@@ -1,10 +1,12 @@
 #include "audio_data_test.hpp"
 
 #include "audio/xact/bank_registry.hpp"
+#include "audio/xact/global_settings.hpp"
 #include "core/test_status.hpp"
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <set>
 #include <string>
 
@@ -20,6 +22,24 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
     }
     spdlog::info("[PASS] global settings: {} categories, {} variables, {} RPC curves",
                  gs->categories.size(), gs->variables.size(), gs->rpcs.size());
+
+    // Each positional cue's Angle (M216b): cue-scoped, and read by a curve
+    // that is ~0 dB straight below the listener and -20 dB at the horizon,
+    // so the engine's "degrees off straight up" is the quantity it means.
+    {
+        const int angle = gs->find_variable("Angle");
+        const audio::xact::RpcCurve* curve = nullptr;
+        for (const auto& rpc : gs->rpcs)
+            if (angle >= 0 && rpc.variable == static_cast<u16>(angle)) curve = &rpc;
+        if (angle < 0 || gs->variables[static_cast<size_t>(angle)].global() || !curve)
+            test_status::fail("[FAIL] no cue-scoped Angle variable with a curve");
+        else if (std::abs(curve->evaluate(180.0f)) < 60.0f && curve->evaluate(90.0f) < -1900.0f)
+            spdlog::info("[PASS] Angle's curve: {:.0f} mB below, {:.0f} mB level",
+                         curve->evaluate(180.0f), curve->evaluate(90.0f));
+        else
+            test_status::fail("[FAIL] Angle's curve: {:.0f} mB below, {:.0f} mB level",
+                              curve->evaluate(180.0f), curve->evaluate(90.0f));
+    }
 
     // The voice banks (EVA, campaign and briefing VO, the movies' voices)
     // in sounds/Voice/US and its tutorials, as AudioSetLanguage('us') loads.

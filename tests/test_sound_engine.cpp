@@ -4,6 +4,8 @@
 #include "audio/sound_manager.hpp"
 #include "xact_fixtures.hpp"
 
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <random>
 #include <string>
@@ -121,9 +123,63 @@ TEST_CASE("Sound engine: distance falloff comes from the sound's RPC curve", "[a
     sm.update(0.2f);
     const f32 at_listener = sm.current_gain(h);
     REQUIRE(at_listener > 0.0f);
-    sm.set_position(h, {500, 0, 0}); // the curve: -1000 mB at 500
+    sm.set_position(h, {0, 0, 500}); // ahead, still centred: the curve's -1000 mB at 500
     sm.update(0.0f);
     CHECK_THAT(sm.current_gain(h) / at_listener, WithinAbs(0.316, 0.005));
+}
+
+TEST_CASE("Sound engine: X3DAudio's stereo matrix, linear between +-90 degrees",
+          "[audio][engine]") {
+    // F3DAudio's stereo law: L + R = 1, centre [0.5, 0.5], hard right at
+    // 90 degrees, and back across behind.
+    const sim::Vector3 forward{0, 0, 1}, right{1, 0, 0};
+    const auto gains = [&](sim::Vector3 d) {
+        return SoundManager::stereo_gains(d, forward, right);
+    };
+    const auto near = [](std::array<f32, 2> g, f32 l, f32 r) {
+        return std::abs(g[0] - l) < 1e-4f && std::abs(g[1] - r) < 1e-4f;
+    };
+    CHECK(near(gains({0, 0, 10}), 0.5f, 0.5f));     // ahead
+    CHECK(near(gains({10, 0, 0}), 0.0f, 1.0f));     // right
+    CHECK(near(gains({-10, 0, 0}), 1.0f, 0.0f));    // left
+    CHECK(near(gains({10, 0, 10}), 0.25f, 0.75f));  // 45 degrees right
+    CHECK(near(gains({0, 0, -10}), 0.5f, 0.5f));    // behind
+    CHECK(near(gains({10, 0, -10}), 0.25f, 0.75f)); // 135: back toward centre
+    CHECK(near(gains({0, 50, 0}), 0.5f, 0.5f));     // straight up: no azimuth
+    CHECK(near(gains({0, 0, 0}), 0.5f, 0.5f));      // at the listener
+}
+
+TEST_CASE("Sound engine: a cue's Angle is its elevation off straight up", "[audio][engine]") {
+    const sim::Vector3 listener{0, 100, 0};
+    CHECK_THAT(SoundManager::cue_angle_degrees({0, 0, 0}, listener), WithinAbs(180.0, 1e-3));
+    CHECK_THAT(SoundManager::cue_angle_degrees({100, 100, 0}, listener), WithinAbs(90.0, 1e-3));
+    CHECK_THAT(SoundManager::cue_angle_degrees({100, 0, 0}, listener), WithinAbs(135.0, 1e-3));
+    CHECK_THAT(SoundManager::cue_angle_degrees({0, 200, 0}, listener), WithinAbs(0.0, 1e-3));
+}
+
+TEST_CASE("Sound engine: a world sound is panned; centred it takes half each side",
+          "[audio][engine]") {
+    // Moho's X3DAudio matrix puts a centred mono emitter at [0.5, 0.5],
+    // where a 2D sound plays at [1, 1]: world sounds sit 6 dB under UI.
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    sm.set_listener({0, 0, 0}, {0, 0, 1}, {1, 0, 0});
+    const sim::Vector3 here{0, 0, 0};
+    const auto flat = sm.play("Test", "Shot");
+    const auto world = sm.play("Test", "Shot", &here); // Music holds one: replaces flat
+    REQUIRE(world != INVALID_SOUND);
+    sm.update(0.6f);
+    f32 l = 0, r = 0;
+    REQUIRE(sm.stereo(world, l, r));
+    CHECK(l == 0.5f);
+    CHECK(r == 0.5f);
+    CHECK_FALSE(sm.stereo(flat, l, r)); // 2D, and replaced
+    const f32 centred = sm.current_gain(world);
+    sm.set_position(world, {1, 0, 0}); // hard right, 1 unit off: the curve is ~0 there
+    sm.update(0.0f);
+    REQUIRE(sm.stereo(world, l, r));
+    CHECK(r == 1.0f);
+    CHECK_THAT(sm.current_gain(world) / centred, WithinAbs(2.0, 0.01));
 }
 
 TEST_CASE("Sound engine: the player's category volumes scale their subtree", "[audio][engine]") {

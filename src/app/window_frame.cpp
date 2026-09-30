@@ -85,10 +85,14 @@ void App::Window::update_audio(double dt) {
         const osc::f32 fy = cam.focus_y() - ey;
         const osc::f32 fz = cam.focus_z() - ez;
         const osc::f32 len = std::max(1e-3f, std::sqrt(fx * fx + fy * fy + fz * fz));
-        sound.set_listener({ex, ey, ez}, {fx / len, fy / len, fz / len});
+        // Moho's listener stands over the focus at the target zoom's height,
+        // less 4, facing the view; its right is the screen's (the view
+        // matrix's first row). Each cue's Angle is its own (SoundManager).
+        const auto view = cam.view();
+        sound.set_listener({cam.focus_x(), cam.focus_y() + cam.zoom() - 4.0f, cam.focus_z()},
+                           {fx / len, fy / len, fz / len}, {view[0], view[4], view[8]});
         sound.set_global_variable("CameraDistance", cam.zoom());
         sound.set_global_variable("ZoomPercent", cam.zoom() / cam.max_zoom() * 100.0f);
-        sound.set_global_variable("Angle", cam.pitch() * 57.29578f);
         sound.update(static_cast<osc::f32>(dt));
     }
 }

@@ -82,7 +82,8 @@ struct SoundManager::CueInstance {
     std::string bank_name;
     bool positional = false;
     sim::Vector3 pos{};
-    bool paused = false; ///< held by a paused category
+    bool paused = false;             ///< held by a paused category
+    f32 pan_left = 1, pan_right = 1; ///< a positional sound's stereo gains
     f64 started = 0;
     f64 fade_in = 0; ///< seconds
     State state = State::Playing;
@@ -255,6 +256,7 @@ SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
         release_variable_ = gs->find_variable("ReleaseTime");
         cue_instances_variable_ = gs->find_variable("NumCueInstances");
         duck_variable_ = gs->find_variable("Duck");
+        angle_variable_ = gs->find_variable("Angle");
         duck_length_variable_ = gs->find_variable("DuckLength");
         paused_.assign(gs->categories.size(), 0);
     }
@@ -268,7 +270,6 @@ SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
     }
     engine_->initialized = true;
     output_ = true;
-    ma_engine_listener_set_world_up(&engine_->engine, 0, 0, 1, 0);
     spdlog::info("Audio engine initialized");
 }
 
@@ -406,6 +407,7 @@ f32 SoundManager::volume_mb(const CueInstance& inst, size_t track) const {
     auto variable = [&](u16 v) -> f32 {
         const int i = v;
         if (i == distance_variable_) return distance(inst);
+        if (i == angle_variable_ && inst.positional) return cue_angle_degrees(inst.pos, listener_);
         if (i == attack_variable_) return static_cast<f32>((clock_ - inst.started) * 1000.0);
         if (i == release_variable_)
             return inst.state == CueInstance::State::Releasing
@@ -620,10 +622,11 @@ SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
             if (ma_sound_init_from_data_source(&engine_->engine, &v->decoder, 0, nullptr, &v->sound) ==
                 MA_SUCCESS) {
                 v->sound_init = true;
-                ma_sound_set_spatialization_enabled(&v->sound, inst.positional ? MA_TRUE : MA_FALSE);
-                // XACT's RPC curves do distance attenuation; miniaudio pans.
-                ma_sound_set_attenuation_model(&v->sound, ma_attenuation_model_none);
-                if (inst.positional) ma_sound_set_position(&v->sound, inst.pos.x, inst.pos.y, inst.pos.z);
+                // XACT's RPC curves attenuate and apply() pans, as X3DAudio's
+                // matrix does; miniaudio's spatializer is off (its model
+                // without attenuation doesn't pan either).
+                ma_sound_set_spatialization_enabled(&v->sound, MA_FALSE);
+                ma_sound_set_pan_mode(&v->sound, ma_pan_mode_balance);
                 ma_sound_set_looping(&v->sound,
                                      v->loops_left == kForever && !v->repick ? MA_TRUE : MA_FALSE);
                 ma_sound_set_pitch(&v->sound, static_cast<float>(std::pow(2.0, cents / 1200.0)));
@@ -646,15 +649,29 @@ void SoundManager::apply(CueInstance& inst) {
     if (inst.state == CueInstance::State::FadingOut && inst.stop_duration > 0)
         fade *= static_cast<f32>(std::max(0.0, 1.0 - (clock_ - inst.stop_started) / inst.stop_duration));
     const f32 cat = category_gain(category_of(inst));
+    // A positional sound's stereo matrix, as miniaudio's balance pan (which
+    // scales one side) times the louder side's gain. A 2D mono sound plays
+    // at [1, 1], XAudio2's default.
+    f32 pan = 0;
+    f32 side = 1;
+    if (inst.positional) {
+        const auto [l, r] = stereo_gains(
+            {inst.pos.x - listener_.x, inst.pos.y - listener_.y, inst.pos.z - listener_.z},
+            listener_forward_, listener_right_);
+        inst.pan_left = l;
+        inst.pan_right = r;
+        side = std::max(l, r);
+        pan = side <= 0 ? 0.0f : r >= l ? 1.0f - l / r : r / l - 1.0f;
+    }
     f32 loudest = 0;
     for (size_t t = 0; t < inst.tracks.size(); ++t) {
         const f32 base_mb = volume_mb(inst, t);
         for (auto& v : inst.tracks[t].voices) {
-            const f32 gain = xact::millibels_to_gain(base_mb + v->variation_mb) * cat * fade;
+            const f32 gain = xact::millibels_to_gain(base_mb + v->variation_mb) * cat * fade * side;
             loudest = std::max(loudest, gain);
             if (!v->sound_init) continue;
             ma_sound_set_volume(&v->sound, gain);
-            if (inst.positional) ma_sound_set_position(&v->sound, inst.pos.x, inst.pos.y, inst.pos.z);
+            ma_sound_set_pan(&v->sound, pan);
         }
     }
     inst.gain = loudest;
@@ -834,16 +851,53 @@ bool SoundManager::position(SoundHandle handle, sim::Vector3& out) const {
     return true;
 }
 
-void SoundManager::set_listener(const sim::Vector3& pos, const sim::Vector3& forward) {
+void SoundManager::set_listener(const sim::Vector3& pos, const sim::Vector3& forward,
+                                const sim::Vector3& right) {
     listener_ = pos;
     listener_forward_ = forward;
-    if (!output_) return;
-    ma_engine_listener_set_position(&engine_->engine, 0, pos.x, pos.y, pos.z);
-    ma_engine_listener_set_direction(&engine_->engine, 0, forward.x, forward.y, forward.z);
+    if (right.x != 0 || right.y != 0 || right.z != 0) {
+        listener_right_ = right;
+    } else { // forward x up
+        listener_right_ = {-forward.z, 0.0f, forward.x};
+    }
 }
 
-void SoundManager::set_listener_position(const sim::Vector3& pos) {
-    set_listener(pos, listener_forward_);
+std::array<f32, 2> SoundManager::stereo_gains(const sim::Vector3& dir, const sim::Vector3& forward,
+                                              const sim::Vector3& right) {
+    const f32 x = dir.x * right.x + dir.y * right.y + dir.z * right.z;
+    const f32 z = dir.x * forward.x + dir.y * forward.y + dir.z * forward.z;
+    if (std::abs(x) < 1e-6f && std::abs(z) < 1e-6f) return {0.5f, 0.5f};
+    // Azimuth from straight ahead, right positive; right's share runs
+    // linearly from 0 at -90 degrees to 1 at +90, and back behind.
+    constexpr f32 kPi = 3.14159265358979f;
+    f32 az = std::atan2(x, z); // [-pi, pi]
+    f32 r = 0;
+    if (az >= -kPi / 2 && az <= kPi / 2) {
+        r = (az + kPi / 2) / kPi;
+    } else {
+        if (az < 0) az += 2 * kPi; // (pi/2, 3pi/2)
+        r = (1.5f * kPi - az) / kPi;
+    }
+    r = std::clamp(r, 0.0f, 1.0f);
+    return {1.0f - r, r};
+}
+
+f32 SoundManager::cue_angle_degrees(const sim::Vector3& emitter, const sim::Vector3& listener) {
+    const f32 dx = emitter.x - listener.x;
+    const f32 dy = emitter.y - listener.y;
+    const f32 dz = emitter.z - listener.z;
+    // faf-re's ComputeCueAngleDegrees is 90 - pitch, its pitch the
+    // vertical over the horizontal; Moho's world is Y-up.
+    const f32 pitch = std::atan2(dy, std::sqrt(dx * dx + dz * dz));
+    return 90.0f - pitch * (180.0f / 3.14159265358979f);
+}
+
+bool SoundManager::stereo(SoundHandle handle, f32& left, f32& right) const {
+    auto it = instances_.find(handle);
+    if (it == instances_.end() || it->second->ended || !it->second->positional) return false;
+    left = it->second->pan_left;
+    right = it->second->pan_right;
+    return true;
 }
 
 void SoundManager::set_global_variable(std::string_view name, f32 value) {

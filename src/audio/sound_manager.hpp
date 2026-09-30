@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/entity.hpp" // for Vector3
 
+#include <array>
 #include <functional>
 #include <list>
 #include <memory>
@@ -129,10 +130,27 @@ public:
     /// Where a playing positional sound is; false for a 2D or ended one.
     bool position(SoundHandle handle, sim::Vector3& out) const;
 
-    /// The listener: the camera.
-    void set_listener(const sim::Vector3& pos, const sim::Vector3& forward);
-    /// Backwards-compatible: position only.
-    void set_listener_position(const sim::Vector3& pos);
+    /// The listener: where it stands, where it looks, and its right (the
+    /// screen's right; left out, forward x up). Moho's stands over the
+    /// camera's focus at the zoom's height, less 4 (CUserSoundManager and
+    /// AudioEngine::SetListenerTransform), facing the view.
+    void set_listener(const sim::Vector3& pos, const sim::Vector3& forward,
+                      const sim::Vector3& right = {});
+
+    /// X3DAudio's stereo matrix for a mono emitter in direction `dir` from
+    /// the listener: {left, right}, linear in the azimuth between speakers
+    /// at +-90 degrees and summing to 1 (F3DAudio), so a centred sound gets
+    /// half on each side. The azimuth is in the listener's forward/right
+    /// plane; behind it pans back across; no direction is the centre.
+    static std::array<f32, 2> stereo_gains(const sim::Vector3& dir, const sim::Vector3& forward,
+                                           const sim::Vector3& right);
+    /// A positional cue's Angle variable (XGS, cue-scoped): degrees off
+    /// straight up from the listener to the emitter -- 0 above, 90 level,
+    /// 180 below. Retail's curve on it quiets sounds toward the horizon.
+    static f32 cue_angle_degrees(const sim::Vector3& emitter, const sim::Vector3& listener);
+    /// A playing positional sound's stereo gains as last applied; false for
+    /// a 2D or ended one.
+    bool stereo(SoundHandle handle, f32& left, f32& right) const;
 
     /// A global XACT variable (CameraDistance, ZoomPercent, Angle, Duck...);
     /// unknown names are ignored.
@@ -215,6 +233,7 @@ private:
 
     sim::Vector3 listener_{};
     sim::Vector3 listener_forward_{0, 0, 1};
+    sim::Vector3 listener_right_{1, 0, 0};
     std::vector<f32> globals_;         ///< per XGS variable (global ones)
     std::vector<f32> user_volume_;     ///< per category, the player's 0..1
     std::vector<u8> paused_;           ///< per category, PauseSound's
@@ -227,6 +246,7 @@ private:
     int world_category_ = -1;
     int release_variable_ = -1, attack_variable_ = -1, distance_variable_ = -1;
     int cue_instances_variable_ = -1;
+    int angle_variable_ = -1;
 
     struct VariationState {
         u32 last = 0xFFFFFFFF;
