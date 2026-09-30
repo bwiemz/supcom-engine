@@ -347,6 +347,15 @@ set_tests_properties(data.golden.scmp009_game_ui_minimap PROPERTIES
     LABELS "data;gate;golden"
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
+# Retail's skirmish lobby, opened from the main menu (a capture's profile has
+# already seen the tutorial prompt)
+add_test(NAME data.golden.skirmish_lobby
+         COMMAND opensupcom --click Skirmish --golden skirmish_lobby
+                 --screenshot-frame 600 --golden-tolerance 0.001)
+set_tests_properties(data.golden.skirmish_lobby PROPERTIES
+    LABELS "data;gate;golden"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
 
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither
