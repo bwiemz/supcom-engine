@@ -542,8 +542,10 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         runs[run].push_back(icon);
     };
     for (const sim::EntityRecord& entity : view.entities()) collect(entity);
-    if (recon_)
+    if (recon_) {
         for (const sim::EntityRecord& ghost : recon_->ghosts()) collect(ghost);
+        for (const sim::EntityRecord& fake : recon_->fakes()) collect(fake); // jammers' (M215e)
+    }
 
     // The underlay at its own colour, the base icon tinted over it, the
     // stunned badge over that at its own colour (Moho's RenderUnitIcon).

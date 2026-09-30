@@ -1942,6 +1942,62 @@ void SimState::update_visibility() {
         }
         prev_entity_vis_[e.entity_id()] = states;
     });
+
+    // 6. Jammers' fake blips.
+    update_jam_blips();
+}
+
+Vector3 SimState::jam_offset(const Unit& u) {
+    // Moho's ComputeJamOffset: Min plus (Max - Min) times a 32-bit draw, in
+    // whole units, then a random fraction of that along a random heading.
+    // (Moho normalizes two Gaussian draws; a point drawn in the unit disc is
+    // as even in heading, and exact on every platform.)
+    const auto lo = static_cast<u32>(std::max(0.0f, u.jam_radius_min()));
+    const auto hi = static_cast<u32>(std::max(0.0f, u.jam_radius_max()));
+    const u32 range = hi > lo ? hi - lo : 0;
+    const u32 step = static_cast<u32>((static_cast<u64>(range) * sim_random_.next_u32()) >> 32);
+    const auto radius = static_cast<f32>(lo + step);
+    f32 x = 0;
+    f32 z = 0;
+    f32 len2 = 0;
+    do {
+        x = sim_random_.range(-1.0f, 1.0f);
+        z = sim_random_.range(-1.0f, 1.0f);
+        len2 = x * x + z * z;
+    } while (len2 > 1.0f || len2 < 1e-6f);
+    const f32 len = std::sqrt(len2);
+    const f32 reach = sim_random_.range(0.0f, 1.0f) * radius;
+    return {x / len * reach, 0.0f, z / len * reach};
+}
+
+void SimState::update_jam_blips() {
+    const u32 n = static_cast<u32>(
+        std::min(army_count(), static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
+    std::set<u64> kept;
+    // Units in id order, armies in index order: the draws fall alike on
+    // every peer.
+    entity_registry_.for_each_unit([&](Entity& e) {
+        if (e.destroyed()) return;
+        auto& u = static_cast<Unit&>(e);
+        if (u.jammer_blips() == 0 || u.is_dying() || u.is_being_built() ||
+            !u.is_intel_enabled("Jammer"))
+            return;
+        const i32 owner = u.army();
+        for (u32 a = 0; a < n; ++a) {
+            if (static_cast<i32>(a) == owner || is_ally(static_cast<i32>(a), owner)) continue;
+            // Moho keeps a unit's blips while the army senses it, or has
+            // seen a structure; the fakes live with them.
+            const bool sensed = has_any_intel_cached(&u, a, u.has_radar_stealth(),
+                                                     u.has_sonar_stealth(), u.is_cloaked());
+            if (!sensed && (u.is_mobile() || !ever_in_sight(u.entity_id(), a))) continue;
+            const u64 key = jam_key(u.entity_id(), a);
+            auto& offsets = jam_offsets_[key];
+            while (offsets.size() < u.jammer_blips()) offsets.push_back(jam_offset(u));
+            offsets.resize(u.jammer_blips());
+            kept.insert(key);
+        }
+    });
+    std::erase_if(jam_offsets_, [&](const auto& entry) { return kept.count(entry.first) == 0; });
 }
 
 void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,

@@ -701,6 +701,15 @@ public:
         return it == prev_entity_vis_.end() ? nullptr : &it->second;
     }
 
+    /// Jammers' fake blips (M215e), as Moho's recon keeps them: while an
+    /// enemy army senses a jammer (or remembers a jamming structure), it
+    /// holds the jammer's JammerBlips fakes, each at its own offset from the
+    /// jammer, drawn from the sim's stream when made (ReconBlip's jam
+    /// offset). Whether the army senses a fake, and knows it fake, is asked
+    /// where it falls (world_snapshot). Keyed by jam_key(unit, army).
+    const std::map<u64, std::vector<Vector3>>& jam_offsets() const { return jam_offsets_; }
+    static u64 jam_key(u32 unit, u32 army) { return (static_cast<u64>(unit) << 8) | army; }
+
     bool ever_in_sight(u32 id, u32 army) const {
         const auto it = los_ever_.find(id);
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
@@ -796,6 +805,11 @@ private:
     /// unit:OnDetectedBy(army), 1-based: `army_idx` has just made its first
     /// blip of the unit (Moho calls it as its recon makes the blip).
     void fire_on_detected_by(u32 entity_id, u32 army_idx);
+    /// Keep each jammer's fakes for each army that senses it (M215e).
+    void update_jam_blips();
+    /// A fake's offset from jammer `u`: JamRadius's Min plus a share of
+    /// its range, then a random fraction of that along a random heading.
+    Vector3 jam_offset(const Unit& u);
     /// The blip objects of entities now gone: each one's OnDestroy (its
     /// destroy hooks), in entity then army order, and forgotten.
     void destroy_gone_blips();
@@ -920,6 +934,9 @@ private:
     // Per entity, a bit per army that has ever had it in line of sight
     // (see ever_in_sight). Looked up, never walked.
     std::unordered_map<u32, u32> los_ever_;
+
+    // Jammers' fake blips' offsets, by jam_key (see jam_offsets).
+    std::map<u64, std::vector<Vector3>> jam_offsets_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>

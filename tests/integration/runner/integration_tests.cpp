@@ -3342,13 +3342,15 @@ void test_jammer(TestContext& ctx) {
                     acu:EnableIntel('Omni')
                     WaitTicks(3)
 
+                    -- The jammer's own blip is real: Moho marks only its fake
+                    -- blips known fake (M215e), omni or not.
                     local jblip2 = jammerUnit:GetBlip(myArmy)
                     if jblip2 then
                         local fake2 = jblip2:IsKnownFake(myArmy)
-                        if fake2 then
-                            LOG('JAMMER TEST 6 PASSED: IsKnownFake=true with Omni')
+                        if not fake2 then
+                            LOG('JAMMER TEST 6 PASSED: a real jammer is not known fake under Omni')
                         else
-                            LOG('JAMMER TEST 6 FAILED: IsKnownFake=false with Omni (expected true)')
+                            LOG('JAMMER TEST 6 FAILED: a real jammer read as known fake under Omni')
                         end
                     end
 

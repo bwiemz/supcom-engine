@@ -396,6 +396,29 @@ TEST_CASE("ReconView: a FlushIntelInRect forgets what it took from the player's 
     CHECK(recon.sight(*w.find(1)) == Sight::Remembered);
 }
 
+TEST_CASE("ReconView: a jammer's fakes its army senses show as blips", "[renderer][recon]") {
+    World w;
+    sim::EntityRecord& frigate = w.unit(7, 1, 100, 100, true);
+    frigate.blueprint_id = "ues0103";
+    w.snap.fake_blips = {{7, 0, 2, {110, 0, 95}}, {7, 1, 0, {90, 0, 90}}};
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.tick(recon);
+    REQUIRE(recon.fakes().size() == 1); // army 0's alone
+    const sim::EntityRecord& fake = recon.fakes().front();
+    CHECK((fake.id & ReconView::kFakeBlip) != 0);
+    CHECK(fake.blueprint_id == "ues0103"); // its jammer's, for the blip's class
+    CHECK(fake.position.x == 110.0f);
+    CHECK(recon.sight(fake) == Sight::Blip);
+    recon.set_focus_army(1);
+    w.tick(recon);
+    CHECK(recon.fakes().size() == 1);
+    CHECK(recon.fakes().front().position.x == 90.0f);
+    recon.set_focus_army(-1); // an observer sees what is real
+    w.tick(recon);
+    CHECK(recon.fakes().empty());
+}
+
 TEST_CASE("ReconView: effects show where the player's army sees", "[renderer][recon]") {
     World w;
     w.snap.armies[0].allies = 1u << 1;
