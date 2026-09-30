@@ -20308,7 +20308,13 @@ void test_emitter(TestContext& ctx) {
                 :OffsetEmitter(0, 0.5, 0)
                 :SetEmitterParam('LIFETIME', 9999)
                 :SetEmitterCurveParam('Y_POSITION_CURVE', 0, 1.5)
-            rawset(_G, '_emtest3', (fx and type(fx) == 'table') and 'ok' or 'fail')
+                :ResizeEmitterCurve('emitrate_curve', 20)
+            -- Moho's names only (any case, prefix optional); others are errors.
+            local ok = fx and type(fx) == 'table'
+                and fx:SetEmitterParam('effect_repeattime', 4) == fx
+                and not pcall(fx.SetEmitterParam, fx, 'NotAParam', 1)
+                and not pcall(fx.SetEmitterCurveParam, fx, 'X_POSITION', 0, 1)
+            rawset(_G, '_emtest3', ok and 'ok' or 'fail')
         )");
         auto v = check_result("_emtest3");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 3: Full method chaining works"); }

@@ -20,6 +20,7 @@
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/emitter_params.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "core/test_status.hpp"
@@ -117,40 +118,66 @@ static int ieffect_OffsetEmitter(lua_State* L) {
     return 1;
 }
 
-// SetEmitterParam(paramName, value) → self
+// SetEmitterParam(paramName, value) → self: one of Moho's EEmitterParams
+// (any case, "EFFECT_" optional; another name is an error, as Moho's enum
+// lookup makes it). The renderer's emitter takes it over its blueprint's.
 static int ieffect_SetEmitterParam(lua_State* L) {
     auto* fx = check_ieffect(L);
-    if (fx) {
-        const char* name = luaL_optstring(L, 2, "");
-        f64 value = luaL_optnumber(L, 3, 0);
-        fx->set_param(name, value);
-        // POSITION_X/_Y/_Z are the params OffsetEmitter adds to (a
-        // contrail's Z; M214b).
-        const std::string_view param(name);
+    if (!fx) { // a gone effect: nothing checked, as Moho's returns first
+        lua_pushvalue(L, 1);
+        return 1;
+    }
+    const char* name = luaL_optstring(L, 2, "");
+    const auto param = sim::emitter_param(name);
+    if (!param) return luaL_error(L, "Invalid enum value %s", name);
+    const f64 value = luaL_optnumber(L, 3, 0);
+    {
+        const std::string canonical(sim::emitter_param_name(*param));
+        fx->set_param(canonical, value);
+        fx->set_emitter_param(*param, static_cast<f32>(value));
         const auto v = static_cast<f32>(value);
-        if (param == "POSITION_X") fx->set_offset(v, fx->offset_y(), fx->offset_z());
-        if (param == "POSITION_Y") fx->set_offset(fx->offset_x(), v, fx->offset_z());
-        if (param == "POSITION_Z") fx->set_offset(fx->offset_x(), fx->offset_y(), v);
+        // POSITION_X/_Y/_Z are the params OffsetEmitter adds to (a
+        // contrail's Z; M214b), SCALE is ScaleEmitter's.
+        if (*param == sim::kParamPositionX) fx->set_offset(v, fx->offset_y(), fx->offset_z());
+        if (*param == sim::kParamPositionY) fx->set_offset(fx->offset_x(), v, fx->offset_z());
+        if (*param == sim::kParamPositionZ) fx->set_offset(fx->offset_x(), fx->offset_y(), v);
+        if (*param == sim::kParamScale) fx->set_scale(v);
         // An emitter's LIFETIME (ticks from when it was made) sets when it
         // ends, as its blueprint's Lifetime did; negative, it emits on.
-        if (std::string_view(name) == "LIFETIME" && fx->has_emitter_blueprint())
+        if (*param == sim::kParamLifetime && fx->has_emitter_blueprint())
             fx->end_after(value, sim::SimState::SECONDS_PER_TICK);
     }
     lua_pushvalue(L, 1);
     return 1;
 }
 
-// SetEmitterCurveParam(curveName, keyIndex, value) → self
+/// The curve arg 2 names, or a Lua error (Moho's
+/// ResolveEmitterCurveParamIndexOrThrow).
+static u8 curve_arg(lua_State* L) {
+    const char* name = luaL_optstring(L, 2, "");
+    const auto curve = sim::emitter_curve(name);
+    if (!curve) luaL_error(L, "Invalid emitter curve parameter: %s", name);
+    return curve.value_or(0);
+}
+
+// SetEmitterCurveParam(curveName, height, size) → self: the curve becomes
+// one key at tick 0, `height` give or take half of `size` (Moho's
+// cfunc_IEffectSetEmitterCurveParamL). Retail sizes its build effects to
+// the unit this way ('X_POSITION_CURVE', 0, width).
 static int ieffect_SetEmitterCurveParam(lua_State* L) {
     auto* fx = check_ieffect(L);
-    if (fx) {
-        const char* curve = luaL_optstring(L, 2, "");
-        i32 key = static_cast<i32>(luaL_optnumber(L, 3, 0));
-        f64 value = luaL_optnumber(L, 4, 0);
-        // Store as "CURVE:key" for future rendering
-        std::string param_key = std::string(curve) + ":" + std::to_string(key);
-        fx->set_param(param_key, value);
-    }
+    if (fx)
+        fx->add_curve_op({curve_arg(L), false, static_cast<f32>(luaL_optnumber(L, 3, 0)),
+                          static_cast<f32>(luaL_optnumber(L, 4, 0))});
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// ResizeEmitterCurve(curveName, ticks) → self: the curve's keys stretched
+// from its length (XRange) to `ticks` (cfunc_IEffectResizeEmitterCurveL).
+static int ieffect_ResizeEmitterCurve(lua_State* L) {
+    auto* fx = check_ieffect(L);
+    if (fx) fx->add_curve_op({curve_arg(L), true, static_cast<f32>(luaL_optnumber(L, 3, 0)), 0.0f});
     lua_pushvalue(L, 1);
     return 1;
 }
@@ -173,6 +200,7 @@ const MethodEntry ieffect_methods[] = {
     {"ScaleEmitter",            ieffect_ScaleEmitter},
     {"OffsetEmitter",           ieffect_OffsetEmitter},
     {"SetEmitterParam",         ieffect_SetEmitterParam},
+    {"ResizeEmitterCurve",      ieffect_ResizeEmitterCurve},
     {"SetEmitterCurveParam",    ieffect_SetEmitterCurveParam},
     {"Destroy",                 ieffect_Destroy},
     {"BeenDestroyed",           been_destroyed_check},

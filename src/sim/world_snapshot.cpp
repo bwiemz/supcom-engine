@@ -333,6 +333,13 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.offset_y = fx->offset_y();
         r.offset_z = fx->offset_z();
         r.scale = fx->scale();
+        if (fx->overrides_serial() != 0) {
+            r.emitter_params_set = fx->emitter_params_set();
+            for (size_t i = 0; i < r.emitter_params.size(); ++i)
+                r.emitter_params[i] = fx->emitter_param(static_cast<u8>(i));
+            r.curve_ops = fx->curve_ops();
+            r.overrides_serial = fx->overrides_serial();
+        }
         r.army = fx->army();
         r.light_size = fx->light_size();
         r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));

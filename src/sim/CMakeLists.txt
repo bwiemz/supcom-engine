@@ -11,6 +11,7 @@ add_library(osc_sim STATIC
     bone_data.cpp
     collision.cpp
     collision_beam.cpp
+    emitter_params.cpp
     entity.cpp
     formation.cpp
     manipulator.cpp

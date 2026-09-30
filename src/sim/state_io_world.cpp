@@ -393,6 +393,16 @@ void StateIO::save(StateWriter& w, const IEffectRegistry& fx) {
         w.b(e->destroyed_);
         w.i32v(e->lua_table_ref_);
         save_str_f64(w, e->params_);
+        for (const f32 v : e->emitter_params_) w.f32v(v);
+        w.u32v(e->emitter_params_set_);
+        w.size(e->curve_ops_.size());
+        for (const auto& op : e->curve_ops_) {
+            w.u8v(op.curve);
+            w.b(op.resize);
+            w.f32v(op.a);
+            w.f32v(op.b);
+        }
+        w.u32v(e->overrides_serial_);
         w.f64v(e->birth_time_);
         w.f64v(e->lifetime_);
         w.f64v(e->ends_at_);
@@ -449,6 +459,16 @@ void StateIO::load(StateReader& r, IEffectRegistry& fx) {
         e->destroyed_ = r.b();
         e->lua_table_ref_ = r.i32v();
         e->params_ = load_str_f64<std::unordered_map<std::string, f64>>(r);
+        for (f32& v : e->emitter_params_) v = r.f32v();
+        e->emitter_params_set_ = r.u32v();
+        e->curve_ops_.resize(r.size(10));
+        for (auto& op : e->curve_ops_) {
+            op.curve = r.u8v();
+            op.resize = r.b();
+            op.a = r.f32v();
+            op.b = r.f32v();
+        }
+        e->overrides_serial_ = r.u32v();
         e->birth_time_ = r.f64v();
         e->lifetime_ = r.f64v();
         e->ends_at_ = r.f64v();

@@ -5,6 +5,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/recon_view.hpp"
+#include "sim/emitter_params.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <algorithm>
@@ -200,6 +201,7 @@ void ParticleSystem::emit(u32 id, Emitter& e, u32 ticks, u32 now_tick,
 
         Particle p;
         p.bp = e.bp;
+        p.own = e.own;
         p.effect_id = id;
         // Scattered about its place, across the ground, by up to half its
         // Size either way.
@@ -248,6 +250,67 @@ void ParticleSystem::emit(u32 id, Emitter& e, u32 ticks, u32 now_tick,
     }
 }
 
+void ParticleSystem::apply_overrides(Emitter& e, const sim::EffectRecord& fx,
+                                     const EmitterBlueprintData& base) {
+    auto own = std::make_shared<EmitterBlueprintData>(base);
+    const auto set = [&](u8 param) { return ((fx.emitter_params_set >> param) & 1u) != 0; };
+    const auto number = [&](u8 param, f32& field) {
+        if (set(param)) field = fx.emitter_params[param];
+    };
+    const auto flag = [&](u8 param, bool& field) {
+        if (set(param)) field = fx.emitter_params[param] != 0.0f;
+    };
+    number(sim::kParamLifetime, own->lifetime);
+    number(sim::kParamRepeatTime, own->repeattime);
+    number(sim::kParamFrameCount, own->frame_count);
+    number(sim::kParamTextureStripCount, own->strip_count);
+    number(sim::kParamSortOrder, own->sort_order);
+    number(sim::kParamLodCutoff, own->lod_cutoff);
+    if (set(sim::kParamBlendMode))
+        own->blendmode = static_cast<i32>(fx.emitter_params[sim::kParamBlendMode]);
+    flag(sim::kParamUseLocalVelocity, own->local_velocity);
+    flag(sim::kParamUseLocalAcceleration, own->local_acceleration);
+    flag(sim::kParamUseGravity, own->gravity);
+    flag(sim::kParamAlignRotation, own->align_rotation);
+    flag(sim::kParamInterpolateEmission, own->interpolate_emission);
+    flag(sim::kParamAlignToBone, own->align_to_bone);
+    flag(sim::kParamFlat, own->flat);
+    flag(sim::kParamEmitIfVisible, own->emit_if_visible);
+    flag(sim::kParamCatchupEmit, own->catchup_emit);
+    flag(sim::kParamCreateIfVisible, own->create_if_visible);
+    flag(sim::kParamSnapToWaterline, own->snap_to_waterline);
+    flag(sim::kParamOnlyEmitOnWater, own->only_emit_on_water);
+    flag(sim::kParamParticleResistance, own->particle_resistance);
+    for (const auto& op : fx.curve_ops) {
+        if (op.curve >= own->curves.size()) continue;
+        EmitterCurve& c = own->curves[op.curve];
+        if (!op.resize) {
+            // SetEmitterCurveParam: one key at tick 0.
+            c.keys = {CurveKey{0.0f, op.a, op.b}};
+            c.x_range = 0.0f;
+        } else {
+            // ResizeEmitterCurve: its keys stretched from its length to a.
+            if (c.x_range > 0.0f)
+                for (CurveKey& k : c.keys) k.x *= op.a / c.x_range;
+            c.x_range = op.a;
+        }
+    }
+    const f32 peak = own->curves[kLifetime].peak();
+    own->max_lifetime = std::isfinite(peak) ? static_cast<i32>(std::ceil(peak)) : 0;
+    e.own = std::move(own);
+    e.bp = e.own.get();
+    if (set(sim::kParamTickIncrement))
+        e.tick_increment = fx.emitter_params[sim::kParamTickIncrement];
+    // TICKCOUNT sets the emitter's clock (from where it runs on) when a
+    // script sets it.
+    if (set(sim::kParamTickCount) &&
+        (!e.tick_count || *e.tick_count != fx.emitter_params[sim::kParamTickCount])) {
+        e.tick_count = fx.emitter_params[sim::kParamTickCount];
+        e.clock = *e.tick_count;
+    }
+    e.overrides_serial = fx.overrides_serial;
+}
+
 void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, const Frustum* frustum,
                              EmitterBlueprintCache& blueprints, lua_State* L,
                              const map::Terrain* terrain) {
@@ -270,16 +333,21 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
             }
             Emitter e;
             e.bp = bp;
+            if (fx.overrides_serial != 0) apply_overrides(e, fx, *bp);
             // Placed where it is made (Interpolate).
             e.position = add(frame.position, sim::quat_rotate(frame.rotation, offset));
             // CreateIfVisible: one the player couldn't see made never is.
-            if (bp->create_if_visible && !can_see(e, view, tick, eye, frustum)) {
+            if (e.bp->create_if_visible && !can_see(e, view, tick, eye, frustum)) {
                 unmade_.insert(fx.id);
                 continue;
             }
             it = emitters_.emplace(fx.id, std::move(e)).first;
         }
         Emitter& e = it->second;
+        if (fx.overrides_serial != e.overrides_serial) {
+            if (const EmitterBlueprintData* base = blueprints.get(fx.blueprint_path, L))
+                apply_overrides(e, fx, *base);
+        }
         e.frames.push_back(frame);
         if (e.frames.size() > kFramesKept) e.frames.pop_front();
         e.offset = offset;
@@ -297,7 +365,7 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
         // Ticks the sim ran that this view never showed (a slow frame) were
         // Moho's to emit, its clock running on: caught up with the missed.
         const u32 unshown = steps - 1;
-        e.clock += static_cast<f32>(unshown);
+        e.clock += static_cast<f32>(unshown) * e.tick_increment;
         // Catch up the ticks it missed, as many as its particles live (and
         // 24); then this tick's (OnTick).
         const u32 back = std::min(
@@ -305,7 +373,7 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
         for (u32 k = back; k > 0; --k) emit(fx.id, e, k, tick, terrain);
         e.missed = 0;
         emit(fx.id, e, 0, tick, terrain);
-        e.clock += 1.0f; // TICKINCREMENT
+        e.clock += e.tick_increment;
     }
     // Emitters gone from the world stop; their particles live on.
     for (auto it = emitters_.begin(); it != emitters_.end();)

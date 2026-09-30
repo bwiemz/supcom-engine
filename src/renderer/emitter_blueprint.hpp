@@ -28,6 +28,9 @@ struct CurveKey {
 /// ticks, in order.
 struct EmitterCurve {
     std::vector<CurveKey> keys;
+    /// Its length in ticks (XRange; SEfxCurve's x bounds from 0), which
+    /// ResizeEmitterCurve stretches its keys from.
+    f32 x_range = 0.0f;
 
     /// SEfxCurve::GetValue at tick `x`: the first key past x (before the
     /// first key, or past the last, that key; between two, y and z
