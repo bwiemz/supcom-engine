@@ -37,6 +37,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace osc::lua {
 class SmokeTestHarness;
@@ -76,6 +77,7 @@ struct Options {
     bool load_flow_test = false;
     bool mods_flow_test = false;
     bool mods_flow_lobby = false;
+    std::vector<std::string> clicks; ///< --click <label>, in order
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's
     /// LAN lobby played to a game by two processes, offscreen (M218c).
     bool lan_game_host = false;

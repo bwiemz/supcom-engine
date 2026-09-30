@@ -45,6 +45,8 @@ void print_usage() {
               << "                     tests and captures keep preferences in memory)\n"
               << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
               << "  --golden-update    Record the golden image instead of comparing\n"
+              << "  --click <label>    Click the button so labelled once it takes a click;\n"
+              << "                     repeat for the next (captures of retail's menus)\n"
               << "  --binding-coverage <file>  Report engine API the scripts call but\n"
               << "                     the engine lacks (needs --map)\n"
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
@@ -280,6 +282,12 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     // --mods-flow-test: a skirmish with the player's mods (M221b).
     o.mods_flow_test = parse_flag(argc, argv, "--mods-flow-test");
     o.mods_flow_lobby = parse_flag(argc, argv, "--mods-flow-lobby"); // (M221c)
+    // --click <label>, repeatable: the buttons a player clicks, in order
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], "--click") == 0) {
+            o.clicks.emplace_back(argv[++i]);
+        }
+    }
     // --lan-game-host / --lan-game-join <address> (--mp-port <port>): two
     // processes play retail's LAN lobby to a game.
     o.lan_game_host = parse_flag(argc, argv, "--lan-game-host");
@@ -298,7 +306,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
     o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
     o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
-                        o.mods_flow_test || o.lan_game_test() || o.gpgnet_scripted;
+                        o.mods_flow_test || !o.clicks.empty() || o.lan_game_test() ||
+                        o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");

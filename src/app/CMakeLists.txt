@@ -14,6 +14,7 @@ add_library(osc_app STATIC
     mods_flow_test.cpp
     reload.cpp
     session.cpp
+    ui_clicks.cpp
     ui_globals.cpp
     window.cpp
     window_commands.cpp
