@@ -30,6 +30,8 @@ public:
     Result<void> parse(const fs::path& xwb_path);
 
     const std::string& bank_name() const { return bank_name_; }
+    /// The bank's file (streamed waves read from it as they play).
+    const fs::path& path() const { return path_; }
     u32 entry_count() const { return static_cast<u32>(entries_.size()); }
     const WaveInfo& entry(u32 index) const { return entries_[index]; }
 

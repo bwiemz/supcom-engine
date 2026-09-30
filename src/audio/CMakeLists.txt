@@ -4,6 +4,7 @@ add_library(osc_audio STATIC
     xact/sound_bank.cpp
     xact/bank_registry.cpp
     sound_manager.cpp
+    wave_stream.cpp
 )
 add_library(osc::audio ALIAS osc_audio)
 
