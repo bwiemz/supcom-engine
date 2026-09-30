@@ -22697,9 +22697,11 @@ void test_profile(TestContext& ctx) {
         p.begin_frame();
         {
             PROFILE_ZONE("TestZone");
-            // Busy work to ensure measurable time
-            volatile int x = 0;
-            for (int i = 0; i < 100000; ++i) x += i;
+            // Busy work to ensure measurable time (unsigned: the sum passes INT_MAX)
+            volatile u32 x = 0;
+            for (u32 i = 0; i < 100000; ++i) {
+                x += i;
+            }
             static_cast<void>(x);
         }
         p.end_frame();
