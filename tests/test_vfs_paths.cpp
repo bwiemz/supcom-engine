@@ -3,8 +3,12 @@
 #include "vfs/directory_mount.hpp"
 #include "vfs/path_utils.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "vfs/zip_mount.hpp"
+
+#include <minizip/zip.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -185,4 +189,47 @@ TEST_CASE("find_files searches mounts below the directory too", "[vfs][paths]") 
     // A directory inside the mount, as before
     CHECK(vfs.find_files("/mods/mymod/hook", "*.lua") ==
           std::vector<std::string>{"/mods/mymod/hook/lua/x.lua"});
+}
+
+TEST_CASE("ZipMount reads a file without searching the archive", "[vfs][zip]") {
+    // A search per read makes a read slower the more files the archive holds
+    auto seconds_per_read = [](int count) {
+        TempDir tmp;
+        const fs::path archive = tmp.path / "many.scd";
+        zipFile zip = zipOpen64(archive.string().c_str(), 0);
+        REQUIRE(zip);
+        for (int i = 0; i < count; ++i) {
+            const std::string name = "Textures/UI/file" + std::to_string(i) + ".dds";
+            const std::string body = "contents of " + std::to_string(i);
+            zip_fileinfo info{};
+            REQUIRE(zipOpenNewFileInZip64(zip, name.c_str(), &info, nullptr, 0, nullptr, 0, nullptr,
+                                          Z_DEFLATED, Z_DEFAULT_COMPRESSION, 0) == ZIP_OK);
+            REQUIRE(zipWriteInFileInZip(zip, body.data(), static_cast<unsigned>(body.size())) ==
+                    ZIP_OK);
+            REQUIRE(zipCloseFileInZip(zip) == ZIP_OK);
+        }
+        REQUIRE(zipClose(zip, nullptr) == ZIP_OK);
+
+        ZipMount mount(archive);
+        int found = 0;
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < count; ++i) {
+            if (mount.read_file("/textures/ui/file" + std::to_string(i) + ".dds")) {
+                ++found;
+            }
+        }
+        const std::chrono::duration<double> took = std::chrono::steady_clock::now() - start;
+        REQUIRE(found == count);
+
+        for (int i = 0; i < count; ++i) {
+            const auto data = mount.read_file("/textures/ui/file" + std::to_string(i) + ".dds");
+            REQUIRE(data);
+            REQUIRE(std::string(data->begin(), data->end()) == "contents of " + std::to_string(i));
+        }
+        CHECK_FALSE(mount.read_file("/textures/ui/file" + std::to_string(count) + ".dds"));
+        return took.count() / count;
+    };
+    const double few = seconds_per_read(500);
+    const double many = seconds_per_read(4000);
+    CHECK(many < few * 4);
 }

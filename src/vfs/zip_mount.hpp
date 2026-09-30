@@ -30,8 +30,9 @@ public:
 
 private:
     struct ZipEntryInfo {
-        std::string original_name; // as stored in the ZIP
         u64 uncompressed_size = 0;
+        u64 dir_offset = 0; // unz64_file_pos: its central directory entry
+        u64 file_index = 0;
     };
 
     std::filesystem::path archive_path_;
