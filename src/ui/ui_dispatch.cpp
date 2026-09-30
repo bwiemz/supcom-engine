@@ -5,6 +5,7 @@
 #include "ui/console.hpp"
 #include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
+#include "ui/lazyvar.hpp"
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
 #include "core/test_status.hpp"
@@ -228,28 +229,6 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
     lua_rawset(L, -3);
 }
 
-/// Read a LazyVar float from a control's Lua table.
-static f32 read_lazyvar_dispatch(lua_State* L, int tbl_idx, const char* field) {
-    lua_pushstring(L, field);
-    lua_rawget(L, tbl_idx);
-    if (!lua_istable(L, -1)) {
-        if (lua_isnumber(L, -1)) {
-            f32 val = static_cast<f32>(lua_tonumber(L, -1));
-            lua_pop(L, 1);
-            return val;
-        }
-        lua_pop(L, 1);
-        return 0.0f;
-    }
-    if (lua_pcall(L, 0, 1, 0) != 0) {
-        lua_pop(L, 1);
-        return 0.0f;
-    }
-    f32 val = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    return val;
-}
-
 namespace {
 
 /// Walk the visible tree under `ctrl`, keeping the deepest hit-testable
@@ -264,15 +243,14 @@ void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
     if (!ctrl->hit_test_disabled() && !(skip && skip->count(ctrl))) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         const int tbl = lua_gettop(L);
-        const f32 left = read_lazyvar_dispatch(L, tbl, "Left");
-        const f32 top = read_lazyvar_dispatch(L, tbl, "Top");
-        const auto rect = control_rect(left, top, read_lazyvar_dispatch(L, tbl, "Right"),
-                                       read_lazyvar_dispatch(L, tbl, "Bottom"),
-                                       read_lazyvar_dispatch(L, tbl, "Width"),
-                                       read_lazyvar_dispatch(L, tbl, "Height"));
+        const f32 left = read_lazyvar(L, tbl, "Left");
+        const f32 top = read_lazyvar(L, tbl, "Top");
+        const auto rect =
+            control_rect(left, top, read_lazyvar(L, tbl, "Right"), read_lazyvar(L, tbl, "Bottom"),
+                         read_lazyvar(L, tbl, "Width"), read_lazyvar(L, tbl, "Height"));
         const bool inside = x >= rect.x && x < rect.x + rect.w &&
                             y >= rect.y && y < rect.y + rect.h;
-        const f32 depth = inside ? read_lazyvar_dispatch(L, tbl, "Depth") : 0.0f;
+        const f32 depth = inside ? read_lazyvar(L, tbl, "Depth") : 0.0f;
         lua_pop(L, 1);
         if (inside && (!best || depth >= best_depth)) {
             best = ctrl;

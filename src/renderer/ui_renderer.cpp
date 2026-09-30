@@ -1,4 +1,5 @@
 #include "renderer/ui_renderer.hpp"
+#include "ui/lazyvar.hpp"
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
 
@@ -14,6 +15,8 @@ extern "C" {
 }
 
 namespace osc::renderer {
+
+using ui::read_lazyvar;
 
 ClipRect ClipRect::intersect(const ClipRect& a, const ClipRect& b) {
     i32 x0 = std::max(a.x, b.x);
@@ -47,29 +50,6 @@ void UIRenderer::init(VkDevice device, VmaAllocator allocator) {
         }
         instance_mapped_[i] = result_info.pMappedData;
     }
-}
-
-f32 UIRenderer::read_lazyvar(lua_State* L, int table_idx, const char* field) {
-    // Normalize index to absolute
-    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
-
-    lua_pushstring(L, field);
-    lua_rawget(L, table_idx); // get LazyVar table
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return 0.0f;
-    }
-
-    // LazyVar uses __call metamethod: lazyvar() returns the value.
-    lua_pushvalue(L, -1); // push LazyVar table as the function to call
-    if (lua_pcall(L, 0, 1, 0) != 0) {
-        lua_pop(L, 2); // error msg + LazyVar table
-        return 0.0f;
-    }
-
-    f32 val = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 2); // result + LazyVar table
-    return val;
 }
 
 void UIRenderer::argb_to_rgba(u32 argb, f32 out[4]) {
