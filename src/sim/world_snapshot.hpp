@@ -158,6 +158,13 @@ struct EffectRecord {
     /// A decal's or splat's record, and the armies that see it (M212c).
     std::shared_ptr<const DecalSpec> decal;
     u32 seen_by = 0;
+    /// An emitter's runtime overrides (M214d): the params a script set (a
+    /// bit per EEmitterParam) and their values, its curve ops, and the
+    /// serial that changes with any of them.
+    u32 emitter_params_set = 0;
+    std::array<f32, 26> emitter_params{};
+    std::vector<IEffect::EmitterCurveOp> curve_ops;
+    u32 overrides_serial = 0;
 };
 
 struct ResourceRecord {

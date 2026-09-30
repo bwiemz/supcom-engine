@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <memory>
 #include <vector>
 
 struct lua_State;
@@ -20,6 +21,7 @@ class Terrain;
 
 namespace osc::sim {
 class FrameView;
+struct EffectRecord;
 }
 
 namespace osc::renderer {
@@ -121,6 +123,12 @@ private:
     /// One emitter effect (CEfxEmitter).
     struct Emitter {
         const EmitterBlueprintData* bp = nullptr;
+        /// Its blueprint with a script's overrides (SetEmitterParam and the
+        /// curve calls; M214d), when it has any: `bp` points here.
+        std::shared_ptr<const EmitterBlueprintData> own;
+        u32 overrides_serial = 0;      ///< the effect's, as last taken
+        f32 tick_increment = 1.0f;     ///< TICKINCREMENT
+        std::optional<f32> tick_count; ///< the TICKCOUNT a script last set
         std::deque<Frame> frames; ///< its last frames, newest last
         sim::Vector3 offset;      ///< its POSITION params (OffsetEmitter)
         f32 scale = 1.0f;         ///< EFFECT_SCALE (ScaleEmitter)
@@ -134,6 +142,7 @@ private:
     /// One particle in the world (SWorldParticle).
     struct Particle {
         const EmitterBlueprintData* bp = nullptr;
+        std::shared_ptr<const EmitterBlueprintData> own; ///< keeps an overridden `bp`
         u32 effect_id = 0;
         f64 born = 0; ///< on the render clock
         f32 lifetime = 0;
@@ -153,6 +162,9 @@ private:
     /// Its frame `ticks` back, `cursor` of the way into that tick
     /// (InterpolatePosition).
     Frame frame_at(const Emitter& e, u32 ticks, f32 cursor) const;
+    /// Take effect `fx`'s runtime overrides over `base` (M214d).
+    static void apply_overrides(Emitter& e, const sim::EffectRecord& fx,
+                                const EmitterBlueprintData& base);
     /// Emit one tick's particles, `ticks` back (Tick).
     void emit(u32 id, Emitter& e, u32 ticks, u32 now_tick, const map::Terrain* terrain);
     /// A uniform [0, 1) draw from the renderer's own stream (splitmix64),
