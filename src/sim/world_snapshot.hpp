@@ -181,6 +181,15 @@ struct ArmyRecord {
     u32 allies = 0; ///< bit j: allied with army j (its intel shares; M215a)
 };
 
+/// A jammer's fake blip an army senses and doesn't know fake (M215e): the
+/// jammer, the army (0-based), which of its fakes, and where it is.
+struct FakeBlipRecord {
+    u32 source = 0;
+    u8 viewer = 0;
+    u8 index = 0;
+    Vector3 position;
+};
+
 /// The world as the renderer draws it, captured once per sim tick.
 struct WorldSnapshot {
     u32 tick = 0;
@@ -193,6 +202,7 @@ struct WorldSnapshot {
     std::vector<ArmyRecord> armies;
     std::optional<map::VisibilityGrid> visibility;
     i32 player_result = 0; ///< SimState::player_result()
+    std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
 
     const EntityRecord* find(u32 id) const;
     const ArmyRecord* army(i32 index) const {

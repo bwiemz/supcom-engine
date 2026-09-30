@@ -863,6 +863,29 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     }
                     lua_pop(L, 1);
                 }
+                // The jammer's fake blips (M215e): how many, and JamRadius's
+                // {Min, Max}.
+                {
+                    const auto number = [&](const char* key) {
+                        lua_pushstring(L, key);
+                        lua_rawget(L, -2);
+                        const f32 v =
+                            lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                        lua_pop(L, 1);
+                        return v;
+                    };
+                    const f32 blips = number("JammerBlips");
+                    f32 jam_min = 0.0f;
+                    f32 jam_max = 0.0f;
+                    lua_pushstring(L, "JamRadius");
+                    lua_rawget(L, -2);
+                    if (lua_istable(L, -1)) {
+                        jam_min = number("Min");
+                        jam_max = number("Max");
+                    }
+                    lua_pop(L, 1);
+                    if (blips > 0.0f) unit->set_jammer(static_cast<u32>(blips), jam_min, jam_max);
+                }
             }
             lua_pop(L, 2); // pop Intel (or nil) + bp table
         }
