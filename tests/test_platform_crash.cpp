@@ -86,8 +86,11 @@ TEST_CASE("crash handler also writes its report into the report folder", "[platf
     CHECK(text.starts_with("OpenSupCom 9.9.9 (test)\nLog: /x.log\n"));
     CHECK(text.find("SIGSEGV") != std::string::npos);
     CHECK(text.find("Backtrace") != std::string::npos);
-    // raise() sent it: no fault address to report
+#ifndef __APPLE__
+    // raise() sent it: no fault address to report. (macOS can't tell: it gives
+    // a sent SIGSEGV a fault's si_code, SEGV_ACCERR, at address 0)
     CHECK(text.find("fault address") == std::string::npos);
+#endif
     CHECK(result.stderr_text.find("Crash report: " + reports[0].string()) != std::string::npos);
     std::filesystem::remove_all(dir, ec);
 }
