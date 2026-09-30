@@ -522,6 +522,66 @@ TEST_CASE("A scrollbar's thumb spans the part of its scrollable shown", "[ui][sc
     CHECK(last.start == 184);
 }
 
+TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lua][scroll]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    // Five rows show: 90 high, at the 14-point font's 18 (no font file here)
+    auto result = lua.do_string(R"(
+        list = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(list, GetFrame(0))
+        rawset(list, 'Height', 90)
+        for i = 1, 20 do list:AddItem('row ' .. i) end
+        bar = setmetatable({}, { __index = moho.scrollbar_methods })
+        InternalCreateScrollbar(bar, GetFrame(0), 'Vert')
+        bar:SetScrollable(list)
+        short = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(short, GetFrame(0))
+        rawset(short, 'Height', 90)
+        for i = 1, 3 do short:AddItem('row ' .. i) end
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+
+    lua_State* L = lua.raw();
+    auto* list = control_of(L, "list");
+    auto* bar = control_of(L, "bar");
+    REQUIRE(list);
+    REQUIRE(bar);
+    const auto run = [&](const char* code) { REQUIRE(lua.do_string(code).ok()); };
+    const auto shown = [&] {
+        const auto v = osc::ui::scroll_values(L, *bar);
+        return std::vector<float>{v.range_min, v.range_max, v.visible_min, v.visible_max};
+    };
+    const auto needs = [&](const char* name) {
+        run((std::string("needs = ") + name + ":NeedsScrollBar()").c_str());
+        lua_getglobal(L, "needs");
+        const bool v = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return v;
+    };
+
+    CHECK(needs("list"));
+    CHECK_FALSE(needs("short"));
+    CHECK(shown() == std::vector<float>{0, 20, 0, 5});
+    run("bar:DoScrollLines(3)");
+    CHECK(shown() == std::vector<float>{0, 20, 3, 8});
+    run("bar:DoScrollPages(1)");
+    CHECK(list->scroll_top() == 8);
+    run("bar:DoScrollLines(100)"); // no further than its last row
+    CHECK(shown() == std::vector<float>{0, 20, 15, 20});
+    run("bar:DoScrollLines(-100)");
+    CHECK(list->scroll_top() == 0);
+    run("list:ScrollToBottom()");
+    CHECK(list->scroll_top() == 15);
+    run("list:ShowItem(2)"); // above: it becomes the top row
+    CHECK(list->scroll_top() == 2);
+    run("list:ShowItem(9)"); // below: it becomes the bottom row
+    CHECK(list->scroll_top() == 5);
+}
 
 TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrolling",
           "[ui][lua][scroll]") {

@@ -237,8 +237,7 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
 
     const FontAtlas* atlas = font_cache.get(ctrl->font_family(),
                                              ctrl->font_pointsize());
-    f32 row_height = static_cast<f32>(ctrl->font_pointsize()) + 4.0f;
-    if (atlas) row_height = atlas->metrics.ascent + atlas->metrics.descent + 4.0f;
+    const f32 row_height = ui::item_list_row_height(*ctrl);
 
     f32 alpha = ctrl->alpha();
     f32 full_uv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
