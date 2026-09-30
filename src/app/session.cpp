@@ -46,6 +46,9 @@ void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
     else lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
     sim.set_sound_manager(sound);
+    // A game quit while paused left its categories paused (retail resumes
+    // them only from gamemain's OnResume): each game starts unpaused.
+    if (sound) sound->resume_all();
 }
 
 /// --checksum-trace <file>: every game's sims write their per-tick checksum

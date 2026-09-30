@@ -8,6 +8,10 @@
 #include "platform/paths.hpp"
 #include "sim/lockstep_session.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 namespace osc::app {
 
 std::optional<int> App::run_window() {
@@ -81,6 +85,13 @@ std::optional<int> App::Window::set_up() {
     // The saved options, as Moho applies them once the window is up
     // (OPTIONS_Apply, M217i). Captures and checks keep the engine's own.
     if (!offscreen_capture) apply_options(ui_lua_state.raw());
+    // Moho's /nomusic: its audio engine starts with Music at 0.
+    if (std::any_of(opt.cmdline_args.begin(), opt.cmdline_args.end(), [](const std::string& a) {
+            return a.size() == 8 && std::equal(a.begin(), a.end(), "/nomusic", [](char x, char y) {
+                       return std::tolower(static_cast<unsigned char>(x)) == y;
+                   });
+        }))
+        sound.set_category_volume("Music", 0.0f);
 
     // Store scenario path for SessionGetScenarioInfo (M145c2)
     if (!opt.map_path.empty()) {

@@ -3730,10 +3730,14 @@ static int l_PlayVoice(lua_State* L) {
     }
     const auto h = play_ui_sound(*mgr, bank, cue, lua_toboolean(L, 3) != 0);
     if (h != osc::audio::INVALID_SOUND && lua_toboolean(L, 2)) {
-        static int ducking = 0; // voices ducking now (one sound engine per process)
-        if (ducking++ == 0) mgr->set_global_variable("Duck", 1.0f);
-        mgr->on_finished(h, [mgr] {
-            if (--ducking == 0) mgr->set_global_variable("Duck", 0.0f);
+        // The duck ramps in over DuckLength; it ramps out when the last
+        // ducking voice ends. Moho pops it only for StopSound(h, true) and
+        // leaves it up after a voice that ends by itself (faf-re); here its
+        // end pops it too, as retail's discarded VO handles would otherwise
+        // leave the mix ducked (M216b design doc, open question 4).
+        mgr->push_duck();
+        mgr->on_finished(h, [mgr, generation = mgr->duck_generation()] {
+            if (mgr->duck_generation() == generation) mgr->pop_duck();
         });
     }
     push_sound_handle(L, h);
@@ -3781,9 +3785,18 @@ static int l_GetVolume(lua_State* L) {
     return 1;
 }
 
-/// PauseSound(bank, pause) / PauseVoice(bank, pause): no pause yet.
-static int l_PauseSound(lua_State* /*L*/) { return 0; }
-static int l_PauseVoice(lua_State* /*L*/) { return 0; }
+/// PauseSound(category, pause) / PauseVoice(category, pause): hold or
+/// release a category's sounds and its subtree's (retail: World and Music
+/// with the game, VO in briefings and transmissions). One engine plays both
+/// Moho's voice and VO engines' banks, so they are the same call.
+static int l_PauseSound(lua_State* L) {
+    if (auto* mgr = get_sound_mgr(L); mgr && lua_type(L, 1) == LUA_TSTRING)
+        mgr->pause_category(lua_tostring(L, 1), lua_toboolean(L, 2) != 0);
+    return 0;
+}
+static int l_PauseVoice(lua_State* L) {
+    return l_PauseSound(L);
+}
 
 /// EnableWorldSounds() / DisableWorldSounds(): the World category on or
 /// off (retail silences it for movies and the score screen).
