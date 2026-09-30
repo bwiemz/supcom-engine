@@ -26,6 +26,7 @@ struct BeamBlueprintData {
     std::array<f32, 4> start_color{1, 1, 1, 0}; ///< RGBA at the start
     std::array<f32, 4> end_color{1, 1, 1, 0};   ///< and at the end
     f32 lod_cutoff = 200.0f;                    ///< drawn within this of the camera
+    u8 fidelity = 0b111;                        ///< the fidelities it is made at
     f32 repeat_rate = 0.0f;                     ///< texture repeats per unit of length (0: once)
     i32 blendmode = 3;                          ///< particle.fx's TBeam suffix (3: ADD)
 };

@@ -3,6 +3,7 @@
 
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/effect_blueprint_file.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/recon_view.hpp"
 #include "sim/emitter_params.hpp"
@@ -329,6 +330,12 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
             const EmitterBlueprintData* bp = blueprints.get(fx.blueprint_path, L);
             if (!bp) {
                 unknown_.insert(fx.id);
+                continue;
+            }
+            // One its blueprint leaves out at this fidelity: Moho makes it
+            // and destroys it at once (IsBlueprintEnabledForCurrentFidelity).
+            if (!fidelity_allows(bp->fidelity, fidelity_)) {
+                unmade_.insert(fx.id);
                 continue;
             }
             Emitter e;

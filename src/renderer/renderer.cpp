@@ -2422,6 +2422,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         else fog_renderer_.stage_clear(); // an observer's: all visible
     }
 
+    // Effects are made at the player's graphics fidelity (graphics_Fidelity).
+    beam_renderer_.set_fidelity(video_options_.graphics_fidelity);
+    trail_renderer_.set_fidelity(video_options_.graphics_fidelity);
+    particle_system_.set_fidelity(video_options_.graphics_fidelity);
     // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
     beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
                           unit_renderer_.shader_time(), fi);

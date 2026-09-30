@@ -18,6 +18,7 @@ TrailBlueprintData parse(lua_State* L, int t) {
         static_cast<i32>(blueprint_number(L, t, "BlendMode", static_cast<f32>(bp.blendmode)));
     if (bp.blendmode < 0 || bp.blendmode > 4) bp.blendmode = 0;
     bp.lod_cutoff = blueprint_number(L, t, "LODCutoff", bp.lod_cutoff);
+    bp.fidelity = blueprint_fidelity(L, t);
     lua_pushstring(L, "EmitIfVisible");
     lua_rawget(L, t);
     if (lua_type(L, -1) == LUA_TBOOLEAN) bp.emit_if_visible = lua_toboolean(L, -1) != 0;

@@ -6,9 +6,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "renderer/beam_blueprint.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/effect_blueprint_file.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/particle_system.hpp"
+#include "renderer/trail_blueprint.hpp"
 #include "sim/emitter_params.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/world_snapshot.hpp"
@@ -216,5 +219,104 @@ TEST_CASE("A script's emitter params and curves reach its emitter", "[renderer][
     CHECK(clock == std::vector<size_t>{5, 6, 7, 8, 13, 14, 15, 16});
     // Keys at 0, 4, 4.002 over 8: phases 0-4 give 1, 5-7 give 5.
     CHECK(stretched == std::vector<size_t>{1, 2, 3, 4, 5, 10, 15, 20});
+    fs::remove_all(root);
+}
+
+TEST_CASE("Effects are made at the fidelities their blueprints allow, as Moho's are",
+          "[renderer][emitter]") {
+    // REffectBlueprint's LowFidelity, MedFidelity and HighFidelity (true
+    // unless false); CEffectManagerImpl destroys, as it makes it, an effect
+    // its blueprint leaves out at graphics_Fidelity.
+    using osc::renderer::fidelity_allows;
+    CHECK(fidelity_allows(0b111, 0));
+    CHECK_FALSE(fidelity_allows(0b110, 0)); // LowFidelity = false
+    CHECK(fidelity_allows(0b110, 1));
+    CHECK_FALSE(fidelity_allows(0b101, 1)); // MedFidelity = false
+    CHECK(fidelity_allows(0b101, 2));
+    CHECK_FALSE(fidelity_allows(0b111, 3)); // no such fidelity: 1 << 3 is in no mask
+    CHECK_FALSE(fidelity_allows(0b111, -1));
+
+    const fs::path root = fs::temp_directory_path() / "osc_effect_fidelity_test";
+    fs::remove_all(root);
+    const fs::path emitters = root / "effects" / "Emitters";
+    fs::create_directories(emitters);
+    const std::string common = "    Lifetime = -1, InterpolateEmission = false,\n"
+                               "    EmitIfVisible = false, SnapToWaterline = false,\n"
+                               "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+                               "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n";
+    std::ofstream(emitters / "every_emit.bp") << "EmitterBlueprint {\n" << common << "}\n";
+    std::ofstream(emitters / "lowoff_emit.bp") << "EmitterBlueprint {\n"
+                                               << common << "    LowFidelity = false,\n}\n";
+    std::ofstream(emitters / "medoff_emit.bp")
+        << "EmitterBlueprint {\n"
+        << common << "    LowFidelity = true, MedFidelity = false, HighFidelity = true,\n}\n";
+    std::ofstream(emitters / "lowbeam.bp")
+        << "BeamBlueprint {\n    TextureName = '/t.dds', LowFidelity = false,\n}\n";
+    std::ofstream(emitters / "hightrail.bp")
+        << "TrailEmitterBlueprint {\n    TrailLength = 5, HighFidelity = false,\n}\n";
+
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+    osc::lua::LuaState lua;
+    osc::renderer::EmitterBlueprintCache cache;
+    cache.set_vfs(&vfs);
+    osc::renderer::BeamBlueprintCache beams;
+    beams.set_vfs(&vfs);
+    osc::renderer::TrailBlueprintCache trails;
+    trails.set_vfs(&vfs);
+
+    // Read from each kind of blueprint.
+    const auto* every = cache.get("/effects/emitters/every_emit.bp", lua.raw());
+    const auto* lowoff = cache.get("/effects/emitters/lowoff_emit.bp", lua.raw());
+    const auto* medoff = cache.get("/effects/emitters/medoff_emit.bp", lua.raw());
+    const auto* beam = beams.get("/effects/emitters/lowbeam.bp", lua.raw());
+    const auto* trail = trails.get("/effects/emitters/hightrail.bp", lua.raw());
+    REQUIRE(every);
+    REQUIRE(lowoff);
+    REQUIRE(medoff);
+    REQUIRE(beam);
+    REQUIRE(trail);
+    CHECK(every->fidelity == 0b111);
+    CHECK(lowoff->fidelity == 0b110);
+    CHECK(medoff->fidelity == 0b101);
+    CHECK(beam->fidelity == 0b110);
+    CHECK(trail->fidelity == 0b011);
+
+    // At low fidelity the particles never make the one that leaves it out,
+    // not even once the fidelity is raised (Moho destroyed it).
+    osc::renderer::Camera camera;
+    osc::renderer::ParticleSystem ps;
+    ps.set_fidelity(0);
+    const auto emitter = [](osc::u32 id, const char* name) {
+        osc::sim::EffectRecord fx;
+        fx.id = id;
+        fx.type = osc::sim::EffectType::EMITTER_AT_ENTITY;
+        fx.blueprint_path = std::string("/effects/emitters/") + name + "_emit.bp";
+        fx.framed = true;
+        return fx;
+    };
+    std::vector<osc::sim::WorldSnapshot> ticks(4);
+    for (osc::u32 t = 0; t < ticks.size(); ++t) {
+        ticks[t].tick = t + 1;
+        ticks[t].effects = {emitter(1, "every"), emitter(2, "lowoff"), emitter(3, "medoff")};
+        if (t >= 2) ticks[t].effects.push_back(emitter(4, "lowoff")); // made at high
+    }
+    const auto count = [&](osc::u32 id) {
+        size_t n = 0;
+        for (const auto& d : ps.drawn()) n += d.effect_id == id ? 1 : 0;
+        return n;
+    };
+    for (size_t t = 0; t < ticks.size(); ++t) {
+        if (t == 2) ps.set_fidelity(2);
+        const osc::sim::WorldSnapshot& prev = ticks[t == 0 ? 0 : t - 1];
+        ps.update(osc::sim::FrameView(&prev, &ticks[t], 1.0f), camera, nullptr, cache, lua.raw(),
+                  nullptr);
+    }
+    CHECK(count(1) == 4);
+    CHECK(ps.unmade(2));
+    CHECK(count(2) == 0);
+    CHECK(count(3) == 4); // medium alone is left out
+    CHECK_FALSE(ps.unmade(4));
+    CHECK(count(4) == 2);
     fs::remove_all(root);
 }

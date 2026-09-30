@@ -30,4 +30,17 @@ f32 blueprint_number(lua_State* L, int idx, const char* key, f32 fallback);
 /// string.
 std::string blueprint_path(lua_State* L, int idx, const char* key);
 
+/// The fidelities an effect blueprint is made at (REffectBlueprint's
+/// LowFidelity, MedFidelity and HighFidelity, each true unless the file says
+/// false): bit n allows graphics_Fidelity n (0 low, 1 medium, 2 high).
+u8 blueprint_fidelity(lua_State* L, int idx);
+
+/// Whether an effect of `fidelity` is made at `graphics_fidelity`, as
+/// CEffectManagerImpl's IsBlueprintEnabledForCurrentFidelity asks: Moho
+/// makes each effect, then destroys at once one its blueprint leaves out.
+constexpr bool fidelity_allows(u8 fidelity, int graphics_fidelity) {
+    return graphics_fidelity >= 0 && graphics_fidelity < 8 &&
+           (fidelity & (1u << static_cast<u32>(graphics_fidelity))) != 0;
+}
+
 } // namespace osc::renderer
