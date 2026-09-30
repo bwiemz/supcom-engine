@@ -19,18 +19,22 @@ import tempfile
 from pathlib import Path
 
 
-def expected_files(windows: bool) -> list[str]:
+def expected_files(windows: bool, xdg: bool) -> list[str]:
     if windows:
         # (vcruntime140.dll: the Visual C++ runtime installed beside it)
         return ["opensupcom.exe", "README.md", "LICENSE", "CHANGELOG.md", "vcruntime140.dll"]
-    return [
+    files = [
         "bin/opensupcom",
         "share/doc/opensupcom/README.md",
         "share/doc/opensupcom/LICENSE",
         "share/doc/opensupcom/CHANGELOG.md",
-        "share/applications/opensupcom.desktop",
-        "share/icons/hicolor/scalable/apps/opensupcom.svg",
     ]
+    if xdg:
+        files += [
+            "share/applications/opensupcom.desktop",
+            "share/icons/hicolor/scalable/apps/opensupcom.svg",
+        ]
+    return files
 
 
 def main(argv: list[str]) -> int:
@@ -39,6 +43,8 @@ def main(argv: list[str]) -> int:
         return 2
     build, config, version = Path(argv[1]), argv[2], argv[3]
     windows = sys.platform == "win32"
+    # The desktop entry and icon go where CMakeLists.txt installs them: UNIX AND NOT APPLE
+    xdg = not windows and sys.platform != "darwin"
     with tempfile.TemporaryDirectory(prefix="osc-install-") as tmp:
         prefix = Path(tmp)
         cmd = ["cmake", "--install", str(build), "--prefix", str(prefix)]
@@ -50,11 +56,11 @@ def main(argv: list[str]) -> int:
             print("cmake --install failed")
             return 1
 
-        missing = [f for f in expected_files(windows) if not (prefix / f).is_file()]
+        missing = [f for f in expected_files(windows, xdg) if not (prefix / f).is_file()]
         for f in missing:
             print(f"not installed: {f}")
 
-        game = prefix / expected_files(windows)[0]
+        game = prefix / expected_files(windows, xdg)[0]
         if not game.is_file():
             return 1  # (reported as not installed)
         ran = subprocess.run(
