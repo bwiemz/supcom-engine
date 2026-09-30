@@ -1036,6 +1036,8 @@ static int l_InternalCreateBorder(lua_State* L) {
     create_lazyvar(L, 1, "BorderWidth");
     create_lazyvar(L, 1, "BorderHeight");
 
+    call_on_init(L, 1, "InternalCreateBorder");
+
     spdlog::debug("InternalCreateBorder: control #{}", id);
     return 0;
 }
@@ -1140,6 +1142,8 @@ static int l_InternalCreateMovie(lua_State* L) {
     // so they don't intercept mouse events from interactive controls above.
     ctrl->set_hit_test_disabled(true);
 
+    call_on_init(L, 1, "InternalCreateMovie");
+
     spdlog::debug("InternalCreateMovie: control #{}", id);
     return 0;
 }
@@ -1206,6 +1210,8 @@ static int create_map_preview_control(lua_State* L, int self_idx, int parent_idx
     create_lazyvar(L, self_idx, "Height");
     create_lazyvar(L, self_idx, "Depth");
 
+    call_on_init(L, self_idx, "InternalCreateMapPreview");
+
     spdlog::debug("MapPreview: control #{}", id);
     return 0;
 }
@@ -1255,6 +1261,8 @@ static int l_InternalCreateHistogram(lua_State* L) {
     create_lazyvar(L, 1, "Width");
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
+
+    call_on_init(L, 1, "InternalCreateHistogram");
 
     spdlog::debug("InternalCreateHistogram: control #{}", id);
     return 0;

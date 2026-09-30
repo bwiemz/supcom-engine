@@ -16205,6 +16205,24 @@ void test_controls(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 20: Dragger standalone"); }
     }
 
+    // --- Test 21: a Movie takes its movie's size ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local m = import('/lua/maui/movie.lua').Movie(test_frame)\n"
+            "m:InternalSet('/movies/fmv_scx_intro.sfd')\n"
+            "return m.MovieWidth() > 0 and m.Width() == m.MovieWidth() and\n"
+            "       m.Height() == m.MovieHeight()\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 21: a Movie takes its movie's size");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 21: a Movie takes its movie's size");
+        }
+    }
+
     spdlog::info("Controls test: {}/{} passed", pass, pass + fail);
 }
 

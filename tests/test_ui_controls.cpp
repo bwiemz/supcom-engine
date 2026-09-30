@@ -66,6 +66,32 @@ TEST_CASE("Control:Destroy is safe from its own OnDestroy", "[ui][lua]") {
     lua_pop(L, 1);
 }
 
+TEST_CASE("Each control constructor runs the control's OnInit, as Moho's do", "[ui][lua]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    const char* kControls[] = {"Group", "Frame",      "Bitmap",    "Text",
+                               "Edit",  "ItemList",   "Scrollbar", "Border",
+                               "Movie", "MapPreview", "Histogram"};
+    for (const char* name : kControls) {
+        INFO(name);
+        auto result = lua.do_string(std::string(R"(
+            inited = false
+            local c = setmetatable({}, { __index = { OnInit = function(self) inited = true end } })
+            InternalCreate)") + name +
+                                    "(c, GetFrame(0))");
+        INFO((result.ok() ? std::string() : result.error().message));
+        REQUIRE(result.ok());
+        lua_State* L = lua.raw();
+        lua_getglobal(L, "inited");
+        CHECK(lua_toboolean(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
 TEST_CASE("Destroying the root frame clears it but keeps it", "[ui][lua]") {
     // Retail's Load and replay dialogs, opened in a game, destroy the
     // control they were opened over -- GetFrame(0) -- as they leave for the
