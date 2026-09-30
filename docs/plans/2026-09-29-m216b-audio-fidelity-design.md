@@ -6,6 +6,8 @@ Date: 2026-09-29.
 
 **Done in the first M216b change:** items 1–3 of the plan below — the 3.0 effect-variation flags (0x40 pitch, 0x80 volume, and a one-value range as a fixed offset), the voice banks (`AudioSetLanguage`, `HasLocalizedVO`), and a new wave per loop for Music's two game tracks (with no-immediate-repeat as an exclusion). `PlayTutorialVO` stays unbound: no retail script calls it.
 
+**Done in the second change:** items 4–7 and 10 — category pause (`PauseSound`/`PauseVoice`, subtree, clocks held), ambient slots play their cue as authored (no forced loop), fades only on replacement with the limit's own fade-in/out, `stop()` without the category fade, the duck ramp over `DuckLength` (reset by `SetVolume` and `StopAllSounds`), `/nomusic`, and `StopAllSounds` as a released stop. Moho's natural-end duck pop stays a deliberate divergence (open question 4).
+
 ## Headline findings (ordered by what a player hears)
 
 1. **All voice is silent.** `BankRegistry` reads only the top level of `sounds/` (`src/audio/xact/bank_registry.cpp:31`). `sounds/Voice/US/` holds 10 sound banks and 1,275 cues:
