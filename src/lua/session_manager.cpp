@@ -294,6 +294,28 @@ GameOptionsConfig read_game_options(lua_State* L, int table_idx) {
     return options;
 }
 
+bool scripts_decide_victory(lua_State* L) {
+    // Retail's CheckVictory, and FAF's victory condition (the singleton
+    // its BeginSession imports to start monitoring).
+    static constexpr const char* kModules[] = {
+        "/lua/victory.lua",
+        "/lua/sim/victorycondition/victoryconditionsingleton.lua",
+    };
+    lua_pushstring(L, "__modules");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    bool loaded = false;
+    if (lua_istable(L, -1)) {
+        for (const char* name : kModules) {
+            lua_pushstring(L, name);
+            lua_rawget(L, -2);
+            loaded = loaded || !lua_isnil(L, -1);
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    return loaded;
+}
+
 Result<void> SessionManager::start_session(LuaState& state,
                                             const vfs::VirtualFileSystem&,
                                             sim::SimState& sim,
@@ -389,23 +411,13 @@ Result<void> SessionManager::start_session(LuaState& state,
     }
     spawn_prebuilt_units(L, sim);
 
-    // Retail and FAF start /lua/victory.lua's CheckVictory from BeginSession
-    // (a schook hook in retail): then the scripts decide the game, as in
-    // Moho, and the engine's own adjudication stands down.
+    // The scripts decide the game when they have a victory check running,
+    // as in Moho, and the engine's own adjudication stands down.
     {
-        lua_pushstring(L, "__modules");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        bool loaded = false;
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "/lua/victory.lua");
-            lua_rawget(L, -2);
-            loaded = !lua_isnil(L, -1);
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-        sim.set_script_victory(loaded);
-        spdlog::info("  Victory: {}", loaded ? "the scenario's scripts decide (victory.lua)"
-                                             : "the engine decides (no victory script)");
+        const bool scripts = scripts_decide_victory(L);
+        sim.set_script_victory(scripts);
+        spdlog::info("  Victory: {}", scripts ? "the scenario's scripts decide"
+                                              : "the engine decides (no victory script)");
     }
 
     // Step 6: Ensure each non-civilian army has at least one unit (ACU).
