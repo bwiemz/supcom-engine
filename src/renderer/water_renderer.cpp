@@ -337,14 +337,12 @@ void WaterRenderer::build(const map::Terrain& terrain, TextureCache& textures) {
     write_sets();
 }
 
-void WaterRenderer::set_refraction(VkImageView view) {
-    refraction_view_ = view;
-    if (has_water_) write_sets();
-}
-
-void WaterRenderer::set_reflection(VkImageView view) {
-    reflection_view_ = view;
-    if (has_water_) write_sets();
+void WaterRenderer::set_frame_images(const FrameImages& images) {
+    refraction_view_ = images.refraction;
+    reflection_view_ = images.reflection;
+    if (has_water_) {
+        write_sets();
+    }
 }
 
 void WaterRenderer::write_sets() {

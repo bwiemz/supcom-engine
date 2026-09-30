@@ -32,10 +32,13 @@ public:
     /// and cubemap. Nothing on a map without water.
     void build(const map::Terrain& terrain, TextureCache& textures);
 
-    /// The copy of the frame the water refracts (set again after a resize).
-    void set_refraction(VkImageView view);
-    /// The units' reflection it reflects (M213b; set again after a resize).
-    void set_reflection(VkImageView view);
+    /// The frame's images the water samples, made again after a resize
+    struct FrameImages {
+        VkImageView refraction = VK_NULL_HANDLE; ///< the copy of the frame it refracts
+        VkImageView reflection = VK_NULL_HANDLE; ///< the units' reflection (M213b)
+    };
+    /// Both at once: each write of the water's descriptors reads both.
+    void set_frame_images(const FrameImages& images);
 
     /// This frame's parameters: the camera, and FA's time (ticks, with the
     /// frame's interpolant).

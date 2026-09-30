@@ -406,8 +406,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     sky_renderer_.init(device_, allocator_, scene_render_pass_);
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, scene_render_pass_);
-    water_renderer_.set_refraction(refraction_image_.view);
-    water_renderer_.set_reflection(reflection_image_.view);
+    water_renderer_.set_frame_images(
+        {.refraction = refraction_image_.view, .reflection = reflection_image_.view});
     // The refracting particles bend the same copy, made again for them.
     particle_renderer_.set_background(refraction_image_.view);
 
@@ -1605,8 +1605,8 @@ void Renderer::create_bloom_resources() {
         write_ds(bloom_blur_v_ds_, bloom_blur_v_image_.view);
     }
 
-    water_renderer_.set_refraction(refraction_image_.view);
-    water_renderer_.set_reflection(reflection_image_.view);
+    water_renderer_.set_frame_images(
+        {.refraction = refraction_image_.view, .reflection = reflection_image_.view});
     bind_normal_target(); // the terrain reads the new one (M212e)
     // The refracting particles bend the same copy, made again for them.
     particle_renderer_.set_background(refraction_image_.view);
