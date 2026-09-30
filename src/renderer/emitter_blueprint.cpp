@@ -84,6 +84,8 @@ EmitterCurve curve(lua_State* L, int t, const char* key) {
             }
         }
         lua_pop(L, 1);
+        // XRange: its length (Moho's key-less curve spans 10 ticks).
+        c.x_range = c.keys.empty() ? 10.0f : blueprint_number(L, ct, "XRange", 0.0f);
     }
     lua_pop(L, 1);
     return c;

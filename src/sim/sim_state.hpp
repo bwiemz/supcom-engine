@@ -642,6 +642,18 @@ public:
     const std::vector<DeathEvent>& death_events() const { return death_events_; }
     void clear_death_events() { death_events_.clear(); }
 
+    /// A one-shot world sound a script played this tick (entity, unit or
+    /// weapon PlaySound): Moho's SAudioRequest. The audio side filters it
+    /// against the player's view and plays it; the sim never learns whether
+    /// it did.
+    struct SoundRequest {
+        std::string bank, cue, lod_cutoff;
+        Vector3 pos;
+        bool underwater = false; ///< a sub's or seabed unit's
+    };
+    void request_sound(SoundRequest r) { sound_requests_.push_back(std::move(r)); }
+    const std::vector<SoundRequest>& sound_requests() const { return sound_requests_; }
+
     // Playable area bounds (set by SetPlayableRect Lua call)
     void set_playable_rect(f32 x0, f32 z0, f32 x1, f32 z1) {
         playable_x0_ = x0; playable_z0_ = z0;
@@ -688,6 +700,15 @@ public:
         const auto it = prev_entity_vis_.find(id);
         return it == prev_entity_vis_.end() ? nullptr : &it->second;
     }
+
+    /// Jammers' fake blips (M215e), as Moho's recon keeps them: while an
+    /// enemy army senses a jammer (or remembers a jamming structure), it
+    /// holds the jammer's JammerBlips fakes, each at its own offset from the
+    /// jammer, drawn from the sim's stream when made (ReconBlip's jam
+    /// offset). Whether the army senses a fake, and knows it fake, is asked
+    /// where it falls (world_snapshot). Keyed by jam_key(unit, army).
+    const std::map<u64, std::vector<Vector3>>& jam_offsets() const { return jam_offsets_; }
+    static u64 jam_key(u32 unit, u32 army) { return (static_cast<u64>(unit) << 8) | army; }
 
     bool ever_in_sight(u32 id, u32 army) const {
         const auto it = los_ever_.find(id);
@@ -784,6 +805,11 @@ private:
     /// unit:OnDetectedBy(army), 1-based: `army_idx` has just made its first
     /// blip of the unit (Moho calls it as its recon makes the blip).
     void fire_on_detected_by(u32 entity_id, u32 army_idx);
+    /// Keep each jammer's fakes for each army that senses it (M215e).
+    void update_jam_blips();
+    /// A fake's offset from jammer `u`: JamRadius's Min plus a share of
+    /// its range, then a random fraction of that along a random heading.
+    Vector3 jam_offset(const Unit& u);
     /// The blip objects of entities now gone: each one's OnDestroy (its
     /// destroy hooks), in entity then army order, and forgotten.
     void destroy_gone_blips();
@@ -889,6 +915,7 @@ private:
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;
+    std::vector<SoundRequest> sound_requests_;
     std::vector<IntelFlushEvent> intel_flush_events_;
     std::string build_ghost_bp_;
     f32 build_ghost_foot_x_ = 1.0f;
@@ -907,6 +934,9 @@ private:
     // Per entity, a bit per army that has ever had it in line of sight
     // (see ever_in_sight). Looked up, never walked.
     std::unordered_map<u32, u32> los_ever_;
+
+    // Jammers' fake blips' offsets, by jam_key (see jam_offsets).
+    std::map<u64, std::vector<Vector3>> jam_offsets_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>

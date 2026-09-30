@@ -9,6 +9,8 @@
 #include "renderer/camera.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/particle_system.hpp"
+#include "sim/emitter_params.hpp"
+#include "sim/ieffect.hpp"
 #include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -135,5 +137,84 @@ TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their
     }
     CHECK(steady_moves);
     CHECK(pulse_turned);
+    fs::remove_all(root);
+}
+
+TEST_CASE("A script's emitter params and curves reach its emitter", "[renderer][emitter]") {
+    // SetEmitterParam's REPEATTIME and TICKCOUNT, SetEmitterCurveParam and
+    // ResizeEmitterCurve (M214d), as the effect's record carries them.
+    const fs::path root = fs::temp_directory_path() / "osc_particle_overrides_test";
+    fs::remove_all(root);
+    const fs::path dir = root / "effects" / "Emitters";
+    fs::create_directories(dir);
+    // 1 a tick for phases 0-2 and 5 at phase 3, over a Repeattime of 4.
+    std::ofstream(dir / "pulse_emit.bp")
+        << "EmitterBlueprint {\n    Lifetime = -1,\n    InterpolateEmission = false,\n"
+           "    EmitIfVisible = false,\n    SnapToWaterline = false,\n    Repeattime = 4,\n"
+           "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+           "    EmitRateCurve = { XRange = 4, Keys = { { x = 0, y = 1, z = 0 }, "
+           "{ x = 2, y = 1, z = 0 }, { x = 2.001, y = 5, z = 0 } } },\n}\n";
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+    osc::lua::LuaState lua;
+    osc::renderer::EmitterBlueprintCache cache;
+    cache.set_vfs(&vfs);
+    osc::renderer::Camera camera;
+    osc::renderer::ParticleSystem ps;
+
+    using Op = osc::sim::IEffect::EmitterCurveOp;
+    const auto pulse = [](osc::u32 id) {
+        osc::sim::EffectRecord fx;
+        fx.id = id;
+        fx.blueprint_path = "/effects/emitters/pulse_emit.bp";
+        fx.framed = true;
+        return fx;
+    };
+    const auto param = [](osc::sim::EffectRecord& fx, osc::u8 p, float v, osc::u32 serial) {
+        fx.emitter_params_set |= 1u << p;
+        fx.emitter_params[p] = v;
+        fx.overrides_serial = serial;
+    };
+    std::vector<osc::sim::WorldSnapshot> ticks(8);
+    for (osc::u32 t = 0; t < ticks.size(); ++t) {
+        ticks[t].tick = t + 1;
+        // 3: REPEATTIME 2 from its fourth tick on.
+        auto repeat = pulse(3);
+        if (t >= 3) param(repeat, osc::sim::kParamRepeatTime, 2, 1);
+        // 4: its emit rate made one key, 3 give or take nothing.
+        auto rate = pulse(4);
+        rate.curve_ops = {Op{3, false, 3, 0}}; // EMITRATE_CURVE
+        rate.overrides_serial = 1;
+        // 5: its clock set to 3.
+        auto clock = pulse(5);
+        param(clock, osc::sim::kParamTickCount, 3, 1);
+        // 6: its emit rate stretched from 4 ticks to 8 over a Repeattime of 8.
+        auto stretched = pulse(6);
+        param(stretched, osc::sim::kParamRepeatTime, 8, 1);
+        stretched.curve_ops = {Op{3, true, 8, 0}};
+        ticks[t].effects = {repeat, rate, clock, stretched};
+    }
+    const auto count = [&](osc::u32 id) {
+        size_t n = 0;
+        for (const auto& d : ps.drawn()) n += d.effect_id == id ? 1 : 0;
+        return n;
+    };
+    std::vector<size_t> repeat, rate, clock, stretched;
+    for (size_t t = 0; t < ticks.size(); ++t) {
+        const osc::sim::WorldSnapshot& prev = ticks[t == 0 ? 0 : t - 1];
+        ps.update(osc::sim::FrameView(&prev, &ticks[t], 1.0f), camera, nullptr, cache, lua.raw(),
+                  nullptr);
+        repeat.push_back(count(3));
+        rate.push_back(count(4));
+        clock.push_back(count(5));
+        stretched.push_back(count(6));
+    }
+    // Phases 0, 1, 2, then clock 3 over 2: 1, 0, 1 ... -- never the 5.
+    CHECK(repeat == std::vector<size_t>{1, 2, 3, 4, 5, 6, 7, 8});
+    CHECK(rate == std::vector<size_t>{3, 6, 9, 12, 15, 18, 21, 24});
+    // Phases 3, 0, 1, 2, 3, 0 ...: 5, 1, 1, 1, 5, ...
+    CHECK(clock == std::vector<size_t>{5, 6, 7, 8, 13, 14, 15, 16});
+    // Keys at 0, 4, 4.002 over 8: phases 0-4 give 1, 5-7 give 5.
+    CHECK(stretched == std::vector<size_t>{1, 2, 3, 4, 5, 10, 15, 20});
     fs::remove_all(root);
 }

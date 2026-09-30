@@ -70,6 +70,8 @@ add_executable(osc_tests
     test_playable_rect.cpp
     test_recon_view.cpp
     test_platoon_squads.cpp
+    test_wave_stream.cpp
+    test_emitter_params.cpp
     test_decal.cpp
     test_runtime_decals.cpp
     test_terrain_normal_maps.cpp

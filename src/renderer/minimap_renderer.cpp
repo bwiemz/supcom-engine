@@ -261,8 +261,10 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
                   DOT_SIZE, DOT_SIZE, r, g, b, 1.0f, white_ds_);
     };
     for (const sim::EntityRecord& entity : view.entities()) dot(entity);
-    if (recon_)
+    if (recon_) {
         for (const sim::EntityRecord& ghost : recon_->ghosts()) dot(ghost);
+        for (const sim::EntityRecord& fake : recon_->fakes()) dot(fake); // jammers' (M215e)
+    }
 
     // --- Camera frustum box ---
     // Unproject the 4 screen corners to world XZ to get the camera view area

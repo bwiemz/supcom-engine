@@ -77,6 +77,12 @@ public:
     /// Whether `id` is one of them (its icon is drawn darkened).
     bool maybe_dead(u32 id) const;
 
+    /// The jammers' fake blips the player's army senses and doesn't know
+    /// fake (M215e): each its jammer's record at the fake's place, under an
+    /// id of its own (kFakeBlip set), seen as a blip.
+    const std::vector<sim::EntityRecord>& fakes() const { return fakes_; }
+    static constexpr u32 kFakeBlip = 0x80000000u;
+
     /// Whether it sees everything (an observer, or no grid).
     bool sees_everything() const { return everything_; }
 
@@ -119,6 +125,7 @@ private:
     u32 unidentified_color_ = 0xFF808080u;
     std::unordered_map<u32, Memory> memory_;
     std::vector<sim::EntityRecord> ghosts_;
+    std::vector<sim::EntityRecord> fakes_;
 };
 
 } // namespace osc::renderer

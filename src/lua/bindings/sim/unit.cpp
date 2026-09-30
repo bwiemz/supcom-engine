@@ -106,8 +106,6 @@ static bool lookup_blueprint_audio(lua_State* L, const sim::Entity* e,
 /// unit:PlayUnitSound(name) -- the one-shot Blueprint.Audio[name], at the
 /// unit; true if the blueprint has it.
 static int unit_PlayUnitSound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
-    if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
     if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
@@ -115,37 +113,29 @@ static int unit_PlayUnitSound(lua_State* L) {
     std::string bank, cue, lod;
     const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue, &lod);
     lua_pop(L, 3);
-    if (ok) {
-        auto pos = e->position();
-        mgr->play(bank, cue, &pos, lod);
-    }
+    if (ok) request_world_sound(L, *e, std::move(bank), std::move(cue), std::move(lod));
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
 
 /// unit:PlayUnitAmbientSound(name) -- loop Blueprint.Audio[name] on the
-/// unit under that name; already playing, it carries on. A fallback: retail's
+/// unit under that name; already wanted, it carries on. A fallback: retail's
 /// (and FAF's) Unit class defines its own in Lua, which loops the sound on an
 /// attached child entity through SetAmbientSound.
 static int unit_PlayUnitAmbientSound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
-    if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
     const std::string name = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
-    if (!name.empty() && mgr->is_playing(e->ambient_sound(name))) {
+    if (!name.empty() && e->ambient_sound(name)) {
         lua_pushboolean(L, 1);
         return 1;
     }
     if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
-    std::string bank, cue;
-    const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue);
+    std::string bank, cue, lod;
+    const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue, &lod);
     lua_pop(L, 3);
-    if (ok) {
-        auto pos = e->position();
-        e->set_ambient_sound(name, mgr->play(bank, cue, &pos)); // as authored
-    }
+    if (ok) e->set_ambient_sound(name, std::move(bank), std::move(cue), std::move(lod));
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
@@ -154,8 +144,10 @@ static int unit_PlayUnitAmbientSound(lua_State* L) {
 /// them without a name)
 static int unit_StopUnitAmbientSound(lua_State* L) {
     auto* e = check_entity(L);
-    if (e && !e->destroyed())
-        stop_ambient(get_sound_mgr(L), e, lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr);
+    if (e && !e->destroyed()) {
+        if (lua_type(L, 2) == LUA_TSTRING) e->set_ambient_sound(lua_tostring(L, 2), {}, {});
+        else e->clear_ambient_sounds();
+    }
     lua_pushboolean(L, 1);
     return 1;
 }

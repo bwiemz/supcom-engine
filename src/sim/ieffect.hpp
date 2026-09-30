@@ -5,6 +5,7 @@
 #include "sim/entity.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -96,6 +97,38 @@ public:
         return it != params_.end() ? it->second : 0.0;
     }
 
+    /// An emitter's runtime parameters and curves as scripts set them
+    /// (M214d): the renderer's emitter takes them over its blueprint's.
+    /// `serial` changes with each, so it knows to take them afresh.
+    struct EmitterCurveOp {
+        u8 curve = 0;        ///< EEmitterCurve (sim/emitter_params.hpp)
+        bool resize = false; ///< ResizeEmitterCurve(length a); else a one-key curve
+        f32 a = 0, b = 0;    ///< SetEmitterCurveParam's height and size
+    };
+    void set_emitter_param(u8 param, f32 value) {
+        if (param >= emitter_params_.size()) return;
+        emitter_params_[param] = value;
+        emitter_params_set_ |= 1u << param;
+        ++overrides_serial_;
+    }
+    /// SetEmitterCurveParam replaces what came before on its curve; a resize
+    /// replaces the resize before it (resizing twice is resizing once).
+    void add_curve_op(const EmitterCurveOp& op) {
+        if (!op.resize)
+            std::erase_if(curve_ops_, [&](const EmitterCurveOp& o) { return o.curve == op.curve; });
+        else
+            std::erase_if(curve_ops_,
+                          [&](const EmitterCurveOp& o) { return o.curve == op.curve && o.resize; });
+        curve_ops_.push_back(op);
+        ++overrides_serial_;
+    }
+    u32 emitter_params_set() const { return emitter_params_set_; }
+    f32 emitter_param(u8 param) const {
+        return param < emitter_params_.size() ? emitter_params_[param] : 0;
+    }
+    const std::vector<EmitterCurveOp>& curve_ops() const { return curve_ops_; }
+    u32 overrides_serial() const { return overrides_serial_; }
+
     /// When an emitter stops of itself (game seconds; negative: it emits
     /// on): its blueprint's Lifetime after it was made, or a script's
     /// LIFETIME param. Its effect then ends, as Moho's emitter does; the
@@ -167,6 +200,10 @@ private:
     bool destroyed_ = false;
     int lua_table_ref_ = -2; // LUA_NOREF
     std::unordered_map<std::string, f64> params_;
+    std::array<f32, 26> emitter_params_{}; ///< by EEmitterParam, where set
+    u32 emitter_params_set_ = 0;           ///< a bit per one set
+    std::vector<EmitterCurveOp> curve_ops_;
+    u32 overrides_serial_ = 0;
 
     f64 birth_time_ = -1.0; // -1 = no auto-expiry
     f64 lifetime_ = 0.0;    // params_' LIFETIME (0 when unset)

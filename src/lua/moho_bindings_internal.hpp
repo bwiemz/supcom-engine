@@ -91,7 +91,8 @@ void push_user_unit(lua_State* L, u32 id, i32 army);
 /// time the UI asks after each tick (lua/bindings/ui/user_unit.cpp).
 const sim::WorldSnapshot* ui_world(lua_State* L);
 f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
-void stop_ambient(audio::SoundManager* mgr, sim::Entity* e, const char* name);
+void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
+                         std::string lod_cutoff);
 i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg);
 sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx);
 bool under_water(const sim::SimState* sim, const sim::Vector3& p);

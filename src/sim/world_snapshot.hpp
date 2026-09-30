@@ -158,6 +158,13 @@ struct EffectRecord {
     /// A decal's or splat's record, and the armies that see it (M212c).
     std::shared_ptr<const DecalSpec> decal;
     u32 seen_by = 0;
+    /// An emitter's runtime overrides (M214d): the params a script set (a
+    /// bit per EEmitterParam) and their values, its curve ops, and the
+    /// serial that changes with any of them.
+    u32 emitter_params_set = 0;
+    std::array<f32, 26> emitter_params{};
+    std::vector<IEffect::EmitterCurveOp> curve_ops;
+    u32 overrides_serial = 0;
 };
 
 struct ResourceRecord {
@@ -174,6 +181,15 @@ struct ArmyRecord {
     u32 allies = 0; ///< bit j: allied with army j (its intel shares; M215a)
 };
 
+/// A jammer's fake blip an army senses and doesn't know fake (M215e): the
+/// jammer, the army (0-based), which of its fakes, and where it is.
+struct FakeBlipRecord {
+    u32 source = 0;
+    u8 viewer = 0;
+    u8 index = 0;
+    Vector3 position;
+};
+
 /// The world as the renderer draws it, captured once per sim tick.
 struct WorldSnapshot {
     u32 tick = 0;
@@ -186,6 +202,7 @@ struct WorldSnapshot {
     std::vector<ArmyRecord> armies;
     std::optional<map::VisibilityGrid> visibility;
     i32 player_result = 0; ///< SimState::player_result()
+    std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
 
     const EntityRecord* find(u32 id) const;
     const ArmyRecord* army(i32 index) const {
@@ -238,15 +255,26 @@ struct IntelFlushRecord {
     i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
     std::vector<std::pair<u32, u32>> forgotten;
 };
-/// Events of every tick captured since the renderer last took them.
+/// A script's one-shot world sound (SimState::SoundRequest) and its tick,
+/// for the audio side.
+struct SoundEventRecord {
+    u32 tick = 0;
+    std::string bank, cue, lod_cutoff;
+    Vector3 pos;
+    bool underwater = false;
+};
+/// Events of every tick captured since the renderer (and, for sounds, the
+/// audio) last took them.
 struct WorldEvents {
     std::vector<DeathEventRecord> deaths;
     std::vector<ShakeEventRecord> shakes;
     std::vector<IntelFlushRecord> intel_flushes;
+    std::vector<SoundEventRecord> sounds;
     void clear() {
         deaths.clear();
         shakes.clear();
         intel_flushes.clear();
+        sounds.clear();
     }
 };
 

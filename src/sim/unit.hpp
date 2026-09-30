@@ -889,6 +889,17 @@ public:
 
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;
+    /// Its jammer (Intel.JammerBlips and JamRadius; M215e): the fake blips
+    /// it gives each enemy army that senses it while its Jammer intel is on,
+    /// and how far from it they fall.
+    u32 jammer_blips() const { return jammer_blips_; }
+    f32 jam_radius_min() const { return jam_radius_min_; }
+    f32 jam_radius_max() const { return jam_radius_max_; }
+    void set_jammer(u32 blips, f32 radius_min, f32 radius_max) {
+        jammer_blips_ = blips;
+        jam_radius_min_ = radius_min;
+        jam_radius_max_ = radius_max;
+    }
     f32 get_intel_radius(const std::string& type) const;
     /// InitIntel: give the unit this intel, switched on.
     void init_intel(const std::string& type, f32 radius);
@@ -1092,6 +1103,8 @@ private:
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
+    u32 jammer_blips_ = 0;          // Intel.JammerBlips
+    f32 jam_radius_min_ = 0, jam_radius_max_ = 0; // Intel.JamRadius
     bool is_being_built_ = false;
     f32 max_speed_ = 0;
     Navigator navigator_;

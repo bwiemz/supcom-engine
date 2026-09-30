@@ -277,30 +277,12 @@ static int blip_IsMaybeDead(lua_State* L) {
     return 1;
 }
 
+// blip:IsKnownFake(army): Moho sets RECON_KnownFake on a jammer's fake
+// blips alone (M215e); a script's blip is a real unit's, never fake. The
+// engine had called a real jammer under omni known fake, and retail's AI
+// (platoon.lua) gave up attacking it.
 static int blip_IsKnownFake(lua_State* L) {
-    auto* e = check_blip_entity(L);
-    if (!e || e->destroyed() || !e->is_unit()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    // A unit is "known fake" if it has Jammer intel enabled AND the
-    // requesting army has Omni coverage at the unit's position
-    auto* unit = static_cast<sim::Unit*>(e);
-    if (!unit->is_intel_enabled("Jammer")) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
-                                  : -1;
-    auto* sim = get_sim(L);
-    if (sim && sim->visibility_grid() && army >= 0) {
-        auto& pos = e->position();
-        lua_pushboolean(
-            L, sim->visibility_grid()->has_omni(pos.x, pos.z,
-                                                static_cast<u32>(army)) ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 0);
-    }
+    lua_pushboolean(L, 0);
     return 1;
 }
 

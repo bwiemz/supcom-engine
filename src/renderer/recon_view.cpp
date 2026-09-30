@@ -15,6 +15,7 @@ void ReconView::set_focus_army(i32 army) {
 void ReconView::clear() {
     memory_.clear();
     ghosts_.clear();
+    fakes_.clear();
     updated_ = false;
     everything_ = true;
     allies_ = 0;
@@ -37,10 +38,23 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
     const map::VisibilityGrid* grid = cur->visibility ? &*cur->visibility : nullptr;
     everything_ =
         focus_ < 0 || focus_ >= static_cast<i32>(map::VisibilityGrid::MAX_ARMIES) || !grid;
+    fakes_.clear();
     if (everything_) {
         memory_.clear();
         ghosts_.clear();
         return;
+    }
+    // The jammers' fakes it senses: their jammers' records where they are
+    // (entity ids stay under 2^26, so the ids can't meet a real one's).
+    for (const sim::FakeBlipRecord& f : cur->fake_blips) {
+        if (f.viewer != static_cast<u32>(focus_)) continue;
+        const sim::EntityRecord* source = cur->find(f.source);
+        if (!source) continue;
+        sim::EntityRecord& r = fakes_.emplace_back(*source);
+        r.id = kFakeBlip | ((f.source & 0x03FFFFFFu) << 5) | (f.index & 31u);
+        r.position = f.position;
+        r.bone_count = 0; // no pose of its own
+        r.is_being_built = false;
     }
     const sim::ArmyRecord* army = cur->army(focus_);
     allies_ = army ? army->allies : 0;
@@ -142,6 +156,7 @@ bool ReconView::maybe_dead(u32 id) const {
 }
 
 Sight ReconView::sight(const sim::EntityRecord& e) const {
+    if ((e.id & kFakeBlip) != 0) return Sight::Blip; // a jammer's fake
     if (everything_ || !judged(e)) return Sight::Seen;
     const auto it = memory_.find(e.id);
     return it == memory_.end() ? Sight::Hidden : it->second.sight;

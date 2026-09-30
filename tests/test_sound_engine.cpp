@@ -4,9 +4,12 @@
 #include "audio/sound_manager.hpp"
 #include "xact_fixtures.hpp"
 
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <random>
 #include <string>
+#include <vector>
 
 using namespace osc;
 using namespace osc::test::xact_fixtures;
@@ -121,9 +124,63 @@ TEST_CASE("Sound engine: distance falloff comes from the sound's RPC curve", "[a
     sm.update(0.2f);
     const f32 at_listener = sm.current_gain(h);
     REQUIRE(at_listener > 0.0f);
-    sm.set_position(h, {500, 0, 0}); // the curve: -1000 mB at 500
+    sm.set_position(h, {0, 0, 500}); // ahead, still centred: the curve's -1000 mB at 500
     sm.update(0.0f);
     CHECK_THAT(sm.current_gain(h) / at_listener, WithinAbs(0.316, 0.005));
+}
+
+TEST_CASE("Sound engine: X3DAudio's stereo matrix, linear between +-90 degrees",
+          "[audio][engine]") {
+    // F3DAudio's stereo law: L + R = 1, centre [0.5, 0.5], hard right at
+    // 90 degrees, and back across behind.
+    const sim::Vector3 forward{0, 0, 1}, right{1, 0, 0};
+    const auto gains = [&](sim::Vector3 d) {
+        return SoundManager::stereo_gains(d, forward, right);
+    };
+    const auto near = [](std::array<f32, 2> g, f32 l, f32 r) {
+        return std::abs(g[0] - l) < 1e-4f && std::abs(g[1] - r) < 1e-4f;
+    };
+    CHECK(near(gains({0, 0, 10}), 0.5f, 0.5f));     // ahead
+    CHECK(near(gains({10, 0, 0}), 0.0f, 1.0f));     // right
+    CHECK(near(gains({-10, 0, 0}), 1.0f, 0.0f));    // left
+    CHECK(near(gains({10, 0, 10}), 0.25f, 0.75f));  // 45 degrees right
+    CHECK(near(gains({0, 0, -10}), 0.5f, 0.5f));    // behind
+    CHECK(near(gains({10, 0, -10}), 0.25f, 0.75f)); // 135: back toward centre
+    CHECK(near(gains({0, 50, 0}), 0.5f, 0.5f));     // straight up: no azimuth
+    CHECK(near(gains({0, 0, 0}), 0.5f, 0.5f));      // at the listener
+}
+
+TEST_CASE("Sound engine: a cue's Angle is its elevation off straight up", "[audio][engine]") {
+    const sim::Vector3 listener{0, 100, 0};
+    CHECK_THAT(SoundManager::cue_angle_degrees({0, 0, 0}, listener), WithinAbs(180.0, 1e-3));
+    CHECK_THAT(SoundManager::cue_angle_degrees({100, 100, 0}, listener), WithinAbs(90.0, 1e-3));
+    CHECK_THAT(SoundManager::cue_angle_degrees({100, 0, 0}, listener), WithinAbs(135.0, 1e-3));
+    CHECK_THAT(SoundManager::cue_angle_degrees({0, 200, 0}, listener), WithinAbs(0.0, 1e-3));
+}
+
+TEST_CASE("Sound engine: a world sound is panned; centred it takes half each side",
+          "[audio][engine]") {
+    // Moho's X3DAudio matrix puts a centred mono emitter at [0.5, 0.5],
+    // where a 2D sound plays at [1, 1]: world sounds sit 6 dB under UI.
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    sm.set_listener({0, 0, 0}, {0, 0, 1}, {1, 0, 0});
+    const sim::Vector3 here{0, 0, 0};
+    const auto flat = sm.play("Test", "Shot");
+    const auto world = sm.play("Test", "Shot", &here); // Music holds one: replaces flat
+    REQUIRE(world != INVALID_SOUND);
+    sm.update(0.6f);
+    f32 l = 0, r = 0;
+    REQUIRE(sm.stereo(world, l, r));
+    CHECK(l == 0.5f);
+    CHECK(r == 0.5f);
+    CHECK_FALSE(sm.stereo(flat, l, r)); // 2D, and replaced
+    const f32 centred = sm.current_gain(world);
+    sm.set_position(world, {1, 0, 0}); // hard right, 1 unit off: the curve is ~0 there
+    sm.update(0.0f);
+    REQUIRE(sm.stereo(world, l, r));
+    CHECK(r == 1.0f);
+    CHECK_THAT(sm.current_gain(world) / centred, WithinAbs(2.0, 0.01));
 }
 
 TEST_CASE("Sound engine: the player's category volumes scale their subtree", "[audio][engine]") {
@@ -147,17 +204,110 @@ TEST_CASE("Sound engine: the player's category volumes scale their subtree", "[a
     CHECK(sm.category_volume("Music") == 1.0f);
 }
 
-TEST_CASE("Sound engine: a LOD cutoff culls distant sounds", "[audio][engine]") {
+TEST_CASE("Sound engine: a world one-shot is filtered as Moho's FilterSound does",
+          "[audio][engine]") {
+    // Its LodCutoff against CameraDistance (not the emitter's distance),
+    // then the player's hearing; one of each cue a beat; none while world
+    // sounds are off.
     Sounds s;
     SoundManager sm(s.dir, false);
-    sm.set_listener({0, 0, 0}, {0, 0, 1});
-    const sim::Vector3 far{200, 0, 0}, near{50, 0, 0};
-    CHECK(sm.play("Test", "Click", &far, "TestCutoff") == INVALID_SOUND); // cutoff 100
-    CHECK(sm.play("Test", "Click", &near, "TestCutoff") != INVALID_SOUND);
-    sm.set_global_variable("TestCutoff", 500);
-    CHECK(sm.global_variable("TestCutoff") == 500.0f);
-    CHECK(sm.play("Test", "Click", &far, "TestCutoff") != INVALID_SOUND);
-    CHECK(sm.play("Test", "Click", nullptr, "TestCutoff") != INVALID_SOUND); // 2D: never culled
+    using WS = SoundManager::WorldSound;
+    const sim::Vector3 far{5000, 0, 0};
+    // CameraDistance 100, TestCutoff 100: not beyond.
+    CHECK(sm.play_world(WS{"Test", "Click", "TestCutoff", far, false, 1}) != INVALID_SOUND);
+    sm.set_global_variable("CameraDistance", 150);
+    CHECK(sm.play_world(WS{"Test", "Click", "TestCutoff", far, false, 2}) == INVALID_SOUND);
+    sm.set_global_variable("TestCutoff", -1); // never culls
+    CHECK(sm.play_world(WS{"Test", "Click", "TestCutoff", far, false, 3}) != INVALID_SOUND);
+
+    const SoundManager::Hearing deaf_west = [](const sim::Vector3& p, bool) { return p.x >= 0; };
+    CHECK(sm.play_world(WS{"Test", "Click", "", {-10, 0, 0}, false, 4}, deaf_west) ==
+          INVALID_SOUND);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {10, 0, 0}, false, 4}, deaf_west) != INVALID_SOUND);
+    // Again in beat 4 (a bank named in another case): deduped; beat 5 plays.
+    CHECK(sm.play_world(WS{"test", "Click", "", {20, 0, 0}, false, 4}) == INVALID_SOUND);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {20, 0, 0}, false, 5}) != INVALID_SOUND);
+
+    sm.set_world_enabled(false);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {0, 0, 0}, false, 6}) == INVALID_SOUND);
+    sm.set_world_enabled(true);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {0, 0, 0}, false, 6}) != INVALID_SOUND);
+}
+
+TEST_CASE("Sound engine: entity loops start in view and near, and stop as Moho's do",
+          "[audio][engine]") {
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    using EL = SoundManager::EntityLoop;
+    std::vector<EL> want{EL{1, "Test", "Shot", "", {0, 0, 0}, false, /*in_view=*/false}};
+    sm.sync_entity_loops(want);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND); // out of view: not started
+    want[0].in_view = true;
+    sm.set_global_variable("CameraDistance", 250); // too far out to start one
+    sm.sync_entity_loops(want);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sm.set_global_variable("CameraDistance", 150);
+    sm.sync_entity_loops(want);
+    const auto h = sm.entity_loop(1);
+    REQUIRE(h != INVALID_SOUND);
+    sm.update(0.2f); // Shot's wave starts at 150 ms
+
+    // Playing, it follows its entity, in view or not, near or far.
+    want[0].pos = {30, 0, 0};
+    want[0].in_view = false;
+    sm.set_global_variable("CameraDistance", 400);
+    sm.sync_entity_loops(want);
+    sim::Vector3 at{};
+    REQUIRE(sm.position(h, at));
+    CHECK(at.x == 30.0f);
+    CHECK(sm.entity_loop(1) == h);
+
+    // Out of hearing: released (Shot's 300 ms fade), and forgotten.
+    const SoundManager::Hearing deaf = [](const sim::Vector3&, bool) { return false; };
+    sm.sync_entity_loops(want, deaf);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sm.update(0.1f);
+    CHECK(sm.is_playing(h));
+    sm.update(0.3f);
+    CHECK_FALSE(sm.is_playing(h));
+
+    // No longer wanted: released.
+    sm.set_global_variable("CameraDistance", 50);
+    want[0].in_view = true;
+    sm.sync_entity_loops(want);
+    const auto again = sm.entity_loop(1);
+    REQUIRE(again != INVALID_SOUND);
+    sm.sync_entity_loops({});
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sm.update(0.4f);
+    CHECK_FALSE(sm.is_playing(again));
+
+    // Beyond its LodCutoff: stopped at once.
+    want[0].lod_cutoff = "TestCutoff"; // 100
+    sm.sync_entity_loops(want);
+    const auto culled = sm.entity_loop(1);
+    REQUIRE(culled != INVALID_SOUND);
+    sm.set_global_variable("CameraDistance", 150);
+    sm.sync_entity_loops(want);
+    sm.update(0.0f);
+    CHECK_FALSE(sm.is_playing(culled));
+
+    // A one-shot cue in a loop slot plays out, then starts again in view.
+    sm.set_global_variable("CameraDistance", 50);
+    const std::vector<EL> once{EL{2, "Test", "Click", "", {0, 0, 0}, false, true}};
+    sm.sync_entity_loops(once);
+    const auto first = sm.entity_loop(2);
+    REQUIRE(first != INVALID_SOUND);
+    sm.update(0.11f); // Click's 0.1 s wave ends
+    sm.sync_entity_loops(once);
+    const auto second = sm.entity_loop(2);
+    CHECK(second != INVALID_SOUND);
+    CHECK(second != first);
+
+    // World sounds off: loops are left as they are.
+    sm.set_world_enabled(false);
+    sm.sync_entity_loops({});
+    CHECK(sm.entity_loop(2) == second);
 }
 
 TEST_CASE("Sound engine: stop_all stops every sound as a plain stop does", "[audio][engine]") {
@@ -383,6 +533,20 @@ TEST_CASE("Sound engine: a loop that picks a new wave each time keeps playing", 
     CHECK(sm.is_playing(faded));
     sm.update(0.1f);
     CHECK_FALSE(sm.is_playing(faded));
+}
+
+TEST_CASE("Sound engine: a long wave streams and plays for its length", "[audio][engine]") {
+    // Retail's music and movie voices run 34-43 MB; from 2 MB a PCM wave
+    // streams from its bank rather than being read whole when it starts.
+    Sounds s;
+    write(s.dir / "TestWaves.xwb", make_xwb("TestWaves", 4, 1100000)); // 2.2 MB, ~49.9 s
+    SoundManager sm(s.dir, false);
+    const auto h = sm.play("Test", "Click");
+    REQUIRE(h != INVALID_SOUND);
+    sm.update(49.8f);
+    CHECK(sm.is_playing(h));
+    sm.update(0.2f);
+    CHECK_FALSE(sm.is_playing(h));
 }
 
 TEST_CASE("Sound engine: no sound data plays nothing", "[audio][engine]") {
