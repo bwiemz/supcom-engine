@@ -66,8 +66,22 @@ else()
     set(OSC_INSTALL_DOCDIR ${CMAKE_INSTALL_DATADIR}/doc/opensupcom)
 endif()
 # (ENABLE_EXPORTS gives the game an import library on Windows: not shipped)
-install(TARGETS opensupcom RUNTIME DESTINATION ${OSC_INSTALL_BINDIR}
-                           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} EXCLUDE_FROM_ALL)
+if(APPLE)
+    # vcpkg's dylibs (the Vulkan loader) go into lib/, where the installed game
+    # looks for them by @rpath
+    set(OSC_RUNTIME_DEPENDENCIES RUNTIME_DEPENDENCY_SET opensupcom_dylibs)
+    set_target_properties(opensupcom PROPERTIES
+        INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+endif()
+install(TARGETS opensupcom ${OSC_RUNTIME_DEPENDENCIES}
+                RUNTIME DESTINATION ${OSC_INSTALL_BINDIR}
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} EXCLUDE_FROM_ALL)
+if(APPLE)
+    install(RUNTIME_DEPENDENCY_SET opensupcom_dylibs
+            PRE_EXCLUDE_REGEXES "^/usr/lib/" "^/System/"
+            POST_EXCLUDE_REGEXES "^/usr/lib/" "^/System/"
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 if(COMMAND x_vcpkg_install_local_dependencies) # the vcpkg toolchain's; Windows only
     x_vcpkg_install_local_dependencies(TARGETS opensupcom DESTINATION ${OSC_INSTALL_BINDIR})
 endif()
