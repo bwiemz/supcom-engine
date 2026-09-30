@@ -1,6 +1,7 @@
 // What an entity owns outside the registry must be released however it is
-// removed: its structure footprint on the pathfinding grid, and its Lua
-// table's _c_object pointer back to the (about to be freed) C++ object.
+// removed: its structure footprint on the pathfinding grid, and (when it is
+// freed at the end of the tick) its Lua table's _c_object pointer back to the
+// C++ object.
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -49,6 +50,16 @@ CellPassability cell_at(const PathfindingGrid& grid, osc::f32 x, osc::f32 z) {
     osc::u32 gx = 0, gz = 0;
     grid.world_to_grid(x, z, gx, gz);
     return grid.get(gx, gz);
+}
+
+/// The _c_object of the Lua global table `name` (null if absent or cut).
+void* table_object(lua_State* L, const char* name) {
+    lua_getglobal(L, name);
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, -2);
+    void* const object = lua_touserdata(L, -1);
+    lua_pop(L, 2);
+    return object;
 }
 
 Unit* spawn_structure(SimState& sim, osc::f32 x, osc::f32 z) {
@@ -144,13 +155,12 @@ TEST_CASE("C++-side removal severs the Lua table's pointer to the entity",
 
     // e.g. reclaim / sacrifice / projectile impact -- no entity_Destroy.
     sim.entity_registry().unregister_entity(id);
+    // Moho deletes a destroyed entity at the end of the beat: until then its
+    // handle still reaches it.
+    CHECK(table_object(L, "unit_table") == raw);
 
-    lua_getglobal(L, "unit_table");
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, -2);
-    CHECK(lua_type(L, -1) == LUA_TLIGHTUSERDATA);
-    CHECK(lua_touserdata(L, -1) == nullptr); // stale handle reads as destroyed
-    lua_pop(L, 2);
+    sim.tick();                                      // its end frees it, cutting the handle first
+    CHECK(table_object(L, "unit_table") == nullptr); // stale handle reads as destroyed
 }
 
 TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]") {
@@ -198,11 +208,8 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     raw->update(0.1, sim.entity_registry(), L, nullptr); // lifetime runs out
     REQUIRE(sim.entity_registry().find(id) == nullptr);
 
-    lua_getglobal(L, "proj_table");
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, -2);
-    CHECK(lua_touserdata(L, -1) == nullptr);
-    lua_pop(L, 2);
+    sim.tick(); // freed at the tick's end, its handle cut first
+    CHECK(table_object(L, "proj_table") == nullptr);
 }
 
 TEST_CASE("an unregistered entity stays allocated until the tick's garbage collection",

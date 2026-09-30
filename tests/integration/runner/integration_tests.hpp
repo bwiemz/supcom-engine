@@ -121,6 +121,8 @@ void test_counter_intel(TestContext& ctx);
 void test_binding_tail(TestContext& ctx);
 /// --jammer-blip-test (M215e), in jammer_blip_test.cpp.
 void test_jammer_blips(TestContext& ctx);
+/// --destroyed-handle-test, in destroyed_handle_test.cpp.
+void test_destroyed_handle(TestContext& ctx);
 /// --beam-render-test (M214a), in beam_render_test.cpp.
 void test_beam_render(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.

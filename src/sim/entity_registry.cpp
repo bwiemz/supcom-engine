@@ -68,8 +68,12 @@ Entity* EntityRegistry::find(u32 id) const {
     return id < entities_.size() ? entities_[id].get() : nullptr;
 }
 
-void EntityRegistry::collect_garbage() {
-    graveyard_.clear();
+void EntityRegistry::collect_garbage(const std::function<void(Entity&)>& release) {
+    std::vector<std::unique_ptr<Entity>> dead;
+    dead.swap(graveyard_);
+    if (release)
+        for (const auto& e : dead) release(*e);
+    dead.clear();
     compact();
 }
 

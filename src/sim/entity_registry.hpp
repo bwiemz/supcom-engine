@@ -51,8 +51,11 @@ public:
     /// here: scripts routinely destroy a unit from inside one of its own
     /// callbacks (a structure finishing its upgrade replaces itself), and the
     /// C++ frame that ran the callback is still inside that unit's update.
-    /// SimState calls this at the end of each tick.
-    void collect_garbage();
+    /// SimState calls this at the end of each tick, with `release` to cut
+    /// each one's Lua handle first (as Moho's deletion queue, drained at the
+    /// end of the beat, frees a destroyed entity). `release` may run scripts;
+    /// what they unregister is freed the next time.
+    void collect_garbage(const std::function<void(Entity&)>& release = {});
 
     /// Initialize spatial hash grid. Must be called after map dimensions are known.
     /// If not called, collect_in_radius/collect_in_rect fall back to O(N) scan.

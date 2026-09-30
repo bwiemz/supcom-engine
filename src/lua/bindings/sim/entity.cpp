@@ -550,16 +550,14 @@ int entity_Destroy(lua_State* L) {
         // If this is a unit, detach its weapons' Lua tables before freeing
         if (e->is_unit()) static_cast<sim::Unit*>(e)->release_weapon_scripts(L);
 
-        // Null out _c_object in the Lua table to prevent use-after-free
-        lua_pushstring(L, "_c_object");
-        lua_pushlightuserdata(L, nullptr);
-        lua_rawset(L, 1);
-
-        // Release Lua registry ref before freeing the C++ object (and say so,
-        // so SimState's unregister hook does not release it a second time).
-        if (lua_ref >= 0) {
-            luaL_unref(L, LUA_REGISTRYINDEX, lua_ref);
-            e->set_lua_table_ref(LUA_NOREF);
+        // The handle stays bound until the end of the tick, as Moho frees a
+        // destroyed entity when its deletion queue is drained (SimState::
+        // release_script_handle cuts it by the registry ref). One without a
+        // ref could not be found then, so it is cut now.
+        if (lua_ref < 0) {
+            lua_pushstring(L, "_c_object");
+            lua_pushlightuserdata(L, nullptr);
+            lua_rawset(L, 1);
         }
 
         auto* sim = get_sim(L);
