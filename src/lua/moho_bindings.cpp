@@ -293,17 +293,20 @@ f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type) {
 // Sound methods
 // ====================================================================
 
-/// Stop the ambient loop `name` of `e` (every one when `name` is null).
-void stop_ambient(audio::SoundManager* mgr, sim::Entity* e, const char* name) {
-    if (!name) {
-        for (const auto& a : e->take_ambient_sounds())
-            if (mgr) mgr->stop(a.handle, false);
-        return;
+/// Queue a one-shot world sound at `e` for the audio side (Moho's
+/// SAudioRequest): whether it plays is the player's view's business, never
+/// the sim's.
+void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
+                         std::string lod_cutoff) {
+    auto* sim = get_sim(L);
+    if (!sim) return;
+    bool underwater = false;
+    if (e.is_unit()) {
+        const std::string& layer = static_cast<const sim::Unit&>(e).layer();
+        underwater = layer == "Sub" || layer == "Seabed";
     }
-    if (const u32 h = e->ambient_sound(name)) {
-        if (mgr) mgr->stop(h, false);
-        e->set_ambient_sound(name, 0);
-    }
+    sim->request_sound(
+        {std::move(bank), std::move(cue), std::move(lod_cutoff), e.position(), underwater});
 }
 
 /// Push the entity's blueprint table from the blueprint store (what

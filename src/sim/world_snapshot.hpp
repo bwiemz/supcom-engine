@@ -238,15 +238,26 @@ struct IntelFlushRecord {
     i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
     std::vector<std::pair<u32, u32>> forgotten;
 };
-/// Events of every tick captured since the renderer last took them.
+/// A script's one-shot world sound (SimState::SoundRequest) and its tick,
+/// for the audio side.
+struct SoundEventRecord {
+    u32 tick = 0;
+    std::string bank, cue, lod_cutoff;
+    Vector3 pos;
+    bool underwater = false;
+};
+/// Events of every tick captured since the renderer (and, for sounds, the
+/// audio) last took them.
 struct WorldEvents {
     std::vector<DeathEventRecord> deaths;
     std::vector<ShakeEventRecord> shakes;
     std::vector<IntelFlushRecord> intel_flushes;
+    std::vector<SoundEventRecord> sounds;
     void clear() {
         deaths.clear();
         shakes.clear();
         intel_flushes.clear();
+        sounds.clear();
     }
 };
 

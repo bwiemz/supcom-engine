@@ -642,6 +642,18 @@ public:
     const std::vector<DeathEvent>& death_events() const { return death_events_; }
     void clear_death_events() { death_events_.clear(); }
 
+    /// A one-shot world sound a script played this tick (entity, unit or
+    /// weapon PlaySound): Moho's SAudioRequest. The audio side filters it
+    /// against the player's view and plays it; the sim never learns whether
+    /// it did.
+    struct SoundRequest {
+        std::string bank, cue, lod_cutoff;
+        Vector3 pos;
+        bool underwater = false; ///< a sub's or seabed unit's
+    };
+    void request_sound(SoundRequest r) { sound_requests_.push_back(std::move(r)); }
+    const std::vector<SoundRequest>& sound_requests() const { return sound_requests_; }
+
     // Playable area bounds (set by SetPlayableRect Lua call)
     void set_playable_rect(f32 x0, f32 z0, f32 x1, f32 z1) {
         playable_x0_ = x0; playable_z0_ = z0;
@@ -889,6 +901,7 @@ private:
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;
+    std::vector<SoundRequest> sound_requests_;
     std::vector<IntelFlushEvent> intel_flush_events_;
     std::string build_ghost_bp_;
     f32 build_ghost_foot_x_ = 1.0f;

@@ -88,36 +88,25 @@ static int (*const stub_return_nil)(lua_State*) = lua_stubs::return_nil;
 
 /// entity:PlaySound(sound) -- a one-shot at the entity
 static int entity_PlaySound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
-    if (!mgr) return 0;
-
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
 
     std::string bank, cue, lod;
     if (!extract_sound_table(L, 2, bank, cue, &lod)) return 0;
-
-    auto pos = e->position();
-    mgr->play(bank, cue, &pos, lod);
+    request_world_sound(L, *e, std::move(bank), std::move(cue), std::move(lod));
     return 0;
 }
 
 /// entity:SetAmbientSound(detail, rumble) -- the entity's two ambient loop
 /// slots; nil stops a slot.
 static int entity_SetAmbientSound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
     const char* slots[2] = {"__ambient", "__rumble"};
     for (int i = 0; i < 2; ++i) {
-        stop_ambient(mgr, e, slots[i]);
-        std::string bank, cue;
-        if (mgr && extract_sound_table(L, 2 + i, bank, cue)) {
-            auto pos = e->position();
-            // As authored: a looping cue loops, a one-shot plays once (Moho
-            // drops an entity loop whose cue has stopped).
-            e->set_ambient_sound(slots[i], mgr->play(bank, cue, &pos));
-        }
+        std::string bank, cue, lod;
+        if (!extract_sound_table(L, 2 + i, bank, cue, &lod)) cue.clear();
+        e->set_ambient_sound(slots[i], std::move(bank), std::move(cue), std::move(lod));
     }
     return 0;
 }
@@ -451,7 +440,7 @@ int entity_Destroy(lua_State* L) {
     if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
     if (e) {
         // Its ambient loops end with it.
-        stop_ambient(get_sound_mgr(L), e, nullptr);
+        e->clear_ambient_sounds();
 
         // Fire OnNotAdjacentTo for adjacent structures before destruction
         if (e->is_unit()) {

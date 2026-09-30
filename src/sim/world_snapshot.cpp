@@ -391,6 +391,9 @@ void WorldHistory::capture(const SimState& sim) {
         events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
     for (const auto& f : sim.intel_flush_events())
         events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
+    for (const auto& r : sim.sound_requests())
+        events_.sounds.push_back(
+            {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater});
 }
 
 void WorldHistory::clear() {
