@@ -856,9 +856,12 @@ private:
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;
 
-    /// Registry unregister hook: sever the entity's Lua table from the C++
-    /// object and release its footprint.
+    /// Registry unregister hook: run the script's OnDestroy and release what
+    /// the entity holds in the sim (its footprint, weapons, storage).
     void on_entity_unregistered(Entity& entity);
+    /// At the end of the tick, before an unregistered entity is freed: sever
+    /// its Lua table (and handles made since) from the C++ object.
+    void release_script_handle(Entity& entity);
 
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;

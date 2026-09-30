@@ -85,26 +85,27 @@ namespace osc::lua {
 // Navigator methods
 // ====================================================================
 
-static sim::Navigator* check_navigator(lua_State* L, int idx = 1) {
-    if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
-    auto* nav = lua_isuserdata(L, -1)
-                    ? static_cast<sim::Navigator*>(lua_touserdata(L, -1))
-                    : nullptr;
-    lua_pop(L, 1);
-    return nav;
-}
-
+// A navigator handle's unit, while it is in the sim. Nothing detaches the
+// handle when its unit goes (a script may keep it, or take one from a unit
+// already destroyed this tick), so its pointer is checked against the
+// registry before it is read.
 static sim::Unit* check_nav_unit(lua_State* L, int idx = 1) {
     if (!lua_istable(L, idx)) return nullptr;
     lua_pushstring(L, "_c_unit");
     lua_rawget(L, idx);
-    auto* unit = lua_isuserdata(L, -1)
-                     ? static_cast<sim::Unit*>(lua_touserdata(L, -1))
-                     : nullptr;
+    void* const object = lua_isuserdata(L, -1) ? lua_touserdata(L, -1) : nullptr;
     lua_pop(L, 1);
+    auto* unit = static_cast<sim::Unit*>(object);
+    auto* sim = get_sim(L);
+    // The cast only adjusts the address; holds() compares it unread.
+    if (!unit || !sim || !sim->entity_registry().holds(static_cast<sim::Entity*>(unit)))
+        return nullptr;
     return unit;
+}
+
+static sim::Navigator* check_navigator(lua_State* L, int idx = 1) {
+    auto* unit = check_nav_unit(L, idx);
+    return unit ? &unit->navigator() : nullptr;
 }
 
 // navigator:SetGoal(position) — position is {x, y, z} table

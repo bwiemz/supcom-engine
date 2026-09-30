@@ -115,23 +115,36 @@ void SimState::on_entity_unregistered(Entity& entity) {
         for (const u32 id : unit.stored_ids()) stored_to_destroy_.push_back(id);
     }
 
+    // Its Lua table keeps its _c_object until the end of the tick
+    // (release_script_handle), as Moho keeps a destroyed entity until its
+    // deletion queue is drained at the end of the beat: the script that
+    // destroyed it, and threads that run later in the tick, still read it
+    // (a structure's adjacency beams read a wrecked neighbour's blueprint).
+}
+
+void SimState::release_script_handle(Entity& entity) {
+    if (!L_) return;
+    // Handles its scripts made after it was unregistered go with it too:
+    // the weapon tables quietly (they never saw OnCreate, so no OnDestroy).
+    if (entity.is_unit()) {
+        auto& unit = static_cast<Unit&>(entity);
+        unit.release_manipulators(L_);
+        unit.release_weapon_scripts(L_, /*run_on_destroy=*/false);
+    }
     // The Lua table outlives the C++ object: null its _c_object so methods
     // called on a stale handle see "destroyed" instead of freed memory, and
-    // release the registry reference. entity_Destroy already does this for
-    // Lua-initiated destruction; reclaim, sacrifice and projectile impact
-    // unregister directly from C++ and relied on this path.
+    // release the registry reference.
     const int ref = entity.lua_table_ref();
-    if (L_ && ref >= 0) {
-        lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
-        if (lua_istable(L_, -1)) {
-            lua_pushstring(L_, "_c_object");
-            lua_pushlightuserdata(L_, nullptr);
-            lua_rawset(L_, -3);
-        }
-        lua_pop(L_, 1);
-        luaL_unref(L_, LUA_REGISTRYINDEX, ref);
-        entity.set_lua_table_ref(LUA_NOREF);
+    if (ref < 0) return;
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
+    if (lua_istable(L_, -1)) {
+        lua_pushstring(L_, "_c_object");
+        lua_pushlightuserdata(L_, nullptr);
+        lua_rawset(L_, -3);
     }
+    lua_pop(L_, 1);
+    luaL_unref(L_, LUA_REGISTRYINDEX, ref);
+    entity.set_lua_table_ref(LUA_NOREF);
 }
 
 void SimState::destroy_orphaned_stored_units() {
@@ -1182,8 +1195,9 @@ void SimState::tick() {
     }
 
     // Entities unregistered this tick may still have been on the C++ stack
-    // (destroyed from their own callbacks); only now is freeing them safe.
-    entity_registry_.collect_garbage();
+    // (destroyed from their own callbacks); only now is freeing them safe,
+    // their Lua handles cut first.
+    entity_registry_.collect_garbage([this](Entity& e) { release_script_handle(e); });
 
     if (tick_observer_) {
         PROFILE_ZONE("Sim::observer");

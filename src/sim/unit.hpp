@@ -881,8 +881,9 @@ public:
     void release_manipulators(lua_State* L);
     /// Detach the weapons' Lua tables (null _c_object and _c_unit) and drop
     /// every Lua ref the weapons and the on-given callbacks hold. Idempotent;
-    /// runs however the unit leaves the sim (entity_Destroy or C++ removal).
-    void release_weapon_scripts(lua_State* L);
+    /// runs however the unit leaves the sim (entity_Destroy or C++ removal),
+    /// each table's script OnDestroy first unless `run_on_destroy` is false.
+    void release_weapon_scripts(lua_State* L, bool run_on_destroy = true);
     /// Hand a teleport to the script (OnTeleportUnit(self, location,
     /// orientation)); false if the unit's class has no handler.
     bool call_on_teleport_unit(lua_State* L, const Vector3& location);

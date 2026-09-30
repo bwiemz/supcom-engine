@@ -2435,7 +2435,7 @@ void Unit::release_manipulators(lua_State* L) {
     manipulators_.clear();
 }
 
-void Unit::release_weapon_scripts(lua_State* L) {
+void Unit::release_weapon_scripts(lua_State* L, bool run_on_destroy) {
     if (!L) return;
     auto unref = [L](int& ref) {
         if (ref >= 0) luaL_unref(L, LUA_REGISTRYINDEX, ref);
@@ -2452,7 +2452,7 @@ void Unit::release_weapon_scripts(lua_State* L) {
                 // ending its state thread).
                 lua_pushstring(L, "OnDestroy");
                 lua_gettable(L, -2);
-                if (lua_isfunction(L, -1)) {
+                if (run_on_destroy && lua_isfunction(L, -1)) {
                     lua_pushvalue(L, -2);
                     if (lua_pcall(L, 1, 0, 0) != 0) {
                         spdlog::warn("Weapon OnDestroy error: {}", lua_tostring(L, -1));
