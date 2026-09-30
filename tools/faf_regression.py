@@ -25,7 +25,8 @@ One game prints the engine's exit status and each distinct warning or error
 with its count, most frequent first. --suite long plays the long set (five
 skirmishes of 2 to 8 AIs, up to 18,000 ticks, and FA's six operations for
 6,000 ticks each) and prints a line a game. Exits non-zero when the engine
-crashed, or with --fail-on-errors when any Lua error was reported.
+crashed or hung (--timeout, 30 minutes a game by default), or with
+--fail-on-errors when any Lua error was reported.
 """
 
 from __future__ import annotations
@@ -200,6 +201,7 @@ def tally(log: str) -> Counter[str]:
 class Outcome:
     exit_code: int
     crashed: bool
+    hung: bool
     seconds: float
     thread_errors: int
     script_errors: int
@@ -208,19 +210,37 @@ class Outcome:
     counts: Counter[str]
 
 
-def play(base: list[str], game: Game, log_path: Path | None) -> Outcome:
+def play(base: list[str], game: Game, log_path: Path | None, timeout: float) -> Outcome:
+    """One game; one that outlives `timeout` seconds is killed and counts
+    as hung (a script looping forever never ends on its own)."""
     start = time.monotonic()
-    run = subprocess.run(
-        [*base, *game.args], capture_output=True, text=True, errors="replace", check=False
-    )
+    hung = False
+    try:
+        run = subprocess.run(
+            [*base, *game.args],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            timeout=timeout,
+        )
+        exit_code = run.returncode
+        log = run.stdout + run.stderr
+    except subprocess.TimeoutExpired as e:
+        hung = True
+        exit_code = -1
+        log = "".join(
+            part.decode(errors="replace") if isinstance(part, bytes) else (part or "")
+            for part in (e.stdout, e.stderr)
+        )
     seconds = time.monotonic() - start
-    log = run.stdout + run.stderr
     if log_path:
         _ = log_path.write_text(log)
     ends: list[str] = re.findall(r"Sim: (\d+ armies, \d+ entities, .*? ticks)", log)
     return Outcome(
-        exit_code=run.returncode,
-        crashed=run.returncode < 0 or run.returncode >= 128 or "OpenSupCom crashed" in log,
+        exit_code=exit_code,
+        crashed=not hung and (exit_code < 0 or exit_code >= 128 or "OpenSupCom crashed" in log),
+        hung=hung,
         seconds=seconds,
         thread_errors=log.count("Thread error"),
         script_errors=len(re.findall(r"\[warning\].* error: ", log)),
@@ -243,6 +263,7 @@ class Args(argparse.Namespace):
     ticks: int = 3000
     seed: str = "4242"
     log: str | None = None
+    timeout: float = 1800.0
     fail_on_errors: bool = False
 
 
@@ -264,6 +285,9 @@ def main() -> int:
     _ = ap.add_argument("--ticks", type=int)
     _ = ap.add_argument("--seed")
     _ = ap.add_argument("--log", help="keep the engine's log here (a folder with --suite)")
+    _ = ap.add_argument(
+        "--timeout", type=float, help="seconds before a game counts as hung (default 1800)"
+    )
     _ = ap.add_argument("--fail-on-errors", action="store_true")
     args = ap.parse_args(namespace=Args())
     cache = Path(args.cache)
@@ -281,11 +305,12 @@ def main() -> int:
             log_dir.mkdir(parents=True, exist_ok=True)
         crashed = errors = 0
         for game in LONG_SUITE:
-            o = play(base, game, log_dir / f"{game.name}.log" if log_dir else None)
-            crashed += o.crashed
+            o = play(base, game, log_dir / f"{game.name}.log" if log_dir else None, args.timeout)
+            crashed += o.crashed or o.hung
             errors += o.thread_errors + o.script_errors + o.error_lines
             print(
-                f"{game.name:12} exit={o.exit_code:<3}{' CRASHED' if o.crashed else ''} "
+                f"{game.name:12} exit={o.exit_code:<3}{' CRASHED' if o.crashed else ''}"
+                + f"{' HUNG' if o.hung else ''} "
                 + f"{o.seconds:6.0f}s thread_errors={o.thread_errors} "
                 + f"script_errors={o.script_errors} error_lines={o.error_lines}  {o.end}",
                 flush=True,
@@ -308,14 +333,17 @@ def main() -> int:
             args.seed,
         ),
     )
-    o = play(base, game, Path(args.log) if args.log else None)
-    print(f"engine exit {o.exit_code}{' (crashed)' if o.crashed else ''}")
+    o = play(base, game, Path(args.log) if args.log else None, args.timeout)
+    print(
+        f"engine exit {o.exit_code}{' (crashed)' if o.crashed else ''}"
+        + f"{' (hung: killed after the timeout)' if o.hung else ''}"
+    )
     if o.end:
         print(f"reached: {o.end}")
     for message, n in o.counts.most_common():
         print(f"{n:6d}  {message}")
     lua_errors = sum(n for m, n in o.counts.items() if "error" in m.lower())
-    if o.crashed:
+    if o.crashed or o.hung:
         return 2
     return 1 if args.fail_on_errors and lua_errors else 0
 
