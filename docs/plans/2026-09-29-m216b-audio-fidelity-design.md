@@ -8,6 +8,8 @@ Date: 2026-09-29.
 
 **Done in the second change:** items 4–7 and 10 — category pause (`PauseSound`/`PauseVoice`, subtree, clocks held), ambient slots play their cue as authored (no forced loop), fades only on replacement with the limit's own fade-in/out, `stop()` without the category fade, the duck ramp over `DuckLength` (reset by `SetVolume` and `StopAllSounds`), `/nomusic`, and `StopAllSounds` as a released stop. Moho's natural-end duck pop stays a deliberate divergence (open question 4).
 
+**Done in the third change:** item 8 and the listener and panning half of item 9. The listener stands at Moho's point (the focus raised by the target zoom, less 4), facing the view. Each positional cue's `Angle` is its own: degrees off straight up, reading faf-re's `ComputeCueAngleDegrees` in Moho's Y-up world. That settles open question 3: retail's curve is −23 mB straight below and −2017 mB level, which only fits the vertical-angle reading. World sounds get X3DAudio's linear stereo matrix, through miniaudio's balance pan and the louder side's gain, since miniaudio's no-attenuation model doesn't pan at all. Still open in item 9: loop positions from the interpolated frame, and 5.1.
+
 ## Headline findings (ordered by what a player hears)
 
 1. **All voice is silent.** `BankRegistry` reads only the top level of `sounds/` (`src/audio/xact/bank_registry.cpp:31`). `sounds/Voice/US/` holds 10 sound banks and 1,275 cues:
