@@ -535,6 +535,20 @@ TEST_CASE("Sound engine: a loop that picks a new wave each time keeps playing", 
     CHECK_FALSE(sm.is_playing(faded));
 }
 
+TEST_CASE("Sound engine: a long wave streams and plays for its length", "[audio][engine]") {
+    // Retail's music and movie voices run 34-43 MB; from 2 MB a PCM wave
+    // streams from its bank rather than being read whole when it starts.
+    Sounds s;
+    write(s.dir / "TestWaves.xwb", make_xwb("TestWaves", 4, 1100000)); // 2.2 MB, ~49.9 s
+    SoundManager sm(s.dir, false);
+    const auto h = sm.play("Test", "Click");
+    REQUIRE(h != INVALID_SOUND);
+    sm.update(49.8f);
+    CHECK(sm.is_playing(h));
+    sm.update(0.2f);
+    CHECK_FALSE(sm.is_playing(h));
+}
+
 TEST_CASE("Sound engine: no sound data plays nothing", "[audio][engine]") {
     SoundManager sm(fs::temp_directory_path() / "osc_no_such_sounds_dir", false);
     CHECK_FALSE(sm.has_data());

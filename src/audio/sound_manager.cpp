@@ -4,6 +4,7 @@
 
 #include "audio/sound_manager.hpp"
 #include "audio/xact/bank_registry.hpp"
+#include "audio/wave_stream.hpp"
 #include "audio/xwb_parser.hpp"
 
 #include <spdlog/spdlog.h>
@@ -19,6 +20,7 @@ namespace {
 
 constexpr u32 kForever = 0xFFFFFFFF;
 constexpr size_t kWaveCacheBytes = 128u << 20; ///< decoded-ready waves kept around
+constexpr u32 kStreamBytes = 2u << 20;         ///< PCM waves this long stream from their bank
 constexpr int kMaxCategoryDepth = 32;
 
 bool iequals(std::string_view a, std::string_view b) {
@@ -41,12 +43,37 @@ struct SoundManager::AudioEngine {
 struct SoundManager::WaveData {
     std::vector<u8> wav; ///< a WAV file in memory, for miniaudio's decoder
     f64 seconds = 0;     ///< length at unit pitch
+    // A long PCM wave streams from its bank instead (retail's music and
+    // movie voices run 34-43 MB): its WAV header, and where its samples sit.
+    std::vector<u8> header;
+    fs::path file;
+    u64 offset = 0, length = 0;
+    bool streamed() const { return length > 0; }
 };
+
+/// miniaudio's decoder callbacks over a WaveStream (a streamed wave).
+static ma_result stream_read(ma_decoder* decoder, void* out, size_t bytes, size_t* got) {
+    auto& stream = *static_cast<WaveStream*>(decoder->pUserData);
+    if (got) *got = 0;
+    if (stream.tell() >= stream.size()) return MA_AT_END;
+    const size_t n = stream.read(out, bytes);
+    if (got) *got = n;
+    return n == 0 ? MA_AT_END : MA_SUCCESS;
+}
+
+static ma_result stream_seek(ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) {
+    auto& stream = *static_cast<WaveStream*>(decoder->pUserData);
+    stream.seek(offset, origin == ma_seek_origin_start     ? WaveStream::Origin::Start
+                        : origin == ma_seek_origin_current ? WaveStream::Origin::Current
+                                                           : WaveStream::Origin::End);
+    return MA_SUCCESS;
+}
 
 /// One wave playing on a track. Not movable (miniaudio keeps pointers into
 /// it), so voices live on the heap.
 struct SoundManager::Voice {
     std::shared_ptr<const WaveData> data;
+    std::unique_ptr<WaveStream> stream; ///< a streamed wave's reader (outlives the decoder)
     ma_decoder decoder{};
     ma_sound sound{};
     bool decoder_init = false;
@@ -106,99 +133,6 @@ struct SoundManager::CueInstance {
 
 // ---- WAV header synthesis ----
 
-/// Build a minimal WAV file wrapping raw PCM or ADPCM data so miniaudio can decode it.
-static std::vector<u8> build_wav(const WaveInfo& info, const std::vector<u8>& raw) {
-    // For PCM (format_tag 0): RIFF/WAVE with fmt + data chunks
-    // For ADPCM (format_tag 2): RIFF/WAVE with extended fmt + data chunks
-
-    bool is_adpcm = (info.format_tag == 2);
-    u16 wav_format_tag = is_adpcm ? 0x0002 : 0x0001;
-
-    u32 channels = info.channels ? info.channels : 1;
-    u32 sample_rate = info.sample_rate;
-    u16 bits_per_sample = is_adpcm ? 4 : static_cast<u16>(info.bits_per_sample);
-    u16 block_align = static_cast<u16>(info.block_align);
-    u32 avg_bytes_per_sec;
-    if (is_adpcm && block_align > 7 * channels) {
-        u32 samples_per_block = (block_align - 7 * channels) * 2 / channels + 2;
-        avg_bytes_per_sec = samples_per_block > 0
-            ? (sample_rate / samples_per_block) * block_align
-            : sample_rate;
-    } else {
-        avg_bytes_per_sec = sample_rate * channels * (info.bits_per_sample / 8);
-    }
-
-    // ADPCM needs extended fmt chunk with coefficient table
-    // Standard MS-ADPCM has 7 coefficient pairs
-    static const i16 adpcm_coeffs[7][2] = {
-        {256, 0}, {512, -256}, {0, 0}, {192, 64},
-        {240, 0}, {460, -208}, {392, -232}
-    };
-
-    u16 adpcm_samples_per_block = 0;
-    if (is_adpcm && block_align > 0) {
-        adpcm_samples_per_block = static_cast<u16>(
-            (block_align - 7 * channels) * 2 / channels + 2);
-    }
-
-    // Calculate fmt chunk sizes
-    u32 fmt_extra_size = is_adpcm ? (2 + 2 + 7 * 4) : 0; // cbSize data
-    u32 fmt_chunk_size = 16 + (is_adpcm ? (2 + fmt_extra_size) : 0);
-    u32 data_chunk_size = static_cast<u32>(raw.size());
-    u32 riff_size = 4 + (8 + fmt_chunk_size) + (8 + data_chunk_size);
-
-    std::vector<u8> wav;
-    wav.reserve(12 + 8 + fmt_chunk_size + 8 + data_chunk_size);
-
-    auto write_u16 = [&](u16 v) {
-        wav.push_back(static_cast<u8>(v));
-        wav.push_back(static_cast<u8>(v >> 8));
-    };
-    auto write_u32 = [&](u32 v) {
-        wav.push_back(static_cast<u8>(v));
-        wav.push_back(static_cast<u8>(v >> 8));
-        wav.push_back(static_cast<u8>(v >> 16));
-        wav.push_back(static_cast<u8>(v >> 24));
-    };
-    auto write_tag = [&](const char* tag) {
-        wav.insert(wav.end(), tag, tag + 4);
-    };
-    auto write_i16 = [&](i16 v) {
-        write_u16(static_cast<u16>(v));
-    };
-
-    // RIFF header
-    write_tag("RIFF");
-    write_u32(riff_size);
-    write_tag("WAVE");
-
-    // fmt chunk
-    write_tag("fmt ");
-    write_u32(fmt_chunk_size);
-    write_u16(wav_format_tag);
-    write_u16(static_cast<u16>(channels));
-    write_u32(sample_rate);
-    write_u32(avg_bytes_per_sec);
-    write_u16(block_align);
-    write_u16(bits_per_sample);
-
-    if (is_adpcm) {
-        write_u16(static_cast<u16>(fmt_extra_size)); // cbSize
-        write_u16(adpcm_samples_per_block);
-        write_u16(7); // num coefficients
-        for (int i = 0; i < 7; i++) {
-            write_i16(adpcm_coeffs[i][0]);
-            write_i16(adpcm_coeffs[i][1]);
-        }
-    }
-
-    // data chunk
-    write_tag("data");
-    write_u32(data_chunk_size);
-    wav.insert(wav.end(), raw.begin(), raw.end());
-
-    return wav;
-}
 
 namespace {
 
@@ -288,6 +222,20 @@ std::shared_ptr<const SoundManager::WaveData> SoundManager::wave_data(const XwbP
         return it->second;
     }
     const WaveInfo& info = bank.entry(index);
+    if (info.format_tag == 0 && info.data_length >= kStreamBytes) {
+        // Streamed: nothing is read now (a headless run never reads it).
+        auto data = std::make_shared<WaveData>();
+        const u32 frame = std::max<u32>(1, info.channels * (info.bits_per_sample / 8));
+        const u64 frames = info.data_length / frame; // whole frames
+        data->seconds = info.sample_rate ? static_cast<f64>(frames) / info.sample_rate : 0.0;
+        data->header = wav_header(info, info.data_length);
+        data->file = bank.path();
+        data->offset = info.data_offset;
+        data->length = info.data_length;
+        waves_.emplace(key, data);
+        wave_lru_.push_front(key);
+        return data;
+    }
     auto raw = bank.read_wave_data(index);
     if (raw.empty()) return nullptr;
     auto data = std::make_shared<WaveData>();
@@ -607,8 +555,18 @@ SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
 
     if (output_) {
         ma_decoder_config dcfg = ma_decoder_config_init(ma_format_f32, 0, 0);
-        if (ma_decoder_init_memory(v->data->wav.data(), v->data->wav.size(), &dcfg, &v->decoder) ==
-            MA_SUCCESS) {
+        ma_result opened = MA_ERROR;
+        if (v->data->streamed()) {
+            v->stream = std::make_unique<WaveStream>(v->data->header, v->data->file,
+                                                     v->data->offset, v->data->length);
+            if (v->stream->ok())
+                opened = ma_decoder_init(&stream_read, &stream_seek, v->stream.get(), &dcfg,
+                                         &v->decoder);
+        } else {
+            opened = ma_decoder_init_memory(v->data->wav.data(), v->data->wav.size(), &dcfg,
+                                            &v->decoder);
+        }
+        if (opened == MA_SUCCESS) {
             v->decoder_init = true;
             if (ma_sound_init_from_data_source(&engine_->engine, &v->decoder, 0, nullptr, &v->sound) ==
                 MA_SUCCESS) {
