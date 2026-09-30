@@ -98,4 +98,12 @@ struct FoundControl {
 std::optional<FoundControl> find_control(lua_State* L, ui::UIControlRegistry& controls,
                                          const std::string& match);
 
+/// A find_control match for a button whose label reads what `loc` localizes to.
+std::string labelled(const char* loc);
+
+/// A player's left click on `found`, once it takes one: the mouse there,
+/// pressed and let go. False if it doesn't take one yet.
+bool click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& controls,
+           const std::optional<FoundControl>& found);
+
 } // namespace osc::app
