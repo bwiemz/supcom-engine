@@ -93,20 +93,25 @@ std::optional<GameInstall> from_explicit(const GameInstallHints& h,
         }
         return install;
     }
+    // FAF data runs its own init, over the FA install the hints name (else
+    // its fa_path.lua's, else Steam's). With an FA path too, retail's init
+    // had run instead, while the FAF data was logged as in use.
+    if (h.faf_data_path) {
+        auto init = find_file_ci(*h.faf_data_path / "bin", "init_faf.lua");
+        search.searched.push_back(source + ": " + h.faf_data_path->string());
+        if (!init) return std::nullopt;
+        install.init_file = *init;
+        install.fa_path = h.fa_path
+                              ? *h.fa_path
+                              : faf_fa_path(*h.faf_data_path, env, search).value_or(fs::path());
+        return install;
+    }
     if (h.fa_path) {
         install.fa_path = *h.fa_path;
         search.searched.push_back(source + ": " + (*h.fa_path / "bin").string());
         auto init = retail_init(*h.fa_path);
         if (!init) return std::nullopt;
         install.init_file = *init;
-        return install;
-    }
-    if (h.faf_data_path) {
-        auto init = find_file_ci(*h.faf_data_path / "bin", "init_faf.lua");
-        search.searched.push_back(source + ": " + h.faf_data_path->string());
-        if (!init) return std::nullopt;
-        install.init_file = *init;
-        install.fa_path = faf_fa_path(*h.faf_data_path, env, search).value_or(fs::path());
         return install;
     }
     return std::nullopt;
