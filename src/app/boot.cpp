@@ -511,15 +511,19 @@ std::optional<int> App::boot_ui() {
     // Preferences (Game.prefs). An interactive game keeps them in the user's
     // config dir. Tests and captures never touch that file, so the player's
     // settings cannot change a result: --prefs PATH seeds them instead, and
-    // is written back only when interactive.
+    // is written back only when interactive. A scripted window (a flow test)
+    // is no player's game: it reads the player's file only when given it,
+    // and writes no file back (a test's fixture included). (The campaign's
+    // flow test had written its progress into the player's profile, and
+    // read it back on its next run.)
     {
         std::filesystem::path file = parse_string_arg(argc, argv, "--prefs", "");
-        if (file.empty() && opt.interactive) {
+        if (file.empty() && opt.interactive && !opt.scripted_window) {
             file = osc::platform::known_folder(osc::platform::KnownFolder::Config) / "opensupcom" /
                    "Game.prefs";
         }
         if (!file.empty()) prefs.load(file);
-        if (opt.interactive) prefs.set_path(file);
+        if (opt.interactive && !opt.scripted_window) prefs.set_path(file);
         // Retail's menus need a current profile; it would ask for one in a
         // first-run dialog (and then offer the tutorial). The engine makes
         // "Player" instead.
@@ -529,10 +533,12 @@ std::optional<int> App::boot_ui() {
         }
     }
     // Replays and saved games (FA's special files). An interactive game keeps
-    // them in FA's user folder; other runs use --user-dir, else a temporary
-    // folder of their own (removed at exit), never the player's.
+    // them in FA's user folder; other runs (a scripted window's too) use
+    // --user-dir, else a temporary folder of their own (removed at exit),
+    // never the player's.
     user_dir = parse_string_arg(argc, argv, "--user-dir", "");
-    if (user_dir.empty() && opt.interactive) user_dir = osc::lua::SpecialFiles::default_root();
+    if (user_dir.empty() && opt.interactive && !opt.scripted_window)
+        user_dir = osc::lua::SpecialFiles::default_root();
     if (user_dir.empty()) {
         std::random_device rd;
         temp_user_dir =
