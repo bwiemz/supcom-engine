@@ -352,18 +352,13 @@ static int unit_GetGuards(lua_State* L) {
 // GetGuardedUnit(): return the unit this unit is guarding, or nil
 static int unit_GetGuardedUnit(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->command_queue().empty()) {
-        lua_pushnil(L);
-        return 1;
-    }
-    const auto& front = u->command_queue().front();
-    if (front.type != sim::CommandType::Guard || front.target_id == 0) {
-        lua_pushnil(L);
-        return 1;
-    }
+    const u32 guarded = u ? u->guarded_unit_id() : 0;
     auto* sim = get_sim(L);
-    if (!sim) { lua_pushnil(L); return 1; }
-    auto* target = sim->entity_registry().find(front.target_id);
+    if (guarded == 0 || !sim) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* target = sim->entity_registry().find(guarded);
     if (!target || target->destroyed() || target->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;

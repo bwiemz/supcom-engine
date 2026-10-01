@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/lua_state.hpp"
+#include "lua/session_manager.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
@@ -597,4 +599,31 @@ TEST_CASE("A peer dropping after the victory script ended the game changes nothi
     auto* acu = static_cast<Unit*>(sim.entity_registry().find(winner_acu));
     REQUIRE(acu != nullptr);
     CHECK_FALSE(acu->is_dying());
+}
+
+TEST_CASE("The scripts decide the game when retail's or FAF's victory check is loaded",
+          "[sim][victory]") {
+    // Moho has no adjudication of its own. Retail runs /lua/victory.lua's
+    // CheckVictory; FAF its victory condition from /lua/sim/victorycondition/
+    // (whose BeginSession never imports victory.lua): with neither, the
+    // engine judges the game. FAF's had gone unseen, and both judged.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    // Each ask leaves the stack as it found it.
+    const auto decide = [&] {
+        const int top = lua_gettop(L);
+        const bool scripts = osc::lua::scripts_decide_victory(L);
+        CHECK(lua_gettop(L) == top);
+        return scripts;
+    };
+    CHECK_FALSE(decide()); // no __modules at all
+    REQUIRE(state.do_string("__modules = { ['/lua/simutils.lua'] = {} }").ok());
+    CHECK_FALSE(decide());
+    REQUIRE(state.do_string("__modules['/lua/victory.lua'] = {}").ok());
+    CHECK(decide());
+    REQUIRE(state
+                .do_string("__modules = { "
+                           "['/lua/sim/victorycondition/victoryconditionsingleton.lua'] = {} }")
+                .ok());
+    CHECK(decide());
 }

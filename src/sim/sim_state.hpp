@@ -377,6 +377,10 @@ public:
     /// command, or one no unit took.
     u32 route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                       bool clear_existing);
+    /// Whether `unit` takes `command` as it is issued: Moho checks each unit
+    /// of an order and leaves out one that can't carry it out
+    /// (func_ProcessUnitCommand). Checked here for Guard so far.
+    bool takes_command(const Unit& unit, const UnitCommand& command) const;
     /// Whether a live unit still has the command in its queue (IsCommandDone
     /// is its negation: a command is done once no unit holds it).
     bool command_queued(u32 command_id) const;
