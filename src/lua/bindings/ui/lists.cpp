@@ -45,6 +45,8 @@
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
 #include "ui/font_metrics_provider.hpp"
+#include "ui/lazyvar.hpp"
+#include "ui/scroll.hpp"
 #include "ui/keymap.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -219,26 +221,29 @@ static int itemlist_ScrollToTop(lua_State* L) {
     return 0;
 }
 
-/// item_list:ScrollToBottom()
+/// item_list:ScrollToBottom(): its last rows in view
 static int itemlist_ScrollToBottom(lua_State* L) {
-    auto* ctrl = check_control(L);
-    if (ctrl && ctrl->item_count() > 0)
-        ctrl->set_scroll_top(ctrl->item_count() - 1);
+    if (auto* ctrl = check_control(L)) {
+        ui::scroll_item_list_to_bottom(*ctrl, ui::read_lazyvar(L, 1, "Height"));
+    }
     return 0;
 }
 
-/// item_list:ShowItem(index) — scroll to make item visible
+/// item_list:ShowItem(index): scrolled as far as the row needs to show
 static int itemlist_ShowItem(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl && lua_isnumber(L, 2))
-        ctrl->set_scroll_top(static_cast<i32>(lua_tonumber(L, 2)));
+    if (ctrl && lua_isnumber(L, 2)) {
+        ui::show_item_list_row(*ctrl, ui::read_lazyvar(L, 1, "Height"),
+                               static_cast<i32>(lua_tonumber(L, 2)));
+    }
     return 0;
 }
 
-/// item_list:NeedsScrollBar() → bool
+/// item_list:NeedsScrollBar() → whether its rows need more than its height
 static int itemlist_NeedsScrollBar(lua_State* L) {
-    // Always false for now (no real viewport calculation)
-    lua_pushboolean(L, 0);
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L,
+                    ctrl && ui::item_list_needs_scrollbar(*ctrl, ui::read_lazyvar(L, 1, "Height")));
     return 1;
 }
 
@@ -383,7 +388,9 @@ static int scrollbar_DoScrollLines(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     f32 lines = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0.0f;
-    call_scrollable_method(L, ctrl, "ScrollLines", lines);
+    if (!ui::scroll_item_list_of(L, *ctrl, lines, false)) {
+        call_scrollable_method(L, ctrl, "ScrollLines", lines);
+    }
     return 0;
 }
 
@@ -392,7 +399,9 @@ static int scrollbar_DoScrollPages(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     f32 pages = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0.0f;
-    call_scrollable_method(L, ctrl, "ScrollPages", pages);
+    if (!ui::scroll_item_list_of(L, *ctrl, pages, true)) {
+        call_scrollable_method(L, ctrl, "ScrollPages", pages);
+    }
     return 0;
 }
 

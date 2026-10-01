@@ -7,6 +7,7 @@
 #include "ui/ui_control.hpp"
 #include "ui/console.hpp"
 #include "ui/keymap.hpp"
+#include "ui/scroll.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "ui/world_view.hpp"
 
@@ -14,6 +15,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
@@ -543,4 +545,115 @@ TEST_CASE("The world has the mouse only where no UI, and no capture, holds it",
     CHECK(ui_has(50, 50));
     f.run("RemoveInputCapture(GetFrame(0))");
     CHECK_FALSE(ui_has(200, 200));
+}
+
+TEST_CASE("A scrollbar's thumb spans the part of its scrollable shown", "[ui][scroll]") {
+    using osc::ui::thumb_span;
+    // (rangeMin, rangeMax, visibleMin, visibleMax), as Moho's GetScrollValues
+    CHECK(thumb_span({0, 10, 0, 10}, 200, 16).length == 200); // all of it shows
+    CHECK(thumb_span({0, 0, 0, 0}, 200, 16).length == 200);   // nothing to scroll
+    const auto first = thumb_span({0, 20, 0, 5}, 200, 16);
+    CHECK(first.start == 0);
+    CHECK(first.length == 50);
+    CHECK(thumb_span({0, 20, 10, 15}, 200, 16).start == 100);
+    CHECK(thumb_span({0, 20, 15, 20}, 200, 16).start == 150);
+    // No shorter than its caps, and still on its track at the end
+    const auto last = thumb_span({0, 1000, 999, 1000}, 200, 16);
+    CHECK(last.length == 16);
+    CHECK(last.start == 184);
+}
+
+TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lua][scroll]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    // Five rows show: 90 high, at the 14-point font's 18 (no font file here)
+    auto result = lua.do_string(R"(
+        list = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(list, GetFrame(0))
+        rawset(list, 'Height', 90)
+        for i = 1, 20 do list:AddItem('row ' .. i) end
+        bar = setmetatable({}, { __index = moho.scrollbar_methods })
+        InternalCreateScrollbar(bar, GetFrame(0), 'Vert')
+        bar:SetScrollable(list)
+        short = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(short, GetFrame(0))
+        rawset(short, 'Height', 90)
+        for i = 1, 3 do short:AddItem('row ' .. i) end
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+
+    lua_State* L = lua.raw();
+    auto* list = control_of(L, "list");
+    auto* bar = control_of(L, "bar");
+    REQUIRE(list);
+    REQUIRE(bar);
+    const auto run = [&](const char* code) { REQUIRE(lua.do_string(code).ok()); };
+    const auto shown = [&] {
+        const auto v = osc::ui::scroll_values(L, *bar);
+        return std::vector<float>{v.range_min, v.range_max, v.visible_min, v.visible_max};
+    };
+    const auto needs = [&](const char* name) {
+        run((std::string("needs = ") + name + ":NeedsScrollBar()").c_str());
+        lua_getglobal(L, "needs");
+        const bool v = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return v;
+    };
+
+    CHECK(needs("list"));
+    CHECK_FALSE(needs("short"));
+    CHECK(shown() == std::vector<float>{0, 20, 0, 5});
+    run("bar:DoScrollLines(3)");
+    CHECK(shown() == std::vector<float>{0, 20, 3, 8});
+    run("bar:DoScrollPages(1)");
+    CHECK(list->scroll_top() == 8);
+    run("bar:DoScrollLines(100)"); // no further than its last row
+    CHECK(shown() == std::vector<float>{0, 20, 15, 20});
+    run("bar:DoScrollLines(-100)");
+    CHECK(list->scroll_top() == 0);
+    run("list:ScrollToBottom()");
+    CHECK(list->scroll_top() == 15);
+    run("list:ShowItem(2)"); // above: it becomes the top row
+    CHECK(list->scroll_top() == 2);
+    run("list:ShowItem(9)"); // below: it becomes the bottom row
+    CHECK(list->scroll_top() == 5);
+}
+
+TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrolling",
+          "[ui][lua][scroll]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    auto result = lua.do_string(R"(
+        scrolled = 0
+        group = setmetatable({
+            GetScrollValues = function(self, axis) return 0, 30, 6, 16 end,
+            ScrollLines = function(self, axis, delta) scrolled = scrolled + delta end,
+        }, { __index = moho.control_methods })
+        InternalCreateGroup(group, GetFrame(0))
+        bar = setmetatable({}, { __index = moho.scrollbar_methods })
+        InternalCreateScrollbar(bar, GetFrame(0), 'Vert')
+        bar:SetScrollable(group)
+        bar:DoScrollLines(2)
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+
+    lua_State* L = lua.raw();
+    const auto v = osc::ui::scroll_values(L, *control_of(L, "bar"));
+    CHECK(v.range_min == 0);
+    CHECK(v.range_max == 30);
+    CHECK(v.visible_min == 6);
+    CHECK(v.visible_max == 16);
+    lua_getglobal(L, "scrolled");
+    CHECK(lua_tonumber(L, -1) == 2);
+    lua_pop(L, 1);
 }

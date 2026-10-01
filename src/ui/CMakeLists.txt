@@ -6,6 +6,7 @@ add_library(osc_ui STATIC
     font_metrics_provider.cpp
     keymap.cpp
     lazyvar.cpp
+    scroll.cpp
     wld_ui_provider.cpp
     world_view.cpp
 )
