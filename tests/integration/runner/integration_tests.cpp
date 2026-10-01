@@ -15194,6 +15194,45 @@ void test_bitmap(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 12: Bitmap parent linkage failed"); }
     }
 
+    // Test 13: a bitmap's size follows its texture through BitmapWidth/
+    // BitmapHeight, as Moho's CMauiBitmap::SetTexture sets them, unless a
+    // script sized it itself: retail's ResetLayout sizes it by them, the
+    // campaign's faction icons by half of them, and a number stays put.
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local f = Frame('SizeTestFrame')\n"
+            "local big = '/textures/ui/common/dialogs/logo-btn/logo-uef_btn_up.dds'\n"
+            "local small = '/textures/ui/common/scx_menu/campaign-select/icon-video_bmp.dds'\n"
+            "local plain = Bitmap(f, big)\n"
+            "local half = Bitmap(f, big)\n"
+            "half.Width:Set(function() return half.BitmapWidth() * .5 end)\n"
+            "half.Height:Set(function() return half.BitmapHeight() * .5 end)\n"
+            "local fixed = Bitmap(f, big)\n"
+            "fixed.Width:Set(37) fixed.Height:Set(41)\n"
+            "local before = {plain.Width(), plain.Height(), half.Width(), fixed.Width()}\n"
+            "plain:SetTexture(small) half:SetTexture(small) fixed:SetTexture(small)\n"
+            "local after = {plain.Width(), plain.Height(), half.Width(), half.Height(),\n"
+            "               fixed.Width(), fixed.Height()}\n"
+            "LOG('Bitmap sizes: before ' .. repr(before) .. ' after ' .. repr(after))\n"
+            "return before[1] == 80 and before[2] == 80 and before[3] == 40 and before[4] == 37\n"
+            "   and after[1] == 28 and after[2] == 24 and after[3] == 14 and after[4] == 12\n"
+            "   and after[5] == 37 and after[6] == 41\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else spdlog::warn("Test 13 Lua error: {}", result.error().message);
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 13: a bitmap's size follows its texture unless set");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 13: a bitmap's size and its texture's");
+        }
+    }
+
     spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
 }
 
@@ -19382,20 +19421,21 @@ void test_input(TestContext& ctx) {
 
     // --- Test 3: Hit test with positioned control ---
     {
-        int err = do_lua_string(L,
-            "do\n"
-            "local root = GetFrame(0)\n"
-            "rawset(_G, '_test_hit', {})\n"
-            "local btn = rawget(_G, '_test_hit')\n"
-            "setmetatable(btn, {__index = moho.control_methods})\n"
-            "InternalCreateGroup(btn, root)\n"
-            // Position at (100,100) with 200x50 size
-            "btn.Left:Set(100)\n"
-            "btn.Top:Set(100)\n"
-            "btn.Width:Set(200)\n"
-            "btn.Height:Set(50)\n"
-            "end\n"
-        );
+        int err = do_lua_string(L, "do\n"
+                                   "local root = GetFrame(0)\n"
+                                   "rawset(_G, '_test_hit', {})\n"
+                                   "local btn = rawget(_G, '_test_hit')\n"
+                                   "setmetatable(btn, {__index = moho.control_methods})\n"
+                                   "InternalCreateGroup(btn, root)\n"
+                                   // Position at (100,100) with 200x50 size
+                                   "btn.Left:Set(100)\n"
+                                   "btn.Top:Set(100)\n"
+                                   "btn.Width:Set(200)\n"
+                                   "btn.Height:Set(50)\n"
+                                   // Above its parent, as retail's Control.OnInit puts a child (a
+                                   // tie with the frame would be the frame's: the first walked)
+                                   "btn.Depth:Set(1)\n"
+                                   "end\n");
         bool ok = (err == 0);
         if (!ok) {
             spdlog::error("  Lua error: {}", lua_tostring(L, -1));

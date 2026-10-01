@@ -172,6 +172,8 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
         container = box(GetFrame(0), 200, 0, 400, 100, 20)
         container:DisableHitTest()
         child = box(container, 250, 20, 300, 60, 21)
+        first = box(GetFrame(0), 500, 0, 600, 100, 7)   -- a tie: the first made wins
+        later = box(GetFrame(0), 550, 50, 650, 150, 7)
     )");
     INFO((result.ok() ? std::string() : result.error().message));
     REQUIRE(result.ok());
@@ -192,6 +194,64 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
     // A container with hit-testing disabled passes clicks to its children.
     CHECK(dispatch.hit_test(L, root, 260, 30) == control_of(L, "child"));
     CHECK(dispatch.hit_test(L, root, 350, 80) == nullptr);
+    // Equal depths: the first in the walk, the first made (Moho's
+    // GetTopmostControl keeps a control only for a deeper one). Retail's
+    // score screen has its page group over its Continue button so.
+    CHECK(dispatch.hit_test(L, root, 575, 75) == control_of(L, "first"));
+    CHECK(dispatch.hit_test(L, root, 625, 125) == control_of(L, "later"));
+}
+
+TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's", "[ui][lua]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        local function group(parent)
+            local c = {}
+            setmetatable(c, { __index = moho.control_methods })
+            InternalCreateGroup(c, parent)
+            return c
+        end
+        heard = {}
+        parent = group(GetFrame(0))
+        child = group(parent)
+        child.OnHide = function(self, hidden) table.insert(heard, hidden) end
+        -- A Window's border sits beside it, hidden by its OnHide
+        beside = group(GetFrame(0))
+        parent.OnHide = function(self, hidden) beside:SetHidden(hidden) end
+        -- An OnHide returning true keeps its control, and its children, as they are
+        keeper = group(GetFrame(0))
+        kept = group(keeper)
+        keeper.OnHide = function() return true end
+
+        parent:Hide()
+        hidden_then = {parent:IsHidden(), child:IsHidden(), beside:IsHidden()}
+        parent:Show()
+        shown_then = {parent:IsHidden(), child:IsHidden(), beside:IsHidden()}
+        keeper:Hide()
+        kept_then = {keeper:IsHidden(), kept:IsHidden()}
+        movie = {}
+        setmetatable(movie, { __index = moho.control_methods })
+        InternalCreateMovie(movie, GetFrame(0))
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    auto check = lua.do_string(R"(
+        local function show(t)
+            return tostring(t[1]) .. ',' .. tostring(t[2]) .. ',' .. tostring(t[3])
+        end
+        assert(hidden_then[1] and hidden_then[2] and hidden_then[3], 'Hide: ' .. show(hidden_then))
+        assert(not shown_then[1] and not shown_then[2] and not shown_then[3],
+               'Show: ' .. show(shown_then))
+        assert(heard[1] == true and heard[2] == false, 'OnHide heard ' .. show(heard))
+        assert(not kept_then[1] and not kept_then[2], 'kept: ' .. show(kept_then))
+        -- A movie takes clicks unless a script says not (a timeline's skip)
+        assert(not movie:IsHitTestDisabled(), 'a movie is hit-tested')
+    )");
+    INFO((check.ok() ? std::string() : check.error().message));
+    CHECK(check.ok());
 }
 
 TEST_CASE("A frame's topmost depth is its deepest live control's, as Moho's", "[ui][lua]") {
