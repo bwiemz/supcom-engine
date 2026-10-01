@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <cstring>
 #include <ostream>
 #include <string>
@@ -84,6 +85,59 @@ f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors
     return (static_cast<f32>(index) + 0.5f) / static_cast<f32>(count);
 }
 
+u32 grown_capacity(u32 have, u32 need, u32 limit) {
+    u64 capacity = std::max<u32>(have, 1);
+    while (capacity < need && capacity < limit) capacity *= 2;
+    return static_cast<u32>(std::min<u64>(capacity, std::max(have, limit)));
+}
+
+bool UnitRenderer::reserve(MappedBuffer& buffer, u32 need, VkDeviceSize size,
+                           VkBufferUsageFlags usage, u32 limit) {
+    if (need <= buffer.capacity) return true;
+    const u32 capacity = grown_capacity(buffer.capacity, need, limit);
+    if (capacity > buffer.capacity && allocator_) {
+        VkBufferCreateInfo ci{};
+        ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        ci.size = static_cast<VkDeviceSize>(capacity) * size;
+        ci.usage = usage;
+
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+        MappedBuffer grown;
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(allocator_, &ci, &alloc_ci, &grown.buf.buffer, &grown.buf.allocation,
+                            &info) == VK_SUCCESS &&
+            info.pMappedData) {
+            // The slot's last frame is done with the old one (its fence was
+            // waited on before the frame's updates).
+            release(buffer);
+            grown.mapped = info.pMappedData;
+            grown.capacity = capacity;
+            buffer = grown;
+        } else if (grown.buf.buffer) {
+            vmaDestroyBuffer(allocator_, grown.buf.buffer, grown.buf.allocation);
+        }
+    }
+    if (need <= buffer.capacity) return true;
+    if (!warned_full_) {
+        spdlog::warn("UnitRenderer: a frame needs {} elements of {} bytes, but its buffer holds "
+                     "{}; the rest go undrawn",
+                     need, size, buffer.capacity);
+        warned_full_ = true;
+    }
+    return false;
+}
+
+void UnitRenderer::release(MappedBuffer& buffer) {
+    if (buffer.buf.buffer && allocator_)
+        vmaDestroyBuffer(allocator_, buffer.buf.buffer, buffer.buf.allocation);
+    buffer = {};
+}
+
 /// Build column-major 4x4 model matrix from position + quaternion + non-uniform scale.
 static void build_model_matrix(f32* out, const sim::Vector3& pos,
                                 const sim::Quaternion& q,
@@ -155,55 +209,18 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
                                   cube_indices, sizeof(cube_indices),
                                   VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-    // Host-visible cube instance buffer (persistently mapped)
-    auto create_instance_buf = [&](AllocatedBuffer& buf, void*& mapped,
-                                    VkDeviceSize elem_size) {
-        VkBufferCreateInfo ci{};
-        ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        ci.size = MAX_INSTANCES * elem_size;
-        ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-        VmaAllocationCreateInfo alloc_ci{};
-        alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-        alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-        VmaAllocationInfo info{};
-        vmaCreateBuffer(allocator, &ci, &alloc_ci,
-                        &buf.buffer, &buf.allocation, &info);
-        mapped = info.pMappedData;
-    };
-
+    // The per-frame instance buffers and bone SSBO (persistently mapped),
+    // which update() grows as a frame needs.
+    allocator_ = allocator;
+    warned_full_ = false;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        create_instance_buf(cube_instance_buf_[i], cube_instance_mapped_[i],
-                            sizeof(CubeInstance));
-        create_instance_buf(mesh_instance_buf_[i], mesh_instance_mapped_[i],
-                            sizeof(MeshInstance));
-    }
-
-    // Bone SSBO (persistently mapped, for GPU skinning, per-frame)
-    {
-        VkBufferCreateInfo ci{};
-        ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        // MAX_INSTANCES * MAX_BONES_PER_UNIT * sizeof(mat4) = 8192*64*64 = 32MB
-        ci.size = static_cast<VkDeviceSize>(MAX_INSTANCES) *
-                  MAX_BONES_PER_UNIT * sizeof(f32) * 16;
-        ci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-
-        VmaAllocationCreateInfo alloc_ci{};
-        alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-        alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-        for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
-            VmaAllocationInfo info{};
-            vmaCreateBuffer(allocator, &ci, &alloc_ci,
-                            &bone_ssbo_[i].buffer, &bone_ssbo_[i].allocation,
-                            &info);
-            bone_ssbo_mapped_[i] = info.pMappedData;
-        }
+        reserve(cubes_[i], kInitialCubes, sizeof(CubeInstance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                kMaxInstances);
+        reserve(meshes_[i], kInitialMeshInstances, sizeof(MeshInstance),
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, kMaxInstances);
+        reserve(bones_[i], kInitialBones, sizeof(f32) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                kMaxBones);
+        ++bone_generation_[i];
     }
 }
 
@@ -227,14 +244,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                            const std::unordered_set<u32>* selected_ids,
                            const Frustum* frustum) {
     mesh_groups_.clear();
+    cube_instance_count_ = 0;
 
-    if (!cube_instance_mapped_[fi_] || !mesh_instance_mapped_[fi_]) return;
+    if (!cubes_[fi_].mapped || !meshes_[fi_].mapped) return;
 
-    auto* cube_instances = static_cast<CubeInstance*>(cube_instance_mapped_[fi_]);
-    auto* mesh_instances = static_cast<MeshInstance*>(mesh_instance_mapped_[fi_]);
-    auto* bone_data = bone_ssbo_mapped_[fi_]
-                          ? static_cast<f32*>(bone_ssbo_mapped_[fi_]) : nullptr;
-    u32 cube_count = 0;
+    cube_scratch_.clear();
     u32 mesh_count = 0;
 
     // Frustum culling replaces old distance-only prop culling
@@ -251,6 +265,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     struct GroupData {
         std::vector<MeshInstance> instances;
         std::vector<InstanceBones> bones;
+        u32 bones_per_instance = 0; // the most any of its instances has
     };
     // Opaque instances (0), then blended ones (1): a build technique's or a
     // build effect's, which blend by their own alpha with pipelines of their
@@ -286,8 +301,6 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
         if (!shows_mesh(sight)) return;
         const bool remembered = sight == Sight::Remembered;
-
-        if (cube_count + mesh_count >= MAX_INSTANCES) return;
 
         const sim::Vector3 pos = view.position(entity);
         // Another army's shield or script entity shows where the player's
@@ -345,7 +358,6 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         }
 
         if (gpu) {
-            if (mesh_count >= MAX_INSTANCES) return;
             MeshInstance inst{};
             f32 sx = entity.scale_x * mesh_scale;
             f32 sy = entity.scale_y * mesh_scale;
@@ -404,6 +416,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
                 gd.bones.push_back({entity.id, bc, entity.hidden_bones,
                                     remembered ? recon_->frozen_pose(entity.id) : nullptr});
+                gd.bones_per_instance = std::max(gd.bones_per_instance, bc);
             } else {
                 gd.bones.push_back({0, 0});
             }
@@ -414,28 +427,40 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             // only carry effects (NullShell, the ACU's warp-in) and markers.
             // A unit without one is a gap worth seeing, so it stands in as a
             // cube in its army's colour.
-            if (cube_count >= MAX_INSTANCES) return;
-            auto& inst = cube_instances[cube_count];
-            inst.x = pos.x;
-            inst.y = pos.y;
-            inst.z = pos.z;
-            inst.scale = 2.0f;
-            inst.r = r;
-            inst.g = g;
-            inst.b = b;
-            inst.a = a;
-            cube_count++;
+            cube_scratch_.push_back({pos.x, pos.y, pos.z, 2.0f, r, g, b, a});
         }
     };
     for (const sim::EntityRecord& entity : view.entities()) draw(entity);
     if (recon_)
         for (const sim::EntityRecord& ghost : recon_->ghosts()) draw(ghost);
 
-    cube_instance_count_ = cube_count;
-
     // Entities gone since the last update take their mesh instances with them.
     for (auto it = births_.begin(); it != births_.end();)
         it = it->second.frame == frame_ ? std::next(it) : births_.erase(it);
+
+    // The slot's buffers grow to hold the frame: its cubes, its mesh
+    // instances and the build ghost's, and its groups' bones. What a buffer
+    // can't hold (past its limit, or with no memory to grow) goes undrawn.
+    u64 bone_need = 0;
+    for (const auto& by_fading : mesh_groups)
+        for (const auto& by_reflection : by_fading)
+            for (const auto& [gpu, gd] : by_reflection)
+                bone_need += u64{gd.bones_per_instance} * gd.instances.size();
+    reserve(cubes_[fi_], static_cast<u32>(cube_scratch_.size()), sizeof(CubeInstance),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, kMaxInstances);
+    reserve(meshes_[fi_], mesh_count + 1, sizeof(MeshInstance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            kMaxInstances);
+    const u32 bone_capacity = bones_[fi_].capacity;
+    reserve(bones_[fi_],
+            static_cast<u32>(std::min<u64>(bone_need, std::numeric_limits<u32>::max())),
+            sizeof(f32) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, kMaxBones);
+    if (bones_[fi_].capacity != bone_capacity) ++bone_generation_[fi_];
+
+    cube_instance_count_ = std::min(static_cast<u32>(cube_scratch_.size()), cubes_[fi_].capacity);
+    std::memcpy(cubes_[fi_].mapped, cube_scratch_.data(),
+                cube_instance_count_ * sizeof(CubeInstance));
+    auto* mesh_instances = static_cast<MeshInstance*>(meshes_[fi_].mapped);
+    auto* bone_data = static_cast<f32*>(bones_[fi_].mapped);
 
     // Flatten mesh groups into contiguous instance buffer + bone SSBO
     u32 offset = 0;
@@ -444,17 +469,16 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     // A hidden bone's skinning matrix (column-major): nothing but y -1000.
     static constexpr f32 kHiddenBone[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1000, 0, 1};
-    u32 max_bone_entries = MAX_INSTANCES * MAX_BONES_PER_UNIT;
+    const u32 max_bone_entries = bones_[fi_].capacity;
+    const u32 max_instances = meshes_[fi_].capacity;
     std::vector<sim::BoneMatrix> blended; // this frame's pose, between ticks
 
     mesh_groups_.clear();
     for (int fading = 0; fading < 2; ++fading)
         for (int reflected = 0; reflected < 2; ++reflected)
             for (auto& [gpu, gd] : mesh_groups[fading][reflected]) {
-                u32 count = static_cast<u32>(gd.instances.size());
-                if (offset + count > MAX_INSTANCES) {
-                    count = MAX_INSTANCES - offset;
-                }
+                const u32 count =
+                    std::min(static_cast<u32>(gd.instances.size()), max_instances - offset);
                 std::memcpy(mesh_instances + offset, gd.instances.data(),
                             count * sizeof(MeshInstance));
 
@@ -465,12 +489,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 group.fading = fading == 1;
                 group.reflected = reflected == 1;
 
-                // Determine bones_per_instance: use max across the group
+                // Each instance gets the most bones any in the group has
                 // (all instances in a group share the same blueprint/mesh)
-                u32 group_bones = 0;
-                for (u32 i = 0; i < count; i++) {
-                    if (gd.bones[i].bone_count > group_bones) group_bones = gd.bones[i].bone_count;
-                }
+                const u32 group_bones = gd.bones_per_instance;
 
                 // Write bone matrices to SSBO
                 group.bone_base_offset = bone_offset;
@@ -572,14 +593,14 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
                                  f32 r, f32 g, f32 b, f32 a,
                                  TextureCache* tex_cache) {
-    if (!mesh || !mesh_instance_mapped_[fi_]) return false;
+    if (!mesh || !meshes_[fi_].mapped) return false;
 
-    // Count total instances already used
+    // Count total instances already used (update() left room for one more)
     u32 total = 0;
     for (auto& g : mesh_groups_) total += g.instance_count;
-    if (total >= MAX_INSTANCES) return false;
+    if (total >= meshes_[fi_].capacity) return false;
 
-    auto* instances = static_cast<MeshInstance*>(mesh_instance_mapped_[fi_]);
+    auto* instances = static_cast<MeshInstance*>(meshes_[fi_].mapped);
     auto& inst = instances[total];
 
     // Identity rotation, uniform_scale from mesh
@@ -655,14 +676,13 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
 
     safe_destroy(cube_verts_);
     safe_destroy(cube_indices_);
+    allocator_ = allocator;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        safe_destroy(cube_instance_buf_[i]);
-        safe_destroy(mesh_instance_buf_[i]);
-        safe_destroy(bone_ssbo_[i]);
-        cube_instance_mapped_[i] = nullptr;
-        mesh_instance_mapped_[i] = nullptr;
-        bone_ssbo_mapped_[i] = nullptr;
+        release(cubes_[i]);
+        release(meshes_[i]);
+        release(bones_[i]);
     }
+    allocator_ = VK_NULL_HANDLE;
     cube_instance_count_ = 0;
     mesh_groups_.clear();
 }
@@ -677,8 +697,8 @@ void UnitRenderer::dump(std::ostream& out) const {
         return h;
     };
     std::vector<std::string> lines;
-    const auto* meshes = static_cast<const MeshInstance*>(mesh_instance_mapped_[fi_]);
-    const auto* bones = static_cast<const f32*>(bone_ssbo_mapped_[fi_]);
+    const auto* meshes = static_cast<const MeshInstance*>(meshes_[fi_].mapped);
+    const auto* bones = static_cast<const f32*>(bones_[fi_].mapped);
     for (const auto& g : mesh_groups_) {
         for (u32 i = 0; meshes && i < g.instance_count; ++i) {
             const MeshInstance& m = meshes[g.instance_offset + i];
@@ -695,7 +715,7 @@ void UnitRenderer::dump(std::ostream& out) const {
             lines.push_back(std::move(line));
         }
     }
-    const auto* cubes = static_cast<const CubeInstance*>(cube_instance_mapped_[fi_]);
+    const auto* cubes = static_cast<const CubeInstance*>(cubes_[fi_].mapped);
     for (u32 i = 0; cubes && i < cube_instance_count_; ++i) {
         const CubeInstance& c = cubes[i];
         lines.push_back(fmt::format("cube {:.4f} {:.4f} {:.4f} {:.3f} | {:.3f} {:.3f} {:.3f} {:.3f}",

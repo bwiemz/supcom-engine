@@ -176,6 +176,14 @@ public:
     const ParticleSystem& particle_system() const { return particle_system_; }
     /// The meshes this frame draws, in their groups (M211k's tests).
     const UnitRenderer& unit_renderer() const { return unit_renderer_; }
+    /// Each frame slot's bone set was written with the unit renderer's SSBO
+    /// for that slot as it is now (it is a new buffer once it grows).
+    bool bone_sets_current() const {
+        for (u32 fi = 0; fi < FRAMES_IN_FLIGHT; ++fi)
+            if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))
+                return false;
+        return true;
+    }
     /// The last frame's mesh draw calls in the view (the water's reflection
     /// not counted) drawn as `technique`, each pass one: Cybran's shield
     /// draws twice (M211k); a personal shield's unit counts as its base
@@ -488,6 +496,11 @@ private:
     VkDescriptorSetLayout bone_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool bone_ds_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet bone_ds_[FRAMES_IN_FLIGHT] = {};
+    /// The unit renderer's bone SSBO each set was last written with
+    /// (bone_ssbo_generation): the SSBO is a new buffer when it grows.
+    u32 bone_ds_generation_[FRAMES_IN_FLIGHT] = {};
+    /// Point slot `fi`'s bone set at the unit renderer's SSBO for that slot.
+    void write_bone_descriptor(u32 fi);
 
     // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
     VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;

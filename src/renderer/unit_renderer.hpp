@@ -49,6 +49,10 @@ struct MeshInstance {
 /// 0 for no army), clamped below n, the count of PlayerColors (at least 1).
 f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors);
 
+/// A per-frame buffer's new capacity to hold `need` elements: `have`
+/// doubled until it does, but not past `limit` (so it may fall short).
+u32 grown_capacity(u32 have, u32 need, u32 limit);
+
 /// A group of instances sharing the same GPU mesh.
 struct MeshDrawGroup {
     const GPUMesh* mesh = nullptr;
@@ -105,7 +109,7 @@ public:
     // --- Cube fallback accessors ---
     VkBuffer cube_vertex_buffer() const { return cube_verts_.buffer; }
     VkBuffer cube_index_buffer() const { return cube_indices_.buffer; }
-    VkBuffer cube_instance_buffer() const { return cube_instance_buf_[fi_].buffer; }
+    VkBuffer cube_instance_buffer() const { return cubes_[fi_].buf.buffer; }
     u32 cube_index_count() const { return 36; }
     u32 cube_instance_count() const { return cube_instance_count_; }
 
@@ -113,14 +117,21 @@ public:
     const std::vector<MeshDrawGroup>& mesh_groups() const {
         return mesh_groups_;
     }
-    VkBuffer mesh_instance_buffer() const { return mesh_instance_buf_[fi_].buffer; }
+    VkBuffer mesh_instance_buffer() const { return meshes_[fi_].buf.buffer; }
     /// This frame's mesh instances, which the groups' offsets index (the
     /// tests read a shield's transform and parameter; M211k).
     const MeshInstance* mesh_instances() const {
-        return static_cast<const MeshInstance*>(mesh_instance_mapped_[fi_]);
+        return static_cast<const MeshInstance*>(meshes_[fi_].mapped);
     }
-    VkBuffer bone_ssbo_buffer(u32 fi) const { return bone_ssbo_[fi].buffer; }
-    VkBuffer bone_ssbo_buffer() const { return bone_ssbo_[fi_].buffer; }
+    VkBuffer bone_ssbo_buffer(u32 fi) const { return bones_[fi].buf.buffer; }
+    VkBuffer bone_ssbo_buffer() const { return bones_[fi_].buf.buffer; }
+    /// Counts the times slot `fi`'s bone SSBO was made: update() replaces it
+    /// when it grows, and its descriptor set must then be written again.
+    u32 bone_ssbo_generation(u32 fi) const { return bone_generation_[fi]; }
+    /// How many mesh instances, cubes and bone matrices slot `fi` holds now.
+    u32 mesh_capacity(u32 fi) const { return meshes_[fi].capacity; }
+    u32 cube_capacity(u32 fi) const { return cubes_[fi].capacity; }
+    u32 bone_capacity(u32 fi) const { return bones_[fi].capacity; }
 
     /// FA's `time` for this frame: the newest tick plus the interpolant
     /// toward it, wrapped as instance times are (MeshRenderer::ConfigureShader).
@@ -138,27 +149,53 @@ public:
     /// colour and a digest of the bone pose (the render-state dump).
     void dump(std::ostream& out) const;
 
-    static constexpr u32 MAX_INSTANCES = 8192;
     static constexpr u32 MAX_BONES_PER_UNIT = 64;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
+    /// What each frame's buffers hold to start with; update() doubles them
+    /// as a frame needs more. (A fixed 8192 instances left a whole map's
+    /// worst meshes undrawn.)
+    static constexpr u32 kInitialMeshInstances = 2048;
+    static constexpr u32 kInitialCubes = 64;
+    static constexpr u32 kInitialBones = 4096; ///< matrices: ~300 units' worth
+    /// The most mesh instances or cubes a frame holds.
+    static constexpr u32 kMaxInstances = 1u << 20;
+    /// The most bone matrices: 128 MB, the storage buffer range every
+    /// Vulkan device binds (maxStorageBufferRange's minimum).
+    static constexpr u32 kMaxBones = (1u << 27) / (16 * sizeof(f32));
+
 private:
+    /// A per-frame buffer, persistently mapped, and how many elements it holds.
+    struct MappedBuffer {
+        AllocatedBuffer buf{};
+        void* mapped = nullptr;
+        u32 capacity = 0;
+    };
+
+    /// Make `buffer` hold `need` elements of `size` bytes, growing it to
+    /// grown_capacity(), which drops what it held. False if it can't hold
+    /// them all: it keeps what it has, and the frame draws what fits.
+    bool reserve(MappedBuffer& buffer, u32 need, VkDeviceSize size, VkBufferUsageFlags usage,
+                 u32 limit);
+    void release(MappedBuffer& buffer);
+
     u32 fi_ = 0; // current frame index for double-buffering
+    VmaAllocator allocator_ = VK_NULL_HANDLE;
 
     // Cube fallback geometry
     AllocatedBuffer cube_verts_{};
     AllocatedBuffer cube_indices_{};
-    AllocatedBuffer cube_instance_buf_[FRAMES_IN_FLIGHT] = {};
-    void* cube_instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    MappedBuffer cubes_[FRAMES_IN_FLIGHT];
     u32 cube_instance_count_ = 0;
+    std::vector<CubeInstance> cube_scratch_; // this frame's cubes, before they're copied
 
     // Mesh instance buffer (shared across all mesh groups)
-    AllocatedBuffer mesh_instance_buf_[FRAMES_IN_FLIGHT] = {};
-    void* mesh_instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    MappedBuffer meshes_[FRAMES_IN_FLIGHT];
 
     // Bone SSBO (all bone matrices for all mesh instances)
-    AllocatedBuffer bone_ssbo_[FRAMES_IN_FLIGHT] = {};
-    void* bone_ssbo_mapped_[FRAMES_IN_FLIGHT] = {};
+    MappedBuffer bones_[FRAMES_IN_FLIGHT];
+    u32 bone_generation_[FRAMES_IN_FLIGHT] = {};
+    bool warned_full_ = false; // a frame fell short of a limit (logged once)
 
     // Per-frame draw groups (rebuilt each frame)
     std::vector<MeshDrawGroup> mesh_groups_;
