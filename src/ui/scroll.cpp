@@ -24,6 +24,23 @@ ThumbSpan thumb_span(const ScrollValues& values, f32 track, f32 min_length) {
     return {std::clamp(start, 0.0f, track - length), length};
 }
 
+TrackPart track_part(const ThumbSpan& thumb, f32 at) {
+    if (at < thumb.start) {
+        return TrackPart::Before;
+    }
+    return at < thumb.start + thumb.length ? TrackPart::Thumb : TrackPart::After;
+}
+
+f32 dragged_top(const ScrollValues& values, f32 track, f32 length, f32 start) {
+    const f32 travel = track - length;
+    const f32 tops =
+        (values.range_max - values.range_min) - (values.visible_max - values.visible_min);
+    if (travel <= 0 || tops <= 0) {
+        return values.visible_min;
+    }
+    return values.range_min + tops * std::clamp(start, 0.0f, travel) / travel;
+}
+
 f32 item_list_row_height(const UIControl& list) {
     const f32 line =
         FontMetricsProvider::instance().line_height(list.font_family(), list.font_pointsize());
@@ -61,6 +78,22 @@ UIControl* push_scrollable(lua_State* L, const UIControl& scrollbar) {
     auto* control = static_cast<UIControl*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     return control;
+}
+
+/// The pushed scrollable's `method`(axis, amount), if it has one
+void call_scrollable(lua_State* L, const UIControl& scrollbar, const char* method, f32 amount) {
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushvalue(L, -2);
+    lua_pushstring(L, scrollbar.scroll_axis().c_str());
+    lua_pushnumber(L, amount);
+    if (lua_pcall(L, 3, 0, 0) != 0) {
+        lua_pop(L, 1);
+    }
 }
 
 } // namespace
@@ -118,19 +151,31 @@ ScrollValues scroll_values(lua_State* L, const UIControl& scrollbar) {
     return values;
 }
 
-bool scroll_item_list_of(lua_State* L, const UIControl& scrollbar, f32 amount, bool pages) {
+void scroll_by(lua_State* L, const UIControl& scrollbar, f32 amount, bool pages) {
     const int top = lua_gettop(L);
     UIControl* scrollable = push_scrollable(L, scrollbar);
-    const bool item_list =
-        scrollable && scrollable->control_type() == UIControl::ControlType::ItemList;
-    if (item_list) {
+    if (scrollable && scrollable->control_type() == UIControl::ControlType::ItemList) {
         const f32 height = read_lazyvar(L, -1, "Height");
         const f32 lines =
             pages ? amount * static_cast<f32>(shown_rows(*scrollable, height)) : amount;
         scroll_item_list(*scrollable, height, static_cast<i32>(std::lround(lines)));
+    } else if (lua_gettop(L) > top) {
+        call_scrollable(L, scrollbar, pages ? "ScrollPages" : "ScrollLines", amount);
     }
     lua_settop(L, top);
-    return item_list;
+}
+
+void scroll_set_top(lua_State* L, const UIControl& scrollbar, f32 top_row) {
+    const int top = lua_gettop(L);
+    UIControl* scrollable = push_scrollable(L, scrollbar);
+    if (scrollable && scrollable->control_type() == UIControl::ControlType::ItemList) {
+        const f32 height = read_lazyvar(L, -1, "Height");
+        scrollable->set_scroll_top(
+            clamped_top(*scrollable, height, static_cast<i32>(std::lround(top_row))));
+    } else if (lua_gettop(L) > top) {
+        call_scrollable(L, scrollbar, "ScrollSetTop", top_row);
+    }
+    lua_settop(L, top);
 }
 
 } // namespace osc::ui

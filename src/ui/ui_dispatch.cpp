@@ -6,6 +6,7 @@
 #include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
 #include "ui/lazyvar.hpp"
+#include "ui/scroll.hpp"
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
 #include "core/test_status.hpp"
@@ -414,6 +415,15 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         }
         if (!has_dragger) lua_pop(L, 1); // pop nil
 
+        // A dragged scrollbar thumb has the mouse until its button is let go
+        if (thumb_drag_ && thumb_drag_->destroyed()) thumb_drag_ = nullptr;
+        if (thumb_drag_ &&
+            (ev.type == UIEventType::MOUSE_MOTION ||
+             (ev.type == UIEventType::BUTTON_RELEASE && ev.key_code == GLFW_MOUSE_BUTTON_LEFT))) {
+            drag_thumb(L, ev);
+            continue;
+        }
+
         // Keys (Moho): the focused control has them, and they go no further;
         // with no focus, the top input capture; with neither, the key map,
         // for a key going down (CUIKeyHandler sits below the controls).
@@ -478,6 +488,16 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             }
         }
 
+        // A scrollbar takes a left press its script leaves
+        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
+            target && !target->destroyed() &&
+            target->control_type() == UIControl::ControlType::Scrollbar) {
+            if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
+                press_scrollbar(L, target, ev);
+            }
+            continue;
+        }
+
         // Dispatch to hit target, then walk up ancestors.
         // If no one consumes a click, retry hit-test skipping the
         // already-tried leaf — this lets sibling controls (e.g. Combo)
@@ -508,6 +528,67 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             }
         }
     }
+}
+
+namespace {
+
+/// A mouse event's place along a scrollbar's track, and the track's length
+struct TrackPoint {
+    f32 at = 0;
+    f32 track = 0;
+};
+
+TrackPoint track_point(lua_State* L, const UIControl& bar, const UIEvent& ev) {
+    TrackPoint point;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, bar.lua_table_ref());
+    const int tbl = lua_gettop(L);
+    if (lua_istable(L, tbl)) {
+        const auto rect =
+            control_rect(read_lazyvar(L, tbl, "Left"), read_lazyvar(L, tbl, "Top"),
+                         read_lazyvar(L, tbl, "Right"), read_lazyvar(L, tbl, "Bottom"),
+                         read_lazyvar(L, tbl, "Width"), read_lazyvar(L, tbl, "Height"));
+        const bool vert = bar.scroll_axis() == "Vert";
+        point.at = static_cast<f32>(vert ? ev.mouse_y - rect.y : ev.mouse_x - rect.x);
+        point.track = vert ? rect.h : rect.w;
+    }
+    lua_settop(L, tbl - 1);
+    return point;
+}
+
+/// The thumb where it was drawn; before its first frame, where it would be
+ThumbSpan bar_thumb(lua_State* L, const UIControl& bar, f32 track) {
+    if (bar.drawn_thumb_length() > 0) {
+        return {bar.drawn_thumb_start(), bar.drawn_thumb_length()};
+    }
+    return thumb_span(scroll_values(L, bar), track, 16.0f);
+}
+
+} // namespace
+
+void UIDispatch::press_scrollbar(lua_State* L, UIControl* bar, const UIEvent& ev) {
+    const TrackPoint point = track_point(L, *bar, ev);
+    const ThumbSpan thumb = bar_thumb(L, *bar, point.track);
+    switch (track_part(thumb, point.at)) {
+    case TrackPart::Thumb:
+        thumb_drag_ = bar;
+        thumb_grab_ = point.at - thumb.start;
+        break;
+    case TrackPart::Before: scroll_by(L, *bar, -1, true); break;
+    case TrackPart::After: scroll_by(L, *bar, 1, true); break;
+    }
+}
+
+void UIDispatch::drag_thumb(lua_State* L, const UIEvent& ev) {
+    UIControl* bar = thumb_drag_;
+    if (ev.type == UIEventType::BUTTON_RELEASE) {
+        thumb_drag_ = nullptr;
+        return;
+    }
+    const TrackPoint point = track_point(L, *bar, ev);
+    const ThumbSpan thumb = bar_thumb(L, *bar, point.track);
+    scroll_set_top(
+        L, *bar,
+        dragged_top(scroll_values(L, *bar), point.track, thumb.length, point.at - thumb_grab_));
 }
 
 void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,

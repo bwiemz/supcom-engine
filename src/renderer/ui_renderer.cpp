@@ -368,6 +368,7 @@ void UIRenderer::emit_scrollbar_quads(lua_State* L, ui::UIControl* ctrl,
     const f32 bottom_len = cap_len(cap_bottom);
     const ui::ThumbSpan span = ui::thumb_span(ui::scroll_values(L, *ctrl), is_vert ? height : width,
                                               std::max(top_len + bottom_len, 16.0f));
+    ctrl->set_drawn_thumb(span.start, span.length);
 
     const auto emit = [&](const GPUTexture* tex, f32 from, f32 length) {
         if (!tex || length <= 0 || quad_count_ >= MAX_UI_QUADS) {

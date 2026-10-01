@@ -245,6 +245,14 @@ public:
     void set_sb_thumb_bot(const std::string& t) { sb_thumb_bot_ = t; }
     int scrollable_ref() const { return scrollable_ref_; }
     void set_scrollable_ref(int ref) { scrollable_ref_ = ref; }
+    /// The thumb as last drawn, along the track from its start: where the
+    /// mouse finds it
+    f32 drawn_thumb_start() const { return drawn_thumb_start_; }
+    f32 drawn_thumb_length() const { return drawn_thumb_length_; }
+    void set_drawn_thumb(f32 start, f32 length) {
+        drawn_thumb_start_ = start;
+        drawn_thumb_length_ = length;
+    }
 
     // --- Border state ---
     const std::string& border_tex_vert() const { return border_tex_vert_; }
@@ -386,6 +394,8 @@ private:
     std::string sb_thumb_top_;
     std::string sb_thumb_bot_;
     int scrollable_ref_ = -2; // LUA_NOREF
+    f32 drawn_thumb_start_ = 0;
+    f32 drawn_thumb_length_ = 0;
 
     // Border state
     std::string border_tex_vert_;
