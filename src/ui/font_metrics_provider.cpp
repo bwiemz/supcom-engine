@@ -5,9 +5,74 @@
 #include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace osc::ui {
+
+namespace {
+
+/// GDI rounds a scaled design unit to the nearest pixel
+i32 gdi_round(f32 v) {
+    return static_cast<i32>(std::floor(v + 0.5f));
+}
+
+/// The tables GDI's text metrics come from. VDMX's group for square pixels
+/// is the first whose ratio range holds 1:1, or one for every ratio (0:0).
+GdiFontTables read_gdi_tables(const stbtt_fontinfo& info) {
+    GdiFontTables t;
+    stbtt_uint8* data = info.data;
+    t.units_per_em = ttUSHORT(data + info.head + 18);
+    t.hhea_ascender = ttSHORT(data + info.hhea + 4);
+    t.hhea_descender = -ttSHORT(data + info.hhea + 6);
+    t.hhea_line_gap = ttSHORT(data + info.hhea + 8);
+    t.win_ascent = t.hhea_ascender;
+    t.win_descent = t.hhea_descender;
+    if (const stbtt_uint32 os2 = stbtt__find_table(data, info.fontstart, "OS/2")) {
+        t.win_ascent = ttUSHORT(data + os2 + 74);
+        t.win_descent = ttUSHORT(data + os2 + 76);
+    }
+    const stbtt_uint32 vdmx = stbtt__find_table(data, info.fontstart, "VDMX");
+    if (vdmx == 0) {
+        return t;
+    }
+    const i32 ratios = ttUSHORT(data + vdmx + 4);
+    for (i32 i = 0; i < ratios; ++i) {
+        const stbtt_uint8* r = data + vdmx + 6 + 4 * i;
+        const bool any = r[1] == 0 && r[2] == 0 && r[3] == 0;
+        if (!any && (r[2] > r[1] || r[1] > r[3])) {
+            continue;
+        }
+        stbtt_uint8* group = data + vdmx + ttUSHORT(data + vdmx + 6 + 4 * ratios + 2 * i);
+        const i32 records = ttUSHORT(group);
+        for (i32 k = 0; k < records; ++k) {
+            stbtt_uint8* rec = group + 4 + 6 * k;
+            t.vdmx[ttUSHORT(rec)] = {ttSHORT(rec + 2), -ttSHORT(rec + 4)};
+        }
+        break;
+    }
+    return t;
+}
+
+} // namespace
+
+i32 gdi_line_height(const GdiFontTables& t, i32 ppem) {
+    if (t.units_per_em <= 0) {
+        return 0;
+    }
+    const f32 scale = static_cast<f32>(ppem) / static_cast<f32>(t.units_per_em);
+    i32 ascent = gdi_round(static_cast<f32>(t.win_ascent) * scale);
+    i32 descent = gdi_round(static_cast<f32>(t.win_descent) * scale);
+    if (auto it = t.vdmx.find(ppem); it != t.vdmx.end()) {
+        ascent = it->second.first;
+        descent = it->second.second;
+    }
+    // The hhea line gap less what the win ascent and descent already add
+    const i32 gap =
+        t.hhea_line_gap - ((t.win_ascent + t.win_descent) - (t.hhea_ascender + t.hhea_descender));
+    const i32 external_leading = std::max(0, gdi_round(static_cast<f32>(gap) * scale));
+    return ascent + descent + external_leading;
+}
 
 static_assert(sizeof(stbtt_fontinfo) <= 512,
               "stbtt_fontinfo size assumption — bump storage if needed");
@@ -84,6 +149,7 @@ FontMetricsProvider::CachedFont* FontMetricsProvider::load_ttf(const std::string
         return nullptr;
     }
 
+    cf.gdi = read_gdi_tables(*info);
     cf.valid = true;
     font_cache_[font_path] = std::move(cf);
     return &font_cache_[font_path];
@@ -121,6 +187,14 @@ bool FontMetricsProvider::get_metrics(const std::string& family, i32 pointsize,
     if (!cm) return false;
     out = cm->metrics;
     return true;
+}
+
+f32 FontMetricsProvider::line_height(const std::string& family, i32 pointsize) {
+    CachedFont* cf = load_ttf(resolve_font_path(family));
+    if (!cf) {
+        return -1.0f;
+    }
+    return static_cast<f32>(gdi_line_height(cf->gdi, pointsize));
 }
 
 f32 FontMetricsProvider::string_advance(const std::string& family, i32 pointsize,

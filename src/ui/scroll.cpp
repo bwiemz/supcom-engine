@@ -25,9 +25,10 @@ ThumbSpan thumb_span(const ScrollValues& values, f32 track, f32 min_length) {
 }
 
 f32 item_list_row_height(const UIControl& list) {
-    FontMetricsProvider::Metrics m{};
-    if (FontMetricsProvider::instance().get_metrics(list.font_family(), list.font_pointsize(), m)) {
-        return m.ascent + m.descent + 4.0f;
+    const f32 line =
+        FontMetricsProvider::instance().line_height(list.font_family(), list.font_pointsize());
+    if (line > 0) {
+        return line;
     }
     return static_cast<f32>(list.font_pointsize()) + 4.0f;
 }

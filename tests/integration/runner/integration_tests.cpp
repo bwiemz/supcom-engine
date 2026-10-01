@@ -15674,6 +15674,29 @@ void test_edit(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 16: ItemList font/metrics failed"); }
     }
 
+    // Test 16b: rows as tall as retail's, from GDI's metrics of FA's fonts
+    {
+        auto result = ctx.lua_state.do_string(std::string(mk_itemlist) +
+                                              "il:SetNewFont('Arial', 14)\n"
+                                              "local arial = il:GetRowHeight()\n"
+                                              "il:SetNewFont('Zeroes Three', 14)\n"
+                                              "return arial == 16 and il:GetRowHeight() == 19\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 16b Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 16b: ItemList rows as tall as retail's");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16b: ItemList row heights differ from retail's");
+        }
+    }
+
     // Test 17: ItemList SetNewColors + ShowSelection/ShowMouseoverItem
     {
         auto result = ctx.lua_state.do_string(
