@@ -1,6 +1,7 @@
 #include "renderer/ui_renderer.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "ui/lazyvar.hpp"
+#include "ui/font_metrics_provider.hpp"
 #include "ui/scroll.hpp"
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
@@ -61,6 +62,26 @@ void UIRenderer::argb_to_rgba(u32 argb, f32 out[4]) {
     out[3] = static_cast<f32>((argb >> 24) & 0xFF) / 255.0f;  // A
 }
 
+namespace {
+
+/// A line of a control's font: its ascent and descent as the layout has
+/// them, GDI's; the atlas's without the font file
+struct FontLine {
+    f32 ascent;
+    f32 descent;
+};
+
+FontLine font_line(const ui::UIControl& ctrl, const FontAtlas& atlas) {
+    auto& fonts = ui::FontMetricsProvider::instance();
+    ui::FontMetricsProvider::Metrics m{};
+    if (fonts.get_metrics(ctrl.font_family(), ctrl.font_pointsize(), m)) {
+        return {m.ascent, m.descent};
+    }
+    return {atlas.metrics.ascent, atlas.metrics.descent};
+}
+
+} // namespace
+
 void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
                                   f32 left, f32 top, f32 width, f32 height,
                                   f32 depth, const ClipRect& clip) {
@@ -76,14 +97,15 @@ void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
     argb_to_rgba(ctrl->text_color(), color);
     color[3] *= ctrl->alpha();
 
-    // Starting position
+    // Starting position: the baseline at the font's ascent, as the layout
+    // has it (GDI's metrics)
+    const FontLine line = font_line(*ctrl, *atlas);
     f32 cursor_x = left;
-    f32 baseline_y = top + atlas->metrics.ascent;
+    f32 baseline_y = top + line.ascent;
 
     // Vertical centering
     if (ctrl->centered_vertically()) {
-        f32 text_height = atlas->metrics.ascent + atlas->metrics.descent;
-        baseline_y = top + (height - text_height) * 0.5f + atlas->metrics.ascent;
+        baseline_y = top + (height - (line.ascent + line.descent)) * 0.5f + line.ascent;
     }
 
     // Compute total advance for horizontal centering
@@ -291,7 +313,7 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
             argb_to_rgba(text_color, color);
             color[3] *= alpha;
 
-            f32 baseline_y = row_y + (atlas ? atlas->metrics.ascent : row_height * 0.8f);
+            f32 baseline_y = row_y + font_line(*ctrl, *atlas).ascent;
             f32 cursor_x = left + 2.0f;
 
             for (unsigned char c : items[i]) {

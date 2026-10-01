@@ -25,6 +25,15 @@ struct GdiFontTables {
     std::map<i32, std::pair<i32, i32>> vdmx;
 };
 
+/// GDI's text metrics at `ppem` pixels per em, in whole pixels: tmAscent,
+/// tmDescent and tmExternalLeading
+struct GdiTextMetrics {
+    i32 ascent = 0;
+    i32 descent = 0;
+    i32 external_leading = 0;
+};
+GdiTextMetrics gdi_text_metrics(const GdiFontTables& tables, i32 ppem);
+
 /// A line's height in GDI's text metrics, tmHeight + tmExternalLeading, at
 /// `ppem` pixels per em: how Moho spaces an ItemList's rows
 i32 gdi_line_height(const GdiFontTables& tables, i32 ppem);
@@ -42,8 +51,8 @@ public:
     /// Set the VFS to load font files from.
     void set_vfs(vfs::VirtualFileSystem* vfs) { vfs_ = vfs; }
 
-    /// Get metrics for a font family at a given pointsize.
-    /// Returns false if the font cannot be loaded (caller should use heuristics).
+    /// A font's metrics at a point size as GDI gives Moho them, in whole
+    /// pixels (gdi_text_metrics); false if the font cannot be loaded.
     bool get_metrics(const std::string& family, i32 pointsize, Metrics& out);
 
     /// Compute pixel width of a string at a given font and size.
@@ -70,7 +79,6 @@ private:
 
     struct CachedMetrics {
         f32 scale;
-        Metrics metrics;
     };
 
     std::string resolve_font_path(const std::string& family) const;

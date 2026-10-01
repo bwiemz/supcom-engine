@@ -28,6 +28,22 @@ fs::path find_system_ttf() {
     return {};
 }
 
+/// FA's Arial: its head, hhea, OS/2 and VDMX values
+osc::ui::GdiFontTables arial_tables() {
+    osc::ui::GdiFontTables t{2048, 1854, 434, 67, 1854, 434, {}};
+    t.vdmx = {{10, {10, 3}}, {12, {12, 3}}, {14, {13, 3}}, {16, {15, 3}},
+              {18, {17, 4}}, {20, {19, 4}}, {24, {21, 6}}};
+    return t;
+}
+
+/// FA's Zeroes Three (UIUtil.titleFont): its head, hhea, OS/2 and VDMX values
+osc::ui::GdiFontTables zeroes_tables() {
+    osc::ui::GdiFontTables t{1000, 756, 195, 39, 910, 385, {}};
+    t.vdmx = {{10, {10, 4}}, {12, {11, 5}}, {14, {13, 6}}, {16, {15, 7}},
+              {18, {17, 7}}, {20, {19, 8}}, {24, {22, 10}}};
+    return t;
+}
+
 } // namespace
 
 TEST_CASE("FontCache: a space advances by the font's own width", "[font]") {
@@ -68,14 +84,9 @@ TEST_CASE("FontCache: a space advances by the font's own width", "[font]") {
 
 TEST_CASE("A line is as tall as GDI's text metrics make it, as Moho spaces ItemList rows",
           "[font]") {
-    // FA's Arial and Zeroes Three (UIUtil.titleFont): their head, hhea, OS/2
-    // and VDMX values. Each row's height is retail's ItemList:GetRowHeight().
-    osc::ui::GdiFontTables arial{2048, 1854, 434, 67, 1854, 434, {}};
-    arial.vdmx = {{10, {10, 3}}, {12, {12, 3}}, {14, {13, 3}}, {16, {15, 3}},
-                  {18, {17, 4}}, {20, {19, 4}}, {24, {21, 6}}};
-    osc::ui::GdiFontTables zeroes{1000, 756, 195, 39, 910, 385, {}};
-    zeroes.vdmx = {{10, {10, 4}}, {12, {11, 5}}, {14, {13, 6}}, {16, {15, 7}},
-                   {18, {17, 7}}, {20, {19, 8}}, {24, {22, 10}}};
+    // Each row's height is retail's ItemList:GetRowHeight().
+    const osc::ui::GdiFontTables arial = arial_tables();
+    const osc::ui::GdiFontTables zeroes = zeroes_tables();
 
     // Arial's line gap adds a pixel from 16 points up
     const std::pair<int, int> arial_rows[] = {{10, 13}, {12, 15}, {14, 16}, {16, 19},
@@ -94,4 +105,30 @@ TEST_CASE("A line is as tall as GDI's text metrics make it, as Moho spaces ItemL
 
     // A size VDMX doesn't list rounds the win ascent and descent
     CHECK(osc::ui::gdi_line_height(arial, 13) == 12 + 3 + 0);
+}
+
+TEST_CASE("A font's text metrics are GDI's whole pixels, as Moho's Text and Edit read them",
+          "[font]") {
+    // Retail's Text FontAscent, FontDescent and FontExternalLeading at each
+    // size; its Height and Edit's GetFontHeight are the ascent and descent
+    struct Expected {
+        int size, ascent, descent, leading;
+    };
+    const Expected arial[] = {
+        {10, 10, 3, 0}, {12, 12, 3, 0}, {14, 13, 3, 0}, {16, 15, 3, 1}, {18, 17, 4, 1}};
+    const Expected zeroes[] = {
+        {10, 10, 4, 0}, {12, 11, 5, 0}, {14, 13, 6, 0}, {16, 15, 7, 0}, {18, 17, 7, 0}};
+    const auto check = [](const osc::ui::GdiFontTables& tables, const Expected& e) {
+        CAPTURE(e.size);
+        const auto m = osc::ui::gdi_text_metrics(tables, e.size);
+        CHECK(m.ascent == e.ascent);
+        CHECK(m.descent == e.descent);
+        CHECK(m.external_leading == e.leading);
+    };
+    for (const auto& e : arial) {
+        check(arial_tables(), e);
+    }
+    for (const auto& e : zeroes) {
+        check(zeroes_tables(), e);
+    }
 }

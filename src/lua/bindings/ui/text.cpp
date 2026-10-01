@@ -423,12 +423,17 @@ static int edit_IsEnabled(lua_State* L) {
     return 1;
 }
 
-/// edit:GetFontHeight() → number
+/// edit:GetFontHeight() → number, its font's ascent + descent
 static int edit_GetFontHeight(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) { lua_pushnumber(L, 0); return 1; }
-    f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    lua_pushnumber(L, ps); // font height ≈ point size
+    auto& fonts = ui::FontMetricsProvider::instance();
+    ui::FontMetricsProvider::Metrics m{};
+    if (fonts.get_metrics(ctrl->font_family(), ctrl->font_pointsize(), m)) {
+        lua_pushnumber(L, m.ascent + m.descent);
+    } else {
+        lua_pushnumber(L, static_cast<f32>(ctrl->font_pointsize()));
+    }
     return 1;
 }
 

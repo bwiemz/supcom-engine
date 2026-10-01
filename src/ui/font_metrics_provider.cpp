@@ -56,22 +56,28 @@ GdiFontTables read_gdi_tables(const stbtt_fontinfo& info) {
 
 } // namespace
 
-i32 gdi_line_height(const GdiFontTables& t, i32 ppem) {
+GdiTextMetrics gdi_text_metrics(const GdiFontTables& t, i32 ppem) {
+    GdiTextMetrics m;
     if (t.units_per_em <= 0) {
-        return 0;
+        return m;
     }
     const f32 scale = static_cast<f32>(ppem) / static_cast<f32>(t.units_per_em);
-    i32 ascent = gdi_round(static_cast<f32>(t.win_ascent) * scale);
-    i32 descent = gdi_round(static_cast<f32>(t.win_descent) * scale);
+    m.ascent = gdi_round(static_cast<f32>(t.win_ascent) * scale);
+    m.descent = gdi_round(static_cast<f32>(t.win_descent) * scale);
     if (auto it = t.vdmx.find(ppem); it != t.vdmx.end()) {
-        ascent = it->second.first;
-        descent = it->second.second;
+        m.ascent = it->second.first;
+        m.descent = it->second.second;
     }
     // The hhea line gap less what the win ascent and descent already add
     const i32 gap =
         t.hhea_line_gap - ((t.win_ascent + t.win_descent) - (t.hhea_ascender + t.hhea_descender));
-    const i32 external_leading = std::max(0, gdi_round(static_cast<f32>(gap) * scale));
-    return ascent + descent + external_leading;
+    m.external_leading = std::max(0, gdi_round(static_cast<f32>(gap) * scale));
+    return m;
+}
+
+i32 gdi_line_height(const GdiFontTables& t, i32 ppem) {
+    const GdiTextMetrics m = gdi_text_metrics(t, ppem);
+    return m.ascent + m.descent + m.external_leading;
 }
 
 static_assert(sizeof(stbtt_fontinfo) <= 512,
@@ -168,14 +174,8 @@ FontMetricsProvider::CachedMetrics* FontMetricsProvider::get_or_compute(
     auto* info = reinterpret_cast<stbtt_fontinfo*>(cf->fontinfo_storage.data());
     f32 scale = stbtt_ScaleForPixelHeight(info, static_cast<f32>(pointsize));
 
-    int ascent_raw, descent_raw, line_gap_raw;
-    stbtt_GetFontVMetrics(info, &ascent_raw, &descent_raw, &line_gap_raw);
-
     CachedMetrics cm;
     cm.scale = scale;
-    cm.metrics.ascent = ascent_raw * scale;
-    cm.metrics.descent = -descent_raw * scale; // stb gives negative descent
-    cm.metrics.external_leading = line_gap_raw * scale;
 
     metrics_cache_[key] = cm;
     return &metrics_cache_[key];
@@ -183,9 +183,11 @@ FontMetricsProvider::CachedMetrics* FontMetricsProvider::get_or_compute(
 
 bool FontMetricsProvider::get_metrics(const std::string& family, i32 pointsize,
                                        Metrics& out) {
-    auto* cm = get_or_compute(family, pointsize);
-    if (!cm) return false;
-    out = cm->metrics;
+    CachedFont* cf = load_ttf(resolve_font_path(family));
+    if (!cf) return false;
+    const GdiTextMetrics m = gdi_text_metrics(cf->gdi, pointsize);
+    out = {static_cast<f32>(m.ascent), static_cast<f32>(m.descent),
+           static_cast<f32>(m.external_leading)};
     return true;
 }
 
