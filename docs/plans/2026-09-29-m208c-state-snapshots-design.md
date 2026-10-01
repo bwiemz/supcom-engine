@@ -225,9 +225,9 @@ written in declaration order; the snapshot as a whole carries a version and a ha
   - Each save signs its snapshot with HMAC-SHA256. The key comes from the OS's cryptographic
     random source (getentropy, BCryptGenRandom), and is kept in the user folder
     (`opensupcom-snapshot.key`) in a file only its owner can read (0600 on POSIX).
-  - A load restores only a snapshot its own key signed. Any other save, such as one a
-    player was sent, catches up from its history. That runs only the local game's scripts
-    and the recorded orders, as a replay does.
+  - A load restores only a snapshot its own key signed, and its own binary took. Any other
+    save, such as one a player was sent, catches up from its history. That runs only the
+    local game's scripts and the recorded orders, as a replay does.
   - A list of the C functions a build can register was measured and rejected. A late game's
     heap holds functions its freshly booted one doesn't: the AI personality's lambdas and
     the falling-tree motor, bound on first use.
@@ -332,8 +332,16 @@ on a short game.
 - **Heap size.** The late game's heap has about 460,000 tables, half of them blueprints that
   aren't saved. With compression, a save should stay in the tens of megabytes. M208c-c
   measures it.
-- **Engine versions.** A snapshot is tied to its build, like the save's history gate: C
-  functions are offsets into it. A mismatch falls back to catching up.
+- **Engine versions.** A snapshot is tied to its binary, not just its build: C functions are
+  offsets into it. A mismatch falls back to catching up.
+  - The save's build id isn't enough. Every dirty build of a commit has the same one, as
+    do its Debug and Release builds.
+  - A dirty A/B build restored another's snapshot in the same installation, and a call
+    landed in the middle of unrelated code (SIGSEGV in the sim's first ticks).
+  - Since then, each snapshot carries its binary's identity, and the signature covers it.
+    The identity is the linker's build id (ELF's `NT_GNU_BUILD_ID`), else the digest of the
+    executable file (Windows, macOS, a build without the note). A load restores only its
+    own binary's snapshot; any other catches up.
 - **A damaged or crafted snapshot.**
   - The loader bounds every size by the input left and checks every reference's kind.
   - A hash over the snapshot fails a corrupted one before anything is made. A unit test
