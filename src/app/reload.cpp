@@ -68,6 +68,9 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     detach_ui_from_sim(uiL);
     sim_state.reset();
     sim_lua_state.reset();
+    // Its blueprints' Lua references went with it (rebound below, unless
+    // the reload fails first: then no destructor may release them)
+    store.rebind(nullptr);
 
     // 3. Create fresh sim Lua state
     sim_lua_state = std::make_unique<osc::lua::LuaState>();

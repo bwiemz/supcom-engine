@@ -84,7 +84,8 @@ public:
     /// Must be called after all blueprints are registered.
     void expose_to_lua(lua_State* L) const;
 
-    /// Re-bind to a new Lua state after sim reload.
+    /// Re-bind to a new Lua state after sim reload, or to none (null) once
+    /// the old one is closed and no other is made yet.
     /// Clears all lua_ref values (old state is dead — do NOT unref).
     /// Caller must re-run load_blueprints() afterward to repopulate refs.
     void rebind(lua_State* new_L);

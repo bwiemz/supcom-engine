@@ -210,6 +210,11 @@ void App::Window::handle_return_to_lobby() {
             detach_ui_from_sim(uiL);
             sim_state.reset();
             sim_lua_state.reset();
+            // Its blueprints' Lua references went with it: the store holds
+            // none until the next game rebinds it. (It had kept the freed
+            // state, and releasing its references there at exit crashed a
+            // game quit from the front end after a game.)
+            store.rebind(nullptr);
 
             // Reset game state
             game_state_mgr.set_game_over(false);
