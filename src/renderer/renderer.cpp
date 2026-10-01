@@ -2362,8 +2362,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
-        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_,
-                              selected_ids, &frustum);
+        // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
+        // decides it below, from the same camera)
+        const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
+        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
+                              &frustum, meshes_drawn);
     }
     // A bone SSBO the update grew is a new buffer for this slot's set.
     if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))

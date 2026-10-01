@@ -238,11 +238,10 @@ void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
                  bp_ids.size(), loaded, failed);
 }
 
-void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
-                           lua_State* L, TextureCache* tex_cache,
-                           const Camera* camera,
-                           const std::unordered_set<u32>* selected_ids,
-                           const Frustum* frustum) {
+void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
+                          TextureCache* tex_cache, const Camera* camera,
+                          const std::unordered_set<u32>* selected_ids, const Frustum* frustum,
+                          bool meshes_drawn) {
     mesh_groups_.clear();
     cube_instance_count_ = 0;
 
@@ -296,6 +295,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             birth.tick = now;
         }
         birth.frame = frame_;
+        // Strategic zoom draws none: the rest is wasted (24,000 instances
+        // in M223b's strategic scene)
+        if (!meshes_drawn) return;
 
         // What the player's intel doesn't show, it doesn't draw (M215a).
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;

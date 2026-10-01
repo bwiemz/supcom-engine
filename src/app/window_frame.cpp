@@ -253,11 +253,18 @@ void App::Window::run_flows() {
         ++replay_flow_frames;
         if (active_playback && sim_state && active_playback->finished(*sim_state)) {
             replay_flow_done = true;
-            // Watched from the front end, its units draw their meshes.
-            if (renderer.mesh_instance_count() == 0 || renderer.cube_instance_count() != 0)
-                osc::test_status::fail("[FAIL] replay-flow: {} meshes and {} cubes drawn",
-                                       renderer.mesh_instance_count(),
-                                       renderer.cube_instance_count());
+            // Watched from the front end, its units are drawn: as their
+            // meshes, or as their icons at strategic zoom, which draws no
+            // meshes.
+            const auto& icons = renderer.strategic_icons();
+            const bool shown = icons.is_strategic_zoom() ? !icons.quads().empty()
+                                                         : renderer.mesh_instance_count() > 0;
+            if (!shown || renderer.cube_instance_count() != 0)
+                osc::test_status::fail(
+                    "[FAIL] replay-flow: {} meshes, {} icons (strategic zoom: {}) and {} cubes "
+                    "drawn",
+                    renderer.mesh_instance_count(), icons.quads().size(), icons.is_strategic_zoom(),
+                    renderer.cube_instance_count());
         } else if (replay_flow_frames > 40000) replay_flow_done = true; // stuck: reported below
     }
 

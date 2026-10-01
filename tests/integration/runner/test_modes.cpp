@@ -318,7 +318,7 @@ void IntegrationModes::print_usage() const {
               << "  --teamcolor-test   Team color rendering (SpecTeam texture, alpha mask blending)\n"
               << "  --normal-test      Normal map rendering (tangent-space normal maps, TBN matrix)\n"
               << "  --prop-test        Map prop rendering (SCMAP parsing, prop meshes, orientation)\n"
-              << "  --scale-test       Prop scale & distance culling (per-prop scale, MAX_INSTANCES)\n"
+              << "  --scale-test       Prop scale & distance culling (per-prop scale, >2048 entities)\n"
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
               << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
               << "  --map-parse-test   Every map's .scmap read to its last byte\n"

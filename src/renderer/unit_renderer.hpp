@@ -98,11 +98,12 @@ public:
     /// Update per-frame instance data from the world as `view` draws it
     /// (between the last two ticks).
     /// If selected_ids is non-null, those units get a selection highlight.
-    void update(const sim::FrameView& view, MeshCache& mesh_cache,
-                lua_State* L, TextureCache* tex_cache = nullptr,
-                const Camera* camera = nullptr,
+    /// `meshes_drawn` false (strategic zoom, which draws icons in their
+    /// place): no instances, only each entity's mesh birth kept.
+    void update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
+                TextureCache* tex_cache = nullptr, const Camera* camera = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr,
-                const Frustum* frustum = nullptr);
+                const Frustum* frustum = nullptr, bool meshes_drawn = true);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

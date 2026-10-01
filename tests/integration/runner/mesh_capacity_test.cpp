@@ -5,7 +5,8 @@
 // and the rest went undrawn. Each frame's instance buffer and bone SSBO now
 // grow to hold what it draws, and the bone SSBO's descriptor set follows it
 // to its new buffer (the validation layer, on in Debug builds, fails the run
-// if a draw binds the old one).
+// if a draw binds the old one). At strategic zoom, which draws icons in the
+// meshes' place, the frame builds no instances at all.
 
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
@@ -20,6 +21,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace osc::test {
 
@@ -47,7 +49,22 @@ FrameLoad drawn_now(const renderer::Renderer& r) {
 constexpr int kPropSide = 96;
 constexpr int kFactoryColumns = 16;
 constexpr int kFactoryRows = 10;
+// More than the 8,192 mesh instances the buffers held
+static_assert(kPropSide * kPropSide > 8192);
 constexpr f32 kViewDistance = 220.0f;
+// Past StrategicIconRenderer::ZOOM_THRESHOLD
+constexpr f32 kStrategicDistance = 320.0f;
+
+/// The mesh instance drawn at (x, z) this frame, or null.
+const renderer::MeshInstance* instance_at(const renderer::Renderer& r, f32 x, f32 z) {
+    const renderer::MeshInstance* all = r.unit_renderer().mesh_instances();
+    for (const auto& g : r.unit_renderer().mesh_groups())
+        for (u32 i = 0; all && i < g.instance_count; ++i) {
+            const renderer::MeshInstance& m = all[g.instance_offset + i];
+            if (std::abs(m.model[12] - x) < 0.1f && std::abs(m.model[14] - z) < 0.1f) return &m;
+        }
+    return nullptr;
+}
 
 } // namespace
 
@@ -96,7 +113,7 @@ void test_mesh_capacity(TestContext& ctx) {
         most_meshes = std::max(most_meshes, units.mesh_capacity(fi));
         most_bones = std::max(most_bones, units.bone_capacity(fi));
     }
-    t.check(first.instances >= spawned && first.instances > 8192 && most_meshes > first.instances,
+    t.check(first.instances >= spawned && most_meshes > first.instances,
             fmt::format("Test 1: {} mesh instances drawn of the {} spawned (and the map's in "
                         "view), in a buffer of {}",
                         first.instances, spawned, most_meshes));
@@ -125,6 +142,37 @@ void test_mesh_capacity(TestContext& ctx) {
                         "and {} bones, its bone set {}; {} validation error(s)",
                         again.instances, least_meshes, least_bones,
                         r.bone_sets_current() ? "current" : "stale", errors));
+
+    // Test 4: strategic zoom builds no instances, but keeps each mesh's
+    // birth: a tank appearing out there has the tick it appeared as its
+    // mesh's age once the view comes in (FA makes a mesh instance as its
+    // entity appears; material.x)
+    {
+        r.camera().set_eye_distance(kStrategicDistance);
+        shots.redraw();
+        const u64 far = drawn_now(r).instances;
+        const Spot at{spot->x, spot->z + 70};
+        const u32 tank = spawn_unit(ctx, "__osc_mc_tank", "uel0201", "ARMY_1", at);
+        shots.recapture();
+        shots.redraw();
+        const u32 born = ctx.sim.tick_count();
+        for (int i = 0; i < 20; ++i) {
+            ctx.sim.tick();
+            shots.recapture();
+            shots.redraw();
+        }
+        r.camera().set_eye_distance(kViewDistance);
+        shots.redraw();
+        const sim::Entity* e = ctx.sim.entity_registry().find(tank);
+        const renderer::MeshInstance* inst =
+            e ? instance_at(r, e->position().x, e->position().z) : nullptr;
+        // Made within a tick of the tank's creation, not as the view came in
+        t.check(far == 0 && inst && std::abs(inst->shader_time - static_cast<f32>(born)) <= 1.0f,
+                fmt::format("Test 4: {} instances at strategic zoom; the tank's mesh, drawn "
+                            "again close in, {}made at tick {:.0f} (created at {}, now {})",
+                            far, inst ? "" : "not found, ", inst ? inst->shader_time : -1.0f, born,
+                            ctx.sim.tick_count()));
+    }
 
     spdlog::info("Mesh capacity test: {} passed, {} failed", t.pass, t.fail);
 }
