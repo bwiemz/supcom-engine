@@ -135,6 +135,8 @@ void test_water_render(TestContext& ctx);
 void test_sky(TestContext& ctx);
 /// --shield-render-test (M211k), in shield_render_test.cpp.
 void test_shield_render(TestContext& ctx);
+/// --mesh-capacity-test, in mesh_capacity_test.cpp.
+void test_mesh_capacity(TestContext& ctx);
 /// --water-reflection-test (M213b), in water_reflection_test.cpp.
 void test_water_reflection(TestContext& ctx);
 /// --refract-render-test (M214d), in refract_render_test.cpp.

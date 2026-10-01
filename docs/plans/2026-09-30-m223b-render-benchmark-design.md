@@ -148,7 +148,7 @@ The CPU frame's split (means, late scene):
   p99 20-50%.
 - **Found on the way:** the whole-map view hits the unit renderer's fixed
   `MAX_INSTANCES` (8,192). Meshes past it are skipped silently, so some units and props
-  at that zoom are not drawn. To fix on its own.
+  at that zoom are not drawn. Fixed since: see below.
 
 ## Verdict
 
@@ -163,10 +163,39 @@ What pays is the CPU's per-frame update work:
    cost what they cost, as in Moho.
 2. **Make `unit_update` cheaper:** reuse static props' instances and poses across
    frames, and pose units in parallel. The latter is the useful part of M225.
-3. **Fix the instance cap.**
+3. **Fix the instance cap.** Done: see below.
 
 Then measure again with this benchmark. On this machine the frame's p50 is 6-8 ms and
 its p95 9-14 ms, against a 16.7 ms frame at 60 fps. A slower CPU, or a weaker GPU at a
 higher resolution, may tell a different story. The benchmark runs anywhere with game
 data, and its baselines are per machine and device.
+
+## The instance cap, fixed (2026-09-30)
+
+The unit renderer's per-frame buffers now grow to hold the frame:
+
+- the instance and cube buffers start at 2,048 and 64 and double as needed;
+- the bone SSBO starts at 4,096 matrices (it had been 32 MB a slot, about 16 times what a
+  big game needs) and grows to the 128 MB every device binds;
+- a grown bone SSBO's descriptor set is written again.
+
+At strategic zoom, which draws icons and no meshes, the update now builds no instances. It
+keeps only each entity's mesh birth. Lifting the cap had shown the scene building about
+24,000 instances a frame, against 8,192 before, to draw none. `--mesh-capacity-test`
+covers both.
+
+Measured A/B the same evening: the old renderer's binary, then this one, 3 runs each,
+fastest CPU p50 kept, means of the zones.
+
+| Scene | `unit_update` old → new | CPU p50 old → new | VRAM allocated |
+|---|---|---|---|
+| battle | 1.02 → 0.91-1.05 ms | 5.95 → 5.88-6.22 ms | 347 → 282 MB |
+| late | 2.19 → 2.45-3.02 ms | 7.75 → 7.96-9.23 ms | 347 → 282 MB |
+| strategic | 2.22 → 0.84-1.03 ms | 7.58 → 6.79-7.18 ms | 361 → 252 MB |
+
+The late scene's spread is the machine's, not the change's. The box was shared (load
+average 6-15, another session's GPU job), and in the slowest late run every zone was
+slower in proportion: `ui_update` +16%, particles +25%, `main_pass` +40%. Its draws and
+instances are identical, and it never grows a buffer past its first size. Both builds'
+buffers are in the same memory type (device-local and host-visible: ReBAR).
 

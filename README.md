@@ -451,6 +451,7 @@ and with 77 (skipped) when no game data is available. Their
 | `--deposit-test` | Resource deposits (mass/hydrocarbon entities, Lua queries) |
 | `--beam-test` | Beam rendering (operation beams + CollisionBeam weapon beams) |
 | `--shield-render-test` | Shield bubble rendering (projected circles, HP-based alpha) |
+| `--mesh-capacity-test` | Every mesh in view drawn past 8,192 instances; instance and bone buffers grow; none built at strategic zoom |
 | `--vet-adj-render-test` | Veterancy indicators + adjacency lines |
 | `--intel-overlay-test` | Intel range overlay (radar/sonar/omni/vision circles) |
 | `--enhance-wreck-test` | Enhancement mesh switching + wreckage desaturation |

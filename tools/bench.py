@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -192,15 +193,41 @@ def compare(baseline: Report, current: Report, tolerance: float) -> tuple[int, l
     return (1 if slower else 0), lines
 
 
+# Each tick's saves of the builds timed last, the newest kept (each is
+# ~10 MB; comparing two builds runs both).
+KEEP_SAVES = 3
+
+
+def version_build(text: str) -> str | None:
+    """The build in `opensupcom --version`'s line ("OpenSupCom 0.1.0
+    (cc67ae41-dirty)"), as a file name may carry it; None if it has none."""
+    match = re.search(r"\(([^()]+)\)\s*$", text.strip())
+    return re.sub(r"[^A-Za-z0-9._-]", "_", match.group(1)) if match else None
+
+
+def save_name(tick: int, build: str | None) -> str:
+    """The pinned game's save at `tick` by `build`: a save loads only in the
+    build that made it (saved_game.cpp's WrongVersion)."""
+    return f"scmp009-4ai-4242-t{tick}" + (f"-{build}" if build else "") + ".SCFAsave"
+
+
 def render_save(exe: Path, tick: int) -> tuple[int, list[str]]:
     """(exit code, the engine's arguments to load it): the pinned game saved at
-    `tick`, beside the baselines, made the first time. Saves and loads share
-    one user folder, whose key signs the snapshot (another's would catch up by
-    replay instead of restoring)."""
+    `tick` by this build, beside the baselines, made the first time this build
+    is timed. Saves and loads share one user folder, whose key signs the
+    snapshot (another's would catch up by replay instead of restoring)."""
     folder = golden_dir() / "bench" / "saves"
     user = folder / "user"
-    save = folder / f"scmp009-4ai-4242-t{tick}.SCFAsave"
+    version = subprocess.run(
+        [str(exe), "--version"], capture_output=True, text=True, timeout=60, check=False
+    )
+    save = folder / save_name(tick, version_build(version.stdout))
     if not save.exists():
+        # Other builds' saves of this tick, past the newest few, go first
+        others = [s for s in folder.glob(f"scmp009-4ai-4242-t{tick}*.SCFAsave") if s != save]
+        others.sort(key=lambda s: s.stat().st_mtime, reverse=True)
+        for old in others[KEEP_SAVES - 1 :]:
+            old.unlink()
         user.mkdir(parents=True, exist_ok=True)
         print(f"saving the pinned game at tick {tick} (once): {save}")
         proc = subprocess.run(
@@ -346,6 +373,14 @@ def self_test() -> int:
         (compare(rbase, render(5.0, 1.5), 0.15)[0], 1),  # GPU 50% slower
         (compare(rbase, render(5.0, None), 0.15)[0], 0),  # no GPU times: not held
         (compare(rbase, render(5.0, 1.0, device="other"), 0.15)[0], 2),  # another GPU
+    ]
+    # A save is named for the build that made it
+    cases += [
+        (version_build("OpenSupCom 0.1.0 (cc67ae41-dirty)") == "cc67ae41-dirty", True),
+        (version_build("OpenSupCom 0.1.0 (a b/c)\n") == "a_b_c", True),
+        (version_build("OpenSupCom 0.1.0") is None, True),
+        (save_name(6000, "cc67ae41") == "scmp009-4ai-4242-t6000-cc67ae41.SCFAsave", True),
+        (save_name(6000, None) == "scmp009-4ai-4242-t6000.SCFAsave", True),
     ]
     failed = [i for i, (got, want) in enumerate(cases) if got != want]
     for i in failed:

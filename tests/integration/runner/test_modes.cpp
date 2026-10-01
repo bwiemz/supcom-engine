@@ -236,6 +236,7 @@ constexpr Mode kModesAfter[] = {
     {"--deposit-test", test_deposits, false},
     {"--beam-test", test_beams, false},
     {"--shield-render-test", test_shield_render, false},
+    {"--mesh-capacity-test", test_mesh_capacity, false},
     {"--vet-adj-render-test", test_vet_adj_render, false},
     {"--intel-overlay-test", test_intel_overlay, false},
     {"--enhance-wreck-test", test_enhance_wreck_render, false},
@@ -317,7 +318,7 @@ void IntegrationModes::print_usage() const {
               << "  --teamcolor-test   Team color rendering (SpecTeam texture, alpha mask blending)\n"
               << "  --normal-test      Normal map rendering (tangent-space normal maps, TBN matrix)\n"
               << "  --prop-test        Map prop rendering (SCMAP parsing, prop meshes, orientation)\n"
-              << "  --scale-test       Prop scale & distance culling (per-prop scale, MAX_INSTANCES)\n"
+              << "  --scale-test       Prop scale & distance culling (per-prop scale, >2048 entities)\n"
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
               << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
               << "  --map-parse-test   Every map's .scmap read to its last byte\n"
@@ -419,6 +420,7 @@ void IntegrationModes::print_usage() const {
               << "  --deposit-test     Resource deposits + manipulator stub conversions\n"
               << "  --beam-test        Beam rendering (construction/reclaim/repair/capture/collision)\n"
               << "  --shield-render-test FA's shields: meshes, fill, impacts, each faction's\n"
+              << "  --mesh-capacity-test Every mesh in view drawn, past 8,192; bone SSBO growth\n"
               << "  --vet-adj-render-test Veterancy indicators + adjacency lines\n"
               << "  --intel-overlay-test Intel range overlay (radar/sonar/omni circles)\n"
               << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"

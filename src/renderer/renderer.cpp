@@ -1929,20 +1929,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             alloc_info.descriptorSetCount = 1;
             alloc_info.pSetLayouts = &bone_ds_layout_;
             VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &bone_ds_[i]));
-
-            VkDescriptorBufferInfo buf_info{};
-            buf_info.buffer = unit_renderer_.bone_ssbo_buffer(i);
-            buf_info.offset = 0;
-            buf_info.range = VK_WHOLE_SIZE;
-
-            VkWriteDescriptorSet write{};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = bone_ds_[i];
-            write.dstBinding = 0;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            write.descriptorCount = 1;
-            write.pBufferInfo = &buf_info;
-            vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
+            write_bone_descriptor(i);
         }
     }
 
@@ -2375,9 +2362,15 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
-        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_,
-                              selected_ids, &frustum);
+        // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
+        // decides it below, from the same camera)
+        const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
+        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
+                              &frustum, meshes_drawn);
     }
+    // A bone SSBO the update grew is a new buffer for this slot's set.
+    if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))
+        write_bone_descriptor(fi);
 
     // Build preview ghost — a semi-transparent mesh where input places it
     if (ghost && !ghost->blueprint_id.empty()) {
@@ -3818,6 +3811,23 @@ void Renderer::poll_events(f64 dt) {
     // Its clocks: the system's, and the game's
     camera_.set_clocks(glfwGetTime(), camera_game_time_);
     camera_.update(window_, dt);
+}
+
+void Renderer::write_bone_descriptor(u32 fi) {
+    VkDescriptorBufferInfo buf_info{};
+    buf_info.buffer = unit_renderer_.bone_ssbo_buffer(fi);
+    buf_info.offset = 0;
+    buf_info.range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = bone_ds_[fi];
+    write.dstBinding = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &buf_info;
+    vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
+    bone_ds_generation_[fi] = unit_renderer_.bone_ssbo_generation(fi);
 }
 
 void Renderer::bind_mesh_environment(const map::ScmapEnvironment& environment) {
