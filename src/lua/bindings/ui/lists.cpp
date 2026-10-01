@@ -161,13 +161,11 @@ static int itemlist_SetSelection(lua_State* L) {
     return 0;
 }
 
-/// item_list:GetRowHeight() → number
+/// item_list:GetRowHeight() → number, the height its rows are drawn at
 static int itemlist_GetRowHeight(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) { lua_pushnumber(L, 0); return 1; }
-    // Row height ≈ font ascent + descent
-    f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    lua_pushnumber(L, ps); // approximate row height
+    lua_pushnumber(L, ui::item_list_row_height(*ctrl));
     return 1;
 }
 

@@ -906,6 +906,8 @@ static int l_InternalCreateItemList(lua_State* L) {
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateItemList: failed to create control");
     ctrl->set_control_type(ui::UIControl::ControlType::ItemList);
+    // Moho's ItemList, before a script sets one: Arial 16, 19 high rows
+    ctrl->set_font_pointsize(16);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);
@@ -4287,9 +4289,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
     clear_chat_history(L);
 
-    // Initialize FontMetricsProvider with VFS for real TrueType metrics
-    auto* vfs = LuaState::get_vfs(L);
-    if (vfs) ui::FontMetricsProvider::instance().set_vfs(vfs);
+    // Font metrics read this state's VFS, or none: an earlier state's may be gone
+    ui::FontMetricsProvider::instance().set_vfs(LuaState::get_vfs(L));
 
     // Store UIControlRegistry pointer in Lua registry
     lua_pushstring(L, "osc_ui_registry");

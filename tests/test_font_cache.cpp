@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -63,4 +64,34 @@ TEST_CASE("FontCache: a space advances by the font's own width", "[font]") {
     CHECK_THAT(cache.string_advance("Arial", 12, text),
                Catch::Matchers::WithinAbs(metrics.string_advance("Arial", 12, text), 0.01));
     fs::remove_all(root);
+}
+
+TEST_CASE("A line is as tall as GDI's text metrics make it, as Moho spaces ItemList rows",
+          "[font]") {
+    // FA's Arial and Zeroes Three (UIUtil.titleFont): their head, hhea, OS/2
+    // and VDMX values. Each row's height is retail's ItemList:GetRowHeight().
+    osc::ui::GdiFontTables arial{2048, 1854, 434, 67, 1854, 434, {}};
+    arial.vdmx = {{10, {10, 3}}, {12, {12, 3}}, {14, {13, 3}}, {16, {15, 3}},
+                  {18, {17, 4}}, {20, {19, 4}}, {24, {21, 6}}};
+    osc::ui::GdiFontTables zeroes{1000, 756, 195, 39, 910, 385, {}};
+    zeroes.vdmx = {{10, {10, 4}}, {12, {11, 5}}, {14, {13, 6}}, {16, {15, 7}},
+                   {18, {17, 7}}, {20, {19, 8}}, {24, {22, 10}}};
+
+    // Arial's line gap adds a pixel from 16 points up
+    const std::pair<int, int> arial_rows[] = {{10, 13}, {12, 15}, {14, 16}, {16, 19},
+                                              {18, 22}, {20, 24}, {24, 28}};
+    for (auto [size, row] : arial_rows) {
+        CAPTURE(size);
+        CHECK(osc::ui::gdi_line_height(arial, size) == row);
+    }
+    // Zeroes Three's win ascent and descent already hold its line gap
+    const std::pair<int, int> zeroes_rows[] = {{10, 14}, {12, 16}, {14, 19}, {16, 22},
+                                               {18, 24}, {20, 27}, {24, 32}};
+    for (auto [size, row] : zeroes_rows) {
+        CAPTURE(size);
+        CHECK(osc::ui::gdi_line_height(zeroes, size) == row);
+    }
+
+    // A size VDMX doesn't list rounds the win ascent and descent
+    CHECK(osc::ui::gdi_line_height(arial, 13) == 12 + 3 + 0);
 }
