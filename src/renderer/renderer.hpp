@@ -218,6 +218,14 @@ public:
     /// ui_AlwaysRenderStrategicIcons (M217i).
     void set_icons_always(bool on) { strategic_icon_renderer_.set_always(on); }
     bool icons_always() const { return strategic_icon_renderer_.always(); }
+    /// The switches a campaign's NIS turns off (gamemain.NISMode):
+    /// ui_RenderUnitBars, ui_NisRenderIcons and ren_SelectBoxes.
+    void set_unit_bars(bool on) { overlay_renderer_.set_unit_bars(on); }
+    bool unit_bars() const { return overlay_renderer_.unit_bars(); }
+    void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
+    bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
+    void set_select_boxes(bool on) { overlay_renderer_.set_select_boxes(on); }
+    bool select_boxes() const { return overlay_renderer_.select_boxes(); }
     /// The strategic icons drawn last frame (tests read them).
     const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
     /// The video options (M217i): ren_Skydome, whether the sky dome draws;

@@ -92,6 +92,10 @@ public:
     /// meshes, past no IconFadeInZoom.
     void set_always(bool on) { always_ = on; }
     bool always() const { return always_; }
+    /// ui_NisRenderIcons ("nis toggle for strat icons"): off, no icons at
+    /// all, as a campaign's NIS turns them off.
+    void set_nis_icons(bool on) { nis_icons_ = on; }
+    bool nis_icons() const { return nis_icons_; }
     VkDescriptorSet atlas_descriptor() const { return atlas_ds_; }
 
     /// Camera distance past which meshes give way to icons altogether.
@@ -163,6 +167,7 @@ private:
 
     VkDescriptorSet atlas_ds_ = VK_NULL_HANDLE;
     bool strategic_zoom_active_ = false;
+    bool nis_icons_ = true;
     bool always_ = false;
     const ReconView* recon_ = nullptr;
 };

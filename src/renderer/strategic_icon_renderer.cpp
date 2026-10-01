@@ -454,6 +454,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
 
     const f32 cam_dist = camera.eye_distance();
     strategic_zoom_active_ = cam_dist >= ZOOM_THRESHOLD;
+    if (!nis_icons_) return strategic_zoom_active_; // a NIS draws none
     const f32 sw = static_cast<f32>(viewport_w);
     const f32 sh = static_cast<f32>(viewport_h);
     // An icon fades in with the camera out past its mesh's IconFadeInZoom
