@@ -357,6 +357,16 @@ set_tests_properties(data.golden.skirmish_lobby PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
 
+# The lobby's Game Options dialog: its maps and map info are ItemLists, rows
+# spaced as retail's
+add_test(NAME data.golden.map_select
+         COMMAND opensupcom --click Skirmish --click "Game Options" --golden map_select
+                 --screenshot-frame 600 --golden-tolerance 0.001)
+set_tests_properties(data.golden.map_select PROPERTIES
+    LABELS "data;gate;golden"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
+
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither
 # bound nor listed in the baseline. Baseline is for retail FA 3599; a machine
