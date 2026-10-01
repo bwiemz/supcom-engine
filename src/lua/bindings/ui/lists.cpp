@@ -360,35 +360,12 @@ static int scrollbar_SetNewTextures(lua_State* L) {
     return 0;
 }
 
-/// Helper: call scrollable:ScrollLines/ScrollPages on the scrollable ref
-static void call_scrollable_method(lua_State* L, ui::UIControl* ctrl,
-                                    const char* method, f32 amount) {
-    int ref = ctrl->scrollable_ref();
-    if (ref < 0) return;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
-    lua_pushstring(L, method);
-    lua_gettable(L, -2);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, -2); // scrollable self
-        lua_pushstring(L, ctrl->scroll_axis().c_str());
-        lua_pushnumber(L, amount);
-        if (lua_pcall(L, 3, 0, 0) != 0)
-            lua_pop(L, 1); // pop error
-        lua_pop(L, 1); // pop scrollable table
-    } else {
-        lua_pop(L, 2); // pop non-function + scrollable
-    }
-}
-
 /// scrollbar:DoScrollLines(lines)
 static int scrollbar_DoScrollLines(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     f32 lines = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0.0f;
-    if (!ui::scroll_item_list_of(L, *ctrl, lines, false)) {
-        call_scrollable_method(L, ctrl, "ScrollLines", lines);
-    }
+    ui::scroll_by(L, *ctrl, lines, false);
     return 0;
 }
 
@@ -397,9 +374,7 @@ static int scrollbar_DoScrollPages(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     f32 pages = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0.0f;
-    if (!ui::scroll_item_list_of(L, *ctrl, pages, true)) {
-        call_scrollable_method(L, ctrl, "ScrollPages", pages);
-    }
+    ui::scroll_by(L, *ctrl, pages, true);
     return 0;
 }
 

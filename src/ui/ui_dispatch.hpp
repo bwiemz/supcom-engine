@@ -70,7 +70,10 @@ public:
     UIControl* hover_control() const { return hover_control_; }
     /// Let go of the controls it remembers (their registry is being
     /// replaced with a new UI state).
-    void forget_controls() { hover_control_ = nullptr; }
+    void forget_controls() {
+        hover_control_ = nullptr;
+        thumb_drag_ = nullptr;
+    }
 
     /// Current mouse position (updated by cursor pos callback).
     f64 mouse_x() const { return mouse_x_; }
@@ -102,12 +105,19 @@ private:
     /// A Movie control's frame (Moho's CMauiMovie::Frame): OnFrame, then
     /// OnStopped, its movie's clock and frame, or OnFinished at its end.
     void movie_frame(lua_State* L, UIControl* ctrl, f64 dt);
+    /// A press on a scrollbar (Moho's CMauiScrollbar): its thumb taken to
+    /// drag, or a page toward the press on its track
+    void press_scrollbar(lua_State* L, UIControl* bar, const UIEvent& ev);
+    /// The dragged thumb follows the mouse until its button is let go
+    void drag_thumb(lua_State* L, const UIEvent& ev);
 
     std::vector<UIEvent> pending_events_;
     f64 mouse_x_ = 0;
     f64 mouse_y_ = 0;
     u8 buttons_down_ = 0; ///< kMouseLeft... held now
     UIControl* hover_control_ = nullptr;
+    UIControl* thumb_drag_ = nullptr; ///< the scrollbar whose thumb is dragged
+    f32 thumb_grab_ = 0;              ///< where along its thumb it was taken
 };
 
 } // namespace osc::ui

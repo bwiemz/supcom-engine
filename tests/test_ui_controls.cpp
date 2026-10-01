@@ -563,6 +563,81 @@ TEST_CASE("A scrollbar's thumb spans the part of its scrollable shown", "[ui][sc
     CHECK(last.start == 184);
 }
 
+TEST_CASE("Along its track, a press finds the thumb, and a dragged thumb picks the top",
+          "[ui][scroll]") {
+    using osc::ui::dragged_top;
+    using osc::ui::track_part;
+    using osc::ui::TrackPart;
+    const osc::ui::ThumbSpan thumb{50, 50};
+    CHECK(track_part(thumb, 49) == TrackPart::Before);
+    CHECK(track_part(thumb, 50) == TrackPart::Thumb);
+    CHECK(track_part(thumb, 99) == TrackPart::Thumb);
+    CHECK(track_part(thumb, 100) == TrackPart::After);
+
+    // 40 rows, 10 shown, on a 200 track: the thumb's 150 of travel spans
+    // tops 0 to 30, and goes no further either way
+    const osc::ui::ScrollValues values{0, 40, 10, 20};
+    CHECK(dragged_top(values, 200, 50, 0) == 0);
+    CHECK(dragged_top(values, 200, 50, 75) == 15);
+    CHECK(dragged_top(values, 200, 50, 150) == 30);
+    CHECK(dragged_top(values, 200, 50, 400) == 30);
+    CHECK(dragged_top(values, 200, 50, -20) == 0);
+    // All of it shows: nothing to drag
+    CHECK(dragged_top({0, 10, 0, 10}, 200, 200, 30) == 0);
+}
+
+TEST_CASE("A press on a scrollbar's track pages once, and its thumb drags the top shown",
+          "[ui][lua][scroll][input]") {
+    InputFixture f;
+    // 40 rows, 10 shown from row 10, on a 200 high bar at y 100: its thumb
+    // is 50 long at 150..200
+    f.run(R"(
+        pages = {} tops = {} top = 10
+        list = setmetatable({
+            GetScrollValues = function(self, axis) return 0, 40, top, top + 10 end,
+            ScrollPages = function(self, axis, delta) table.insert(pages, delta) end,
+            ScrollSetTop = function(self, axis, t) table.insert(tops, t) end,
+        }, { __index = moho.control_methods })
+        InternalCreateGroup(list, GetFrame(0))
+        bar = setmetatable({}, { __index = moho.scrollbar_methods })
+        InternalCreateScrollbar(bar, GetFrame(0), 'Vert')
+        rawset(bar, 'Left', 300) rawset(bar, 'Top', 100)
+        rawset(bar, 'Right', 320) rawset(bar, 'Bottom', 300)
+        rawset(bar, 'Width', 20) rawset(bar, 'Height', 200) rawset(bar, 'Depth', 5)
+        bar:SetScrollable(list)
+    )");
+    const auto press = [&](double y) {
+        f.dispatch.on_cursor_pos(310, y);
+        f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+        f.deliver();
+    };
+    const auto release = [&] {
+        f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+        f.deliver();
+    };
+    const auto move = [&](double y) {
+        f.dispatch.on_cursor_pos(310, y);
+        f.deliver();
+    };
+
+    // Above the thumb a page up, below it a page down; holding adds none
+    press(120);
+    move(121);
+    release();
+    press(260);
+    release();
+    CHECK(f.check("table.concat(pages, ',') == '-1,1' and table.getn(tops) == 0"));
+
+    // The thumb, taken 10 into it, follows the mouse: its start at 100 of
+    // its 150 travel is top 20; past the end, the last top
+    press(160);
+    move(210);
+    move(400);
+    release();
+    move(250); // let go: no longer dragged
+    CHECK(f.check("table.concat(tops, ',') == '20,30' and table.getn(pages) == 2"));
+}
+
 TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lua][scroll]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
@@ -624,6 +699,11 @@ TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lu
     CHECK(list->scroll_top() == 2);
     run("list:ShowItem(9)"); // below: it becomes the bottom row
     CHECK(list->scroll_top() == 5);
+    // A dragged thumb's top: the nearest row, within its rows
+    osc::ui::scroll_set_top(L, *bar, 7.4f);
+    CHECK(list->scroll_top() == 7);
+    osc::ui::scroll_set_top(L, *bar, 100);
+    CHECK(list->scroll_top() == 15);
 }
 
 TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrolling",
