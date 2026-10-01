@@ -9,6 +9,7 @@
 #include "app/app_internal.hpp"
 #include "app/lan_game_test.hpp"
 #include "app/mods_flow_test.hpp"
+#include "app/render_bench.hpp"
 #include "app/window_mode.hpp"
 #include "lua/factory_queue.hpp"
 #include "renderer/input_handler.hpp"
@@ -17,6 +18,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -192,6 +194,8 @@ private:
     std::string screenshot_path;
     osc::u32 screenshot_frame = 0;
     osc::u32 frames_rendered = 0;
+    /// --render-bench (M223b): the scene's frames, recorded once the game is in.
+    std::unique_ptr<RenderBench> render_bench;
     bool screenshot_done = false;
     bool screenshot_ok = false;
     bool replay_flow_done = false;
