@@ -55,6 +55,15 @@ TEST_CASE("HMAC-SHA256 gives RFC 4231's", "[sha256]") {
         "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54");
 }
 
+TEST_CASE("HMAC-SHA256 over parts is the HMAC of them joined", "[sha256]") {
+    const std::string key = "Jefe";
+    osc::core::HmacSha256 mac(key.data(), key.size());
+    mac.update("what do ya ", 11);
+    mac.update("", 0);
+    mac.update("want for nothing?", 17);
+    CHECK(hex(mac.finish()) == hmac(key, "what do ya want for nothing?"));
+}
+
 TEST_CASE("Digests compare equal only when they are", "[sha256]") {
     const auto a = osc::core::sha256("a");
     auto b = a;

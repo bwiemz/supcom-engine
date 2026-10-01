@@ -4,6 +4,7 @@ add_library(osc_platform STATIC
     browser.cpp
     crash_handler.cpp
     engine_settings.cpp
+    executable.cpp
     first_run.cpp
     game_install.cpp
     native_prompter.cpp

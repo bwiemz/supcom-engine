@@ -33,8 +33,8 @@ const char* save_load_error_name(SaveLoadError error);
 /// SimState::start_resume); since a replay plays back identically on the
 /// build that recorded it, the loaded game is the saved one.
 struct SavedGame {
-    /// 2: the game's snapshot (M208c); 3: its signature
-    static constexpr u32 kVersion = 3;
+    /// 2: the game's snapshot (M208c); 3: its signature; 4: its binary
+    static constexpr u32 kVersion = 4;
 
     u32 version = kVersion;
     /// The build that saved it: only that build is known to replay it as it
@@ -53,6 +53,12 @@ struct SavedGame {
     /// so a crafted one could aim a call anywhere; any other save still
     /// loads, by catching up from its history.
     core::Sha256Digest snapshot_mac{};
+    /// The binary that took the snapshot (SpecialFiles::binary_identity),
+    /// which the signature covers. The snapshot names C functions by their
+    /// place in that binary, so no other may restore it, though the build id
+    /// be the same: every dirty build of a commit has it, and its Debug and
+    /// Release builds. Any other still loads, by catching up.
+    core::Sha256Digest snapshot_binary{};
     Replay game;
 
     std::vector<u8> serialize() const;
@@ -67,9 +73,9 @@ SavedGame save_game(SimState& sim, std::string name, bool snapshot = true);
 
 /// An installation's key for signing its saves' snapshots.
 using SnapshotKey = std::array<u8, 32>;
-/// Sign `save`'s snapshot with `key`.
-void sign_snapshot(SavedGame& save, const SnapshotKey& key);
-/// Whether `save` has a snapshot `key` signed.
+/// Sign `save`'s snapshot, as taken by `binary`, with `key`.
+void sign_snapshot(SavedGame& save, const SnapshotKey& key, const core::Sha256Digest& binary);
+/// Whether `save` has a snapshot `key` signed, with the binary it names.
 bool snapshot_signed(const SavedGame& save, const SnapshotKey& key);
 
 } // namespace osc::sim

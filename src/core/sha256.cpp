@@ -108,7 +108,7 @@ Sha256Digest sha256(const void* data, size_t size) {
     return s.finish();
 }
 
-Sha256Digest hmac_sha256(const void* key, size_t key_size, const void* data, size_t size) {
+HmacSha256::HmacSha256(const void* key, size_t key_size) {
     std::array<u8, 64> k{};
     if (key_size > k.size()) {
         const Sha256Digest d = sha256(key, key_size);
@@ -116,19 +116,26 @@ Sha256Digest hmac_sha256(const void* key, size_t key_size, const void* data, siz
     } else if (key_size > 0) {
         std::memcpy(k.data(), key, key_size);
     }
-    std::array<u8, 64> ipad{}, opad{};
+    std::array<u8, 64> ipad{};
     for (size_t i = 0; i < k.size(); ++i) {
         ipad[i] = static_cast<u8>(k[i] ^ 0x36);
-        opad[i] = static_cast<u8>(k[i] ^ 0x5c);
+        opad_[i] = static_cast<u8>(k[i] ^ 0x5c);
     }
-    Sha256 inner;
-    inner.update(ipad.data(), ipad.size());
-    inner.update(data, size);
-    const Sha256Digest inner_digest = inner.finish();
+    inner_.update(ipad.data(), ipad.size());
+}
+
+Sha256Digest HmacSha256::finish() {
+    const Sha256Digest inner_digest = inner_.finish();
     Sha256 outer;
-    outer.update(opad.data(), opad.size());
+    outer.update(opad_.data(), opad_.size());
     outer.update(inner_digest.data(), inner_digest.size());
     return outer.finish();
+}
+
+Sha256Digest hmac_sha256(const void* key, size_t key_size, const void* data, size_t size) {
+    HmacSha256 mac(key, key_size);
+    mac.update(data, size);
+    return mac.finish();
 }
 
 bool digest_equal(const Sha256Digest& a, const Sha256Digest& b) {

@@ -5,6 +5,7 @@
 
 #include "lua/lua_state.hpp"
 #include "lua/special_files.hpp"
+#include "sim/build_info.hpp"
 #include "sim/replay.hpp"
 
 extern "C" {
@@ -169,4 +170,59 @@ TEST_CASE("Replay files round-trip, and one without a setup is refused", "[speci
     osc::sim::Replay no_setup;
     REQUIRE(osc::lua::write_replay_file(no_setup, dir.path / "old.oscreplay"));
     CHECK_FALSE(osc::lua::read_replay_file(dir.path / "old.oscreplay"));
+}
+
+TEST_CASE("A snapshot is restored only by the installation and binary that took it",
+          "[specialfiles][savegame]") {
+    TempDir dir, elsewhere;
+    osc::core::Sha256Digest this_binary{}, other_binary{};
+    this_binary.fill(1);
+    other_binary.fill(2);
+    const SpecialFiles here(dir.path, this_binary);
+    // Another build of the same build id (a dirty build, Debug for Release)
+    // in the same installation, sharing its key
+    const SpecialFiles rebuilt(dir.path, other_binary);
+    const SpecialFiles other_installation(elsewhere.path, this_binary);
+    const SpecialFiles unknown(dir.path, std::nullopt);
+
+    osc::sim::SavedGame save;
+    save.snapshot = {1, 2, 3, 4};
+    REQUIRE(here.sign_snapshot(save));
+    std::string why;
+    CHECK(here.trusts_snapshot(save, why));
+    // Through the file
+    osc::sim::SavedGame loaded;
+    save.game = playable_replay();
+    save.tick = save.game.final_tick;
+    save.build = osc::sim::build_id();
+    REQUIRE(osc::sim::SavedGame::deserialize(save.serialize(), loaded) ==
+            osc::sim::SaveLoadError::None);
+    CHECK(here.trusts_snapshot(loaded, why));
+
+    CHECK_FALSE(rebuilt.trusts_snapshot(loaded, why));
+    CHECK(why == "its snapshot was taken by another binary of this build");
+    CHECK_FALSE(other_installation.trusts_snapshot(loaded, why));
+    CHECK(why == "its snapshot isn't this installation's");
+    CHECK_FALSE(unknown.trusts_snapshot(loaded, why));
+
+    // Naming the other binary breaks the signature, which covers it
+    osc::sim::SavedGame relabelled = loaded;
+    relabelled.snapshot_binary = other_binary;
+    CHECK_FALSE(rebuilt.trusts_snapshot(relabelled, why));
+    CHECK(why == "its snapshot isn't this installation's");
+
+    // Nothing to sign without the binary's identity or a snapshot
+    osc::sim::SavedGame unsigned_save;
+    unsigned_save.snapshot = {1, 2, 3, 4};
+    CHECK_FALSE(unknown.sign_snapshot(unsigned_save));
+    osc::sim::SavedGame empty;
+    CHECK_FALSE(here.sign_snapshot(empty));
+    CHECK_FALSE(here.trusts_snapshot(empty, why));
+}
+
+TEST_CASE("The running binary knows itself", "[specialfiles][savegame]") {
+    const auto identity = SpecialFiles::running_binary();
+    REQUIRE(identity.has_value()); // a build id, else the file's digest
+    CHECK(SpecialFiles::running_binary() == identity);
+    CHECK(*identity != osc::core::Sha256Digest{});
 }

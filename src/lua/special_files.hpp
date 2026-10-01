@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/sha256.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
 
@@ -28,7 +29,17 @@ public:
         const char* extension; // without the dot
     };
 
+    /// The running binary's identity, which a snapshot it takes carries:
+    /// its linker build id, else its file's digest. None if neither can be
+    /// read: its snapshots are then neither signed nor trusted.
+    static std::optional<core::Sha256Digest> running_binary();
+
+    /// Signing and trusting the running binary's snapshots.
     explicit SpecialFiles(std::filesystem::path root) : root_(std::move(root)) {}
+    /// Signing and trusting `binary`'s instead (a test's other one; none:
+    /// a binary that can't tell its identity).
+    SpecialFiles(std::filesystem::path root, std::optional<core::Sha256Digest> binary)
+        : root_(std::move(root)), binary_(binary), binary_given_(true) {}
 
     /// FA's own user folder: Documents/My Games/Gas Powered Games/Supreme
     /// Commander Forged Alliance.
@@ -55,9 +66,25 @@ public:
     /// made at random the first time, and kept in the folder. None when it
     /// can't be read or made: snapshots are then neither signed nor trusted.
     std::optional<sim::SnapshotKey> snapshot_key() const;
+    /// Sign `save`'s snapshot as this installation's, taken by this binary.
+    /// False (left unsigned: a load catches up) without a key or the
+    /// binary's identity.
+    bool sign_snapshot(sim::SavedGame& save) const;
+    /// Whether `save`'s snapshot is this installation's and was taken by
+    /// this binary, so it may be restored; if not, `why` says what it isn't.
+    bool trusts_snapshot(const sim::SavedGame& save, std::string& why) const;
 
 private:
+    /// Whose snapshots it signs and trusts: the running binary's (read at
+    /// the first save or load: where it has no build id, its file is read
+    /// whole), or the one it was given.
+    std::optional<core::Sha256Digest> binary() const {
+        return binary_given_ ? binary_ : running_binary();
+    }
+
     std::filesystem::path root_;
+    std::optional<core::Sha256Digest> binary_;
+    bool binary_given_ = false;
 };
 
 /// The UI's special-file globals: GetSpecialFiles, GetSpecialFilePath,

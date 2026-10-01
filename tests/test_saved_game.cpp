@@ -289,12 +289,18 @@ TEST_CASE("Only its own installation's snapshot is trusted", "[savegame]") {
     osc::sim::SnapshotKey mine{}, theirs{};
     mine.fill(7);
     theirs.fill(9);
+    osc::core::Sha256Digest binary{};
+    binary.fill(3);
     CHECK_FALSE(osc::sim::snapshot_signed(save, mine)); // not signed yet
-    osc::sim::sign_snapshot(save, mine);
+    osc::sim::sign_snapshot(save, mine, binary);
     SavedGame loaded;
     REQUIRE(SavedGame::deserialize(save.serialize(), loaded) == SaveLoadError::None);
+    CHECK(loaded.snapshot_binary == binary); // the binary that took it, carried
     CHECK(osc::sim::snapshot_signed(loaded, mine));
     CHECK_FALSE(osc::sim::snapshot_signed(loaded, theirs));
+    SavedGame relabelled = loaded;
+    relabelled.snapshot_binary[0] ^= 1; // the signature covers the binary
+    CHECK_FALSE(osc::sim::snapshot_signed(relabelled, mine));
     loaded.snapshot[loaded.snapshot.size() / 2] ^= 1; // changed after signing
     CHECK_FALSE(osc::sim::snapshot_signed(loaded, mine));
 }

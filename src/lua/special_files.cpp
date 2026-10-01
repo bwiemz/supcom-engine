@@ -2,6 +2,7 @@
 
 #include "lua/lua_state.hpp"
 #include "lua/mp_net_state.hpp"
+#include "platform/executable.hpp"
 #include "platform/paths.hpp"
 #include "platform/secrets.hpp"
 #include "sim/build_info.hpp"
@@ -218,7 +219,7 @@ int l_InternalSaveGame(lua_State* L) {
         spdlog::warn("InternalSaveGame({}): {}", file, refused);
     } else {
         sim::SavedGame save = sim::save_game(*sim, name);
-        if (auto key = files->snapshot_key()) sim::sign_snapshot(save, *key);
+        (void)files->sign_snapshot(save);
         worked = write_saved_game(save, file);
         errmsg = worked ? name : "nowrite"; // retail's dialog words "nowrite"
     }
@@ -330,6 +331,61 @@ std::optional<sim::SnapshotKey> SpecialFiles::snapshot_key() const {
     // key, once in place, is the one.)
     (void)platform::write_private_file(file, key.data(), key.size());
     return read();
+}
+
+std::optional<core::Sha256Digest> SpecialFiles::running_binary() {
+    static const std::optional<core::Sha256Digest> identity =
+        []() -> std::optional<core::Sha256Digest> {
+        // The linker's build id is a digest of the binary already
+        if (const std::vector<u8> id = platform::executable_build_id(); !id.empty()) {
+            core::Sha256 h;
+            h.update("build-id:", 9);
+            h.update(id.data(), id.size());
+            return h.finish();
+        }
+        // Else the file's own digest, read once
+        std::ifstream in(platform::executable_path(), std::ios::binary);
+        if (!in) {
+            spdlog::warn("Saved games: this binary's identity can't be read; their snapshots "
+                         "won't be signed or restored");
+            return std::nullopt;
+        }
+        core::Sha256 h;
+        h.update("file:", 5);
+        std::vector<char> chunk(1 << 20);
+        while (in.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) || in.gcount() > 0)
+            h.update(chunk.data(), static_cast<size_t>(in.gcount()));
+        return h.finish();
+    }();
+    return identity;
+}
+
+bool SpecialFiles::sign_snapshot(sim::SavedGame& save) const {
+    if (save.snapshot.empty()) return false;
+    const auto key = snapshot_key();
+    const auto binary = this->binary();
+    if (!key || !binary) return false;
+    sim::sign_snapshot(save, *key, *binary);
+    return true;
+}
+
+bool SpecialFiles::trusts_snapshot(const sim::SavedGame& save, std::string& why) const {
+    if (save.snapshot.empty()) {
+        why = "it has no snapshot";
+        return false;
+    }
+    const auto key = snapshot_key();
+    if (!key || !sim::snapshot_signed(save, *key)) {
+        why = "its snapshot isn't this installation's";
+        return false;
+    }
+    // Signed here, but by another binary of the same build id: its C
+    // functions are elsewhere in this one
+    if (const auto binary = this->binary(); !binary || save.snapshot_binary != *binary) {
+        why = "its snapshot was taken by another binary of this build";
+        return false;
+    }
+    return true;
 }
 
 SpecialFiles* get_special_files(lua_State* L) {

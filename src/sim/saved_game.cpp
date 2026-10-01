@@ -56,6 +56,7 @@ std::vector<u8> SavedGame::serialize() const {
     w.u64v(packed.size());
     b.insert(b.end(), packed.begin(), packed.end());
     b.insert(b.end(), snapshot_mac.begin(), snapshot_mac.end());
+    b.insert(b.end(), snapshot_binary.begin(), snapshot_binary.end());
     const std::vector<u8> recording = game.serialize();
     b.insert(b.end(), recording.begin(), recording.end());
     return b;
@@ -91,11 +92,14 @@ SaveLoadError SavedGame::deserialize(const std::vector<u8>& bytes, SavedGame& ou
             return SaveLoadError::InvalidFormat;
     }
     const auto mac_at = packed_at + static_cast<std::ptrdiff_t>(packed_size);
-    if (bytes.end() - mac_at < static_cast<std::ptrdiff_t>(save.snapshot_mac.size()))
+    const auto binary_at = mac_at + static_cast<std::ptrdiff_t>(save.snapshot_mac.size());
+    if (bytes.end() - mac_at <
+        static_cast<std::ptrdiff_t>(save.snapshot_mac.size() + save.snapshot_binary.size()))
         return SaveLoadError::InvalidFormat;
     std::copy_n(mac_at, save.snapshot_mac.size(), save.snapshot_mac.begin());
-    const std::vector<u8> recording(mac_at + static_cast<std::ptrdiff_t>(save.snapshot_mac.size()),
-                                    bytes.end());
+    std::copy_n(binary_at, save.snapshot_binary.size(), save.snapshot_binary.begin());
+    const std::vector<u8> recording(
+        binary_at + static_cast<std::ptrdiff_t>(save.snapshot_binary.size()), bytes.end());
     if (!Replay::deserialize(recording, save.game) || !save.game.has_setup ||
         save.game.final_tick != save.tick)
         return SaveLoadError::InvalidFormat;
@@ -103,16 +107,26 @@ SaveLoadError SavedGame::deserialize(const std::vector<u8>& bytes, SavedGame& ou
     return SaveLoadError::None;
 }
 
-void sign_snapshot(SavedGame& save, const SnapshotKey& key) {
-    save.snapshot_mac =
-        core::hmac_sha256(key.data(), key.size(), save.snapshot.data(), save.snapshot.size());
+namespace {
+
+/// The signature of `save`'s snapshot and the binary it names.
+core::Sha256Digest snapshot_signature(const SavedGame& save, const SnapshotKey& key) {
+    core::HmacSha256 mac(key.data(), key.size());
+    mac.update(save.snapshot_binary.data(), save.snapshot_binary.size());
+    mac.update(save.snapshot.data(), save.snapshot.size());
+    return mac.finish();
+}
+
+} // namespace
+
+void sign_snapshot(SavedGame& save, const SnapshotKey& key, const core::Sha256Digest& binary) {
+    save.snapshot_binary = binary;
+    save.snapshot_mac = snapshot_signature(save, key);
 }
 
 bool snapshot_signed(const SavedGame& save, const SnapshotKey& key) {
     return !save.snapshot.empty() &&
-           core::digest_equal(save.snapshot_mac,
-                              core::hmac_sha256(key.data(), key.size(), save.snapshot.data(),
-                                                save.snapshot.size()));
+           core::digest_equal(save.snapshot_mac, snapshot_signature(save, key));
 }
 
 SavedGame save_game(SimState& sim, std::string name, bool snapshot) {

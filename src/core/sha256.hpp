@@ -33,6 +33,18 @@ inline Sha256Digest sha256(std::string_view s) {
     return sha256(s.data(), s.size());
 }
 
+/// HMAC-SHA256 of data given in parts.
+class HmacSha256 {
+public:
+    HmacSha256(const void* key, size_t key_size);
+    void update(const void* data, size_t size) { inner_.update(data, size); }
+    Sha256Digest finish();
+
+private:
+    Sha256 inner_;
+    std::array<u8, 64> opad_{};
+};
+
 Sha256Digest hmac_sha256(const void* key, size_t key_size, const void* data, size_t size);
 
 /// Equal digests, compared in constant time.
