@@ -75,12 +75,6 @@ constexpr const char* kReport = R"(
         .. ' selected=' .. table.concat(selected, ',')
 )";
 
-/// A button whose label reads what `loc` localizes to.
-std::string labelled(const char* loc) {
-    return fmt::format("return c.label and c.label.GetText and c.label:GetText() == LOC('{}')",
-                       loc);
-}
-
 /// The mod manager's entry for `uid` (`and_also`: more it must be).
 std::string mod_entry(const char* uid, const char* and_also = "true") {
     return fmt::format("return c.modInfo and c.modInfo.uid == '{}' and {}", uid, and_also);
@@ -114,8 +108,13 @@ bool takes_click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& con
     return hit_root && input.hit_test(L, hit_root, found.x, found.y) == found.control;
 }
 
-/// A player's left click on `found`, once it takes one: the mouse there,
-/// pressed and let go. False if it doesn't take one yet.
+} // namespace
+
+std::string labelled(const char* loc) {
+    return fmt::format("return c.label and c.label.GetText and c.label:GetText() == LOC('{}')",
+                       loc);
+}
+
 bool click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& controls,
            const std::optional<FoundControl>& found) {
     if (!found || !takes_click(L, input, controls, *found)) return false;
@@ -124,8 +123,6 @@ bool click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& controls,
     input.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
     return true;
 }
-
-} // namespace
 
 std::optional<FoundControl> find_control(lua_State* L, ui::UIControlRegistry& controls,
                                          const std::string& match) {

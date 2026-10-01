@@ -279,6 +279,9 @@ void App::Window::run_flows() {
     if (mods_flow)
         mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(), renderer.ui_dispatch(),
                          ui_registry);
+    if (ui_clicks) {
+        ui_clicks->frame(ui_lua_state, renderer.ui_dispatch(), ui_registry);
+    }
 
     load_flow_frame();
 }

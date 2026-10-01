@@ -356,6 +356,9 @@ std::optional<int> App::Window::start_flows() {
             return finish_test_run("mods-flow-test");
         }
     }
+    if (!opt.clicks.empty()) {
+        ui_clicks.emplace(opt.clicks);
+    }
     return std::nullopt;
 }
 
@@ -430,6 +433,10 @@ std::optional<int> App::Window::finish() {
     }
     if (tests) {
         if (auto code = tests->after_window()) return code;
+    }
+    if (ui_clicks && !ui_clicks->done()) {
+        spdlog::error("--click '{}': the button never took a click", ui_clicks->waiting_for());
+        return 1;
     }
     if (!screenshot_path.empty() && osc::renderer::Renderer::validation_error_count() > 0) {
         spdlog::error("{} Vulkan validation error(s) during the capture run",
