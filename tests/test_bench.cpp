@@ -20,6 +20,7 @@ TEST_CASE("A benchmark's tick figures, by nearest rank", "[bench]") {
     CHECK(s.mean_ms == Catch::Approx(50.5));
     CHECK(s.p50_ms == 50);
     CHECK(s.p90_ms == 90);
+    CHECK(s.p95_ms == 95);
     CHECK(s.p99_ms == 99);
     CHECK(s.max_ms == 100);
     CHECK(s.max_tick == 7);

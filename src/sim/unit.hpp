@@ -341,6 +341,13 @@ public:
     const std::deque<UnitCommand>& command_queue() const {
         return command_queue_;
     }
+    /// The unit this one guards (GetGuardedUnit): its current order's
+    /// target when that is a Guard, else 0.
+    u32 guarded_unit_id() const {
+        return !command_queue_.empty() && command_queue_.front().type == CommandType::Guard
+                   ? command_queue_.front().target_id
+                   : 0;
+    }
     void push_command(const UnitCommand& cmd, bool clear_existing);
     void clear_commands(const char* source = "?");
 

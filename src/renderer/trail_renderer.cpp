@@ -1,4 +1,5 @@
 #include "renderer/trail_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 
 #include "renderer/camera.hpp"
 #include "renderer/effect_blueprint_file.hpp"
@@ -414,16 +415,16 @@ void TrailRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
         if (g.under_water != under_water) continue;
         if (!pipelines_[static_cast<size_t>(g.blendmode)]) continue;
         if (g.blendmode != bound) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              pipelines_[static_cast<size_t>(g.blendmode)]);
-            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
-                               view_proj);
+            vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               pipelines_[static_cast<size_t>(g.blendmode)]);
+            vkc::push_constants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
+                                view_proj);
             bound = g.blendmode;
         }
         const std::array<VkDescriptorSet, 2> sets = {g.ramp, g.repeat};
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0,
-                                static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
-        vkCmdDraw(cmd, g.vertex_count, 1, g.first_vertex, 0);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0,
+                                  static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
+        vkc::draw(cmd, g.vertex_count, 1, g.first_vertex, 0);
     }
 }
 

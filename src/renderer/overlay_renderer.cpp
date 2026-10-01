@@ -1,4 +1,5 @@
 #include "renderer/overlay_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/trail_renderer.hpp"
@@ -880,8 +881,7 @@ void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     // Push viewport size (same format as UI pipeline)
     f32 vp[2] = {static_cast<f32>(viewport_w),
                  static_cast<f32>(viewport_h)};
-    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(f32) * 2, vp);
+    vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     // Full-screen scissor
     VkRect2D scissor{};
@@ -889,8 +889,8 @@ void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     // Bind white texture
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            layout, 0, 1, &white_ds_, 0, nullptr);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &white_ds_, 0,
+                              nullptr);
 
     // Bind instance buffer
     VkBuffer buf = instance_buf_[fi_].buffer;
@@ -898,7 +898,7 @@ void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     vkCmdBindVertexBuffers(cmd, 0, 1, &buf, &offset);
 
     // Draw all quads (6 verts per quad, instanced)
-    vkCmdDraw(cmd, 6, quad_count_, 0, 0);
+    vkc::draw(cmd, 6, quad_count_, 0, 0);
 }
 
 } // namespace osc::renderer

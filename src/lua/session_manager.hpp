@@ -45,6 +45,14 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx);
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
                            const std::vector<u32>& army_colors);
 
+/// Whether the session's scripts decide the game, so the engine's own
+/// adjudication stands down, as Moho has none: retail's /lua/victory.lua
+/// (its CheckVictory, started by a schook hook of BeginSession), or FAF's
+/// victory condition (/lua/sim/victorycondition/, started by its
+/// BeginSession). Asked once BeginSession has run: `__modules` holds what
+/// has been imported (names lower-cased, as both import.lua's keep them).
+bool scripts_decide_victory(lua_State* L);
+
 class SessionManager {
 public:
     /// Run the full session lifecycle:

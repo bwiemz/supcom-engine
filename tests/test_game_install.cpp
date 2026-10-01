@@ -209,6 +209,28 @@ TEST_CASE("CLI hints and env override discovery", "[platform][install]") {
     CHECK(from_env.install->fa_path == custom);
 }
 
+TEST_CASE("FAF data given with an FA path runs FAF's init over that FA", "[platform][install]") {
+    // --faf-data <dir> --fa-path <fa>: FAF's bin/init_faf.lua, over the FA
+    // install named (it had run retail's init, while logging the FAF data).
+    TempDir tmp;
+    make_steam_tree(tmp.path);
+    fs::path custom = tmp.path / "custom_fa";
+    write_file(custom / "bin" / "SupComDataPath.lua", "path = {}\n");
+    fs::path faf = tmp.path / "fafdata";
+    write_file(faf / "bin" / "init_faf.lua", "-- faf\n");
+    auto env = fake_env({{"HOME", (tmp.path / "home").string()}});
+
+    GameInstallHints hints;
+    hints.fa_path = custom;
+    hints.faf_data_path = faf;
+    auto result = locate_game_install(hints, env);
+    REQUIRE(result.install.has_value());
+    CHECK(result.install->source == "cli");
+    CHECK(result.install->init_file == faf / "bin" / "init_faf.lua");
+    CHECK(result.install->faf_data_path == faf);
+    CHECK(result.install->fa_path == custom);
+}
+
 TEST_CASE("locate_game_install explains a failed search", "[platform][install]") {
     TempDir tmp;
     auto env = fake_env({{"HOME", (tmp.path / "empty_home").string()}});

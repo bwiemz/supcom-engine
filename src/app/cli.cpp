@@ -87,6 +87,12 @@ void print_usage() {
               << "                     more just before --save-at's save\n"
               << "  --bench <file>     With --ticks or --ai-skirmish: write each tick's time\n"
               << "                     and the game's checksum as JSON (tools/bench.py)\n"
+              << "  --render-bench <file>  With --load: render a scene of the saved game\n"
+              << "                     offscreen at 1920x1080 and write its frames' figures\n"
+              << "                     as JSON (M223b; tools/bench.py)\n"
+              << "  --render-scene <battle|late|strategic>  The scene (default battle)\n"
+              << "  --render-frames <n> --render-warmup <n>  Frames measured (default 600),\n"
+              << "                     after the warm-up's (default 120)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --log <file>       Write the log there (default: a player's game logs to\n"
@@ -256,6 +262,12 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
     o.load_by_replay = parse_flag(argc, argv, "--load-by-replay");
     o.bench_report = parse_string_arg(argc, argv, "--bench", "");
+    o.render_bench_report = parse_string_arg(argc, argv, "--render-bench", "");
+    o.render_scene = parse_string_arg(argc, argv, "--render-scene", "battle");
+    o.render_frames = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--render-frames", "600").c_str(), nullptr, 10));
+    o.render_warmup = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--render-warmup", "120").c_str(), nullptr, 10));
     // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
     // --watch <file>: open a replay in the game, as the replay dialog does.
     // --replay-flow-test: the dialog's own path (the first replay

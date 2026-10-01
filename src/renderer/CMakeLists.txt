@@ -42,6 +42,8 @@ add_library(osc_renderer STATIC
     wave_system.cpp
     particle_renderer.cpp
     profile_overlay.cpp
+    vk_cmd.cpp
+    gpu_queries.cpp
 )
 add_library(osc::renderer ALIAS osc_renderer)
 

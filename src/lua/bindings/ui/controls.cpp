@@ -14,6 +14,7 @@
 #include "lua/factory_queue.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
+#include "ui/lazyvar.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
@@ -470,10 +471,26 @@ const MethodEntry ui_control_methods[] = {
 };
 // clang-format on
 
+static f32 topmost_depth(lua_State* L, const ui::UIControl& ctrl) {
+    f32 top = 0.0f;
+    for (const auto* child : ctrl.children()) {
+        if (!child || child->destroyed() || child->destroying()) {
+            continue;
+        }
+        if (child->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, child->lua_table_ref());
+            top = std::max(top, ui::read_lazyvar(L, -1, "Depth"));
+            lua_pop(L, 1);
+        }
+        top = std::max(top, topmost_depth(L, *child));
+    }
+    return top;
+}
+
+// The deepest of the frame's controls, hidden ones and theirs too, as Moho's
 static int frame_GetTopmostDepth(lua_State* L) {
-    // Walk all children recursively and find max Depth LazyVar value
-    // For now return a fixed value; Depth is managed in Lua LazyVars
-    lua_pushnumber(L, 0);
+    auto* frame = check_control(L);
+    lua_pushnumber(L, frame ? topmost_depth(L, *frame) : 0.0f);
     return 1;
 }
 

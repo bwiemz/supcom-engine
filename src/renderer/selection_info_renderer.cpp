@@ -1,4 +1,5 @@
 #include "renderer/selection_info_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "sim/world_snapshot.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
@@ -456,8 +457,7 @@ void SelectionInfoRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 
     f32 vp[2] = {static_cast<f32>(viewport_w),
                  static_cast<f32>(viewport_h)};
-    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(f32) * 2, vp);
+    vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     VkRect2D scissor{};
     scissor.extent = {viewport_w, viewport_h};
@@ -470,10 +470,10 @@ void SelectionInfoRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     for (auto& group : groups_) {
         if (group.count == 0) continue;
         if (group.ds) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    layout, 0, 1, &group.ds, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &group.ds,
+                                      0, nullptr);
         }
-        vkCmdDraw(cmd, 6, group.count, 0, group.offset);
+        vkc::draw(cmd, 6, group.count, 0, group.offset);
     }
 }
 

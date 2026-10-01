@@ -2,6 +2,7 @@
 // UI's frames (M192 step 2b, moved from run()); its frame's phases are
 // App::Window's (step 2c, window_frame.cpp and window_session.cpp).
 
+#include "core/profiler.hpp"
 #include "app/window_loop.hpp"
 #include "app/window_commands.hpp"
 #include "lua/mp_net_state.hpp"
@@ -22,10 +23,13 @@ std::optional<int> App::run_window() {
 App::Window::Window(App& app)
     : app(app), offscreen_capture(!parse_string_arg(argc, argv, "--screenshot", "").empty() ||
                                   !parse_string_arg(argc, argv, "--golden", "").empty() ||
-                                  opt.scripted_window) {}
+                                  !opt.render_bench_report.empty() || opt.scripted_window) {}
 
 std::optional<int> App::Window::run() {
-    if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
+    // The render benchmark's frames are 1920x1080 (M223b); captures keep
+    // their 1600x900.
+    const bool bench = !opt.render_bench_report.empty();
+    if (renderer.init(bench ? 1920 : 1600, bench ? 1080 : 900, "OpenSupCom", offscreen_capture)) {
         if (auto code = set_up()) return code;
         while (running()) {
             if (!frame()) break;
@@ -146,6 +150,28 @@ std::optional<int> App::Window::set_up() {
     if (opt.scripted_window) {
         renderer.set_fixed_frame_dt(static_cast<osc::f32>(kInterpFrameDt));
         renderer.camera().set_input_enabled(false);
+    }
+    if (!opt.render_bench_report.empty()) {
+        const auto scene = RenderBench::scene_named(opt.render_scene);
+        if (!scene) {
+            spdlog::error("--render-scene expects battle, late or strategic, got '{}'",
+                          opt.render_scene);
+            return 1;
+        }
+        if (opt.load_path.empty()) {
+            spdlog::error("--render-bench renders a saved game's scene: pass --load <file>");
+            return 1;
+        }
+        render_bench = std::make_unique<RenderBench>(opt.render_bench_report, *scene,
+                                                     opt.render_warmup, opt.render_frames);
+        // A fixed clock (the same frames each run), the camera the scene's,
+        // and no wait for the display
+        renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
+        renderer.camera().set_input_enabled(false);
+        renderer.set_vsync(false);
+        // Its zones split each frame's CPU time; its overlay would add to it
+        osc::Profiler::instance().set_enabled(true);
+        renderer.set_profile_overlay_hidden(true);
     }
     if (!screenshot_path.empty()) {
         renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
@@ -335,11 +361,25 @@ std::optional<int> App::Window::start_flows() {
 
 bool App::Window::running() const {
     return !renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
+           !(render_bench && (render_bench->done() || render_bench->gave_up())) &&
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done());
 }
 
 std::optional<int> App::Window::finish() {
+    // The render benchmark's report, while the renderer and the game are up
+    if (render_bench) {
+        const bool complete = render_bench->done() && sim_state;
+        const bool written = complete && render_bench->write(renderer, *sim_state);
+        if (written) spdlog::info("Render bench report: {}", render_bench->report_path());
+        else
+            spdlog::error("--render-bench: {}", complete ? "cannot write the report"
+                                                : render_bench->gave_up()
+                                                    ? "the saved game never loaded"
+                                                    : "the scene never finished");
+        renderer.shutdown();
+        return written ? 0 : 1;
+    }
     save_last_game(); // quitting leaves the game being played
     if (!offscreen_capture) {
         // Where and how big the window was, for the next start (M217h)

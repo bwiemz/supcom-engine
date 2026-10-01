@@ -194,6 +194,47 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
     CHECK(dispatch.hit_test(L, root, 350, 80) == nullptr);
 }
 
+TEST_CASE("A frame's topmost depth is its deepest live control's, as Moho's", "[ui][lua]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    // As retail answers: a hidden control counts, and so do its children
+    auto result = lua.do_string(R"(
+        local function group(parent, depth)
+            local c = setmetatable({}, { __index = moho.control_methods })
+            InternalCreateGroup(c, parent)
+            rawset(c, 'Depth', depth)
+            return c
+        end
+        local frame = GetFrame(0)
+        local g = group(frame, 5000)
+        with_group = frame:GetTopmostDepth()
+        g:Hide()
+        hidden = frame:GetTopmostDepth()
+        group(g, 7000)
+        with_child = frame:GetTopmostDepth()
+        g:Destroy()
+        destroyed = frame:GetTopmostDepth()
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+
+    lua_State* L = lua.raw();
+    auto global = [L](const char* name) {
+        lua_getglobal(L, name);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    CHECK(global("with_group") == 5000);
+    CHECK(global("hidden") == 5000);
+    CHECK(global("with_child") == 7000);
+    CHECK(global("destroyed") == 0);
+}
+
 namespace {
 
 /// A UI state with the input fixtures: boxes laid out in plain numbers, each

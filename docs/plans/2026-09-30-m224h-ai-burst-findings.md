@@ -1,7 +1,8 @@
 # M224h: The Late Game's p99 Spikes — Findings
 
-**Status:** 2026-09-30. Roadmap Phase H (M224, sim hot paths). Diagnosis done; the
-next step is a decision (see Options).
+**Status:** 2026-09-30. Roadmap Phase H (M224, sim hot paths). Diagnosed, and decided
+the same day: option 1, retail's behaviour stays, and the budget is split (see
+Decision), then option 4.
 
 ## Why
 
@@ -114,6 +115,17 @@ was set against.
 **Recommendation:** option 1 now (re-baseline, restate the budget), then option 4.
 Option 2 only if a faster late game matters more than matching Moho here.
 
+## Decision (2026-09-30)
+
+Option 1. Retail's scripts are not patched or rescheduled to pass a budget.
+
+The Phase H budget is split:
+- **Core:** at about 2,000 units, the median tick under 12 ms and p90 under 16 ms.
+- **The engine's:** a p99 of the engine's own, measured apart from the scripts.
+- **Retail's script spikes** like this one are tracked but don't fail the budget.
+
+Option 4, freezing more of the static heap, is next on the sim's side.
+
 ## Method (to repeat it)
 
 - **Phase timing:** a scratch patch in `SimState::tick` with `steady_clock` marks
@@ -128,3 +140,41 @@ Option 2 only if a faster late game matters more than matching Moho here.
   scratch folder first on the path, with `hook = { '/schook' }`.
 
 None of these is committed; each is a few lines to redo.
+
+## Option 4, tried (2026-09-30): there is no static heap left worth freezing
+
+An instrumented collector (scratch, not committed) took a census at the late game's
+collections. It counted the live tables still marked, by shape and holder, and the
+mark's work.
+
+At collection 250 (about tick 17,500) the mark takes 31-34 ms. It visits:
+- 330,000-365,000 tables, with 2.4 million array and hash slots;
+- 5,800 threads, with 295,000 stack slots.
+
+The frozen blueprints (203,000 tables) are already out of it.
+
+- **What it marks is live game state:**
+  - each unit's empty event-callback lists and effect bags (66,000 empty tables);
+  - the props' objects (19,000);
+  - trash bags (36,000, growing);
+  - retail AI's platoon lists and monitor points;
+  - upvalues (about 110,000) and coroutines.
+  None of it can be frozen: it changes, and it dies with its units.
+- **Static data reachable from modules and globals** totals 42,000 tables. 38,000 of
+  them are `/lua/basetemplates.lua`'s AI base layouts.
+- **Freezing the base templates changed nothing:** in a trial, the mean mark over the
+  last 84 collections of the same game was 34.11 ms without and 34.10 ms with. They
+  were allocated together at load, so marking them was already cheap; the cost is the
+  live objects scattered through the heap.
+- **The largest single table** (131,072 nodes) is retail's `repr.lua` `global_names`.
+  It maps every table within two levels of `_G` to its name, and was built when
+  `globalInit.lua` re-ran `repr.lua` after `__blueprints` existed. Moho does the same:
+  `Sim` exports `__blueprints` (`ExportToLuaState`) before `simInit.lua`. Some of its
+  keys have metatables, so freezing it would only make it a frozen root, traversed as
+  before.
+
+**Conclusion:** the mark is set by live state. Only an incremental or generational
+collector would shorten it, and that means write barriers throughout Lua 5.0's VM
+(table writes, upvalues, stacks) while keeping the game deterministic: a large change,
+not to start without a decision. Freezing more is not worth a change.
+

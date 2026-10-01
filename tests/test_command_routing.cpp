@@ -244,3 +244,57 @@ TEST_CASE("A mapped source's UI callbacks touch only its own army's units", "[ro
     CHECK(unit_of(sim, mine)->fire_state() == 0);
     CHECK(unit_of(sim, theirs)->fire_state() == 1);
 }
+
+TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][guard]") {
+    // func_ProcessUnitCommand: never the unit itself, a factory only a
+    // factory, never a unit guarding it, not without the order, not from a
+    // carrier's hold; a place, only a mobile unit. A campaign base manager's
+    // factory told to guard itself had FAF's roll-off loop walk forever.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const auto make = [&](const char* category, bool mobile, bool guards = true) {
+        auto u = std::make_unique<Unit>();
+        u->set_army(0);
+        u->add_category(category);
+        if (mobile) u->set_motion_type("RULEUMT_Land");
+        if (guards) u->add_command_cap("RULEUCC_Guard");
+        return sim.entity_registry().register_entity(std::move(u));
+    };
+    const auto guard = [](osc::u32 target) {
+        UnitCommand c;
+        c.type = CommandType::Guard;
+        c.target_id = target;
+        return c;
+    };
+    const auto guarding = [&](osc::u32 id) { return unit_of(sim, id)->guarded_unit_id(); };
+
+    const osc::u32 factory = make("FACTORY", false);
+    const osc::u32 other_factory = make("FACTORY", false);
+    const osc::u32 engineer = make("ENGINEER", true);
+    const osc::u32 tank = make("LAND", true);
+
+    // Itself: not taken, and so nothing to report.
+    CHECK(sim.route_command({factory}, guard(factory), false) == 0);
+    CHECK(guarding(factory) == 0);
+    // Of a list naming its target, the others go; the target stays out.
+    CHECK(sim.route_command({factory, other_factory}, guard(factory), false) != 0);
+    CHECK(guarding(other_factory) == factory);
+    CHECK(guarding(factory) == 0);
+    // A unit guarding it: the factory it assists can't turn to guard it.
+    CHECK(sim.route_command({factory}, guard(other_factory), false) == 0);
+    // A factory only guards a factory; an engineer guards either.
+    CHECK(sim.route_command({factory}, guard(tank), false) == 0);
+    CHECK(sim.route_command({engineer}, guard(factory), false) != 0);
+    CHECK(guarding(engineer) == factory);
+    // Without RULEUCC_Guard, nothing.
+    const osc::u32 wall = make("STRUCTURE", false, /*guards=*/false);
+    CHECK(sim.route_command({wall}, guard(tank), false) == 0);
+    // A place (no target unit): only a mobile unit goes.
+    CHECK(sim.route_command({tank}, guard(0), false) != 0);
+    CHECK(sim.route_command({other_factory}, guard(0), true) == 0);
+    // In a carrier's hold, nothing.
+    const osc::u32 carrier = make("CARRIER", true);
+    const osc::u32 plane = make("AIR", true);
+    unit_of(sim, plane)->set_transport_id(carrier);
+    CHECK(sim.route_command({plane}, guard(tank), false) == 0);
+}

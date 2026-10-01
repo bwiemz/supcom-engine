@@ -140,6 +140,12 @@ public:
 
     /// Get all active zone stats (for overlay display or log output).
     const ProfileZoneStats* zone_stats() const { return zones_; }
+    /// This frame's time so far in zone `name`, in microseconds (0 when it
+    /// hasn't run): the render benchmark reads it before the frame ends.
+    f64 frame_zone_us(const char* name) const {
+        const i32 i = find_frame_zone(name);
+        return i >= 0 ? frame_zones_[i].elapsed_us : 0.0;
+    }
     u32 zone_count() const { return persistent_zone_count_; }
 
     /// Get frame time history (for sparkline graph).

@@ -1,4 +1,5 @@
 #include "stb/stb_truetype.h"
+#include "renderer/vk_cmd.hpp"
 
 #include "renderer/font_cache.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -365,7 +366,7 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
             write.descriptorCount = 1;
             write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             write.pImageInfo = &img_info;
-            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
         }
     }
 
