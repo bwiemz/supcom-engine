@@ -172,7 +172,8 @@ void App::Window::handle_launch() {
                 }
 
                 // Build the game interface; the loading dialog fades out
-                finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value());
+                finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value(),
+                                sim_lua_state.get(), sim_state.get());
             }
         } else {
             lua_pop(uiL, 1);

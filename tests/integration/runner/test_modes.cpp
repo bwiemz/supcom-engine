@@ -839,7 +839,8 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
 
         // FA's game interface, as the windowed launch builds it
         begin_world_ui(ui_lua_state.raw(), wld_provider);
-        finish_world_ui(ui_lua_state.raw(), wld_provider, false);
+        finish_world_ui(ui_lua_state.raw(), wld_provider, false, sim_lua_state.get(),
+                        sim_state.get());
 
         // Fire OnFirstUpdate once
         osc::core::call_on_first_update(ui_lua_state.raw());

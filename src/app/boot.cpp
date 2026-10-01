@@ -798,7 +798,8 @@ std::optional<int> App::start() {
         // controls.
         if (!opt.headless || request.world_ui) {
             begin_world_ui(ui_lua_state.raw(), wld_provider);
-            finish_world_ui(ui_lua_state.raw(), wld_provider, false);
+            finish_world_ui(ui_lua_state.raw(), wld_provider, false, sim_lua_state.get(),
+                            sim_state.get());
         }
     } else {
         // No map: start in FRONT_END state (main menu)
