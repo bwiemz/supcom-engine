@@ -8,8 +8,10 @@ namespace osc::platform {
 /// Install process-wide crash reporting. Idempotent.
 ///
 /// POSIX: SIGSEGV/SIGBUS/SIGFPE/SIGILL/SIGABRT write a report and backtrace
-/// to stderr (on an alternate stack, so stack overflows are reported too),
-/// then re-raise with the default action so core dumps and the "killed by
+/// to stderr (on an alternate stack, so stack overflows are reported too):
+/// the signal, a fault's address and, on Linux, the faulting PC first, then
+/// the backtrace, which a smashed stack can keep from being walked. Then they
+/// re-raise with the default action so core dumps and the "killed by
 /// signal" exit status are preserved. SIGPIPE is ignored: a peer that
 /// vanishes must surface as a failed send, not kill the game.
 ///
@@ -30,5 +32,12 @@ void set_crash_report_dir(const std::filesystem::path& dir, const std::string& h
 /// Crash now, as a fault would (--simulate-crash), so crash reporting can be
 /// checked end to end.
 [[noreturn]] void crash_for_test();
+
+/// POSIX: the function the handler walks the stack with, backtrace()'s
+/// signature (null: backtrace() again). A test's can fault, as the unwinder
+/// does on a stack a wild call smashed: the report's summary (the signal,
+/// the fault address, the faulting PC) is written before it runs.
+using UnwinderForTest = int (*)(void** frames, int size);
+void set_unwinder_for_test(UnwinderForTest unwinder);
 
 } // namespace osc::platform
