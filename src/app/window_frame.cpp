@@ -71,7 +71,7 @@ double App::Window::begin_frame() {
     auto now = std::chrono::high_resolution_clock::now();
     double dt = std::chrono::duration<double>(now - prev_time).count();
     prev_time = now;
-    if (!screenshot_path.empty()) dt = kScreenshotFrameDt;
+    if (!screenshot_path.empty() || render_bench) dt = kScreenshotFrameDt;
     if (opt.scripted_window) dt = kInterpFrameDt;
     // Clamp dt to avoid spiral of death
     if (dt > 0.25) dt = 0.25;
@@ -364,6 +364,9 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
 
 void App::Window::render(const sim::FrameView& frame_view) {
     const auto& sel = input_handler.selected();
+    // The render benchmark waits for its save to load, front end included
+    if (render_bench && !(sim_state && game_state_mgr.current() == osc::GameState::GAME))
+        render_bench->waiting();
     if (!screenshot_path.empty() && ++frames_rendered == std::max<osc::u32>(screenshot_frame, 1)) {
         const bool requested = renderer.request_capture([&](osc::ImageRGBA8 image) {
             screenshot_ok = osc::write_png(screenshot_path, image);
@@ -378,8 +381,18 @@ void App::Window::render(const sim::FrameView& frame_view) {
     }
     if (sim_state) {
         const auto ghost = input_handler.build_ghost(renderer, *sim_state);
+        // The render benchmark's scene, once the loaded game is in (M223b)
+        RenderBench* bench = render_bench && game_state_mgr.current() == osc::GameState::GAME
+                                 ? render_bench.get()
+                                 : nullptr;
+        if (bench) bench->before_frame(renderer, *sim_state);
+        const auto render_start = std::chrono::steady_clock::now();
         renderer.render(frame_view, world_interp.history.events(), ghost ? &*ghost : nullptr,
                         ui_lua_state.raw(), &ui_registry, sel.empty() ? nullptr : &sel);
+        if (bench)
+            bench->after_frame(renderer, std::chrono::duration<osc::f64, std::milli>(
+                                             std::chrono::steady_clock::now() - render_start)
+                                             .count());
         if (tests) {
             Frame frame{frame_view, renderer, input_handler};
             tests->frame_rendered(engine, frame);

@@ -29,6 +29,10 @@ public:
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
+    /// Hidden, the profiler times its zones and nothing is drawn (the render
+    /// benchmark's frames, M223b). Shown by default, as --profile shows it.
+    void set_hidden(bool hidden) { hidden_ = hidden; }
+
     void set_frame_index(u32 fi) { fi_ = fi; }
 
     u32 quad_count() const { return quad_count_; }
@@ -37,6 +41,7 @@ public:
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
+    bool hidden_ = false;
     struct DrawGroup {
         VkDescriptorSet ds = VK_NULL_HANDLE;
         u32 offset = 0;

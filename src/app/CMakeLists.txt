@@ -4,6 +4,7 @@
 add_library(osc_app STATIC
     app.cpp
     bench.cpp
+    render_bench.cpp
     boot.cpp
     cli.cpp
     frames.cpp

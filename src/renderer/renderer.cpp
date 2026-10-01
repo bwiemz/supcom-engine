@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "core/cursor.hpp"
 #include "core/ui_registry_keys.hpp"
 
@@ -29,6 +30,7 @@ extern "C" {
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -223,6 +225,13 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     auto vkb_phys = phys_ret.value();
     physical_device_ = vkb_phys.physical_device;
     spdlog::info("Vulkan GPU: {}", vkb_phys.name);
+    device_name_ = vkb_phys.name;
+
+    // Pipeline statistics, where the device has them: the render benchmark's
+    // primitive and shader counts (M223b).
+    VkPhysicalDeviceFeatures optional_features{};
+    optional_features.pipelineStatisticsQuery = VK_TRUE;
+    const bool pipeline_statistics = vkb_phys.enable_features_if_present(optional_features);
 
     // Logical device
     vkb::DeviceBuilder dev_builder(vkb_phys);
@@ -244,6 +253,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     }
     graphics_queue_ = gq.value();
     graphics_queue_family_ = gqi.value();
+    gpu_queries_.init(physical_device_, device_, graphics_queue_family_, pipeline_statistics,
+                      FRAMES_IN_FLIGHT);
 
     // VMA allocator
     VmaAllocatorCreateInfo alloc_ci{};
@@ -828,8 +839,8 @@ void Renderer::create_shadow_resources() {
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[1].pBufferInfo = &buf_info;
 
-            vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()),
-                                   writes.data(), 0, nullptr);
+            vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
+                                        nullptr);
         }
     }
 
@@ -1596,7 +1607,7 @@ void Renderer::create_bloom_resources() {
             write.descriptorCount = 1;
             write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             write.pImageInfo = &img_info;
-            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
         };
 
         write_ds(scene_ds_, scene_color_image_.view);
@@ -1931,7 +1942,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             write.descriptorCount = 1;
             write.pBufferInfo = &buf_info;
-            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
         }
     }
 
@@ -2063,7 +2074,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[i].pImageInfo = &img_infos[i];
         }
-        vkUpdateDescriptorSets(device_, 20, writes.data(), 0, nullptr);
+        vkc::update_descriptor_sets(device_, 20, writes.data(), 0, nullptr);
 
         // The upper stratum (binding 22); without one, a transparent texel
         // leaves the strata below as they are.
@@ -2112,7 +2123,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             more[1].descriptorCount = 1;
             more[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             more[1].pBufferInfo = &strata_info;
-            vkUpdateDescriptorSets(device_, static_cast<u32>(more.size()), more.data(), 0, nullptr);
+            vkc::update_descriptor_sets(device_, static_cast<u32>(more.size()), more.data(), 0,
+                                        nullptr);
         }
 
         spdlog::info("Terrain textures: {} strata loaded, blend0={}, blend1={}",
@@ -2146,7 +2158,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             fog_write.descriptorType =
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             fog_write.pImageInfo = &fog_info;
-            vkUpdateDescriptorSets(device_, 1, &fog_write, 0, nullptr);
+            vkc::update_descriptor_sets(device_, 1, &fog_write, 0, nullptr);
         }
     }
 
@@ -2169,7 +2181,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &info;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
         bind_normal_target();
         spdlog::info("Normal maps: {}x{} in tiles of {}x{}{}", normal_maps.width,
                      normal_maps.height, normal_maps.tile_width, normal_maps.tile_height,
@@ -2285,8 +2297,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Wait for this frame's previous GPU work to complete
     {
         PROFILE_ZONE("Render::gpu_wait");
+        const auto wait_start = std::chrono::steady_clock::now();
         vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
+        last_gpu_wait_ms_ =
+            std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - wait_start)
+                .count();
     }
+    // The GPU's figures for the frame that last used this slot (M223b)
+    gpu_queries_.collect(device_, fi);
 
     // A resized window or a vsync change: a new swapchain first (M217h)
     if (swapchain_stale_) recreate_swapchain();
@@ -2514,6 +2532,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
+    gpu_queries_.begin(cmd_buf_[fi], fi, frame_sequence_ + 1);
     mesh_draws_.fill(0); // this frame's, for tests (M211k)
 
     // Upload fog of war texture (barriers + copy, before any render pass)
@@ -2555,30 +2574,28 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
         // Shadow terrain
         if (terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              shadow_terrain_pipeline_);
-            vkCmdPushConstants(cmd_buf_[fi], shadow_terrain_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT,
-                               0, sizeof(f32) * 16, light_vp.data());
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               shadow_terrain_pipeline_);
+            vkc::push_constants(cmd_buf_[fi], shadow_terrain_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                sizeof(f32) * 16, light_vp.data());
 
             VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
             vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
                                  VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+            vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
         }
 
         // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
         if (!strategic_icon_renderer_.is_strategic_zoom() &&
             !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_[fi]) {
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              shadow_mesh_pipeline_);
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               shadow_mesh_pipeline_);
 
             // Bind bone SSBO at set=0
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    shadow_mesh_layout_, 0, 1, &bone_ds_[fi],
-                                    0, nullptr);
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      shadow_mesh_layout_, 0, 1, &bone_ds_[fi], 0, nullptr);
 
             struct ShadowMeshPC {
                 f32 lightVP[16];
@@ -2600,15 +2617,15 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
                 spc.technique = static_cast<u32>(base_technique(group.mesh->technique));
-                vkCmdPushConstants(cmd_buf_[fi], shadow_mesh_layout_,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(spc), &spc);
+                vkc::push_constants(cmd_buf_[fi], shadow_mesh_layout_,
+                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                    sizeof(spc), &spc);
                 // The albedo, whose alpha cuts an alpha-tested mesh's shadow
                 // (DepthClip, M211j).
                 VkDescriptorSet albedo = group.texture_ds ? group.texture_ds : albedo_fallback;
                 if (albedo) {
-                    vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                            shadow_mesh_layout_, 1, 1, &albedo, 0, nullptr);
+                    vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                              shadow_mesh_layout_, 1, 1, &albedo, 0, nullptr);
                 }
 
                 VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
@@ -2620,19 +2637,18 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
                 vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
                                      VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd_buf_[fi], group.mesh->index_count,
-                                 group.instance_count, 0, 0, 0);
+                vkc::draw_indexed(cmd_buf_[fi], group.mesh->index_count, group.instance_count, 0, 0,
+                                  0);
             }
         }
 
         // Shadow cubes (skip when strategic zoom active)
         if (!strategic_icon_renderer_.is_strategic_zoom() &&
             unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              shadow_unit_pipeline_);
-            vkCmdPushConstants(cmd_buf_[fi], shadow_unit_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT,
-                               0, sizeof(f32) * 16, light_vp.data());
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               shadow_unit_pipeline_);
+            vkc::push_constants(cmd_buf_[fi], shadow_unit_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                sizeof(f32) * 16, light_vp.data());
 
             VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
                                 unit_renderer_.cube_instance_buffer()};
@@ -2640,8 +2656,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
             vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
                                  VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
-                             unit_renderer_.cube_instance_count(), 0, 0, 0);
+            vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
+                              unit_renderer_.cube_instance_count(), 0, 0, 0);
         }
 
         vkCmdEndRenderPass(cmd_buf_[fi]);
@@ -2677,7 +2693,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         normal_scissor.extent = {window_width_, window_height_};
         vkCmdSetScissor(cmd_buf_[fi], 0, 1, &normal_scissor);
 
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
@@ -2690,18 +2706,18 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
-        vkCmdPushConstants(cmd_buf_[fi], terrain_normal_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                           sizeof(tpc), &tpc);
+        vkc::push_constants(cmd_buf_[fi], terrain_normal_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(tpc), &tpc);
         const std::array<VkDescriptorSet, 2> sets = {terrain_tex_ds_, shadow_ds_[fi]};
-        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                terrain_normal_layout_, 0, static_cast<u32>(sets.size()),
-                                sets.data(), 0, nullptr);
+        vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  terrain_normal_layout_, 0, static_cast<u32>(sets.size()),
+                                  sets.data(), 0, nullptr);
         VkBuffer vertices = terrain_mesh_.vertex_buffer();
         const VkDeviceSize no_offset = 0;
         vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, &vertices, &no_offset);
         vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
 
         // The normal decals (OverDrawDecals: TDecalsNormals, ...Alpha).
         record_decals(cmd_buf_[fi], fi, DecalTechnique::Normals, decal_normal_pipeline_, vp);
@@ -2785,8 +2801,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // 1. Draw terrain
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          terrain_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_pipeline_);
 
         // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
         // pad(8) + eye(12) = 92B
@@ -2804,22 +2819,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         tpc.terrainTime = terrain_time_.value();
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
-        vkCmdPushConstants(cmd_buf_[fi], terrain_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT |
-                               VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(tpc), &tpc);
+        vkc::push_constants(cmd_buf_[fi], terrain_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(tpc), &tpc);
 
         // Bind terrain texture descriptor set (set=0)
         if (terrain_tex_ds_) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    terrain_layout_, 0, 1, &terrain_tex_ds_,
-                                    0, nullptr);
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      terrain_layout_, 0, 1, &terrain_tex_ds_, 0, nullptr);
         }
         // Bind shadow descriptor set (set=1)
         if (shadow_ds_[fi]) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    terrain_layout_, 1, 1, &shadow_ds_[fi],
-                                    0, nullptr);
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      terrain_layout_, 1, 1, &shadow_ds_[fi], 0, nullptr);
         }
 
         VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
@@ -2827,7 +2839,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
         vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
     // 2. The decals, as HighFidelityTerrain's DrawNormals draws them: the
@@ -2858,14 +2870,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // 4. Draw cube fallback units (skip when strategic zoom active)
     if (!strategic_icon_renderer_.is_strategic_zoom() &&
         unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          unit_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_pipeline_);
 
         // Bind shadow descriptor set at set=0
         if (shadow_ds_[fi]) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    unit_layout_, 0, 1, &shadow_ds_[fi],
-                                    0, nullptr);
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_layout_,
+                                      0, 1, &shadow_ds_[fi], 0, nullptr);
         }
 
         struct UnitPC {
@@ -2874,10 +2884,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         } upc{};
         std::memcpy(upc.viewProj, vp.data(), sizeof(f32) * 16);
         camera_.eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
-        vkCmdPushConstants(cmd_buf_[fi], unit_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT |
-                               VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, sizeof(upc), &upc);
+        vkc::push_constants(cmd_buf_[fi], unit_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(upc), &upc);
 
         VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
                             unit_renderer_.cube_instance_buffer()};
@@ -2885,8 +2894,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
         vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
-                         unit_renderer_.cube_instance_count(), 0, 0, 0);
+        vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
+                          unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
     // 4b. FA's particles and trails under the water, a negative SortOrder's
@@ -2952,13 +2961,13 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             rp.framebuffer = fb;
             rp.renderArea.extent = {half_w, half_h};
             vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
             vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
-            vkCmdPushConstants(cmd_buf_[fi], layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, pc_size, pc);
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
-                                    &input, 0, nullptr);
-            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+            vkc::push_constants(cmd_buf_[fi], layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, pc_size, pc);
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
+                                      &input, 0, nullptr);
+            vkc::draw(cmd_buf_[fi], 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd_buf_[fi]);
         };
         const struct {
@@ -2998,78 +3007,73 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
     if (bloom_composite_pipeline_) {
         f32 strength = do_bloom ? 1.0f : 0.0f;
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_composite_pipeline_);
-        vkCmdPushConstants(cmd_buf_[fi], bloom_composite_layout_,
-                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(strength), &strength);
-        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                bloom_composite_layout_, 0, 1, &scene_ds_, 0, nullptr);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           bloom_composite_pipeline_);
+        vkc::push_constants(cmd_buf_[fi], bloom_composite_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(strength), &strength);
+        vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  bloom_composite_layout_, 0, 1, &scene_ds_, 0, nullptr);
         // Without bloom its input adds nothing (strength 0), but must still be
         // an image in a defined layout. The bloom images are written only by
         // bloom frames, and until the first one they are UNDEFINED (a NaN
         // there would survive the 0), so the scene stands in.
         VkDescriptorSet bloom_input = do_bloom ? bloom_blur_v_ds_ : scene_ds_;
-        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                bloom_composite_layout_, 1, 1, &bloom_input, 0, nullptr);
-        vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+        vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  bloom_composite_layout_, 1, 1, &bloom_input, 0, nullptr);
+        vkc::draw(cmd_buf_[fi], 3, 1, 0, 0);
     }
 
     // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
     if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         strategic_icon_renderer_.render(cmd_buf_[fi], ui_layout_,
                                          window_width_, window_height_);
     }
 
     // 7. Draw game overlays (health bars, selection, command lines)
     if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         overlay_renderer_.render(cmd_buf_[fi], ui_layout_,
                                  window_width_, window_height_);
     }
 
     // 8. Draw minimap (terrain bg + unit dots + camera box)
     if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
                                   window_width_, window_height_);
     }
 
     // 9. Draw economy HUD (resource bars + text at top of screen)
     if (legacy_hud_active_ && ui_pipeline_ && hud_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         hud_renderer_.render(cmd_buf_[fi], ui_layout_,
                               window_width_, window_height_);
     }
 
     // 10. Draw selection info panel (bottom-center unit details)
     if (legacy_hud_active_ && ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         selection_info_renderer_.render(cmd_buf_[fi], ui_layout_,
                                          window_width_, window_height_);
     }
 
     // 11. Draw UI (screen-space 2D quads, last — always on top)
     if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         ui_renderer_.render(cmd_buf_[fi], ui_layout_,
                             window_width_, window_height_);
     }
 
     // 12. Draw profile overlay (topmost, after all other UI)
     if (ui_pipeline_ && profile_overlay_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         profile_overlay_.render(cmd_buf_[fi], ui_layout_,
                                 window_width_, window_height_);
     }
 
     vkCmdEndRenderPass(cmd_buf_[fi]);
+    gpu_queries_.end(cmd_buf_[fi], fi); // the frame's, not a capture's readback
     const bool capturing = record_capture(cmd_buf_[fi], image_index);
     vkEndCommandBuffer(cmd_buf_[fi]);
 
@@ -3087,6 +3091,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_finished_[image_index];
     VK_CHECK(vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]));
+    last_command_counts_ = take_command_counts();
+    ++frame_sequence_;
 
     // Present
     VkPresentInfoKHR present{};
@@ -3110,6 +3116,22 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 }
 
 // --- UI-only rendering (loading screen) ---
+
+Renderer::VramUsage Renderer::vram_usage() const {
+    VramUsage usage;
+    if (!allocator_) return usage;
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(allocator_, &props);
+    std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+    vmaGetHeapBudgets(allocator_, budgets.data());
+    for (u32 h = 0; props && h < props->memoryHeapCount; ++h) {
+        if ((props->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
+        usage.allocated_bytes += budgets[h].statistics.allocationBytes;
+        usage.used_bytes += budgets[h].usage;
+        usage.budget_bytes += budgets[h].budget;
+    }
+    return usage;
+}
 
 void Renderer::dump_frame(std::ostream& out) const {
     auto quad_line = [](const UIInstance& q) {
@@ -3196,7 +3218,7 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         return;
     const bool mirrored = stage == MeshPass::Reflection;
     const f32 surface = water_renderer_.water_elevation();
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline_);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline_);
 
     // Push viewProj as first 64 bytes (bone offsets per-group below)
     struct MeshPushConstants {
@@ -3222,34 +3244,34 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
     // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
     VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
     if (fallback_ds) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1,
-                                &fallback_ds, 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1,
+                                  &fallback_ds, 0, nullptr);
     }
 
     // Bind bone SSBO at set=1 (once for all groups)
     if (bone_ds_[fi]) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1,
-                                &bone_ds_[fi], 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1,
+                                  &bone_ds_[fi], 0, nullptr);
     }
 
     // Bind specteam fallback at set=2 (alpha=0 = no team color)
     VkDescriptorSet specteam_fallback = texture_cache_.specteam_fallback_descriptor();
     if (specteam_fallback) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1,
-                                &specteam_fallback, 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1,
+                                  &specteam_fallback, 0, nullptr);
     }
 
     // Bind normal map fallback at set=3 (flat normal = no perturbation)
     VkDescriptorSet normal_fallback = texture_cache_.normal_fallback_descriptor();
     if (normal_fallback) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 3, 1,
-                                &normal_fallback, 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 3, 1,
+                                  &normal_fallback, 0, nullptr);
     }
 
     // Bind shadow descriptor set at set=4
     if (shadow_ds_[fi]) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 4, 1,
-                                &shadow_ds_[fi], 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 4, 1,
+                                  &shadow_ds_[fi], 0, nullptr);
     }
 
     VkPipeline bound = mesh_pipeline_;
@@ -3270,37 +3292,37 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // stale set=0 from prior group)
         VkDescriptorSet albedo_ds = group.texture_ds ? group.texture_ds : fallback_ds;
         if (albedo_ds) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1,
-                                    &albedo_ds, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1,
+                                      &albedo_ds, 0, nullptr);
         }
 
         // Bind per-group specteam texture descriptor (always bind to avoid
         // stale set=2 from prior group)
         VkDescriptorSet spec_ds = group.specteam_ds ? group.specteam_ds : specteam_fallback;
         if (spec_ds) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1,
-                                    &spec_ds, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1,
+                                      &spec_ds, 0, nullptr);
         }
 
         // Bind per-group normal map descriptor (always bind to avoid
         // stale set=3 from prior group)
         VkDescriptorSet norm_ds = group.normal_ds ? group.normal_ds : normal_fallback;
         if (norm_ds) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 3, 1,
-                                    &norm_ds, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 3, 1,
+                                      &norm_ds, 0, nullptr);
         }
 
         // The mesh's lookup texture (set=5) and secondary (set=6),
         // transparent black without them
         VkDescriptorSet lookup_ds = group.lookup_ds ? group.lookup_ds : specteam_fallback;
         if (lookup_ds) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 5, 1,
-                                    &lookup_ds, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 5, 1,
+                                      &lookup_ds, 0, nullptr);
         }
         VkDescriptorSet secondary_ds = group.secondary_ds ? group.secondary_ds : specteam_fallback;
         if (secondary_ds) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 6, 1,
-                                    &secondary_ds, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 6, 1,
+                                      &secondary_ds, 0, nullptr);
         }
 
         VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer, unit_renderer_.mesh_instance_buffer()};
@@ -3341,17 +3363,17 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         mesh_pc.bonesPerInst = group.bones_per_instance;
         for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
             if (passes[pass] != bound) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, passes[pass]);
+                vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, passes[pass]);
                 bound = passes[pass];
             }
             // The first pass draws as the base technique (a personal
             // shield's unit), the rest as the technique's own
             mesh_pc.technique = static_cast<u32>(pass == 0 ? base_technique(technique) : technique);
             mesh_pc.pass = pass;
-            vkCmdPushConstants(cmd, mesh_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(mesh_pc), &mesh_pc);
-            vkCmdDrawIndexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
+            vkc::push_constants(cmd, mesh_layout_,
+                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                sizeof(mesh_pc), &mesh_pc);
+            vkc::draw_indexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
             if (stage != MeshPass::Reflection && mesh_pc.technique < mesh_draws_.size())
                 ++mesh_draws_[mesh_pc.technique];
         }
@@ -3436,6 +3458,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     minimap_renderer_.begin_frame(); // no world, so no minimap this frame
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
     vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
+    gpu_queries_.collect(device_, fi);
 
     if (swapchain_stale_) recreate_swapchain(); // M217h
     u32 image_index = 0;
@@ -3516,7 +3539,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
 
     if (ui_registry && L && ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         ui_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
     }
 
@@ -3536,6 +3559,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_finished_[image_index];
     vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]);
+    (void)take_command_counts(); // a UI-only frame's aren't a world frame's
 
     // Present
     VkPresentInfoKHR present{};
@@ -3591,10 +3615,10 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
     if (!any) return;
     // Every decal technique's pipeline shares decal_layout_'s sets and push
     // block.
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     const std::array<VkDescriptorSet, 2> shared = {terrain_tex_ds_, shadow_ds_[fi]};
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 0,
-                            static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 0,
+                              static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
     VkBuffer vertices = terrain_mesh_.vertex_buffer();
     const VkDeviceSize no_offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertices, &no_offset);
@@ -3626,8 +3650,8 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
         const GPUTexture* spec = d.spec->empty() ? nullptr : texture_cache_.get(*d.spec);
         const std::array<VkDescriptorSet, 3> own = {
             albedo->descriptor_set, spec ? spec->descriptor_set : no_spec, decal_mask_ds_};
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 2,
-                                static_cast<u32>(own.size()), own.data(), 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 2,
+                                  static_cast<u32>(own.size()), own.data(), 0, nullptr);
         std::memcpy(pc.u, d.u, sizeof(pc.u));
         std::memcpy(pc.v, d.v, sizeof(pc.v));
         pc.map_alpha[2] = d.alpha;
@@ -3635,10 +3659,10 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
             pc.eye[0] = std::cos(d.rotation_y);
             pc.eye[1] = std::sin(d.rotation_y);
         }
-        vkCmdPushConstants(cmd, decal_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
-                           &pc);
-        vkCmdDrawIndexed(cmd, d.index_count, 1, d.first_index, 0, 0);
+        vkc::push_constants(cmd, decal_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(pc), &pc);
+        vkc::draw_indexed(cmd, d.index_count, 1, d.first_index, 0, 0);
     }
 }
 
@@ -3655,7 +3679,7 @@ void Renderer::bind_normal_target() {
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &info;
-    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
 }
 
 u32 Renderer::mesh_instance_count() const {
@@ -3842,7 +3866,8 @@ void Renderer::bind_mesh_environment(const map::ScmapEnvironment& environment) {
             writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[i].pImageInfo = &infos[i];
         }
-        vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
+        vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
+                                    nullptr);
     }
 }
 
@@ -4132,6 +4157,7 @@ void Renderer::shutdown() {
     particle_renderer_.destroy(device_, allocator_);
     runtime_decals_.destroy(device_, allocator_);
     beam_renderer_.destroy(device_, allocator_);
+    gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
     strategic_icon_renderer_.destroy(device_, allocator_);

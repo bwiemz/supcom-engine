@@ -1,7 +1,8 @@
 # M224h: The Late Game's p99 Spikes — Findings
 
-**Status:** 2026-09-30. Roadmap Phase H (M224, sim hot paths). Diagnosis done; the
-next step is a decision (see Options).
+**Status:** 2026-09-30. Roadmap Phase H (M224, sim hot paths). Diagnosed, and decided
+the same day: option 1, retail's behaviour stays, and the budget is split (see
+Decision), then option 4.
 
 ## Why
 
@@ -113,6 +114,17 @@ was set against.
 
 **Recommendation:** option 1 now (re-baseline, restate the budget), then option 4.
 Option 2 only if a faster late game matters more than matching Moho here.
+
+## Decision (2026-09-30)
+
+Option 1. Retail's scripts are not patched or rescheduled to pass a budget.
+
+The Phase H budget is split:
+- **Core:** at about 2,000 units, the median tick under 12 ms and p90 under 16 ms.
+- **The engine's:** a p99 of the engine's own, measured apart from the scripts.
+- **Retail's script spikes** like this one are tracked but don't fail the budget.
+
+Option 4, freezing more of the static heap, is next on the sim's side.
 
 ## Method (to repeat it)
 

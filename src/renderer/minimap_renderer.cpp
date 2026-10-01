@@ -1,4 +1,5 @@
 #include "renderer/minimap_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/recon_view.hpp"
@@ -319,8 +320,7 @@ void MinimapRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     // Push viewport size
     f32 vp[2] = {static_cast<f32>(viewport_w),
                  static_cast<f32>(viewport_h)};
-    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(f32) * 2, vp);
+    vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     // Bind instance buffer
     VkBuffer buf = instance_buf_[fi_].buffer;
@@ -339,10 +339,10 @@ void MinimapRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
         scissor.extent.height = static_cast<u32>(view_.h) + 4;
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                layout, 0, 1, &group.ds, 0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &group.ds, 0,
+                                  nullptr);
 
-        vkCmdDraw(cmd, 6, group.count, 0, group.offset);
+        vkc::draw(cmd, 6, group.count, 0, group.offset);
     }
 
     // Restore full-screen scissor

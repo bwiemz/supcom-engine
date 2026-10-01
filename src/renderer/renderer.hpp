@@ -3,6 +3,8 @@
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 
+#include "renderer/gpu_queries.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
@@ -326,6 +328,30 @@ public:
 
     static constexpr u32 SHADOW_MAP_SIZE = 4096;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
+
+    /// What the last frame cost (M223b's render benchmark reads it after
+    /// each render()): its draws and state changes, how long the CPU waited
+    /// on the GPU's fence first, and the GPU's own figures for the latest
+    /// frame whose results are in (a frame in flight behind).
+    const CommandCounts& last_command_counts() const { return last_command_counts_; }
+    f64 last_gpu_wait_ms() const { return last_gpu_wait_ms_; }
+    const GpuFrameQueries::Frame& last_gpu_frame() const { return gpu_queries_.latest(); }
+    /// How many world frames render() has recorded (the GPU figures name one).
+    u64 frame_sequence() const { return frame_sequence_; }
+    /// VRAM over the device-local heaps (VMA): what the renderer allocated,
+    /// the memory blocks holding it (VMA's estimate of use without
+    /// VK_EXT_memory_budget), and the budget.
+    struct VramUsage {
+        u64 allocated_bytes = 0;
+        u64 used_bytes = 0;
+        u64 budget_bytes = 0;
+    };
+    VramUsage vram_usage() const;
+    /// The profiler's on-screen overlay, drawn while the profiler runs
+    /// unless hidden (the render benchmark times zones without it).
+    void set_profile_overlay_hidden(bool hidden) { profile_overlay_.set_hidden(hidden); }
+    /// The GPU's name, as the driver gives it.
+    const std::string& device_name() const { return device_name_; }
 
 private:
     static VkBool32 VKAPI_CALL vulkan_debug_callback(
@@ -700,6 +726,13 @@ private:
 
     // Frame-in-flight tracking
     u32 frame_index_ = 0;
+
+    // A frame's cost, for the render benchmark (M223b)
+    GpuFrameQueries gpu_queries_;
+    std::string device_name_;
+    CommandCounts last_command_counts_;
+    f64 last_gpu_wait_ms_ = 0;
+    u64 frame_sequence_ = 0;
 
     // Cleanup
     DeletionQueue deletion_queue_;

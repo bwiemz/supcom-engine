@@ -21,6 +21,7 @@ struct TickStats {
     double mean_ms = 0;
     double p50_ms = 0;
     double p90_ms = 0;
+    double p95_ms = 0;
     double p99_ms = 0;
     double max_ms = 0;
     size_t max_tick = 0; ///< which tick (1-based) was the slowest

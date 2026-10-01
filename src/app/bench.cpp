@@ -26,8 +26,8 @@ double percentile(const std::vector<double>& sorted, double p) {
 
 nlohmann::json to_json(const TickStats& s) {
     return {{"ticks", s.ticks},   {"total_ms", s.total_ms}, {"mean_ms", s.mean_ms},
-            {"p50_ms", s.p50_ms}, {"p90_ms", s.p90_ms},     {"p99_ms", s.p99_ms},
-            {"max_ms", s.max_ms}, {"max_tick", s.max_tick}};
+            {"p50_ms", s.p50_ms}, {"p90_ms", s.p90_ms},     {"p95_ms", s.p95_ms},
+            {"p99_ms", s.p99_ms}, {"max_ms", s.max_ms},     {"max_tick", s.max_tick}};
 }
 
 constexpr size_t kWindow = 1000; ///< ticks per window of the report
@@ -48,6 +48,7 @@ TickStats tick_stats(const std::vector<double>& tick_ms) {
     std::sort(sorted.begin(), sorted.end());
     s.p50_ms = percentile(sorted, 50);
     s.p90_ms = percentile(sorted, 90);
+    s.p95_ms = percentile(sorted, 95);
     s.p99_ms = percentile(sorted, 99);
     return s;
 }

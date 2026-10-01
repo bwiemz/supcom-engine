@@ -1,4 +1,5 @@
 #include "renderer/beam_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/camera.hpp"
@@ -330,15 +331,15 @@ void BeamRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, c
     for (const Group& g : groups_) {
         if (!pipelines_[static_cast<size_t>(g.blendmode)]) continue;
         if (g.blendmode != bound) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              pipelines_[static_cast<size_t>(g.blendmode)]);
-            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
-                               view_proj);
+            vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               pipelines_[static_cast<size_t>(g.blendmode)]);
+            vkc::push_constants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
+                                view_proj);
             bound = g.blendmode;
         }
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &g.ds, 0,
-                                nullptr);
-        vkCmdDraw(cmd, g.vertex_count, 1, g.first_vertex, 0);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &g.ds, 0,
+                                  nullptr);
+        vkc::draw(cmd, g.vertex_count, 1, g.first_vertex, 0);
     }
 }
 
