@@ -9,6 +9,10 @@ Three processes, each writing `--checksum-trace`:
   C  loads B's save and plays on.
   D  loads A's save as another installation would (its own user folder):
      A's snapshot isn't its own, so it catches up instead (not --by-replay).
+  E  loads A's save in A's installation, as another binary of the same build
+     would (a copy of the game with another linker build id, as every dirty
+     build of a commit is, or its Debug build for its Release): A's snapshot
+     names C functions by their place in A's binary, so E catches up too.
 
 A load restores the save's snapshot (M208c), whose checksum must be the one
 the save's history holds for its tick; with `--by-replay` it catches up from
@@ -28,6 +32,7 @@ the game has no data to run on.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -62,6 +67,23 @@ def load_args(game_args: list[str]) -> list[str]:
             i += 1  # and its value
         i += 1
     return kept
+
+
+def rebuilt(exe: Path, out: Path) -> Path:
+    """A copy of `exe` as another binary of its build would be, its code
+    where it was: its ELF build-id note (in its first pages) flipped, else
+    (no note: the engine knows the binary by its file's digest) a byte more."""
+    data = bytearray(exe.read_bytes())
+    note = re.search(rb"\x04\x00\x00\x00(.{4})\x03\x00\x00\x00GNU\x00", data[: 1 << 16], re.DOTALL)
+    if note:
+        size = int.from_bytes(note.group(1), "little")
+        for i in range(note.end(), note.end() + size):
+            data[i] ^= 0xFF
+    else:
+        data.append(0)
+    _ = out.write_bytes(bytes(data))
+    out.chmod(0o755)
+    return out
 
 
 def between(trace: Path, first_tick: int, last_tick: int, out: Path) -> Path:
@@ -210,6 +232,35 @@ def main(argv: list[str]) -> int:
                     between(trace["b"], SAVE_1 + 1, SAVE_2, d / "b_part2.txt"),
                     between(d_trace, SAVE_1 + 1, SAVE_2, d / "d_part.txt"),
                     "B and D (another installation's load, caught up)",
+                )
+                and same
+            )
+            # Another binary of the same build, in A's installation: it
+            # catches up too, where restoring would call A's C functions'
+            # places in its own code
+            e_trace = d / "e.txt"
+            other_binary = run(
+                [
+                    str(rebuilt(exe, d / exe.name)),
+                    "--load",
+                    str(save_1),
+                    *load_args(game_args),
+                    *user,
+                    "--checksum-trace",
+                    str(e_trace),
+                ]
+            )
+            if not loaded(other_binary, "E", SAVE_1, by_replay=True):
+                return 1
+            if "taken by another binary" not in other_binary.stdout:
+                print("E didn't say A's snapshot was another binary's")
+                return 1
+            same = (
+                compare(
+                    diff_tool,
+                    between(trace["b"], SAVE_1 + 1, SAVE_2, d / "b_part3.txt"),
+                    between(e_trace, SAVE_1 + 1, SAVE_2, d / "e_part.txt"),
+                    "B and E (another binary's load, caught up)",
                 )
                 and same
             )

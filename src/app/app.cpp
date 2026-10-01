@@ -147,15 +147,11 @@ int App::run() {
 }
 
 App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
-    if (save.snapshot.empty()) {
-        why = "it has no snapshot";
+    if (!special_files) {
+        why = "there are no special files";
         return Restore::Skipped;
     }
-    const auto key = special_files ? special_files->snapshot_key() : std::nullopt;
-    if (!key || !sim::snapshot_signed(save, *key)) {
-        why = "its snapshot isn't this installation's";
-        return Restore::Skipped;
-    }
+    if (!special_files->trusts_snapshot(save, why)) return Restore::Skipped;
     const auto start = std::chrono::steady_clock::now();
     if (std::string err = sim::load_snapshot(*sim_state, save.snapshot); !err.empty()) {
         why = err;

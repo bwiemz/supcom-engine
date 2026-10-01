@@ -106,7 +106,8 @@ def snapshot_hash(b: bytes) -> int:
 def damage_snapshot(save: bytes, key: bytes) -> bytes:
     """The save with a byte of its snapshot's Lua heap flipped, the
     snapshot's own hash and its signature made good again
-    (SavedGame::serialize's layout)."""
+    (SavedGame::serialize's layout: the signature, then the binary that took
+    the snapshot, which the signature covers before the snapshot)."""
     pos = 7 + 4  # magic, version
     for _ in range(2):  # build, name
         pos += 4 + int.from_bytes(save[pos : pos + 4], "little")
@@ -119,7 +120,9 @@ def damage_snapshot(save: bytes, key: bytes) -> bytes:
     snap[len(snap) - 64] ^= 0x40  # in the Lua heap, which comes last
     snap[-8:] = snapshot_hash(bytes(snap[:-8])).to_bytes(8, "little")
     packed = zlib.compress(bytes(snap), 1)
-    mac = hmac.new(key, bytes(snap), hashlib.sha256).digest()
+    binary_at = pos + packed_size + 32  # past the old signature
+    binary = save[binary_at : binary_at + 32]
+    mac = hmac.new(key, binary + bytes(snap), hashlib.sha256).digest()
     head = bytearray(save[: pos - 16])
     head += len(snap).to_bytes(8, "little") + len(packed).to_bytes(8, "little")
     return bytes(head) + packed + mac + save[pos + packed_size + len(mac) :]
