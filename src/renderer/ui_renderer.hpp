@@ -90,9 +90,6 @@ public:
     static constexpr u32 MAX_UI_QUADS = 8192;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
-    /// Read a LazyVar float from a control's Lua table.
-    static f32 read_lazyvar(lua_State* L, int table_idx, const char* field);
-
     /// Convert ARGB u32 color to float RGBA.
     static void argb_to_rgba(u32 argb, f32 out[4]);
 

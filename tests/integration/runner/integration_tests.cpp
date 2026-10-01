@@ -19,6 +19,7 @@
 #include "ui/wld_ui_provider.hpp"
 #include "core/game_state.hpp"
 #include "ui/font_metrics_provider.hpp"
+#include "ui/lazyvar.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
@@ -17734,11 +17735,11 @@ void test_uirender(TestContext& ctx) {
         f32 left = 0, top = 0, width = 0, height = 0, depth = 0;
         if (ok) {
             int tbl = lua_gettop(L);
-            left = renderer::UIRenderer::read_lazyvar(L, tbl, "Left");
-            top = renderer::UIRenderer::read_lazyvar(L, tbl, "Top");
-            width = renderer::UIRenderer::read_lazyvar(L, tbl, "Width");
-            height = renderer::UIRenderer::read_lazyvar(L, tbl, "Height");
-            depth = renderer::UIRenderer::read_lazyvar(L, tbl, "Depth");
+            left = ui::read_lazyvar(L, tbl, "Left");
+            top = ui::read_lazyvar(L, tbl, "Top");
+            width = ui::read_lazyvar(L, tbl, "Width");
+            height = ui::read_lazyvar(L, tbl, "Height");
+            depth = ui::read_lazyvar(L, tbl, "Depth");
         }
         lua_pop(L, 1);
 
@@ -18273,8 +18274,8 @@ void test_border_render(TestContext& ctx) {
         f32 bw = 0, bh = 0;
         if (ok) {
             int tbl = lua_gettop(L);
-            bw = renderer::UIRenderer::read_lazyvar(L, tbl, "BorderWidth");
-            bh = renderer::UIRenderer::read_lazyvar(L, tbl, "BorderHeight");
+            bw = ui::read_lazyvar(L, tbl, "BorderWidth");
+            bh = ui::read_lazyvar(L, tbl, "BorderHeight");
         }
         lua_pop(L, 1);
         ok = (bw == 16.0f && bh == 16.0f);
