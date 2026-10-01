@@ -555,8 +555,8 @@ u32 check_color(lua_State* L, int idx) {
     return 0;
 }
 
-/// Helper: update font metrics on a control using stb_truetype via FontMetricsProvider.
-/// Falls back to heuristics if the font file is not available.
+/// Helper: update font metrics on a control as GDI gives Moho them, in whole
+/// pixels (FontMetricsProvider). Falls back to heuristics without the font file.
 void update_font_metrics(ui::UIControl* ctrl) {
     f32 ps = static_cast<f32>(ctrl->font_pointsize());
     auto& fmp = ui::FontMetricsProvider::instance();

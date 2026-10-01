@@ -15699,6 +15699,36 @@ void test_edit(TestContext& ctx) {
         }
     }
 
+    // Test 16c: Text and Edit metrics as retail's, GDI's whole pixels
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "local t = import('/lua/maui/text.lua').Text(f)\n"
+            "t:SetFont('Arial', 14)\n"
+            "local text_ok = t.FontAscent() == 13 and t.FontDescent() == 3 and\n"
+            "    t.FontExternalLeading() == 0 and t.Height() == 16\n"
+            "t:SetFont('Arial', 16)\n"
+            "text_ok = text_ok and t.FontExternalLeading() == 1 and t.Height() == 18\n"
+            "e:SetNewFont('Arial', 14)\n"
+            "local arial = e:GetFontHeight()\n"
+            "e:SetNewFont('Zeroes Three', 14)\n"
+            "return text_ok and arial == 16 and e:GetFontHeight() == 19\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 16c Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 16c: Text and Edit metrics as retail's");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16c: Text or Edit metrics differ from retail's");
+        }
+    }
+
     // Test 17: ItemList SetNewColors + ShowSelection/ShowMouseoverItem
     {
         auto result = ctx.lua_state.do_string(
