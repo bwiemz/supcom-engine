@@ -76,6 +76,7 @@ struct Options {
     bool replay_flow_test = false;
     bool load_flow_test = false;
     bool mods_flow_test = false;
+    bool campaign_flow_test = false; ///< (M209b)
     bool mods_flow_lobby = false;
     std::vector<std::string> clicks; ///< --click <label>, in order
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's

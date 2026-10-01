@@ -12,6 +12,7 @@ add_library(osc_app STATIC
     lan_game_test.cpp
     log_bundle.cpp
     mods_flow_test.cpp
+    campaign_flow_test.cpp
     reload.cpp
     session.cpp
     ui_clicks.cpp

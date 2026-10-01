@@ -356,6 +356,11 @@ std::optional<int> App::Window::start_flows() {
             return finish_test_run("mods-flow-test");
         }
     }
+    // --campaign-flow-test: the campaign through retail's screens (M209b)
+    if (opt.campaign_flow_test) {
+        spdlog::info("=== campaign flow test ===");
+        campaign_flow.emplace();
+    }
     if (!opt.clicks.empty()) {
         ui_clicks.emplace(opt.clicks);
     }
@@ -366,7 +371,8 @@ bool App::Window::running() const {
     return !renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
            !(render_bench && (render_bench->done() || render_bench->gave_up())) &&
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
-           !gpgnet_done && !(mods_flow && mods_flow->done());
+           !gpgnet_done && !(mods_flow && mods_flow->done()) &&
+           !(campaign_flow && campaign_flow->done());
 }
 
 std::optional<int> App::Window::finish() {
@@ -410,6 +416,10 @@ std::optional<int> App::Window::finish() {
     if (mods_flow) {
         mods_flow->finish();
         return finish_test_run("mods-flow-test");
+    }
+    if (campaign_flow) {
+        campaign_flow->finish();
+        return finish_test_run("campaign-flow-test");
     }
     if (opt.replay_flow_test) {
         auto is_replay = ui_lua_state.do_string(
