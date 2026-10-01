@@ -5,6 +5,7 @@
 #ifndef _WIN32
 
 #include <csignal>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -46,6 +47,38 @@ ChildResult run_in_child(Body body) {
     close(fds[0]);
     waitpid(pid, &result.status, 0);
     return result;
+}
+
+/// Store to a small address: a real fault, SEGV_MAPERR at `address`.
+void fault_at(std::uintptr_t address) {
+    // A fault on purpose, at an address no mapping holds (volatile keeps
+    // the store): the checks flag exactly that
+    // NOLINTNEXTLINE(performance-no-int-to-ptr,clang-analyzer-core.FixedAddressDereference)
+    *reinterpret_cast<volatile int*>(address) = 1;
+}
+
+/// An unwinder that faults, as backtrace() does on a stack a wild call
+/// smashed.
+int faulting_unwinder(void** /*frames*/, int /*size*/) {
+    fault_at(16);
+    return 0;
+}
+
+/// The one report in `dir`, and its text; empty if there isn't exactly one.
+std::string only_report(const std::filesystem::path& dir) {
+    std::vector<std::filesystem::path> reports;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
+        reports.push_back(entry.path());
+    if (reports.size() != 1) return {};
+    std::ifstream in(reports[0]);
+    return {(std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()};
+}
+
+std::filesystem::path fresh_dir() {
+    std::random_device rd;
+    return std::filesystem::temp_directory_path() /
+           ("osc_crash_test_" + std::to_string(rd()) + std::to_string(rd()));
 }
 
 } // namespace
@@ -114,6 +147,44 @@ TEST_CASE("install_crash_handler is idempotent", "[platform]") {
     auto first = text.find("OpenSupCom crashed");
     REQUIRE(first != std::string::npos);
     CHECK(text.find("OpenSupCom crashed", first + 1) == std::string::npos);
+}
+
+TEST_CASE("crash handler reports a fault's address and where it ran", "[platform]") {
+    auto result = run_in_child([] { fault_at(8); });
+    REQUIRE(WIFSIGNALED(result.status));
+    CHECK(WTERMSIG(result.status) == SIGSEGV);
+    CHECK(result.stderr_text.find("fault address 0x8") != std::string::npos);
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    // The faulting instruction, in the binary (fault_at is in it)
+    CHECK(result.stderr_text.find(", pc 0x") != std::string::npos);
+    CHECK(result.stderr_text.find("(addr2line -e <binary> 0x") != std::string::npos);
+#endif
+}
+
+TEST_CASE("a stack the unwinder can't walk still leaves what crashed and where", "[platform]") {
+    const auto dir = fresh_dir();
+    auto result = run_in_child([&] {
+        osc::platform::set_crash_report_dir(dir, "OpenSupCom 9.9.9 (test)");
+        osc::platform::set_unwinder_for_test(faulting_unwinder);
+        fault_at(8);
+    });
+    // The unwinder's own fault ends it, as on a smashed stack
+    REQUIRE(WIFSIGNALED(result.status));
+    CHECK(WTERMSIG(result.status) == SIGSEGV);
+    const std::string text = only_report(dir);
+    CHECK(text.starts_with("OpenSupCom 9.9.9 (test)\n"));
+    CHECK(text.find("SIGSEGV") != std::string::npos);
+    CHECK(text.find("fault address 0x8") != std::string::npos);
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    CHECK(text.find(", pc 0x") != std::string::npos);
+#endif
+    // ... and nothing after the backtrace's heading: the walk never finished
+    const auto heading = text.find("Backtrace");
+    REQUIRE(heading != std::string::npos);
+    CHECK(text.find('\n', heading) == text.size() - 1);
+    CHECK(result.stderr_text.find("fault address 0x8") != std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
 }
 
 #endif

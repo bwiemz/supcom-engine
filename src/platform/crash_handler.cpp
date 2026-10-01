@@ -20,6 +20,10 @@
 #include <execinfo.h>
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <link.h>
+#include <ucontext.h>
+#endif
 #endif
 
 namespace osc::platform {
@@ -112,6 +116,8 @@ void install_crash_handler() {
     SetUnhandledExceptionFilter(unhandled_exception_filter);
 }
 
+void set_unwinder_for_test(UnwinderForTest /*unwinder*/) {} // (the filter walks no stack)
+
 void crash_for_test() {
     RaiseException(EXCEPTION_ACCESS_VIOLATION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
     std::abort();
@@ -161,19 +167,74 @@ constexpr int kFatalSignals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
 
 std::atomic<bool> g_in_handler{false};
 
-/// The report (the signal, where, the backtrace) to `fd`.
-void write_report(int fd, int sig, const siginfo_t* info, void* const* frames, int count) {
+/// The unwinder: backtrace(), or a test's.
+UnwinderForTest g_unwinder = &backtrace;
+
+/// The main program's code in memory, found when the handler is installed:
+/// a PC in it is reported as the address addr2line takes (PC - load bias).
+std::uintptr_t g_image_bias = 0;
+std::uintptr_t g_image_begin = 0;
+std::uintptr_t g_image_end = 0;
+
+#ifdef __linux__
+int find_main_image(dl_phdr_info* info, size_t /*size*/, void* /*data*/) {
+    // The first object dl_iterate_phdr visits is the main program
+    g_image_bias = info->dlpi_addr;
+    for (ElfW(Half) i = 0; i < info->dlpi_phnum; ++i) {
+        const ElfW(Phdr) & ph = info->dlpi_phdr[i];
+        if (ph.p_type != PT_LOAD || (ph.p_flags & PF_X) == 0) continue;
+        const std::uintptr_t begin = info->dlpi_addr + ph.p_vaddr;
+        const std::uintptr_t end = begin + ph.p_memsz;
+        if (g_image_begin == 0 || begin < g_image_begin) g_image_begin = begin;
+        if (end > g_image_end) g_image_end = end;
+    }
+    return 1;
+}
+#endif
+
+/// Where it was running when the signal came: the faulting instruction for
+/// a fault (0 where the platform's context isn't read: Linux on x86-64 and
+/// AArch64 only).
+std::uintptr_t fault_pc(const void* context) {
+#if defined(__linux__) && defined(__x86_64__)
+    return context ? static_cast<std::uintptr_t>(
+                         static_cast<const ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP])
+                   : 0;
+#elif defined(__linux__) && defined(__aarch64__)
+    return context ? static_cast<std::uintptr_t>(
+                         static_cast<const ucontext_t*>(context)->uc_mcontext.pc)
+                   : 0;
+#else
+    static_cast<void>(context);
+    return 0;
+#endif
+}
+
+/// What crashed and where, written before any unwinding: on a smashed stack
+/// the unwinder can fault in turn, and this much is then already out.
+void write_summary(int fd, int sig, const siginfo_t* info, std::uintptr_t pc) {
     write_str(fd, "\n*** OpenSupCom crashed: ");
     write_str(fd, signal_name(sig));
+    char number[24];
     // (A real fault's: a signal sent by raise or kill, si_code <= 0, has none)
     if (info && info->si_code > 0 && (sig == SIGSEGV || sig == SIGBUS)) {
-        char address[24];
-        format_number(address, reinterpret_cast<std::uintptr_t>(info->si_addr), 16);
+        format_number(number, reinterpret_cast<std::uintptr_t>(info->si_addr), 16);
         write_str(fd, ", fault address ");
-        write_str(fd, address);
+        write_str(fd, number);
     }
-    write_str(fd, " ***\nBacktrace (resolve offsets with addr2line -e <binary>):\n");
-    backtrace_symbols_fd(frames, count, fd);
+    if (pc != 0) {
+        format_number(number, pc, 16);
+        write_str(fd, ", pc ");
+        write_str(fd, number);
+        if (pc >= g_image_begin && pc < g_image_end) {
+            format_number(number, pc - g_image_bias, 16);
+            write_str(fd, " (addr2line -e <binary> ");
+            write_str(fd, number);
+            write_str(fd, ")");
+        }
+    }
+    write_str(fd, " ***\nBacktrace (resolve offsets with addr2line -e <binary>; none below "
+                  "if the stack couldn't be walked):\n");
 }
 
 /// Open crash-<time>-<pid>.txt in the report folder, its path into `path`;
@@ -198,7 +259,7 @@ int open_report_file(char* path, size_t size) {
     return open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
 }
 
-void fatal_signal_handler(int sig, siginfo_t* info, void* /*context*/) {
+void fatal_signal_handler(int sig, siginfo_t* info, void* context) {
     // A second fault while reporting (or a fault on another thread) goes
     // straight to the default action.
     if (g_in_handler.exchange(true)) {
@@ -207,19 +268,28 @@ void fatal_signal_handler(int sig, siginfo_t* info, void* /*context*/) {
         return;
     }
 
-    void* frames[64];
-    const int count = backtrace(frames, 64);
-    write_report(STDERR_FILENO, sig, info, frames, count);
-
+    // What and where first, to the file and stderr, then the backtrace. A
+    // wild call leaves a stack the unwinder faults on, and that fault kills
+    // the process at once (SA_RESETHAND): the summary is already out.
+    const std::uintptr_t pc = fault_pc(context);
     char path[sizeof(g_report_dir) + 64];
-    if (const int fd = open_report_file(path, sizeof(path)); fd >= 0) {
+    const int fd = open_report_file(path, sizeof(path));
+    if (fd >= 0) {
         write_str(fd, g_report_header);
-        write_report(fd, sig, info, frames, count);
-        close(fd);
+        write_summary(fd, sig, info, pc);
         write_str(STDERR_FILENO, "Crash report: ");
         write_str(STDERR_FILENO, path);
         write_str(STDERR_FILENO, "\n");
     }
+    write_summary(STDERR_FILENO, sig, info, pc);
+
+    void* frames[64];
+    const int count = g_unwinder(frames, 64);
+    if (fd >= 0) {
+        backtrace_symbols_fd(frames, count, fd);
+        close(fd);
+    }
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
 
     // SA_RESETHAND already restored the default action; re-raise so the
     // process still dies by this signal (core dump, correct exit status).
@@ -244,6 +314,9 @@ void install_crash_handler() {
     // do that now rather than inside the handler.
     void* warm[1];
     backtrace(warm, 1);
+#ifdef __linux__
+    dl_iterate_phdr(find_main_image, nullptr);
+#endif
 
     struct sigaction sa{};
     sa.sa_sigaction = fatal_signal_handler;
@@ -254,6 +327,10 @@ void install_crash_handler() {
     }
 
     signal(SIGPIPE, SIG_IGN);
+}
+
+void set_unwinder_for_test(UnwinderForTest unwinder) {
+    g_unwinder = unwinder ? unwinder : &backtrace;
 }
 
 void crash_for_test() {
