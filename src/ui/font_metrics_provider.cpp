@@ -172,7 +172,8 @@ FontMetricsProvider::CachedMetrics* FontMetricsProvider::get_or_compute(
     if (!cf) return nullptr;
 
     auto* info = reinterpret_cast<stbtt_fontinfo*>(cf->fontinfo_storage.data());
-    f32 scale = stbtt_ScaleForPixelHeight(info, static_cast<f32>(pointsize));
+    // GDI's em is the point size in pixels (Moho's fonts)
+    f32 scale = stbtt_ScaleForMappingEmToPixels(info, static_cast<f32>(pointsize));
 
     CachedMetrics cm;
     cm.scale = scale;
@@ -216,7 +217,8 @@ f32 FontMetricsProvider::string_advance(const std::string& family, i32 pointsize
     for (unsigned char c : text) {
         int adv_raw, lsb;
         stbtt_GetCodepointHMetrics(info, static_cast<int>(c), &adv_raw, &lsb);
-        advance += adv_raw * scale;
+        // Whole pixels, each glyph's own rounded (GDI's widths)
+        advance += std::floor(static_cast<f32>(adv_raw) * scale + 0.5f);
     }
     return advance;
 }
