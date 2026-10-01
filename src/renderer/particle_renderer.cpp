@@ -1,4 +1,5 @@
 #include "renderer/particle_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 
 #include "renderer/shader_utils.hpp"
 #include "renderer/texture_cache.hpp"
@@ -242,15 +243,15 @@ void ParticleRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_
         const auto blend = static_cast<size_t>(g.blendmode);
         if (blend >= pipelines_.size() || !pipelines_[blend]) continue;
         if (g.blendmode != bound) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_[blend]);
-            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
-                               view_proj);
+            vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_[blend]);
+            vkc::push_constants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
+                                view_proj);
             bound = g.blendmode;
         }
         const std::array<VkDescriptorSet, 2> sets = {g.texture, g.ramp};
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0,
-                                static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
-        vkCmdDraw(cmd, 6, g.count, 0, g.offset);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0,
+                                  static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
+        vkc::draw(cmd, 6, g.count, 0, g.offset);
     }
 }
 
@@ -267,7 +268,7 @@ void ParticleRenderer::set_background(VkImageView view) {
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &info;
-    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
     background_ready_ = true;
 }
 
@@ -290,15 +291,15 @@ void ParticleRenderer::render_refracting(VkCommandBuffer cmd, u32 viewport_w, u3
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_[fi].buffer, &offset);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, refract_pipeline_);
-    vkCmdPushConstants(cmd, refract_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
-                       view_proj);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, refract_pipeline_);
+    vkc::push_constants(cmd, refract_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
+                        view_proj);
     for (const Group& g : groups_) {
         if (g.blendmode != kBlendRefract) continue;
         const std::array<VkDescriptorSet, 3> sets = {g.texture, g.ramp, background_set_};
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, refract_layout_, 0,
-                                static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
-        vkCmdDraw(cmd, 6, g.count, 0, g.offset);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, refract_layout_, 0,
+                                  static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
+        vkc::draw(cmd, 6, g.count, 0, g.offset);
     }
 }
 

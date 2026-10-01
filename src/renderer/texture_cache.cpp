@@ -1,4 +1,5 @@
 #include "renderer/texture_cache.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "renderer/dds_parser.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -624,7 +625,7 @@ VkDescriptorSet TextureCache::allocate_and_write_descriptor(VkImageView view) {
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &img_info;
 
-    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
     return ds;
 }
 

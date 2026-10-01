@@ -1,4 +1,5 @@
 #include "renderer/ui_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 #include "ui/lazyvar.hpp"
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
@@ -768,7 +769,7 @@ void UIRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 
     // Push viewport dimensions
     f32 push[2] = {static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)};
-    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 8, push);
+    vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 8, push);
 
     // Bind instance buffer at binding 0
     VkDeviceSize offset = 0;
@@ -792,11 +793,10 @@ void UIRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
             current_scissor = group.clip;
         }
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                layout, 0, 1, &group.texture_ds,
-                                0, nullptr);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
+                                  &group.texture_ds, 0, nullptr);
         // 6 vertices per quad (2 triangles), N instances
-        vkCmdDraw(cmd, 6, group.instance_count, 0, group.instance_offset);
+        vkc::draw(cmd, 6, group.instance_count, 0, group.instance_offset);
     }
 
     // Restore full viewport scissor after UI rendering

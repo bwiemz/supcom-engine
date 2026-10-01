@@ -1,4 +1,5 @@
 #include "renderer/sky_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
@@ -375,7 +376,8 @@ void SkyRenderer::write_sets() {
                 writes[b].pImageInfo = &infos[b];
             }
         }
-        vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
+        vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
+                                    nullptr);
     }
 }
 
@@ -396,14 +398,14 @@ void SkyRenderer::update(const Camera& camera, const std::array<f32, 16>& view_p
 
 void SkyRenderer::record(VkCommandBuffer cmd, u32 fi) const {
     if (!has_sky() || !atmosphere_pipeline_) return;
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
-                            nullptr);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
+                              nullptr);
     const VkDeviceSize zero = 0;
     const auto draw_dome = [&](VkPipeline pipeline) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdBindVertexBuffers(cmd, 0, 1, &dome_vertices_.buffer, &zero);
         vkCmdBindIndexBuffer(cmd, dome_indices_.buffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, index_count_, 1, 0, 0, 0);
+        vkc::draw_indexed(cmd, index_count_, 1, 0, 0, 0);
     };
     // RenderAtmosphere, RenderDecals (albedo, then glow), RenderCirrus
     draw_dome(atmosphere_pipeline_);
@@ -411,10 +413,10 @@ void SkyRenderer::record(VkCommandBuffer cmd, u32 fi) const {
         const std::array<VkBuffer, 2> buffers = {quad_buf_.buffer, decal_buf_.buffer};
         const std::array<VkDeviceSize, 2> offsets = {0, 0};
         for (VkPipeline pipeline : {decal_albedo_pipeline_, decal_glow_pipeline_}) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindVertexBuffers(cmd, 0, 2, buffers.data(), offsets.data());
             vkCmdBindIndexBuffer(cmd, quad_buf_.buffer, kQuadIndexOffset, VK_INDEX_TYPE_UINT16);
-            vkCmdDrawIndexed(cmd, static_cast<u32>(kQuadIndices.size()), decal_count_, 0, 0, 0);
+            vkc::draw_indexed(cmd, static_cast<u32>(kQuadIndices.size()), decal_count_, 0, 0, 0);
         }
     }
     draw_dome(cirrus_pipeline_);

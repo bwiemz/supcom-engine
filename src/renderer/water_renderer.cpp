@@ -1,4 +1,5 @@
 #include "renderer/water_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
@@ -379,7 +380,8 @@ void WaterRenderer::write_sets() {
                 writes[b].pImageInfo = &infos[b];
             }
         }
-        vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
+        vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
+                                    nullptr);
     }
 }
 
@@ -402,13 +404,13 @@ void WaterRenderer::render_mask(VkCommandBuffer cmd, u32 viewport_w, u32 viewpor
     VkRect2D scissor{};
     scissor.extent = {viewport_w, viewport_h};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mask_pipeline_);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
-                            nullptr);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mask_pipeline_);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
+                              nullptr);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf_.buffer, &offset);
     vkCmdBindIndexBuffer(cmd, index_buf_.buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
 }
 
 void WaterRenderer::render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
@@ -422,13 +424,13 @@ void WaterRenderer::render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 view
     VkRect2D scissor{};
     scissor.extent = {viewport_w, viewport_h};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, surface_pipeline_);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
-                            nullptr);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, surface_pipeline_);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
+                              nullptr);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf_.buffer, &offset);
     vkCmdBindIndexBuffer(cmd, index_buf_.buffer, 0, VK_INDEX_TYPE_UINT16);
-    vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
 }
 
 void WaterRenderer::clear() {

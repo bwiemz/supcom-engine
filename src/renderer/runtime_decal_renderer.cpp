@@ -1,4 +1,5 @@
 #include "renderer/runtime_decal_renderer.hpp"
+#include "renderer/vk_cmd.hpp"
 
 #include "map/terrain.hpp"
 #include "renderer/decal_math.hpp"
@@ -259,10 +260,10 @@ void RuntimeDecalRenderer::draw_splats(VkCommandBuffer cmd, u32 fi,
                                        VkDescriptorSet terrain_set,
                                        VkDescriptorSet shadow_set) const {
     if (runs_.empty() || !splat_pipeline_ || !terrain_set || !shadow_set) return;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_pipeline_);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_pipeline_);
     const std::array<VkDescriptorSet, 2> shared = {terrain_set, shadow_set};
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_layout_, 0,
-                            static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
+    vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_layout_, 0,
+                              static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
     const VkDeviceSize no_offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &splat_buf_[fi].buffer, &no_offset);
     DecalPush pc{};
@@ -272,13 +273,13 @@ void RuntimeDecalRenderer::draw_splats(VkCommandBuffer cmd, u32 fi,
     pc.eye[0] = eye[0];
     pc.eye[1] = eye[1];
     pc.eye[2] = eye[2];
-    vkCmdPushConstants(cmd, splat_layout_,
-                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
-                       &pc);
+    vkc::push_constants(cmd, splat_layout_,
+                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
+                        &pc);
     for (const Run& run : runs_) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_layout_, 2, 1,
-                                &run.texture, 0, nullptr);
-        vkCmdDraw(cmd, run.vertex_count, 1, run.first_vertex, 0);
+        vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_layout_, 2, 1,
+                                  &run.texture, 0, nullptr);
+        vkc::draw(cmd, run.vertex_count, 1, run.first_vertex, 0);
     }
 }
 
