@@ -95,6 +95,8 @@ void write_game_setup(ByteWriter& w, const GameSetup& s) {
     w.f64v(s.cheat_mult);
     w.f64v(s.build_mult);
     w.str(s.mods);
+    w.str(s.campaign_info);
+    w.u8v(s.tutorial ? 1 : 0);
 }
 
 bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
@@ -153,6 +155,10 @@ bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
     s.cheat_mult = r.f64v();
     s.build_mult = r.f64v();
     if (version >= 10) s.mods = r.str(); // before: none
+    if (version >= 12) {                 // before: none
+        s.campaign_info = r.str();
+        s.tutorial = r.u8v() != 0;
+    }
     return r.ok();
 }
 

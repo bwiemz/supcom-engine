@@ -142,6 +142,8 @@ private:
     std::string ai_personality_ = "adaptive";
     double cheat_mult_ = 2.0;
     double build_mult_ = 2.0;
+    std::string campaign_info_; ///< sim::lua_to_bytes's, or empty
+    bool tutorial_ = false;
 };
 
 } // namespace osc::lua

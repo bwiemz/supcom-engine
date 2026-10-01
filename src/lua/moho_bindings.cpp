@@ -3198,6 +3198,20 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
     }
     lua_pop(L, 1);
 
+    // SinglePlayerLaunch.lua's session (the campaign's, the tutorial's):
+    // its scenarioInfo is MapUtil.LoadScenario's, which names its file
+    if (scenario.empty()) {
+        lua_pushstring(L, "scenarioInfo");
+        lua_rawget(L, 1);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "file");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) scenario = lua_tostring(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+
     if (scenario.empty()) {
         spdlog::warn("LaunchSinglePlayerSession: no ScenarioFile in config");
         return 0;

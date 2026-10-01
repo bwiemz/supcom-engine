@@ -21,8 +21,9 @@ struct Replay {
     // and a checksum trail; 5: formation orders; 6: a specific unload's
     // cargo; 7: factory commands (a player's rally orders); 8: a callback's
     // Args as one value (SimCamera's OnCameraFinish); 9: each army's lobby
-    // slot; 10: the game's mods; 11: a Script order's table
-    static constexpr u32 kVersion = 11;
+    // slot; 10: the game's mods; 11: a Script order's table; 12: a campaign
+    // operation's flow
+    static constexpr u32 kVersion = 12;
 
     u32 version = kVersion;
     u32 final_tick = 0;               // last tick the recording covers

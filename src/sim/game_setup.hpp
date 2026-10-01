@@ -97,6 +97,13 @@ struct GameSetup {
     /// it. The game's Lua states read it back as their __active_mods.
     /// Empty: none.
     std::string mods;
+    /// A campaign operation's flow (SetupCampaignSession's campaignFlowInfo:
+    /// opKey, campaignID, difficulty), as sim::lua_to_bytes wrote it: the
+    /// sim's ScenarioInfo.campaignInfo, which ScenarioFramework.EndOperation
+    /// reports to the front end. Empty: none.
+    std::string campaign_info;
+    /// The tutorial operation (ScenarioInfo.tutorial).
+    bool tutorial = false;
 };
 
 /// The game's armies, by name, in order: a lobby's (`setup.slots`) each
