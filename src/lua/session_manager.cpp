@@ -147,6 +147,72 @@ void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
     if (cfg->handicap > 0) brain->set_handicap(cfg->handicap / 100.0);
 }
 
+namespace {
+
+/// The armies a launch's players table names (a lobby's PlayerOptions,
+/// or a single-player launch's teamInfo) into `setup`'s slots.
+void read_player_slots(lua_State* L, int options, sim::GameSetup& setup) {
+    // {[slot] = {Human = true, ...}, [slot] = {Human = false, AIPersonality
+    // = 'adaptive', ...}}. The slots taken, in order, are the armies, each
+    // its slot's army of the scenario (Moho's LaunchGame: players in slots 1
+    // and 5 play armies 0 and 1, ARMY_1 and ARMY_5). Random spawn leaves
+    // gaps, which luaL_getn would stop at.
+    std::vector<double> taken;
+    lua_pushnil(L);
+    while (lua_next(L, options) != 0) {
+        if (lua_type(L, -2) == LUA_TNUMBER && lua_istable(L, -1))
+            taken.push_back(lua_tonumber(L, -2));
+        lua_pop(L, 1);
+    }
+    std::sort(taken.begin(), taken.end());
+    setup.slots.resize(taken.size());
+    for (size_t army = 0; army < taken.size(); ++army) {
+        lua_pushnumber(L, taken[army]);
+        lua_rawget(L, options);
+        const int entry = lua_gettop(L);
+        // (A key that is no slot, 0 or 2.5 say: none, the first army
+        // free; its team and start spot default to its place)
+        const bool whole =
+            taken[army] >= 1 && taken[army] <= 1024 && taken[army] == std::floor(taken[army]);
+        const int slot = whole ? static_cast<int>(taken[army]) : 0;
+        const int place = whole ? slot : static_cast<int>(army) + 1;
+        ++setup.army_count;
+        auto& cfg = setup.slots[army];
+        cfg.configured = true;
+        cfg.slot = slot;
+        auto read_int = [&](const char* key, int def) {
+            lua_pushstring(L, key);
+            lua_rawget(L, entry);
+            const int v = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : def;
+            lua_pop(L, 1);
+            return v;
+        };
+        lua_pushstring(L, "Human");
+        lua_rawget(L, entry);
+        cfg.human = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        if (!cfg.human) {
+            setup.ai_armies.push_back(static_cast<int>(army));
+            lua_pushstring(L, "AIPersonality");
+            lua_rawget(L, entry);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                cfg.ai_personality = lua_tostring(L, -1);
+                setup.ai_personality = cfg.ai_personality;
+            }
+            lua_pop(L, 1);
+        }
+        cfg.faction = read_int("Faction", 1); // 1 UEF, 2 Aeon, 3 Cybran, 4 Seraphim
+        cfg.team = read_int("Team", place);
+        cfg.start_spot = read_int("StartSpot", place);
+        cfg.player_color = read_int("PlayerColor", -1);
+        cfg.army_color = read_int("ArmyColor", -1);
+        cfg.handicap = read_int("Handicap", 0);
+        lua_pop(L, 1); // entry
+    }
+}
+
+} // namespace
+
 sim::GameSetup read_session_config(lua_State* L, int table_idx) {
     sim::GameSetup setup;
     const int top = lua_gettop(L);
@@ -155,69 +221,46 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
     if (lua_istable(L, -1)) setup.options = read_game_options(L, lua_gettop(L));
     lua_settop(L, top);
 
-    // PlayerOptions: {[slot] = {Human = true, ...}, [slot] = {Human =
-    // false, AIPersonality = 'adaptive', ...}}. The slots taken, in order,
-    // are the armies, each its slot's army of the scenario (Moho's
-    // LaunchGame: players in slots 1 and 5 play armies 0 and 1, ARMY_1 and
-    // ARMY_5). Random spawn leaves gaps, which luaL_getn would stop at.
     lua_pushstring(L, "PlayerOptions");
     lua_rawget(L, table_idx);
+    if (lua_istable(L, -1)) read_player_slots(L, lua_gettop(L), setup);
+    lua_settop(L, top);
+
+    // A single-player launch's session (SinglePlayerLaunch.lua's, as Moho's
+    // WLD_SetupSessionInfo takes it): its scenarioInfo, which becomes the
+    // sim's ScenarioInfo (its Options, a campaign's campaignInfo and
+    // tutorial flag), and its teamInfo, one player's options per army in
+    // the scenario's order.
+    lua_pushstring(L, "scenarioInfo");
+    lua_rawget(L, table_idx);
     if (lua_istable(L, -1)) {
-        const int options = lua_gettop(L);
-        std::vector<double> taken;
-        lua_pushnil(L);
-        while (lua_next(L, options) != 0) {
-            if (lua_type(L, -2) == LUA_TNUMBER && lua_istable(L, -1))
-                taken.push_back(lua_tonumber(L, -2));
-            lua_pop(L, 1);
+        const int info = lua_gettop(L);
+        lua_pushstring(L, "Options");
+        lua_rawget(L, info);
+        if (lua_istable(L, -1) && !setup.options.configured)
+            setup.options = read_game_options(L, lua_gettop(L));
+        lua_pop(L, 1);
+        lua_pushstring(L, "campaignInfo");
+        lua_rawget(L, info);
+        if (lua_istable(L, -1)) {
+            if (auto bytes = sim::lua_to_bytes(L, -1)) setup.campaign_info = std::move(*bytes);
+            else
+                spdlog::warn("Launch: its campaignInfo can't be carried; the operation's end "
+                             "won't name it");
         }
-        std::sort(taken.begin(), taken.end());
-        setup.slots.resize(taken.size());
-        for (size_t army = 0; army < taken.size(); ++army) {
-            lua_pushnumber(L, taken[army]);
-            lua_rawget(L, options);
-            const int entry = lua_gettop(L);
-            // (A key that is no slot, 0 or 2.5 say: none, the first army
-            // free; its team and start spot default to its place)
-            const bool whole =
-                taken[army] >= 1 && taken[army] <= 1024 && taken[army] == std::floor(taken[army]);
-            const int slot = whole ? static_cast<int>(taken[army]) : 0;
-            const int place = whole ? slot : static_cast<int>(army) + 1;
-            ++setup.army_count;
-            auto& cfg = setup.slots[army];
-            cfg.configured = true;
-            cfg.slot = slot;
-            auto read_int = [&](const char* key, int def) {
-                lua_pushstring(L, key);
-                lua_rawget(L, entry);
-                const int v = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : def;
-                lua_pop(L, 1);
-                return v;
-            };
-            lua_pushstring(L, "Human");
-            lua_rawget(L, entry);
-            cfg.human = lua_toboolean(L, -1) != 0;
-            lua_pop(L, 1);
-            if (!cfg.human) {
-                setup.ai_armies.push_back(static_cast<int>(army));
-                lua_pushstring(L, "AIPersonality");
-                lua_rawget(L, entry);
-                if (lua_type(L, -1) == LUA_TSTRING) {
-                    cfg.ai_personality = lua_tostring(L, -1);
-                    setup.ai_personality = cfg.ai_personality;
-                }
-                lua_pop(L, 1);
-            }
-            cfg.faction = read_int("Faction", 1); // 1 UEF, 2 Aeon, 3 Cybran, 4 Seraphim
-            cfg.team = read_int("Team", place);
-            cfg.start_spot = read_int("StartSpot", place);
-            cfg.player_color = read_int("PlayerColor", -1);
-            cfg.army_color = read_int("ArmyColor", -1);
-            cfg.handicap = read_int("Handicap", 0);
-            lua_pop(L, 1); // entry
-        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "tutorial");
+        lua_rawget(L, info);
+        setup.tutorial = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
     }
     lua_settop(L, top);
+    if (setup.slots.empty()) {
+        lua_pushstring(L, "teamInfo");
+        lua_rawget(L, table_idx);
+        if (lua_istable(L, -1)) read_player_slots(L, lua_gettop(L), setup);
+        lua_settop(L, top);
+    }
 
     // The game's mods (M221b): the lobby's GameMods, which retail's lobby
     // sets to Mods.GetGameMods(...) just before its LaunchGame (Moho's
@@ -250,6 +293,8 @@ void SessionManager::configure(const sim::GameSetup& setup) {
     // After the options, which may carry their own multipliers.
     if (setup.cheat_mult != 1.0) set_cheat_mult(setup.cheat_mult);
     if (setup.build_mult != 1.0) set_build_mult(setup.build_mult);
+    campaign_info_ = setup.campaign_info;
+    tutorial_ = setup.tutorial;
 }
 
 GameOptionsConfig read_game_options(lua_State* L, int table_idx) {
@@ -554,6 +599,20 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
     }
 
     lua_rawset(L, si_idx); // ScenarioInfo.Options = opts table
+
+    // A campaign launch's own ScenarioInfo fields (SetupCampaignSession's):
+    // the operation's flow, which ScenarioFramework.EndOperation reports,
+    // and the tutorial flag
+    if (!campaign_info_.empty()) {
+        lua_pushstring(L, "campaignInfo");
+        if (sim::push_lua_bytes(L, campaign_info_)) lua_rawset(L, si_idx);
+        else lua_pop(L, 1);
+    }
+    if (tutorial_) {
+        lua_pushstring(L, "tutorial");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, si_idx);
+    }
 
     // Create ScenarioInfo.ArmySetup = {}
     lua_pushstring(L, "ArmySetup");

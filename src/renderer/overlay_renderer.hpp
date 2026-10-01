@@ -72,6 +72,14 @@ public:
 
     u32 quad_count() const { return quad_count_; }
 
+    /// ui_RenderUnitBars: the units' bars (health, progress, and the marks
+    /// drawn with them); a campaign's NIS turns them off.
+    void set_unit_bars(bool on) { unit_bars_ = on; }
+    bool unit_bars() const { return unit_bars_; }
+    /// ren_SelectBoxes: the selection's marks; a NIS turns them off too.
+    void set_select_boxes(bool on) { select_boxes_ = on; }
+    bool select_boxes() const { return select_boxes_; }
+
     /// The player's intel: a unit's health bar, selection ring and work
     /// beams show only while it is in sight, a death's flash only where the
     /// player's army sees (null: everything seen; M215a).
@@ -89,6 +97,8 @@ public:
 
 private:
     std::unordered_set<std::string> intel_ring_types_ = kAllIntelRingTypes;
+    bool unit_bars_ = true;
+    bool select_boxes_ = true;
     const ReconView* recon_ = nullptr;
     const BeamRenderer* beams_ = nullptr;
     const TrailRenderer* trails_ = nullptr;

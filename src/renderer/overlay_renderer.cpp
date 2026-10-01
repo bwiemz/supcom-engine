@@ -190,7 +190,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         f32 hp_frac = (entity.max_health > 0)
                           ? entity.health / entity.max_health
                           : 1.0f;
-        if (hp_frac < 0.999f || is_selected) {
+        if (unit_bars_ && (hp_frac < 0.999f || is_selected)) {
             constexpr f32 BAR_W = 40.0f;
             constexpr f32 BAR_H = 4.0f;
             constexpr f32 BAR_Y_OFFSET = 20.0f; // pixels above unit center
@@ -211,7 +211,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
 
         // --- Build progress indicator (for units being built OR actively building) ---
         const sim::EntityRecord* unit = &entity;
-        if (unit->is_being_built && entity.fraction_complete < 0.999f) {
+        if (unit_bars_ && unit->is_being_built && entity.fraction_complete < 0.999f) {
             // Unit under construction: blue progress bar below health bar
             constexpr f32 BP_W = 40.0f;
             constexpr f32 BP_H = 3.0f;
@@ -224,7 +224,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             f32 bp_fill = BP_W * bp_frac;
             if (bp_fill > 0.5f)
                 emit_quad(bp_x, bp_y, bp_fill, BP_H, 0.3f, 0.6f, 1.0f, 0.9f);
-        } else if (unit->is_building() && cam_dist < 400.0f) {
+        } else if (unit_bars_ && unit->is_building() && cam_dist < 400.0f) {
             // Builder actively constructing: small yellow indicator below health bar
             constexpr f32 BI_W = 30.0f;
             constexpr f32 BI_H = 3.0f;
@@ -240,7 +240,8 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         }
 
         // --- Veterancy indicators (gold chevrons above health bar) ---
-        if (unit->vet_level > 0 && cam_dist < 400.0f && (hp_frac < 0.999f || is_selected)) {
+        if (unit_bars_ && unit->vet_level > 0 && cam_dist < 400.0f &&
+            (hp_frac < 0.999f || is_selected)) {
             constexpr f32 CHEV_SIZE = 5.0f;  // each chevron square
             constexpr f32 CHEV_GAP  = 1.5f;  // gap between chevrons
             constexpr f32 CHEV_Y_OFFSET = 26.0f; // above health bar
@@ -257,7 +258,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         }
 
         // --- Transport cargo indicators (small dots below unit) ---
-        if (unit->cargo_count > 0 && cam_dist < 400.0f) {
+        if (unit_bars_ && unit->cargo_count > 0 && cam_dist < 400.0f) {
             constexpr f32 CARGO_DOT = 4.0f;
             constexpr f32 CARGO_GAP = 2.0f;
             constexpr f32 CARGO_Y = 8.0f; // below unit center
@@ -273,7 +274,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         }
 
         // --- Silo ammo indicators (nuke = red, tactical = blue) ---
-        if (cam_dist < 400.0f) {
+        if (unit_bars_ && cam_dist < 400.0f) {
             i32 nuke = unit->nuke_silo_ammo;
             i32 tac = unit->tactical_silo_ammo;
             if (nuke > 0 || tac > 0) {
@@ -305,7 +306,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         }
 
         // --- Selection circle (projected 12-segment circle on ground) ---
-        if (is_selected) {
+        if (is_selected && select_boxes_) {
             constexpr f32 RING_RADIUS = 2.5f;
             constexpr f32 RING_THICK = 2.0f; // pixels
             constexpr u32 SEL_SEGMENTS = 12;

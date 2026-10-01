@@ -76,6 +76,8 @@ void print_usage() {
               << "                     as retail's lobby launches one, reporting what they did\n"
               << "  --mods-flow-lobby  ...through retail's lobby, picking Resource Rich in its\n"
               << "                     mod manager with a player's clicks\n"
+              << "  --campaign-flow-test Offscreen: the campaign through retail's screens, from\n"
+              << "                     the main menu through X1CA_001 to X1CA_002's briefing\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
@@ -281,6 +283,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.load_flow_test = parse_flag(argc, argv, "--load-flow-test");
     // --mods-flow-test: a skirmish with the player's mods (M221b).
     o.mods_flow_test = parse_flag(argc, argv, "--mods-flow-test");
+    // --campaign-flow-test: the campaign through retail's screens (M209b).
+    o.campaign_flow_test = parse_flag(argc, argv, "--campaign-flow-test");
     o.mods_flow_lobby = parse_flag(argc, argv, "--mods-flow-lobby"); // (M221c)
     // --click <label>, repeatable: the buttons a player clicks, in order
     for (int i = 1; i + 1 < argc; ++i) {
@@ -306,8 +310,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
     o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
     o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
-                        o.mods_flow_test || !o.clicks.empty() || o.lan_game_test() ||
-                        o.gpgnet_scripted;
+                        o.mods_flow_test || o.campaign_flow_test || !o.clicks.empty() ||
+                        o.lan_game_test() || o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
@@ -367,7 +371,7 @@ const char* test_mode_flag(int argc, char* argv[]) {
         const std::string_view arg = argv[i];
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
                           arg != "--replay-flow-test" && arg != "--load-flow-test" &&
-                          arg != "--mods-flow-test";
+                          arg != "--mods-flow-test" && arg != "--campaign-flow-test";
         if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join")
             return argv[i];
     }

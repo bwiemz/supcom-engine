@@ -56,7 +56,8 @@ void world_beat(lua::LuaState* sim_lua, sim::SimState* sim, lua_State* uiL);
 void note_game_over_if_ended(sim::SimState* sim, GameStateManager& mgr, lua_State* uiL);
 /// FA's game interface: the loading dialog, then the interface itself.
 void begin_world_ui(lua_State* uiL, ui::WldUIProvider& wld);
-void finish_world_ui(lua_State* uiL, ui::WldUIProvider& wld, bool is_replay);
+void finish_world_ui(lua_State* uiL, ui::WldUIProvider& wld, bool is_replay, lua::LuaState* sim_lua,
+                     sim::SimState* sim);
 
 /// The UI's OnSelectionChanged, when the selection changed.
 void dispatch_selection_change(lua_State* uL, std::unordered_set<u32>& prev,

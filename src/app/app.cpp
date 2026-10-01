@@ -61,7 +61,7 @@ int run(int argc, char* argv[], TestModes* tests) {
     // (A scripted windowed test mode counts its script errors if it says
     // so, in parse.)
     if (opt->any_test || opt->replay_flow_test || opt->load_flow_test || opt->mods_flow_test ||
-        opt->lan_game_test() || opt->gpgnet_scripted)
+        opt->campaign_flow_test || opt->lan_game_test() || opt->gpgnet_scripted)
         osc::test_status::set_count_lua_failures(true);
 
     // The first run (M228a): a player's game that found no FA asks where it
@@ -75,7 +75,7 @@ int run(int argc, char* argv[], TestModes* tests) {
                       "--fa-path <dir>, set OSC_FA_PATH, or run --print-install "
                       "to see where we looked.");
         const bool data_test_mode = opt->any_test || opt->lan_game_test() || opt->gpgnet_scripted ||
-                                    opt->mods_flow_test ||
+                                    opt->mods_flow_test || opt->campaign_flow_test ||
                                     !parse_string_arg(argc, argv, "--binding-coverage", "").empty();
         return data_test_mode ? kExitSkippedNoData : 1;
     }

@@ -202,46 +202,63 @@ static int control_ClearChildren(lua_State* L) {
     return 0;
 }
 
+/// Moho's CMauiControl::OnHide: the control's OnHide(self, hidden); true
+/// when it keeps the control as it is.
+static bool call_on_hide(lua_State* L, ui::UIControl& ctrl, bool hidden) {
+    const int ref = ctrl.lua_table_ref();
+    if (ref < 0) return false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return false;
+    }
+    lua_pushstring(L, "OnHide");
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushvalue(L, -2); // self
+    lua_pushboolean(L, hidden ? 1 : 0);
+    bool kept = false;
+    if (lua_pcall(L, 2, 1, 0) == 0) {
+        kept = lua_toboolean(L, -1) != 0;
+    } else {
+        const char* err = lua_tostring(L, -1);
+        spdlog::warn("OnHide: {}", err ? err : "(error)");
+    }
+    lua_pop(L, 2); // its result (or error), the control's table
+    return kept;
+}
+
+/// Moho's CMauiControl::SetHidden, which Hide and Show call too: OnHide
+/// first (true: the control stays as it is, and so do its children), then
+/// its flag, then each child the same way. (A Window keeps its border in a
+/// group beside it, which its OnHide hides with it.)
+static void set_hidden(lua_State* L, ui::UIControl& ctrl, bool hidden) {
+    if (call_on_hide(L, ctrl, hidden)) return;
+    ctrl.set_hidden(hidden);
+    const std::vector<ui::UIControl*> children = ctrl.children(); // a callback may change them
+    for (ui::UIControl* child : children) {
+        if (child && !child->destroyed()) set_hidden(L, *child, hidden);
+    }
+}
+
 static int control_Show(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_hidden(false);
+    if (ctrl) set_hidden(L, *ctrl, false);
     return 0;
 }
 
 static int control_Hide(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_hidden(true);
+    if (ctrl) set_hidden(L, *ctrl, true);
     return 0;
 }
 
 static int control_SetHidden(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl) return 0;
-    bool h = lua_toboolean(L, 2) != 0;
-
-    // FA calls OnHide(hidden) before applying the state change.
-    // If OnHide returns true, the operation is suppressed.
-    if (lua_istable(L, 1)) {
-        lua_pushstring(L, "OnHide");
-        lua_gettable(L, 1);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, 1); // self
-            lua_pushboolean(L, h);
-            if (lua_pcall(L, 2, 1, 0) == 0) {
-                if (lua_toboolean(L, -1)) {
-                    lua_pop(L, 1); // pop return value
-                    return 0; // suppressed
-                }
-                lua_pop(L, 1); // pop return value
-            } else {
-                lua_pop(L, 1); // pop error
-            }
-        } else {
-            lua_pop(L, 1); // pop nil
-        }
-    }
-
-    ctrl->set_hidden(h);
+    if (ctrl) set_hidden(L, *ctrl, lua_toboolean(L, 2) != 0);
     return 0;
 }
 
@@ -512,6 +529,28 @@ const MethodEntry ui_frame_methods[] = {
 };
 // clang-format on
 
+/// Set a bitmap's BitmapWidth/BitmapHeight LazyVars (self at `self_idx`).
+static void set_bitmap_size(lua_State* L, int self_idx, i32 width, i32 height) {
+    if (!lua_istable(L, self_idx)) return;
+    for (const auto& [name, value] :
+         {std::pair{"BitmapWidth", width}, std::pair{"BitmapHeight", height}}) {
+        lua_pushstring(L, name);
+        lua_rawget(L, self_idx);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Set");
+            lua_gettable(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, -2); // the LazyVar
+                lua_pushnumber(L, static_cast<lua_Number>(value));
+                if (lua_pcall(L, 2, 0, 0) != 0) lua_pop(L, 1); // (its error)
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1); // the LazyVar
+    }
+}
+
 static int bitmap_SetNewTexture(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
@@ -547,43 +586,13 @@ static int bitmap_SetNewTexture(lua_State* L) {
         ctrl->set_has_solid_color(false);
     }
 
-    // Push bitmap dimensions to Lua-side Width/Height LazyVars so the
-    // UI layout engine can size the control based on the texture.
-    // FA's engine does this internally; we must do it explicitly.
-    if (ctrl->bitmap_width() > 0 && ctrl->bitmap_height() > 0) {
-        // Get the control's Lua table (arg 1 = self)
-        if (lua_istable(L, 1)) {
-            lua_pushstring(L, "Width");
-            lua_rawget(L, 1);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "Set");
-                lua_gettable(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    lua_pushvalue(L, -2); // self (Width LazyVar)
-                    lua_pushnumber(L, ctrl->bitmap_width());
-                    lua_pcall(L, 2, 0, 0);
-                } else {
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1); // Width LazyVar
-
-            lua_pushstring(L, "Height");
-            lua_rawget(L, 1);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "Set");
-                lua_gettable(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    lua_pushvalue(L, -2);
-                    lua_pushnumber(L, ctrl->bitmap_height());
-                    lua_pcall(L, 2, 0, 0);
-                } else {
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1); // Height LazyVar
-        }
-    }
+    // The texture's size into its BitmapWidth/BitmapHeight LazyVars, as
+    // CMauiBitmap::SetTexture sets them; Width and Height follow them
+    // through retail's ResetLayout, unless a script set them itself (the
+    // campaign's half-size faction icons, then given their disabled
+    // texture).
+    if (ctrl->bitmap_width() > 0 && ctrl->bitmap_height() > 0)
+        set_bitmap_size(L, 1, ctrl->bitmap_width(), ctrl->bitmap_height());
 
     return 0;
 }
@@ -768,6 +777,8 @@ static int bitmap_ShareTextures(lua_State* L) {
         ctrl->set_bitmap_width(other->bitmap_width());
         ctrl->set_bitmap_height(other->bitmap_height());
         ctrl->set_texture_border(other->texture_border());
+        if (ctrl->bitmap_width() > 0 && ctrl->bitmap_height() > 0)
+            set_bitmap_size(L, 1, ctrl->bitmap_width(), ctrl->bitmap_height());
     }
     return 0;
 }

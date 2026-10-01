@@ -236,6 +236,15 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # The campaign through retail's own screens (M209b): the main menu, the
+    # timeline movie skipped, operation select, the briefing, X1CA_001 to its
+    # end, the score screen, and the next operation's briefing
+    add_test(NAME data.campaign_flow COMMAND opensupcom --campaign-flow-test)
+    set_tests_properties(data.campaign_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+
     # M221b: a skirmish with the player's mods -- two test mods in a
     # temporary Documents folder's mods folder and retail's Resource Rich,
     # selected in its preferences -- launched from the front end as retail's

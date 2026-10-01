@@ -257,6 +257,22 @@ void register_option_commands(ui::Console& console) {
         [](lua_State* L, bool v) {
             if (Renderer* r = renderer_of(L)) r->set_icons_always(v);
         });
+    // What a campaign's NIS turns off and on again (gamemain.NISMode)
+    const auto renderer_bool = [&console](const char* name, bool (Renderer::*get)() const,
+                                          void (Renderer::*set)(bool)) {
+        ui::add_bool_var(
+            console, name,
+            [get](lua_State* L) {
+                Renderer* r = renderer_of(L);
+                return !r || (r->*get)();
+            },
+            [set](lua_State* L, bool v) {
+                if (Renderer* r = renderer_of(L)) (r->*set)(v);
+            });
+    };
+    renderer_bool("ui_RenderUnitBars", &Renderer::unit_bars, &Renderer::set_unit_bars);
+    renderer_bool("ui_NisRenderIcons", &Renderer::nis_icons, &Renderer::set_nis_icons);
+    renderer_bool("ren_SelectBoxes", &Renderer::select_boxes, &Renderer::set_select_boxes);
     ui::add_bool_var(
         console, "ren_bloom",
         [](lua_State* L) {

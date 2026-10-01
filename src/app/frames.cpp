@@ -279,11 +279,17 @@ void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr
     osc::core::call_note_game_over(uiL);
 }
 
-/// The world is loaded: build FA's game interface (gamemain.CreateUI) and
-/// fade the loading dialog out.
-void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld, bool is_replay) {
-    wld.create_game_interface(uiL, is_replay);
+/// The world is loaded, as Moho's WLD_DoInitializing hands over: the sim's
+/// first sync reaches the UI (its OnSync: a campaign's Sync.CampaignMode,
+/// set as its armies are made), the loading dialog stops, then FA's game
+/// interface is built (gamemain.CreateUI), which reads what that sync
+/// brought: a campaign's interface stays up for its intro's NIS to hide, a
+/// skirmish's hides until the loading screen's fade slides it in.
+void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld, bool is_replay,
+                     osc::lua::LuaState* sim_lua, osc::sim::SimState* sim) {
+    world_beat(sim_lua, sim, uiL);
     wld.stop_loading_dialog(uiL);
+    wld.create_game_interface(uiL, is_replay);
 }
 
 /// Pump N UI frames: resume coroutines, fire OnBeat, fire beat functions.

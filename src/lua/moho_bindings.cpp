@@ -789,6 +789,11 @@ static int l_InternalCreateBitmap(lua_State* L) {
     create_lazyvar(L, 1, "Width");
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
+    // Its texture's size (Moho's mBitmapWidthLV/mBitmapHeightLV): retail's
+    // ResetLayout sizes a bitmap by them, so a new texture resizes it
+    // unless a script has sized it itself
+    create_lazyvar(L, 1, "BitmapWidth");
+    create_lazyvar(L, 1, "BitmapHeight");
 
     call_on_init(L, 1, "InternalCreateBitmap");
 
@@ -1143,9 +1148,9 @@ static int l_InternalCreateMovie(lua_State* L) {
     create_lazyvar(L, 1, "MovieHeight");
 
     ctrl->set_control_type(ui::UIControl::ControlType::Movie);
-    // Movie controls are non-interactive backgrounds — disable hit test
-    // so they don't intercept mouse events from interactive controls above.
-    ctrl->set_hit_test_disabled(true);
+    // Hit-tested as any control is (Moho's default): a movie that takes
+    // clicks -- the campaign's timeline, skipped by one -- has them, and
+    // retail disables a background movie's itself (DisableHitTest).
 
     call_on_init(L, 1, "InternalCreateMovie");
 
@@ -3192,6 +3197,20 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
         scenario = lua_tostring(L, -1);
     }
     lua_pop(L, 1);
+
+    // SinglePlayerLaunch.lua's session (the campaign's, the tutorial's):
+    // its scenarioInfo is MapUtil.LoadScenario's, which names its file
+    if (scenario.empty()) {
+        lua_pushstring(L, "scenarioInfo");
+        lua_rawget(L, 1);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "file");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) scenario = lua_tostring(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
 
     if (scenario.empty()) {
         spdlog::warn("LaunchSinglePlayerSession: no ScenarioFile in config");

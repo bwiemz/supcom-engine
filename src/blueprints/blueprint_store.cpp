@@ -431,8 +431,9 @@ void BlueprintStore::rebind(lua_State* new_L) {
     for (auto& [id, entry] : blueprints_) {
         entry.lua_ref = -1;
     }
-    spdlog::info("BlueprintStore rebound to new Lua state ({} blueprints, refs cleared)",
-                 blueprints_.size());
+    if (new_L)
+        spdlog::info("BlueprintStore rebound to new Lua state ({} blueprints, refs cleared)",
+                     blueprints_.size());
 }
 
 } // namespace osc::blueprints

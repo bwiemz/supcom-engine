@@ -234,7 +234,12 @@ namespace {
 
 /// Walk the visible tree under `ctrl`, keeping the deepest hit-testable
 /// control whose rect contains (x, y). Parents are visited before their
-/// children and siblings in order, so `>=` lets the later one win a tie.
+/// children and siblings in the order they were made, and only a deeper
+/// control replaces the one kept, so the first one wins a tie, as in
+/// Moho's CMauiControl::GetTopmostControl (a depth-first walk, children
+/// appended as they are made, `>`). Retail's score screen relies on it:
+/// its page group fills the panel at the Continue button's depth, made
+/// after it.
 void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
                  const std::unordered_set<UIControl*>* skip, UIControl*& best,
                  f32& best_depth) {
@@ -253,7 +258,7 @@ void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
                             y >= rect.y && y < rect.y + rect.h;
         const f32 depth = inside ? read_lazyvar(L, tbl, "Depth") : 0.0f;
         lua_pop(L, 1);
-        if (inside && (!best || depth >= best_depth)) {
+        if (inside && (!best || depth > best_depth)) {
             best = ctrl;
             best_depth = depth;
         }
