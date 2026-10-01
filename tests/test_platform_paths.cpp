@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "platform/executable.hpp"
 #include "platform/paths.hpp"
 
+#include <filesystem>
 #include <map>
 #include <string>
 
@@ -71,4 +73,16 @@ TEST_CASE("known_folder with the real environment returns absolute paths",
         auto p = known_folder(folder);
         CHECK(p.is_absolute());
     }
+}
+
+TEST_CASE("The running executable is found, and on macOS its linker's UUID", "[platform]") {
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+    const std::filesystem::path exe = executable_path();
+    REQUIRE_FALSE(exe.empty());
+    CHECK(exe.is_absolute());
+    CHECK(std::filesystem::is_regular_file(exe));
+#endif
+#ifdef __APPLE__
+    CHECK(executable_build_id().size() == 16); // LC_UUID
+#endif
 }

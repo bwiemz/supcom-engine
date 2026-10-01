@@ -14,9 +14,9 @@ namespace osc::platform {
 /// The running executable's file; empty if the OS won't say.
 std::filesystem::path executable_path();
 
-/// The build id the linker wrote into the running executable (ELF's
-/// NT_GNU_BUILD_ID note, a digest of its contents), or empty where it has
-/// none or the platform keeps none this reads.
+/// The build id the linker wrote into the running executable, a digest of
+/// its contents (ELF's NT_GNU_BUILD_ID note, Mach-O's LC_UUID), or empty
+/// where it has none or the platform keeps none this reads.
 std::vector<std::uint8_t> executable_build_id();
 
 } // namespace osc::platform
