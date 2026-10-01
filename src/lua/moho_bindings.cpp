@@ -906,6 +906,8 @@ static int l_InternalCreateItemList(lua_State* L) {
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateItemList: failed to create control");
     ctrl->set_control_type(ui::UIControl::ControlType::ItemList);
+    // Moho's ItemList, before a script sets one: Arial 16, 19 high rows
+    ctrl->set_font_pointsize(16);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);

@@ -15677,10 +15677,12 @@ void test_edit(TestContext& ctx) {
     // Test 16b: rows as tall as retail's, from GDI's metrics of FA's fonts
     {
         auto result = ctx.lua_state.do_string(std::string(mk_itemlist) +
+                                              "local default = il:GetRowHeight()\n"
                                               "il:SetNewFont('Arial', 14)\n"
                                               "local arial = il:GetRowHeight()\n"
                                               "il:SetNewFont('Zeroes Three', 14)\n"
-                                              "return arial == 16 and il:GetRowHeight() == 19\n");
+                                              "return default == 19 and arial == 16 and\n"
+                                              "    il:GetRowHeight() == 19\n");
         bool ok = false;
         if (result) {
             ok = lua_toboolean(L, -1) != 0;

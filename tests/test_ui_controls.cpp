@@ -574,6 +574,7 @@ TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lu
     auto result = lua.do_string(R"(
         list = setmetatable({}, { __index = moho.item_list_methods })
         InternalCreateItemList(list, GetFrame(0))
+        list:SetNewFont('Arial', 14)
         rawset(list, 'Height', 90)
         for i = 1, 20 do list:AddItem('row ' .. i) end
         bar = setmetatable({}, { __index = moho.scrollbar_methods })
@@ -581,6 +582,7 @@ TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lu
         bar:SetScrollable(list)
         short = setmetatable({}, { __index = moho.item_list_methods })
         InternalCreateItemList(short, GetFrame(0))
+        short:SetNewFont('Arial', 14)
         rawset(short, 'Height', 90)
         for i = 1, 3 do short:AddItem('row ' .. i) end
     )");
