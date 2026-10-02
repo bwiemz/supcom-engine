@@ -450,7 +450,16 @@ public:
 
     /// The control that currently has keyboard focus.
     UIControl* keyboard_focus() const { return keyboard_focus_; }
-    void set_keyboard_focus(UIControl* c) { keyboard_focus_ = c; }
+    /// Gives `c` (or none) the focus: the control it leaves no longer has it
+    void set_keyboard_focus(UIControl* c) {
+        if (keyboard_focus_ && keyboard_focus_ != c) {
+            keyboard_focus_->set_keyboard_focus(false);
+        }
+        keyboard_focus_ = c;
+        if (c) {
+            c->set_keyboard_focus(true);
+        }
+    }
 
     /// Moho's input-capture stack (AddInputCapture). The top control is
     /// where the mouse hit-tests from, in place of the root frame, and it
