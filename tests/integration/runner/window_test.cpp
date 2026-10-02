@@ -27,7 +27,9 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace osc::test {
@@ -100,11 +102,15 @@ void test_window(TestContext& ui, TestContext& sim, const std::function<void(int
         prefs.set_int("Windows.Main.height", 800);
         console.execute(L, "SC_PrimaryAdapter windowed");
         // The resize's own event marks the swapchain stale, before any frame
-        // could find it out of date (Wayland never says so)
+        // could find it out of date (Wayland never says so). The window system
+        // delivers it in its own time: on a loaded machine that can be later
+        // than a few immediate polls, so give it up to two seconds.
         bool stale = false;
-        for (int i = 0; i < 50 && !stale; ++i) {
+        const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!stale && std::chrono::steady_clock::now() < give_up) {
             r.poll_events(0.0);
             stale = r.swapchain_stale();
+            if (!stale) std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         frames(5);
         const ImageRGBA8 shot = shots.grab();
