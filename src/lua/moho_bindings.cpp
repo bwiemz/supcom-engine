@@ -537,6 +537,14 @@ std::pair<i32, i32> read_dds_dimensions(lua_State* L, const std::string& path) {
     return {static_cast<i32>(w_raw), static_cast<i32>(h_raw)};
 }
 
+std::pair<i32, i32> ui_texture_dimensions(lua_State* L, const std::string& path, i32 border) {
+    const auto [w, h] = read_dds_dimensions(L, path);
+    if (w == 0 && h == 0) {
+        return {0, 0};
+    }
+    return {std::max(1, w - 2 * border), std::max(1, h - 2 * border)};
+}
+
 // ====================================================================
 // Text methods (M73)
 // ====================================================================
@@ -1000,7 +1008,8 @@ static int l_GetTextureDimensions(lua_State* L) {
         return 2;
     }
     std::string path = lua_tostring(L, 1);
-    auto [w, h] = read_dds_dimensions(L, path);
+    const i32 border = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    auto [w, h] = ui_texture_dimensions(L, path, border);
     if (w == 0 && h == 0) {
         lua_pushnil(L);
         lua_pushnil(L);

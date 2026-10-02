@@ -15218,8 +15218,8 @@ void test_bitmap(TestContext& ctx) {
             "local after = {plain.Width(), plain.Height(), half.Width(), half.Height(),\n"
             "               fixed.Width(), fixed.Height()}\n"
             "LOG('Bitmap sizes: before ' .. repr(before) .. ' after ' .. repr(after))\n"
-            "return before[1] == 80 and before[2] == 80 and before[3] == 40 and before[4] == 37\n"
-            "   and after[1] == 28 and after[2] == 24 and after[3] == 14 and after[4] == 12\n"
+            "return before[1] == 78 and before[2] == 78 and before[3] == 39 and before[4] == 37\n"
+            "   and after[1] == 26 and after[2] == 22 and after[3] == 13 and after[4] == 11\n"
             "   and after[5] == 37 and after[6] == 41\n");
         bool ok = false;
         if (result) {
@@ -15232,6 +15232,30 @@ void test_bitmap(TestContext& ctx) {
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 13: a bitmap's size and its texture's");
+        }
+    }
+
+    // Test 14: a texture's size leaves out its one-pixel border, as retail's
+    // GetTextureDimensions does (604x36 in the file), unless told another
+    {
+        auto result = ctx.lua_state.do_string(
+            "local box = '/textures/ui/common/dialogs/options-02/content-box_bmp.dds'\n"
+            "local w, h = GetTextureDimensions(box)\n"
+            "local fw, fh = GetTextureDimensions(box, 0)\n"
+            "return w == 602 and h == 34 and fw == 604 and fh == 36\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 14 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 14: a texture's size leaves out its border");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 14: a texture's size counts its border");
         }
     }
 
