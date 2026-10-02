@@ -329,8 +329,8 @@ def run(opts: argparse.Namespace) -> int:
         prefs.write_text(CLEAN_PREFS)
         cmd = plat.command(exe) + [
             "/init", plat.game_path(init), "/nosound", "/windowed", width, height,
-            "/nobugreport", "/nomovie", "/log", plat.game_path(log),
-        ]  # fmt: skip
+            "/nobugreport", "/log", plat.game_path(log),
+        ] + ([] if opts.movies else ["/nomovie"])  # fmt: skip
         with open(work / "stdout.txt", "w") as out:
             game = subprocess.Popen(cmd, cwd=exe.parent, stdout=out, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + opts.timeout
@@ -450,6 +450,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--screenshot", help="capture the game's window into this PNG")
     p.add_argument("--size", default="1600x900", help="the window's size (default 1600x900)")
     p.add_argument("--settle", type=float, default=3, help="seconds after the clicks")
+    p.add_argument("--movies", action="store_true", help="play the menus' movies (the campaign's)")
     p.add_argument("--timeout", type=float, default=180, help="seconds to wait for retail")
     p.add_argument("--wine", help="Wine's command where not Windows (else $WINE, wine)")
     p.add_argument("--prefs", help="Game.prefs to set aside (else where the game keeps it)")
