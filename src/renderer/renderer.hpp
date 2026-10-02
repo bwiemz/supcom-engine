@@ -484,6 +484,9 @@ private:
     VkPipelineLayout decal_glow_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_glow_mask_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_glow_mask_layout_ = VK_NULL_HANDLE;
+    // The water's albedo decals (M212g), on its surface after it
+    VkPipeline decal_water_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_water_layout_ = VK_NULL_HANDLE;
     // The normal pass (M212e): the terrain's normals and the normal decals,
     // into the normal target the scene then reads.
     VkPipeline terrain_normal_pipeline_ = VK_NULL_HANDLE;
@@ -597,8 +600,18 @@ private:
     };
     std::vector<FrameDecal> frame_decals_;
     /// This frame's decals, the map's then the scripts', seen and not faded
-    /// out (M212e: the normal pass and the colour passes both draw them).
-    void collect_frame_decals(const Frustum& frustum);
+    /// out (M212e: the normal pass and the colour passes both draw them), at
+    /// `ticks` (the sim's, and the frame's fraction of the next), which picks
+    /// an animated texture's frame (M212g).
+    void collect_frame_decals(const Frustum& frustum, f32 ticks);
+    /// A decal texture's frames (Moho's CAnimTexture, M212g), by its name: it
+    /// alone, or its numbered sequence. Each frame's load is begun when the
+    /// list is made.
+    std::map<std::string, std::vector<std::string>> decal_frames_;
+    const std::vector<std::string>& decal_frames(const std::string& path);
+    /// The texture a decal shows at `ticks`: `path`'s frame then, or `path`
+    /// itself (empty, or one frame).
+    const std::string* decal_frame(const std::string& path, f32 ticks);
     /// Draw this frame's decals of `technique` with `pipeline`, over the
     /// terrain's vertices, in the render pass open (the normal pass, or the
     /// scene's).

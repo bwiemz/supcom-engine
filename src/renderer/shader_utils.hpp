@@ -47,6 +47,10 @@ const char* decal_normal_frag();
 const char* decal_glow_frag();
 /// Glow-mask decals, lit and setting the glow to 0.01 (DecalsGlowMaskPS; M212d).
 const char* decal_glow_mask_frag();
+/// Water Albedo decals on the water's surface (DecalsVSWaterAlbedo,
+/// DecalsPSWaterAlbedo; M212g).
+extern const char* decal_water_vert;
+extern const char* decal_water_frag;
 extern const char* splat_vert; // runtime splats: a quad on the terrain (SplatsVS; M212c)
 /// Runtime splats, lit as the terrain is with no specular (SplatsPS; M212c).
 const char* splat_frag();

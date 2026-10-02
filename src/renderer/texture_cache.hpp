@@ -47,6 +47,9 @@ public:
     /// Synchronous load — blocks until the texture is ready.
     /// Use for one-time init (terrain textures in build_scene).
     const GPUTexture* get_blocking(const std::string& vfs_path);
+    /// Whether the file system has `vfs_path` (an animated decal's next
+    /// frame, M212g).
+    bool exists(const std::string& vfs_path) const;
 
     /// Get or lazily load a GPU texture from raw DDS bytes (not VFS).
     /// Key is used for caching. Returns nullptr on failure.

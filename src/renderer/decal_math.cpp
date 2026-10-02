@@ -92,8 +92,45 @@ std::optional<DecalTechnique> decal_technique(map::DecalType type) {
     case map::DecalType::Albedo: return DecalTechnique::Albedo;
     case map::DecalType::AlbedoXP: return DecalTechnique::AlbedoXP;
     case map::DecalType::Glow: return DecalTechnique::Glow;
+    case map::DecalType::WaterAlbedo: return DecalTechnique::WaterAlbedo;
     default: return std::nullopt;
     }
+}
+
+bool next_decal_frame_name(std::string& name) {
+    // The last digit in the name, which must end it or come just before a
+    // dot (CAnimTexture's IncrementFrameNameSuffix).
+    const size_t last = name.find_last_of("0123456789");
+    if (last == std::string::npos) return false;
+    if (last + 1 < name.size() && name[last + 1] != '.') return false;
+    // Counted up with its carries, the run as wide as it was
+    for (size_t i = last + 1; i-- > 0;) {
+        char& c = name[i];
+        if (c < '0' || c > '9') return true;
+        if (c < '9') {
+            ++c;
+            return true;
+        }
+        c = '0';
+    }
+    return true;
+}
+
+std::vector<std::string> decal_frame_names(const std::string& first,
+                                           const std::function<bool(const std::string&)>& exists) {
+    std::vector<std::string> frames{first};
+    std::string name = first;
+    while (frames.size() < 1000 && next_decal_frame_name(name) && name != first && exists(name))
+        frames.push_back(name);
+    return frames;
+}
+
+size_t decal_frame_at(f32 ticks, size_t count) {
+    if (count <= 1) return 0;
+    const auto n = static_cast<f64>(count);
+    f64 phase = std::fmod(static_cast<f64>(ticks) * 0.5, n);
+    if (phase < 0) phase += n;
+    return std::min(static_cast<size_t>(phase), count - 1);
 }
 
 std::array<f32, 2> decal_corner(const map::DecalInfo& d, f32 lx, f32 lz) {
