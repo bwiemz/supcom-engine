@@ -1734,6 +1734,12 @@ void main() {
     bool alphaTested = (prop && !vertexNormal && !terrainProp) || pc.technique == 9u ||
                        pc.technique == 14u || pc.technique == 17u;
     vec3 tint = prop ? vec3(1.0) : fragColor.rgb;
+    // The blended techniques (the builds, AlphaFade, UEFBuildCube,
+    // VertexNormal) and the build ghost's fade: FA drew them into an 8-bit
+    // target, which clamps what a shader writes before it blends (the scene
+    // here is half floats).
+    bool blended = (pc.technique >= 5u && pc.technique <= 8u) || pc.technique == 11u ||
+                   pc.technique == 12u || vertexNormal || fragColor.a < 1.0;
     // Alpha: the build ghost's fade, which its pipeline blends by, leaving
     // the frame's alpha; a build technique's or effect's own (M211f/g); else
     // the glow FA's techniques write there (M211e): a unit's SpecTeam blue
@@ -1798,7 +1804,7 @@ void main() {
         if (alphaTested && fragParameter * texColor.a <= 128.0 / 255.0) discard;
         if ((pc.technique == 11u || vertexNormal) && lowAlpha <= 35.0 / 255.0) discard;
         if (fragColor.a < 1.0) lowAlpha = fragColor.a; // the build ghost's fade
-        outColor = vec4(lowLit, lowAlpha);
+        outColor = vec4(blended ? clamp(lowLit, 0.0, 1.0) : lowLit, lowAlpha);
         return;
     }
 
@@ -1901,7 +1907,7 @@ void main() {
         if (fragWorldPos.y < pc.surface) discard;
         alpha = 0.5;
     }
-    outColor = vec4(lit, alpha);
+    outColor = vec4(blended ? clamp(lit, 0.0, 1.0) : lit, alpha);
 }
 )glsl";
 
