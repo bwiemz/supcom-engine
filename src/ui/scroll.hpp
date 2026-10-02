@@ -39,6 +39,10 @@ f32 dragged_top(const ScrollValues& values, f32 track, f32 length, f32 start);
 /// The height an ItemList's rows are drawn at
 f32 item_list_row_height(const UIControl& list);
 
+/// The row of an ItemList `height` tall drawn at `at` below its top; -1 off
+/// its rows
+i32 item_list_row_at(const UIControl& list, f32 height, f32 at);
+
 /// An ItemList `height` tall: its rows, and those it shows
 ScrollValues item_list_scroll_values(const UIControl& list, f32 height);
 
