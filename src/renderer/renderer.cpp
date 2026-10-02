@@ -3399,7 +3399,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
                                             VK_NULL_HANDLE};
         if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
             passes[1] = mesh_overlay_pipeline_;
-        else if (technique == MeshTechnique::AeonBuild) passes[1] = mesh_fade_pipeline_;
+        // (At Low, Aeon's build is one blended pass, M211n.)
+        else if (technique == MeshTechnique::AeonBuild && fidelity() > 0)
+            passes[1] = mesh_fade_pipeline_;
         // The build effects' (M211g): AlphaFade blends colour and alpha,
         // UEF's cube colour only and writes no depth.
         else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
@@ -3409,7 +3411,8 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         else if (is_shield_technique(technique)) {
             const ShieldPasses shield = shield_passes(technique);
             passes[0] = shield_pipelines_[static_cast<u32>(shield.state)];
-            if (shield.count > 1) passes[1] = passes[0];
+            // (At Low, Cybran's is one pass, M211n.)
+            if (shield.count > 1 && fidelity() > 0) passes[1] = passes[0];
         }
         // A personal shield's (M211l): the unit as its base technique, then
         // the electric shell, blended, its depth written (mesh.fx's P1

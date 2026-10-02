@@ -14,9 +14,10 @@
 //
 // (A personal shield's P0, the unit itself, draws with the mesh shaders.)
 //
-// Each technique's medium fidelity variant, which High draws too. Shields
-// are never in the water's reflection (Moho reflects only units), so the
-// shaders' `mirrored` clip never applies.
+// Each technique's medium fidelity variant, which High draws too, and its
+// low fidelity one at graphics fidelity 0 (M211n). Shields are never in the
+// water's reflection (Moho reflects only units), so the shaders' `mirrored`
+// clip never applies.
 
 #include "renderer/shader_utils.hpp"
 
@@ -39,6 +40,8 @@ layout(push_constant) uniform PushConstants {
     float time;     // FA's time: the newest tick plus the interpolant, wrapped
     uint mirrored;
     float surface;
+    uint lane;       // mesh.fx's lane by graphics fidelity: 0 Low (M211n)
+    uint shadowMode; // unused here
 } pc;
 )glsl";
 
@@ -79,6 +82,14 @@ struct Layers {
 };
 
 Layers layers() {
+    // The Low lanes' ThreeUVTexShiftScaleLoFiVS (M211n): texcoord0.xy, .zw
+    // and texcoord1.xy, each scaled and moved by the age
+    if (pc.lane == 0u && pc.technique == 18u) // ShieldUEF_LowFidelity
+        return Layers(vec4(1, 3, 32, 1), vec4(0, 0, 0.0003, 0.005), vec4(-0.001, -0.005, 0, 0));
+    if (pc.lane == 0u && pc.technique == 19u) // ShieldCybran_LowFidelity
+        return Layers(vec4(1, 2, 1, 1), vec4(0, 0, 0, 0.002), vec4(0.001, -0.003, 0, 0));
+    if (pc.lane == 0u && (pc.technique == 20u || pc.technique == 21u)) // Aeon's, Seraphim's
+        return Layers(vec4(1, 12, 8, 1), vec4(0, 0, 0, 0.032), vec4(0.012, -0.032, 0, 0));
     if (pc.technique == 18u) // ShieldUEF_MedFidelity: FourUVTexShiftScaleVS
         return Layers(vec4(1, 3, 32, 6), vec4(0, 0, 0.0003, 0.005),
                       vec4(-0.001, -0.005, -0.0003, -0.0008));
@@ -235,6 +246,35 @@ vec4 shieldUEF(float health) { // ShieldPS
     return color;
 }
 
+// The Low lanes (M211n)
+vec4 shieldLoFi() { // ShieldLoFiPS (UEF)
+    vec4 colorMask = texture(albedoSampler, fragTex0.xy);
+    vec4 albedo = texture(albedoSampler, fragTex0.zw);
+    vec4 secondary = texture(secondarySampler, fragTex1.xy);
+    vec4 specular = texture(specularSampler, fragTex1.xy);
+    vec3 color = vec3(0.0, 0.0, 0.3) + albedo.r + secondary.b;
+    float alpha = colorMask.b * 0.7 + (specular.g <= albedo.g ? 0.2 : 0.1);
+    color += vec3(0.0, 0.0, 0.15) + colorMask.bbb;
+    return vec4(color, alpha * colorMask.a);
+}
+
+vec4 shieldCybranLoFi() { // ShieldCybranLoFiPS(0.24): one pass
+    vec4 albedo = texture(albedoSampler, fragTex0.xy);
+    vec4 albedo2 = texture(albedoSampler, fragTex0.zw);
+    vec3 specular = texture(specularSampler, fragTex1.xy).rgb;
+    return vec4(vec3(0.2, 0.0, 0.5) * specular.b, 0.24 + (albedo.r + albedo2.r) * 0.8);
+}
+
+vec4 shieldAeonLoFi() { // ShieldAeonLoFiPS(0.5): Aeon's, and Seraphim's at Low
+    const float a = 0.5;
+    vec4 albedo = texture(albedoSampler, fragTex0.xy);
+    vec4 specular = texture(specularSampler, fragTex0.zw);
+    vec3 specular2 = texture(specularSampler, fragTex1.xy).rgb;
+    vec3 color = (vec3(dot(albedo.rgb * a, vec3(0.6))) + albedo.rgb * a) *
+                 (specular.rrr * 1.45 + specular2.rrr * 2.2);
+    return vec4(color, 0.33 * a * albedo.a);
+}
+
 vec4 shieldCybran(float age, float health) { // ShieldCybranPS(0.17)
     vec4 albedo = texture(albedoSampler, fragTex0.xy);
     vec4 albedo2 = texture(albedoSampler, fragTex0.zw);
@@ -335,10 +375,11 @@ void main() {
     float age = fragMaterial.x;
     float health = fragMaterial.y;
     vec4 color = vec4(0.0); // ShieldFillPS: nothing (its pipeline writes depth alone)
-    if (pc.technique == 18u) color = shieldUEF(health);
-    else if (pc.technique == 19u) color = shieldCybran(age, health);
-    else if (pc.technique == 20u) color = shieldAeon(health);
-    else if (pc.technique == 21u) color = shieldSeraphim();
+    bool low = pc.lane == 0u; // the Low lanes (M211n)
+    if (pc.technique == 18u) color = low ? shieldLoFi() : shieldUEF(health);
+    else if (pc.technique == 19u) color = low ? shieldCybranLoFi() : shieldCybran(age, health);
+    else if (pc.technique == 20u) color = low ? shieldAeonLoFi() : shieldAeon(health);
+    else if (pc.technique == 21u) color = low ? shieldAeonLoFi() : shieldSeraphim();
     else if (pc.technique == 23u) color = shieldImpact(age);
     else if (pc.technique == 24u) color = cybranShieldImpact(age);
     else if (pc.technique == 25u) color = phaseShield(age, false);

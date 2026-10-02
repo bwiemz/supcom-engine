@@ -410,6 +410,35 @@ void test_effect_meshes(TestContext& ctx) {
                             show(grey), show(expected), show(cut)));
     }
 
+    // Test 7: UEFBuildCubeLoFiPS (M211n), at Low: no pulse, its albedo and
+    // the secondary lerped to blue by 0.65 whatever the time; built, its
+    // albedo at alpha a, as at High.
+    {
+        renderer::Renderer::VideoOptions& video = r.video_options();
+        const renderer::Renderer::VideoOptions as_was = video;
+        video.graphics_fidelity = 0;
+        Look cube;
+        cube.shader = "UEFBuildCube";
+        cube.albedo = "albedo_cube.dds";
+        stand(cube, 1.0f, 100.0f, 160.0f);
+        stand(cube, 0.0f, 120.0f, 160.0f);
+        const Rgb albedo = {100.0f / 255.0f, 150.0f / 255.0f, 200.0f / 255.0f};
+        const f32 a = 128.0f / 255.0f;
+        to_phase(20, 17);
+        const Rgb built = at(100.0f, 160.0f);
+        const Rgb early = at(120.0f, 160.0f);
+        to_phase(20, 2);
+        const Rgb later = at(120.0f, 160.0f);
+        video = as_was;
+        const Rgb expected_built = over(sky, albedo, a);
+        const Rgb expected = over(sky, over(albedo, Rgb{0, 0, 1}, 0.65f), 0.5f * a);
+        t.check(near(built, expected_built) && near(early, expected) && near(later, expected),
+                fmt::format("Test 7: at Low, UEF build cubes show {} built ({} expected), {} and "
+                            "{} at 0% a pulse apart ({})",
+                            show(built), show(expected_built), show(early), show(later),
+                            show(expected)));
+    }
+
     spdlog::info("Effect mesh test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
