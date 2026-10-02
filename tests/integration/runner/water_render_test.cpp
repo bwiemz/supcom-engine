@@ -393,6 +393,29 @@ void test_water_render(TestContext& ctx) {
         std::fill(foamed.foam.begin(), foamed.foam.end(), u8{255});
         const Look crestless = look(original, foamed);
 
+        // Test 9 (M213d): at graphics fidelity 1 (and 0), FA's
+        // Water_LowFidelity: a pale blue by the depth, up to 0.3, and the
+        // waves' crests, over the frame. Neither the map's water colour nor
+        // its sky changes it, and over deep water it is paler than the high
+        // fidelity water.
+        r.video_options().graphics_fidelity = 1;
+        const Look low = look(original, masks);
+        const Look low_red = look(red, masks);
+        const Look low_skyless = look(no_sky, masks);
+        r.video_options().graphics_fidelity = 2;
+        {
+            const f32 by_colour = moved(low, low_red);
+            const f32 by_sky_low = moved(low, low_skyless);
+            const f32 apart_fidelity = moved(base, low);
+            t.check(by_colour == 0.0f && by_sky_low == 0.0f && apart_fidelity > 0.02f &&
+                        low.mean[2] > 0.3f,
+                    fmt::format("Test 9: at fidelity 1 the low water: its colour {:.4f} and sky "
+                                "{:.4f} a pixel change nothing; {:.3f} a pixel from the high "
+                                "water; mean ({:.2f} {:.2f} {:.2f})",
+                                by_colour, by_sky_low, apart_fidelity, low.mean[0], low.mean[1],
+                                low.mean[2]));
+        }
+
         wet.set_water(original, masks, abyss);
         // A frame drawn again unchanged is the same to the bit, so even the
         // crests' few pixels show.

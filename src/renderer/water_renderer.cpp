@@ -130,9 +130,11 @@ void WaterRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass s
     VkShaderModule vert = compile_glsl(device, shaders::water_vert, "water_vert", true);
     VkShaderModule surface = compile_glsl(device, shaders::water_frag, "water_frag", false);
     VkShaderModule mask = compile_glsl(device, shaders::water_mask_frag, "water_mask_frag", false);
-    if (!vert || !surface || !mask) {
+    VkShaderModule low0 = compile_glsl(device, shaders::water_low_frag0, "water_low_frag0", false);
+    VkShaderModule low1 = compile_glsl(device, shaders::water_low_frag1, "water_low_frag1", false);
+    if (!vert || !surface || !mask || !low0 || !low1) {
         spdlog::error("WaterRenderer: shader compilation failed");
-        for (VkShaderModule m : {vert, surface, mask})
+        for (VkShaderModule m : {vert, surface, mask, low0, low1})
             if (m) vkDestroyShaderModule(device, m, nullptr);
         return;
     }
@@ -173,7 +175,7 @@ void WaterRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass s
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
     const auto build = [&](VkShaderModule frag, VkCompareOp compare, VkColorComponentFlags write,
-                           VkPipeline& out) {
+                           VkPipeline& out, bool blended = false) {
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -189,7 +191,13 @@ void WaterRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass s
         depth.depthWriteEnable = VK_FALSE;
         depth.depthCompareOp = compare;
         VkPipelineColorBlendAttachmentState att{};
-        att.blendEnable = VK_FALSE;
+        att.blendEnable = blended ? VK_TRUE : VK_FALSE;
+        att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        att.colorBlendOp = VK_BLEND_OP_ADD;
+        att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        att.alphaBlendOp = VK_BLEND_OP_ADD;
         att.colorWriteMask = write;
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -218,7 +226,14 @@ void WaterRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass s
     build(surface, VK_COMPARE_OP_LESS_OR_EQUAL,
           VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT,
           surface_pipeline_);
-    for (VkShaderModule m : {vert, surface, mask}) vkDestroyShaderModule(device, m, nullptr);
+    // Water_LowFidelity: both passes SrcAlpha / InvSrcAlpha into RGB
+    // (ColorWriteEnable 0x07), Depth LessEqual, unwritten.
+    const VkColorComponentFlags rgb =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+    build(low0, VK_COMPARE_OP_LESS_OR_EQUAL, rgb, low_pipelines_[0], true);
+    build(low1, VK_COMPARE_OP_LESS_OR_EQUAL, rgb, low_pipelines_[1], true);
+    for (VkShaderModule m : {vert, surface, mask, low0, low1})
+        vkDestroyShaderModule(device, m, nullptr);
 }
 
 void WaterRenderer::build(const map::Terrain& terrain, TextureCache& textures) {
@@ -413,9 +428,17 @@ void WaterRenderer::render_mask(VkCommandBuffer cmd, u32 viewport_w, u32 viewpor
     vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
 }
 
-void WaterRenderer::render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                                   u32 fi) const {
-    if (!has_water_ || !surface_pipeline_) return;
+void WaterRenderer::render_surface_low(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
+                                       u32 fi) const {
+    if (!has_water_ || !low_pipelines_[0] || !low_pipelines_[1]) return;
+    for (VkPipeline pass : low_pipelines_) {
+        bind_quad(cmd, pass, viewport_w, viewport_h, fi);
+        vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
+    }
+}
+
+void WaterRenderer::bind_quad(VkCommandBuffer cmd, VkPipeline pipeline, u32 viewport_w,
+                              u32 viewport_h, u32 fi) const {
     VkViewport viewport{};
     viewport.width = static_cast<f32>(viewport_w);
     viewport.height = static_cast<f32>(viewport_h);
@@ -424,12 +447,18 @@ void WaterRenderer::render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 view
     VkRect2D scissor{};
     scissor.extent = {viewport_w, viewport_h};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, surface_pipeline_);
+    vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
                               nullptr);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf_.buffer, &offset);
     vkCmdBindIndexBuffer(cmd, index_buf_.buffer, 0, VK_INDEX_TYPE_UINT16);
+}
+
+void WaterRenderer::render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
+                                   u32 fi) const {
+    if (!has_water_ || !surface_pipeline_) return;
+    bind_quad(cmd, surface_pipeline_, viewport_w, viewport_h, fi);
     vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
 }
 
@@ -444,7 +473,8 @@ void WaterRenderer::clear() {
 
 void WaterRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     clear();
-    for (VkPipeline* p : {&mask_pipeline_, &surface_pipeline_}) {
+    for (VkPipeline* p :
+         {&mask_pipeline_, &surface_pipeline_, &low_pipelines_[0], &low_pipelines_[1]}) {
         if (*p) vkDestroyPipeline(device, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }

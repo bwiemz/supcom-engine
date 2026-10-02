@@ -21,6 +21,10 @@ extern const char* unit_frag;
 extern const char* water_vert;
 extern const char* water_frag;
 extern const char* water_mask_frag; // TWaterLayAlphaMask: alpha 0 over open water (M213a)
+/// Water_LowFidelity's two passes (M213d): its colour by depth, then the
+/// waves' crests.
+extern const char* water_low_frag0;
+extern const char* water_low_frag1;
 /// The sky (sky.fx; M210b): the dome (DomeVS), its Atmosphere and Cirrus,
 /// and the decals' billboards (DecalVS) with their albedo and glow passes.
 const char* sky_dome_vert();
