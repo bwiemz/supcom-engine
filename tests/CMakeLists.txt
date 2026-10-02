@@ -91,6 +91,7 @@ add_executable(osc_tests
     test_army_stats.cpp
     test_victory.cpp
     test_fow.cpp
+    test_intel_grid.cpp
     test_sync.cpp
     test_command_scheduler.cpp
     test_no_rush.cpp

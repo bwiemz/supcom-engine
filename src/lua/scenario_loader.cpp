@@ -287,7 +287,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
 
     sim.set_terrain(std::move(terrain));
     sim.build_pathfinding_grid();
-    sim.build_visibility_grid();
+    sim.build_intel_grids();
     sim.build_spatial_grid();
 
     // Step 5: Create prop entities from .scmap data

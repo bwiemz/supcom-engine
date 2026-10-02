@@ -1,6 +1,5 @@
 #include "renderer/recon_view.hpp"
 
-#include "map/visibility_grid.hpp"
 
 #include <algorithm>
 
@@ -35,9 +34,10 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
     last_tick_ = cur->tick;
     ++update_count_;
 
-    const map::VisibilityGrid* grid = cur->visibility ? &*cur->visibility : nullptr;
-    everything_ =
-        focus_ < 0 || focus_ >= static_cast<i32>(map::VisibilityGrid::MAX_ARMIES) || !grid;
+    // The player's army's sight (none captured for it yet: it sees nothing
+    // but its recon of units)
+    const sim::SightMap* sight = cur->sight.army == focus_ ? &cur->sight : nullptr;
+    everything_ = focus_ < 0 || focus_ >= 32 || (sight && sight->everywhere);
     fakes_.clear();
     if (everything_) {
         memory_.clear();
@@ -73,7 +73,6 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
         });
     };
 
-    using map::VisFlag;
     for (const sim::EntityRecord& e : cur->entities) {
         if (!judged(e)) continue;
         Memory& m = memory_[e.id];
@@ -81,12 +80,11 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
         m.ghost = false; // in the world, whatever the player's army thought
 
         if (e.is_projectile) {
-            // A projectile: the player's line of sight where it is.
-            u32 gx = 0;
-            u32 gz = 0;
-            grid->world_to_grid(e.position.x, e.position.z, gx, gz);
-            const VisFlag here = grid->get(gx, gz, static_cast<u32>(focus_));
-            m.sight = map::has_flag(here, VisFlag::Vision) ? Sight::Seen : Sight::Hidden;
+            // A projectile: the player's line of sight where it is (under
+            // the water, its water grid's).
+            m.sight = sight && sight->sees(e.position.x, e.position.y, e.position.z)
+                          ? Sight::Seen
+                          : Sight::Hidden;
             continue;
         }
         if (std::binary_search(forgotten.begin(), forgotten.end(), e.id)) {
@@ -125,10 +123,7 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
     // player's army remembers and didn't see go: Moho's MaybeDead, drawn as
     // last seen until its army sees the spot (M215d).
     const auto seen_there = [&](const sim::Vector3& p) {
-        u32 gx = 0;
-        u32 gz = 0;
-        grid->world_to_grid(p.x, p.z, gx, gz);
-        return map::has_flag(grid->get(gx, gz, static_cast<u32>(focus_)), VisFlag::Vision);
+        return sight && sight->sees(p.x, p.y, p.z);
     };
     ghosts_.clear();
     for (auto it = memory_.begin(); it != memory_.end();) {
@@ -166,12 +161,9 @@ bool ReconView::sees_at(const sim::FrameView& view, i32 army, f32 x, f32 z) cons
     if (everything_ || army == focus_) return true;
     if (army >= 0 && army < 32 && (allies_ >> army & 1u) != 0) return true;
     const sim::WorldSnapshot* cur = view.cur();
-    if (!cur || !cur->visibility) return true;
-    u32 gx = 0;
-    u32 gz = 0;
-    cur->visibility->world_to_grid(x, z, gx, gz);
-    return map::has_flag(cur->visibility->get(gx, gz, static_cast<u32>(focus_)),
-                         map::VisFlag::Vision);
+    if (!cur) return true;
+    if (cur->sight.army != focus_) return false;
+    return cur->sight.sees_ground(x, z);
 }
 
 const std::vector<sim::BoneMatrix>* ReconView::frozen_pose(u32 id) const {

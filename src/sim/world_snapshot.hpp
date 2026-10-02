@@ -1,7 +1,6 @@
 #pragma once
 
 #include "core/types.hpp"
-#include "map/visibility_grid.hpp"
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/unit_command.hpp"
@@ -198,6 +197,34 @@ struct FakeBlipRecord {
     Vector3 position;
 };
 
+/// What one army sees now, for the renderer (M215g): Moho's
+/// UserArmy::CanSeePoint, which reads the army's own vision and water grids
+/// and those of every army that calls it an ally, here flattened to seen or
+/// not, cell by cell.
+struct SightMap {
+    i32 army = -1;           ///< whose (-1: none captured)
+    bool everywhere = false; ///< no fog of war: it sees everything
+    f32 water_surface = -10000.0f;
+    u32 vision_cell = 2;
+    u32 vision_width = 0;
+    u32 vision_height = 0;
+    std::vector<u8> vision; ///< 1 where seen, row by row
+    u32 water_cell = 4;
+    u32 water_width = 0;
+    u32 water_height = 0;
+    std::vector<u8> water; ///< under the water's surface
+
+    /// Whether it sees (x, y, z): under the water's surface by its water
+    /// grid, else by its vision grid.
+    bool sees(f32 x, f32 y, f32 z) const;
+    /// Whether its vision grid holds (x, z) (the ground's fog of war).
+    bool sees_ground(f32 x, f32 z) const;
+    void clear();
+};
+
+/// Army `army`'s sight in `sim` now (nothing for an army it hasn't).
+void capture_sight(const SimState& sim, i32 army, SightMap& out);
+
 /// The world as the renderer draws it, captured once per sim tick.
 struct WorldSnapshot {
     u32 tick = 0;
@@ -208,7 +235,7 @@ struct WorldSnapshot {
     std::vector<u32> adjacent;
     std::vector<EffectRecord> effects;  ///< live effects, in creation order
     std::vector<ArmyRecord> armies;
-    std::optional<map::VisibilityGrid> visibility;
+    SightMap sight;        ///< the sight army's (WorldHistory::set_sight_army)
     i32 player_result = 0; ///< SimState::player_result()
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
 
@@ -236,10 +263,11 @@ struct WorldSnapshot {
     void clear();
 };
 
-/// Capture `sim`'s current tick into `out`, reusing its storage. Destroyed
-/// entities and effects are left out. Ids are sequential and never reused
-/// within a session, so two snapshots can be matched by id.
-void capture_world(const SimState& sim, WorldSnapshot& out);
+/// Capture `sim`'s current tick into `out`, reusing its storage, with army
+/// `sight_army`'s sight (none for -1). Destroyed entities and effects are
+/// left out. Ids are sequential and never reused within a session, so two
+/// snapshots can be matched by id.
+void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army = -1);
 
 /// The blueprints of everything in the world (meshes to preload).
 std::vector<std::string> world_blueprints(const SimState& sim);
@@ -291,6 +319,11 @@ class WorldHistory {
 public:
     /// The previous current becomes previous; `sim` is captured as current.
     void capture(const SimState& sim);
+    /// Whose sight the captures carry: the army the player watches. Given
+    /// the sim, a new army's sight is taken into the newest capture at once,
+    /// not at the next tick.
+    void set_sight_army(i32 army, const SimState* sim = nullptr);
+    i32 sight_army() const { return sight_army_; }
     /// Forget everything (a new session).
     void clear();
 
@@ -304,6 +337,7 @@ private:
     std::array<WorldSnapshot, 2> snaps_;
     int cur_ = 0;
     u32 captured_ = 0;
+    i32 sight_army_ = -1;
     WorldEvents events_;
 };
 
