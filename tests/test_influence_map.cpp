@@ -156,6 +156,36 @@ TEST_CASE("Threat is laned by what the unit is and how well it was seen", "[infl
     CHECK_THAT(cell(blip, 40, 40, ThreatType::AntiSurface), WithinAbs(10.0, 1e-5));
 }
 
+TEST_CASE("A jammer's fake the army knows fake adds nothing, and goes", "[influence]") {
+    // Moho's Update: a blip with RECON_KnownFake drops to strength 0; it
+    // adds nothing now and is erased at the next update.
+    InfluenceMap map(512, 512, 2);
+    const auto fake = [&](bool known) {
+        map.update([](i32 army) { return army == 0; },
+                   [&](u32) {
+                       return std::optional<InfluenceMap::UnitState>(
+                           {ThreatLayer::Land, false, known});
+                   });
+    };
+    map.report(1, 1, {40, 0, 40}, tank());
+    fake(false);
+    CHECK_THAT(cell(map, 40, 40, ThreatType::Unknown), WithinAbs(10.0, 1e-5));
+    fake(true);
+    CHECK(cell(map, 40, 40, ThreatType::Overall) == 0.0f);
+    CHECK(map.has_entry(1));
+    fake(true);
+    CHECK_FALSE(map.has_entry(1));
+
+    // Fed again before the next update (as its army still holds it), it
+    // stays and adds nothing for as long as the army knows it fake.
+    map.report(1, 1, {40, 0, 40}, tank());
+    fake(true);
+    map.report(1, 1, {40, 0, 40}, tank());
+    fake(true);
+    CHECK(map.has_entry(1));
+    CHECK(cell(map, 40, 40, ThreatType::Overall) == 0.0f);
+}
+
 TEST_CASE("An ally's units count only as Overall, Unknown, Structures and Air", "[influence]") {
     InfluenceMap map(512, 512, 3);
     map.report(1, 2, {40, 0, 40}, tank()); // army 2 is allied with the owner

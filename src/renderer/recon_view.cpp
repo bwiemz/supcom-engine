@@ -51,7 +51,7 @@ void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlu
         const sim::EntityRecord* source = cur->find(f.source);
         if (!source) continue;
         sim::EntityRecord& r = fakes_.emplace_back(*source);
-        r.id = kFakeBlip | ((f.source & 0x03FFFFFFu) << 5) | (f.index & 31u);
+        r.id = sim::fake_blip_id(f.source, f.index);
         r.position = f.position;
         r.bone_count = 0; // no pose of its own
         r.is_being_built = false;

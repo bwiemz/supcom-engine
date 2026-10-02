@@ -21,6 +21,7 @@
 #include "sim/script_class.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
+#include "sim/world_snapshot.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -37,6 +38,7 @@ extern "C" {
 #include <cmath>
 #include <cctype>
 #include <cstring>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -1656,6 +1658,14 @@ bool moves(const Unit& u) {
     return !u.motion_type().empty() && u.motion_type() != "RULEUMT_None";
 }
 
+/// The influence map's layer for a unit's threat (Moho's LAYER_ mask).
+ThreatLayer threat_layer_of(const Unit& u) {
+    const std::string& layer = u.layer();
+    if (layer == "Land") return ThreatLayer::Land;
+    if (layer == "Water" || layer == "Seabed" || layer == "Sub") return ThreatLayer::Naval;
+    return ThreatLayer::None;
+}
+
 /// A unit that lives: not gone, dying or left as a wreck.
 bool alive(const Entity* e) {
     return e && !e->destroyed() && e->is_unit() && !static_cast<const Unit*>(e)->is_dying() &&
@@ -1705,12 +1715,18 @@ void SimState::feed_influence_map() {
         if (detected || (!moves(u) && ever_in_sight(e.entity_id(), a)))
             map->report(e.entity_id(), u.army(), u.position(), threat_source_of(u));
     });
+    // And each jammer's fake it holds, sensed or not, as Moho's recon feeds
+    // every blip (UpdateBlip): its jammer's threat at the fake's place.
+    // Known fakes are fed too; the update zeroes them (M215f).
+    for (const HeldFake& f : held_fakes(owner))
+        map->report(fake_blip_id(f.jammer, f.index), f.unit->army(), f.position,
+                    threat_source_of(*f.unit));
 
     // A dead structure's entry goes once the army sees where it stood, or
     // it was an ally's; a mobile unit's fades out instead.
     std::vector<u32> gone;
     map->for_each_entry([&](const InfluenceMap::EntryView& v) {
-        if (v.mobile || alive(entity_registry_.find(v.id))) return;
+        if (v.mobile || (v.id & kFakeBlipBit) != 0 || alive(entity_registry_.find(v.id))) return;
         if (is_ally(owner, v.source_army) ||
             visibility_grid_->has_vision(v.position.x, v.position.z, a))
             gone.push_back(v.id);
@@ -1724,16 +1740,25 @@ void SimState::update_influence_maps() {
         const i32 owner = static_cast<i32>(i);
         InfluenceMap* map = influence_map(owner);
         if (!map) continue;
+        // The fakes the army holds now: their jammer's layer, never detailed
+        // (one in sight or omni is a known fake), and whether it knows them
+        // fake. One it holds no longer only fades, as a gone blip's entry.
+        std::map<u32, InfluenceMap::UnitState> fakes;
+        for (const HeldFake& f : held_fakes(owner))
+            fakes[fake_blip_id(f.jammer, f.index)] = {threat_layer_of(*f.unit), false,
+                                                      f.known_fake};
         map->update([&](i32 army) { return army == owner || is_ally(owner, army); },
                     [&](u32 id) -> std::optional<InfluenceMap::UnitState> {
+                        if ((id & kFakeBlipBit) != 0) {
+                            const auto fake = fakes.find(id);
+                            if (fake == fakes.end()) return std::nullopt;
+                            return fake->second;
+                        }
                         const Entity* e = entity_registry_.find(id);
                         if (!alive(e)) return std::nullopt;
                         const auto& u = static_cast<const Unit&>(*e);
                         InfluenceMap::UnitState s;
-                        const std::string& layer = u.layer();
-                        if (layer == "Land") s.layer = ThreatLayer::Land;
-                        else if (layer == "Water" || layer == "Seabed" || layer == "Sub")
-                            s.layer = ThreatLayer::Naval;
+                        s.layer = threat_layer_of(u);
                         s.detailed = ever_in_sight(id, static_cast<u32>(owner)) ||
                                      (visibility_grid_ && i < map::VisibilityGrid::MAX_ARMIES &&
                                       visibility_grid_->has_omni(u.position().x, u.position().z,
@@ -2034,6 +2059,43 @@ void SimState::update_jam_blips() {
         }
     });
     std::erase_if(jam_offsets_, [&](const auto& entry) { return kept.count(entry.first) == 0; });
+}
+
+std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
+    std::vector<HeldFake> held;
+    if (!visibility_grid_) return held;
+    const map::VisibilityGrid& grid = *visibility_grid_;
+    for (const auto& [key, offsets] : jam_offsets_) {
+        const auto army = static_cast<u32>(key & 0xFF);
+        if (viewer >= 0 && army != static_cast<u32>(viewer)) continue;
+        const Entity* e = entity_registry_.find(static_cast<u32>(key >> 8));
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        const auto& u = static_cast<const Unit&>(*e);
+        const std::string& layer = u.layer();
+        const bool under = layer == "Sub" || layer == "Seabed";
+        const bool wet = under || layer == "Water";
+        for (size_t i = 0; i < offsets.size(); ++i) {
+            HeldFake f;
+            f.jammer = u.entity_id();
+            f.unit = &u;
+            f.viewer = army;
+            f.index = static_cast<u32>(i);
+            f.position = {u.position().x + offsets[i].x, u.position().y + offsets[i].y,
+                          u.position().z + offsets[i].z};
+            // Its senses where it lies, as the jammer's own stealth allows
+            const bool sight = grid.has_vision(f.position.x, f.position.z, army);
+            const bool omni = grid.has_omni(f.position.x, f.position.z, army);
+            const bool radar = !under && !u.has_radar_stealth() &&
+                               grid.has_radar(f.position.x, f.position.z, army);
+            const bool sonar =
+                wet && !u.has_sonar_stealth() && grid.has_sonar(f.position.x, f.position.z, army);
+            f.sensed = sight || omni || radar || sonar;
+            const Vector3 kept = clamp_to_playable(f.position, static_cast<i32>(army));
+            f.known_fake = sight || omni || kept.x != f.position.x || kept.z != f.position.z;
+            held.push_back(f);
+        }
+    }
+    return held;
 }
 
 void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,

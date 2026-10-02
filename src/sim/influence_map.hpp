@@ -95,6 +95,9 @@ public:
     struct UnitState {
         ThreatLayer layer = ThreatLayer::None;
         bool detailed = false; ///< in omni now, or ever in line of sight
+        /// A jammer's fake the army can tell (RECON_KnownFake): its strength
+        /// falls to 0, so it adds nothing and goes at the next update.
+        bool known_fake = false;
     };
     /// Moho's Update, every 30 ticks: entries fade (and those at 0 go), the
     /// script-assigned threat fades, and each army's threat is summed again.

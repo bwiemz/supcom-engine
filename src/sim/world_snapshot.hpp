@@ -183,6 +183,14 @@ struct ArmyRecord {
 
 /// A jammer's fake blip an army senses and doesn't know fake (M215e): the
 /// jammer, the army (0-based), which of its fakes, and where it is.
+/// A jammer's fake blip's id of its own: the high bit set, its jammer's id
+/// (entity ids stay under 2^26) and which fake, so it meets no entity's.
+/// The army's influence map keys it so (M215f), and the renderer draws it.
+constexpr u32 kFakeBlipBit = 0x80000000u;
+constexpr u32 fake_blip_id(u32 source, u32 index) {
+    return kFakeBlipBit | ((source & 0x03FFFFFFu) << 5) | (index & 31u);
+}
+
 struct FakeBlipRecord {
     u32 source = 0;
     u8 viewer = 0;

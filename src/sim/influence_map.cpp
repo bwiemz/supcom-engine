@@ -171,7 +171,8 @@ void InfluenceMap::update(const std::function<bool(i32 army)>& allied_or_self,
             if (!allied_or_self(entry.source_army)) {
                 if (const auto state = unit_state(it->first)) {
                     entry.layer = state->layer;
-                    if (state->detailed) entry.detailed = true;
+                    if (state->known_fake) entry.strength = 0.0f;
+                    else if (state->detailed) entry.detailed = true;
                 }
             }
 
