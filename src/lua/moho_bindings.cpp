@@ -631,6 +631,46 @@ void push_font_lazyvars(lua_State* L, int self_idx, ui::UIControl* ctrl) {
 
 // --- Factory functions (registered as globals) ---
 
+namespace {
+
+/// LazyVar.Create of the lazyvar module the scripts' own import holds
+/// (__modules): a lazy var depends on another only within one module, and
+/// userInit's globalInit starts an import of its own, with a fresh
+/// __modules, after the bindings cached theirs. Imported here if no script
+/// has yet; the cached one if there is no import. Pushes it, or nil.
+void push_lazyvar_create(lua_State* L) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__modules");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "/lua/lazyvar.lua");
+        lua_rawget(L, -2);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_pushstring(L, "import");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            lua_pushstring(L, "/lua/lazyvar.lua");
+            if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0) {
+                lua_pushnil(L);
+            }
+        }
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Create");
+            lua_rawget(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_replace(L, top + 1);
+                lua_settop(L, top + 1);
+                return;
+            }
+        }
+    }
+    lua_settop(L, top);
+    lua_pushstring(L, "__osc_lazyvar_create");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+}
+
+} // namespace
+
 /// Helper: create a LazyVar for a control and store it as self[name].
 /// Calls LazyVar.Create(0) from /lua/lazyvar.lua.
 void create_lazyvar(lua_State* L, int self_idx, const char* name) {
@@ -638,8 +678,7 @@ void create_lazyvar(lua_State* L, int self_idx, const char* name) {
     if (self_idx < 0) self_idx = lua_gettop(L) + self_idx + 1;
 
     // Get the LazyVar Create function from the lazyvar module
-    lua_pushstring(L, "__osc_lazyvar_create");
-    lua_rawget(L, LUA_REGISTRYINDEX);
+    push_lazyvar_create(L);
     if (lua_isfunction(L, -1)) {
         lua_pushnumber(L, 0);
         lua_call(L, 1, 1); // returns LazyVar table

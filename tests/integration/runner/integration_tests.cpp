@@ -15235,6 +15235,37 @@ void test_bitmap(TestContext& ctx) {
         }
     }
 
+    // Test 15: a control's lazy var depends on one the scripts made: both from
+    // the lazyvar module the scripts' import has, whose dependencies hold
+    {
+        auto result =
+            ctx.lua_state.do_string("local LazyVar = import('/lua/lazyvar.lua')\n"
+                                    "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
+                                    "local v = LazyVar.Create(0)\n"
+                                    "local b = Bitmap(GetFrame(0))\n"
+                                    "b.Right:Set(function() return v() * 2 end)\n"
+                                    "local before = b.Right()\n"
+                                    "v:Set(5)\n"
+                                    "local after = b.Right()\n"
+                                    "b:Destroy()\n"
+                                    "return before == 0 and after == 10\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 15 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 15: a control's lazy var follows one the scripts made");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 15: a control's lazy var misses a change to "
+                                   "one the scripts made");
+        }
+    }
+
     spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
 }
 
