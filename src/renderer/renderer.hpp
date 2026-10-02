@@ -40,6 +40,7 @@
 #include "core/image.hpp"
 #include "core/types.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <functional>
@@ -242,6 +243,14 @@ public:
     };
     VideoOptions& video_options() { return video_options_; }
     const VideoOptions& video_options() const { return video_options_; }
+    /// The highest graphics fidelity the device draws (Moho's
+    /// graphics_FidelitySupported: 2, High, wherever ps_2_a runs).
+    static constexpr int kFidelitySupported = 2;
+    /// graphics_Fidelity as Moho draws by it: clamped to 0 (Low) through
+    /// the supported (M213d).
+    int fidelity() const {
+        return std::clamp(video_options_.graphics_fidelity, 0, kFidelitySupported);
+    }
     /// SC_ToggleCursorClip (M217i): the cursor held inside a window (not full
     /// screen), or let go.
     void set_cursor_clip(bool on);

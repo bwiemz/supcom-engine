@@ -2453,9 +2453,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     }
 
     // Effects are made at the player's graphics fidelity (graphics_Fidelity).
-    beam_renderer_.set_fidelity(video_options_.graphics_fidelity);
-    trail_renderer_.set_fidelity(video_options_.graphics_fidelity);
-    particle_system_.set_fidelity(video_options_.graphics_fidelity);
+    beam_renderer_.set_fidelity(fidelity());
+    trail_renderer_.set_fidelity(fidelity());
+    particle_system_.set_fidelity(fidelity());
     // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
     beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
                           unit_renderer_.shader_time(), fi);
@@ -2743,7 +2743,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // (colour output) also waits for the last frame's water to have sampled
     // the target: a source stage takes in the stages before it, and a write
     // after a read needs no more than that.
-    if (water_renderer_.has_water() && reflection_framebuffer_) {
+    // Only the high fidelity water reads it (M213d).
+    if (water_renderer_.has_water() && reflection_framebuffer_ && fidelity() >= 2) {
         PROFILE_ZONE("Render::reflection");
         std::array<VkClearValue, 2> cleared{};
         cleared[1].depthStencil = {1.0f, 0};
@@ -2782,12 +2783,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // Split around the water on a map with it (M213a), and before the
     // refracting particles on a frame with them (M214d), each for a copy of
-    // the frame.
-    const bool refracting = particle_renderer_.refracting();
+    // the frame. Below graphics fidelity 2 there is neither: the low
+    // fidelity water refracts nothing, and Moho draws no refracting effects
+    // (M213d).
+    const bool high_water = water_renderer_.has_water() && fidelity() >= 2;
+    const bool refracting = fidelity() >= 2 && particle_renderer_.refracting();
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass =
-        water_renderer_.has_water() || refracting ? scene_first_pass_ : scene_render_pass_;
+    rp_begin.renderPass = high_water || refracting ? scene_first_pass_ : scene_render_pass_;
     rp_begin.framebuffer = scene_framebuffer_;
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
@@ -2918,10 +2921,16 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // over open water), a copy of the frame so far, then the surface, which
     // refracts the copy, in a pass that goes on from the first (and, with
     // refracting particles to come, ends as it does).
+    // Below graphics fidelity 2, Water_LowFidelity, with no mask and no copy
+    // (LowFidelityWater, M213d).
     if (water_renderer_.has_water()) {
-        water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
-        copy_and_continue(cmd_buf_[fi], refracting ? scene_middle_pass_ : scene_second_pass_);
-        water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
+        if (high_water) {
+            water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
+            copy_and_continue(cmd_buf_[fi], refracting ? scene_middle_pass_ : scene_second_pass_);
+            water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
+        } else {
+            water_renderer_.render_surface_low(cmd_buf_[fi], window_width_, window_height_, fi);
+        }
         // The water's albedo decals on its surface (M212g), as the terrain
         // draws them once the water is down (HighFidelityTerrain).
         record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);

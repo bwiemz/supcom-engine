@@ -1032,6 +1032,50 @@ void main() {
 }
 )glsl";
 
+// Water_LowFidelity (M213d), water2.fx's at fidelity 0 and 1 (it has no
+// medium technique): no refraction, reflection or sun. Pass 0
+// (LowFidelityPS0): waterColorLowFi, by the water map's depth up to 0.3.
+// Pass 1 (LowFidelityPS1): white where the four wave layers' alphas sum past
+// waveCrestThreshold. Both SrcAlpha / InvSrcAlpha into RGB. Moho sets neither
+// colour nor the threshold: water2.fx's own values.
+const char* water_low_frag0 = R"glsl(
+#version 450
+
+layout(set = 0, binding = 9) uniform sampler2D waterMap; // UtilitySamplerC: G the depth
+
+layout(location = 0) in vec2 fragUV;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    float alpha = clamp(texture(waterMap, fragUV).g, 0.0, 0.3);
+    outColor = vec4(0.7647, 0.8784, 0.9647, alpha); // waterColorLowFi
+}
+)glsl";
+
+const char* water_low_frag1 = R"glsl(
+#version 450
+
+layout(set = 0, binding = 2) uniform sampler2D normalMap0;
+layout(set = 0, binding = 3) uniform sampler2D normalMap1;
+layout(set = 0, binding = 4) uniform sampler2D normalMap2;
+layout(set = 0, binding = 5) uniform sampler2D normalMap3;
+
+layout(location = 1) in vec2 fragLayer0;
+layout(location = 2) in vec2 fragLayer1;
+layout(location = 3) in vec2 fragLayer2;
+layout(location = 4) in vec2 fragLayer3;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    float w = texture(normalMap0, fragLayer0).a + texture(normalMap1, fragLayer1).a +
+              texture(normalMap2, fragLayer2).a + texture(normalMap3, fragLayer3).a;
+    float crest = clamp(w - 1.0, 0.0, 1.0); // waveCrestThreshold 1
+    outColor = vec4(1.0, 1.0, 1.0, crest);  // waveCrestColor
+}
+)glsl";
+
 const char* water_mask_frag = R"glsl(
 #version 450
 

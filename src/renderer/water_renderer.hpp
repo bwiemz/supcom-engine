@@ -48,6 +48,9 @@ public:
     void render_mask(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, u32 fi) const;
     /// The surface (the second scene pass, after the copy).
     void render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, u32 fi) const;
+    /// The surface at graphics fidelity 0 or 1 (Water_LowFidelity, M213d):
+    /// blended over the frame, with no mask or copy before it.
+    void render_surface_low(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, u32 fi) const;
 
     /// Forget the map's water (a new map), keeping the pipelines.
     void clear();
@@ -102,6 +105,10 @@ private:
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline mask_pipeline_ = VK_NULL_HANDLE;
     VkPipeline surface_pipeline_ = VK_NULL_HANDLE;
+    std::array<VkPipeline, 2> low_pipelines_{}; ///< Water_LowFidelity's passes
+    /// Bind the quad, the viewport and set `fi`'s descriptors for `pipeline`.
+    void bind_quad(VkCommandBuffer cmd, VkPipeline pipeline, u32 viewport_w, u32 viewport_h,
+                   u32 fi) const;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, FRAMES_IN_FLIGHT> sets_{};
     VkSampler wrap_ = VK_NULL_HANDLE, clamp_ = VK_NULL_HANDLE, point_ = VK_NULL_HANDLE;
