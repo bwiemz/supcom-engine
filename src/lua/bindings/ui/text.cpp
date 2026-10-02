@@ -460,7 +460,6 @@ static int edit_AcquireFocus(lua_State* L) {
     auto* reg = get_ui_registry(L);
     if (ctrl && reg) {
         reg->set_keyboard_focus(ctrl);
-        ctrl->set_keyboard_focus(true);
     }
     return 0;
 }
@@ -470,9 +469,9 @@ static int edit_AbandonFocus(lua_State* L) {
     auto* ctrl = check_control(L);
     auto* reg = get_ui_registry(L);
     if (ctrl && reg) {
-        if (reg->keyboard_focus() == ctrl)
+        if (reg->keyboard_focus() == ctrl) {
             reg->set_keyboard_focus(nullptr);
-        ctrl->set_keyboard_focus(false);
+        }
     }
     return 0;
 }

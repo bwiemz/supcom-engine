@@ -567,6 +567,67 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     CHECK(f.check("hotkeys == 11"));
 }
 
+TEST_CASE("Only the Edit with the focus has it, as it moves between them", "[ui][lua][input]") {
+    InputFixture f;
+    lua_State* L = f.lua.raw();
+    f.run(R"(
+        function edit()
+            local e = setmetatable({}, { __index = moho.edit_methods })
+            InternalCreateEdit(e, GetFrame(0))
+            return e
+        end
+        nickname = edit() address = edit() port = edit()
+    )");
+    auto* nickname = control_of(L, "nickname");
+    auto* address = control_of(L, "address");
+    auto* port = control_of(L, "port");
+    REQUIRE(nickname);
+    REQUIRE(address);
+    REQUIRE(port);
+    const auto focused = [&] {
+        return std::vector<bool>{nickname->has_keyboard_focus(), address->has_keyboard_focus(),
+                                 port->has_keyboard_focus()};
+    };
+
+    // None draws a caret until one takes the focus
+    CHECK(focused() == std::vector<bool>{false, false, false});
+    f.run("nickname:AcquireFocus()");
+    CHECK(focused() == std::vector<bool>{true, false, false});
+    // Taken by another, by either of Moho's calls: the first one loses it
+    f.run("address:AcquireFocus()");
+    CHECK(focused() == std::vector<bool>{false, true, false});
+    f.run("moho.control_methods.AcquireKeyboardFocus(port, false)");
+    CHECK(focused() == std::vector<bool>{false, false, true});
+    // Let go by one without it: the focus stays
+    f.run("nickname:AbandonFocus()");
+    CHECK(focused() == std::vector<bool>{false, false, true});
+    f.run("moho.control_methods.AbandonKeyboardFocus(port)");
+    CHECK(focused() == std::vector<bool>{false, false, false});
+    CHECK(f.registry.keyboard_focus() == nullptr);
+
+    // A field clicked into takes the focus from the one that had it; one
+    // whose script takes the press does not
+    f.run("nickname:AcquireFocus()");
+    f.run(R"(
+        function place(e, l, t, r, b)
+            rawset(e, 'Left', l) rawset(e, 'Top', t) rawset(e, 'Right', r) rawset(e, 'Bottom', b)
+            rawset(e, 'Width', r - l) rawset(e, 'Height', b - t) rawset(e, 'Depth', 1)
+        end
+        place(address, 0, 0, 100, 20) place(port, 0, 30, 100, 50)
+        port.HandleEvent = function(self, event) return event.Type == 'ButtonPress' end
+    )");
+    f.dispatch.on_cursor_pos(50, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(focused() == std::vector<bool>{false, true, false});
+    CHECK(f.registry.keyboard_focus() == address);
+    f.dispatch.on_cursor_pos(50, 40);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(focused() == std::vector<bool>{false, true, false});
+}
+
 TEST_CASE("The world has the mouse only where no UI, and no capture, holds it",
           "[ui][lua][input]") {
     InputFixture f;

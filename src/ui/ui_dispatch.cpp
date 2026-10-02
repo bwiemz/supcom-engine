@@ -493,6 +493,18 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             }
         }
 
+        // An Edit takes the focus on a left press its script leaves, the
+        // press going no further (Moho's CMauiEdit): retail's edit.lua asks
+        // for none, a field clicked into is the one typed into.
+        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
+            target && !target->destroyed() &&
+            target->control_type() == UIControl::ControlType::Edit && target->input_enabled()) {
+            if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
+                run_script(L, target, "AcquireFocus");
+            }
+            continue;
+        }
+
         // A scrollbar takes a left press its script leaves
         if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
             target && !target->destroyed() &&

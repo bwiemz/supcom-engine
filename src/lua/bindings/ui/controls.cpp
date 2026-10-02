@@ -330,7 +330,6 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
     bool blocks = lua_toboolean(L, 2) != 0;
     auto* prev = reg->keyboard_focus();
     if (prev && prev != ctrl) {
-        prev->set_keyboard_focus(false);
         // Call OnLoseKeyboardFocus on previous
         if (prev->lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, prev->lua_table_ref());
@@ -346,7 +345,6 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
         }
     }
 
-    ctrl->set_keyboard_focus(true);
     ctrl->set_blocks_key_down(blocks);
     reg->set_keyboard_focus(ctrl);
     return 0;
@@ -358,7 +356,6 @@ static int control_AbandonKeyboardFocus(lua_State* L) {
     if (!ctrl || !reg) return 0;
 
     if (reg->keyboard_focus() == ctrl) {
-        ctrl->set_keyboard_focus(false);
         reg->set_keyboard_focus(nullptr);
     }
     return 0;
