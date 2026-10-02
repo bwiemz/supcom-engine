@@ -40,10 +40,12 @@ public:
     /// decals' triangles (gathered again as they come and go) and fades,
     /// and the splats' quads. Their textures load as they are first drawn,
     /// as Moho loads them. `view` and `eye` are the camera's.
+    /// At graphics fidelity 0 only those of fidelity 0 draw (the low
+    /// fidelity terrain's rule, M212h).
     void update(const sim::WorldSnapshot* snap, i32 focus_army, const map::Terrain& terrain,
                 const TerrainMesh& mesh, const std::array<f32, 16>& view,
                 const std::array<f32, 3>& eye, f32 half_width, const Frustum& frustum,
-                TextureCache& textures, u32 fi);
+                TextureCache& textures, u32 fi, int graphics_fidelity = 2);
 
     /// A runtime decal this frame draws, over the terrain's vertices with
     /// index_buffer(), in its technique's pass.
@@ -59,10 +61,11 @@ public:
     VkBuffer index_buffer(u32 fi) const { return index_buf_[fi].buffer; }
 
     /// Draw the splats (the scene pass open, after the decals), lit over the
-    /// terrain's sets.
+    /// terrain's sets; `low`: unlit (LowFidelitySplat, M212h).
     void draw_splats(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& view_proj,
                      const std::array<f32, 3>& eye, f32 map_width, f32 map_height,
-                     VkDescriptorSet terrain_set, VkDescriptorSet shadow_set) const;
+                     VkDescriptorSet terrain_set, VkDescriptorSet shadow_set,
+                     bool low = false) const;
 
     /// Forget them all (a new scene).
     void clear();
@@ -95,7 +98,7 @@ private:
     void upload_indices(u32 fi);
     void build_splats(const map::Terrain& terrain, const std::array<f32, 16>& view,
                       const std::array<f32, 3>& eye, f32 half_width, const Frustum& frustum,
-                      TextureCache& textures, u32 fi);
+                      TextureCache& textures, u32 fi, int graphics_fidelity);
 
     VkDevice device_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = nullptr;

@@ -16,6 +16,8 @@ namespace shaders {
 extern const char* terrain_vert;
 /// The terrain's fragment shader, built around its shared surface (M212b).
 const char* terrain_frag();
+/// The low fidelity terrain: unlit strata 0-3 times the normal maps' light (M212h).
+const char* terrain_low_frag();
 extern const char* unit_vert;
 extern const char* unit_frag;
 extern const char* water_vert;

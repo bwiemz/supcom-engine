@@ -422,6 +422,67 @@ void test_runtime_decal(TestContext& ctx) {
     }
     forget();
 
+    // Test 12 (M212h): the decals by graphics fidelity. At Medium (1) there
+    // is no AlbedoXP pass. At Low (0) the terrain draws only decals and
+    // splats of fidelity 0 (CreateDecal's and CreateSplat's last argument,
+    // 1 if none), the splats unlit (LowFidelitySplat): under a dim light a
+    // fidelity 0 splat keeps its full red there, where High lights it.
+    {
+        const auto red_at_middle = [&](const map::ScmapLighting& light) {
+            return redness(pixel_at(r, shoot(light), {32, 0, 32}));
+        };
+        map::ScmapLighting dim = fill;
+        for (f32& c : dim.shadow_fill) c = 0.3f;
+        forget();
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'AlbedoXP', 8, 8, 1000, 0, 1)",
+                        tex("red.dds")));
+        r.video_options().graphics_fidelity = 2;
+        const f32 xp_high = red_at_middle(fill);
+        r.video_options().graphics_fidelity = 1;
+        const f32 xp_medium = red_at_middle(fill);
+        forget();
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'Albedo', 8, 8, 1000, 0, 1)",
+                        tex("red.dds")));
+        r.video_options().graphics_fidelity = 0;
+        const f32 one_low = red_at_middle(fill);
+        forget();
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'Albedo', 8, 8, 1000, 0, 1, 0)",
+                        tex("red.dds")));
+        const f32 zero_low = red_at_middle(fill);
+        forget();
+        lua(fmt::format("CreateSplat({{32, 0, 32}}, 0, {}, 8, 8, 1000, 0, 1, 0)", tex("red.dds")));
+        const f32 splat_low = red_at_middle(dim);
+        r.video_options().graphics_fidelity = 2;
+        const f32 splat_high = red_at_middle(dim);
+        forget();
+        t.check(xp_high > 0.5f && xp_medium < 0.05f && one_low < 0.05f && zero_low > 0.5f &&
+                    splat_low > 0.9f && splat_high < 0.5f,
+                fmt::format("Test 12: AlbedoXP {:.2f} red at High, {:.2f} at Medium; at Low a "
+                            "fidelity 1 decal {:.2f}, a fidelity 0 one {:.2f}; a fidelity 0 splat "
+                            "under a dim light {:.2f} at Low (unlit), {:.2f} at High",
+                            xp_high, xp_medium, one_low, zero_low, splat_low, splat_high));
+    }
+
+    // Test 13 (M212h): the low fidelity terrain draws the lower stratum and
+    // strata 0-3 alone (LowFidelityTerrain): a red upper stratum, which
+    // covers the ground at High, isn't there at Low.
+    {
+        std::vector<map::StratumInfo> strata(10);
+        for (auto& st : strata) st.albedo_scale = st.normal_scale = 4.0f;
+        strata[0].albedo_path = "/env/evergreen2/layers/eg_gravel005_albedo.dds";
+        strata[9].albedo_path = fmt::format("{}/red.dds", kRoot);
+        ground->set_strata(std::move(strata), {}, {});
+        forget();
+        r.video_options().graphics_fidelity = 2;
+        const f32 high = redness(pixel_at(r, shoot(fill), {32, 0, 32}));
+        r.video_options().graphics_fidelity = 0;
+        const f32 low = redness(pixel_at(r, shoot(fill), {32, 0, 32}));
+        r.video_options().graphics_fidelity = 2;
+        t.check(high > 0.5f && low < 0.1f,
+                fmt::format("Test 13: a red upper stratum: {:.2f} red at High, {:.2f} at Low", high,
+                            low));
+    }
+
     spdlog::info("Runtime decal test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

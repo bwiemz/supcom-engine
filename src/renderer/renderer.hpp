@@ -463,6 +463,9 @@ private:
     // Pipelines
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout terrain_layout_ = VK_NULL_HANDLE;
+    // The low fidelity terrain (M212h): terrain_layout_'s sets and push block
+    VkPipeline terrain_low_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout terrain_low_layout_ = VK_NULL_HANDLE;
     VkPipeline unit_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout unit_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE;

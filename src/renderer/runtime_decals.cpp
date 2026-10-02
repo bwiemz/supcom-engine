@@ -86,6 +86,7 @@ void RuntimeDecals::add(const sim::WorldSnapshot& snap, size_t effect) {
     d.id = fx.id;
     d.splat = spec.splat;
     d.remove_tick = spec.remove_tick;
+    d.fidelity = spec.fidelity;
     if (spec.splat) {
         d.info.type = map::DecalType::Albedo;
     } else {

@@ -39,6 +39,7 @@ public:
         f32 alpha = 1.0f;    ///< mCurrentAlpha: 1 until it fades
         u32 remove_tick = 0; ///< fades once the tick passes it; 0: never
         bool live = true;    ///< still in the sim and seen (not removed)
+        u32 fidelity = 1;    ///< its fidelity: 0 draws at graphics fidelity 0 too (M212h)
     };
 
     /// A splat's fade a beat, and a decal's (CDecalManager::ProcessRemovals).
