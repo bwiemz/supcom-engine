@@ -1359,6 +1359,8 @@ layout(location = 5) out vec3 fragWorldPos;
 layout(location = 6) flat out float fragColorLookup;
 layout(location = 7) flat out float fragShaderTime;
 layout(location = 8) flat out float fragParameter;
+// VertexNormalVS's normal, normalised per vertex (the Low lanes', M211m)
+layout(location = 9) out vec3 fragVertexNormal;
 
 void main() {
     // Blend-weight skeletal skinning: skip for unskinned meshes (bonesPerInst == 0)
@@ -1413,6 +1415,8 @@ void main() {
     // Transform TBN vectors through blended bone then model
     mat3 normalMat = mat3(inModel) * mat3(bone);
     fragNormal = normalMat * inNormal;
+    // (Unnormalised, fragNormal carries the blueprint's UniformScale.)
+    fragVertexNormal = normalize(fragNormal);
     fragTangent = normalMat * inTangent;
     fragBitangent = normalMat * inBinormal;
     fragColor = inColor;
@@ -1484,6 +1488,7 @@ layout(location = 5) in vec3 fragWorldPos;
 layout(location = 6) flat in float fragColorLookup; // the army's row of texLookup
 layout(location = 7) flat in float fragShaderTime;  // the tick its mesh instance was made
 layout(location = 8) flat in float fragParameter;   // the fraction complete
+layout(location = 9) in vec3 fragVertexNormal;      // normalised per vertex (the Low lanes')
 
 layout(location = 0) out vec4 outColor;
 
@@ -1741,14 +1746,15 @@ void main() {
             ? fragColor.a
             : (alphaTested ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum));
     // The Low lane (graphics fidelity 0, M211m): mesh.fx's low fidelity
-    // shaders, lit by the vertex's normal (interpolated, not renormalised, as
-    // FA's are), with no shadow, normal map, environment or glow. The build
+    // shaders, lit by the vertex's normal (normalised per vertex, interpolated
+    // and not renormalised, as FA's are), with no shadow, normal map,
+    // environment or glow. The build
     // techniques (5-8, 12, 13) keep their own shaders for now, and
     // NormalMappedTerrain has no lanes.
     bool lowLane = pc.lane == 0u && !(pc.technique >= 5u && pc.technique <= 8u) &&
                    pc.technique != 12u && pc.technique != 13u && !terrainProp;
     if (lowLane) {
-        vec3 lowLight = computeLight(dot(S, fragNormal), 1.0, 1.0, 1.0);
+        vec3 lowLight = computeLight(dot(S, fragVertexNormal), 1.0, 1.0, 1.0);
         vec3 lowLit;
         float lowAlpha = 0.0; // written RGB only: no glow
         if (fragColor.r < 0.0) {

@@ -911,6 +911,35 @@ void test_material(TestContext& ctx) {
                             high3, medium2, high1, low3));
     }
 
+    // Test 20: the Low lane lights by the vertex's normal normalised, as
+    // VertexNormalVS does. Unnormalised it carries the blueprint's
+    // UniformScale (the factory's 0.1), and the sun lit the factory a tenth
+    // as much, squared: black. Under a slanted sun and no fill, about as few
+    // of the frame's middle pixels are black at Low as at High.
+    {
+        map::ScmapLighting slant = white_fill();
+        for (f32& c : slant.shadow_fill) c = 0.0f;
+        for (f32& c : slant.sun_color) c = 1.0f;
+        slant.sun_direction[0] = 0.5f;
+        slant.sun_direction[1] = 0.7071f;
+        slant.sun_direction[2] = 0.5f;
+        const auto black_share = [&](int graphics) {
+            video.graphics_fidelity = graphics;
+            const Pixels px = shoot(kBlack, slant);
+            size_t black = 0;
+            for (const auto& p : px)
+                if (p[0] < 0.03f && p[1] < 0.03f && p[2] < 0.03f) ++black;
+            return px.empty() ? 1.0f : static_cast<f32>(black) / static_cast<f32>(px.size());
+        };
+        const f32 low = black_share(0);
+        const f32 high = black_share(2);
+        video = as_was;
+        t.check(low < high + 0.1f,
+                fmt::format("Test 20: under a slanted sun, {:.1f}% of the factory's frame is "
+                            "black at Low, {:.1f}% at High",
+                            low * 100.0f, high * 100.0f));
+    }
+
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
