@@ -1055,7 +1055,8 @@ void Renderer::create_pipelines() {
                 .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
-                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32),
+                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
+                                       sizeof(u32) * 2,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
                 .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
@@ -1098,7 +1099,8 @@ void Renderer::create_pipelines() {
                                                                    : VK_CULL_MODE_BACK_BIT,
                                VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
-                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32),
+                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
+                                       sizeof(u32) * 2,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
                 .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
@@ -2593,8 +2595,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         shadow_sc.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
         vkCmdSetScissor(cmd_buf_[fi], 0, 1, &shadow_sc);
 
+        // At shadow fidelity 0 nothing casts (Moho makes no shadow map): the
+        // map stays cleared, all lit (M211m)
+        const bool casting = shadow_fidelity() > 0;
         // Shadow terrain
-        if (terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
+        if (casting && terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
             vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                shadow_terrain_pipeline_);
             vkc::push_constants(cmd_buf_[fi], shadow_terrain_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -2609,7 +2614,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         }
 
         // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
-        if (!strategic_icon_renderer_.is_strategic_zoom() &&
+        if (casting && !strategic_icon_renderer_.is_strategic_zoom() &&
             !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_[fi]) {
             vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                shadow_mesh_pipeline_);
@@ -3281,8 +3286,10 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         f32 time;      // FA's time (M211f)
         u32 mirrored;  // drawn into the water's reflection (M213b)
         f32 surface;   // the water's elevation (M213b)
+        u32 lane;      // mesh.fx's lane by graphics fidelity (M211m)
+        u32 shadow_mode; // 0 none, 1 one tap, 2 five (M211m)
     } mesh_pc{};
-    static_assert(sizeof(MeshPushConstants) == 104, "matches mesh_vert/frag's push block");
+    static_assert(sizeof(MeshPushConstants) == 112, "matches mesh_vert/frag's push block");
     std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
     camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
     // (The reflection is seen from the eye mirrored in the water: mesh_frag
@@ -3418,8 +3425,26 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             }
             // The first pass draws as the base technique (a personal
             // shield's unit), the rest as the technique's own
-            mesh_pc.technique = static_cast<u32>(pass == 0 ? base_technique(technique) : technique);
+            MeshTechnique drawn = pass == 0 ? base_technique(technique) : technique;
+            // The lane mesh.fx picks by graphics fidelity (M211m). A Seraphim
+            // personal shield has no Medium lane: below High it draws its Low
+            // one, the unit as LowFiUnitFalloffPS and the shell as
+            // PhaseShieldPS.
+            int lane = fidelity();
+            if (technique == MeshTechnique::SeraphimPersonalShield && lane < 2) {
+                lane = 0;
+                if (pass == 1) drawn = MeshTechnique::PhaseShield;
+            }
+            mesh_pc.technique = static_cast<u32>(drawn);
             mesh_pc.pass = pass;
+            mesh_pc.lane = static_cast<u32>(lane);
+            // Meshes take shadows above shadow fidelity 1, and not on the
+            // Low lane: one tap, or High's five at 3 with ren_ShadowBlur
+            const int shadows = shadow_fidelity();
+            mesh_pc.shadow_mode =
+                lane == 0 || shadows <= 1
+                    ? 0u
+                    : (lane == 2 && shadows == 3 && video_options_.shadow_blur ? 2u : 1u);
             vkc::push_constants(cmd, mesh_layout_,
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                 sizeof(mesh_pc), &mesh_pc);

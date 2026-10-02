@@ -805,6 +805,141 @@ void test_material(TestContext& ctx) {
                             unit_seen.blue, wreck_seen.blue, unit_seen.dark, wreck_seen.dark));
     }
 
+    // The lanes by graphics and shadow fidelity (M211m)
+    renderer::Renderer::VideoOptions& video = shots.renderer().video_options();
+    const renderer::Renderer::VideoOptions as_was = video;
+
+    // Test 17: the Low lane's ColorMaskPS_LowFidelity: lit by the vertex's
+    // normal, no environment (the map's cube changes nothing on the
+    // factory) and no glow (in the dark the power generator's core is
+    // black).
+    {
+        video.graphics_fidelity = 0;
+        const Pixels low_cube = shoot(kCube);
+        const Pixels low_black = shoot(kBlack);
+        size_t changed = 0;
+        for (size_t i = 0; i < low_cube.size() && i < low_black.size(); ++i)
+            for (int c = 0; c < 3; ++c)
+                if (std::abs(low_cube[i][c] - low_black[i][c]) > 0.02f) {
+                    ++changed;
+                    break;
+                }
+        map::ScmapLighting dark = white_fill();
+        for (f32& c : dark.shadow_fill) c = 0.0f;
+        for (f32& d : dark.sun_direction) d = 0.0f;
+        map::ScmapEnvironment env;
+        env.terrain_shader = "TTerrain";
+        env.cubemaps.emplace_back("<default>", kBlack);
+        ground.set_lighting(dark, std::move(env));
+        shots.recapture();
+        size_t glowing = 0;
+        for (const auto& px : shots.shoot(ground, 48.0f, 14.0f, 30.0f))
+            if (px[0] > 0.1f && px[0] > px[2] + 0.05f) ++glowing;
+        video = as_was;
+        t.check(changed < 50 && glowing < 20,
+                fmt::format("Test 17: at Low the cube changes {} pixels of the factory (over 500 "
+                            "at High) and {} glow in the dark",
+                            changed, glowing));
+    }
+
+    // Test 18: at Medium the Aeon factory takes Aeon_Med, which names no
+    // environment: it reflects the "<default>" cube, not "<aeon>".
+    {
+        const auto shoot_aeon = [&](const std::string& default_cube, const std::string& aeon_cube) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", default_cube);
+            env.cubemaps.emplace_back("<aeon>", aeon_cube);
+            ground.set_lighting(white_fill(), std::move(env));
+            shots.recapture();
+            return shots.shoot(ground, 16.0f, 48.0f, 30.0f);
+        };
+        const auto brightened = [](const Pixels& a, const Pixels& b) {
+            size_t n = 0;
+            for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+                if (a[i][1] - b[i][1] > 0.05f) ++n;
+            return n;
+        };
+        const std::string sky = face_cube("white");
+        video.graphics_fidelity = 1;
+        const Pixels none = shoot_aeon(kBlack, kBlack);
+        const size_t by_aeon = brightened(shoot_aeon(kBlack, sky), none);
+        const size_t by_default = brightened(shoot_aeon(sky, kBlack), none);
+        video = as_was;
+        t.check(by_aeon < 50 && by_default > 500,
+                fmt::format("Test 18: at Medium the Aeon factory brightens on {} pixels under an "
+                            "\"<aeon>\" cube, {} under \"<default>\"",
+                            by_aeon, by_default));
+    }
+
+    // Test 19: meshes take shadows above shadow fidelity 1 and not on the
+    // Low lane: Test 16's hovering plate shades the unit's plate beneath at
+    // shadow fidelity 3 and 2 (one tap, at Medium), not at 1, nor at
+    // graphics fidelity 0.
+    {
+        map::ScmapLighting sun = white_fill();
+        for (f32& c : sun.shadow_fill) c = 0.0f;
+        for (f32& c : sun.sun_color) c = 1.0f;
+        sun.sun_direction[0] = 0.0f;
+        sun.sun_direction[1] = 1.0f;
+        sun.sun_direction[2] = 0.0f;
+        renderer::Camera& camera = shots.renderer().camera();
+        const f32 default_pitch = camera.pitch();
+        const auto dark_under = [&](int graphics, int shadows) {
+            video.graphics_fidelity = graphics;
+            video.shadow_fidelity = shadows;
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", kBlack);
+            ground.set_lighting(sun, std::move(env));
+            shots.recapture();
+            size_t dark = 0;
+            for (const auto& px : shots.shoot(ground, 140.0f, 130.0f, 30.0f))
+                if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++dark;
+            return dark;
+        };
+        camera.set_pitch(1.1f);
+        const size_t high3 = dark_under(2, 3);
+        const size_t medium2 = dark_under(1, 2);
+        const size_t high1 = dark_under(2, 1);
+        const size_t low3 = dark_under(0, 3);
+        camera.set_pitch(default_pitch);
+        video = as_was;
+        t.check(high3 > 500 && medium2 > 500 && high1 < 50 && low3 < 50,
+                fmt::format("Test 19: the plate beneath is dark on {} pixels at High and shadow "
+                            "fidelity 3, {} at Medium and 2, {} at shadow fidelity 1, {} at Low",
+                            high3, medium2, high1, low3));
+    }
+
+    // Test 20: the Low lane lights by the vertex's normal normalised, as
+    // VertexNormalVS does. Unnormalised it carries the blueprint's
+    // UniformScale (the factory's 0.1), and the sun lit the factory a tenth
+    // as much, squared: black. Under a slanted sun and no fill, about as few
+    // of the frame's middle pixels are black at Low as at High.
+    {
+        map::ScmapLighting slant = white_fill();
+        for (f32& c : slant.shadow_fill) c = 0.0f;
+        for (f32& c : slant.sun_color) c = 1.0f;
+        slant.sun_direction[0] = 0.5f;
+        slant.sun_direction[1] = 0.7071f;
+        slant.sun_direction[2] = 0.5f;
+        const auto black_share = [&](int graphics) {
+            video.graphics_fidelity = graphics;
+            const Pixels px = shoot(kBlack, slant);
+            size_t black = 0;
+            for (const auto& p : px)
+                if (p[0] < 0.03f && p[1] < 0.03f && p[2] < 0.03f) ++black;
+            return px.empty() ? 1.0f : static_cast<f32>(black) / static_cast<f32>(px.size());
+        };
+        const f32 low = black_share(0);
+        const f32 high = black_share(2);
+        video = as_was;
+        t.check(low < high + 0.1f,
+                fmt::format("Test 20: under a slanted sun, {:.1f}% of the factory's frame is "
+                            "black at Low, {:.1f}% at High",
+                            low * 100.0f, high * 100.0f));
+    }
+
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

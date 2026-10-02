@@ -282,6 +282,17 @@ void register_option_commands(ui::Console& console) {
         [](lua_State* L, bool v) {
             if (Renderer* r = renderer_of(L)) r->set_bloom_enabled(v);
         });
+    // ren_ShadowBlur: the High lane's five-tap shadows at shadow fidelity 3
+    // (Moho's default on, M211m)
+    ui::add_bool_var(
+        console, "ren_ShadowBlur",
+        [](lua_State* L) {
+            Renderer* r = renderer_of(L);
+            return !r || r->video_options().shadow_blur;
+        },
+        [](lua_State* L, bool v) {
+            if (Renderer* r = renderer_of(L)) r->video_options().shadow_blur = v;
+        });
     ui::add_bool_var(
         console, "ren_Skydome",
         [](lua_State* L) {
