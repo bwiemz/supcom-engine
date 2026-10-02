@@ -1,9 +1,14 @@
 #pragma once
 
+#include "core/types.hpp"
+
+#include <string>
+
 struct lua_State;
 
 namespace osc::sim {
 class SimState;
+struct PlacementRules;
 }
 
 namespace osc::lua {
@@ -30,5 +35,14 @@ void register_category_bindings(LuaState& state);
 /// creating it on first use. Every vector the engine hands to scripts
 /// carries it: retail reads positions as both pos[1] and pos.x.
 void push_vector_metatable(lua_State* L);
+
+/// A structure blueprint's placement rules, as its Physics give them (the
+/// sim keeps them once read)
+const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
+                                           const std::string& bp_id);
+
+/// Where a structure stands at (x, z): on the ground for one that can sit
+/// on the seabed, else on the water's surface where there is water
+f32 structure_elevation(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x, f32 z);
 
 } // namespace osc::lua
