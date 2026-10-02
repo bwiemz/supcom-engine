@@ -320,7 +320,11 @@ void install_crash_handler() {
 
     struct sigaction sa{};
     sa.sa_sigaction = fatal_signal_handler;
-    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND;
+    // SA_NODEFER: a fault in the handler (an unwinder on a smashed stack)
+    // must meet the default action SA_RESETHAND restored, not a blocked
+    // signal; Linux kills the process either way, macOS re-runs the
+    // faulting instruction forever.
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND | SA_NODEFER;
     sigemptyset(&sa.sa_mask);
     for (int sig : kFatalSignals) {
         sigaction(sig, &sa, nullptr);

@@ -11,6 +11,9 @@
 #elif defined(__linux__)
 #include <elf.h>
 #include <link.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #endif
 
 namespace osc::platform {
@@ -83,6 +86,43 @@ std::vector<std::uint8_t> executable_build_id() {
     std::vector<std::uint8_t> id;
     dl_iterate_phdr(find_build_id, &id);
     return id;
+}
+
+#elif defined(__APPLE__)
+
+std::filesystem::path executable_path() {
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string path(size, '\0');
+    if (_NSGetExecutablePath(path.data(), &size) != 0) {
+        return {};
+    }
+    path.resize(std::strlen(path.c_str()));
+    // The path it was started by, maybe through a symlink: the file itself
+    std::error_code ec;
+    std::filesystem::path file = std::filesystem::canonical(path, ec);
+    return ec ? std::filesystem::path(path) : file;
+}
+
+std::vector<std::uint8_t> executable_build_id() {
+    // The main program is dyld's first image; ld64 derives its LC_UUID
+    // from the binary's contents, as a build id
+    const mach_header* header = _dyld_get_image_header(0);
+    if (!header || header->magic != MH_MAGIC_64) {
+        return {};
+    }
+    const auto* p = reinterpret_cast<const unsigned char*>(header) + sizeof(mach_header_64);
+    for (std::uint32_t i = 0; i < header->ncmds; ++i) {
+        load_command command{};
+        std::memcpy(&command, p, sizeof(command));
+        if (command.cmd == LC_UUID) {
+            uuid_command uuid{};
+            std::memcpy(&uuid, p, sizeof(uuid));
+            return {uuid.uuid, uuid.uuid + sizeof(uuid.uuid)};
+        }
+        p += command.cmdsize;
+    }
+    return {};
 }
 
 #else
