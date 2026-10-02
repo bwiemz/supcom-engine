@@ -160,6 +160,13 @@ if(OSC_BUILD_TESTS)
         set_tests_properties(arch.state_io arch.state_io_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # retail_ref.py, which asks retail FA itself for references: its config,
+        # init file and reading of retail's log (retail isn't run here)
+        add_test(NAME arch.retail_ref_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/retail_ref/retail_ref.py
+                         --self-test)
+        set_tests_properties(arch.retail_ref_self_test PROPERTIES LABELS "arch" TIMEOUT 60)
+
         # The docs' status numbers are this build's (tools/status_metrics.py):
         # a change that adds tests updates docs/current-state.md with them.
         # Not on Windows, whose build leaves out some POSIX-only tests.
