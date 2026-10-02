@@ -766,6 +766,64 @@ TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lu
     CHECK(list->scroll_top() == 15);
 }
 
+TEST_CASE("An ItemList takes a press on a row and tells of the row under the mouse",
+          "[ui][lua][input]") {
+    InputFixture f;
+    // A Combo's list over the Combo, as retail's combo.lua lays them: rows
+    // 18 high at the 14-point font (no font file here), from the fourth.
+    f.run(R"(
+        combo = box('combo', GetFrame(0), 0, 0, 100, 200, 1)
+        combo.eats = true
+        list = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(list, combo)
+        list:SetNewFont('Arial', 14)
+        rawset(list, 'Left', 0) rawset(list, 'Top', 0)
+        rawset(list, 'Right', 100) rawset(list, 'Bottom', 90)
+        rawset(list, 'Width', 100) rawset(list, 'Height', 90)
+        rawset(list, 'Depth', 2)
+        for i = 1, 20 do list:AddItem('row ' .. i) end
+        list:ScrollToBottom() list:ShowItem(3)
+        list.HandleEvent = function(self, event)
+            table.insert(handled, { who = 'list', event = event })
+            return self.eats
+        end
+        clicks = {}
+        list.OnClick = function(self, row, event)
+            table.insert(clicks, row .. ':' .. event.Type)
+        end
+        over = {}
+        list.OnMouseoverItem = function(self, row) table.insert(over, row) end
+    )");
+    REQUIRE(control_of(f.lua.raw(), "list")->scroll_top() == 3);
+
+    // Over its third shown row; along it, no news; off its side, none
+    f.dispatch.on_cursor_pos(50, 40);
+    f.dispatch.on_cursor_pos(60, 45);
+    f.deliver();
+    CHECK(f.check("table.concat(over, ',') == '5'"));
+
+    // A press there: its row, the Combo under it not told
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("table.concat(clicks, ',') == '5:ButtonPress'"));
+    CHECK(f.check("whos('ButtonPress') == 'list'"));
+
+    // One its script takes is the script's
+    f.run("handled = {} clicks = {} list.eats = true");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.getn(clicks) == 0 and whos('ButtonPress') == 'list'"));
+
+    // Off its rows: -1, and a press goes on to the Combo
+    f.run("handled = {} list.eats = nil");
+    f.dispatch.on_cursor_pos(50, 150);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.concat(over, ',') == '5,-1'"));
+    CHECK(f.check("table.getn(clicks) == 0 and whos('ButtonPress') == 'combo'"));
+}
+
 TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrolling",
           "[ui][lua][scroll]") {
     osc::lua::LuaState lua;

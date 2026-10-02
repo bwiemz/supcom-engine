@@ -98,6 +98,18 @@ void call_scrollable(lua_State* L, const UIControl& scrollbar, const char* metho
 
 } // namespace
 
+i32 item_list_row_at(const UIControl& list, f32 height, f32 at) {
+    if (at < 0 || at >= height) {
+        return -1;
+    }
+    const i32 shown = static_cast<i32>(at / item_list_row_height(list));
+    if (shown >= shown_rows(list, height)) {
+        return -1;
+    }
+    const i32 row = list.scroll_top() + shown;
+    return row < static_cast<i32>(list.items().size()) ? row : -1;
+}
+
 ScrollValues item_list_scroll_values(const UIControl& list, f32 height) {
     const i32 count = static_cast<i32>(list.items().size());
     const i32 top = clamped_top(list, height, list.scroll_top());
