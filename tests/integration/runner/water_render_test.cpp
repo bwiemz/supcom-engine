@@ -409,6 +409,79 @@ void test_water_render(TestContext& ctx) {
                             reddened.mean[0] - base.mean[0], by_sky, by_sun, by_crest));
     }
 
+    // Test 8: the water's albedo decals (M212g). A Water Albedo decal over
+    // open water lies on the surface, drawn after it (TDecalsWaterAlbedo);
+    // a decal whose texture is numbered ("frame_01.dds") shows its frames in
+    // turn, half a frame a tick (CAnimTexture).
+    {
+        std::optional<Spot> open;
+        const auto mw = static_cast<f32>(terrain.map_width());
+        const auto mh = static_cast<f32>(terrain.map_height());
+        for (int iz = 24; static_cast<f32>(iz + 24) < mh && !open; iz += 4)
+            for (int ix = 24; static_cast<f32>(ix + 24) < mw && !open; ix += 4) {
+                const auto x = static_cast<f32>(ix);
+                const auto z = static_cast<f32>(iz);
+                bool under = true;
+                for (int dz = -10; dz <= 10 && under; dz += 2)
+                    for (int dx = -10; dx <= 10 && under; dx += 2)
+                        under = terrain.get_terrain_height(x + static_cast<f32>(dx),
+                                                           z + static_cast<f32>(dz)) < w - 1;
+                if (under) open = Spot{x, z};
+            }
+        const auto dir = std::filesystem::temp_directory_path() / "osc_water_decal_test";
+        std::filesystem::create_directories(dir);
+        const auto flat = [](u8 r_, u8 g_, u8 b_) {
+            return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, 255}; };
+        };
+        write_dds(dir / "red.dds", 1, flat(255, 0, 0));
+        write_dds(dir / "frame_01.dds", 1, flat(255, 0, 0));
+        write_dds(dir / "frame_02.dds", 1, flat(0, 255, 0));
+        ctx.vfs.mount("/osc_water_decal_test", std::make_unique<vfs::DirectoryMount>(dir));
+        r.set_decals_enabled(true);
+        const auto forget = [&] {
+            for (const auto& fx : ctx.sim.effect_registry().all())
+                if (fx && fx->decal()) fx->mark_destroyed();
+            ctx.sim.tick();
+        };
+        const auto decal = [&](const char* texture) {
+            run_lua(ctx, fmt::format("CreateDecal({{{}, {}, {}}}, 0, '/osc_water_decal_test/{}', "
+                                     "'', 'Water Albedo', 12, 12, 1000, 0, 1)",
+                                     open->x, w, open->z, texture));
+        };
+        // The open water's middle, the sim's decals as they are now
+        const auto look = [&] {
+            shots.recapture();
+            (void)shots.shoot_frame(terrain, open->x, open->z, 40.0f); // textures load
+            return middle(shots.shoot_frame(terrain, open->x, open->z, 40.0f));
+        };
+        if (open) {
+            forget();
+            const Rgb bare = look();
+            decal("red.dds");
+            ctx.sim.tick();
+            const Rgb red = look();
+            forget();
+            decal("frame_01.dds");
+            ctx.sim.tick();
+            const Rgb first = look();
+            ctx.sim.tick();
+            ctx.sim.tick(); // a frame on
+            const Rgb second = look();
+            forget();
+            const auto green = [](const Rgb& c) { return c[1] - std::max(c[0], c[2]); };
+            const auto reds = [](const Rgb& c) { return c[0] - std::max(c[1], c[2]); };
+            const bool turned = (reds(first) > 0.3f && green(second) > 0.3f) ||
+                                (green(first) > 0.3f && reds(second) > 0.3f);
+            t.check(reds(red) - reds(bare) > 0.4f && turned,
+                    fmt::format("Test 8: a Water Albedo decal lies on the open water ({} with it, "
+                                "{} without); a numbered one turns frames ({} then {})",
+                                show(red), show(bare), show(first), show(second)));
+        } else {
+            t.check(false, "Test 8: open water 20 across");
+        }
+        r.set_decals_enabled(false);
+    }
+
     spdlog::info("Water test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

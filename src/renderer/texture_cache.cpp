@@ -887,6 +887,10 @@ const GPUTexture* TextureCache::get(const std::string& vfs_path) {
     return nullptr;
 }
 
+bool TextureCache::exists(const std::string& vfs_path) const {
+    return vfs_ && vfs_->file_exists(vfs_path);
+}
+
 const GPUTexture* TextureCache::get_blocking(const std::string& vfs_path) {
     if (device_ == VK_NULL_HANDLE) return nullptr;
 

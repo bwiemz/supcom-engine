@@ -748,6 +748,76 @@ void main() {
 }
 )glsl";
 
+// Water Albedo decals (M212g): terrain.fx's DecalsVSWaterAlbedo, the
+// terrain's vertices under the water's surface lifted onto it (to 0.01
+// above), with DecalsVS's bias and matrix. The surface's height in eye.w.
+const char* decal_water_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    vec4 decalU;
+    vec4 decalV;
+    vec4 mapAlpha;
+    vec4 eye; // w: the water's surface
+} pc;
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+
+layout(location = 3) out vec2 fragDecalUV;
+
+void main() {
+    vec4 world = vec4(inPosition, 1.0);
+    if (world.y < pc.eye.w) world.y = pc.eye.w + 0.01;
+    gl_Position = pc.viewProj * world;
+    // Rasterizer_Bias_Decal: decalDepthOffset (-0.00001) on the depth.
+    gl_Position.z += -0.00001 * gl_Position.w;
+    fragDecalUV = vec2(dot(pc.decalU, world), dot(pc.decalV, world));
+}
+)glsl";
+
+// DecalsPSWaterAlbedo: the albedo times LightingMultiplier, unlit and
+// unshadowed, its alpha the albedo's times the mask's red, faded
+// (TDecalsWaterAlbedo: SrcAlpha / InvSrcAlpha, RGB).
+const char* decal_water_frag = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    vec4 decalU;
+    vec4 decalV;
+    vec4 mapAlpha; // z: DecalAlpha
+    vec4 eye;
+} pc;
+
+layout(set = 1, binding = 1) uniform LightUBO {
+    mat4 lightViewProj;
+    vec4 sunDirection;
+    vec4 sunColor; // w: LightingMultiplier
+    vec4 sunAmbience;
+    vec4 shadowFill;
+    vec4 specularColor;
+} lightUbo;
+layout(set = 2, binding = 0) uniform sampler2D decalAlbedo; // DecalAlbedoSampler: clamps
+layout(set = 4, binding = 0) uniform sampler2D decalMask;   // DecalMaskSampler: clamps
+
+layout(location = 3) in vec2 fragDecalUV;
+
+layout(location = 0) out vec4 outColor;
+
+vec4 clamped(sampler2D tex, vec2 uv) {
+    vec2 edge = 0.5 / vec2(textureSize(tex, 0));
+    return texture(tex, clamp(uv, edge, 1.0 - edge));
+}
+
+void main() {
+    vec4 albedo = clamped(decalAlbedo, fragDecalUV);
+    float mask = clamped(decalMask, fragDecalUV).r;
+    outColor = vec4(lightUbo.sunColor.w * albedo.rgb, albedo.a * mask * pc.mapAlpha.z);
+}
+)glsl";
+
 const char* unit_vert = R"glsl(
 #version 450
 

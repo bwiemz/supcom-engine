@@ -1118,9 +1118,9 @@ void Renderer::create_pipelines() {
 
         // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B.
         // Every decal technique's pipeline takes these sets and this block.
-        const auto decal_builder = [&](VkShaderModule frag) {
+        const auto decal_builder = [&](VkShaderModule frag, VkShaderModule vert = VK_NULL_HANDLE) {
             PipelineBuilder b;
-            b.set_shaders(dv, frag)
+            b.set_shaders(vert ? vert : dv, frag)
                 .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
                 .set_depth_test(true, false)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
@@ -1165,9 +1165,22 @@ void Renderer::create_pipelines() {
                     .set_blend(true)
                     .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT)
                     .build(device_, scene_render_pass_, &decal_normal_layout_);
+        // The water's albedo decals (M212g; TDecalsWaterAlbedo): on its
+        // surface, SrcAlpha / InvSrcAlpha into RGB.
+        VkShaderModule water_vert =
+            compile_glsl(device_, shaders::decal_water_vert, "decal_water.vert", true);
+        VkShaderModule water_frag =
+            compile_glsl(device_, shaders::decal_water_frag, "decal_water.frag", false);
+        if (water_vert && water_frag)
+            decal_water_pipeline_ = decal_builder(water_frag, water_vert)
+                                        .set_blend(true)
+                                        .set_color_write_mask(kColorOnly)
+                                        .build(device_, scene_render_pass_, &decal_water_layout_);
         if (glow) vkDestroyShaderModule(device_, glow, nullptr);
         if (glow_mask) vkDestroyShaderModule(device_, glow_mask, nullptr);
         if (normals) vkDestroyShaderModule(device_, normals, nullptr);
+        if (water_vert) vkDestroyShaderModule(device_, water_vert, nullptr);
+        if (water_frag) vkDestroyShaderModule(device_, water_frag, nullptr);
     }
 
     // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
@@ -1780,6 +1793,7 @@ void Renderer::clear_scene() {
     }
 
     stored_decals_.clear();
+    decal_frames_.clear();
     decal_mask_ds_ = VK_NULL_HANDLE;
     // build_scene makes them again for the next map: a game started from
     // another leaked the last one's otherwise.
@@ -2181,7 +2195,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         std::vector<u32> indices;
         for (const map::DecalInfo& d : terrain->decals()) {
             const std::optional<DecalTechnique> technique = decal_technique(d.type);
-            if (!technique) continue; // the water decals (normals bake apart)
+            if (!technique) continue; // Water Mask and Water Normals: never drawn
             if (d.scale_x == 0.0f || d.scale_y == 0.0f || d.scale_z == 0.0f) continue;
             StoredDecal sd;
             sd.albedo_path = d.texture_path;
@@ -2201,9 +2215,12 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             sd.index_count = static_cast<u32>(indices.size()) - sd.first_index;
             if (sd.index_count == 0) continue;
             // Loaded with the map, as Moho loads a map's decal textures: the
-            // first frame shows them.
-            (void)texture_cache_.get_blocking(sd.albedo_path);
-            if (!sd.spec_path.empty()) (void)texture_cache_.get_blocking(sd.spec_path);
+            // first frame shows them, every frame of an animated one too.
+            for (const std::string& frame : decal_frames(sd.albedo_path))
+                (void)texture_cache_.get_blocking(frame);
+            if (!sd.spec_path.empty())
+                for (const std::string& frame : decal_frames(sd.spec_path))
+                    (void)texture_cache_.get_blocking(frame);
             stored_decals_.push_back(std::move(sd));
         }
         if (!indices.empty())
@@ -2662,7 +2679,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // the normal decals blended into RG, which the scene then reads at each
     // pixel. The scene's pass and depth draw it; the scene clears the depth
     // again after.
-    collect_frame_decals(frustum);
+    collect_frame_decals(frustum,
+                         view.cur() ? static_cast<f32>(view.cur()->tick) + view.alpha() : 0.0f);
     if (terrain_normal_framebuffer_ && terrain_normal_pipeline_ && terrain_tex_ds_ &&
         shadow_ds_[fi] && terrain_mesh_.index_count() > 0) {
         PROFILE_ZONE("Render::normals");
@@ -2904,6 +2922,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
         copy_and_continue(cmd_buf_[fi], refracting ? scene_middle_pass_ : scene_second_pass_);
         water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
+        // The water's albedo decals on its surface (M212g), as the terrain
+        // draws them once the water is down (HighFidelityTerrain).
+        record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
         // The meshes Moho draws after the water (M213b), which writes no
         // depth: over it, unrefracted.
         draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
@@ -3573,7 +3594,29 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
-void Renderer::collect_frame_decals(const Frustum& frustum) {
+const std::vector<std::string>& Renderer::decal_frames(const std::string& path) {
+    auto it = decal_frames_.find(path);
+    if (it == decal_frames_.end()) {
+        it = decal_frames_
+                 .emplace(path, decal_frame_names(path,
+                                                  [&](const std::string& name) {
+                                                      return texture_cache_.exists(name);
+                                                  }))
+                 .first;
+        // Each frame loads now, so the first round shows them all
+        if (it->second.size() > 1)
+            for (const std::string& frame : it->second) (void)texture_cache_.get(frame);
+    }
+    return it->second;
+}
+
+const std::string* Renderer::decal_frame(const std::string& path, f32 ticks) {
+    if (path.empty()) return &path;
+    const std::vector<std::string>& frames = decal_frames(path);
+    return &frames[decal_frame_at(ticks, frames.size())];
+}
+
+void Renderer::collect_frame_decals(const Frustum& frustum, f32 ticks) {
     frame_decals_.clear();
     if (!decals_enabled_ || !terrain_) return;
     const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
@@ -3591,12 +3634,15 @@ void Renderer::collect_frame_decals(const Frustum& frustum) {
             decal_lod_alpha(sd.cut_off_lod, sd.near_cut_off_lod,
                             decal_lod_metric(view, eye, half_width, sd.mid_x, ground, sd.mid_z));
         if (alpha < 1.0f / 255.0f) continue;
-        frame_decals_.push_back({sd.technique, &sd.albedo_path, &sd.spec_path, sd.u, sd.v, alpha,
-                                 sd.rotation_y, sd.first_index, sd.index_count, false});
+        // Its albedo and specular, each a frame of its sequence (CAnimTexture)
+        frame_decals_.push_back({sd.technique, decal_frame(sd.albedo_path, ticks),
+                                 decal_frame(sd.spec_path, ticks), sd.u, sd.v, alpha, sd.rotation_y,
+                                 sd.first_index, sd.index_count, false});
     }
+    // The scripts' are terrain decals too: their textures animate alike
     for (const auto& d : runtime_decals_.decal_draws())
-        frame_decals_.push_back({d.technique, &d.decal->info.texture_path,
-                                 &d.decal->info.texture2_path, d.u, d.v, d.alpha,
+        frame_decals_.push_back({d.technique, decal_frame(d.decal->info.texture_path, ticks),
+                                 decal_frame(d.decal->info.texture2_path, ticks), d.u, d.v, d.alpha,
                                  d.decal->info.rotation_y, d.first_index, d.index_count, true});
 }
 
@@ -3628,6 +3674,8 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
     pc.map_alpha[1] = static_cast<f32>(terrain_->map_height());
     pc.map_alpha[3] = technique == DecalTechnique::AlbedoXP ? 1.0f : 0.0f;
     camera_.eye_position(pc.eye[0], pc.eye[1], pc.eye[2]);
+    // The water's albedo decals lie on its surface (DecalsVSWaterAlbedo)
+    if (technique == DecalTechnique::WaterAlbedo) pc.eye[3] = water_renderer_.water_elevation();
     VkDescriptorSet no_spec = texture_cache_.specteam_fallback_descriptor();
     std::optional<bool> bound_runtime;
     for (const FrameDecal& d : frame_decals_) {
@@ -4236,11 +4284,13 @@ void Renderer::shutdown() {
     }
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
-    for (VkPipeline pipeline : {decal_glow_pipeline_, decal_glow_mask_pipeline_,
-                                decal_normal_pipeline_, terrain_normal_pipeline_})
+    for (VkPipeline pipeline :
+         {decal_glow_pipeline_, decal_glow_mask_pipeline_, decal_normal_pipeline_,
+          terrain_normal_pipeline_, decal_water_pipeline_})
         if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
-    for (VkPipelineLayout layout : {decal_glow_layout_, decal_glow_mask_layout_,
-                                    decal_normal_layout_, terrain_normal_layout_})
+    for (VkPipelineLayout layout :
+         {decal_glow_layout_, decal_glow_mask_layout_, decal_normal_layout_, terrain_normal_layout_,
+          decal_water_layout_})
         if (layout) vkDestroyPipelineLayout(device_, layout, nullptr);
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);
     if (ui_layout_) vkDestroyPipelineLayout(device_, ui_layout_, nullptr);

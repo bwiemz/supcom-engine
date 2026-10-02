@@ -4,7 +4,10 @@
 #include "map/terrain.hpp"
 
 #include <array>
+#include <functional>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace osc::renderer {
 
@@ -13,11 +16,28 @@ namespace osc::renderer {
 /// the rest over the terrain's colour, in the order HighFidelityTerrain::
 /// DrawNormals draws them: the glow masks (TDecalGlowMask), Albedo (TDecals),
 /// AlbedoXP (TDecalsXP), then, after the splats, the glowing ones
-/// (TDecalsGlow).
-enum class DecalTechnique : u8 { Normals, GlowMask, Albedo, AlbedoXP, Glow };
+/// (TDecalsGlow). WaterAlbedo (TDecalsWaterAlbedo, M212g) lies on the
+/// water's surface, drawn after the water.
+enum class DecalTechnique : u8 { Normals, GlowMask, Albedo, AlbedoXP, Glow, WaterAlbedo };
 
-/// A decal type's technique; none for the water types.
+/// A decal type's technique; none for Water Mask and Water Normals, which
+/// Moho never draws.
 std::optional<DecalTechnique> decal_technique(map::DecalType type);
+
+/// Moho's CAnimTexture (M212g): a decal's texture whose name ends in a run
+/// of digits just before its extension ("foam_01.dds") is the first frame of
+/// a sequence, the run counted up ("foam_02.dds", with its carries, as wide
+/// as it was) while the next file exists. Every other name is one frame.
+/// The next frame's name, in place; false when the name has no such run.
+bool next_decal_frame_name(std::string& name);
+/// The frames from `first`: it, then each next name `exists` finds (at most
+/// 1000, and never round to the first again).
+std::vector<std::string> decal_frame_names(const std::string& first,
+                                           const std::function<bool(const std::string&)>& exists);
+/// The frame of `count` a decal shows at `ticks` (the sim's ticks and the
+/// frame's fraction of the next): half a frame a tick (5 a second), every
+/// decal in step (CWldTerrainDecal's rate 5 times 0.1 a tick).
+size_t decal_frame_at(f32 ticks, size_t count);
 
 /// A decal's texture matrix (CWldTerrainDecal::Update), as DecalsVS
 /// applies it to a world position (a row vector, D3D's mul): its corner taken

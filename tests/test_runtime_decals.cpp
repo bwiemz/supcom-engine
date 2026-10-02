@@ -8,7 +8,9 @@
 
 #include <cmath>
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
 using namespace osc;
 using Catch::Approx;
@@ -174,17 +176,67 @@ TEST_CASE("Decal types: each one's technique", "[runtime_decals]") {
     // CWldTerrainDecal's types: Normals and Alpha Normals draw into the
     // normal pass (TDecalsNormals, TDecalsNormalsAlpha; M212e); Glow Mask,
     // Albedo, AlbedoXP and Glow over the colour (TDecalGlowMask, TDecals,
-    // TDecalsXP, TDecalsGlow; M212b, M212d); the water types neither.
+    // TDecalsXP, TDecalsGlow; M212b, M212d); Water Albedo on the water
+    // (TDecalsWaterAlbedo; M212g); Water Mask and Water Normals, which Moho
+    // never draws, neither.
     using renderer::decal_technique;
     using renderer::DecalTechnique;
     for (u32 raw = 0; raw <= 9; ++raw) {
         const auto t = static_cast<map::DecalType>(raw);
-        CHECK(decal_technique(t).has_value() == (raw == 1 || raw == 2 || raw >= 6));
+        CHECK(decal_technique(t).has_value() == (raw == 1 || raw == 2 || raw == 4 || raw >= 6));
     }
+    CHECK(decal_technique(map::DecalType::WaterAlbedo) == DecalTechnique::WaterAlbedo);
     CHECK(decal_technique(map::DecalType::Normals) == DecalTechnique::Normals);
     CHECK(decal_technique(map::DecalType::AlphaNormals) == DecalTechnique::Normals);
     CHECK(decal_technique(map::DecalType::GlowMask) == DecalTechnique::GlowMask);
     CHECK(decal_technique(map::DecalType::Albedo) == DecalTechnique::Albedo);
     CHECK(decal_technique(map::DecalType::AlbedoXP) == DecalTechnique::AlbedoXP);
     CHECK(decal_technique(map::DecalType::Glow) == DecalTechnique::Glow);
+}
+
+TEST_CASE("A decal's numbered texture is a sequence of frames, as CAnimTexture's",
+          "[runtime_decals]") {
+    using renderer::decal_frame_at;
+    using renderer::decal_frame_names;
+    using renderer::next_decal_frame_name;
+    // The digit run just before the extension counts up, carries kept
+    std::string name = "/env/foam_01.dds";
+    CHECK(next_decal_frame_name(name));
+    CHECK(name == "/env/foam_02.dds");
+    name = "/env/foam_09.dds";
+    CHECK(next_decal_frame_name(name));
+    CHECK(name == "/env/foam_10.dds");
+    name = "/env/foam_99.dds";
+    CHECK(next_decal_frame_name(name));
+    CHECK(name == "/env/foam_00.dds");
+    name = "flare";
+    CHECK_FALSE(next_decal_frame_name(name));
+    name = "flare7";
+    CHECK(next_decal_frame_name(name));
+    CHECK(name == "flare8");
+    // Digits anywhere else make one frame
+    name = "/env/eg_boulder006_albedo.dds";
+    CHECK_FALSE(next_decal_frame_name(name));
+    name = "/env/x5/foam.dds";
+    CHECK_FALSE(next_decal_frame_name(name));
+
+    // The frames: while the next exists
+    const std::set<std::string> files = {"/d/foam_01.dds", "/d/foam_02.dds", "/d/foam_03.dds",
+                                         "/d/foam_05.dds"};
+    const auto exists = [&](const std::string& f) { return files.count(f) > 0; };
+    CHECK(decal_frame_names("/d/foam_01.dds", exists) ==
+          std::vector<std::string>{"/d/foam_01.dds", "/d/foam_02.dds", "/d/foam_03.dds"});
+    CHECK(decal_frame_names("/d/foam_03.dds", exists).size() == 1);
+    CHECK(decal_frame_names("/d/rock.dds", exists).size() == 1);
+    // A run that wraps round to the first stops there
+    const auto always = [](const std::string&) { return true; };
+    CHECK(decal_frame_names("/d/f_7.dds", always).size() == 10);
+
+    // Half a frame a tick, every decal in step, wrapped
+    CHECK(decal_frame_at(0.0f, 3) == 0);
+    CHECK(decal_frame_at(1.9f, 3) == 0);
+    CHECK(decal_frame_at(2.0f, 3) == 1);
+    CHECK(decal_frame_at(4.5f, 3) == 2);
+    CHECK(decal_frame_at(6.0f, 3) == 0);
+    CHECK(decal_frame_at(1234.0f, 1) == 0);
 }
