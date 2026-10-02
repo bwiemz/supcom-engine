@@ -7,6 +7,7 @@
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/intel_sources.hpp"
 #include "sim/replay.hpp"
 #include "sim/thread_manager.hpp"
 
@@ -31,7 +32,7 @@ namespace osc::map {
 class Terrain;
 class PathfindingGrid;
 class Pathfinder;
-class VisibilityGrid;
+class IntelGrids;
 }
 
 namespace osc::audio {
@@ -131,7 +132,6 @@ struct SimContext {
     const map::Terrain* terrain;
     const map::Pathfinder* pathfinder;
     map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
-    const map::VisibilityGrid* visibility_grid;
     SimState* sim;
     static constexpr u32 MAX_EFFICIENCY_ARMIES = 16;
     std::array<ArmyEfficiency, MAX_EFFICIENCY_ARMIES> army_efficiency;
@@ -184,13 +184,14 @@ public:
         return occupied_footprints_.count(entity_id) != 0;
     }
     const map::Pathfinder* pathfinder() const { return pathfinder_.get(); }
-    void build_visibility_grid();
+    /// Every army's intel grids (M215g), made for the map, its armies and
+    /// its fog of war (and made again should those change).
+    void build_intel_grids();
     void build_spatial_grid();
-    map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
-    const map::VisibilityGrid* visibility_grid() const { return visibility_grid_.get(); }
+    const map::IntelGrids* intel_grids() const { return intel_grids_.get(); }
     /// Intel a script gave an entity that isn't a unit: retail's VizMarker
-    /// calls InitIntel(army, type, radius) to reveal an area. Painted each
-    /// tick like a unit's, until the entity goes.
+    /// calls InitIntel(army, type, radius) to reveal an area. Painted like a
+    /// unit's, until the entity goes.
     struct EntityIntel {
         struct Source {
             f32 radius = 0;
@@ -206,8 +207,37 @@ public:
     }
 
     void add_temp_vision(u32 army, f32 x, f32 z, f32 radius, f32 lifetime_sec) {
-        temp_visions_.push_back({army, x, z, radius, static_cast<i32>(lifetime_sec * 10.0f)});
+        temp_visions_.push_back(
+            {army, x, z, radius, static_cast<i32>(lifetime_sec * 10.0f), false});
     }
+
+    /// Moho's recon senses (EReconFlags' low bits).
+    enum ReconSense : u8 {
+        kReconLOS = 1,
+        kReconRadar = 2,
+        kReconSonar = 4,
+        kReconOmni = 8,
+        kReconAll = 15,
+    };
+    /// What army `viewer` senses now of entity `e` at `pos` (Moho's
+    /// ReconCanDetect): nothing off the playable area; everything of its own
+    /// or an ally's; else its own grids and those of every army allied to
+    /// it, by the entity's layer (under the water, the water grid, sonar and
+    /// omni; on it, sight, radar, sonar and omni; else sight, radar and
+    /// omni), less what fields and the unit's own cloak and stealth hide.
+    u8 recon_of(const Entity& e, const Vector3& pos, u32 viewer) const;
+    u8 recon_of(const Entity& e, u32 viewer) const { return recon_of(e, e.position(), viewer); }
+    /// ... of a point, no entity there (an effect, a decal): under the water
+    /// by its height.
+    u8 recon_at(const Vector3& pos, u32 viewer) const;
+    /// ... of any part of a world rectangle at height `y` (GetReconFlagsForRect;
+    /// a decal's bounds).
+    u8 recon_in(f32 x0, f32 z0, f32 x1, f32 z1, f32 y, u32 viewer) const;
+    /// The armies whose grids army `viewer` reads: its own, and every army
+    /// that calls it an ally (a bit each).
+    u32 intel_sharers(u32 viewer) const;
+    /// The height of the water's surface, or far below the map without water.
+    f32 water_surface() const;
 
     // Audio
     /// The application's sound engine (not owned: it outlives the sim, and
@@ -696,10 +726,11 @@ public:
         bool radar = false;
         bool sonar = false;
         bool omni = false;
+        bool any() const { return vision || radar || sonar || omni; }
     };
     static constexpr u32 MAX_VIS_ARMIES = 16;
-    /// Every army's recon of unit `id` as of the last tick, or null (not a
-    /// unit, or no visibility grid).
+    /// Every army's recon of unit `id` as of the last tick's pass, or null
+    /// (not a unit, or no grids).
     const std::array<EntityVisSnapshot, MAX_VIS_ARMIES>* entity_recon(u32 id) const {
         const auto it = prev_entity_vis_.find(id);
         return it == prev_entity_vis_.end() ? nullptr : &it->second;
@@ -835,15 +866,24 @@ private:
     /// destroy hooks), in entity then army order, and forgotten.
     void destroy_gone_blips();
 
-    // Stealth-aware intel helpers with pre-cached stealth flags to avoid
-    // redundant per-army is_intel_enabled string lookups in inner loops.
-    bool has_effective_radar_cached(const Entity* entity, u32 req_army,
-                                    bool radar_stealth) const;
-    bool has_effective_sonar_cached(const Entity* entity, u32 req_army,
-                                    bool sonar_stealth) const;
-    bool has_any_intel_cached(const Entity* entity, u32 req_army,
-                              bool radar_stealth, bool sonar_stealth,
-                              bool cloaked) const;
+    /// Whether army `army` sensed unit `id` on the last pass.
+    bool sensed_now(u32 id, u32 army) const {
+        const auto it = prev_entity_vis_.find(id);
+        return it != prev_entity_vis_.end() && army < MAX_VIS_ARMIES && it->second[army].any();
+    }
+    /// The intel each entity paints, brought up to date (Moho's handles:
+    /// enable, disable, radius, moving and stopping) before the recon pass.
+    void sync_intel();
+    /// Paint (+1) or rub out (-1) a handle of `army`'s intel.
+    void paint_intel(i32 army, IntelSource source, const Vector3& pos, u32 radius, i8 delta);
+    /// The armies' senses before counters, at `pos` (GetNewReconFor of the
+    /// sharers).
+    u8 recon_senses(const Vector3& pos, u32 sharers, bool below, bool sonar) const;
+    /// Less what the viewer's counter grids and the unit's own cloak and
+    /// stealth hide (ApplyReconCounters).
+    u8 recon_counters(const Vector3& pos, u32 viewer, u8 senses, const Unit* unit) const;
+    /// recon_of, the viewer's sharers given (the pass works them out once).
+    u8 recon_detect(const Entity& e, const Vector3& pos, u32 viewer, u32 sharers) const;
 
     lua_State* L_;
     // Declared before entity_registry_ so it outlives the registry that holds a
@@ -885,7 +925,9 @@ private:
     void release_script_handle(Entity& entity);
 
     std::unique_ptr<map::Pathfinder> pathfinder_;
-    std::unique_ptr<map::VisibilityGrid> visibility_grid_;
+    std::unique_ptr<map::IntelGrids> intel_grids_;
+    std::map<u32, PaintedIntel> painted_intel_; ///< by entity id
+    u32 intel_pass_ = 0;
     audio::SoundManager* sound_manager_ = nullptr;
     std::function<void(const SimState&)> tick_observer_;
     std::ostream* checksum_trace_ = nullptr;
@@ -921,6 +963,7 @@ private:
         u32 army;
         f32 x, z, radius;
         i32 remaining_ticks;
+        bool painted; ///< in its army's vision grid
     };
     std::vector<TempVision> temp_visions_;
     std::map<u32, EntityIntel> entity_intel_; ///< by entity id: painted in id order
@@ -993,10 +1036,16 @@ public:
     /// and forgets it. A negative army's blip is a fresh one, kept nowhere.
     void push_blip(lua_State* L, u32 entity_id, i32 army);
 
-    /// Stealth-aware intel queries (check RadarStealth/SonarStealth).
-    bool has_effective_radar(const Entity* entity, u32 req_army) const;
-    bool has_effective_sonar(const Entity* entity, u32 req_army) const;
-    bool has_any_intel(const Entity* entity, u32 req_army) const;
+    /// Army `req_army`'s recon of `entity` now (recon_of): radar, sonar, any.
+    bool has_effective_radar(const Entity* entity, u32 req_army) const {
+        return entity && (recon_of(*entity, req_army) & kReconRadar) != 0;
+    }
+    bool has_effective_sonar(const Entity* entity, u32 req_army) const {
+        return entity && (recon_of(*entity, req_army) & kReconSonar) != 0;
+    }
+    bool has_any_intel(const Entity* entity, u32 req_army) const {
+        return entity && recon_of(*entity, req_army) != 0;
+    }
 };
 
 } // namespace osc::sim

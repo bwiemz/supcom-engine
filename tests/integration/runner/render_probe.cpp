@@ -78,16 +78,20 @@ OffscreenShots::OffscreenShots(TestContext& ctx) : ctx_(ctx) {
     // The backdrop the tests' scenery stands against, past its ground: the
     // blue-grey the engine cleared to until the sky dome (M210b), with no glow
     renderer_.set_clear_color(kBackdrop);
+    history_.set_sight_army(renderer_.player_army());
     history_.capture(ctx_.sim);
     history_.capture(ctx_.sim);
 }
 
 void OffscreenShots::recapture() {
+    history_.set_sight_army(renderer_.player_army());
     history_.capture(ctx_.sim);
     history_.capture(ctx_.sim);
 }
 
 void OffscreenShots::redraw(const std::unordered_set<u32>* selected) {
+    // The sight of the army the test watches (it may have changed since)
+    history_.set_sight_army(renderer_.player_army(), &ctx_.sim);
     renderer_.render(sim::FrameView(&history_.prev(), &history_.cur(), 1.0f), history_.events(),
                      nullptr, ctx_.L, nullptr, selected);
     renderer_.poll_events(0.016);
@@ -118,6 +122,7 @@ ImageRGBA8 OffscreenShots::shoot_frame(const map::Terrain& terrain, f32 x, f32 z
 ImageRGBA8 OffscreenShots::capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
                                    bool with_world) {
     sim::WorldHistory& world = with_world ? history_ : empty_;
+    world.set_sight_army(renderer_.player_army(), &ctx_.sim);
     renderer::Camera& cam = renderer_.camera();
     const f32 heading = cam.heading();
     const f32 pitch = cam.pitch();

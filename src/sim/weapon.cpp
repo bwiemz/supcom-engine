@@ -9,7 +9,6 @@
 #include "sim/projectile.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
-#include "map/visibility_grid.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -27,20 +26,15 @@ namespace {
 constexpr f32 kGravity = Projectile::GRAVITY;
 constexpr f32 kPi = 3.14159265358979f;
 
-bool has_omni_detection(const Unit& owner, const Entity& target,
-                        const map::VisibilityGrid* visibility_grid) {
-    if (!visibility_grid || owner.army() < 0) return false;
-    const auto& pos = target.position();
-    return visibility_grid->has_omni(pos.x, pos.z,
-                                     static_cast<u32>(owner.army()));
+bool has_omni_detection(const Unit& owner, const Entity& target, const SimState* sim) {
+    if (!sim || owner.army() < 0) return false;
+    return (sim->recon_of(target, static_cast<u32>(owner.army())) & SimState::kReconOmni) != 0;
 }
 
-bool is_weapon_targetable(const Unit& owner, const Entity& target,
-                          const map::VisibilityGrid* visibility_grid) {
+bool is_weapon_targetable(const Unit& owner, const Entity& target, const SimState* sim) {
     if (!target.is_unit()) return true;
     const auto* target_unit = static_cast<const Unit*>(&target);
-    if (target_unit->is_cloaked() &&
-        !has_omni_detection(owner, target, visibility_grid)) {
+    if (target_unit->is_cloaked() && !has_omni_detection(owner, target, sim)) {
         return false;
     }
     return true;
@@ -150,8 +144,7 @@ bool Weapon::call_script(lua_State* L, const char* method, const char* arg) cons
     return result;
 }
 
-void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
-                    const map::VisibilityGrid* visibility_grid, const SimState* sim) {
+void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
     if (fire_clock > 0) --fire_clock;
 
     if (!enabled || fire_on_death) return;
@@ -167,7 +160,7 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
     } else {
         // HoldFire (1) = don't auto-target or fire at all
         if (owner.fire_state() == 1) return;
-        update_targeting(owner, registry, visibility_grid, sim);
+        update_targeting(owner, registry, sim);
     }
     update_aim(owner, registry, L);
     if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
@@ -184,7 +177,7 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return;
-    if (try_fire(owner, registry, L, visibility_grid)) fire_clock = fire_period();
+    if (try_fire(owner, registry, L, sim)) fire_clock = fire_period();
 }
 
 void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry) {
@@ -236,8 +229,7 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
     fire_clock = fire_period();
 }
 
-bool Weapon::can_target(const Unit& owner, const Entity& target,
-                        const map::VisibilityGrid* visibility_grid, const SimState* sim) const {
+bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim) const {
     // A weapon shoots units, or, with TargetType RULEWTT_Projectile, the
     // other side's projectiles (M206b).
     if (target.destroyed() || target.entity_id() == owner.entity_id()) return false;
@@ -246,7 +238,7 @@ bool Weapon::can_target(const Unit& owner, const Entity& target,
     if (sim ? !sim->is_enemy(owner.army(), target.army()) : target.army() == owner.army())
         return false;
     if (target.is_unit()) {
-        if (!is_weapon_targetable(owner, target, visibility_grid)) return false;
+        if (!is_weapon_targetable(owner, target, sim)) return false;
         const auto& unit = static_cast<const Unit&>(target);
         if (fire_target_layer_caps != 0xFF &&
             !(layer_to_bit(unit.layer()) & fire_target_layer_caps))
@@ -296,12 +288,11 @@ int Weapon::priority_of(const Entity& target) const {
     return -1;
 }
 
-void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
-                              const map::VisibilityGrid* visibility_grid, const SimState* sim) {
+void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
     // A target this weapon can no longer shoot is dropped at once.
     if (target_entity_id != 0) {
         const Entity* target = registry.find(target_entity_id);
-        if (!target || !can_target(owner, *target, visibility_grid, sim)) target_entity_id = 0;
+        if (!target || !can_target(owner, *target, sim)) target_entity_id = 0;
     }
 
     // An attack order's target comes first, for every weapon that can hit
@@ -309,7 +300,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     if (const u32 ordered = attack_order_target(owner); ordered != 0) {
         if (ordered == target_entity_id) return;
         const Entity* target = registry.find(ordered);
-        if (target && can_target(owner, *target, visibility_grid, sim)) {
+        if (target && can_target(owner, *target, sim)) {
             set_target_entity(ordered);
             return;
         }
@@ -339,7 +330,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     for (const u32 id : registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
         Entity* e = registry.find(id);
-        if (!e || !can_target(owner, *e, visibility_grid, sim)) continue;
+        if (!e || !can_target(owner, *e, sim)) continue;
         // A missile already held by as many weapons as it wants shooting at
         // it (a nuke's DesiredShooterCap is 1) is left to them.
         if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;
@@ -423,14 +414,12 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
     }
 }
 
-bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
-                      lua_State* L,
-                      const map::VisibilityGrid* visibility_grid) {
+bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
     // At a unit, or at its ground target.
     auto* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
     if (target_entity_id != 0 &&
         (!target || target->destroyed() || target->do_not_target() ||
-         !is_weapon_targetable(owner, *target, visibility_grid) ||
+         !is_weapon_targetable(owner, *target, sim) ||
          (fire_target_layer_caps != 0xFF && target->is_unit() &&
           !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)))) {
         target_entity_id = 0;

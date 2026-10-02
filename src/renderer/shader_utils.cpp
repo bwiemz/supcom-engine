@@ -259,16 +259,11 @@ vec3 applyWaterColor(vec3 lit, vec2 blendUV) {
     return mix(lit, waterTint.rgb, waterTint.a);
 }
 
-// Fog of war: CPU-blurred texture, smooth transitions
-// FA shows unexplored at ~45% brightness with mild desaturation
+// Fog of war: what the army doesn't see is darkened as FA's frame.fx
+// Vision pass darkens it, black at alpha 0.33 over the colour (M215g).
 vec3 applyFogOfWar(vec3 lit, vec2 blendUV) {
     float fogVal = texture(fogMap, blendUV).r;
-    float fogBright = mix(0.45, 1.0, fogVal);
-    // Mild desaturation in unexplored areas
-    float fogSat = mix(0.65, 1.0, fogVal);
-    vec3 gray = vec3(dot(lit, vec3(0.299, 0.587, 0.114)));
-    lit = mix(gray, lit, fogSat);
-    return lit * fogBright;
+    return lit * mix(0.67, 1.0, fogVal);
 }
 )glsl";
 

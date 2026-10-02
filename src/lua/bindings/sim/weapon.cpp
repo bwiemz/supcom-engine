@@ -30,7 +30,6 @@
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
-#include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
 #include "sim/platoon.hpp"
@@ -458,7 +457,7 @@ static int weapon_FireWeapon(lua_State* L) {
         lua_pushboolean(L, fired ? 1 : 0);
         return 1;
     }
-    bool fired = w->try_fire(unit, sim->entity_registry(), L);
+    bool fired = w->try_fire(unit, sim->entity_registry(), L, sim);
     lua_pushboolean(L, fired ? 1 : 0);
     return 1;
 }

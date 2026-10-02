@@ -2,11 +2,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "map/visibility_grid.hpp"
+#include "map/intel_grid.hpp"
 #include "sim/sim_state.hpp"
 
-using osc::map::VisFlag;
-using osc::map::VisibilityGrid;
+using osc::map::IntelGrids;
+using osc::map::IntelLayer;
 using osc::sim::FogMode;
 
 TEST_CASE("parse_fog_mode maps FA keys", "[fow]") {
@@ -16,29 +16,16 @@ TEST_CASE("parse_fog_mode maps FA keys", "[fow]") {
     CHECK(osc::sim::parse_fog_mode("something") == FogMode::Explored);
 }
 
-TEST_CASE("VisibilityGrid::reveal_all lights the whole map for an army", "[fow]") {
-    VisibilityGrid grid(256, 256); // 16x16 cells
-    const osc::u32 army = 0;
-
-    // Nothing is visible before revealing.
-    CHECK_FALSE(grid.has_vision(8.0f, 8.0f, army));
-    CHECK_FALSE(grid.has_omni(200.0f, 40.0f, army));
-
-    grid.reveal_all(army);
-
-    for (osc::u32 gz = 0; gz < grid.grid_height(); ++gz) {
-        for (osc::u32 gx = 0; gx < grid.grid_width(); ++gx) {
-            VisFlag f = grid.get(gx, gz, army);
-            CHECK(osc::map::has_flag(f, VisFlag::Vision));
-            CHECK(osc::map::has_flag(f, VisFlag::Omni));
-            CHECK(osc::map::has_flag(f, VisFlag::EverSeen));
-        }
-    }
-    CHECK(grid.has_vision(200.0f, 40.0f, army));
-    CHECK(grid.has_omni(8.0f, 8.0f, army));
-
-    // Other armies are unaffected.
-    CHECK_FALSE(grid.has_vision(8.0f, 8.0f, 1));
+TEST_CASE("Without fog of war an army keeps no sight grids, as Moho's", "[fow]") {
+    const IntelGrids fogged(256, 256, 2, true);
+    CHECK(fogged.grid(0, IntelLayer::Vision).width() == 128);
+    CHECK(fogged.grid(1, IntelLayer::Water).width() == 64);
+    const IntelGrids clear(256, 256, 2, false);
+    CHECK(clear.grid(0, IntelLayer::Vision).empty());
+    CHECK(clear.grid(1, IntelLayer::Water).empty());
+    // Radar, sonar, omni and the counter grids still are
+    CHECK(clear.grid(0, IntelLayer::Radar).width() == 64);
+    CHECK(clear.grid(1, IntelLayer::VisionCounter).width() == 64);
 }
 
 TEST_CASE("SimState defaults to explored fog and honors FogOfWar=none", "[fow]") {

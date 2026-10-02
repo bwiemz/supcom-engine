@@ -909,7 +909,8 @@ public:
         jam_radius_max_ = radius_max;
     }
     f32 get_intel_radius(const std::string& type) const;
-    /// InitIntel: give the unit this intel, switched on.
+    /// InitIntel: give the unit this intel, a new handle, off until
+    /// EnableIntel (Moho).
     void init_intel(const std::string& type, f32 radius);
     /// Register intel the unit has (from its blueprint), switched off until
     /// the script enables it. Leaves intel the unit already has untouched.
