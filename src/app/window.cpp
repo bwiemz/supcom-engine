@@ -217,6 +217,7 @@ void App::Window::publish_window_objects() {
     // lists the display's modes (M217h)
     size_root_frame(uL, root_width, root_height);
     publish_adapter_options(uL, display_modes, adapter_overridden);
+    publish_fidelity_options(uL);
 }
 
 std::optional<int> App::Window::open_replay() {

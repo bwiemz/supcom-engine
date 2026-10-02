@@ -174,6 +174,31 @@ void test_window(TestContext& ui, TestContext& sim, const std::function<void(int
                             disabled));
     }
 
+    // Test 5: the fidelity options as retail publishes them at startup: no
+    // Ultra preset, Medium by default; antialiasing off only
+    {
+        app::publish_fidelity_options(L);
+        const std::string find =
+            "(function() for _, s in import('/lua/options/optionsLogic.lua').GetOptionsData() do "
+            "for _, i in s.items do if i.key == '{}' then return i end end end end)()";
+        const auto item = [&](const char* key) { return fmt::format(fmt::runtime(find), key); };
+        const std::string presets = item("fidelity_presets");
+        const f64 preset = ui_number(ui, presets + ".default");
+        const f64 preset_states = ui_number(ui, "table.getn(" + presets + ".custom.states)");
+        const f64 last_preset = ui_number(ui, presets + ".custom.states[4].key");
+        const f64 shadows = ui_number(ui, item("shadow_quality") + ".default");
+        const f64 fidelity_states =
+            ui_number(ui, "table.getn(" + item("fidelity") + ".custom.states)");
+        const f64 aa_states =
+            ui_number(ui, "table.getn(" + item("antialiasing") + ".custom.states)");
+        t.check(preset == 1 && preset_states == 4 && last_preset == 4 && shadows == 1 &&
+                    fidelity_states == 3 && aa_states == 1,
+                fmt::format("Test 5: the preset {} of {} states (last {}), shadows {}, fidelity {} "
+                            "states, antialiasing {}",
+                            preset, preset_states, last_preset, shadows, fidelity_states,
+                            aa_states));
+    }
+
     // Back to the capture size for whatever runs after
     prefs.set_int("Windows.Main.width", 1600);
     prefs.set_int("Windows.Main.height", 900);

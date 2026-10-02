@@ -163,6 +163,23 @@ void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes
     }
 }
 
+void publish_fidelity_options(lua_State* uL) {
+    run(uL,
+        "local logic = import('/lua/options/optionsLogic.lua')\n"
+        "logic.SetCustomData('fidelity_presets', {states = {\n"
+        "    {text = '<LOC _Low>', key = 0}, {text = '<LOC _Medium>', key = 1},\n"
+        "    {text = '<LOC _High>', key = 2}, {text = '<LOC _Custom>', key = 4}}}, 1)\n"
+        "logic.SetCustomData('fidelity', {states = {\n"
+        "    {text = '<LOC _Low>', key = 0}, {text = '<LOC _Medium>', key = 1},\n"
+        "    {text = '<LOC _High>', key = 2}}}, 1)\n"
+        "logic.SetCustomData('shadow_quality', {states = {\n"
+        "    {text = '<LOC _Off>', key = 0}, {text = '<LOC _Low>', key = 1},\n"
+        "    {text = '<LOC _Medium>', key = 2}, {text = '<LOC _High>', key = 3}}}, 1)\n"
+        "logic.SetCustomData('antialiasing', {states = {\n"
+        "    {text = '<LOC OPTIONS_0029>Off', key = 0}}}, 0)\n",
+        "publishing the fidelity options");
+}
+
 void register_window_commands(ui::Console& console, core::Preferences& prefs, bool overridden) {
     using Args = std::vector<std::string>;
     // SC_PrimaryAdapter <windowed | w,h,fps>: the options screen's Apply.
