@@ -46,6 +46,11 @@ void size_root_frame(lua_State* uL, u32 width, u32 height);
 /// adapter options' states, through optionsLogic.SetCustomData.
 void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes, bool overridden);
 
+/// The fidelity options' states and defaults, as retail's executable sets
+/// them at startup: no Ultra preset, Medium by default, low shadows; and
+/// antialiasing off only, for the engine draws without multisampling
+void publish_fidelity_options(lua_State* uL);
+
 /// SC_PrimaryAdapter, SC_SecondaryAdapter and SC_VerticalSync. They find
 /// the renderer the UI state was given ("__osc_renderer").
 void register_window_commands(ui::Console& console, core::Preferences& prefs, bool overridden);
