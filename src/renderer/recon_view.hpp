@@ -81,7 +81,7 @@ public:
     /// fake (M215e): each its jammer's record at the fake's place, under an
     /// id of its own (kFakeBlip set), seen as a blip.
     const std::vector<sim::EntityRecord>& fakes() const { return fakes_; }
-    static constexpr u32 kFakeBlip = 0x80000000u;
+    static constexpr u32 kFakeBlip = sim::kFakeBlipBit;
 
     /// Whether it sees everything (an observer, or no grid).
     bool sees_everything() const { return everything_; }

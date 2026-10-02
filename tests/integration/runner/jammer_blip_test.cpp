@@ -3,15 +3,18 @@
 // (JammerBlips 5, JamRadius 12) and, 70 away, ARMY_1's radar (115 across
 // its reach, 20 of sight). With its Jammer on and ARMY_1's radar on it,
 // ARMY_1 holds five fakes within 12 of it, which its radar senses and it
-// can't tell from real (the engineer's own blip beside them); a sight of
-// the spot unmasks them; the Jammer off, or the engineer gone, they go. The
-// offsets come from the sim's stream, so a replay repeats them.
+// can't tell from real (the engineer's own blip beside them), and its
+// influence map counts them as the engineer's threat (M215f); a sight of
+// the spot unmasks them, and they count no more; the Jammer off, or the
+// engineer gone, they go. The offsets come from the sim's stream, so a
+// replay repeats them.
 
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
 
 #include "lua/lua_state.hpp"
+#include "sim/influence_map.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
@@ -61,6 +64,23 @@ void test_jammer_blips(TestContext& ctx) {
     const auto run = [&](int ticks) {
         for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
+    // ARMY_1's influence map: its entries for the engineer's fakes, and
+    // ARMY_2's threat about the engineer (summed every 30 ticks)
+    sim::InfluenceMap* threat = ctx.sim.influence_map(0);
+    const auto fake_entries = [&] {
+        size_t n = 0;
+        if (threat)
+            threat->for_each_entry([&](const sim::InfluenceMap::EntryView& v) {
+                n += (v.id & sim::kFakeBlipBit) != 0 && v.source_army == 1 ? 1 : 0;
+            });
+        return n;
+    };
+    const auto threat_about = [&] {
+        if (!threat) return 0.0f;
+        const i32 c = threat->cell_of({sx, 0, sz});
+        return threat->threat_rect(c % threat->width(), c / threat->width(), 1, nullptr,
+                                   sim::ThreatType::Overall, 1);
+    };
 
     lua("__osc_jb_engineer:DisableIntel('Jammer')\n");
     run(5);
@@ -82,13 +102,24 @@ void test_jammer_blips(TestContext& ctx) {
     run(3);
     t.check(offsets() && same(*offsets(), before), "a fake keeps its place about the jammer");
 
-    // Sight over the engineer: the fakes it covers are known fake.
-    for (int i = 0; i < 3; ++i) {
-        lua("CreateVisibleAreaAtPoint(1, " + std::to_string(sx) + ", 0, " + std::to_string(sz) +
-            ", 30, 0.1)\n");
-        run(1);
-    }
+    // Fed as the engineer (SurfaceThreatLevel 1) at their own places, and
+    // summed at the map's next update
+    run(31);
+    const size_t held = fake_entries();
+    t.check(held == 5, "ARMY_1's influence map holds the 5 fakes (" + std::to_string(held) + ")");
+    const f32 fooled = threat_about();
+
+    // Sight over the engineer: the fakes it covers are known fake, and add
+    // no threat from the next update on.
+    lua("CreateVisibleAreaAtPoint(1, " + std::to_string(sx) + ", 0, " + std::to_string(sz) +
+        ", 30, 5)\n");
+    run(2);
     t.check(shown() == 0, "seen, the fakes are known fake");
+    run(31);
+    const f32 seen = threat_about();
+    t.check(std::abs(fooled - seen - 5.0f) < 1e-3f, "known fake, they add no threat (" +
+                                                        std::to_string(fooled) + " -> " +
+                                                        std::to_string(seen) + ")");
 
     lua("__osc_jb_engineer:DisableIntel('Jammer')\n");
     run(3);

@@ -264,31 +264,11 @@ void WorldSnapshot::clear() {
 /// radar above the water or sonar in it (the jammer's stealth counting);
 /// known fake in its sight, under its omni, or off the playable area.
 static void capture_fake_blips(const SimState& sim, WorldSnapshot& out) {
-    const map::VisibilityGrid* grid = sim.visibility_grid();
-    if (!grid) return;
-    for (const auto& [key, offsets] : sim.jam_offsets()) {
-        const auto* e = sim.entity_registry().find(static_cast<u32>(key >> 8));
-        if (!e || e->destroyed() || !e->is_unit()) continue;
-        const auto& u = static_cast<const Unit&>(*e);
-        const auto viewer = static_cast<u32>(key & 0xFF);
-        const std::string& layer = u.layer();
-        const bool under = layer == "Sub" || layer == "Seabed";
-        const bool wet = under || layer == "Water";
-        for (size_t i = 0; i < offsets.size(); ++i) {
-            const Vector3 at{u.position().x + offsets[i].x, u.position().y + offsets[i].y,
-                             u.position().z + offsets[i].z};
-            const bool sight = grid->has_vision(at.x, at.z, viewer);
-            const bool omni = grid->has_omni(at.x, at.z, viewer);
-            const bool radar =
-                !under && !u.has_radar_stealth() && grid->has_radar(at.x, at.z, viewer);
-            const bool sonar = wet && !u.has_sonar_stealth() && grid->has_sonar(at.x, at.z, viewer);
-            if (!(sight || omni || radar || sonar)) continue;
-            const Vector3 kept = sim.clamp_to_playable(at, static_cast<i32>(viewer));
-            const bool off_map = kept.x != at.x || kept.z != at.z;
-            if (sight || omni || off_map) continue; // known fake
-            out.fake_blips.push_back(
-                {u.entity_id(), static_cast<u8>(viewer), static_cast<u8>(i), at});
-        }
+    // Those the army senses and can't tell from real
+    for (const SimState::HeldFake& f : sim.held_fakes()) {
+        if (!f.sensed || f.known_fake) continue;
+        out.fake_blips.push_back(
+            {f.jammer, static_cast<u8>(f.viewer), static_cast<u8>(f.index), f.position});
     }
 }
 

@@ -714,6 +714,23 @@ public:
     const std::map<u64, std::vector<Vector3>>& jam_offsets() const { return jam_offsets_; }
     static u64 jam_key(u32 unit, u32 army) { return (static_cast<u64>(unit) << 8) | army; }
 
+    /// A fake blip an army holds, where it is now and what the army makes of
+    /// it (Moho's CAiReconDBImpl::UpdateBlip for a fake).
+    struct HeldFake {
+        u32 jammer = 0;             ///< the jamming unit
+        const Unit* unit = nullptr; ///< it, until the sim moves on
+        u32 viewer = 0;             ///< the army holding it (0-based)
+        u32 index = 0;              ///< which of the jammer's JammerBlips
+        Vector3 position;
+        bool sensed = false; ///< the army's sight, omni, radar or sonar reach it
+        /// RECON_KnownFake: in the army's sight or omni, or off the
+        /// playable area; the army can tell it from real
+        bool known_fake = false;
+    };
+    /// The fakes army `viewer` holds (every army's: -1), by jammer, army and
+    /// index.
+    std::vector<HeldFake> held_fakes(i32 viewer = -1) const;
+
     bool ever_in_sight(u32 id, u32 army) const {
         const auto it = los_ever_.find(id);
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
