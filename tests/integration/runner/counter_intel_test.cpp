@@ -56,8 +56,9 @@ void test_counter_intel(TestContext& ctx) {
     const u32 gen = spawn_unit(ctx, "__osc_ci_gen", "ueb1101", "ARMY_2", gen_at);
     (void)spawn_unit(ctx, "__osc_ci_sensor", "ueb1101", "ARMY_1", {sx, sz - 40});
     run_lua(ctx,
-            "__osc_ci_cloak:InitIntel(2, 'Cloak', 1)\n"
+            "__osc_ci_cloak:InitIntel(2, 'Cloak', 1) __osc_ci_cloak:EnableIntel('Cloak')\n"
             "__osc_ci_stealth:InitIntel(2, 'RadarStealth', 1)\n"
+            "__osc_ci_stealth:EnableIntel('RadarStealth')\n"
             "local s = __osc_ci_sensor\n"
             "s:DisableIntel('Vision') s:DisableIntel('Omni')\n"
             "s:InitIntel(1, 'Radar', 90) s:InitIntel(1, 'Sonar', 90) s:InitIntel(1, 'Omni', 90)\n"

@@ -14,7 +14,7 @@
 #include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
-#include "map/visibility_grid.hpp"
+#include "map/intel_grid.hpp"
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
@@ -328,6 +328,9 @@ FogMode parse_fog_mode(const std::string& value) {
 
 void SimState::set_fog_of_war(const std::string& mode) {
     fog_mode_ = parse_fog_mode(mode);
+    // Without fog there are no sight grids (and with it, they're needed)
+    if (intel_grids_ && intel_grids_->fog_of_war() != (fog_mode_ != FogMode::None))
+        build_intel_grids();
 }
 
 void SimState::set_no_rush(f32 seconds, f32 radius) {
@@ -463,8 +466,9 @@ void SimState::set_alliance(i32 army1, i32 army2, Alliance alliance) {
 namespace {
 
 /// The armies as the decals' sight rules ask about them (M212c): "can
-/// detect" is some cell of the army's sight grid in the decal's bounds in
-/// its line of sight now (the grid already holds its allies' sight).
+/// detect" is line of sight now over some part of the decal's bounds, the
+/// army's or an ally's (M215g: by the decal's height, under the water the
+/// water grid).
 class SimDecalArmies final : public DecalArmies {
 public:
     explicit SimDecalArmies(const SimState& sim) : sim_(sim) {}
@@ -477,10 +481,10 @@ public:
     bool allied(size_t army, size_t other) const override {
         return sim_.is_ally(static_cast<i32>(army), static_cast<i32>(other));
     }
-    bool detects(size_t observer, const DecalBounds& rect, f32 /*y*/) const override {
-        const map::VisibilityGrid* grid = sim_.visibility_grid();
-        return grid && grid->any_vision(rect.min_x, rect.min_z, rect.max_x, rect.max_z,
-                                        static_cast<u32>(observer));
+    bool detects(size_t observer, const DecalBounds& rect, f32 y) const override {
+        return (sim_.recon_in(rect.min_x, rect.min_z, rect.max_x, rect.max_z, y,
+                              static_cast<u32>(observer)) &
+                SimState::kReconLOS) != 0;
     }
 
 private:
@@ -517,15 +521,22 @@ bool SimState::is_neutral(i32 army1, i32 army2) const {
     return armies_[army1]->is_neutral(army2);
 }
 
-void SimState::build_visibility_grid() {
+void SimState::build_intel_grids() {
     if (!terrain_) return;
-    visibility_grid_ = std::make_unique<map::VisibilityGrid>(
-        terrain_->map_width(), terrain_->map_height());
-    visibility_grid_->build_height_grid(*terrain_);
-    spdlog::info("Built visibility grid: {}x{} cells (cell_size={})",
-                 visibility_grid_->grid_width(),
-                 visibility_grid_->grid_height(),
-                 visibility_grid_->cell_size());
+    const auto armies =
+        static_cast<u32>(std::min(army_count(), static_cast<size_t>(MAX_VIS_ARMIES)));
+    intel_grids_ = std::make_unique<map::IntelGrids>(terrain_->map_width(), terrain_->map_height(),
+                                                     armies, fog_mode_ != FogMode::None);
+    // What is painted stays painted, where it was (Moho rebuilds its grids
+    // from its handles so after a load).
+    for (const auto& [id, rec] : painted_intel_)
+        for (size_t s = 0; s < kIntelSources; ++s)
+            if (const IntelHandle& h = rec.handles[s]; h.enabled)
+                paint_intel(rec.army, static_cast<IntelSource>(s), h.pos, h.radius, 1);
+    for (const TempVision& tv : temp_visions_)
+        if (tv.painted)
+            paint_intel(static_cast<i32>(tv.army), IntelSource::Vision, {tv.x, 0, tv.z},
+                        static_cast<u32>(std::max(0.0f, tv.radius)), 1);
 }
 
 void SimState::build_spatial_grid() {
@@ -544,89 +555,6 @@ const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,
     auto& snap = it->second[army];
     // A snapshot is valid if entity_army has been set (>= 0)
     return snap.entity_army >= 0 ? &snap : nullptr;
-}
-
-// --- Stealth-aware intel query helpers ---
-
-bool SimState::has_effective_radar(const Entity* entity,
-                                    u32 req_army) const {
-    if (!visibility_grid_ || !entity) return false;
-    auto& pos = entity->position();
-    if (!visibility_grid_->has_radar(pos.x, pos.z, req_army)) return false;
-    // RadarStealth negates radar unless observer has Omni
-    if (entity->is_unit()) {
-        auto* unit = static_cast<const Unit*>(entity);
-        if (unit->is_intel_enabled("RadarStealth") &&
-            !visibility_grid_->has_omni(pos.x, pos.z, req_army))
-            return false;
-    }
-    return true;
-}
-
-bool SimState::has_effective_sonar(const Entity* entity,
-                                    u32 req_army) const {
-    if (!visibility_grid_ || !entity) return false;
-    auto& pos = entity->position();
-    if (!visibility_grid_->has_sonar(pos.x, pos.z, req_army)) return false;
-    // SonarStealth negates sonar unless observer has Omni
-    if (entity->is_unit()) {
-        auto* unit = static_cast<const Unit*>(entity);
-        if (unit->is_intel_enabled("SonarStealth") &&
-            !visibility_grid_->has_omni(pos.x, pos.z, req_army))
-            return false;
-    }
-    return true;
-}
-
-bool SimState::has_any_intel(const Entity* entity, u32 req_army) const {
-    if (!visibility_grid_ || !entity) return false;
-    auto& pos = entity->position();
-    bool omni = visibility_grid_->has_omni(pos.x, pos.z, req_army);
-    bool cloaked = entity->is_unit() &&
-                   static_cast<const Unit*>(entity)->is_cloaked();
-    bool vision = visibility_grid_->has_vision(pos.x, pos.z, req_army) &&
-                  (!cloaked || omni);
-    return vision ||
-           has_effective_radar(entity, req_army) ||
-           has_effective_sonar(entity, req_army) ||
-           omni;
-}
-
-// --- Cached stealth variants (avoid per-army is_intel_enabled string lookups) ---
-
-bool SimState::has_effective_radar_cached(const Entity* entity, u32 req_army,
-                                           bool radar_stealth) const {
-    if (!visibility_grid_ || !entity) return false;
-    auto& pos = entity->position();
-    if (!visibility_grid_->has_radar(pos.x, pos.z, req_army)) return false;
-    if (radar_stealth && !visibility_grid_->has_omni(pos.x, pos.z, req_army))
-        return false;
-    return true;
-}
-
-bool SimState::has_effective_sonar_cached(const Entity* entity, u32 req_army,
-                                           bool sonar_stealth) const {
-    if (!visibility_grid_ || !entity) return false;
-    auto& pos = entity->position();
-    if (!visibility_grid_->has_sonar(pos.x, pos.z, req_army)) return false;
-    if (sonar_stealth && !visibility_grid_->has_omni(pos.x, pos.z, req_army))
-        return false;
-    return true;
-}
-
-bool SimState::has_any_intel_cached(const Entity* entity, u32 req_army,
-                                     bool radar_stealth,
-                                     bool sonar_stealth,
-                                     bool cloaked) const {
-    if (!visibility_grid_ || !entity) return false;
-    auto& pos = entity->position();
-    bool omni = visibility_grid_->has_omni(pos.x, pos.z, req_army);
-    bool vision = visibility_grid_->has_vision(pos.x, pos.z, req_army) &&
-                  (!cloaked || omni);
-    return vision ||
-           has_effective_radar_cached(entity, req_army, radar_stealth) ||
-           has_effective_sonar_cached(entity, req_army, sonar_stealth) ||
-           omni;
 }
 
 u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
@@ -1497,9 +1425,8 @@ void SimState::update_entities() {
         ids.push_back(e.entity_id());
     });
 
-    SimContext ctx{entity_registry_, L_, terrain_.get(),
-                   pathfinder_.get(), pathfinding_grid_.get(),
-                   visibility_grid_.get(), this, {}};
+    SimContext ctx{
+        entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this, {}};
     for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
         ctx.army_efficiency[i] = {armies_[i]->mass_efficiency(),
                                   armies_[i]->energy_efficiency()};
@@ -1692,9 +1619,8 @@ ThreatSource threat_source_of(const Unit& u) {
 } // namespace
 
 void SimState::feed_influence_map() {
-    if (!visibility_grid_) return;
-    const u32 n = static_cast<u32>(
-        std::min(army_count(), static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
+    if (!intel_grids_) return;
+    const u32 n = static_cast<u32>(std::min(army_count(), static_cast<size_t>(MAX_VIS_ARMIES)));
     if (n == 0) return;
     // Moho's recon ticks one army a tick, in turn.
     const u32 a = tick_count_ % n;
@@ -1709,9 +1635,7 @@ void SimState::feed_influence_map() {
         if (!alive(&e) || e.army() == owner) return;
         auto& u = static_cast<Unit&>(e);
         if (!u.has_category(kVisibleToRecon)) return;
-        const bool detected =
-            is_ally(owner, u.army()) || has_any_intel_cached(&e, a, u.has_radar_stealth(),
-                                                             u.has_sonar_stealth(), u.is_cloaked());
+        const bool detected = is_ally(owner, u.army()) || sensed_now(e.entity_id(), a);
         if (detected || (!moves(u) && ever_in_sight(e.entity_id(), a)))
             map->report(e.entity_id(), u.army(), u.position(), threat_source_of(u));
     });
@@ -1727,8 +1651,7 @@ void SimState::feed_influence_map() {
     std::vector<u32> gone;
     map->for_each_entry([&](const InfluenceMap::EntryView& v) {
         if (v.mobile || (v.id & kFakeBlipBit) != 0 || alive(entity_registry_.find(v.id))) return;
-        if (is_ally(owner, v.source_army) ||
-            visibility_grid_->has_vision(v.position.x, v.position.z, a))
+        if (is_ally(owner, v.source_army) || (recon_at(v.position, a) & kReconLOS) != 0)
             gone.push_back(v.id);
     });
     for (const u32 id : gone) map->remove(id);
@@ -1759,161 +1682,320 @@ void SimState::update_influence_maps() {
                         const auto& u = static_cast<const Unit&>(*e);
                         InfluenceMap::UnitState s;
                         s.layer = threat_layer_of(u);
+                        const auto* recon = entity_recon(id);
                         s.detailed = ever_in_sight(id, static_cast<u32>(owner)) ||
-                                     (visibility_grid_ && i < map::VisibilityGrid::MAX_ARMIES &&
-                                      visibility_grid_->has_omni(u.position().x, u.position().z,
-                                                                 static_cast<u32>(owner)));
+                                     (recon && i < MAX_VIS_ARMIES && (*recon)[i].omni);
                         return s;
                     });
     }
 }
 
-void SimState::update_visibility() {
-    PROFILE_ZONE("Sim::visibility");
-    if (!visibility_grid_) return;
+u32 SimState::intel_sharers(u32 viewer) const {
+    u32 mask = viewer < 32 ? 1u << viewer : 0;
+    const u32 n = intel_grids_ ? intel_grids_->armies() : 0;
+    for (u32 x = 0; x < n; ++x)
+        if (x != viewer && is_ally(static_cast<i32>(x), static_cast<i32>(viewer))) mask |= 1u << x;
+    return mask;
+}
 
-    // 1. Clear transient flags (keep EverSeen)
-    visibility_grid_->clear_transient();
+f32 SimState::water_surface() const {
+    return terrain_ && terrain_->has_water() ? terrain_->water_elevation() : -10000.0f;
+}
 
-    // "No Fog of War": reveal the whole map to every army, then let the normal
-    // painting run on top (harmlessly). Intel queries then see everything.
-    if (fog_mode_ == FogMode::None) {
-        u32 fn = static_cast<u32>(
-            std::min(army_count(),
-                     static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
-        for (u32 a = 0; a < fn; ++a) visibility_grid_->reveal_all(a);
+void SimState::paint_intel(i32 army, IntelSource source, const Vector3& pos, u32 radius, i8 delta) {
+    if (!intel_grids_ || army < 0 || radius == 0) return;
+    const map::IntelLayer layer = intel_source_layer(source);
+    const u32 n = intel_grids_->armies();
+    const auto paint = [&](u32 a) {
+        map::IntelGrid& grid = intel_grids_->grid(a, layer);
+        if (delta > 0) grid.add_circle(pos.x, pos.z, radius);
+        else grid.sub_circle(pos.x, pos.z, radius);
+    };
+    if (intel_source_is_field(source)) {
+        for (u32 a = 0; a < n; ++a)
+            if (a != static_cast<u32>(army)) paint(a);
+    } else if (static_cast<u32>(army) < n) {
+        paint(static_cast<u32>(army));
+    }
+}
+
+namespace {
+/// A radius as Moho's handles keep it: whole units, never below 0.
+u32 intel_radius(f32 r) {
+    return r > 0.0f ? static_cast<u32>(r) : 0;
+}
+} // namespace
+
+void SimState::sync_intel() {
+    if (!terrain_) return;
+    const auto armies =
+        static_cast<u32>(std::min(army_count(), static_cast<size_t>(MAX_VIS_ARMIES)));
+    if (!intel_grids_ || intel_grids_->armies() != armies ||
+        intel_grids_->fog_of_war() != (fog_mode_ != FogMode::None))
+        build_intel_grids();
+    const u32 pass = ++intel_pass_;
+    const u32 tick = tick_count_;
+
+    // Visible areas (scrying): seen for their ticks, rubbed out the pass
+    // after.
+    std::erase_if(temp_visions_, [&](const TempVision& tv) {
+        if (tv.remaining_ticks > 0) return false;
+        if (tv.painted)
+            paint_intel(static_cast<i32>(tv.army), IntelSource::Vision, {tv.x, 0, tv.z},
+                        intel_radius(tv.radius), -1);
+        return true;
+    });
+    for (TempVision& tv : temp_visions_) {
+        if (!tv.painted)
+            paint_intel(static_cast<i32>(tv.army), IntelSource::Vision, {tv.x, 0, tv.z},
+                        intel_radius(tv.radius), 1);
+        tv.painted = true;
+        --tv.remaining_ticks;
     }
 
-    // 2. Paint intel radii: a source's radius for each intel type it has
-    // switched on (0 = none).
-    const auto paint_intel = [&](u32 ua, const Vector3& pos, const auto& radius_of) {
-        // Vision: terrain LOS occlusion
-        if (const f32 r = radius_of("Vision"); r > 0.0f) {
-            f32 eye_h =
-                terrain_->get_terrain_height(pos.x, pos.z) + map::VisibilityGrid::EYE_OFFSET;
-            visibility_grid_->paint_circle_los(ua, pos.x, pos.z, r, eye_h);
+    // An entity's handles, as Moho's CIntel keeps them up to date: `wanted`
+    // is each source's switch and radius.
+    using Wanted = std::array<std::pair<bool, u32>, kIntelSources>;
+    const auto track = [&](u32 id, i32 army, const Vector3& pos, const Wanted& wanted) {
+        auto [it, fresh] = painted_intel_.try_emplace(id);
+        PaintedIntel& rec = it->second;
+        if (!fresh && rec.army != army) { // its intel given to another army
+            for (size_t s = 0; s < kIntelSources; ++s)
+                if (const IntelHandle& h = rec.handles[s]; h.enabled)
+                    paint_intel(rec.army, static_cast<IntelSource>(s), h.pos, h.radius, -1);
+            rec = PaintedIntel{};
+            fresh = true;
         }
-        // WaterVision maps to Vision flag but no terrain LOS (underwater sensing)
-        if (const f32 r = radius_of("WaterVision"); r > 0.0f)
-            visibility_grid_->paint_circle(ua, pos.x, pos.z, r, map::VisFlag::Vision);
-        // Radar/Sonar/Omni: simple circle (not blocked by terrain)
-        struct IntelMapping {
-            const char* type;
-            map::VisFlag flag;
-        };
-        static const IntelMapping non_los[] = {
-            {"Radar", map::VisFlag::Radar},
-            {"Sonar", map::VisFlag::Sonar},
-            {"Omni", map::VisFlag::Omni},
-        };
-        for (const auto& m : non_los)
-            if (const f32 r = radius_of(m.type); r > 0.0f)
-                visibility_grid_->paint_circle(ua, pos.x, pos.z, r, m.flag);
-    };
-    const auto valid_army = [](i32 army) {
-        return army >= 0 && army < static_cast<i32>(map::VisibilityGrid::MAX_ARMIES);
+        if (fresh) {
+            rec.army = army;
+            rec.last_pos = pos;
+            for (IntelHandle& h : rec.handles) h.pos = pos;
+        }
+        rec.pass = pass;
+        const bool moved = !fresh && (pos.x != rec.last_pos.x || pos.y != rec.last_pos.y ||
+                                      pos.z != rec.last_pos.z);
+        const bool stopped = rec.moved && !moved;
+        for (size_t s = 0; s < kIntelSources; ++s) {
+            const auto source = static_cast<IntelSource>(s);
+            IntelHandle& h = rec.handles[s];
+            const auto [on, radius] = wanted[s];
+            if (!h.enabled) {
+                // Off, it follows its entity unpainted (UpdatePos); on, it
+                // is painted where it is (EnableIntel's AddViz).
+                h.pos = pos;
+                h.radius = radius;
+                if (on) {
+                    h.enabled = true;
+                    paint_intel(army, source, h.pos, h.radius, 1);
+                }
+                continue;
+            }
+            if (!on) { // DisableIntel's SubViz
+                paint_intel(army, source, h.pos, h.radius, -1);
+                h.enabled = false;
+                h.pos = pos;
+                h.radius = radius;
+                continue;
+            }
+            if (radius != h.radius) { // ChangeRadius
+                paint_intel(army, source, h.pos, h.radius, -1);
+                h.radius = radius;
+                paint_intel(army, source, h.pos, h.radius, 1);
+            }
+            // Moving, a third of its radius or 30 ticks on (UpdatePos);
+            // stopping, at once (the motion's Stopped event).
+            bool update = false;
+            if (moved) {
+                const f32 dx = pos.x - h.pos.x;
+                const f32 dy = pos.y - h.pos.y;
+                const f32 dz = pos.z - h.pos.z;
+                const auto range = static_cast<f32>(static_cast<f64>(h.radius) * 0.333);
+                update = dx * dx + dy * dy + dz * dz >= range * range ||
+                         static_cast<i64>(tick) - static_cast<i64>(h.last_tick) > 30;
+            }
+            if (update || stopped) {
+                h.last_tick = tick;
+                if (pos.x != h.pos.x || pos.y != h.pos.y || pos.z != h.pos.z) {
+                    paint_intel(army, source, h.pos, h.radius, -1);
+                    h.pos = pos;
+                    paint_intel(army, source, h.pos, h.radius, 1);
+                }
+            }
+        }
+        rec.moved = moved;
+        rec.last_pos = pos;
     };
 
+    // Each one's intel, in a walk of it (a few entries; no lookups by name)
+    const auto wanted_of = [](const auto& intel) {
+        Wanted wanted{};
+        for (const auto& [name, state] : intel)
+            if (const int s = intel_source_index(name); s >= 0)
+                wanted[static_cast<size_t>(s)] = {state.enabled, intel_radius(state.radius)};
+        return wanted;
+    };
     entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
-        auto* unit = static_cast<Unit*>(&e);
-        if (!valid_army(unit->army())) return;
-        const auto& pos = unit->position();
-        const u32 ua = static_cast<u32>(unit->army());
-        paint_intel(ua, pos, [&](const char* type) {
-            return unit->is_intel_enabled(type) ? unit->get_intel_radius(type) : 0.0f;
-        });
-
-        // Self-vision: own army always sees own unit cell
-        visibility_grid_->paint_circle(
-            ua, pos.x, pos.z,
-            static_cast<f32>(map::VisibilityGrid::CELL_SIZE) * 0.5f,
-            map::VisFlag::Vision);
+        const auto& unit = static_cast<const Unit&>(e);
+        track(e.entity_id(), e.army(), e.position(), wanted_of(unit.intel_states()));
     });
-
-    // Script entities' intel (VizMarkers), dropped once the entity is gone.
+    // Script entities' intel (VizMarkers), forgotten once the entity is gone.
     for (auto it = entity_intel_.begin(); it != entity_intel_.end();) {
         const Entity* e = entity_registry_.find(it->first);
         if (!e || e->destroyed()) {
             it = entity_intel_.erase(it);
             continue;
         }
-        if (valid_army(it->second.army)) {
-            const auto& sources = it->second.sources;
-            paint_intel(static_cast<u32>(it->second.army), e->position(), [&](const char* type) {
-                const auto s = sources.find(type);
-                return s != sources.end() && s->second.enabled ? s->second.radius : 0.0f;
-            });
-        }
+        track(it->first, it->second.army, e->position(), wanted_of(it->second.sources));
         ++it;
     }
-
-    // 2b. Paint temporary vision areas (scrying, Eye of Rhianne)
-    // Single-pass: paint, decrement, and compact in place
-    {
-        size_t write = 0;
-        for (size_t read = 0; read < temp_visions_.size(); ++read) {
-            auto& tv = temp_visions_[read];
-            if (tv.remaining_ticks > 0) {
-                visibility_grid_->paint_circle(tv.army, tv.x, tv.z, tv.radius,
-                                               map::VisFlag::Vision);
-                tv.remaining_ticks--;
-                if (tv.remaining_ticks > 0) {
-                    if (write != read) temp_visions_[write] = tv;
-                    write++;
-                }
-            }
+    // What is gone takes its intel with it.
+    for (auto it = painted_intel_.begin(); it != painted_intel_.end();) {
+        if (it->second.pass == pass) {
+            ++it;
+            continue;
         }
-        temp_visions_.resize(write);
+        for (size_t s = 0; s < kIntelSources; ++s)
+            if (const IntelHandle& h = it->second.handles[s]; h.enabled)
+                paint_intel(it->second.army, static_cast<IntelSource>(s), h.pos, h.radius, -1);
+        it = painted_intel_.erase(it);
     }
+}
 
-    // 3. Share allied vision
-    u32 n = static_cast<u32>(
-        std::min(army_count(),
-                 static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
-    for (u32 a = 0; a < n; ++a) {
-        for (u32 b = a + 1; b < n; ++b) {
-            if (is_ally(static_cast<i32>(a), static_cast<i32>(b))) {
-                visibility_grid_->merge_armies(a, b);
-                visibility_grid_->merge_armies(b, a);
-            }
-        }
+u8 SimState::recon_senses(const Vector3& pos, u32 sharers, bool below, bool sonar) const {
+    const bool fog = intel_grids_->fog_of_war();
+    u8 f = fog ? 0 : kReconLOS; // no fog: line of sight everywhere
+    const map::IntelLayer sight = below ? map::IntelLayer::Water : map::IntelLayer::Vision;
+    for (u32 a = 0; a < intel_grids_->armies(); ++a) {
+        if ((sharers >> a & 1u) == 0) continue;
+        if (fog && intel_grids_->grid(a, sight).visible(pos.x, pos.z)) f |= kReconLOS;
+        if (sonar && intel_grids_->grid(a, map::IntelLayer::Sonar).visible(pos.x, pos.z))
+            f |= kReconSonar;
+        if (!below && intel_grids_->grid(a, map::IntelLayer::Radar).visible(pos.x, pos.z))
+            f |= kReconRadar;
+        if (intel_grids_->grid(a, map::IntelLayer::Omni).visible(pos.x, pos.z)) f |= kReconOmni;
     }
+    return f;
+}
 
-    // 3.5. Update blip cache (dead-reckoning positions). An army's first
-    // blip of a unit is its detection (OnDetectedBy, after the pass).
-    std::vector<std::pair<u32, u32>> detected;
+u8 SimState::recon_counters(const Vector3& pos, u32 viewer, u8 senses, const Unit* unit) const {
+    u8 f = senses;
+    if (f == 0 || (f & kReconOmni) != 0) return f; // omni beats every counter
+    const auto here = [&](map::IntelLayer layer) {
+        return intel_grids_->grid(viewer, layer).visible(pos.x, pos.z);
+    };
+    if (here(map::IntelLayer::RadarCounter)) f &= static_cast<u8>(~kReconRadar);
+    if (here(map::IntelLayer::SonarCounter)) f &= static_cast<u8>(~kReconSonar);
+    if ((unit && unit->is_cloaked()) || here(map::IntelLayer::VisionCounter))
+        f &= static_cast<u8>(~kReconLOS);
+    // A unit's own stealth only out of sight
+    if (unit && (f & kReconLOS) == 0) {
+        if (unit->has_radar_stealth()) f &= static_cast<u8>(~kReconRadar);
+        if (unit->has_sonar_stealth()) f &= static_cast<u8>(~kReconSonar);
+    }
+    return f;
+}
+
+u8 SimState::recon_detect(const Entity& e, const Vector3& pos, u32 viewer, u32 sharers) const {
+    if (!intel_grids_ || viewer >= intel_grids_->armies()) return 0;
+    const Vector3 kept = clamp_to_playable(pos, static_cast<i32>(viewer));
+    if (kept.x != pos.x || kept.z != pos.z) return 0; // off the playable area
+    if (e.army() == static_cast<i32>(viewer) || is_ally(static_cast<i32>(viewer), e.army()))
+        return kReconAll;
+    if (!e.is_unit()) {
+        const bool below = water_surface() > pos.y;
+        return recon_counters(pos, viewer, recon_senses(pos, sharers, below, below), nullptr);
+    }
+    const auto& unit = static_cast<const Unit&>(e);
+    const std::string& layer = unit.layer();
+    const bool below = layer == "Seabed" || layer == "Sub";
+    const bool sonar = below || layer == "Water";
+    return recon_counters(pos, viewer, recon_senses(pos, sharers, below, sonar), &unit);
+}
+
+u8 SimState::recon_of(const Entity& e, const Vector3& pos, u32 viewer) const {
+    return recon_detect(e, pos, viewer, intel_sharers(viewer));
+}
+
+u8 SimState::recon_at(const Vector3& pos, u32 viewer) const {
+    if (!intel_grids_ || viewer >= intel_grids_->armies()) return 0;
+    const bool below = water_surface() > pos.y;
+    return recon_counters(pos, viewer, recon_senses(pos, intel_sharers(viewer), below, below),
+                          nullptr);
+}
+
+u8 SimState::recon_in(f32 x0, f32 z0, f32 x1, f32 z1, f32 y, u32 viewer) const {
+    if (!intel_grids_ || viewer >= intel_grids_->armies()) return 0;
+    const bool below = water_surface() > y;
+    const bool fog = intel_grids_->fog_of_war();
+    const u32 sharers = intel_sharers(viewer);
+    const auto any = [&](u32 a, map::IntelLayer layer) {
+        return intel_grids_->grid(a, layer).any_in(x0, z0, x1, z1);
+    };
+    u8 f = fog ? 0 : kReconLOS;
+    for (u32 a = 0; a < intel_grids_->armies(); ++a) {
+        if ((sharers >> a & 1u) == 0) continue;
+        if (fog && any(a, below ? map::IntelLayer::Water : map::IntelLayer::Vision)) f |= kReconLOS;
+        if (any(a, below ? map::IntelLayer::Sonar : map::IntelLayer::Radar))
+            f |= below ? kReconSonar : kReconRadar;
+        if (any(a, map::IntelLayer::Omni)) f |= kReconOmni;
+    }
+    if (f == 0 || (f & kReconOmni) != 0) return f;
+    if (any(viewer, map::IntelLayer::RadarCounter)) f &= static_cast<u8>(~kReconRadar);
+    if (any(viewer, map::IntelLayer::SonarCounter)) f &= static_cast<u8>(~kReconSonar);
+    if (any(viewer, map::IntelLayer::VisionCounter)) f &= static_cast<u8>(~kReconLOS);
+    return f;
+}
+
+void SimState::update_visibility() {
+    PROFILE_ZONE("Sim::visibility");
+    // 1. Each source's intel painted where Moho's handles would have it.
+    sync_intel();
+    if (!intel_grids_) return;
+    const u32 n = intel_grids_->armies();
+    std::array<u32, MAX_VIS_ARMIES> sharers{};
+    for (u32 a = 0; a < n; ++a) sharers[a] = intel_sharers(a);
+
+    // 2. Each army's recon of each unit, once (ReconCanDetect).
+    std::vector<u32> ids;
+    ids.reserve(entity_registry_.count());
+    std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>> recon;
+    recon.reserve(entity_registry_.count());
     entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
-        u32 eid = e.entity_id();
-        // Cache per-unit stealth state before the army loop to avoid
-        // redundant is_intel_enabled string lookups per army iteration.
-        auto* unit = static_cast<Unit*>(&e);
-        bool radar_stealth = unit->has_radar_stealth();
-        bool sonar_stealth = unit->has_sonar_stealth();
-        bool cloaked = unit->is_cloaked();
+        ids.push_back(e.entity_id());
+        auto& states = recon[e.entity_id()];
         for (u32 a = 0; a < n; ++a) {
-            if (static_cast<i32>(a) == e.army()) continue; // skip own army
-            if (has_any_intel_cached(&e, a, radar_stealth, sonar_stealth,
-                                     cloaked)) {
-                // Army can see entity — update cached snapshot
-                auto& snap = blip_cache_[eid][a];
-                if (snap.entity_army < 0) detected.emplace_back(eid, a);
-                snap.last_known_position = e.position();
-                snap.blueprint_id = e.blueprint_id();
-                snap.entity_army = e.army();
-                snap.entity_dead = false;
-            }
-            // If no intel, keep stale data — that IS the dead-reckoning freeze
+            const u8 f = recon_detect(e, e.position(), a, sharers[a]);
+            states[a] = {(f & kReconLOS) != 0, (f & kReconRadar) != 0, (f & kReconSonar) != 0,
+                         (f & kReconOmni) != 0};
         }
     });
+
+    // 3. The blip cache (dead-reckoning positions). An army's first blip of
+    // a unit is its detection (OnDetectedBy, after the pass).
+    std::vector<std::pair<u32, u32>> detected;
+    for (const u32 eid : ids) {
+        const Entity* e = entity_registry_.find(eid);
+        const auto& states = recon[eid];
+        for (u32 a = 0; a < n; ++a) {
+            if (static_cast<i32>(a) == e->army() || !states[a].any()) continue;
+            auto& snap = blip_cache_[eid][a];
+            if (snap.entity_army < 0) detected.emplace_back(eid, a);
+            snap.last_known_position = e->position();
+            snap.blueprint_id = e->blueprint_id();
+            snap.entity_army = e->army();
+            snap.entity_dead = false;
+            // Without intel, the stale data stays: that IS the dead-reckoning
+        }
+    }
 
     // Erase destroyed entities from blip cache (prevents unbounded growth)
     for (auto it = los_ever_.begin(); it != los_ever_.end();) {
         const auto* e = entity_registry_.find(it->first);
         it = !e || e->destroyed() ? los_ever_.erase(it) : std::next(it);
     }
-    for (auto it = blip_cache_.begin(); it != blip_cache_.end(); ) {
+    for (auto it = blip_cache_.begin(); it != blip_cache_.end();) {
         auto* e = entity_registry_.find(it->first);
         if (!e || e->destroyed()) {
             it = blip_cache_.erase(it);
@@ -1924,85 +2006,43 @@ void SimState::update_visibility() {
     destroy_gone_blips();
     for (const auto& [eid, a] : detected) fire_on_detected_by(eid, a);
 
-    // 4. Detect changes and fire OnIntelChange (stealth-aware)
-    std::vector<u32> ids;
-    ids.reserve(entity_registry_.count());
-    entity_registry_.for_each_unit([&](Entity& e) {
-        if (!e.destroyed() && e.is_unit())
-            ids.push_back(e.entity_id());
-    });
-
-    for (u32 eid : ids) {
-        auto* e = entity_registry_.find(eid);
+    // 4. OnIntelChange for each sense gained or lost
+    for (const u32 eid : ids) {
+        const Entity* e = entity_registry_.find(eid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
-
-        auto& pos = e->position();
-
-        // Cache per-unit stealth state before the army loop.
-        auto* u = static_cast<const Unit*>(e);
-        bool radar_stealth = u->has_radar_stealth();
-        bool sonar_stealth = u->has_sonar_stealth();
-        bool cloaked = u->is_cloaked();
-
+        std::array<EntityVisSnapshot, MAX_VIS_ARMIES> prev{};
+        if (const auto it = prev_entity_vis_.find(eid); it != prev_entity_vis_.end())
+            prev = it->second;
+        const auto cur = recon[eid];
         for (u32 a = 0; a < n; ++a) {
             if (static_cast<i32>(a) == e->army()) continue; // skip own army
-
-            bool cur_omn =
-                visibility_grid_->has_omni(pos.x, pos.z, a);
-            bool cur_vis = visibility_grid_->has_vision(pos.x, pos.z, a) &&
-                           (!cloaked || cur_omn);
-            bool cur_rad = has_effective_radar_cached(e, a, radar_stealth);
-            bool cur_son = has_effective_sonar_cached(e, a, sonar_stealth);
-
-            auto prev_it = prev_entity_vis_.find(eid);
-            EntityVisSnapshot prev;
-            if (prev_it != prev_entity_vis_.end())
-                prev = prev_it->second[a];
-
-            if (prev.vision != cur_vis) {
-                fire_on_intel_change(eid, a, "LOSNow", cur_vis);
+            const auto fire = [&](bool was, bool now, const char* sense) {
+                if (was == now) return true;
+                fire_on_intel_change(eid, a, sense, now);
                 e = entity_registry_.find(eid);
-                if (!e || e->destroyed()) break;
-            }
-            if (prev.radar != cur_rad) {
-                fire_on_intel_change(eid, a, "Radar", cur_rad);
-                e = entity_registry_.find(eid);
-                if (!e || e->destroyed()) break;
-            }
-            if (prev.sonar != cur_son) {
-                fire_on_intel_change(eid, a, "Sonar", cur_son);
-                e = entity_registry_.find(eid);
-                if (!e || e->destroyed()) break;
-            }
-            if (prev.omni != cur_omn) {
-                fire_on_intel_change(eid, a, "Omni", cur_omn);
-                e = entity_registry_.find(eid);
-                if (!e || e->destroyed()) break;
-            }
+                return e && !e->destroyed();
+            };
+            if (!fire(prev[a].vision, cur[a].vision, "LOSNow") ||
+                !fire(prev[a].radar, cur[a].radar, "Radar") ||
+                !fire(prev[a].sonar, cur[a].sonar, "Sonar") ||
+                !fire(prev[a].omni, cur[a].omni, "Omni"))
+                break;
         }
     }
 
-    // 5. Save current state for next tick (stealth-aware)
-    prev_entity_vis_.clear();
-    entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed() || !e.is_unit()) return;
-        auto& pos = e.position();
-        auto* unit = static_cast<const Unit*>(&e);
-        bool radar_stealth = unit->has_radar_stealth();
-        bool sonar_stealth = unit->has_sonar_stealth();
-        bool cloaked = unit->is_cloaked();
-        std::array<EntityVisSnapshot, MAX_VIS_ARMIES> states{};
-        for (u32 a = 0; a < n; ++a) {
-            states[a].omni =
-                visibility_grid_->has_omni(pos.x, pos.z, a);
-            states[a].vision = visibility_grid_->has_vision(pos.x, pos.z, a) &&
-                               (!cloaked || states[a].omni);
-            states[a].radar = has_effective_radar_cached(&e, a, radar_stealth);
-            states[a].sonar = has_effective_sonar_cached(&e, a, sonar_stealth);
-            if (states[a].vision) los_ever_[e.entity_id()] |= 1u << a;
+    // 5. This pass's recon, for the next and for the tick's queries; and
+    // whatever was in sight is seen ever.
+    for (auto it = recon.begin(); it != recon.end();) {
+        const Entity* e = entity_registry_.find(it->first);
+        if (!e || e->destroyed()) {
+            it = recon.erase(it);
+            continue;
         }
-        prev_entity_vis_[e.entity_id()] = states;
-    });
+        for (u32 a = 0; a < n; ++a)
+            if (it->second[a].vision) los_ever_[it->first] |= 1u << a;
+        ++it;
+    }
+    prev_entity_vis_ = std::move(recon);
 
     // 6. Jammers' fake blips.
     update_jam_blips();
@@ -2032,8 +2072,7 @@ Vector3 SimState::jam_offset(const Unit& u) {
 }
 
 void SimState::update_jam_blips() {
-    const u32 n = static_cast<u32>(
-        std::min(army_count(), static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
+    const u32 n = intel_grids_ ? intel_grids_->armies() : 0;
     std::set<u64> kept;
     // Units in id order, armies in index order: the draws fall alike on
     // every peer.
@@ -2048,8 +2087,7 @@ void SimState::update_jam_blips() {
             if (static_cast<i32>(a) == owner || is_ally(static_cast<i32>(a), owner)) continue;
             // Moho keeps a unit's blips while the army senses it, or has
             // seen a structure; the fakes live with them.
-            const bool sensed = has_any_intel_cached(&u, a, u.has_radar_stealth(),
-                                                     u.has_sonar_stealth(), u.is_cloaked());
+            const bool sensed = sensed_now(u.entity_id(), a);
             if (!sensed && (u.is_mobile() || !ever_in_sight(u.entity_id(), a))) continue;
             const u64 key = jam_key(u.entity_id(), a);
             auto& offsets = jam_offsets_[key];
@@ -2063,17 +2101,13 @@ void SimState::update_jam_blips() {
 
 std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
     std::vector<HeldFake> held;
-    if (!visibility_grid_) return held;
-    const map::VisibilityGrid& grid = *visibility_grid_;
+    if (!intel_grids_) return held;
     for (const auto& [key, offsets] : jam_offsets_) {
         const auto army = static_cast<u32>(key & 0xFF);
         if (viewer >= 0 && army != static_cast<u32>(viewer)) continue;
         const Entity* e = entity_registry_.find(static_cast<u32>(key >> 8));
         if (!e || e->destroyed() || !e->is_unit()) continue;
         const auto& u = static_cast<const Unit&>(*e);
-        const std::string& layer = u.layer();
-        const bool under = layer == "Sub" || layer == "Seabed";
-        const bool wet = under || layer == "Water";
         for (size_t i = 0; i < offsets.size(); ++i) {
             HeldFake f;
             f.jammer = u.entity_id();
@@ -2082,16 +2116,14 @@ std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
             f.index = static_cast<u32>(i);
             f.position = {u.position().x + offsets[i].x, u.position().y + offsets[i].y,
                           u.position().z + offsets[i].z};
-            // Its senses where it lies, as the jammer's own stealth allows
-            const bool sight = grid.has_vision(f.position.x, f.position.z, army);
-            const bool omni = grid.has_omni(f.position.x, f.position.z, army);
-            const bool radar = !under && !u.has_radar_stealth() &&
-                               grid.has_radar(f.position.x, f.position.z, army);
-            const bool sonar =
-                wet && !u.has_sonar_stealth() && grid.has_sonar(f.position.x, f.position.z, army);
-            f.sensed = sight || omni || radar || sonar;
+            // The army's recon of the jammer where the fake lies (Moho asks
+            // ReconCanDetect of the fake's source unit at the fake's place):
+            // the jammer's layer, cloak and stealth count.
+            const u8 recon = recon_of(u, f.position, army);
+            f.sensed = recon != 0;
             const Vector3 kept = clamp_to_playable(f.position, static_cast<i32>(army));
-            f.known_fake = sight || omni || kept.x != f.position.x || kept.z != f.position.z;
+            f.known_fake = (recon & (kReconLOS | kReconOmni)) != 0 || kept.x != f.position.x ||
+                           kept.z != f.position.z;
             held.push_back(f);
         }
     }

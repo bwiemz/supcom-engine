@@ -792,8 +792,15 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             lua_pop(L, 1); // pop bp table
         }
 
-        // Intel radii from blueprint (VisionRadius, RadarRadius, etc.)
+        // Intel radii from blueprint (VisionRadius, RadarRadius, etc.). All
+        // of it starts off: the unit's script switches it on (retail's
+        // SetupIntel at OnStopBeingBuilt; WaterVision only when wet), as
+        // Moho's handles start disabled (M215g).
         {
+            // Every unit has Vision and WaterVision, 10 unless its blueprint
+            // says otherwise (Moho's RUnitBlueprint defaults).
+            unit->add_intel("Vision", 10.0f);
+            unit->add_intel("WaterVision", 10.0f);
             store->push_lua_table(*entry, L);
             lua_pushstring(L, "Intel");
             lua_rawget(L, -2);
@@ -813,8 +820,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     lua_pushstring(L, f.bp_field);
                     lua_rawget(L, -2);
                     if (lua_isnumber(L, -1)) {
-                        f32 r = static_cast<f32>(lua_tonumber(L, -1));
-                        if (r > 0.0f) unit->init_intel(f.intel_type, r);
+                        const auto r = static_cast<f32>(lua_tonumber(L, -1));
+                        const std::string_view type = f.intel_type;
+                        if (type == "Vision" || type == "WaterVision")
+                            unit->set_intel_radius(f.intel_type, std::max(r, 0.0f));
+                        else if (r > 0.0f) unit->add_intel(f.intel_type, r);
                     }
                     lua_pop(L, 1);
                 }

@@ -31,7 +31,6 @@
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
-#include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
 #include "sim/platoon.hpp"
@@ -166,11 +165,9 @@ static int blip_IsSeenNow(lua_State* L) {
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
     auto* sim = get_sim(L);
-    if (sim && sim->visibility_grid() && army >= 0) {
-        auto& pos = e->position();
+    if (sim && army >= 0) {
         lua_pushboolean(
-            L, sim->visibility_grid()->has_vision(pos.x, pos.z,
-                                                  static_cast<u32>(army)) ? 1 : 0);
+            L, (sim->recon_of(*e, static_cast<u32>(army)) & sim::SimState::kReconLOS) != 0 ? 1 : 0);
     } else {
         lua_pushboolean(L, 0);
     }
@@ -215,11 +212,10 @@ static int blip_IsOnOmni(lua_State* L) {
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
     auto* sim = get_sim(L);
-    if (sim && sim->visibility_grid() && army >= 0) {
-        auto& pos = e->position();
+    if (sim && army >= 0) {
         lua_pushboolean(
-            L, sim->visibility_grid()->has_omni(pos.x, pos.z,
-                                                static_cast<u32>(army)) ? 1 : 0);
+            L,
+            (sim->recon_of(*e, static_cast<u32>(army)) & sim::SimState::kReconOmni) != 0 ? 1 : 0);
     } else {
         lua_pushboolean(L, 0);
     }

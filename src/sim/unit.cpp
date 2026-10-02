@@ -584,7 +584,7 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
         update_motion_turn(L);
         for (auto& weapon : weapons_) {
             if (destroyed() || dying_) break;
-            weapon->update(*this, registry, L, ctx.visibility_grid, ctx.sim);
+            weapon->update(*this, registry, L, ctx.sim);
         }
     }
 
@@ -1789,13 +1789,14 @@ f32 Unit::get_intel_radius(const std::string& type) const {
 }
 
 void Unit::init_intel(const std::string& type, f32 radius) {
-    intel_states_[type] = IntelState{radius, true};
+    // A new handle, off until EnableIntel (Moho's InitIntel)
+    intel_states_[type] = IntelState{radius, false};
     if (type == "Cloak") {
-        set_cloaked(true);
+        set_cloaked(false);
     } else if (type == "RadarStealth") {
-        set_radar_stealth(true);
+        set_radar_stealth(false);
     } else if (type == "SonarStealth") {
-        set_sonar_stealth(true);
+        set_sonar_stealth(false);
     }
 }
 
