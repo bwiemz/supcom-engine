@@ -1,6 +1,6 @@
 #include "renderer/fog_renderer.hpp"
 #include "renderer/vk_types.hpp"
-#include "map/visibility_grid.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -139,76 +139,21 @@ void FogRenderer::init(u32 grid_width, u32 grid_height,
     spdlog::info("Fog of war texture: {}x{} R8", grid_width_, grid_height_);
 }
 
-void FogRenderer::stage(const osc::map::VisibilityGrid& grid, u32 army) {
+void FogRenderer::stage(const osc::sim::SightMap& sight) {
     if (!initialized_ || !staging_mapped_[fi_]) return;
-
-    // Write raw visibility data to temp buffer
-    if (raw_grid_.size() != grid_width_ * grid_height_)
-        raw_grid_.resize(grid_width_ * grid_height_, 255);
-
-    for (u32 gz = 0; gz < grid_height_; gz++) {
-        for (u32 gx = 0; gx < grid_width_; gx++) {
-            auto flags = grid.get(gx, gz, army);
-            u8 val = 0; // unexplored
-            if (map::has_flag(flags, map::VisFlag::Vision))
-                val = 255; // fully visible
-            else if (map::has_flag(flags, map::VisFlag::Radar) ||
-                     map::has_flag(flags, map::VisFlag::Omni))
-                val = 200; // radar coverage (slightly dimmed)
-            else if (map::has_flag(flags, map::VisFlag::EverSeen))
-                val = 100; // explored but dark
-            raw_grid_[gz * grid_width_ + gx] = val;
-        }
+    if (sight.everywhere || sight.vision_width != grid_width_ ||
+        sight.vision_height != grid_height_) {
+        stage_clear();
+        return;
     }
-
-    // Two-pass box blur (radius=2) for smooth FoW transitions
-    blur_to_staging();
+    // Seen or not, hard-edged as FA's (its fog volumes have no blur)
+    u8* out = staging_mapped_[fi_];
+    for (size_t i = 0; i < sight.vision.size(); ++i) out[i] = sight.vision[i] != 0 ? 255 : 0;
 }
 
 void FogRenderer::stage_clear() {
     if (!initialized_ || !staging_mapped_[fi_]) return;
     std::memset(staging_mapped_[fi_], 255, static_cast<size_t>(grid_width_) * grid_height_);
-}
-
-void FogRenderer::blur_to_staging() {
-    u32 w = grid_width_;
-    u32 h = grid_height_;
-    constexpr i32 R = 2; // blur radius
-
-    // Horizontal blur: raw_grid_ -> staging
-    for (u32 y = 0; y < h; y++) {
-        for (u32 x = 0; x < w; x++) {
-            i32 sum = 0;
-            i32 count = 0;
-            for (i32 dx = -R; dx <= R; dx++) {
-                i32 sx = static_cast<i32>(x) + dx;
-                if (sx >= 0 && sx < static_cast<i32>(w)) {
-                    sum += raw_grid_[y * w + sx];
-                    count++;
-                }
-            }
-            staging_mapped_[fi_][y * w + x] = static_cast<u8>(sum / count);
-        }
-    }
-
-    // Copy staging back to raw for vertical pass
-    std::memcpy(raw_grid_.data(), staging_mapped_[fi_], w * h);
-
-    // Vertical blur: raw_grid_ -> staging
-    for (u32 y = 0; y < h; y++) {
-        for (u32 x = 0; x < w; x++) {
-            i32 sum = 0;
-            i32 count = 0;
-            for (i32 dy = -R; dy <= R; dy++) {
-                i32 sy = static_cast<i32>(y) + dy;
-                if (sy >= 0 && sy < static_cast<i32>(h)) {
-                    sum += raw_grid_[sy * w + x];
-                    count++;
-                }
-            }
-            staging_mapped_[fi_][y * w + x] = static_cast<u8>(sum / count);
-        }
-    }
 }
 
 void FogRenderer::record_upload(VkCommandBuffer cmd) {

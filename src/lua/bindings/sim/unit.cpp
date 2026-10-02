@@ -32,7 +32,6 @@
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
-#include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
 #include "sim/platoon.hpp"
@@ -775,7 +774,7 @@ static int unit_GetBlip(lua_State* L) {
         auto ra = static_cast<osc::u32>(req_army);
 
         // Check if army has any current intel or blip cache entry
-        if (sim && sim->visibility_grid()) {
+        if (sim && sim->intel_grids()) {
             bool has_intel = sim->has_any_intel(e, ra);
             // Blip cache entry means this entity was previously visible
             // (dead-reckoning — blip methods return cached position)

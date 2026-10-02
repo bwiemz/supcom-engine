@@ -1,29 +1,45 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "map/visibility_grid.hpp"
 #include "renderer/recon_view.hpp"
 #include "sim/world_snapshot.hpp"
 
+#include <cmath>
 #include <span>
 #include <utility>
 #include <vector>
 
 using namespace osc;
-using map::VisFlag;
 using renderer::ReconView;
 using renderer::Sight;
 
 namespace {
 
+/// Army 0's senses in these tests.
+enum class VisFlag : u8 { None = 0, Vision = 1, Radar = 2, Sonar = 4, Omni = 8 };
+
 /// A 256 x 256 world of three armies (0 the player's), whose snapshot the
 /// tests edit between ticks.
 struct World {
     sim::WorldSnapshot snap;
+    /// Army 0's circles of sense (radius 12) this tick.
+    std::vector<std::pair<sim::Vector3, VisFlag>> circles;
 
     World() {
-        snap.visibility.emplace(256, 256);
+        snap.sight.army = 0;
+        snap.sight.vision_cell = 2;
+        snap.sight.vision_width = snap.sight.vision_height = 128;
+        snap.sight.water_cell = 4;
+        snap.sight.water_width = snap.sight.water_height = 64;
+        snap.sight.water.assign(64 * 64, 0);
         snap.armies.resize(3);
         for (auto& a : snap.armies) a.valid = true;
+    }
+
+    /// Whether army 0 has `flag` at (x, z).
+    bool senses(f32 x, f32 z, VisFlag flag) const {
+        for (const auto& [at, f] : circles)
+            if (f == flag && std::hypot(x - at.x, z - at.z) <= 12.0f) return true;
+        return false;
     }
 
     sim::EntityRecord& add(u32 id, i32 army, f32 x, f32 z) {
@@ -46,34 +62,41 @@ struct World {
         return nullptr;
     }
 
-    /// Army 0's senses over (x, z)'s cell this tick: nothing else.
+    /// Army 0's senses about (x, z) this tick: nothing else.
     void sense(f32 x, f32 z, VisFlag flag) {
-        snap.visibility->clear_transient();
-        if (flag != VisFlag::None) snap.visibility->paint_circle(0, x, z, 12.0f, flag);
+        circles.clear();
+        if (flag != VisFlag::None) paint(x, z, flag);
     }
+    /// And another circle.
+    void paint(f32 x, f32 z, VisFlag flag) { circles.push_back({{x, 0, z}, flag}); }
 
-    /// Units' recon masks from the grid, as the sim leaves them with nothing
-    /// to counter (no cloak, stealth or water); off, a test sets its own.
+    /// Units' recon masks from the circles, as the sim leaves them with
+    /// nothing to counter (no cloak, stealth or water); off, a test sets its
+    /// own.
     bool derive_masks = true;
 
     /// The next tick, as `recon` sees it (with the FlushIntelInRects since
     /// the last).
     void tick(ReconView& recon, std::span<const sim::IntelFlushRecord> flushes = {}) {
         ++snap.tick;
-        if (derive_masks && snap.visibility)
+        // Army 0's sight: its vision circles' cells
+        auto& sight = snap.sight;
+        sight.vision.assign(static_cast<size_t>(sight.vision_width) * sight.vision_height, 0);
+        for (u32 gz = 0; gz < sight.vision_height; ++gz)
+            for (u32 gx = 0; gx < sight.vision_width; ++gx)
+                if (senses((static_cast<f32>(gx) + 0.5f) * 2, (static_cast<f32>(gz) + 0.5f) * 2,
+                           VisFlag::Vision))
+                    sight.vision[gz * sight.vision_width + gx] = 1;
+        if (derive_masks)
             for (auto& e : snap.entities) {
                 if (!e.is_unit) continue;
                 e.los_now = e.detected = 0;
-                u32 gx = 0;
-                u32 gz = 0;
-                snap.visibility->world_to_grid(e.position.x, e.position.z, gx, gz);
-                for (u32 a = 0; a < 3; ++a) {
-                    const VisFlag f = snap.visibility->get(gx, gz, a);
-                    if (map::has_flag(f, VisFlag::Vision)) e.los_now |= 1u << a;
-                    if (map::has_flag(f, VisFlag::Vision | VisFlag::Radar | VisFlag::Sonar |
-                                             VisFlag::Omni))
-                        e.detected |= 1u << a;
-                }
+                const f32 x = e.position.x;
+                const f32 z = e.position.z;
+                if (senses(x, z, VisFlag::Vision)) e.los_now |= 1u;
+                if (senses(x, z, VisFlag::Vision) || senses(x, z, VisFlag::Radar) ||
+                    senses(x, z, VisFlag::Sonar) || senses(x, z, VisFlag::Omni))
+                    e.detected |= 1u;
             }
         recon.update(sim::FrameView(&snap, &snap, 1.0f), flushes);
     }
@@ -81,8 +104,7 @@ struct World {
 
 } // namespace
 
-TEST_CASE("ReconView: an observer, or a world without a grid, sees everything",
-          "[renderer][recon]") {
+TEST_CASE("ReconView: an observer, or a world without fog, sees everything", "[renderer][recon]") {
     World w;
     w.unit(1, 1, 100, 100, true);
     w.add(2, 1, 100, 100).is_projectile = true;
@@ -99,7 +121,7 @@ TEST_CASE("ReconView: an observer, or a world without a grid, sees everything",
     CHECK_FALSE(recon.sees_everything());
     CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
 
-    w.snap.visibility.reset();
+    w.snap.sight.everywhere = true;
     w.tick(recon);
     CHECK(recon.sees_everything());
     CHECK(recon.sight(*w.find(1)) == Sight::Seen);
@@ -317,8 +339,8 @@ TEST_CASE("ReconView: a structure gone unseen is maybe dead, until its spot is s
     w.unit(8, 1, 200, 200, true); // a tank: mobile, never a ghost
     ReconView recon;
     recon.set_focus_army(0);
-    w.snap.visibility->paint_circle(0, 200, 200, 12.0f, VisFlag::Vision);
-    w.snap.visibility->paint_circle(0, 100, 100, 12.0f, VisFlag::Vision);
+    w.paint(200, 200, VisFlag::Vision);
+    w.paint(100, 100, VisFlag::Vision);
     w.tick(recon);
     w.sense(0, 0, VisFlag::None);
     w.tick(recon);
@@ -370,7 +392,7 @@ TEST_CASE("ReconView: a FlushIntelInRect forgets what it took from the player's 
     recon.set_focus_army(0);
     for (const auto& [x, z] :
          {std::pair{100.0f, 100.0f}, {140.0f, 100.0f}, {200.0f, 200.0f}, {240.0f, 100.0f}})
-        w.snap.visibility->paint_circle(0, x, z, 12.0f, VisFlag::Vision);
+        w.paint(x, z, VisFlag::Vision);
     w.tick(recon);
     w.sense(0, 0, VisFlag::None);
     w.tick(recon);

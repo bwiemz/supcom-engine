@@ -31,7 +31,6 @@
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
-#include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
 #include "sim/platoon.hpp"
@@ -988,7 +987,8 @@ static int entity_InitIntel(lua_State* L) {
     if (!e || !sim || lua_type(L, 3) != LUA_TSTRING) return 0;
     auto& intel = sim->entity_intel(e->entity_id());
     intel.army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1 : e->army();
-    intel.sources[lua_tostring(L, 3)] = {static_cast<f32>(luaL_optnumber(L, 4, 0)), true};
+    // A new handle, off until EnableIntel (Moho's InitIntel)
+    intel.sources[lua_tostring(L, 3)] = {static_cast<f32>(luaL_optnumber(L, 4, 0)), false};
     return 0;
 }
 

@@ -37,6 +37,7 @@ add_executable(osc_integration
     runner/binding_tail_test.cpp
     runner/destroyed_handle_test.cpp
     runner/jammer_blip_test.cpp
+    runner/intel_field_test.cpp
     runner/beam_render_test.cpp
     runner/trail_render_test.cpp
     runner/particle_render_test.cpp

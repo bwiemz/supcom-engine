@@ -159,7 +159,8 @@ TEST_CASE("EnableIntel only enables intel the unit has", "[intel]") {
     // IsIntelEnabled afterwards: in Moho the call does nothing for intel the
     // unit lacks. Enabling it anyway cloaked and stealthed every unit.
     osc::sim::Unit unit;
-    unit.init_intel("Vision", 26.0f);
+    unit.add_intel("Vision", 26.0f);
+    unit.enable_intel("Vision");
     unit.add_intel("RadarStealth", 0.0f);
 
     for (const char* intel : {"Radar", "Omni", "Cloak", "RadarStealth",
@@ -180,6 +181,13 @@ TEST_CASE("EnableIntel only enables intel the unit has", "[intel]") {
     unit.add_intel("Vision", 5.0f);
     REQUIRE(unit.is_intel_enabled("Vision"));
     REQUIRE(unit.get_intel_radius("Vision") == 26.0f);
+
+    // InitIntel makes a new handle, off until EnableIntel (Moho's; retail
+    // always enables it next).
+    unit.init_intel("Omni", 30.0f);
+    REQUIRE_FALSE(unit.is_intel_enabled("Omni"));
+    unit.enable_intel("Omni");
+    REQUIRE(unit.is_intel_enabled("Omni"));
 }
 
 TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
@@ -190,7 +198,9 @@ TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
 
     auto cloaked = std::make_unique<osc::sim::Unit>();
     cloaked->set_army(0);
-    cloaked->init_intel("Cloak", 0.0f);
+    cloaked->add_intel("Cloak", 0.0f);
+    cloaked->enable_intel("Cloak");
+    REQUIRE(cloaked->is_cloaked());
     cloaked->economy().maintenance_active = true;
     cloaked->economy().energy_maintenance_override = 100.0;
     auto unit_id = registry.register_entity(std::move(cloaked));
@@ -217,7 +227,8 @@ TEST_CASE("Energy stall disables active intel maintenance toggles", "[intel][eco
              "Radar", "Sonar", "Omni", "Jammer",
              "RadarStealth", "SonarStealth", "CloakField",
          }) {
-        intel_unit->init_intel(std::string(intel), 10.0f);
+        intel_unit->add_intel(std::string(intel), 10.0f);
+        intel_unit->enable_intel(std::string(intel));
     }
     intel_unit->economy().maintenance_active = true;
     intel_unit->economy().energy_maintenance_override = 100.0;

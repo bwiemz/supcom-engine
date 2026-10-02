@@ -22,7 +22,7 @@ extern "C" {
 #include "renderer/frustum.hpp"
 #include "renderer/decal_math.hpp"
 #include "map/pathfinding_grid.hpp"
-#include "map/visibility_grid.hpp"
+#include "map/intel_grid.hpp"
 
 #include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
@@ -2148,12 +2148,11 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     }
 
 
-    // Init fog of war texture (same grid dimensions as visibility grid)
+    // Init fog of war texture: a texel per cell of the vision grid
     {
-        u32 fog_w = static_cast<u32>(terrain->map_width()) /
-                        map::VisibilityGrid::CELL_SIZE + 1;
-        u32 fog_h = static_cast<u32>(terrain->map_height()) /
-                        map::VisibilityGrid::CELL_SIZE + 1;
+        const u32 cell = map::intel_cell_size(map::IntelLayer::Vision);
+        const u32 fog_w = std::max<u32>(static_cast<u32>(terrain->map_width()) / cell, 1);
+        const u32 fog_h = std::max<u32>(static_cast<u32>(terrain->map_height()) / cell, 1);
         fog_renderer_.init(fog_w, fog_h, device_, allocator_, cmd_pool_,
                            graphics_queue_);
 
@@ -2459,9 +2458,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     }
 
     // Stage fog of war data from visibility grid (CPU side)
-    if (fog_enabled_ && fog_renderer_.initialized() && view.cur() && view.cur()->visibility) {
-        if (player_army_ >= 0 && player_army_ < static_cast<i32>(map::VisibilityGrid::MAX_ARMIES))
-            fog_renderer_.stage(*view.cur()->visibility, static_cast<u32>(player_army_));
+    if (fog_enabled_ && fog_renderer_.initialized() && view.cur()) {
+        if (player_army_ >= 0 && view.cur()->sight.army == player_army_)
+            fog_renderer_.stage(view.cur()->sight);
         else fog_renderer_.stage_clear(); // an observer's: all visible
     }
 

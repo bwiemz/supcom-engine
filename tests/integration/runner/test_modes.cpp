@@ -198,6 +198,7 @@ constexpr Mode kModesBefore[] = {
     {"--issue-handles-test", test_issue_handles, false},
     {"--binding-tail-test", test_binding_tail, false},
     {"--jammer-blip-test", test_jammer_blips, false},
+    {"--intel-field-test", test_intel_fields, false},
     {"--destroyed-handle-test", test_destroyed_handle, false},
     {"--terrain-tex-test", test_terrain_tex, false},
     {"--shadow-test", test_shadow, false},
@@ -377,6 +378,8 @@ void IntegrationModes::print_usage() const {
               << "  --binding-tail-test Retail's last missing engine calls (platoon transport orders,\n"
               << "                     FlushIntelInRect, PickBestAttackVector)\n"
               << "  --jammer-blip-test A jammer's fake blips (M215e)\n"
+              << "  --intel-field-test Stealth fields and underwater sight, with retail's units "
+                 "(M215g)\n"
               << "  --destroyed-handle-test A destroyed entity's handle lasts the tick\n"
               << "  --issue-handles-test Issue* takes one unit or a list, and skips non-units\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
