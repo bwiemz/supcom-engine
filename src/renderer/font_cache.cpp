@@ -8,6 +8,7 @@
 #include <vk_mem_alloc.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 // forward-declare from vk_utils.cpp
@@ -248,7 +249,8 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
         return nullptr;
     }
 
-    f32 scale = stbtt_ScaleForPixelHeight(&font, static_cast<f32>(pointsize));
+    // GDI's em is the point size in pixels (Moho's fonts)
+    f32 scale = stbtt_ScaleForMappingEmToPixels(&font, static_cast<f32>(pointsize));
 
     // Get font metrics
     int ascent_raw, descent_raw, line_gap_raw;
@@ -266,12 +268,19 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
     constexpr u32 LAST_CHAR = 126;
     constexpr u32 CHAR_COUNT = LAST_CHAR - FIRST_CHAR + 1;
 
-    // Determine atlas size (pack glyphs in rows)
-    // Estimate: each glyph ~pointsize x pointsize, pack ~16 per row
+    // Determine atlas size (pack glyphs in rows): cells as large as the
+    // largest glyph, which may stand taller than the em
     u32 cols = 16;
     u32 rows = (CHAR_COUNT + cols - 1) / cols;
     u32 cell_w = static_cast<u32>(pointsize) + 2;
     u32 cell_h = static_cast<u32>(pointsize) + 2;
+    for (u32 codepoint = FIRST_CHAR; codepoint <= LAST_CHAR; codepoint++) {
+        int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+        stbtt_GetCodepointBitmapBox(&font, static_cast<int>(codepoint), scale, scale, &bx0, &by0,
+                                    &bx1, &by1);
+        cell_w = std::max(cell_w, static_cast<u32>(bx1 - bx0) + 2);
+        cell_h = std::max(cell_h, static_cast<u32>(by1 - by0) + 2);
+    }
     atlas->atlas_width = cols * cell_w;
     atlas->atlas_height = rows * cell_h;
 
@@ -307,7 +316,8 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
         int advance_raw, lsb;
         stbtt_GetCodepointHMetrics(&font, static_cast<int>(codepoint),
                                    &advance_raw, &lsb);
-        gi.x_advance = advance_raw * scale;
+        // Whole pixels, each glyph's own rounded (GDI's widths)
+        gi.x_advance = std::floor(static_cast<f32>(advance_raw) * scale + 0.5f);
 
         if (glyph_bmp) {
             // Clamp to cell bounds

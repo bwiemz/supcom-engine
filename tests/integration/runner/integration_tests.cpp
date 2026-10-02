@@ -15768,6 +15768,42 @@ void test_edit(TestContext& ctx) {
         }
     }
 
+    // Test 16d: string widths as retail's, GDI's: each glyph's own, rounded
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "local texts = { 'W', 'iiiiiiiiii', 'MMMMMMMMMM',\n"
+            "    'The quick brown fox', '0123456789' }\n"
+            "local function widths()\n"
+            "    local out = {}\n"
+            "    for _, t in texts do table.insert(out, il:GetStringAdvance(t)) end\n"
+            "    return table.concat(out, ' ')\n"
+            "end\n"
+            "il:SetNewFont('Arial', 16)\n"
+            "local arial = widths()\n"
+            "il:SetNewFont('Zeroes Three', 14)\n"
+            "local zeroes = widths()\n"
+            "local t = import('/lua/maui/text.lua').Text(f)\n"
+            "t:SetFont('Arial', 14)\n"
+            "t:SetText('The quick brown fox')\n"
+            "return arial == '15 40 130 143 90' and zeroes == '14 30 110 157 90' and\n"
+            "    t.TextAdvance() == 128\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 16d Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 16d: string widths as retail's");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16d: string widths differ from retail's");
+        }
+    }
+
     // Test 17: ItemList SetNewColors + ShowSelection/ShowMouseoverItem
     {
         auto result = ctx.lua_state.do_string(
