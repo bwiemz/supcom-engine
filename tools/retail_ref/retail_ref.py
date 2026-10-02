@@ -35,7 +35,6 @@ Wine has only a stub. Where there is no desktop, under Xvfb (xvfb-run); a
 from __future__ import annotations
 
 import argparse
-import getpass
 import hashlib
 import os
 import shutil
@@ -150,13 +149,17 @@ class Platform:
     def prefs_path(self) -> Path:
         if self.windows:
             return Path(os.environ["LOCALAPPDATA"]) / PREFS_REL
-        prefix = Path(os.environ.get("WINEPREFIX", Path.home() / ".wine"))
-        user = getpass.getuser()
-        for local in ("AppData/Local", "Local Settings/Application Data"):
-            candidate = prefix / "drive_c" / "users" / user / local / PREFS_REL
-            if candidate.parent.exists():
-                return candidate
-        return prefix / "drive_c" / "users" / user / "AppData/Local" / PREFS_REL
+        # Where this Wine keeps a user's local application data, as the game
+        # finds it: AppData\Local, or Local Settings\Application Data before
+        # Wine 7
+        out = subprocess.run(
+            [self.wine, "cmd", "/c", "echo", "%LOCALAPPDATA%"], capture_output=True, text=True
+        )
+        lines = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        local = prefix_path(lines[-1] if lines else "")
+        if local is None:
+            raise RuntimeError("Wine didn't say where its local application data is")
+        return local / PREFS_REL
 
     def command(self, exe: Path) -> list[str]:
         return [str(exe)] if self.windows else [self.wine, str(exe)]
@@ -239,6 +242,18 @@ public class W {{
     return subprocess.run(["import", "-window", found[0], str(out)]).returncode == 0
 
 
+def wine_prefix() -> Path:
+    return Path(os.environ.get("WINEPREFIX", Path.home() / ".wine"))
+
+
+def prefix_path(windows_path: str, prefix: Path | None = None) -> Path | None:
+    """A Wine prefix's C: path as a file here; None if it isn't one."""
+    if len(windows_path) < 3 or windows_path[:3].upper() != "C:\\":
+        return None
+    parts = [p for p in windows_path[3:].split("\\") if p]
+    return (prefix or wine_prefix()).joinpath("drive_c", *parts)
+
+
 def native_dll(data: bytes) -> bool:
     """Whether a DLL's bytes are a real one, not Wine's own (which says so)."""
     return b"Wine builtin DLL" not in data
@@ -270,7 +285,7 @@ def run(opts: argparse.Namespace) -> int:
         return 2
     plat = Platform(opts.wine)
     if not plat.windows:
-        problem = wine_d3dx_problem(Path(os.environ.get("WINEPREFIX", Path.home() / ".wine")))
+        problem = wine_d3dx_problem(wine_prefix())
         if problem:
             print(problem)
             return 2
@@ -411,6 +426,12 @@ def self_test() -> int:
     )
     check("a failed run", report("OSC-REF: failed: no button X\nOSC-REF: ready")[1], False)
     check("Microsoft's DLL", native_dll(b"MZ...Microsoft (R) D3DX..."), True)
+    check(
+        "Wine's local data",
+        prefix_path("C:\\users\\a\\Local Settings\\Application Data", Path("/p")),
+        Path("/p/drive_c/users/a/Local Settings/Application Data"),
+    )
+    check("not a C: path", prefix_path("%LOCALAPPDATA%", Path("/p")), None)
     check("Wine's own DLL", native_dll(b"MZ...Wine builtin DLL..."), False)
     check("a run that never got ready", report("OSC-REF: main menu")[1], False)
     if failed == 0:
