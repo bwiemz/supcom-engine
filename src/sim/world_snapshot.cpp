@@ -1,5 +1,7 @@
 #include "sim/world_snapshot.hpp"
 
+#include "map/intel_grid.hpp"
+
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
@@ -151,20 +153,16 @@ void capture_frame(const SimState& sim, const IEffect& fx, EffectRecord& r) {
     r.frame_rotation = e->orientation();
 }
 
-/// Each army's recon of `u` (M215d): the sim's (cloak and stealth counted),
-/// less what the unit's layer hides from a sense, as Moho's GetNewReconFor
-/// asks radar only above the water and sonar only in or under it.
+/// Each army's recon of `u` (M215d): the sim's, the unit's layer, cloak,
+/// stealth and fields counted (M215g).
 void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
     const auto* recon = sim.entity_recon(u.entity_id());
     if (!recon) return;
-    const std::string& layer = u.layer();
-    const bool under = layer == "Sub" || layer == "Seabed";
-    const bool wet = under || layer == "Water";
     static_assert(SimState::MAX_VIS_ARMIES <= 32, "an army's recon is a bit of a u32");
     for (u32 a = 0; a < SimState::MAX_VIS_ARMIES; ++a) {
         const SimState::EntityVisSnapshot& f = (*recon)[a];
         if (f.vision) r.los_now |= 1u << a;
-        if (f.vision || f.omni || (f.radar && !under) || (f.sonar && wet)) r.detected |= 1u << a;
+        if (f.any()) r.detected |= 1u << a;
     }
 }
 
@@ -254,7 +252,7 @@ void WorldSnapshot::clear() {
     adjacent.clear();
     effects.clear();
     armies.clear();
-    visibility.reset();
+    sight.clear();
     player_result = 0;
     fake_blips.clear();
 }
@@ -272,7 +270,61 @@ static void capture_fake_blips(const SimState& sim, WorldSnapshot& out) {
     }
 }
 
-void capture_world(const SimState& sim, WorldSnapshot& out) {
+bool SightMap::sees_ground(f32 x, f32 z) const {
+    if (everywhere) return true;
+    const auto gx = static_cast<i64>(std::floor(x / static_cast<f32>(vision_cell)));
+    const auto gz = static_cast<i64>(std::floor(z / static_cast<f32>(vision_cell)));
+    if (gx < 0 || gz < 0 || gx >= vision_width || gz >= vision_height) return false;
+    return vision[static_cast<size_t>(gz) * vision_width + static_cast<size_t>(gx)] != 0;
+}
+
+bool SightMap::sees(f32 x, f32 y, f32 z) const {
+    if (everywhere) return true;
+    if (y >= water_surface) return sees_ground(x, z);
+    const auto gx = static_cast<i64>(std::floor(x / static_cast<f32>(water_cell)));
+    const auto gz = static_cast<i64>(std::floor(z / static_cast<f32>(water_cell)));
+    if (gx < 0 || gz < 0 || gx >= water_width || gz >= water_height) return false;
+    return water[static_cast<size_t>(gz) * water_width + static_cast<size_t>(gx)] != 0;
+}
+
+void SightMap::clear() {
+    army = -1;
+    everywhere = false;
+    vision.clear();
+    water.clear();
+    vision_width = vision_height = water_width = water_height = 0;
+}
+
+void capture_sight(const SimState& sim, i32 army, SightMap& out) {
+    out.clear();
+    const map::IntelGrids* grids = sim.intel_grids();
+    if (!grids || army < 0 || static_cast<u32>(army) >= grids->armies()) return;
+    out.army = army;
+    out.everywhere = !grids->fog_of_war();
+    out.water_surface = sim.water_surface();
+    if (out.everywhere) return;
+    const u32 sharers = sim.intel_sharers(static_cast<u32>(army));
+    // Its grids and its allies', each cell seen in any
+    const auto flatten = [&](map::IntelLayer layer, u32& cell, u32& width, u32& height,
+                             std::vector<u8>& seen) {
+        const map::IntelGrid& own = grids->grid(static_cast<u32>(army), layer);
+        cell = own.cell_size();
+        width = own.width();
+        height = own.height();
+        seen.assign(own.cells().size(), 0);
+        for (u32 a = 0; a < grids->armies(); ++a) {
+            if ((sharers >> a & 1u) == 0) continue;
+            const std::vector<i8>& cells = grids->grid(a, layer).cells();
+            if (cells.size() != seen.size()) continue;
+            for (size_t i = 0; i < cells.size(); ++i) seen[i] |= static_cast<u8>(cells[i] != 0);
+        }
+    };
+    flatten(map::IntelLayer::Vision, out.vision_cell, out.vision_width, out.vision_height,
+            out.vision);
+    flatten(map::IntelLayer::Water, out.water_cell, out.water_width, out.water_height, out.water);
+}
+
+void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     out.tick = sim.tick_count();
     out.entities.clear();
     out.bones.clear();
@@ -386,8 +438,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
             if (j != static_cast<i32>(i) && brain->is_ally(j)) a.allies |= 1u << j;
     }
 
-    if (const auto* grid = sim.visibility_grid()) out.visibility = *grid;
-    else out.visibility.reset();
+    capture_sight(sim, sight_army, out.sight);
     out.player_result = sim.player_result();
 }
 
@@ -404,7 +455,7 @@ std::vector<std::string> world_blueprints(const SimState& sim) {
 
 void WorldHistory::capture(const SimState& sim) {
     cur_ = 1 - cur_;
-    capture_world(sim, snaps_[cur_]);
+    capture_world(sim, snaps_[cur_], sight_army_);
     ++captured_;
     // The sim forgets its events once the tick is over: keep them until
     // the renderer shows them.
@@ -417,6 +468,12 @@ void WorldHistory::capture(const SimState& sim) {
     for (const auto& r : sim.sound_requests())
         events_.sounds.push_back(
             {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater});
+}
+
+void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
+    if (army == sight_army_) return;
+    sight_army_ = army;
+    if (sim && captured_ > 0) capture_sight(*sim, army, snaps_[cur_].sight);
 }
 
 void WorldHistory::clear() {

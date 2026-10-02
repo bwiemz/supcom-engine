@@ -82,7 +82,8 @@ TYPES: list[tuple[str, str]] = [
     ("src/sim/sim_state.hpp", "BlipSnapshot"),
     ("src/sim/sim_state.hpp", "ResourceDeposit"),
     ("src/sim/armor_definition.hpp", "ArmorDefinition"),
-    ("src/map/visibility_grid.hpp", "VisibilityGrid"),
+    ("src/sim/intel_sources.hpp", "IntelHandle"),
+    ("src/sim/intel_sources.hpp", "PaintedIntel"),
 ]
 
 SERIALIZERS = [

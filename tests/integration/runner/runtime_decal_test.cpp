@@ -16,7 +16,6 @@
 #include "lua/lua_state.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
-#include "map/visibility_grid.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/decal.hpp"
@@ -312,12 +311,16 @@ void test_runtime_decal(TestContext& ctx) {
     // sees the spot; an enemy's splat is drawn anyway.
     {
         forget();
-        const map::VisibilityGrid* grid = ctx.sim.visibility_grid();
-        const bool unseen =
-            grid && !grid->any_vision(28, 28, 36, 36, 0) && !grid->any_vision(28, 40, 36, 48, 0);
-        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'Albedo', 8, 8, 1000, 0, 2)",
+        // At the surface, as a unit's would be: Moho tells a decal under the
+        // water's surface by its height, and asks the water grid for it.
+        const f32 y = ctx.sim.terrain()->get_surface_height(32, 32);
+        const auto seen = [&](f32 x0, f32 z0, f32 x1, f32 z1) {
+            return (ctx.sim.recon_in(x0, z0, x1, z1, y, 0) & sim::SimState::kReconLOS) != 0;
+        };
+        const bool unseen = !seen(28, 28, 36, 36) && !seen(28, 40, 36, 48);
+        lua(fmt::format("CreateDecal({{32, {}, 32}}, 0, {}, '', 'Albedo', 8, 8, 1000, 0, 2)", y,
                         tex("red.dds")));
-        lua(fmt::format("CreateSplat({{32, 0, 44}}, 0, {}, 8, 8, 1000, 0, 2)", tex("red.dds")));
+        lua(fmt::format("CreateSplat({{32, {}, 44}}, 0, {}, 8, 8, 1000, 0, 2)", y, tex("red.dds")));
         r.set_fog_enabled(true);
         r.set_player_army(0);
         const ImageRGBA8 before = shoot(fill);

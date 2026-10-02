@@ -34,7 +34,6 @@
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
-#include "map/visibility_grid.hpp"
 #include "sim/shield.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -2204,12 +2203,13 @@ void test_intel(TestContext& ctx) {
             LOG('INTEL TEST: no Blueprint.Intel (ok for some units)')
         end
 
-        -- Test 1: InitIntel + IsIntelEnabled (init auto-enables — original engine behavior)
+        -- Test 1: InitIntel makes a new handle, off until EnableIntel (Moho's
+        -- CIntelPosHandle starts disabled; retail always enables it next)
         acu:InitIntel(1, 'Radar', 44.0)
-        if acu:IsIntelEnabled('Radar') then
-            LOG('INTEL TEST 1 PASSED: IsIntelEnabled=true after InitIntel')
+        if not acu:IsIntelEnabled('Radar') then
+            LOG('INTEL TEST 1 PASSED: IsIntelEnabled=false after InitIntel')
         else
-            LOG('INTEL TEST 1 FAILED: IsIntelEnabled=false after InitIntel (should be true)')
+            LOG('INTEL TEST 1 FAILED: IsIntelEnabled=true after InitIntel (should be false)')
         end
 
         -- Test 2: EnableIntel → IsIntelEnabled should be true
@@ -7656,18 +7656,20 @@ void test_impact(TestContext& ctx) {
     )");
 
     // A VizMarker (a script entity) reveals an area with InitIntel.
-    auto* vis = ctx.sim.visibility_grid();
-    const bool dark_before = vis && !vis->has_vision(450.0f, 600.0f, 0);
+    const auto lit_there = [&] {
+        return (ctx.sim.recon_at({450.0f, 1000.0f, 600.0f}, 0) & sim::SimState::kReconLOS) != 0;
+    };
+    const bool dark_before = !lit_there();
     lua_check("setup: a VizMarker", R"(
         local VizMarker = import('/lua/sim/vizmarker.lua').VizMarker
         __osc_marker = VizMarker({X = 450, Z = 600, Radius = 12, LifeTime = 0, Army = 1,
                                   Omni = false, Radar = false, Vision = true, WaterVision = false})
     )");
     ctx.sim.tick();
-    const bool lit = vis && vis->has_vision(450.0f, 600.0f, 0);
+    const bool lit = lit_there();
     (void)ctx.lua_state.do_string("__osc_marker:Destroy()");
     ctx.sim.tick();
-    const bool dark_after = vis && !vis->has_vision(450.0f, 600.0f, 0);
+    const bool dark_after = !lit_there();
     check(dark_before && lit && dark_after,
           fmt::format("Test 5: a VizMarker reveals its area while it lives "
                       "(before {}, with {}, after {})",
@@ -22202,6 +22204,7 @@ void test_intel_overlay(TestContext& ctx) {
     // Test 2: Init radar intel
     {
         unit->init_intel("Radar", 60.0f);
+        unit->enable_intel("Radar"); // InitIntel makes it off (Moho)
         if (unit->is_intel_enabled("Radar") && unit->get_intel_radius("Radar") == 60.0f) {
             pass++; spdlog::info("[PASS] Test 2: Radar intel initialized (60u)");
         } else {
@@ -22212,6 +22215,7 @@ void test_intel_overlay(TestContext& ctx) {
     // Test 3: Init sonar intel
     {
         unit->init_intel("Sonar", 40.0f);
+        unit->enable_intel("Sonar"); // InitIntel makes it off (Moho)
         if (unit->is_intel_enabled("Sonar") && unit->get_intel_radius("Sonar") == 40.0f) {
             pass++; spdlog::info("[PASS] Test 3: Sonar intel initialized (40u)");
         } else {
@@ -22222,6 +22226,7 @@ void test_intel_overlay(TestContext& ctx) {
     // Test 4: Init omni intel
     {
         unit->init_intel("Omni", 30.0f);
+        unit->enable_intel("Omni"); // InitIntel makes it off (Moho)
         if (unit->is_intel_enabled("Omni") && unit->get_intel_radius("Omni") == 30.0f) {
             pass++; spdlog::info("[PASS] Test 4: Omni intel initialized (30u)");
         } else {
@@ -22290,6 +22295,7 @@ void test_intel_overlay(TestContext& ctx) {
     // Test 10: Unknown intel type not rendered
     {
         unit->init_intel("CustomType", 50.0f);
+        unit->enable_intel("CustomType"); // InitIntel makes it off (Moho)
         // Renderer skips unknown types (continue in the else branch)
         if (unit->is_intel_enabled("CustomType")) {
             pass++; spdlog::info("[PASS] Test 10: Unknown intel type exists but renderer skips it");
