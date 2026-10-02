@@ -418,6 +418,79 @@ void test_shield_render(TestContext& ctx) {
                             scu_worn, scu_shells, shielded_seraphim, bare_seraphim, scu_shown));
     }
 
+    // Test 6: at Low (M211n) each faction's shield draws its LowFidelity
+    // technique, in one pass, Cybran's too, and shows. Their colours, from
+    // ThreeUVTexShiftScaleLoFiVS's reads: UEF's ShieldLoFiPS at least 0.45
+    // bluer than red, so the frame bluer; Cybran's ShieldCybranLoFiPS (0.2,
+    // 0, 0.5) by the specular, no green, where High's has its (0.15, 0.15,
+    // 0.3); Seraphim's, Aeon's ShieldAeonLoFiPS, still added.
+    {
+        renderer::Renderer::VideoOptions& video = r.video_options();
+        const renderer::Renderer::VideoOptions as_was = video;
+        // The share of the frame's middle greener in `a` than in `b`
+        const auto greener_share = [](const Pixels& a, const Pixels& b) {
+            size_t greener = 0;
+            for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+                if (a[i][1] > b[i][1] + 0.02f) ++greener;
+            return a.empty() ? 0.0f : static_cast<f32>(greener) / static_cast<f32>(a.size());
+        };
+        struct Faction {
+            const char* name;
+            const char* global;
+            Spot at;
+            MeshTechnique technique;
+        };
+        const Faction factions[] = {
+            {"UEF", "__osc_sh_uef", uef_at, MeshTechnique::ShieldUEF},
+            {"Cybran", "__osc_sh_cybran", cybran_at, MeshTechnique::ShieldCybran},
+            {"Aeon", "__osc_sh_aeon", aeon_at, MeshTechnique::ShieldAeon},
+            {"Seraphim", "__osc_sh_seraphim", seraphim_at, MeshTechnique::ShieldSeraphim},
+        };
+        // A shield's look: its passes, then the frame's middle with it and
+        // without
+        struct Look {
+            u32 passes = 0;
+            f32 shown = 0.0f;
+            f32 bluer = 0.0f;
+            f32 greener = 0.0f;
+            f32 darker = 0.0f;
+        };
+        const auto look = [&](const Faction& f) {
+            const ImageRGBA8 frame = shots.shoot_frame(*terrain, f.at.x, f.at.z, 60.0f);
+            keep(fmt::format("{}_{}", f.name, video.graphics_fidelity).c_str(), frame);
+            const Pixels on = centre_pixels(frame);
+            Look l;
+            l.passes = r.mesh_draws(f.technique);
+            run_lua(ctx, fmt::format("{}.MyShield:RemoveShield()\n", f.global));
+            tick(1);
+            const Pixels off = centre_pixels(shots.grab());
+            run_lua(ctx, fmt::format("{}.MyShield:CreateShieldMesh()\n", f.global));
+            tick(1);
+            l.shown = mean_abs_diff(on, off);
+            l.bluer = blueness(on) - blueness(off);
+            l.greener = greener_share(on, off);
+            l.darker = darker_share(on, off);
+            return l;
+        };
+        const Look cybran_high = look(factions[1]);
+        video.graphics_fidelity = 0;
+        Look low[std::size(factions)];
+        bool ok = cybran_high.greener > 0.02f;
+        std::string seen;
+        for (size_t i = 0; i < std::size(factions); ++i) {
+            low[i] = look(factions[i]);
+            ok = ok && low[i].passes == 1 && low[i].shown > 0.005f;
+            seen += fmt::format(" {} {} pass(es), changing it by {:.4f};", factions[i].name,
+                                low[i].passes, low[i].shown);
+        }
+        video = as_was;
+        ok = ok && low[0].bluer > 0.01f && low[1].greener < 0.01f && low[3].darker < 0.1f;
+        t.check(ok, fmt::format("Test 6: at Low:{} UEF's bluer by {:.4f}; Cybran's greener on "
+                                "{:.1f}% ({:.1f}% at High); Seraphim's darker on {:.1f}%",
+                                seen, low[0].bluer, low[1].greener * 100.0f,
+                                cybran_high.greener * 100.0f, low[3].darker * 100.0f));
+    }
+
     spdlog::info("Shield render test: {} passed, {} failed", t.pass, t.fail);
 }
 

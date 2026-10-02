@@ -708,6 +708,58 @@ void test_build_shaders(TestContext& ctx) {
                             dark[0], dark[1], dark[2], dark[3], dark[4]));
     }
 
+    // Test 10: the Low lanes (M211n), lit by the vertex's normal: 2 light²
+    // its colour, the white fill's light 1. UEFBuildLoFiPS draws a flat grey
+    // max(f, 0.5) at that alpha (its HLSL comma operator), under the overlay
+    // at alpha 0.25 never faded; AeonBuild is one pass, its albedo (white,
+    // lit twice over) at alpha f; CybranBuildLoFiPS, SeraphimBuild's too,
+    // puts the army's colour by half f under the mask, at alpha 0.4 below
+    // 70%. (At High the 97% UEF overlay is faded to 0.1, Aeon's plate
+    // opaque, Cybran's and Seraphim's black until 90%.)
+    {
+        renderer::Renderer::VideoOptions& video = r.video_options();
+        const renderer::Renderer::VideoOptions as_was = video;
+        video.graphics_fidelity = 0;
+        const Rgb team = {220.0f / 255.0f, 30.0f / 255.0f, 30.0f / 255.0f};
+        if (army) army->set_color(220, 30, 30);
+        stand(Build{}, 0.0f, 100.0f, 220.0f);
+        stand(Build{}, 0.97f, 120.0f, 220.0f);
+        Build aeon;
+        aeon.shader = "AeonBuild";
+        aeon.albedo = "albedo_white.dds";
+        stand(aeon, 0.5f, 140.0f, 220.0f);
+        Build cybran;
+        cybran.shader = "CybranBuild";
+        cybran.specteam = "spec_team.dds";
+        stand(cybran, 0.5f, 160.0f, 220.0f);
+        Build seraphim = cybran;
+        seraphim.shader = "SeraphimBuild";
+        stand(seraphim, 0.5f, 180.0f, 220.0f);
+        const auto uef = [&](f32 f) {
+            const f32 s = std::max(f, 0.5f);
+            return over(over(sky, Rgb{s, s, s}, s), black, 0.25f);
+        };
+        const Rgb masked = over(sky, scaled(team, 0.5f), 0.4f);
+        struct Seen {
+            const char* what;
+            Rgb px;
+            Rgb expected;
+        };
+        const Seen seen[] = {{"UEF at 0%", at(100.0f, 220.0f), uef(0.0f)},
+                             {"UEF at 97%", at(120.0f, 220.0f), uef(0.97f)},
+                             {"Aeon at 50%", at(140.0f, 220.0f), over(sky, white, 0.5f)},
+                             {"Cybran at 50%", at(160.0f, 220.0f), masked},
+                             {"Seraphim at 50%", at(180.0f, 220.0f), masked}};
+        video = as_was;
+        bool ok = true;
+        std::string shown;
+        for (const Seen& s : seen) {
+            ok = ok && near(s.px, s.expected);
+            shown += fmt::format(" {} {} ({});", s.what, show(s.px), show(s.expected));
+        }
+        t.check(ok, fmt::format("Test 10: at Low:{}", shown));
+    }
+
     spdlog::info("Build shader test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

@@ -1591,6 +1591,42 @@ vec3 buildColor(vec4 texColor, vec4 specTeam, vec3 N, vec3 V, float shadow, out 
     vec3 environment = texture(environmentMap, reflect(-V, N)).rgb; // no "environment" named
     float phongAmount = clamp(dot(reflect(S, N), -V), 0.0, 1.0);
     float emissive = 2.0 * specTeam.b; // glowMultiplier
+    if (pc.lane == 0u) {
+        // The builds' Low lanes (M211n), lit by the vertex's normal, no
+        // shadow, normal map or environment.
+        vec3 lowLight = computeLight(dot(S, fragVertexNormal), 1.0, 1.0, 1.0);
+        if (pc.technique == 5u && pc.pass == 0u) {
+            // UEFBuildLoFiPS writes `float4 color = (lit colour + blue,
+            // max(f, 0.5))`: HLSL's comma operator keeps the last, so FA's
+            // colour is that alpha in all four channels, a flat grey.
+            float s = max(f, 0.5);
+            alpha = s;
+            return vec3(s);
+        }
+        if (pc.technique == 5u) {
+            // UEFBuildOverlayLoFiPS, by EffectVertexNormalLoFiVS(16, 8,
+            // 0.0192, 0.0176, -0.05, -0.05): no fade at the end
+            vec4 x = texture(texSecondary, fragUV * 16.0 + age * vec2(0.0192, 0.0176));
+            vec4 y = texture(texSecondary, fragUV * 8.0 + age * vec2(-0.05, -0.05));
+            alpha = max((x.a + y.a) * clamp(1.0 - f, 0.0, 1.0), 0.25);
+            return x.rgb + y.rgb;
+        }
+        if (pc.technique == 6u) {
+            // AeonBuild_LowFidelity: one pass of ColorMaskPS_LowFidelity
+            // (AeonBuildLoFiVS(1, 1, 0, 0, 0, 0)), blended by f
+            alpha = f;
+            return 2.0 * lowLight * lowLight *
+                   mix(fragColor.rgb, texColor.rgb, 1.0 - clamp(specTeam.a, 0.0, 1.0));
+        }
+        if ((pc.technique == 7u || pc.technique == 8u) && pc.pass == 0u) {
+            // CybranBuildLoFiPS (SeraphimBuild_LowFidelity's too): the army's
+            // colour, half and by f, under the mask; 40% opaque until 70%
+            alpha = f >= 0.7 ? 0.4 + 0.6 * ((f - 0.7) * 3.33) : 0.4;
+            return 2.0 * lowLight * lowLight *
+                   mix(fragColor.rgb * f * 0.5, texColor.rgb, 1.0 - clamp(specTeam.a, 0.0, 1.0));
+        }
+        // CybranBuild's overlay is CybranBuildOverlayPS at every fidelity
+    }
     if (pc.technique == 5u && pc.pass == 0u) {
         // UEFBuildHiFiPS: pulsing toward blue (by FA's time, every 50
         // ticks), less so as it's built, under a scrolling secondary.
@@ -1675,6 +1711,24 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
     vec3 S = sunDirection();
     float f = fragParameter;
     float age = pc.time - fragShaderTime;
+    if (pc.lane == 0u && pc.technique == 12u) {
+        // UEFBuildCubeLoFiPS, by EffectVertexNormalLoFiVS(0.025, 50, 0.0012,
+        // 0.0062, -0.25, -0.0062) (M211n)
+        vec4 albedo = texture(texAlbedo, fragUV * 0.025 + age * vec2(0.0012, 0.0062));
+        vec4 secondary = texture(texSecondary, fragUV * 50.0 + age * vec2(-0.25, -0.0062));
+        vec3 current = mix(albedo.rgb + secondary.rgb, vec3(0.0, 0.0, 1.0), 0.65);
+        alpha = max(f, 0.5) * albedo.a;
+        return mix(current, albedo.rgb, clamp(f, 0.0, 1.0));
+    }
+    if (pc.lane == 0u && pc.technique == 13u) {
+        // AeonBuildPuddleLoFiPS, by EffectVertexNormalLoFiVS(1, 1, -0.002,
+        // 0.0042, 0, 0): the albedo and a little of the sun's reflection in
+        // the default cube; no glow (M211n)
+        vec4 albedo = texture(texAlbedo, fragUV + age * vec2(-0.002, 0.0042));
+        vec3 environment = texture(environmentMap, reflect(-S, fragVertexNormal)).rgb;
+        alpha = 0.0;
+        return albedo.rgb + environment * 0.15;
+    }
     if (pc.technique == 11u) {
         // AlphaFadePS(2.0, 0.145): lit by the vertex's normal (VertexNormalVS),
         // fading out from two ticks old.
@@ -1734,6 +1788,12 @@ void main() {
     bool alphaTested = (prop && !vertexNormal && !terrainProp) || pc.technique == 9u ||
                        pc.technique == 14u || pc.technique == 17u;
     vec3 tint = prop ? vec3(1.0) : fragColor.rgb;
+    // The blended techniques (the builds, AlphaFade, UEFBuildCube,
+    // VertexNormal) and the build ghost's fade: FA drew them into an 8-bit
+    // target, which clamps what a shader writes before it blends (the scene
+    // here is half floats).
+    bool blended = (pc.technique >= 5u && pc.technique <= 8u) || pc.technique == 11u ||
+                   pc.technique == 12u || vertexNormal || fragColor.a < 1.0;
     // Alpha: the build ghost's fade, which its pipeline blends by, leaving
     // the frame's alpha; a build technique's or effect's own (M211f/g); else
     // the glow FA's techniques write there (M211e): a unit's SpecTeam blue
@@ -1748,9 +1808,9 @@ void main() {
     // The Low lane (graphics fidelity 0, M211m): mesh.fx's low fidelity
     // shaders, lit by the vertex's normal (normalised per vertex, interpolated
     // and not renormalised, as FA's are), with no shadow, normal map,
-    // environment or glow. The build
-    // techniques (5-8, 12, 13) keep their own shaders for now, and
-    // NormalMappedTerrain has no lanes.
+    // environment or glow. The build techniques (5-8, 12, 13) take theirs in
+    // buildColor and effectColor (M211n), and NormalMappedTerrain has no
+    // lanes.
     bool lowLane = pc.lane == 0u && !(pc.technique >= 5u && pc.technique <= 8u) &&
                    pc.technique != 12u && pc.technique != 13u && !terrainProp;
     if (lowLane) {
@@ -1798,7 +1858,7 @@ void main() {
         if (alphaTested && fragParameter * texColor.a <= 128.0 / 255.0) discard;
         if ((pc.technique == 11u || vertexNormal) && lowAlpha <= 35.0 / 255.0) discard;
         if (fragColor.a < 1.0) lowAlpha = fragColor.a; // the build ghost's fade
-        outColor = vec4(lowLit, lowAlpha);
+        outColor = vec4(blended ? clamp(lowLit, 0.0, 1.0) : lowLit, lowAlpha);
         return;
     }
 
@@ -1901,7 +1961,7 @@ void main() {
         if (fragWorldPos.y < pc.surface) discard;
         alpha = 0.5;
     }
-    outColor = vec4(lit, alpha);
+    outColor = vec4(blended ? clamp(lit, 0.0, 1.0) : lit, alpha);
 }
 )glsl";
 
@@ -1931,6 +1991,7 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
     uint technique; // MeshTechnique (M211f)
     float time;     // FA's time, for the swaying trees (M211j)
+    uint lane;      // mesh.fx's lane by graphics fidelity: 0 Low (M211n)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -1955,6 +2016,14 @@ layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
 } boneSSBO;
 
 void main() {
+    fragUV = inUV;
+    fragProp = inColor.g < 0.0 ? 1.0 : 0.0;
+    if (pc.lane == 0u && inColor.r < 0.0) {
+        // Wreckage_LowFidelity has no depth stage: at Low a wreck (its
+        // colour's negative red) casts no shadow. Outside the clip volume.
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+    }
     mat4 bone;
     if (pc.bonesPerInst > 0u) {
         uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
@@ -1976,8 +2045,6 @@ void main() {
         worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
     }
     gl_Position = pc.lightViewProj * worldPos;
-    fragUV = inUV;
-    fragProp = inColor.g < 0.0 ? 1.0 : 0.0;
 }
 )glsl";
 
@@ -2019,6 +2086,7 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
     uint technique;
     float time;
+    uint lane;
 } pc;
 
 layout(set = 1, binding = 0) uniform sampler2D texAlbedo;

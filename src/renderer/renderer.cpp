@@ -1302,8 +1302,8 @@ void Renderer::create_shadow_pipelines() {
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
         attrs[11] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
-        // Push constant 80B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
-        // uint technique (4, M211f) + float time (4, M211j)
+        // Push constant 84B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
+        // uint technique (4, M211f) + float time (4, M211j) + uint lane (4, M211n)
         shadow_mesh_pipeline_ =
             PipelineBuilder()
                 .set_shaders(smv, smf)
@@ -1311,7 +1311,7 @@ void Renderer::create_shadow_pipelines() {
                                   static_cast<u32>(attrs.size()))
                 .set_depth_test(true, true)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 3 + sizeof(f32),
+                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 4 + sizeof(f32),
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(bone_ds_layout_)    // set=0: bone SSBO
                 .add_descriptor_set_layout(texture_ds_layout_) // set=1: albedo (M211j)
@@ -2629,10 +2629,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 u32 bonesPerInst;
                 u32 technique; // MeshTechnique (M211f)
                 f32 time;      // FA's time, for the swaying trees (M211j)
+                u32 lane;      // the lane by graphics fidelity: at Low wrecks cast none (M211n)
             } spc{};
-            static_assert(sizeof(ShadowMeshPC) == 80, "matches shadow_mesh_vert/frag's push block");
+            static_assert(sizeof(ShadowMeshPC) == 84, "matches shadow_mesh_vert/frag's push block");
             std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
             spc.time = unit_renderer_.shader_time();
+            spc.lane = static_cast<u32>(fidelity());
             VkDescriptorSet albedo_fallback = texture_cache_.fallback_descriptor();
 
             for (auto& group : unit_renderer_.mesh_groups()) {
@@ -3399,7 +3401,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
                                             VK_NULL_HANDLE};
         if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
             passes[1] = mesh_overlay_pipeline_;
-        else if (technique == MeshTechnique::AeonBuild) passes[1] = mesh_fade_pipeline_;
+        // (At Low, Aeon's build is one blended pass, M211n.)
+        else if (technique == MeshTechnique::AeonBuild && fidelity() > 0)
+            passes[1] = mesh_fade_pipeline_;
         // The build effects' (M211g): AlphaFade blends colour and alpha,
         // UEF's cube colour only and writes no depth.
         else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
@@ -3409,7 +3413,8 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         else if (is_shield_technique(technique)) {
             const ShieldPasses shield = shield_passes(technique);
             passes[0] = shield_pipelines_[static_cast<u32>(shield.state)];
-            if (shield.count > 1) passes[1] = passes[0];
+            // (At Low, Cybran's is one pass, M211n.)
+            if (shield.count > 1 && fidelity() > 0) passes[1] = passes[0];
         }
         // A personal shield's (M211l): the unit as its base technique, then
         // the electric shell, blended, its depth written (mesh.fx's P1
