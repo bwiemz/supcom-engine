@@ -915,17 +915,28 @@ void Renderer::create_pipelines() {
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
 
         // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
-        terrain_pipeline_ =
-            PipelineBuilder()
-                .set_shaders(tv, tf)
+        const auto terrain_builder = [&](VkShaderModule frag) {
+            PipelineBuilder b;
+            b.set_shaders(tv, frag)
                 .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
                 .set_depth_test(true, true)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(92,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_push_constant(92, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
-                .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow
-                .build(device_, scene_render_pass_, &terrain_layout_);
+                .add_descriptor_set_layout(shadow_ds_layout_);     // set=1: shadow
+            return b;
+        };
+        terrain_pipeline_ =
+            terrain_builder(tf).build(device_, scene_render_pass_, &terrain_layout_);
+        // The low fidelity terrain (M212h; LowFidelityTerrain, then its
+        // lighting): the same vertices, sets and push block.
+        VkShaderModule low =
+            compile_glsl(device_, shaders::terrain_low_frag(), "terrain_low.frag", false);
+        if (low) {
+            terrain_low_pipeline_ =
+                terrain_builder(low).build(device_, scene_render_pass_, &terrain_low_layout_);
+            vkDestroyShaderModule(device_, low, nullptr);
+        }
     }
 
     // --- The terrain in the normal pass (M212e): its normals into the
@@ -2497,9 +2508,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         f32 ey = 0;
         f32 ez = 0;
         camera_.eye_position(ex, ey, ez);
-        runtime_decals_.update(
-            view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_, terrain_mesh_, camera_.view(),
-            {ex, ey, ez}, camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi);
+        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
+                               terrain_mesh_, camera_.view(), {ex, ey, ez},
+                               camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi,
+                               fidelity());
     }
 
     // The terrain's Time (M212f): set when the terrain would re-tessellate,
@@ -2680,8 +2692,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // again after.
     collect_frame_decals(frustum,
                          view.cur() ? static_cast<f32>(view.cur()->tick) + view.alpha() : 0.0f);
-    if (terrain_normal_framebuffer_ && terrain_normal_pipeline_ && terrain_tex_ds_ &&
-        shadow_ds_[fi] && terrain_mesh_.index_count() > 0) {
+    // The low fidelity terrain draws no normals (its DrawTerrainNormal is
+    // empty, M212h): the pass only clears the target then, which keeps it
+    // readable for what samples it (a fidelity 0 decal's light).
+    const bool normal_pass = terrain_normal_framebuffer_ && terrain_normal_pipeline_ &&
+                             terrain_tex_ds_ && shadow_ds_[fi] && terrain_mesh_.index_count() > 0;
+    if (normal_pass) {
         PROFILE_ZONE("Render::normals");
         std::array<VkClearValue, 2> cleared{};
         cleared[0].color = {{0.5f, 0.5f, 0.5f, 0.5f}}; // no terrain: zero normals
@@ -2702,7 +2718,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         VkRect2D normal_scissor{};
         normal_scissor.extent = {window_width_, window_height_};
         vkCmdSetScissor(cmd_buf_[fi], 0, 1, &normal_scissor);
-
+    }
+    if (normal_pass && fidelity() > 0) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
         struct TerrainPC {
             f32 viewProj[16];
@@ -2731,8 +2748,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
         // The normal decals (OverDrawDecals: TDecalsNormals, ...Alpha).
         record_decals(cmd_buf_[fi], fi, DecalTechnique::Normals, decal_normal_pipeline_, vp);
-        vkCmdEndRenderPass(cmd_buf_[fi]);
     }
+    if (normal_pass) vkCmdEndRenderPass(cmd_buf_[fi]);
 
     // ==================== REFLECTION ====================
     // Moho's RenderReflections (M213b): the units, mirrored in the water's
@@ -2812,9 +2829,13 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // unless ren_SkyDome is off (the render_skydome option): the clear shows
     if (video_options_.skydome) sky_renderer_.record(cmd_buf_[fi], fi);
 
-    // 1. Draw terrain
+    // 1. Draw terrain: at graphics fidelity 0 the low fidelity terrain
+    // (LowFidelityTerrain, M212h), else the map's own shader (Medium and
+    // High alike)
+    const bool low_terrain = fidelity() == 0 && terrain_low_pipeline_;
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_pipeline_);
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           low_terrain ? terrain_low_pipeline_ : terrain_pipeline_);
 
         // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
         // pad(8) + eye(12) = 92B
@@ -2861,17 +2882,23 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // (DrawGlowingDecals). Each pass the map's decals (M212b) and then the
     // scripts' (M212c), faded by their LOD (GetLODAlpha). The normal decals
     // drew in the normal pass (M212e).
+    // Medium and Low have no AlbedoXP pass; Low draws the water's albedo
+    // decals here, before the water (LowFidelityTerrain::DrawNormals, M212h).
     record_decals(cmd_buf_[fi], fi, DecalTechnique::GlowMask, decal_glow_mask_pipeline_, vp);
     record_decals(cmd_buf_[fi], fi, DecalTechnique::Albedo, decal_pipeline_, vp);
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
+    if (fidelity() >= 2)
+        record_decals(cmd_buf_[fi], fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
+    if (fidelity() == 0)
+        record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
     if (decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi]) {
         f32 ex = 0;
         f32 ey = 0;
         f32 ez = 0;
         camera_.eye_position(ex, ey, ez);
-        runtime_decals_.draw_splats(
-            cmd_buf_[fi], fi, vp, {ex, ey, ez}, static_cast<f32>(terrain_->map_width()),
-            static_cast<f32>(terrain_->map_height()), terrain_tex_ds_, shadow_ds_[fi]);
+        runtime_decals_.draw_splats(cmd_buf_[fi], fi, vp, {ex, ey, ez},
+                                    static_cast<f32>(terrain_->map_width()),
+                                    static_cast<f32>(terrain_->map_height()), terrain_tex_ds_,
+                                    shadow_ds_[fi], fidelity() == 0);
     }
     record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
 
@@ -2931,8 +2958,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             water_renderer_.render_surface_low(cmd_buf_[fi], window_width_, window_height_, fi);
         }
         // The water's albedo decals on its surface (M212g), as the terrain
-        // draws them once the water is down (HighFidelityTerrain).
-        record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
+        // draws them once the water is down (Medium and High; Low drew them).
+        if (fidelity() > 0)
+            record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
         // The meshes Moho draws after the water (M213b), which writes no
         // depth: over it, unrefracted.
         draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
@@ -3635,7 +3663,10 @@ void Renderer::collect_frame_decals(const Frustum& frustum, f32 ticks) {
     camera_.eye_position(ex, ey, ez);
     const std::array<f32, 3> eye = {ex, ey, ez};
     const std::array<f32, 16> view = camera_.view();
+    // The map's decals are fidelity 1 (CWldTerrainDecal's load): the low
+    // fidelity terrain draws none of them (M212h).
     for (const StoredDecal& sd : stored_decals_) {
+        if (fidelity() == 0) break;
         const f32 ground = terrain_->get_terrain_height(sd.mid_x, sd.mid_z);
         if (!frustum.is_sphere_visible(sd.mid_x, ground, sd.mid_z, sd.radius + 64.0f)) continue;
         const f32 alpha =
@@ -4276,6 +4307,8 @@ void Renderer::shutdown() {
     // Pipelines
     vkDestroyPipeline(device_, terrain_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
+    if (terrain_low_pipeline_) vkDestroyPipeline(device_, terrain_low_pipeline_, nullptr);
+    if (terrain_low_layout_) vkDestroyPipelineLayout(device_, terrain_low_layout_, nullptr);
     vkDestroyPipeline(device_, unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, unit_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);

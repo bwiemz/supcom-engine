@@ -441,6 +441,54 @@ void main() {
 }
 )glsl";
 
+// The low fidelity terrain (M212h): terrain.fx's LowFidelityTerrainPS, the
+// lower stratum and strata 0-3 by the first mask (sharpened), unlit, then
+// LowFidelityLightingPS multiplied in (its pass blends Zero / SrcColor): the
+// map's normal map at the point, bilinear within its tile (x from alpha, z
+// from green), the sun by it and the shadow, the ambience, the multiplier
+// and the shadow fill. No upper stratum, strata 4-7, specular, screen
+// normals or water tint; no glow.
+const char* kTerrainLowFragMain = R"glsl(
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec2 fragWorldXZ;
+layout(location = 2) in float fragWorldY;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec2 mapSize = vec2(pc.mapWidth, pc.mapHeight);
+    vec2 blendUV = fragWorldXZ / mapSize;
+    vec4 b0;
+    vec4 b1;
+    terrainMasks(blendUV, b0, b1);
+    vec4 mask = clamp(b0 * 2.0 - 1.0, 0.0, 1.0);
+    vec3 albedo = texture(stratum0, fragWorldXZ / strata.albedoSize0_3.x).rgb;
+    albedo = mix(albedo, texture(stratum1, fragWorldXZ / strata.albedoSize0_3.y).rgb, mask.x);
+    albedo = mix(albedo, texture(stratum2, fragWorldXZ / strata.albedoSize0_3.z).rgb, mask.y);
+    albedo = mix(albedo, texture(stratum3, fragWorldXZ / strata.albedoSize0_3.w).rgb, mask.z);
+    albedo = mix(albedo, texture(stratum4, fragWorldXZ / strata.albedoSize4_7.x).rgb, mask.w);
+
+    // The map's normal map tile under the point (UtilitySamplerA, rebound
+    // per tile), bilinear, kept within the tile.
+    vec2 size = vec2(textureSize(normalMaps, 0));
+    vec2 tile = min(strata.normalSize8.yz, size);
+    vec2 origin = clamp(floor(fragWorldXZ / tile) * tile, vec2(0.0), size - tile);
+    vec2 local = clamp(fragWorldXZ - origin, vec2(0.5), tile - 0.5);
+    vec4 nm = texture(normalMaps, (origin + local) / size);
+    vec3 normal = vec3(nm.a * 2.0 - 1.0, 0.0, nm.g * 2.0 - 1.0);
+    normal.y = sqrt(max(0.0, 1.0 - normal.x * normal.x - normal.z * normal.z));
+
+    vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
+    float shadow = calcShadow(worldPos);
+    vec3 light = lightUbo.sunColor.rgb *
+                     clamp(dot(lightUbo.sunDirection.xyz, normal), 0.0, 1.0) * shadow +
+                 lightUbo.sunAmbience.rgb;
+    light = lightUbo.sunColor.w * light + lightUbo.shadowFill.rgb * (1.0 - light);
+    vec3 lit = applyFogOfWar(albedo * light, blendUV);
+    outColor = vec4(lit, 0.0);
+}
+)glsl";
+
 // The terrain in the normal pass (M212e): its strata's normal into RG
 // (TerrainNormalsPS / TerrainNormalsXP) and the map's normal into BA
 // (TerrainBasisPSBiCubic), in one draw: the normal decals after it write RG
@@ -624,6 +672,11 @@ void main() {
     // The cache's sampler repeats: clamp as FA's decal sampler does.
     vec2 edge = 0.5 / vec2(textureSize(splatAlbedo, 0));
     vec4 albedo = texture(splatAlbedo, clamp(fragSplatUV, edge, 1.0 - edge));
+    // LowFidelitySplat (M212h, eye.w set): the albedo, unlit
+    if (pc.eye.w > 0.5) {
+        outColor = vec4(applyFogOfWar(albedo.rgb, blendUV), albedo.a * fragAlpha);
+        return;
+    }
 
     // The terrain's normal under it, from the normal target (M212e).
     vec3 worldNormal = screenNormal();
@@ -702,6 +755,12 @@ void main() {
 const char* terrain_frag() {
     static const std::string source =
         std::string(kTerrainPush) + kTerrainSurface + kTerrainFragMain;
+    return source.c_str();
+}
+
+const char* terrain_low_frag() {
+    static const std::string source =
+        std::string(kTerrainPush) + kTerrainSurface + kTerrainLowFragMain;
     return source.c_str();
 }
 

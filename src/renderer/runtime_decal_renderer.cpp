@@ -128,7 +128,7 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
                                   const map::Terrain& terrain, const TerrainMesh& mesh,
                                   const std::array<f32, 16>& view, const std::array<f32, 3>& eye,
                                   f32 half_width, const Frustum& frustum, TextureCache& textures,
-                                  u32 fi) {
+                                  u32 fi, int graphics_fidelity) {
     decal_draws_.clear();
     runs_.clear();
     splat_count_ = 0;
@@ -143,6 +143,7 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
         const RuntimeDecals::Decal& d = decals[i];
         const Gathered& g = gathered_[i];
         if (g.index_count == 0 || !index_buf_[fi].buffer) continue;
+        if (graphics_fidelity == 0 && d.fidelity > 0) continue;
         const f32 ground = terrain.get_terrain_height(g.mid_x, g.mid_z);
         if (!frustum.is_sphere_visible(g.mid_x, ground, g.mid_z, g.radius + 64.0f)) continue;
         const f32 alpha =
@@ -161,7 +162,7 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
         decal_draws_.push_back(draw);
     }
 
-    build_splats(terrain, view, eye, half_width, frustum, textures, fi);
+    build_splats(terrain, view, eye, half_width, frustum, textures, fi, graphics_fidelity);
 }
 
 void RuntimeDecalRenderer::gather(const TerrainMesh& mesh, TextureCache& textures) {
@@ -215,12 +216,14 @@ void RuntimeDecalRenderer::upload_indices(u32 fi) {
 void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
                                         const std::array<f32, 16>& view,
                                         const std::array<f32, 3>& eye, f32 half_width,
-                                        const Frustum& frustum, TextureCache& textures, u32 fi) {
+                                        const Frustum& frustum, TextureCache& textures, u32 fi,
+                                        int graphics_fidelity) {
     auto* out = static_cast<SplatVertex*>(splat_mapped_[fi]);
     if (!out || !splat_pipeline_) return;
     u32 budget = 0;
     u32 written = 0;
     for (const RuntimeDecals::Decal& s : decals_.splats()) {
+        if (graphics_fidelity == 0 && s.fidelity > 0) continue; // Low draws fidelity 0 alone
         // CWldSplat::UpdateVertices: its corners on the terrain.
         constexpr std::array<std::array<f32, 2>, 4> kLocal = {{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
         std::array<std::array<f32, 3>, 4> corners{};
@@ -257,8 +260,8 @@ void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
 void RuntimeDecalRenderer::draw_splats(VkCommandBuffer cmd, u32 fi,
                                        const std::array<f32, 16>& view_proj,
                                        const std::array<f32, 3>& eye, f32 map_width, f32 map_height,
-                                       VkDescriptorSet terrain_set,
-                                       VkDescriptorSet shadow_set) const {
+                                       VkDescriptorSet terrain_set, VkDescriptorSet shadow_set,
+                                       bool low) const {
     if (runs_.empty() || !splat_pipeline_ || !terrain_set || !shadow_set) return;
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, splat_pipeline_);
     const std::array<VkDescriptorSet, 2> shared = {terrain_set, shadow_set};
@@ -273,6 +276,7 @@ void RuntimeDecalRenderer::draw_splats(VkCommandBuffer cmd, u32 fi,
     pc.eye[0] = eye[0];
     pc.eye[1] = eye[1];
     pc.eye[2] = eye[2];
+    pc.eye[3] = low ? 1.0f : 0.0f; // LowFidelitySplat: unlit
     vkc::push_constants(cmd, splat_layout_,
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
                         &pc);
