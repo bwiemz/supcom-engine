@@ -237,6 +237,7 @@ public:
         bool skydome = true;
         int graphics_fidelity = 2;
         int shadow_fidelity = 3;
+        bool shadow_blur = true; ///< ren_ShadowBlur (M211m)
         int mip_skip_levels = 0;
         f32 camera_scale_lod = 1.0f;
         int antialiasing = 0;
@@ -250,6 +251,13 @@ public:
     /// the supported (M213d).
     int fidelity() const {
         return std::clamp(video_options_.graphics_fidelity, 0, kFidelitySupported);
+    }
+    /// shadow_Fidelity as Moho draws by it, clamped to 0 (none) through 3
+    /// (M211m): 0 casts nothing, 1 shades the terrain alone, 2 and 3 the
+    /// meshes too (one tap; High's five at 3 with ren_ShadowBlur).
+    static constexpr int kShadowFidelitySupported = 3;
+    int shadow_fidelity() const {
+        return std::clamp(video_options_.shadow_fidelity, 0, kShadowFidelitySupported);
     }
     /// SC_ToggleCursorClip (M217i): the cursor held inside a window (not full
     /// screen), or let go.

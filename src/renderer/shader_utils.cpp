@@ -1327,6 +1327,8 @@ layout(push_constant) uniform PushConstants {
     float time;     // FA's time: the newest tick plus the interpolant (M211f)
     uint mirrored;  // drawn into the water's reflection (M213b)
     float surface;  // the water's elevation (M213b)
+    uint lane;       // mesh.fx's lane by graphics fidelity: 0 Low, 1 Medium, 2 High (M211m)
+    uint shadowMode; // 0 none, 1 one tap, 2 FA's five-tap PCF (M211m)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -1379,9 +1381,20 @@ void main() {
     float grow = 1.0;
     if (pc.technique == 6u) grow = max(inParameter, 0.75);
     else if (pc.technique == 8u) grow = 0.25 + inParameter * 0.75;
-    vec4 skinnedPos = bone * vec4(inPosition * grow, 1.0);
+    vec3 local = inPosition * grow;
+    if (inColor.r < 0.0 && pc.lane == 0u) {
+        // WreckageVS_LowFidelity (M211m): the wreck's model-space position
+        // crumpled by a random from when its mesh instance was made, its
+        // uniform scale factored out, and squashed down to 0.69 of it.
+        float s = length(inModel[1].xyz);
+        float rdm = fract(0.01 * inShaderTime);
+        local += (0.05 / s) * (cos(15.0 * rdm * local.x * s) + sin(20.0 * rdm * local.z * s));
+        local.y *= mix(0.69, 1.0, rdm);
+    }
+    vec4 skinnedPos = bone * vec4(local, 1.0);
     vec4 worldPos = inModel * skinnedPos;
-    if (pc.technique == 17u) {
+    // At Low the undulating trees take VertexNormalVS: no sway (M211m)
+    if (pc.technique == 17u && pc.lane > 0u) {
         // UndulatingNormalMappedVS: swaying in FA's wind (mesh.fx's
         // windDirection, which Moho never sets), by the vertex's height in
         // its mesh, out of step by the instance's place (M211i).
@@ -1389,7 +1402,7 @@ void main() {
         float sway = sin(0.05 * pc.time - dot(wind, inModel[3].xyz));
         worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
     }
-    if (inColor.r < 0.0) {
+    if (inColor.r < 0.0 && pc.lane > 0u) {
         // A wreck (WreckageVS, mesh.fx) crumples: each vertex shifts by up to
         // 0.15, by its place in the world and the instance's.
         vec3 nvert = normalize(worldPos.xyz);
@@ -1435,6 +1448,8 @@ layout(push_constant) uniform PushConstants {
     float time; // FA's time: the newest tick plus the interpolant, wrapped
     uint mirrored; // drawn into the water's reflection (M213b)
     float surface; // the water's elevation (M213b)
+    uint lane;       // mesh.fx's lane by graphics fidelity: 0 Low, 1 Medium, 2 High (M211m)
+    uint shadowMode; // 0 none, 1 one tap, 2 FA's five-tap PCF (M211m)
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
@@ -1484,23 +1499,29 @@ vec3 sunDirection() {
 }
 
 float calcShadow(vec3 worldPos) {
-    // The reflection is drawn with no shadow bound (M213b).
-    if (pc.mirrored != 0u) return 1.0;
+    // The reflection is drawn with no shadow bound (M213b); the Low lane and
+    // shadow fidelity 0 and 1 take none either (M211m).
+    if (pc.mirrored != 0u || pc.shadowMode == 0u) return 1.0;
     vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
     vec3 pc2 = lc.xyz / lc.w;
     vec2 uv = pc2.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
         return 1.0;
-    // 4x4 PCF soft shadows
-    float shadow = 0.0;
+    // By the lane and shadow fidelity (M211m): mesh.fx's ComputeShadowStandard,
+    // one tap (the Medium lane, or High without the blur), or its
+    // ComputeShadowPCF, five taps about the point (High at shadow fidelity 3
+    // with ren_ShadowBlur).
     float ts = 1.0 / 4096.0;
-    for (int x = -2; x <= 1; x++) {
-        for (int y = -2; y <= 1; y++) {
-            vec2 off = vec2(float(x) + 0.5, float(y) + 0.5) * ts;
-            shadow += texture(shadowMap, vec3(uv + off, pc2.z));
-        }
+    float shadow;
+    if (pc.shadowMode == 1u) {
+        shadow = texture(shadowMap, vec3(uv, pc2.z));
+    } else {
+        shadow = (texture(shadowMap, vec3(uv + vec2(-0.5 * ts, 0.0), pc2.z)) +
+                  texture(shadowMap, vec3(uv + vec2(0.0, -0.5 * ts), pc2.z)) +
+                  texture(shadowMap, vec3(uv + vec2(-ts, 0.0), pc2.z)) +
+                  texture(shadowMap, vec3(uv + vec2(ts, 0.0), pc2.z)) +
+                  texture(shadowMap, vec3(uv + vec2(0.0, ts), pc2.z))) / 5.0;
     }
-    shadow /= 16.0;
     // Smooth fade at shadow map frustum edges
     float fadeRange = 0.05;
     float edgeFade = smoothstep(0.0, fadeRange, uv.x)
@@ -1685,6 +1706,8 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
                          specular.r * environment) +
            pow(phongAmount, 8.0) * specular.g;
 }
+)glsl" // split again: MSVC caps one literal at 16380 bytes (C2026)
+                        R"glsl(
 
 void main() {
     vec3 worldNormal = computeNormal(fragUV);
@@ -1722,6 +1745,62 @@ void main() {
         fragColor.a < 1.0
             ? fragColor.a
             : (alphaTested ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum));
+    // The Low lane (graphics fidelity 0, M211m): mesh.fx's low fidelity
+    // shaders, lit by the vertex's normal (interpolated, not renormalised, as
+    // FA's are), with no shadow, normal map, environment or glow. The build
+    // techniques (5-8, 12, 13) keep their own shaders for now, and
+    // NormalMappedTerrain has no lanes.
+    bool lowLane = pc.lane == 0u && !(pc.technique >= 5u && pc.technique <= 8u) &&
+                   pc.technique != 12u && pc.technique != 13u && !terrainProp;
+    if (lowLane) {
+        vec3 lowLight = computeLight(dot(S, fragNormal), 1.0, 1.0, 1.0);
+        vec3 lowLit;
+        float lowAlpha = 0.0; // written RGB only: no glow
+        if (fragColor.r < 0.0) {
+            // WreckagePS_LowFidelity: the crunch tiled 10 times. Its alpha
+            // (f) is left out: Wreckage_LowFidelity sets no alpha state, so
+            // whether FA writes it depends on the draw before (a Low unit's
+            // leaves alpha unwritten); no glow, as the other Low lanes.
+            vec4 crunch = texture(texSpecTeam, fragUV * 10.0);
+            lowLit = texColor.rgb * lowLight * (texColor.rgb + crunch.r + crunch.a) * crunch.b * 5.5;
+        } else if (pc.technique == 4u) {
+            // LowFiUnitFalloffPS (Seraphim): its colour from the specular's
+            // green and red, the army's by the green, a highlight, and
+            // ComputeLight's attenuation the sun direction's x (FA passes the
+            // float3 where a float goes)
+            vec3 diffuse = specTeam.ggg * specTeam.rrr * (1.0 - texColor.rgb);
+            diffuse = mix(tint, diffuse, specTeam.g);
+            vec3 n = normalize(fragNormal);
+            vec3 reflected = reflect(-faViewDirection(fragWorldPos), n);
+            float highlight = pow(clamp(dot(reflected, S), 0.0, 1.0), 5.0);
+            lowLit = diffuse * computeLight(dot(S, n), S.x, 1.0, 1.0) + vec3(highlight);
+        } else if (pc.technique <= 3u) {
+            // ColorMaskPS_LowFidelity (Unit, Aeon, Insect, Metal): the army's
+            // colour by the specular's alpha
+            vec3 albedo = mix(tint, texColor.rgb, 1.0 - clamp(specTeam.a, 0.0, 1.0));
+            lowLit = 2.0 * lowLight * lowLight * albedo;
+        } else if (pc.technique == 14u) {
+            // BlackenedLoFiPS
+            lowLit = vec3(dot(texColor.rgb, vec3(0.1))) * lowLight;
+        } else if (pc.technique == 11u) {
+            // AlphaFadeLoFiPS
+            float age = pc.time - fragShaderTime;
+            lowLit = texColor.rgb * lowLight;
+            lowAlpha = texColor.a * fragParameter * clamp(1.0 - (age - 2.0) * 0.145, 0.0, 1.0);
+        } else {
+            // VertexNormalPS_LowFidelity (NormalMappedAlpha, NormalMappedGlow,
+            // VertexNormal, UndulatingNormalMappedAlpha): untinted; the glow's
+            // and VertexNormal's alpha f times the albedo's
+            lowLit = 2.0 * lowLight * lowLight * texColor.rgb;
+            if (pc.technique == 10u || vertexNormal) lowAlpha = texColor.a * fragParameter;
+        }
+        if (alphaTested && fragParameter * texColor.a <= 128.0 / 255.0) discard;
+        if ((pc.technique == 11u || vertexNormal) && lowAlpha <= 35.0 / 255.0) discard;
+        if (fragColor.a < 1.0) lowAlpha = fragColor.a; // the build ghost's fade
+        outColor = vec4(lowLit, lowAlpha);
+        return;
+    }
+
     vec3 lit;
     if (fragColor.r < 0.0) {
         // WreckagePS (mesh.fx): a wreck's "specular" is a crunch noise
@@ -1761,7 +1840,9 @@ void main() {
         float emissive = 2.0 * specTeam.b; // glowMultiplier
         if (pc.technique == 1u) {
             // AeonPS: its own cube and highlight, and the sun at 0.6.
-            vec3 environment = texture(aeonEnvironment, R).rgb;
+            // Aeon_Med names no environment: the "<default>" cube (M211m)
+            vec3 environment = pc.lane >= 2u ? texture(aeonEnvironment, R).rgb
+                                             : texture(environmentMap, R).rgb;
             vec3 phongAdditive = vec3(0.8, 0.85, 1.10) * pow(phongAmount, 3.0) * specTeam.g;
             lit = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
                             specTeam.r * environment) +
