@@ -938,6 +938,64 @@ void test_material(TestContext& ctx) {
                 fmt::format("Test 20: under a slanted sun, {:.1f}% of the factory's frame is "
                             "black at Low, {:.1f}% at High",
                             low * 100.0f, high * 100.0f));
+
+        // Test 21: Wreckage_LowFidelity has no depth stage (M211n): at Low a
+        // wreck casts no shadow. A small blue wreck and a small blue plate hover
+        // 2.5 over the test's ground, the sun overhead and no fill; the ground
+        // (whose Low lighting reads the shadow map) is dark under the plate's
+        // near edge, not under the wreck's, which at High darkens it too. Both
+        // are props, which lay no tarmac to hide the ground.
+        {
+            std::vector<std::string> props; // Test 11 took the first two
+            const std::vector<std::string> world = sim::world_blueprints(ctx.sim);
+            for (const auto* e :
+                 ctx.sim.blueprint_store()->get_all(blueprints::BlueprintType::Prop)) {
+                if (props.size() < 4 && e->id.find("/env/") != std::string::npos &&
+                    std::find(world.begin(), world.end(), e->id) == world.end())
+                    props.push_back(e->id);
+            }
+            Plate hover;
+            hover.mesh = "plate_small.scm";
+            hover.albedo = "plate_albedo_blue.dds";
+            Plate wreck = hover;
+            wreck.shader = "Wreckage";
+            wreck.specteam = "crunch_low.dds";
+            if (props.size() == 4) {
+                make_plate(props[2], wreck, 52.0f, 28.0f, /*prop=*/true, 2.5f);
+                make_plate(props[3], hover, 18.0f, 26.0f, /*prop=*/true, 2.5f);
+            }
+            map::ScmapLighting sun = white_fill();
+            for (f32& c : sun.shadow_fill) c = 0.0f;
+            for (f32& c : sun.sun_color) c = 1.0f;
+            sun.sun_direction[0] = 0.0f;
+            sun.sun_direction[1] = 1.0f;
+            sun.sun_direction[2] = 0.0f;
+            renderer::Camera& camera = shots.renderer().camera();
+            const f32 default_pitch = camera.pitch();
+            const auto dark_at = [&](f32 x, f32 z, int graphics) {
+                video.graphics_fidelity = graphics;
+                video.shadow_fidelity = 3;
+                map::ScmapEnvironment env;
+                env.terrain_shader = "TTerrain";
+                env.cubemaps.emplace_back("<default>", kBlack);
+                ground.set_lighting(sun, std::move(env));
+                shots.recapture();
+                size_t dark = 0;
+                for (const auto& px : shots.shoot(ground, x, z, 30.0f))
+                    if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++dark;
+                return dark;
+            };
+            camera.set_pitch(1.1f);
+            const size_t unit_low = dark_at(18.0f, 26.0f, 0);
+            const size_t wreck_low = dark_at(52.0f, 28.0f, 0);
+            const size_t wreck_high = dark_at(52.0f, 28.0f, 2);
+            camera.set_pitch(default_pitch);
+            video = as_was;
+            t.check(unit_low > 300 && wreck_low < 50 && wreck_high > 300,
+                    fmt::format("Test 21: the ground is dark on {} pixels under a hovering plate "
+                                "at Low, {} under a hovering wreck ({} at High)",
+                                unit_low, wreck_low, wreck_high));
+        }
     }
 
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);

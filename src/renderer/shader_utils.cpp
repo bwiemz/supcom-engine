@@ -1991,6 +1991,7 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
     uint technique; // MeshTechnique (M211f)
     float time;     // FA's time, for the swaying trees (M211j)
+    uint lane;      // mesh.fx's lane by graphics fidelity: 0 Low (M211n)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -2015,6 +2016,14 @@ layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
 } boneSSBO;
 
 void main() {
+    fragUV = inUV;
+    fragProp = inColor.g < 0.0 ? 1.0 : 0.0;
+    if (pc.lane == 0u && inColor.r < 0.0) {
+        // Wreckage_LowFidelity has no depth stage: at Low a wreck (its
+        // colour's negative red) casts no shadow. Outside the clip volume.
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+    }
     mat4 bone;
     if (pc.bonesPerInst > 0u) {
         uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
@@ -2036,8 +2045,6 @@ void main() {
         worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
     }
     gl_Position = pc.lightViewProj * worldPos;
-    fragUV = inUV;
-    fragProp = inColor.g < 0.0 ? 1.0 : 0.0;
 }
 )glsl";
 
@@ -2079,6 +2086,7 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
     uint technique;
     float time;
+    uint lane;
 } pc;
 
 layout(set = 1, binding = 0) uniform sampler2D texAlbedo;

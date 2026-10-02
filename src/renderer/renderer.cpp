@@ -1302,8 +1302,8 @@ void Renderer::create_shadow_pipelines() {
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
         attrs[11] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
-        // Push constant 80B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
-        // uint technique (4, M211f) + float time (4, M211j)
+        // Push constant 84B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
+        // uint technique (4, M211f) + float time (4, M211j) + uint lane (4, M211n)
         shadow_mesh_pipeline_ =
             PipelineBuilder()
                 .set_shaders(smv, smf)
@@ -1311,7 +1311,7 @@ void Renderer::create_shadow_pipelines() {
                                   static_cast<u32>(attrs.size()))
                 .set_depth_test(true, true)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 3 + sizeof(f32),
+                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 4 + sizeof(f32),
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(bone_ds_layout_)    // set=0: bone SSBO
                 .add_descriptor_set_layout(texture_ds_layout_) // set=1: albedo (M211j)
@@ -2629,10 +2629,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 u32 bonesPerInst;
                 u32 technique; // MeshTechnique (M211f)
                 f32 time;      // FA's time, for the swaying trees (M211j)
+                u32 lane;      // the lane by graphics fidelity: at Low wrecks cast none (M211n)
             } spc{};
-            static_assert(sizeof(ShadowMeshPC) == 80, "matches shadow_mesh_vert/frag's push block");
+            static_assert(sizeof(ShadowMeshPC) == 84, "matches shadow_mesh_vert/frag's push block");
             std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
             spc.time = unit_renderer_.shader_time();
+            spc.lane = static_cast<u32>(fidelity());
             VkDescriptorSet albedo_fallback = texture_cache_.fallback_descriptor();
 
             for (auto& group : unit_renderer_.mesh_groups()) {
