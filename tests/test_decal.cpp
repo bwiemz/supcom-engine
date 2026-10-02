@@ -1,7 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include "map/visibility_grid.hpp"
 #include "sim/decal.hpp"
 
 #include <cmath>
@@ -171,13 +170,3 @@ TEST_CASE("A splat is looked at again only in its first 10 ticks, with a lifetim
     CHECK(sim::decal_sight_on_tick(lasting, 0b01u, 20, 21, a) == 0b01u);
 }
 
-TEST_CASE("A rectangle's vision is any cell it covers", "[decal]") {
-    map::VisibilityGrid grid(128, 128);                    // cells of 16
-    grid.paint_circle(0, 40, 40, 1, map::VisFlag::Vision); // cell (2, 2)
-    CHECK(grid.any_vision(33, 33, 36, 36, 0));
-    CHECK(grid.any_vision(20, 20, 32.5f, 32.5f, 0)); // ceil reaches cell 2
-    CHECK_FALSE(grid.any_vision(20, 20, 32, 32, 0)); // ends where cell 2 starts
-    CHECK_FALSE(grid.any_vision(50, 50, 60, 60, 0));
-    CHECK_FALSE(grid.any_vision(33, 33, 36, 36, 1));
-    CHECK_FALSE(grid.any_vision(-40, -40, -20, -20, 0));
-}

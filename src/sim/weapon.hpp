@@ -10,10 +10,6 @@
 
 struct lua_State;
 
-namespace osc::map {
-class VisibilityGrid;
-}
-
 namespace osc::sim {
 
 class AimManipulator;
@@ -155,8 +151,7 @@ public:
     /// cylinder, as Moho's is: horizontal distance within the min and max
     /// radius, and height within MaxHeightDiff when that is set.
     /// Priorities are not checked: an attack order can pick any such unit.
-    bool can_target(const Unit& owner, const Entity& target,
-                    const map::VisibilityGrid* visibility_grid, const SimState* sim) const;
+    bool can_target(const Unit& owner, const Entity& target, const SimState* sim) const;
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.
@@ -169,7 +164,6 @@ public:
 
     /// Per tick: advance the fire clock, pick targets, fire when ready.
     void update(Unit& owner, EntityRegistry& registry, lua_State* L,
-                const map::VisibilityGrid* visibility_grid = nullptr,
                 const SimState* sim = nullptr);
 
     /// Fire the weapon at current target. Returns true if fired.
@@ -185,11 +179,10 @@ public:
                        EntityRegistry& registry, lua_State* L, bool in_water,
                        std::optional<Vector3> muzzle_dir = std::nullopt);
     bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L,
-                  const map::VisibilityGrid* visibility_grid = nullptr);
+                  const SimState* sim = nullptr);
 
 private:
-    void update_targeting(Unit& owner, EntityRegistry& registry,
-                          const map::VisibilityGrid* visibility_grid, const SimState* sim);
+    void update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim);
     /// What it was aiming at: the script hears when that changes.
     struct TargetMark {
         u32 entity = 0;

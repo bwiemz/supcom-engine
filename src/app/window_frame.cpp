@@ -352,6 +352,7 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
         const osc::i32 focus = osc::lua::focus_army(ui_lua_state.raw());
         renderer.set_player_army(focus);
         input_handler.set_player_army(focus);
+        world_interp.history.set_sight_army(focus, sim_state.get()); // its sight, from now
     }
 
     // Player input: selection + commands

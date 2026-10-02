@@ -5,7 +5,7 @@ add_library(osc_map STATIC
     scmap_parser.cpp
     terrain.cpp
     terrain_quadtree.cpp
-    visibility_grid.cpp
+    intel_grid.cpp
 )
 add_library(osc::map ALIAS osc_map)
 

@@ -5,7 +5,7 @@
 
 #include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
-#include "map/visibility_grid.hpp"
+#include "map/intel_grid.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bone_cache.hpp"
 #include "sim/entity_registry.hpp"
@@ -24,8 +24,8 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 4; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
-                            // 4: jammers' fake blips (M215e)
+constexpr u32 kVersion = 5; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+                            // 4: jammers' fake blips (M215e); 5: intel handles (M215g)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -219,22 +219,25 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.f32v(f.size_z);
     });
     // stored_to_destroy_: empty between ticks
-    if (sim.visibility_grid_) { // (a sim without a map has none)
-        const auto& cells = sim.visibility_grid_->cells_;
-        w.size(cells.size());
-        for (const auto& army : cells) {
-            w.size(army.size());
-            if (!army.empty()) w.raw(army.data(), army.size());
+    // The intel each entity has painted, where it painted it: the grids are
+    // made again from it on a load (intel_grids_), as Moho's are.
+    save_by_id(w, sim.painted_intel_, [&](const PaintedIntel& p) {
+        w.i32v(p.army);
+        for (const IntelHandle& h : p.handles) {
+            w.u32v(h.radius);
+            w.b(h.enabled);
+            w.vec3(h.pos);
+            w.u32v(h.last_tick);
         }
-    } else {
-        w.size(0);
-    }
+        w.vec3(p.last_pos);
+        w.b(p.moved);
+        w.u32v(p.pass);
+    });
+    w.u32v(sim.intel_pass_);
     // sound_manager_, tick_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
     // entity_trace_from_, entity_trace_to_: the host's; bone_cache_,
-    // anim_cache_: caches. Of the visibility grid, cells_ (every flag): its
-    // grid_width_, grid_height_, map_width_, map_height_ and height_grid_
-    // are the map's
+    // anim_cache_: caches
     {
         std::vector<std::string> armor;
         armor.reserve(sim.armor_def_.table_.size());
@@ -271,6 +274,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.f32v(v.z);
         w.f32v(v.radius);
         w.i32v(v.remaining_ticks);
+        w.b(v.painted);
     }
     w.size(sim.entity_intel_.size());
     for (const auto& [id, intel] : sim.entity_intel_) {
@@ -385,21 +389,22 @@ void StateIO::load(StateReader& r, SimState& sim) {
     if (sim.pathfinding_grid_)
         sim.pathfinder_ = std::make_unique<map::Pathfinder>(*sim.pathfinding_grid_);
     sim.stored_to_destroy_.clear();
-    {
-        const size_t armies = r.size(4);
-        if (!sim.visibility_grid_) {
-            if (armies != 0) return r.fail("a visibility grid, and no map");
-        } else {
-            auto& cells = sim.visibility_grid_->cells_;
-            if (armies != cells.size())
-                return r.fail("a visibility grid for another count of armies");
-            for (auto& army : cells) {
-                if (r.size(1) != army.size())
-                    return r.fail("a visibility grid of another map's size");
-                if (!army.empty()) r.raw(army.data(), army.size());
-            }
+    sim.painted_intel_.clear();
+    const size_t painted = r.size(4 + 4 + kIntelSources * 21 + 17);
+    for (size_t i = 0; i < painted && r.ok(); ++i) {
+        PaintedIntel& p = sim.painted_intel_[r.u32v()];
+        p.army = r.i32v();
+        for (IntelHandle& h : p.handles) {
+            h.radius = r.u32v();
+            h.enabled = r.b();
+            h.pos = r.vec3();
+            h.last_tick = r.u32v();
         }
+        p.last_pos = r.vec3();
+        p.moved = r.b();
+        p.pass = r.u32v();
     }
+    sim.intel_pass_ = r.u32v();
     sim.armor_def_.table_.clear();
     const size_t armor = r.size(8);
     for (size_t i = 0; i < armor && r.ok(); ++i) {
@@ -418,13 +423,14 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.game_time_ = sim.tick_count_ * SimState::SECONDS_PER_TICK;
     load(r, sim.command_scheduler_);
     sim.command_delay_ = r.u32v();
-    sim.temp_visions_.resize(r.size(20));
+    sim.temp_visions_.resize(r.size(21));
     for (auto& v : sim.temp_visions_) {
         v.army = r.u32v();
         v.x = r.f32v();
         v.z = r.f32v();
         v.radius = r.f32v();
         v.remaining_ticks = r.i32v();
+        v.painted = r.b();
     }
     sim.entity_intel_.clear();
     const size_t intel = r.size(12);
@@ -507,6 +513,10 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.blip_objects_.clear();
     const size_t blip_objects = r.size(4);
     for (size_t i = 0; i < blip_objects; ++i) sim.blip_objects_.insert(r.u32v());
+    // The grids, from what is painted (the fog of war, the armies and the
+    // painted intel all loaded by now)
+    sim.intel_grids_.reset();
+    sim.build_intel_grids();
 }
 
 // ------------------------------------------------------------- Snapshot
