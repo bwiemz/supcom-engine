@@ -25,6 +25,11 @@ struct BuildGhost;
 
 /// FA's command mode (/lua/ui/game/commandmode.lua): what a world click
 /// does after the player picked a build icon or an order button.
+/// Whether the player may select `e`: a live unit not made unselectable
+/// (SetUnSelectable), not still being built, and not INSIGNIFICANTUNIT (the
+/// Cybran build bots, which Moho's selection skips)
+bool selectable(const sim::Entity& e);
+
 struct CommandMode {
     std::string mode; ///< "build", "order", "ping"...; empty for none
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack

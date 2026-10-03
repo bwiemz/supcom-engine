@@ -926,7 +926,7 @@ static int l_SelectUnits(lua_State* L) {
                 auto eid = static_cast<u32>(lua_tonumber(L, -1));
                 if (sim) {
                     auto* entity = sim->entity_registry().find(eid);
-                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                    if (entity && renderer::selectable(*entity)) {
                         new_sel.insert(eid);
                     }
                 } else {
@@ -982,7 +982,7 @@ static int l_AddSelectUnits(lua_State* L) {
                 auto eid = static_cast<u32>(lua_tonumber(L, -1));
                 if (sim) {
                     auto* entity = sim->entity_registry().find(eid);
-                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                    if (entity && renderer::selectable(*entity)) {
                         sel.insert(eid);
                     }
                 } else {
@@ -1627,7 +1627,7 @@ void select_by_category(lua_State* L, const std::vector<std::string>& args) {
     f32 nearest_distance = std::numeric_limits<f32>::infinity();
     sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         const auto& u = static_cast<const sim::Unit&>(e);
-        if (u.destroyed() || u.unselectable() || u.army() != ih->player_army()) return;
+        if (!renderer::selectable(u) || u.army() != ih->player_army()) return;
         const auto& p = u.position();
         if (view && !view->is_sphere_visible(p.x, p.y, p.z, 0.0f)) return;
         if (idle && (u.busy() || !u.command_queue().empty())) return;
