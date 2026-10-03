@@ -43,6 +43,31 @@ TEST_CASE("A unit blueprint's omitted collision offsets read as 0", "[blueprints
     )"));
 }
 
+TEST_CASE("A unit blueprint's omitted upgrade links read as 'none'", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        -- A T1 power generator names none; construction.lua builds a
+        -- structure whose UpgradesFrom is 'none', else upgrades to it
+        local bare = {BlueprintId = 'ueb1101', General = {Category = 'Economy'}}
+        RegisterUnitBlueprint(bare)
+        local g = bare.General
+        assert(g.UpgradesFrom == 'none' and g.UpgradesTo == 'none' and
+               g.UpgradesFromBase == 'none', 'links not defaulted')
+        assert(g.Category == 'Economy', 'General lost')
+        -- Without a General at all
+        local none = {BlueprintId = 'none'}
+        RegisterUnitBlueprint(none)
+        assert(none.General.UpgradesFrom == 'none', 'no General: not defaulted')
+        -- An upgrade's own links stay
+        local t2 = {BlueprintId = 'uab1201', General = {UpgradesFrom = 'uab1101',
+                                                        UpgradesTo = 'uab1301'}}
+        RegisterUnitBlueprint(t2)
+        assert(t2.General.UpgradesFrom == 'uab1101' and t2.General.UpgradesTo == 'uab1301',
+               'own links lost')
+        assert(t2.General.UpgradesFromBase == 'none', 'base')
+    )"));
+}
+
 TEST_CASE("A unit blueprint's omitted threat levels and regeneration read as 0", "[blueprints]") {
     BlueprintWorld w;
     CHECK(w.check(R"(
