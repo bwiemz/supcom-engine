@@ -97,6 +97,79 @@ void apply_unit_defaults(lua_State* L, int bp) {
         }
     }
 
+    // Its upgrade links, which Moho's RUnitBlueprintGeneral defaults to
+    // 'none': construction.lua's OnClickHandler takes a structure whose
+    // UpgradesFrom isn't 'none' for an upgrade of the selected unit, and
+    // only units that upgrade name them (96 of retail's 568).
+    lua_pushstring(L, "General");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "General");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "General");
+        lua_rawget(L, bp);
+    }
+    const int general = lua_gettop(L);
+    for (const char* link : {"UpgradesFrom", "UpgradesTo", "UpgradesFromBase"}) {
+        lua_pushstring(L, link);
+        lua_rawget(L, general);
+        const bool missing =
+            lua_isnil(L, -1) || (lua_type(L, -1) == LUA_TSTRING && lua_strlen(L, -1) == 0);
+        lua_pop(L, 1);
+        if (missing) {
+            lua_pushstring(L, link);
+            lua_pushstring(L, "none");
+            lua_rawset(L, general);
+        }
+    }
+    lua_pop(L, 1);
+
+    // Its icon's name, which Moho's RUnitBlueprintDisplay defaults to the
+    // blueprint's id: no retail unit names it, and gamecommon.lua builds the
+    // build buttons' and the unit view's icon paths from it unguarded.
+    lua_pushstring(L, "Display");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Display");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Display");
+        lua_rawget(L, bp);
+    }
+    const int display = lua_gettop(L);
+    lua_pushstring(L, "IconName");
+    lua_rawget(L, display);
+    const bool unnamed = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (unnamed) {
+        lua_pushstring(L, "BlueprintId");
+        lua_rawget(L, bp);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            std::string id = lua_tostring(L, -1);
+            std::transform(id.begin(), id.end(), id.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            lua_pushstring(L, "IconName");
+            lua_pushstring(L, id.c_str());
+            lua_rawset(L, display);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
+    // unitview.lua builds a texture path from it unguarded
+    lua_pushstring(L, "StrategicIconName");
+    lua_rawget(L, bp);
+    const bool iconless = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (iconless) {
+        lua_pushstring(L, "StrategicIconName");
+        lua_pushstring(L, "");
+        lua_rawset(L, bp);
+    }
+
     // Every unit has a weapon list, if an empty one: Unit.DoDeathWeapon
     // loops over bp.Weapon on every death, and 321 of retail's 568 units
     // (engineers, economy, most structures) have none.
