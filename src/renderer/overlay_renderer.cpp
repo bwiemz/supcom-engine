@@ -1,4 +1,5 @@
 #include "renderer/overlay_renderer.hpp"
+#include "renderer/renderer.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -78,6 +79,35 @@ bool OverlayRenderer::world_to_screen(f32 wx, f32 wy, f32 wz,
     return true;
 }
 
+std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
+                                            const std::array<f32, 4>& ys, f32 row) {
+    std::vector<std::array<f32, 4>> rows;
+    const f32 top = *std::min_element(ys.begin(), ys.end());
+    const f32 bottom = *std::max_element(ys.begin(), ys.end());
+    const int count = row > 0.0f ? static_cast<int>(std::ceil((bottom - top) / row)) : 0;
+    for (int k = 0; k < count; ++k) {
+        const f32 y = top + static_cast<f32>(k) * row;
+        const f32 mid = y + row * 0.5f;
+        f32 left = 1e9f;
+        f32 right = -1e9f;
+        for (size_t i = 0; i < 4; ++i) {
+            const size_t j = (i + 1) % 4;
+            const f32 y0 = ys[i];
+            const f32 y1 = ys[j];
+            if ((mid < y0) == (mid < y1)) {
+                continue;
+            }
+            const f32 x = xs[i] + (xs[j] - xs[i]) * (mid - y0) / (y1 - y0);
+            left = std::min(left, x);
+            right = std::max(right, x);
+        }
+        if (right > left) {
+            rows.push_back({left, y, right - left, row});
+        }
+    }
+    return rows;
+}
+
 void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
                                  f32 r, f32 g, f32 b, f32 a) {
     if (quad_count_ >= MAX_OVERLAY_QUADS) return;
@@ -89,14 +119,18 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
+void OverlayRenderer::emit_convex(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys, f32 r,
+                                  f32 g, f32 b, f32 a) {
+    for (const auto& q : convex_rows(xs, ys, 2.0f)) {
+        emit_quad(q[0], q[1], q[2], q[3], r, g, b, a);
+    }
+}
+
 void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& events,
-                              const Camera& camera,
-                              const std::array<f32, 16>& vp_matrix,
-                              const std::unordered_set<u32>* selected_ids,
-                              TextureCache& tex_cache,
-                              u32 viewport_w, u32 viewport_h,
-                              i32 game_result, f32 dt,
-                              const Frustum* frustum) {
+                             const Camera& camera, const std::array<f32, 16>& vp_matrix,
+                             const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
+                             u32 viewport_w, u32 viewport_h, i32 game_result, f32 dt,
+                             const Frustum* frustum, const BuildGhost* ghost) {
     quads_.clear();
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
@@ -113,6 +147,27 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     // Eye position for distance culling
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
+
+    if (ghost) {
+        const f32 hx = ghost->size_x * 0.5f;
+        const f32 hz = ghost->size_z * 0.5f;
+        const std::array<std::array<f32, 2>, 4> corners = {
+            {{-hx, -hz}, {hx, -hz}, {hx, hz}, {-hx, hz}}};
+        std::array<f32, 4> xs{};
+        std::array<f32, 4> ys{};
+        bool shown = true;
+        for (size_t i = 0; i < 4 && shown; ++i) {
+            shown = world_to_screen(ghost->x + corners[i][0], ghost->y, ghost->z + corners[i][1],
+                                    vp_matrix, sw, sh, xs[i], ys[i]);
+        }
+        if (shown) {
+            if (ghost->valid) {
+                emit_convex(xs, ys, 0.2f, 0.9f, 0.3f, 0.35f);
+            } else {
+                emit_convex(xs, ys, 1.0f, 0.2f, 0.2f, 0.35f);
+            }
+        }
+    }
 
     // --- Consume death events and spawn explosion VFX ---
     // A death's flash stands in for its effects, which show only where the

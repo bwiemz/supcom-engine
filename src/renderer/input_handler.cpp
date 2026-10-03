@@ -407,6 +407,9 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     if (mode.mode == "build") {
         if (mode.name.empty()) return std::nullopt;
         sim::snap_structure_center(wx, wz, mode.footprint_x, mode.footprint_z);
+        if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, wx, wz)) {
+            return std::nullopt;
+        }
         // Mobile builders take the order; factories build through their queue.
         live_selected([](const sim::Unit& u) {
             return u.build_rate() > 0 && !u.has_category("STRUCTURE");
@@ -526,6 +529,12 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     ghost.x = wx;
     ghost.y = sim.terrain()->get_terrain_height(wx, wz);
     ghost.z = wz;
+    ghost.size_x = size_x;
+    ghost.size_z = size_z;
+    if (mode_hooks_.can_place) {
+        ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
+        return ghost;
+    }
     // Buildable unless the footprint covers impassable ground
     if (const auto* grid = sim.pathfinding_grid()) {
         const f32 half_x = size_x * 0.5f;

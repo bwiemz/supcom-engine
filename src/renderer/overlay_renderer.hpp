@@ -17,6 +17,8 @@ struct WorldEvents;
 
 namespace osc::renderer {
 
+struct BuildGhost;
+
 class BeamRenderer;
 class TrailRenderer;
 class ParticleSystem;
@@ -35,6 +37,11 @@ inline const std::unordered_set<std::string> kAllIntelRingTypes{"Radar", "Sonar"
 std::unordered_set<std::string> intel_ring_types_for_filters(
     const std::vector<std::string>& filters);
 
+/// A convex quad on screen (corners in order) as rows `row` high, each
+/// {x, y, w, h}
+std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
+                                            const std::array<f32, 4>& ys, f32 row);
+
 /// Renders game overlays: health bars, selection rings, command lines.
 /// Uses the same UI pipeline (UIInstance quads, pixel coords, fallback white texture).
 class OverlayRenderer {
@@ -46,12 +53,9 @@ public:
     /// from `events`, which this takes.
     /// game_result: 0=in progress, 1=victory, 2=defeat, 3=draw.
     void update(const sim::FrameView& view, sim::WorldEvents& events, const Camera& camera,
-                const std::array<f32, 16>& vp_matrix,
-                const std::unordered_set<u32>* selected_ids,
-                TextureCache& tex_cache,
-                u32 viewport_w, u32 viewport_h,
-                i32 game_result = 0, f32 dt = 0.0f,
-                const Frustum* frustum = nullptr);
+                const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
+                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, i32 game_result = 0,
+                f32 dt = 0.0f, const Frustum* frustum = nullptr, const BuildGhost* ghost = nullptr);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
@@ -110,6 +114,8 @@ private:
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a);
+    void emit_convex(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys, f32 r, f32 g,
+                     f32 b, f32 a);
 
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};

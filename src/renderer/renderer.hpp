@@ -79,6 +79,7 @@ namespace osc::renderer {
 struct BuildGhost {
     std::string blueprint_id;
     f32 x = 0, y = 0, z = 0;
+    f32 size_x = 1, size_z = 1;
     bool valid = true;
 };
 

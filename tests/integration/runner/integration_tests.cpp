@@ -17044,6 +17044,31 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends
     // the mode).
+    lua_ok("Test 11p: the ACU's position", R"(
+        __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
+    )");
+    for (const char* bp : {"ueb1103", "ueb0103"}) {
+        lua_getglobal(L, "__osc_test_acu_pos");
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 3);
+        const f32 x = static_cast<f32>(lua_tonumber(L, -2)) + 12.3f;
+        const f32 z = static_cast<f32>(lua_tonumber(L, -1)) + 7.8f;
+        lua_pop(L, 3);
+        const std::string start = std::string("import('/lua/ui/game/commandmode.lua')"
+                                              ".StartCommandMode('build', {name = '") +
+                                  bp + "'})";
+        lua_ok("Test 11q: pick it", start.c_str());
+        if (!click(x, z, false)) {
+            spdlog::info("[PASS] Test 11q: {} refused on bare land", bp);
+        } else {
+            osc::test_status::fail("[FAIL] Test 11q: {} issued on bare land", bp);
+        }
+    }
+    lua_ok("Test 11r: the refused click left the mode on", R"(
+        local mode = import('/lua/ui/game/commandmode.lua').GetCommandMode()
+        if mode[1] ~= 'build' then error('mode ' .. tostring(mode[1])) end
+        import('/lua/ui/game/commandmode.lua').EndCommandMode(true)
+    )");
     lua_ok("Test 11a: pick the T1 power generator from the build panel", R"(
         __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
         import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})
