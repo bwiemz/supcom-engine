@@ -4,10 +4,12 @@
 #include "renderer/ui_renderer.hpp" // UIInstance, UIDrawGroup, ClipRect
 #include "renderer/frustum.hpp"
 #include "core/types.hpp"
+#include "sim/build_placement.hpp"
 
 #include <array>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -16,6 +18,8 @@ struct WorldEvents;
 }
 
 namespace osc::renderer {
+
+struct BuildGhost;
 
 class BeamRenderer;
 class TrailRenderer;
@@ -35,6 +39,21 @@ inline const std::unordered_set<std::string> kAllIntelRingTypes{"Radar", "Sonar"
 std::unordered_set<std::string> intel_ring_types_for_filters(
     const std::vector<std::string>& filters);
 
+/// A convex quad on screen (corners in order) as rows `row` high, each
+/// {x, y, w, h}
+std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
+                                            const std::array<f32, 4>& ys, f32 row);
+
+/// The pads (skirts) of the structures standing or under way that the
+/// player sees, each with its height, outlined while a structure is placed
+std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
+                                                               const ReconView* recon);
+
+/// The outline of a quad on screen (corners in order), `thickness` wide, as
+/// convex_rows' rows of a pixel
+std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
+                                             const std::array<f32, 4>& ys, f32 thickness);
+
 /// Renders game overlays: health bars, selection rings, command lines.
 /// Uses the same UI pipeline (UIInstance quads, pixel coords, fallback white texture).
 class OverlayRenderer {
@@ -46,12 +65,9 @@ public:
     /// from `events`, which this takes.
     /// game_result: 0=in progress, 1=victory, 2=defeat, 3=draw.
     void update(const sim::FrameView& view, sim::WorldEvents& events, const Camera& camera,
-                const std::array<f32, 16>& vp_matrix,
-                const std::unordered_set<u32>* selected_ids,
-                TextureCache& tex_cache,
-                u32 viewport_w, u32 viewport_h,
-                i32 game_result = 0, f32 dt = 0.0f,
-                const Frustum* frustum = nullptr);
+                const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
+                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, i32 game_result = 0,
+                f32 dt = 0.0f, const Frustum* frustum = nullptr, const BuildGhost* ghost = nullptr);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
@@ -110,6 +126,10 @@ private:
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a);
+    /// A placement outline's width, pixels
+    static constexpr f32 kOutlineThickness = 2.0f;
+    void emit_outline(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys, f32 r, f32 g,
+                      f32 b, f32 a);
 
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};

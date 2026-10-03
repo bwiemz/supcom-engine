@@ -1,5 +1,9 @@
 #pragma once
 
+#include "core/types.hpp"
+
+#include <string>
+
 struct lua_State;
 
 namespace osc::sim {
@@ -30,5 +34,10 @@ void register_category_bindings(LuaState& state);
 /// creating it on first use. Every vector the engine hands to scripts
 /// carries it: retail reads positions as both pos[1] and pos.x.
 void push_vector_metatable(lua_State* L);
+
+/// Whether army `army` may build structure `bp_id` centred at (x, z), by
+/// StructurePlacement
+bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
+                         f32 x, f32 z);
 
 } // namespace osc::lua

@@ -4,6 +4,7 @@
 
 #include "core/profiler.hpp"
 #include "app/window_loop.hpp"
+#include "lua/sim_bindings.hpp"
 #include "app/window_commands.hpp"
 #include "lua/mp_net_state.hpp"
 #include "platform/paths.hpp"
@@ -113,11 +114,16 @@ std::optional<int> App::Window::set_up() {
     if (opt.no_decals) renderer.set_decals_enabled(false);
     if (opt.legacy_hud) renderer.set_legacy_hud(true);
 
-    input_handler.set_command_mode_hooks({[this] { return current_command_mode; },
-                                          [this](const osc::renderer::IssuedCommand& c) {
-                                              report_command_issued(ui_lua_state.raw(), c);
-                                          },
-                                          [this] { cancel_command_mode(ui_lua_state.raw()); }});
+    input_handler.set_command_mode_hooks(
+        {[this] { return current_command_mode; },
+         [this](const osc::renderer::IssuedCommand& c) {
+             report_command_issued(ui_lua_state.raw(), c);
+         },
+         [this] { cancel_command_mode(ui_lua_state.raw()); },
+         [this](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z) {
+             return sim_state &&
+                    osc::lua::can_build_structure(ui_lua_state.raw(), *sim_state, army, bp, x, z);
+         }});
     prev_time = std::chrono::high_resolution_clock::now();
 
     // --screenshot <png> [--screenshot-frame N]: render N frames on a

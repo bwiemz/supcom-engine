@@ -53,6 +53,9 @@ struct CommandModeHooks {
     std::function<CommandMode()> current;
     std::function<void(const IssuedCommand&)> issued;
     std::function<void()> cancel;
+    /// Whether army `army` may build structure `bp` centred at (x, z); none:
+    /// anywhere
+    std::function<bool(i32 army, const std::string& bp, f32 x, f32 z)> can_place;
 };
 
 /// Handles player input on the world: unit selection, command dispatch and
