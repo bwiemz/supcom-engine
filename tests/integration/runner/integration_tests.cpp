@@ -11795,10 +11795,14 @@ void test_right_click(TestContext& ctx) {
     check(head(*plane, CT::Dock, pad->entity_id()), "on a staging platform: the plane docks");
 
     if (prop) {
+        input.set_selected({eng->entity_id(), tank->entity_id()});
+        const auto shown_order =
+            input.right_button_order(ctx.sim, prop->position().x, prop->position().z);
         right_click({eng->entity_id(), tank->entity_id()}, *prop);
         check(head(*eng, CT::Reclaim, prop->entity_id()) && gave("Reclaim", prop->entity_id()) &&
-                  gave("Move", 0) && issued.size() == 2,
-              "on a wreck or prop: the engineer reclaims it, the tank moves there");
+                  gave("Move", 0) && issued.size() == 2 && shown_order == CT::Reclaim,
+              "on a wreck or prop: the engineer reclaims it, the tank moves there; the cursor "
+              "shows the reclaim");
     } else {
         check(false, "a reclaimable prop near by");
     }
@@ -11806,10 +11810,14 @@ void test_right_click(TestContext& ctx) {
     {
         input.set_selected({eng->entity_id()});
         const float gx = eng->position().x + 60.0f, gz = eng->position().z + 60.0f;
+        const auto shown_order = input.right_button_order(ctx.sim, gx, gz);
         const auto issued = input.right_click_at(ctx.sim, gx, gz, false);
         ctx.sim.tick();
-        check(issued.size() == 1 && issued[0].type == "Move" && head(*eng, CT::Move, 0),
-              "on open ground: a move");
+        input.set_selected({});
+        const auto no_order = input.right_button_order(ctx.sim, gx, gz);
+        check(issued.size() == 1 && issued[0].type == "Move" && head(*eng, CT::Move, 0) &&
+                  shown_order == CT::Move && !no_order,
+              "on open ground: a move, as the cursor shows; nothing selected, no order");
     }
     // Allied, the other army's tank is an ally: a right-click guards it.
     lua("SetAlliance('ARMY_1', 'ARMY_2', 'Ally')");
@@ -15259,6 +15267,74 @@ void test_bitmap(TestContext& ctx) {
         }
     }
 
+    // Test 15: a control's lazy var depends on one the scripts made: both from
+    // the lazyvar module the scripts' import has, whose dependencies hold
+    {
+        auto result =
+            ctx.lua_state.do_string("local LazyVar = import('/lua/lazyvar.lua')\n"
+                                    "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
+                                    "local v = LazyVar.Create(0)\n"
+                                    "local b = Bitmap(GetFrame(0))\n"
+                                    "b.Right:Set(function() return v() * 2 end)\n"
+                                    "local before = b.Right()\n"
+                                    "v:Set(5)\n"
+                                    "local after = b.Right()\n"
+                                    "b:Destroy()\n"
+                                    "return before == 0 and after == 10\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 15 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 15: a control's lazy var follows one the scripts made");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 15: a control's lazy var misses a change to "
+                                   "one the scripts made");
+        }
+    }
+
+    // Test 16: the scripts start their modules afresh (import.lua does, at
+    // its start) after the engine made the root frame: a control laid out on
+    // the frame still follows the frame's size
+    {
+        auto result =
+            ctx.lua_state.do_string("__modules['/lua/lazyvar.lua'] = nil\n"
+                                    "local LazyVar = import('/lua/lazyvar.lua')\n"
+                                    "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
+                                    "local f = GetFrame(0)\n"
+                                    "local same = getmetatable(f.Width) == "
+                                    "getmetatable(LazyVar.Create(0))\n"
+                                    "local w = f.Width()\n"
+                                    "local b = Bitmap(f)\n"
+                                    "b.Right:Set(function() return f.Width() * 2 end)\n"
+                                    "local before = b.Right()\n"
+                                    "f.Width:Set(w + 10)\n"
+                                    "local after = b.Right()\n"
+                                    "f.Width:Set(w)\n"
+                                    "b:Destroy()\n"
+                                    "return same and before == w * 2 and after == (w + 10) * 2\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 16 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 16: a control laid out on the root frame follows its size");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16: a control laid out on the root frame misses "
+                                   "a change to its size");
+        }
+    }
+
     spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
 }
 
@@ -16764,6 +16840,40 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                .c_str());
     sim_lua("__osc_ui_pgen:Destroy()");
     play(2);
+
+    // 10b3. Some units can't be selected: a Cybran build bot
+    //    (INSIGNIFICANTUNIT), and a factory still being built.
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_bot = CreateUnitHPR('ura0001', 'ARMY_1', x + 6, GetTerrainHeight(x + 6, z) + 3, z + 6, 0, 0, 0)
+        __osc_ui_fac = CreateUnitHPR('ueb0101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
+    )");
+    osc::u32 bot_id = 0;
+    osc::u32 unbuilt_id = 0;
+    ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (e.destroyed() || e.army() != 0) {
+            return;
+        }
+        if (e.blueprint_id() == "ura0001") {
+            bot_id = e.entity_id();
+        } else if (e.blueprint_id() == "ueb0101") {
+            unbuilt_id = e.entity_id();
+            static_cast<osc::sim::Unit&>(e).set_is_being_built(true);
+        }
+    });
+    play(2);
+    const std::string select_unselectable = fmt::format(R"(
+        local acu = GetSelectedUnits()[1]
+        SelectUnits({{{{EntityId = {}}}, {{EntityId = {}}}}})
+        local n = table.getn(GetSelectedUnits())
+        SelectUnits({{acu}})
+        if n ~= 0 then error(n .. ' selected') end
+    )",
+                                                        bot_id, unbuilt_id);
+    lua_ok("Test 10b3: a build bot and an unbuilt factory can't be selected",
+           select_unselectable.c_str());
+    sim_lua("__osc_ui_bot:Destroy() __osc_ui_fac:Destroy()");
+    play(2);
     lua_ok("Test 10d: the orders panel has the commander's orders", R"(
         local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
         local n = 0
@@ -16771,17 +16881,38 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             for _, item in col do n = n + 1 end
         end
         if n < 5 then error('order grid holds ' .. n .. ' buttons') end
+        if grid:IsHidden() then error('the order grid is hidden') end
     )");
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
         local list = EntityCategoryGetUnitList(buildable)
-        local power = false
-        for _, id in list do if id == 'ueb1101' then power = true end end
-        if not power or table.getn(list) < 10 then
-            error('buildable: ' .. table.getn(list) .. ' blueprints, T1 power ' .. tostring(power))
+        local power, factory = false, false
+        for _, id in list do
+            if id == 'ueb1101' then power = true end
+            if id == 'ueb0101' then factory = true end
+        end
+        if not power or not factory then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, T1 power ' .. tostring(power) ..
+                  ', land factory ' .. tostring(factory))
+        end
+        -- Its OnCreate restricts its tech 2 and 3 until its enhancements
+        for _, id in list do
+            if EntityCategoryContains(categories.TECH2 + categories.TECH3, id) then
+                error('a fresh commander may build ' .. id)
+            end
         end
         local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
         if table.getn(shown) < 1 then error('construction panel shows no build options') end
+    )");
+    lua_ok("Test 10g2: a structure's button places it", R"(
+        import('/lua/ui/game/construction.lua').OnClickHandler(
+            {Data = {type = 'item', id = 'ueb1101'}}, {Left = true})
+        local commandmode = import('/lua/ui/game/commandmode.lua')
+        local mode = commandmode.GetCommandMode()
+        if mode[1] ~= 'build' or not mode[2] or mode[2].name ~= 'ueb1101' then
+            error('the click left command mode ' .. tostring(mode[1]))
+        end
+        commandmode.EndCommandMode(true)
     )");
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
     // for auto mode, and after a tick the sim's unit has it.

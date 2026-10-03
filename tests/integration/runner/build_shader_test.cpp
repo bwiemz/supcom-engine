@@ -252,6 +252,8 @@ void test_build_shaders(TestContext& ctx) {
             std::string mesh;
             MeshTechnique technique = MeshTechnique::Unit;
             f32 fraction = -1.0f;
+            f32 height = 0.0f; ///< where it stands
+            f32 ground = 0.0f; ///< the ground's surface there
         };
         const auto look = [&](const char* structure) {
             Seen seen;
@@ -259,6 +261,10 @@ void test_build_shaders(TestContext& ctx) {
                 if (!e.is_unit() || e.destroyed() || e.blueprint_id() != structure) return;
                 seen.mesh = e.mesh_override();
                 seen.fraction = e.fraction_complete();
+                seen.height = e.position().y;
+                if (const auto* terrain = ctx.sim.terrain()) {
+                    seen.ground = terrain->get_surface_height(e.position().x, e.position().z);
+                }
                 seen.technique =
                     r.mesh_technique(seen.mesh.empty() ? e.blueprint_id() : seen.mesh, ctx.L);
             });
@@ -298,11 +304,15 @@ void test_build_shaders(TestContext& ctx) {
         for (const Job& job : jobs) {
             const Seen seen = look(job.structure);
             const std::string own = display_field(ctx, job.structure, "MeshBlueprint");
+            // It stands on the ground where it was built
             const bool ok = seen.fraction == 1.0f && (seen.mesh.empty() || seen.mesh == own) &&
-                            seen.technique != job.building;
+                            seen.technique != job.building && seen.ground > 1.0f &&
+                            std::abs(seen.height - seen.ground) < 0.01f;
             built_ok = built_ok && ok;
-            after += fmt::format(" {} at {:.2f} wears '{}', technique {};", job.structure,
-                                 seen.fraction, seen.mesh, static_cast<u32>(seen.technique));
+            after +=
+                fmt::format(" {} at {:.2f} wears '{}', technique {}, stands at {:.2f} on {:.2f};",
+                            job.structure, seen.fraction, seen.mesh,
+                            static_cast<u32>(seen.technique), seen.height, seen.ground);
         }
         t.check(building_ok && built_ok,
                 fmt::format("Test 1: under construction:{} built:{}", during, after));
