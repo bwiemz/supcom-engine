@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "renderer/overlay_renderer.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <cmath>
 
@@ -46,4 +47,30 @@ TEST_CASE("A placement outline covers its edges and leaves the middle", "[overla
     CHECK(covered(0.5f, 19.5f));
     CHECK_FALSE(covered(10, 10));
     CHECK_FALSE(covered(10, 3));
+}
+
+TEST_CASE("Placing a structure outlines the pads of those standing", "[overlay]") {
+    osc::sim::WorldSnapshot world;
+    osc::sim::EntityRecord factory;
+    factory.id = 1;
+    factory.is_unit = true;
+    factory.is_structure = true;
+    factory.position = {30.5f, 4.0f, 40.5f};
+    factory.footprint_size_x = factory.footprint_size_z = 5;
+    factory.skirt_size_x = factory.skirt_size_z = 8;
+    factory.skirt_offset_x = factory.skirt_offset_z = -1.5f;
+    world.entities.push_back(factory);
+    osc::sim::EntityRecord tank;
+    tank.id = 2;
+    tank.is_unit = true;
+    tank.position = {10, 0, 10};
+    world.entities.push_back(tank);
+
+    const auto pads =
+        osc::renderer::structure_pads(osc::sim::FrameView(&world, &world, 1.0f), nullptr);
+    REQUIRE(pads.size() == 1);
+    CHECK(pads[0].first.x0 == Catch::Approx(26.5f));
+    CHECK(pads[0].first.x1 == Catch::Approx(34.5f));
+    CHECK(pads[0].first.z0 == Catch::Approx(36.5f));
+    CHECK(pads[0].second == Catch::Approx(4.0f));
 }

@@ -1,5 +1,6 @@
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/renderer.hpp"
+#include "sim/build_placement.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -128,6 +129,22 @@ std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
     return rows;
 }
 
+std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
+                                                               const ReconView* recon) {
+    std::vector<std::pair<sim::StructureSite, f32>> pads;
+    for (const sim::EntityRecord& e : view.entities()) {
+        if (!e.is_unit || !e.is_structure || (recon && recon->sight(e) != Sight::Seen)) {
+            continue;
+        }
+        const sim::Vector3 pos = view.position(e);
+        pads.emplace_back(sim::StructureSite::of(pos.x, pos.z, e.footprint_size_x,
+                                                 e.footprint_size_z, e.skirt_size_x, e.skirt_size_z,
+                                                 e.skirt_offset_x, e.skirt_offset_z),
+                          pos.y);
+    }
+    return pads;
+}
+
 void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
                                  f32 r, f32 g, f32 b, f32 a) {
     if (quad_count_ >= MAX_OVERLAY_QUADS) return;
@@ -185,6 +202,22 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
             } else {
                 emit_outline(xs, ys, 0.9f, 0.0f, 0.0f, 1.0f);
+            }
+        }
+    }
+    if (ghost) {
+        for (const auto& [pad, y] : structure_pads(view, recon_)) {
+            const std::array<std::array<f32, 2>, 4> corners = {
+                {{pad.x0, pad.z0}, {pad.x1, pad.z0}, {pad.x1, pad.z1}, {pad.x0, pad.z1}}};
+            std::array<f32, 4> xs{};
+            std::array<f32, 4> ys{};
+            bool shown = true;
+            for (size_t i = 0; i < 4 && shown; ++i) {
+                shown = world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
+                                        ys[i]);
+            }
+            if (shown) {
+                emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
             }
         }
     }

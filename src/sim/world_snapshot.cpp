@@ -172,6 +172,11 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.is_mobile = u.is_mobile();
     r.footprint_size_x = u.footprint_size_x();
     r.footprint_size_z = u.footprint_size_z();
+    r.is_structure = u.has_category("STRUCTURE");
+    r.skirt_size_x = u.skirt_size_x();
+    r.skirt_size_z = u.skirt_size_z();
+    r.skirt_offset_x = u.skirt_offset_x();
+    r.skirt_offset_z = u.skirt_offset_z();
     r.is_being_built = u.is_being_built();
     r.build_target_id = u.build_target_id();
     r.reclaim_target_id = u.reclaim_target_id();

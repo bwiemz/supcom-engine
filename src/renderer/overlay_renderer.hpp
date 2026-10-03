@@ -4,10 +4,12 @@
 #include "renderer/ui_renderer.hpp" // UIInstance, UIDrawGroup, ClipRect
 #include "renderer/frustum.hpp"
 #include "core/types.hpp"
+#include "sim/build_placement.hpp"
 
 #include <array>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -41,6 +43,11 @@ std::unordered_set<std::string> intel_ring_types_for_filters(
 /// {x, y, w, h}
 std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
                                             const std::array<f32, 4>& ys, f32 row);
+
+/// The pads (skirts) of the structures standing or under way that the
+/// player sees, each with its height, outlined while a structure is placed
+std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
+                                                               const ReconView* recon);
 
 /// The outline of a quad on screen (corners in order), `thickness` wide, as
 /// convex_rows' rows of a pixel
