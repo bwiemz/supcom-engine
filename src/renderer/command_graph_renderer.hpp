@@ -17,7 +17,9 @@ struct lua_State;
 
 namespace osc::sim {
 class FrameView;
-}
+struct WorldSnapshot;
+struct EntityRecord;
+} // namespace osc::sim
 
 namespace osc::renderer {
 
@@ -67,6 +69,13 @@ std::vector<sim::Vector3> command_curve(const std::vector<sim::Vector3>& chain, 
 std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
                              f32 off_x, f32 off_z);
 
+/// The units whose orders the command graph shows, each with whether it is
+/// selected: the selected ones (their orders), and the army's others (their
+/// build sites alone)
+std::vector<std::pair<const sim::EntityRecord*, bool>>
+command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u32>* selected,
+                    i32 player_army);
+
 /// Draws the selected units' order lines and waypoints as Moho's
 /// UICommandGraph does, while Shift is held: each leg a textured strip on
 /// the ground, in its order's colours; each order's waypoint icon lying at
@@ -83,8 +92,8 @@ public:
     /// once); `time` in seconds scrolls an animated line. `shown`: Shift is
     /// held.
     void update(const sim::FrameView& view, const Camera& camera,
-                const std::unordered_set<u32>* selected, TextureCache& tex_cache, lua_State* L,
-                f32 time, u32 viewport_h, bool shown, u32 fi);
+                const std::unordered_set<u32>* selected, i32 player_army, TextureCache& tex_cache,
+                lua_State* L, f32 time, u32 viewport_h, bool shown, u32 fi);
 
     void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
                 u32 fi) const;

@@ -3,6 +3,7 @@
 
 #include "lua/lua_state.hpp"
 #include "renderer/command_graph_renderer.hpp"
+#include "sim/world_snapshot.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -133,4 +134,27 @@ TEST_CASE("A build order's site is its structure's skirt", "[renderer][command_g
     const auto bare = build_pad(10, 10, 2, 2, 0, 0, 0, 0);
     CHECK(bare[0] == Catch::Approx(9.0f));
     CHECK(bare[2] == Catch::Approx(11.0f));
+}
+
+TEST_CASE("Shift shows the selected units' orders and the army's build sites",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    const auto add = [&](osc::u32 id, osc::i32 army, bool is_unit) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = army;
+        e.is_unit = is_unit;
+        world.entities.push_back(e);
+    };
+    add(1, 0, true);  // selected
+    add(2, 0, true);  // the army's, not selected
+    add(3, 1, true);  // another army's, selected
+    add(4, 1, true);  // another army's
+    add(5, 0, false); // a prop
+    const std::unordered_set<osc::u32> selected{1, 3};
+    std::vector<std::pair<osc::u32, bool>> got;
+    for (const auto& [e, chosen] : osc::renderer::command_graph_units(world, &selected, 0)) {
+        got.emplace_back(e->id, chosen);
+    }
+    CHECK(got == std::vector<std::pair<osc::u32, bool>>{{1, true}, {2, false}, {3, true}});
 }

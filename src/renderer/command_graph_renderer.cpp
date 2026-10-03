@@ -145,6 +145,19 @@ std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, 
     return {x0, z0, x0 + std::max(skirt_x, size_x), z0 + std::max(skirt_z, size_z)};
 }
 
+std::vector<std::pair<const sim::EntityRecord*, bool>>
+command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u32>* selected,
+                    i32 player_army) {
+    std::vector<std::pair<const sim::EntityRecord*, bool>> out;
+    for (const sim::EntityRecord& e : world.entities) {
+        const bool chosen = selected && selected->count(e.id) > 0;
+        if (e.is_unit && (chosen || e.army == player_army)) {
+            out.emplace_back(&e, chosen);
+        }
+    }
+    return out;
+}
+
 std::string command_graph_key(sim::CommandType type) {
     switch (type) {
     case sim::CommandType::Move: return "UNITCOMMAND_Move";
@@ -411,12 +424,15 @@ const CommandGraphStyle* CommandGraphRenderer::style(sim::CommandType type, lua_
 }
 
 void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& camera,
-                                  const std::unordered_set<u32>* selected, TextureCache& tex_cache,
-                                  lua_State* L, f32 time, u32 viewport_h, bool shown, u32 fi) {
+                                  const std::unordered_set<u32>* selected, i32 player_army,
+                                  TextureCache& tex_cache, lua_State* L, f32 time, u32 viewport_h,
+                                  bool shown, u32 fi) {
     groups_.clear();
     legs_.clear();
     const sim::WorldSnapshot* cur = view.cur();
-    if (!shown || !cur || !selected || selected->empty() || !vertex_mapped_[fi]) return;
+    if (!shown || !cur || !vertex_mapped_[fi]) {
+        return;
+    }
 
     f32 ex = 0;
     f32 ey = 0;
@@ -436,9 +452,8 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     const auto vertex = [](const Vector3& p, f32 u, f32 v, const std::array<f32, 4>& c) {
         return Vertex{{p.x, p.y, p.z}, {u, v}, {c[0], c[1], c[2], c[3]}};
     };
-    for (u32 uid : *selected) {
-        const sim::EntityRecord* e = view.find(uid);
-        if (!e || !e->is_unit) continue;
+    for (const auto& [e, chosen] : command_graph_units(*cur, selected, player_army)) {
+        const u32 uid = e->id;
         // Its orders, then (a factory's) the rally orders what it builds
         // takes, drawn on from where its orders end
         std::vector<sim::CommandRecord> cmds(cur->commands_of(*e).begin(),
@@ -473,7 +488,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             if (lines.size() + waypoints.size() + kCurveSegments + 1 > MAX_QUADS) break;
             const GPUTexture* line_tex =
                 s->line_texture.empty() ? nullptr : tex_cache.get(s->line_texture);
-            if (line_tex) {
+            if (chosen && line_tex) {
                 const auto& col = s->line_selected_color;
                 const f32 shift = -s->anim_rate * time;
                 const std::vector<Vector3> points =
@@ -522,7 +537,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                             {tex_cache.fallback_descriptor(), {qa, qb, qc, qa, qc, qd}});
                     }
                 }
-            } else if (wp_tex && per_px > 0.0f) {
+            } else if (chosen && wp_tex && per_px > 0.0f) {
                 // Its world size, held between its least and most on screen
                 const f32 px_world = per_px * length(sub(to, eye));
                 f32 size = kWaypointSize * s->waypoint_selected_scale;

@@ -2477,9 +2477,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                            fi);
 
     command_graph_renderer_.update(
-        view, camera_, selected_ids, texture_cache_, L, unit_renderer_.shader_time() / 10.0f,
-        window_height_, is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT),
-        fi);
+        view, camera_, selected_ids, player_army_, texture_cache_, L,
+        unit_renderer_.shader_time() / 10.0f, window_height_,
+        is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT), fi);
 
     // Update game overlays (health bars, selection circles, game over)
     {
