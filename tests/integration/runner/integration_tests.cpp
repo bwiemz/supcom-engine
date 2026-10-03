@@ -15266,6 +15266,43 @@ void test_bitmap(TestContext& ctx) {
         }
     }
 
+    // Test 16: the scripts start their modules afresh (import.lua does, at
+    // its start) after the engine made the root frame: a control laid out on
+    // the frame still follows the frame's size
+    {
+        auto result =
+            ctx.lua_state.do_string("__modules['/lua/lazyvar.lua'] = nil\n"
+                                    "local LazyVar = import('/lua/lazyvar.lua')\n"
+                                    "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
+                                    "local f = GetFrame(0)\n"
+                                    "local same = getmetatable(f.Width) == "
+                                    "getmetatable(LazyVar.Create(0))\n"
+                                    "local w = f.Width()\n"
+                                    "local b = Bitmap(f)\n"
+                                    "b.Right:Set(function() return f.Width() * 2 end)\n"
+                                    "local before = b.Right()\n"
+                                    "f.Width:Set(w + 10)\n"
+                                    "local after = b.Right()\n"
+                                    "f.Width:Set(w)\n"
+                                    "b:Destroy()\n"
+                                    "return same and before == w * 2 and after == (w + 10) * 2\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 16 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 16: a control laid out on the root frame follows its size");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16: a control laid out on the root frame misses "
+                                   "a change to its size");
+        }
+    }
+
     spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
 }
 

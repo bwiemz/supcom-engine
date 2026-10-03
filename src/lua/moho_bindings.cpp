@@ -1475,12 +1475,57 @@ static int l_InternalCreateLobby(lua_State* L) {
 
 // --- UI bootstrap globals (M76) ---
 
+/// The root frame's lazy vars, made with the lazyvar module the scripts
+/// import now, at the values they had: the engine makes the frame before
+/// the scripts' import.lua starts its modules afresh, and a lazy var made
+/// by one copy of the module does not tell another's of its changes (a
+/// splash movie laid out on the frame kept the size it was first given).
+static void renew_root_lazyvars(lua_State* L, int frame_idx) {
+    const int top = lua_gettop(L);
+    push_lazyvar_create(L);
+    lua_pushstring(L, "__osc_root_lazyvar_create");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool renew = lua_isfunction(L, -2) && !lua_rawequal(L, -1, -2);
+    lua_pop(L, 1);
+    if (!renew) {
+        lua_settop(L, top);
+        return;
+    }
+    static const char* const kRenew =
+        "return function(frame, create)\n"
+        "    for _, k in { 'Left', 'Top', 'Right', 'Bottom', 'Width', 'Height', 'Depth' } do\n"
+        "        local old = rawget(frame, k)\n"
+        "        rawset(frame, k, create(old and old() or 0))\n"
+        "    end\n"
+        "end\n";
+    if (luaL_loadbuffer(L, kRenew, std::strlen(kRenew), "the root frame's lazy vars") != 0 ||
+        lua_pcall(L, 0, 1, 0) != 0) {
+        spdlog::warn("Renewing the root frame's lazy vars: {}", lua_tostring(L, -1));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushvalue(L, frame_idx);
+    lua_pushvalue(L, top + 1); // Create
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        spdlog::warn("Renewing the root frame's lazy vars: {}", lua_tostring(L, -1));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "__osc_root_lazyvar_create");
+    lua_pushvalue(L, top + 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_settop(L, top);
+}
+
 /// GetFrame(head) -> root frame table (only head 0 supported)
 static int l_GetFrame(lua_State* L) {
     int head = static_cast<int>(luaL_optnumber(L, 1, 0));
     if (head != 0) { lua_pushnil(L); return 1; }
     lua_pushstring(L, "__osc_root_frame");
     lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        renew_root_lazyvars(L, lua_gettop(L));
+    }
     return 1;
 }
 
@@ -4713,6 +4758,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
             create_lazyvar(L, -1, "Width");
             create_lazyvar(L, -1, "Height");
             create_lazyvar(L, -1, "Depth");
+            // The module they were made with (see renew_root_lazyvars)
+            lua_pushstring(L, "__osc_root_lazyvar_create");
+            push_lazyvar_create(L);
+            lua_rawset(L, LUA_REGISTRYINDEX);
 
             // Store in registry as __osc_root_frame
             lua_pushstring(L, "__osc_root_frame");
