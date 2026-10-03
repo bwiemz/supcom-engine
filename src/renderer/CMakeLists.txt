@@ -34,6 +34,7 @@ add_library(osc_renderer STATIC
     runtime_decal_renderer.cpp
     beam_blueprint.cpp
     beam_renderer.cpp
+    command_graph_renderer.cpp
     effect_blueprint_file.cpp
     trail_blueprint.cpp
     trail_renderer.cpp

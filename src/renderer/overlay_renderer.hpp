@@ -28,6 +28,13 @@ class TextureCache;
 inline const std::unordered_set<std::string> kAllIntelRingTypes{"Radar", "Sonar", "Omni",
                                                                  "Vision"};
 
+/// A screen line `thick` either side of the segment from (x0, y0) to
+/// (x1, y1), as the axis-aligned rects (x, y, w, h) the overlay draws: one
+/// along the line's main axis per step of its other, no more than
+/// `max_runs` of them.
+std::vector<std::array<f32, 4>> line_runs(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick,
+                                          u32 max_runs = 256);
+
 /// Intel types to show rings for, given FA's active range-overlay filters:
 /// the RangeOverlayParams names multifunction.lua passes to
 /// SetOverlayFilters ("Radar", "Sonar", "Omni", or "AllIntel" for all
@@ -110,6 +117,8 @@ private:
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a);
+    /// A line, as line_runs lays it
+    void emit_line(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick, f32 r, f32 g, f32 b, f32 a);
 
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};

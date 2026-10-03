@@ -33,6 +33,7 @@
 #include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
+#include "renderer/command_graph_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "renderer/trail_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
@@ -200,6 +201,7 @@ public:
     const WaveSystem& wave_system() const { return wave_system_; }
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
+    const CommandGraphRenderer& command_graph_renderer() const { return command_graph_renderer_; }
     /// The trail segments drawn last frame (tests read them; M214b).
     const TrailRenderer& trail_renderer() const { return trail_renderer_; }
     /// The map's water (tests read its water map and Fresnel table; M213a).
@@ -707,6 +709,7 @@ private:
     /// The map build_scene drew (its water, for particles; M214c).
     const map::Terrain* terrain_ = nullptr;
     BeamRenderer beam_renderer_;
+    CommandGraphRenderer command_graph_renderer_;
     BeamBlueprintCache beam_bp_cache_;
     TrailRenderer trail_renderer_;
     TrailBlueprintCache trail_bp_cache_;
