@@ -34,6 +34,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::test {
@@ -348,6 +349,32 @@ void test_beam_render(TestContext& ctx) {
                 fmt::format("Test 7b: no overlay line to the structure being built (building {}, "
                             "lined {})",
                             building, lined));
+    }
+
+    // Test 7c: two power generators side by side, one selected: adjacent,
+    // and no line of the overlay's between them
+    {
+        const u32 p1 =
+            spawn_unit(ctx, "__osc_bt_p1", "ueb1101", "ARMY_1", {sx - 20.5f, sz + 30.5f});
+        const u32 p2 =
+            spawn_unit(ctx, "__osc_bt_p2", "ueb1101", "ARMY_1", {sx - 18.5f, sz + 30.5f});
+        next(2);
+        const sim::EntityRecord* first = seen.cur().find(p1);
+        bool adjacent = false;
+        if (first) {
+            for (u32 id : seen.cur().adjacent_of(*first)) {
+                adjacent = adjacent || id == p2;
+            }
+        }
+        const std::unordered_set<u32> selected{p1};
+        shots.redraw(&selected);
+        bool lined = false;
+        for (const Quad& q : drawn(r).overlay) {
+            lined = lined || same_colour(q, 1.0f, 0.6f, 0.1f);
+        }
+        t.check(
+            adjacent && !lined,
+            fmt::format("Test 7c: adjacent {}, an overlay line between them {}", adjacent, lined));
     }
 
     // Test 8: ARMY_2's beam in the fog (45 from ARMY_1's nearest) isn't
