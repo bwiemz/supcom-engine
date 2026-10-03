@@ -2,6 +2,9 @@
 
 #include "core/types.hpp"
 
+#include <string_view>
+#include <vector>
+
 namespace osc::ui {
 
 /// A key event's KeyCode as Moho gives it to Lua: wxWidgets' key code
@@ -17,5 +20,9 @@ i32 windows_key_code(i32 glfw_key);
 /// A mouse button event's KeyCode: wx's button number (left 1, middle 2,
 /// right 3). 0 for any other button.
 i32 moho_mouse_button(i32 glfw_button);
+
+/// The GLFW keys a modifier's keyNames.lua name stands for, in any case;
+/// none for another name.
+std::vector<i32> glfw_keys_named(std::string_view name);
 
 } // namespace osc::ui
