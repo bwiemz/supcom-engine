@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "renderer/vk_types.hpp"
+#include "renderer/world_quad_batch.hpp"
 #include "sim/entity.hpp"
 #include "sim/unit_command.hpp"
 
@@ -104,7 +105,6 @@ public:
     static constexpr u32 MAX_QUADS = 32768;
     /// Segments a leg's curve is drawn in (ui_CurveSegments)
     static constexpr u32 kCurveSegments = 20;
-    static constexpr u32 FRAMES_IN_FLIGHT = 2;
     /// A leg's width in the world (CalculateWaypointLineWidth for one unit)
     static constexpr f32 kLineWidth = 1.0f;
     /// A waypoint's size in the world, and its least and most on the screen
@@ -117,22 +117,9 @@ public:
     static constexpr std::array<f32, 4> kPadOutlineColor = {0.15f, 0.45f, 0.95f, 1.0f};
 
 private:
-    struct Vertex {
-        f32 pos[3];
-        f32 uv[2];
-        f32 color[4];
-    };
-    struct Group {
-        VkDescriptorSet ds = VK_NULL_HANDLE;
-        u32 first_vertex = 0, vertex_count = 0;
-    };
     const CommandGraphStyle* style(sim::CommandType type, lua_State* L);
 
-    VkPipeline pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout layout_ = VK_NULL_HANDLE;
-    AllocatedBuffer vertex_buf_[FRAMES_IN_FLIGHT] = {};
-    void* vertex_mapped_[FRAMES_IN_FLIGHT] = {};
-    std::vector<Group> groups_;
+    WorldQuadBatch batch_;
     std::vector<Leg> legs_;
     /// A structure blueprint's footprint and skirt: size x, z, skirt x, z,
     /// offset x, z

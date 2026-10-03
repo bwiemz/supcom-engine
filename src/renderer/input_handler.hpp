@@ -25,6 +25,10 @@ struct BuildGhost;
 
 /// FA's command mode (/lua/ui/game/commandmode.lua): what a world click
 /// does after the player picked a build icon or an order button.
+/// Whether (x, z) is inside the convex quad `q` on the ground (corners in
+/// order, either way round)
+bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z);
+
 struct CommandMode {
     std::string mode; ///< "build", "order", "ping"...; empty for none
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
@@ -129,6 +133,17 @@ public:
     /// Whether a drag-selection box is active.
     bool is_dragging() const { return dragging_; }
 
+    /// The drag box's corners on the ground, while dragging
+    std::optional<std::array<sim::Vector3, 4>> drag_box() const {
+        return dragging_ ? std::optional(drag_quad_) : std::nullopt;
+    }
+
+    /// The unit under the cursor, of any army (0: none)
+    u32 hovered() const { return hovered_; }
+
+    /// The shown unit whose box, turned with it, holds (wx, wz), or 0
+    u32 unit_under(sim::SimState& sim, f32 wx, f32 wz) const;
+
     /// Drag box corners in screen pixels (valid when is_dragging).
     void drag_rect(f32& x0, f32& y0, f32& x1, f32& y1) const {
         x0 = drag_start_x_; y0 = drag_start_y_;
@@ -165,6 +180,8 @@ private:
     f32 drag_end_x_ = 0, drag_end_y_ = 0;
     f32 drag_world_x0_ = 0, drag_world_z0_ = 0;
     f32 drag_world_x1_ = 0, drag_world_z1_ = 0;
+    std::array<sim::Vector3, 4> drag_quad_{};
+    u32 hovered_ = 0;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
 
     // Right mouse state (commands)
