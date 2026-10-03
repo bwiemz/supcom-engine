@@ -14,6 +14,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -36,15 +37,21 @@ struct PlacementRules {
     enum class Deposit : u8 { None, Mass, Hydrocarbon } deposit = Deposit::None;
 };
 
-/// Snap a structure's center to the build grid: odd footprints center on a
-/// cell, even ones on a cell corner, so the footprint covers whole cells.
-/// The placement ghost and the build order both use it.
+/// Snap a structure's center to the build grid, as Moho does: the
+/// footprint's corner to the nearest whole cell, so odd footprints center on
+/// a cell and even ones on a cell corner. The placement ghost and the build
+/// order both use it.
 inline void snap_structure_center(f32& x, f32& z, f32 size_x, f32 size_z) {
-    x = std::floor(x) + 0.5f;
-    z = std::floor(z) + 0.5f;
-    if (static_cast<int>(size_x) % 2 == 0) x = std::floor(x);
-    if (static_cast<int>(size_z) % 2 == 0) z = std::floor(z);
+    x = std::nearbyint(x - size_x * 0.5f) + size_x * 0.5f;
+    z = std::nearbyint(z - size_z * 0.5f) + size_z * 0.5f;
 }
+
+/// The sites of a structure laid along a drag from (x0, z0) to (x1, z1), as
+/// Moho lays a build drag: `spacing` apart along the drag's longer axis, the
+/// other following it, each snapped as snap_structure_center does; the line
+/// stops short of a spacing that doesn't fit. One site for no drag.
+std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f32 z1, f32 size_x,
+                                                      f32 size_z, f32 spacing);
 
 /// Blueprint lookup (blueprints live in Lua); unknown ids get defaults.
 using PlacementRulesLookup = std::function<PlacementRules(const std::string& bp_id)>;

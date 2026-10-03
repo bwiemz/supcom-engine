@@ -1149,7 +1149,16 @@ void IntegrationModes::headless(Engine& e) {
             if (!r) spdlog::error("sim Lua: {}", r.error().message);
             return static_cast<bool>(r);
         };
-        if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click, sim_lua);
+        // A build mode's drag, released, as the input handler lays it
+        auto drag = [&](osc::f32 x0, osc::f32 z0, osc::f32 x1, osc::f32 z1, bool shift) {
+            const auto mode = read_command_mode(uL);
+            const auto issued = headless_input.build_line(*sim_state, mode, x0, z0, x1, z1, shift);
+            for (const auto& c : issued) {
+                report_command_issued(uL, c);
+            }
+            return static_cast<int>(issued.size());
+        };
+        if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click, sim_lua, drag);
         if (keymap_test) osc::test::test_keymap(ui_test_ctx, ui_registry, game_state_mgr, pump);
         if (session_command_test)
             osc::test::test_session_commands(ui_test_ctx, ui_registry, pump, play, sim_lua);

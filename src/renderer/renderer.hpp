@@ -81,6 +81,7 @@ struct BuildGhost {
     f32 x = 0, y = 0, z = 0;
     f32 pad_x0 = 0, pad_z0 = 0, pad_x1 = 0, pad_z1 = 0; ///< its skirt
     bool valid = true;
+    std::vector<BuildGhost> line; ///< a build drag's other sites
 };
 
 class Renderer {

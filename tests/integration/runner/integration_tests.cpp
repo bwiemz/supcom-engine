@@ -16394,7 +16394,8 @@ static int count_descendants(const osc::ui::UIControl* root) {
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                  const std::function<void(int)>& play,
                  const std::function<bool(f32, f32, bool)>& click,
-                 const std::function<bool(const char*)>& sim_lua) {
+                 const std::function<bool(const char*)>& sim_lua,
+                 const std::function<int(f32, f32, f32, f32, bool)>& drag) {
     spdlog::info("=== GAME UI TEST (M187) ===");
     lua_State* L = ctx.L;
     auto lua_ok = [&](const char* what, const char* code) {
@@ -17069,6 +17070,36 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if mode[1] ~= 'build' then error('mode ' .. tostring(mode[1])) end
         import('/lua/ui/game/commandmode.lua').EndCommandMode(true)
     )");
+    lua_ok("Test 11s: pick the T1 power generator to drag", R"(
+        __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})
+    )");
+    int dragged = 0;
+    {
+        lua_getglobal(L, "__osc_test_acu_pos");
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 3);
+        const f32 x = static_cast<f32>(lua_tonumber(L, -2)) - 12.3f;
+        const f32 z = static_cast<f32>(lua_tonumber(L, -1)) + 7.8f;
+        lua_pop(L, 3);
+        dragged = drag(x, z, x + 8.0f, z, false);
+    }
+    play(1);
+    const std::string line_queued = fmt::format(R"(
+        local q = GetSelectedUnits()[1]:GetCommandQueue()
+        local builds = 0
+        for _, c in q do
+            if c.commandType == 20 then builds = builds + 1 end
+        end
+        if builds ~= {0} or {0} < 4 then
+            error(builds .. ' builds queued, ' .. {0} .. ' issued')
+        end
+        if import('/lua/ui/game/commandmode.lua').GetCommandMode()[1] then
+            error('the build mode stayed after the line')
+        end
+    )",
+                                                dragged);
+    lua_ok("Test 11t: the drag queued a line of them, and ended the mode", line_queued.c_str());
     lua_ok("Test 11a: pick the T1 power generator from the build panel", R"(
         __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
         import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})

@@ -185,20 +185,27 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
 
+    std::vector<const BuildGhost*> sites;
     if (ghost) {
-        const std::array<std::array<f32, 2>, 4> corners = {{{ghost->pad_x0, ghost->pad_z0},
-                                                            {ghost->pad_x1, ghost->pad_z0},
-                                                            {ghost->pad_x1, ghost->pad_z1},
-                                                            {ghost->pad_x0, ghost->pad_z1}}};
+        sites.push_back(ghost);
+        for (const BuildGhost& site : ghost->line) {
+            sites.push_back(&site);
+        }
+    }
+    for (const BuildGhost* site : sites) {
+        const std::array<std::array<f32, 2>, 4> corners = {{{site->pad_x0, site->pad_z0},
+                                                            {site->pad_x1, site->pad_z0},
+                                                            {site->pad_x1, site->pad_z1},
+                                                            {site->pad_x0, site->pad_z1}}};
         std::array<f32, 4> xs{};
         std::array<f32, 4> ys{};
         bool shown = true;
         for (size_t i = 0; i < 4 && shown; ++i) {
-            shown = world_to_screen(corners[i][0], ghost->y, corners[i][1], vp_matrix, sw, sh,
-                                    xs[i], ys[i]);
+            shown = world_to_screen(corners[i][0], site->y, corners[i][1], vp_matrix, sw, sh, xs[i],
+                                    ys[i]);
         }
         if (shown) {
-            if (ghost->valid) {
+            if (site->valid) {
                 emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
             } else {
                 emit_outline(xs, ys, 0.9f, 0.0f, 0.0f, 1.0f);

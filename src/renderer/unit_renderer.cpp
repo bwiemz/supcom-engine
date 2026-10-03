@@ -450,8 +450,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                 bone_need += u64{gd.bones_per_instance} * gd.instances.size();
     reserve(cubes_[fi_], static_cast<u32>(cube_scratch_.size()), sizeof(CubeInstance),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, kMaxInstances);
-    reserve(meshes_[fi_], mesh_count + 1, sizeof(MeshInstance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            kMaxInstances);
+    reserve(meshes_[fi_], mesh_count + ghost_slots_, sizeof(MeshInstance),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, kMaxInstances);
     const u32 bone_capacity = bones_[fi_].capacity;
     reserve(bones_[fi_],
             static_cast<u32>(std::min<u64>(bone_need, std::numeric_limits<u32>::max())),
