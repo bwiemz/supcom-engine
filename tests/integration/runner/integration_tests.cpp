@@ -16759,6 +16759,40 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
         if table.getn(shown) < 1 then error('construction panel shows no build options') end
     )");
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_mex = CreateUnitHPR('ueb1103', 'ARMY_1', x + 12, GetTerrainHeight(x + 12, z), z - 12, 0, 0, 0)
+    )");
+    osc::u32 mex_id = 0;
+    ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb1103") {
+            mex_id = e.entity_id();
+        }
+    });
+    play(2);
+    const std::string select_mex = fmt::format(R"(
+        __osc_test_acu = GetSelectedUnits()[1]
+        SelectUnits({{{{EntityId = {}}}}})
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        local list = EntityCategoryGetUnitList(buildable)
+        if table.getn(list) ~= 1 or list[1] ~= 'ueb1202' then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, ' .. tostring(list[1]))
+        end
+    )",
+                                               mex_id);
+    lua_ok("Test 10g3: a T1 extractor offers its upgrade", select_mex.c_str());
+    play(2);
+    lua_ok("Test 10g4: the construction panel shows it", R"(
+        local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
+        local upgrade = false
+        for _, item in shown do
+            if item.id == 'ueb1202' then upgrade = true end
+        end
+        if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
+        SelectUnits({__osc_test_acu})
+    )");
+    sim_lua("__osc_ui_mex:Destroy()");
+    play(2);
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
     // for auto mode, and after a tick the sim's unit has it.
     lua_ok("Test 10h: ProcessInfo requests auto mode", R"(
