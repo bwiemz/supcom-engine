@@ -16895,6 +16895,30 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     if (army1_unit("uel0105"))
         osc::test_status::fail("[FAIL] Test 10s2: Stop left the factory's engineer half-built");
     else spdlog::info("[PASS] Test 10s2: Stop took the engineer under construction");
+    lua_ok("Test 10s3: select the commander", "SelectUnits(GetArmyAvatars())");
+    sim_lua(R"(
+        local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
+        local p = acu:GetPosition()
+        IssueBuildMobile({acu}, Vector(p[1] + 10, 0, p[3]), 'ueb1101', {})
+        IssueBuildMobile({acu}, Vector(p[1] + 14, 0, p[3]), 'ueb1101', {})
+        IssueBuildMobile({acu}, Vector(p[1] + 10, 0, p[3] + 8), 'ueb1105', {})
+    )");
+    play(1);
+    lua_ok("Test 10s4: the commander's builds are its queue", R"(
+        local q = SetCurrentFactoryForQueueDisplay(GetArmyAvatars()[1])
+        if table.getn(q) ~= 2 or q[1].id ~= 'ueb1101' or q[1].count ~= 2 or
+           q[2].id ~= 'ueb1105' or q[2].count ~= 1 then
+            error(table.getn(q) .. ' groups, ' .. tostring(q[1] and q[1].count))
+        end
+        IssueCommand('UNITCOMMAND_Stop')
+    )");
+    play(1);
+    sim_lua(R"(
+        for _, u in ArmyBrains[1]:GetListOfUnits(categories.STRUCTURE, false) do
+            if u:IsBeingBuilt() then u:Destroy() end
+        end
+    )");
+    play(1);
     lua_ok("Test 10t: stopped; an enhancement for the commander", R"(
         local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
         if table.getn(q) ~= 0 then error(table.getn(q) .. ' entries after Stop') end

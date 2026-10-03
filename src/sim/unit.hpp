@@ -311,8 +311,8 @@ public:
     void set_economy_threat(f32 t) { economy_threat_ = t; }
 
     // Build queue (factory production queue)
-    /// The factory's queue as FA's construction panel shows it: its
-    /// BuildFactory orders, a run of one blueprint grouped with a count.
+    /// The unit's queue as FA's construction panel shows it, a run of one
+    /// blueprint grouped with a count.
     std::vector<BuildQueueEntry> factory_queue() const;
     /// Remove up to `count` orders from the `index`-th (1-based) group of
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
