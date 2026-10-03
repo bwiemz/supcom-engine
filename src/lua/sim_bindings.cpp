@@ -3851,10 +3851,7 @@ static int l_ParseEntityCategory(lua_State* L) {
         return 1;
     }
 
-    // Uppercase the input
-    std::string input(raw);
-    for (auto& c : input)
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const std::string input(raw);
 
     // Split by spaces
     std::vector<std::string> words;
