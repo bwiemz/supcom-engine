@@ -16759,6 +16759,16 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
         if table.getn(shown) < 1 then error('construction panel shows no build options') end
     )");
+    lua_ok("Test 10g2: a structure's button places it", R"(
+        import('/lua/ui/game/construction.lua').OnClickHandler(
+            {Data = {type = 'item', id = 'ueb1101'}}, {Left = true})
+        local commandmode = import('/lua/ui/game/commandmode.lua')
+        local mode = commandmode.GetCommandMode()
+        if mode[1] ~= 'build' or not mode[2] or mode[2].name ~= 'ueb1101' then
+            error('the click left command mode ' .. tostring(mode[1]))
+        end
+        commandmode.EndCommandMode(true)
+    )");
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
     // for auto mode, and after a tick the sim's unit has it.
     lua_ok("Test 10h: ProcessInfo requests auto mode", R"(
