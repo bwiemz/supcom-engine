@@ -2415,10 +2415,69 @@ static std::vector<std::string> buildable_category_strings(lua_State* L,
 /// its BuildableCategory entries (each "A B" meaning A and B), across the
 /// selection the intersection -- the options every selected unit has. A
 /// selection that builds nothing gets a category no unit is in.
-static void push_buildable_category(lua_State* L,
-                                    const std::vector<std::vector<std::string>>& per_unit) {
+/// A unit's buildable categories, and what it may not build
+struct UnitBuildable {
+    std::vector<std::string> lists;
+    const sim::CategoryExpr* restriction = nullptr;
+};
+
+/// Pushes a compiled category as a description the combine helper builds
+/// back: {op = 'all'}, {op = 'name', name = ...} or {op = '+' | '*' | '-',
+/// l = ..., r = ...}
+static void push_category_description(lua_State* L, const sim::CategoryExpr& c, int depth = 0) {
+    lua_newtable(L);
+    const auto field = [L](const char* key, const char* value) {
+        lua_pushstring(L, key);
+        lua_pushstring(L, value);
+        lua_rawset(L, -3);
+    };
+    using Op = sim::CategoryExpr::Op;
+    switch (c.op()) {
+    case Op::All: field("op", "all"); return;
+    case Op::Name:
+        field("op", "name");
+        field("name", c.category_name().c_str());
+        return;
+    case Op::Union:
+    case Op::Intersection:
+    case Op::Difference:
+        if (c.operands().size() == 2 && depth < 64) {
+            field("op", c.op() == Op::Union ? "+" : c.op() == Op::Intersection ? "*" : "-");
+            lua_pushstring(L, "l");
+            push_category_description(L, c.operands()[0], depth + 1);
+            lua_rawset(L, -3);
+            lua_pushstring(L, "r");
+            push_category_description(L, c.operands()[1], depth + 1);
+            lua_rawset(L, -3);
+            return;
+        }
+        break;
+    case Op::None: break;
+    }
+    field("op", "none");
+}
+
+static void push_buildable_category(lua_State* L, const std::vector<UnitBuildable>& per_unit) {
+    // Each unit's lists joined, less its build restriction; then what the
+    // selection all can build
     static const char* kCombine =
-        "return function(lists)\n"
+        "local function build(d)\n"
+        "  if d.op == 'all' then return categories.ALLUNITS end\n"
+        "  if d.op == 'name' then return ParseEntityCategory(d.name) end\n"
+        "  if d.op == 'none' then return nil end\n"
+        "  local a, b = build(d.l), build(d.r)\n"
+        "  if d.op == '+' then\n"
+        "    if not a then return b elseif not b then return a end\n"
+        "    return a + b\n"
+        "  end\n"
+        "  if d.op == '*' then\n"
+        "    if not a or not b then return nil end\n"
+        "    return a * b\n"
+        "  end\n"
+        "  if not a then return nil elseif not b then return a end\n"
+        "  return a - b\n"
+        "end\n"
+        "return function(lists, restrictions)\n"
         "  local result\n"
         "  for i = 1, table.getn(lists) do\n"
         "    local u\n"
@@ -2427,6 +2486,8 @@ static void push_buildable_category(lua_State* L,
         "      if u then u = u + c else u = c end\n"
         "    end\n"
         "    if not u then return categories.OSC_BUILDS_NOTHING end\n"
+        "    local restricted = restrictions[i] and build(restrictions[i])\n"
+        "    if restricted then u = u - restricted end\n"
         "    if result then result = result * u else result = u end\n"
         "  end\n"
         "  return result or categories.OSC_BUILDS_NOTHING\n"
@@ -2449,13 +2510,19 @@ static void push_buildable_category(lua_State* L,
     lua_newtable(L);
     for (size_t i = 0; i < per_unit.size(); ++i) {
         lua_newtable(L);
-        for (size_t j = 0; j < per_unit[i].size(); ++j) {
-            lua_pushstring(L, per_unit[i][j].c_str());
+        for (size_t j = 0; j < per_unit[i].lists.size(); ++j) {
+            lua_pushstring(L, per_unit[i].lists[j].c_str());
             lua_rawseti(L, -2, static_cast<int>(j + 1));
         }
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
-    if (lua_pcall(L, 1, 1, 0) != 0) {
+    lua_newtable(L);
+    for (size_t i = 0; i < per_unit.size(); ++i) {
+        if (!per_unit[i].restriction || per_unit[i].restriction->empty()) continue;
+        push_category_description(L, *per_unit[i].restriction);
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    if (lua_pcall(L, 2, 1, 0) != 0) {
         spdlog::warn("buildable category: {}", lua_tostring(L, -1));
         lua_pop(L, 1);
         lua_newtable(L);
@@ -2483,7 +2550,7 @@ static int l_GetUnitCommandData(lua_State* L) {
 
     bool first_unit = true;
     std::unordered_set<std::string> common_caps;
-    std::vector<std::vector<std::string>> buildable;
+    std::vector<UnitBuildable> buildable;
 
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
@@ -2494,7 +2561,7 @@ static int l_GetUnitCommandData(lua_State* L) {
             continue;
         }
         auto* unit = static_cast<sim::Unit*>(entity);
-        buildable.push_back(buildable_category_strings(L, unit));
+        buildable.push_back({buildable_category_strings(L, unit), &unit->build_restriction()});
 
         if (first_unit) {
             for (const char** cap = all_caps; *cap; ++cap) {

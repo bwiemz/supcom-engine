@@ -1082,7 +1082,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u32v(u.last_attacker_id_);
     save_strings(w, u.command_caps_);
     save_strings(w, u.original_command_caps_);
-    save_strings(w, u.build_restrictions_);
+    save(w, u.build_restriction_);
     w.f32v(u.elevation_override_);
     w.b(u.dying_);
     w.b(u.transferred_);
@@ -1377,7 +1377,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.last_attacker_id_ = r.u32v();
     u.command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     u.original_command_caps_ = load_strings<std::unordered_set<std::string>>(r);
-    u.build_restrictions_ = load_strings<std::unordered_set<std::string>>(r);
+    load(r, u.build_restriction_);
     u.elevation_override_ = r.f32v();
     u.dying_ = r.b();
     u.transferred_ = r.b();
