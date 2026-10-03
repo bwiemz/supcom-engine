@@ -28,6 +28,7 @@ struct CommandRecord {
     CommandType type = CommandType::Stop;
     u32 target_id = 0;
     Vector3 target_pos;
+    std::string blueprint_id; ///< what a build order builds
 };
 
 /// An intel range a unit has on (the renderer rings it when selected).

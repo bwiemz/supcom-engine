@@ -5,6 +5,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/shader_utils.hpp"
 #include "renderer/texture_cache.hpp"
+#include "sim/collision.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <spdlog/spdlog.h>
@@ -135,6 +136,13 @@ CommandGraphStyle command_graph_style(lua_State* L, int params, const std::strin
     s.waypoint_scale = param_number(L, params, name, "waypoint_scale", 1.0f);
     s.waypoint_selected_scale = param_number(L, params, name, "waypoint_selected_scale", 1.0f);
     return s;
+}
+
+std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
+                             f32 off_x, f32 off_z) {
+    const f32 x0 = x - size_x * 0.5f + std::min(off_x, 0.0f);
+    const f32 z0 = z - size_z * 0.5f + std::min(off_z, 0.0f);
+    return {x0, z0, x0 + std::max(skirt_x, size_x), z0 + std::max(skirt_z, size_z)};
 }
 
 std::string command_graph_key(sim::CommandType type) {
@@ -337,6 +345,46 @@ void CommandGraphRenderer::init(VkDevice device, VmaAllocator allocator, VkRende
     vkDestroyShaderModule(device, frag, nullptr);
 }
 
+const std::array<f32, 6>& CommandGraphRenderer::pad_of(const std::string& bp, lua_State* L) {
+    if (auto it = pads_.find(bp); it != pads_.end()) {
+        return it->second;
+    }
+    std::array<f32, 6>& out = pads_[bp];
+    out = {1, 1, 0, 0, 0, 0};
+    if (!L) {
+        return out;
+    }
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, bp.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            const int table = lua_gettop(L);
+            const auto [fx, fz] = sim::blueprint_footprint(L, table);
+            out[0] = fx > 0 ? fx : 1.0f;
+            out[1] = fz > 0 ? fz : 1.0f;
+            lua_pushstring(L, "Physics");
+            lua_rawget(L, table);
+            if (lua_istable(L, -1)) {
+                const int physics = lua_gettop(L);
+                const char* keys[] = {"SkirtSizeX", "SkirtSizeZ", "SkirtOffsetX", "SkirtOffsetZ"};
+                for (size_t i = 0; i < 4; ++i) {
+                    lua_pushstring(L, keys[i]);
+                    lua_rawget(L, physics);
+                    if (lua_isnumber(L, -1)) {
+                        out[2 + i] = static_cast<f32>(lua_tonumber(L, -1));
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+        }
+    }
+    lua_settop(L, top);
+    return out;
+}
+
 const CommandGraphStyle* CommandGraphRenderer::style(sim::CommandType type, lua_State* L) {
     if (!styles_read_ && L) {
         styles_read_ = true;
@@ -398,7 +446,12 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
         const auto rally = cur->rally_of(*e);
         cmds.insert(cmds.end(), rally.begin(), rally.end());
         std::vector<Vector3> chain{view.position(*e)};
-        std::vector<std::pair<sim::CommandType, const CommandGraphStyle*>> leg_orders;
+        struct LegOrder {
+            sim::CommandType type;
+            const CommandGraphStyle* style;
+            const std::string* blueprint;
+        };
+        std::vector<LegOrder> leg_orders;
         for (const sim::CommandRecord& c : cmds) {
             const CommandGraphStyle* s = style(c.type, L);
             if (!s) continue;
@@ -411,10 +464,10 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                 }
             }
             chain.push_back(to);
-            leg_orders.emplace_back(c.type, s);
+            leg_orders.push_back({c.type, s, &c.blueprint_id});
         }
         for (size_t i = 0; i < leg_orders.size(); ++i) {
-            const auto [type, s] = leg_orders[i];
+            const auto [type, s, blueprint] = leg_orders[i];
             const Vector3& from = chain[i];
             const Vector3& to = chain[i + 1];
             if (lines.size() + waypoints.size() + kCurveSegments + 1 > MAX_QUADS) break;
@@ -443,7 +496,33 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             }
             const GPUTexture* wp_tex =
                 s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
-            if (wp_tex && per_px > 0.0f) {
+            // A build's site: its icon over the pad, outlined
+            if (wp_tex && !blueprint->empty() && per_px > 0.0f) {
+                const auto& p = pad_of(*blueprint, L);
+                const auto pad = build_pad(to.x, to.z, p[0], p[1], p[2], p[3], p[4], p[5]);
+                const std::array<Vector3, 4> corner = {{{pad[0], to.y, pad[1]},
+                                                        {pad[2], to.y, pad[1]},
+                                                        {pad[2], to.y, pad[3]},
+                                                        {pad[0], to.y, pad[3]}}};
+                const auto& col = s->waypoint_selected_color;
+                const Vertex a = vertex(corner[0], 0.0f, 1.0f, col);
+                const Vertex b = vertex(corner[1], 1.0f, 1.0f, col);
+                const Vertex cc = vertex(corner[2], 1.0f, 0.0f, col);
+                const Vertex d = vertex(corner[3], 0.0f, 0.0f, col);
+                waypoints.push_back({wp_tex->descriptor_set, {a, b, cc, a, cc, d}});
+                const f32 half = kPadOutlinePx * 0.5f * per_px * length(sub(to, eye));
+                for (size_t k = 0; k < 4; ++k) {
+                    std::array<Vector3, 4> q;
+                    if (command_strip(corner[k], corner[(k + 1) % 4], half, q)) {
+                        const Vertex qa = vertex(q[0], 0.0f, 0.0f, kPadOutlineColor);
+                        const Vertex qb = vertex(q[1], 1.0f, 0.0f, kPadOutlineColor);
+                        const Vertex qc = vertex(q[2], 1.0f, 1.0f, kPadOutlineColor);
+                        const Vertex qd = vertex(q[3], 0.0f, 1.0f, kPadOutlineColor);
+                        waypoints.push_back(
+                            {tex_cache.fallback_descriptor(), {qa, qb, qc, qa, qc, qd}});
+                    }
+                }
+            } else if (wp_tex && per_px > 0.0f) {
                 // Its world size, held between its least and most on screen
                 const f32 px_world = per_px * length(sub(to, eye));
                 f32 size = kWaypointSize * s->waypoint_selected_scale;

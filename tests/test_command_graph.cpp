@@ -120,3 +120,17 @@ TEST_CASE("An order chain bends through its waypoints, as Moho's command graph d
     CHECK(std::abs(leg[10].z) < 0.25f * 10.0f);
     CHECK(command_curve(corner, 2, 20, 1.0f).empty());
 }
+
+TEST_CASE("A build order's site is its structure's skirt", "[renderer][command_graph]") {
+    using osc::renderer::build_pad;
+    // An air factory: footprint 5, skirt 8 from 1.5 outside it
+    const auto factory = build_pad(30.5f, 40.5f, 5, 5, 8, 8, -1.5f, -1.5f);
+    CHECK(factory[0] == Catch::Approx(26.5f));
+    CHECK(factory[1] == Catch::Approx(36.5f));
+    CHECK(factory[2] == Catch::Approx(34.5f));
+    CHECK(factory[3] == Catch::Approx(44.5f));
+    // A blueprint without a skirt: its footprint
+    const auto bare = build_pad(10, 10, 2, 2, 0, 0, 0, 0);
+    CHECK(bare[0] == Catch::Approx(9.0f));
+    CHECK(bare[2] == Catch::Approx(11.0f));
+}

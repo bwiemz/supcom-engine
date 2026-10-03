@@ -62,6 +62,11 @@ bool command_strip(const sim::Vector3& a, const sim::Vector3& b, f32 half_width,
 std::vector<sim::Vector3> command_curve(const std::vector<sim::Vector3>& chain, size_t leg,
                                         u32 segments, f32 width, f32 smoothness = 50.0f);
 
+/// A structure's pad from its footprint and skirt (Physics.SkirtSizeX/Z,
+/// SkirtOffsetX/Z), centred at (x, z): {x0, z0, x1, z1}
+std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
+                             f32 off_x, f32 off_z);
+
 /// Draws the selected units' order lines and waypoints as Moho's
 /// UICommandGraph does, while Shift is held: each leg a textured strip on
 /// the ground, in its order's colours; each order's waypoint icon lying at
@@ -107,6 +112,9 @@ public:
     static constexpr f32 kWaypointSize = 1.5f;
     static constexpr f32 kMinWaypointPx = 7.0f;
     static constexpr f32 kMaxWaypointPx = 100.0f;
+    /// A build site's outline: its width on the screen, and colour
+    static constexpr f32 kPadOutlinePx = 2.0f;
+    static constexpr std::array<f32, 4> kPadOutlineColor = {0.15f, 0.45f, 0.95f, 1.0f};
 
 private:
     struct Vertex {
@@ -126,7 +134,12 @@ private:
     void* vertex_mapped_[FRAMES_IN_FLIGHT] = {};
     std::vector<Group> groups_;
     std::vector<Leg> legs_;
+    /// A structure blueprint's footprint and skirt: size x, z, skirt x, z,
+    /// offset x, z
+    const std::array<f32, 6>& pad_of(const std::string& bp, lua_State* L);
+
     std::unordered_map<std::string, CommandGraphStyle> styles_;
+    std::unordered_map<std::string, std::array<f32, 6>> pads_;
     bool styles_read_ = false;
 };
 
