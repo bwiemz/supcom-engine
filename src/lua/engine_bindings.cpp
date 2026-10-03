@@ -398,20 +398,32 @@ static int l_STR_Utf8Len(lua_State* L) {
     return 1;
 }
 
+std::string utf8_substring(std::string_view s, int start, int count) {
+    const auto is_lead = [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; };
+    const auto offset_of = [&](int n) {
+        size_t i = 0;
+        for (int seen = -1; i < s.size(); ++i) {
+            if (is_lead(s[i]) && ++seen == n) {
+                return i;
+            }
+        }
+        return s.size();
+    };
+    if (count <= 0) {
+        return {};
+    }
+    const int first = std::max(start, 1) - 1;
+    const size_t begin = offset_of(first);
+    const size_t end = offset_of(first + count);
+    return std::string(s.substr(begin, end - begin));
+}
+
 /// STR_Utf8SubString
 static int l_STR_Utf8SubString(lua_State* L) {
     const char* str = luaL_checkstring(L, 1);
-    int start = static_cast<int>(luaL_checknumber(L, 2));
-    int count = static_cast<int>(luaL_checknumber(L, 3));
-
-    std::string s(str);
-    // Simple byte-based substring for now
-    if (start < 0) start = 0;
-    if (start >= static_cast<int>(s.size())) {
-        lua_pushstring(L, "");
-        return 1;
-    }
-    lua_pushstring(L, s.substr(start, count).c_str());
+    const int start = static_cast<int>(luaL_checknumber(L, 2));
+    const int count = static_cast<int>(luaL_checknumber(L, 3));
+    lua_pushstring(L, utf8_substring(str, start, count).c_str());
     return 1;
 }
 
