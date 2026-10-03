@@ -83,6 +83,18 @@ TEST_CASE("A unit blueprint's omitted icon name reads as its id", "[blueprints]"
     )"));
 }
 
+TEST_CASE("A unit blueprint's omitted strategic icon name reads as empty", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bot = {BlueprintId = 'ura0001'}
+        RegisterUnitBlueprint(bot)
+        assert(bot.StrategicIconName == '', 'strategic icon name not defaulted')
+        local named = {BlueprintId = 'uel0105', StrategicIconName = 'icon_land1_engineer'}
+        RegisterUnitBlueprint(named)
+        assert(named.StrategicIconName == 'icon_land1_engineer', 'own name lost')
+    )"));
+}
+
 TEST_CASE("A unit blueprint's omitted threat levels and regeneration read as 0", "[blueprints]") {
     BlueprintWorld w;
     CHECK(w.check(R"(

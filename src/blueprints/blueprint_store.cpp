@@ -159,6 +159,17 @@ void apply_unit_defaults(lua_State* L, int bp) {
     }
     lua_pop(L, 1);
 
+    // unitview.lua builds a texture path from it unguarded
+    lua_pushstring(L, "StrategicIconName");
+    lua_rawget(L, bp);
+    const bool iconless = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (iconless) {
+        lua_pushstring(L, "StrategicIconName");
+        lua_pushstring(L, "");
+        lua_rawset(L, bp);
+    }
+
     // Every unit has a weapon list, if an empty one: Unit.DoDeathWeapon
     // loops over bp.Weapon on every death, and 321 of retail's 568 units
     // (engineers, economy, most structures) have none.
