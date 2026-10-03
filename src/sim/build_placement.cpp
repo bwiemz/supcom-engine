@@ -16,15 +16,47 @@ namespace {
 /// big factories stay well under this).
 constexpr f32 MAX_STRUCTURE_HALF_EXTENT = 16.0f;
 
-/// How far a structure's center may sit from a deposit and still use it.
-constexpr f32 DEPOSIT_TOLERANCE = 1.0f;
-
 } // namespace
+
+std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f32 z1, f32 size_x,
+                                                      f32 size_z, f32 spacing) {
+    const f32 hx = size_x * 0.5f;
+    const f32 hz = size_z * 0.5f;
+    const f32 cx0 = std::nearbyint(x0 - hx);
+    const f32 cz0 = std::nearbyint(z0 - hz);
+    const f32 dx = std::nearbyint(x1 - hx) - cx0;
+    const f32 dz = std::nearbyint(z1 - hz) - cz0;
+    const f32 along = std::max(std::abs(dx), std::abs(dz));
+    std::vector<std::pair<f32, f32>> sites;
+    if (along == 0.0f || spacing <= 0.0f) {
+        sites.emplace_back(cx0 + hx, cz0 + hz);
+        return sites;
+    }
+    const int count = static_cast<int>(std::floor(along / spacing)) + 1;
+    const f32 step_x = dx / along * spacing;
+    const f32 step_z = dz / along * spacing;
+    for (int i = 0; i < count; ++i) {
+        const f32 k = static_cast<f32>(i);
+        sites.emplace_back(std::nearbyint(cx0 + step_x * k) + hx,
+                           std::nearbyint(cz0 + step_z * k) + hz);
+    }
+    return sites;
+}
+
+StructureSite StructureSite::of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
+                                f32 off_x, f32 off_z) {
+    const f32 x0 = x - size_x * 0.5f + std::min(off_x, 0.0f);
+    const f32 z0 = z - size_z * 0.5f + std::min(off_z, 0.0f);
+    return {x0, z0, x0 + std::max(skirt_x, size_x), z0 + std::max(skirt_z, size_z)};
+}
+
+StructureSite StructureSite::of(const PlacementRules& r, f32 x, f32 z) {
+    return of(x, z, r.size_x, r.size_z, r.skirt_x, r.skirt_z, r.skirt_off_x, r.skirt_off_z);
+}
 
 bool StructureSite::overlaps(const StructureSite& o) const {
     // Touching edges is fine: FA packs structures edge to edge.
-    return std::abs(x - o.x) * 2.0f < size_x + o.size_x &&
-           std::abs(z - o.z) * 2.0f < size_z + o.size_z;
+    return x0 < o.x1 && o.x0 < x1 && z0 < o.z1 && o.z0 < z1;
 }
 
 StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules)
@@ -33,15 +65,27 @@ StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementR
 const std::vector<StructureSite>& StructurePlacement::reserved() const {
     if (reserved_) return *reserved_;
     auto& sites = reserved_.emplace();
+    const auto reserve = [&](const UnitCommand& cmd) {
+        if (cmd.type == CommandType::BuildMobile && !cmd.blueprint_id.empty()) {
+            sites.push_back(
+                StructureSite::of(rules(cmd.blueprint_id), cmd.target_pos.x, cmd.target_pos.z));
+        }
+    };
     sim_.entity_registry().for_each_unit([&](const Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != army_) return;
-        const auto& unit = static_cast<const Unit&>(e);
-        for (const auto& cmd : unit.command_queue()) {
-            if (cmd.type != CommandType::BuildMobile || cmd.blueprint_id.empty()) continue;
-            const auto& r = rules(cmd.blueprint_id);
-            sites.push_back({cmd.target_pos.x, cmd.target_pos.z, r.size_x, r.size_z});
+        for (const auto& cmd : static_cast<const Unit&>(e).command_queue()) {
+            reserve(cmd);
         }
     });
+    // Orders given but not yet in a queue (they reach it next tick)
+    for (const auto& scheduled : sim_.command_scheduler().pending()) {
+        const Entity* first = scheduled.unit_ids.empty()
+                                  ? nullptr
+                                  : sim_.entity_registry().find(scheduled.unit_ids.front());
+        if (first && first->army() == army_) {
+            reserve(scheduled.command);
+        }
+    }
     return sites;
 }
 
@@ -54,8 +98,8 @@ const PlacementRules& StructurePlacement::rules(const std::string& bp_id) const 
 
 bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const {
     const auto& r = rules(bp_id);
-    const StructureSite site{x, z, r.size_x, r.size_z};
-    if (!terrain_allows(r, site)) return false;
+    if (!terrain_allows(r, StructureSite::of(x, z, r.size_x, r.size_z))) return false;
+    const StructureSite site = StructureSite::of(r, x, z);
     if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
     for (const auto& pending : reserved())
         if (pending.overlaps(site)) return false;
@@ -64,8 +108,8 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
 
 bool StructurePlacement::terrain_allows(const PlacementRules& r,
                                         const StructureSite& site) const {
-    const f32 x0 = site.x - site.size_x * 0.5f, x1 = site.x + site.size_x * 0.5f;
-    const f32 z0 = site.z - site.size_z * 0.5f, z1 = site.z + site.size_z * 0.5f;
+    const f32 x0 = site.x0, x1 = site.x1;
+    const f32 z0 = site.z0, z1 = site.z1;
     if (sim_.has_playable_rect() &&
         (x0 < sim_.playable_x0() || x1 > sim_.playable_x1() ||
          z0 < sim_.playable_z0() || z1 > sim_.playable_z1()))
@@ -92,7 +136,7 @@ bool StructurePlacement::terrain_allows(const PlacementRules& r,
     if (gx1 < gx0 || gz1 < gz0) {
         // Smaller than a cell and between centers: judge by the cell it is in.
         u32 cx, cz;
-        grid->world_to_grid(site.x, site.z, cx, cz);
+        grid->world_to_grid((x0 + x1) * 0.5f, (z0 + z1) * 0.5f, cx, cz);
         gx0 = gx1 = cx;
         gz0 = gz1 = cz;
     }
@@ -116,16 +160,21 @@ bool StructurePlacement::terrain_allows(const PlacementRules& r,
 
 bool StructurePlacement::structure_overlaps(const StructureSite& site) const {
     const f32 reach =
-        0.5f * osc::dmath::hypot(site.size_x, site.size_z) + MAX_STRUCTURE_HALF_EXTENT;
+        0.5f * osc::dmath::hypot(site.x1 - site.x0, site.z1 - site.z0) + MAX_STRUCTURE_HALF_EXTENT;
     const auto& registry = sim_.entity_registry();
-    for (const auto* e : registry.units_in_radius(site.x, site.z, reach)) {
+    for (const auto* e :
+         registry.units_in_radius((site.x0 + site.x1) * 0.5f, (site.z0 + site.z1) * 0.5f, reach)) {
         const auto& unit = static_cast<const Unit&>(*e);
         if (!unit.has_category("STRUCTURE") || unit.footprint_size_x() <= 0 ||
-            unit.footprint_size_z() <= 0)
+            unit.footprint_size_z() <= 0) {
             continue;
-        const StructureSite other{unit.position().x, unit.position().z,
-                                  unit.footprint_size_x(), unit.footprint_size_z()};
-        if (other.overlaps(site)) return true;
+        }
+        const StructureSite other = StructureSite::of(
+            unit.position().x, unit.position().z, unit.footprint_size_x(), unit.footprint_size_z(),
+            unit.skirt_size_x(), unit.skirt_size_z(), unit.skirt_offset_x(), unit.skirt_offset_z());
+        if (other.overlaps(site)) {
+            return true;
+        }
     }
     return false;
 }
@@ -134,9 +183,9 @@ bool StructurePlacement::on_deposit(const PlacementRules& r, f32 x, f32 z) const
     const auto want = r.deposit == PlacementRules::Deposit::Mass
                           ? ResourceDeposit::Mass : ResourceDeposit::Hydrocarbon;
     for (const auto& d : sim_.resource_deposits()) {
-        if (d.type == want && std::abs(d.x - x) <= DEPOSIT_TOLERANCE &&
-            std::abs(d.z - z) <= DEPOSIT_TOLERANCE)
+        if (d.type == want && std::abs(d.x - x) < 0.5f && std::abs(d.z - z) < 0.5f) {
             return true;
+        }
     }
     return false;
 }

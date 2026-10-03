@@ -2394,6 +2394,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
         // decides it below, from the same camera)
         const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
+        unit_renderer_.set_ghost_slots(ghost ? 1 + static_cast<u32>(ghost->line.size()) : 1);
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
     }
@@ -2413,6 +2414,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         if (ghost_mesh) {
             unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z,
                                         gr, gg, gb, ga, &texture_cache_);
+            for (const BuildGhost& site : ghost->line) {
+                unit_renderer_.inject_ghost(ghost_mesh, site.x, site.y, site.z,
+                                            site.valid ? 0.2f : 1.0f, site.valid ? 0.9f : 0.2f,
+                                            site.valid ? 0.3f : 0.2f, ga, &texture_cache_);
+            }
         }
     }
 
@@ -2480,8 +2486,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         PROFILE_ZONE("Render::overlay_update");
         const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
         overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
-                                 window_width_, window_height_, game_result,
-                                 frame_dt_, &frustum);
+                                 window_width_, window_height_, game_result, frame_dt_, &frustum,
+                                 ghost);
     }
 
     // FA's water: this frame's camera and time (M213a)

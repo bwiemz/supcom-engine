@@ -1,4 +1,6 @@
 #include "renderer/overlay_renderer.hpp"
+#include "renderer/renderer.hpp"
+#include "sim/build_placement.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -78,6 +80,71 @@ bool OverlayRenderer::world_to_screen(f32 wx, f32 wy, f32 wz,
     return true;
 }
 
+std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
+                                            const std::array<f32, 4>& ys, f32 row) {
+    std::vector<std::array<f32, 4>> rows;
+    const f32 top = *std::min_element(ys.begin(), ys.end());
+    const f32 bottom = *std::max_element(ys.begin(), ys.end());
+    const int count = row > 0.0f ? static_cast<int>(std::ceil((bottom - top) / row)) : 0;
+    for (int k = 0; k < count; ++k) {
+        const f32 y = top + static_cast<f32>(k) * row;
+        const f32 mid = y + row * 0.5f;
+        f32 left = 1e9f;
+        f32 right = -1e9f;
+        for (size_t i = 0; i < 4; ++i) {
+            const size_t j = (i + 1) % 4;
+            const f32 y0 = ys[i];
+            const f32 y1 = ys[j];
+            if ((mid < y0) == (mid < y1)) {
+                continue;
+            }
+            const f32 x = xs[i] + (xs[j] - xs[i]) * (mid - y0) / (y1 - y0);
+            left = std::min(left, x);
+            right = std::max(right, x);
+        }
+        if (right > left) {
+            rows.push_back({left, y, right - left, row});
+        }
+    }
+    return rows;
+}
+
+std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
+                                             const std::array<f32, 4>& ys, f32 thickness) {
+    std::vector<std::array<f32, 4>> rows;
+    for (size_t i = 0; i < 4; ++i) {
+        const size_t j = (i + 1) % 4;
+        const f32 dx = xs[j] - xs[i];
+        const f32 dy = ys[j] - ys[i];
+        const f32 len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-3f) {
+            continue;
+        }
+        const f32 nx = -dy / len * thickness * 0.5f;
+        const f32 ny = dx / len * thickness * 0.5f;
+        const auto edge = convex_rows({xs[i] + nx, xs[j] + nx, xs[j] - nx, xs[i] - nx},
+                                      {ys[i] + ny, ys[j] + ny, ys[j] - ny, ys[i] - ny}, 1.0f);
+        rows.insert(rows.end(), edge.begin(), edge.end());
+    }
+    return rows;
+}
+
+std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
+                                                               const ReconView* recon) {
+    std::vector<std::pair<sim::StructureSite, f32>> pads;
+    for (const sim::EntityRecord& e : view.entities()) {
+        if (!e.is_unit || !e.is_structure || (recon && recon->sight(e) != Sight::Seen)) {
+            continue;
+        }
+        const sim::Vector3 pos = view.position(e);
+        pads.emplace_back(sim::StructureSite::of(pos.x, pos.z, e.footprint_size_x,
+                                                 e.footprint_size_z, e.skirt_size_x, e.skirt_size_z,
+                                                 e.skirt_offset_x, e.skirt_offset_z),
+                          pos.y);
+    }
+    return pads;
+}
+
 void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
                                  f32 r, f32 g, f32 b, f32 a) {
     if (quad_count_ >= MAX_OVERLAY_QUADS) return;
@@ -89,14 +156,18 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
+void OverlayRenderer::emit_outline(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys,
+                                   f32 r, f32 g, f32 b, f32 a) {
+    for (const auto& q : outline_rows(xs, ys, kOutlineThickness)) {
+        emit_quad(q[0], q[1], q[2], q[3], r, g, b, a);
+    }
+}
+
 void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& events,
-                              const Camera& camera,
-                              const std::array<f32, 16>& vp_matrix,
-                              const std::unordered_set<u32>* selected_ids,
-                              TextureCache& tex_cache,
-                              u32 viewport_w, u32 viewport_h,
-                              i32 game_result, f32 dt,
-                              const Frustum* frustum) {
+                             const Camera& camera, const std::array<f32, 16>& vp_matrix,
+                             const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
+                             u32 viewport_w, u32 viewport_h, i32 game_result, f32 dt,
+                             const Frustum* frustum, const BuildGhost* ghost) {
     quads_.clear();
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
@@ -113,6 +184,50 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     // Eye position for distance culling
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
+
+    std::vector<const BuildGhost*> sites;
+    if (ghost) {
+        sites.push_back(ghost);
+        for (const BuildGhost& site : ghost->line) {
+            sites.push_back(&site);
+        }
+    }
+    for (const BuildGhost* site : sites) {
+        const std::array<std::array<f32, 2>, 4> corners = {{{site->pad_x0, site->pad_z0},
+                                                            {site->pad_x1, site->pad_z0},
+                                                            {site->pad_x1, site->pad_z1},
+                                                            {site->pad_x0, site->pad_z1}}};
+        std::array<f32, 4> xs{};
+        std::array<f32, 4> ys{};
+        bool shown = true;
+        for (size_t i = 0; i < 4 && shown; ++i) {
+            shown = world_to_screen(corners[i][0], site->y, corners[i][1], vp_matrix, sw, sh, xs[i],
+                                    ys[i]);
+        }
+        if (shown) {
+            if (site->valid) {
+                emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
+            } else {
+                emit_outline(xs, ys, 0.9f, 0.0f, 0.0f, 1.0f);
+            }
+        }
+    }
+    if (ghost) {
+        for (const auto& [pad, y] : structure_pads(view, recon_)) {
+            const std::array<std::array<f32, 2>, 4> corners = {
+                {{pad.x0, pad.z0}, {pad.x1, pad.z0}, {pad.x1, pad.z1}, {pad.x0, pad.z1}}};
+            std::array<f32, 4> xs{};
+            std::array<f32, 4> ys{};
+            bool shown = true;
+            for (size_t i = 0; i < 4 && shown; ++i) {
+                shown = world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
+                                        ys[i]);
+            }
+            if (shown) {
+                emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
+            }
+        }
+    }
 
     // --- Consume death events and spawn explosion VFX ---
     // A death's flash stands in for its effects, which show only where the

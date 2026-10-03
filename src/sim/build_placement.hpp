@@ -14,6 +14,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -24,29 +25,45 @@ class SimState;
 struct PlacementRules {
     f32 size_x = 1.0f; ///< footprint, world units
     f32 size_z = 1.0f;
+    /// Physics.SkirtSizeX/Z and SkirtOffsetX/Z: the pad no other structure's
+    /// may overlap (none: the footprint)
+    f32 skirt_x = 0.0f;
+    f32 skirt_z = 0.0f;
+    f32 skirt_off_x = 0.0f;
+    f32 skirt_off_z = 0.0f;
     bool on_land = true;   ///< Physics.BuildOnLayerCaps
     bool on_water = false;
     bool on_seabed = false; ///< it sits on the ground under water (an extractor)
     enum class Deposit : u8 { None, Mass, Hydrocarbon } deposit = Deposit::None;
 };
 
-/// Snap a structure's center to the build grid: odd footprints center on a
-/// cell, even ones on a cell corner, so the footprint covers whole cells.
-/// The placement ghost and the build order both use it.
+/// Snap a structure's center to the build grid, as Moho does: the
+/// footprint's corner to the nearest whole cell, so odd footprints center on
+/// a cell and even ones on a cell corner. The placement ghost and the build
+/// order both use it.
 inline void snap_structure_center(f32& x, f32& z, f32 size_x, f32 size_z) {
-    x = std::floor(x) + 0.5f;
-    z = std::floor(z) + 0.5f;
-    if (static_cast<int>(size_x) % 2 == 0) x = std::floor(x);
-    if (static_cast<int>(size_z) % 2 == 0) z = std::floor(z);
+    x = std::nearbyint(x - size_x * 0.5f) + size_x * 0.5f;
+    z = std::nearbyint(z - size_z * 0.5f) + size_z * 0.5f;
 }
+
+/// The sites of a structure laid along a drag from (x0, z0) to (x1, z1), as
+/// Moho lays a build drag: `spacing` apart along the drag's longer axis, the
+/// other following it, each snapped as snap_structure_center does; the line
+/// stops short of a spacing that doesn't fit. One site for no drag.
+std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f32 z1, f32 size_x,
+                                                      f32 size_z, f32 spacing);
 
 /// Blueprint lookup (blueprints live in Lua); unknown ids get defaults.
 using PlacementRulesLookup = std::function<PlacementRules(const std::string& bp_id)>;
 
-/// An axis-aligned footprint centered at (x, z), sizes in world units.
+/// The pad a structure takes, an axis-aligned rect in world units.
 struct StructureSite {
-    f32 x = 0, z = 0;
-    f32 size_x = 1.0f, size_z = 1.0f;
+    f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+
+    /// The skirt of a footprint `size_x` by `size_z` centred at (x, z)
+    static StructureSite of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x = 0, f32 skirt_z = 0,
+                            f32 off_x = 0, f32 off_z = 0);
+    static StructureSite of(const PlacementRules& r, f32 x, f32 z);
 
     bool overlaps(const StructureSite& o) const;
 };
