@@ -10105,6 +10105,10 @@ void test_range(TestContext& ctx) {
         __osc_prize:SetFireState(1)
         IssueCapture({__osc_taker}, __osc_prize)
 
+        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 610.5, 160.5)
+        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 610.5, 165.5)
+        IssueBuildMobile({__osc_onsite}, __osc_at(610.5, 165.5), 'ueb1101', {})
+
         -- The queue: orders after the first wait their turn.
         __osc_queued = __osc_spawn('uel0201', 'ARMY_1', 680.5, 100.5)
         IssueMove({__osc_queued}, __osc_at(690, 100.5))
@@ -10200,6 +10204,17 @@ void test_range(TestContext& ctx) {
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
         if d < 5 then error(string.format('the ACU is %.2f from its target', d)) end
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
+    )");
+
+    lua_check("Test 12b: a builder on its site builds there once clear of it", R"(
+        local built = false
+        for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
+            if __osc_from(u, 610.5, 165.5) < 1 then built = true end
+        end
+        if not built then
+            error('no power generator on the site; the ACU has ' ..
+                  table.getn(__osc_onsite:GetCommandQueue()) .. ' orders')
+        end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
