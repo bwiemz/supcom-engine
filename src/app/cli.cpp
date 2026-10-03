@@ -13,11 +13,28 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
 
 namespace {
+
+/// "<x>,<y>" as a point to click; nothing if it isn't one
+std::optional<UiClick> parse_point(const char* text) {
+    char* end = nullptr;
+    UiClick at;
+    at.x = std::strtod(text, &end);
+    if (end == text || *end != ',') {
+        return std::nullopt;
+    }
+    const char* rest = end + 1;
+    at.y = std::strtod(rest, &end);
+    if (end == rest || *end != '\0') {
+        return std::nullopt;
+    }
+    return at;
+}
 
 /// How many earlier runs' logs a player's game keeps (M228b).
 constexpr int kKeptLogs = 5;
@@ -47,6 +64,8 @@ void print_usage() {
               << "  --golden-update    Record the golden image instead of comparing\n"
               << "  --click <label>    Click the button so labelled once it takes a click;\n"
               << "                     repeat for the next (captures of retail's menus)\n"
+              << "  --click-at <x>,<y> Click that point, a frame after the click before;\n"
+              << "                     in turn with --click (a scrollbar's track, say)\n"
               << "  --binding-coverage <file>  Report engine API the scripts call but\n"
               << "                     the engine lacks (needs --map)\n"
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
@@ -286,10 +305,18 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     // --campaign-flow-test: the campaign through retail's screens (M209b).
     o.campaign_flow_test = parse_flag(argc, argv, "--campaign-flow-test");
     o.mods_flow_lobby = parse_flag(argc, argv, "--mods-flow-lobby"); // (M221c)
-    // --click <label>, repeatable: the buttons a player clicks, in order
+    // --click <label>, --click-at <x>,<y>, repeatable: where a player
+    // clicks, in order
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::strcmp(argv[i], "--click") == 0) {
-            o.clicks.emplace_back(argv[++i]);
+            o.clicks.push_back({argv[++i]});
+        } else if (std::strcmp(argv[i], "--click-at") == 0) {
+            const auto at = parse_point(argv[++i]);
+            if (!at) {
+                spdlog::error("--click-at {}: give a point as <x>,<y>", argv[i]);
+                return std::nullopt;
+            }
+            o.clicks.push_back(*at);
         }
     }
     // --lan-game-host / --lan-game-join <address> (--mp-port <port>): two
