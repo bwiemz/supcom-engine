@@ -16747,6 +16747,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             for _, item in col do n = n + 1 end
         end
         if n < 5 then error('order grid holds ' .. n .. ' buttons') end
+        if grid:IsHidden() then error('the order grid is hidden') end
     )");
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
