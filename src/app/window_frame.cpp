@@ -11,6 +11,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
+#include "lua/user_bindings.hpp"
 #include "renderer/frustum.hpp"
 #include "sim/lockstep_session.hpp"
 
@@ -364,6 +365,9 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
             renderer.mouse_position(mx, my);
             return mouse_over_ui(ui_lua_state.raw(), mx, my);
         });
+        if (input_handler.cursor_world()) {
+            osc::lua::update_world_view_cursor(ui_lua_state.raw());
+        }
     }
 
     // Selections are a game's: at the front end (after a return to the
