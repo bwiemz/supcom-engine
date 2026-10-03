@@ -443,18 +443,31 @@ static int lobby_JoinGame(lua_State* L) {
     if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_JoinGame(L, *nl);
     return 0;
 }
-/// lobby:LaunchGame(config) — delegates to LaunchSinglePlayerSession
+/// lobby:LaunchGame(config) — delegates to LaunchSinglePlayerSession, then
+/// calls GameLaunched, as a network lobby does
 static int lobby_LaunchGame(lua_State* L) {
     if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_LaunchGame(L, *nl);
     lua_pushstring(L, "LaunchSinglePlayerSession");
     lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 2); // push config arg
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("lobby LaunchGame error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    lua_pushvalue(L, 2); // push config arg
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        spdlog::warn("lobby LaunchGame error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        return 0;
+    }
+    lua_pushstring(L, "GameLaunched");
+    lua_gettable(L, 1);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    lua_pushvalue(L, 1);
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        spdlog::warn("lobby GameLaunched: {}", lua_tostring(L, -1));
         lua_pop(L, 1);
     }
     return 0;
