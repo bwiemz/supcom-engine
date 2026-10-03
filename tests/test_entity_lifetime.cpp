@@ -78,24 +78,36 @@ Unit* spawn_structure(SimState& sim, osc::f32 x, osc::f32 z) {
 TEST_CASE("obstacle cells stay blocked while any footprint covers them",
           "[nav][m183]") {
     PathfindingGrid grid(flat_heightmap(), 0.0f, false, /*cell_size=*/2);
-    // Two 4x4 footprints whose rectangles touch at x = 12: after rounding
-    // both cover the grid column there.
     grid.mark_obstacle(10.0f, 10.0f, 4.0f, 4.0f); // x 8..12
-    grid.mark_obstacle(14.0f, 10.0f, 4.0f, 4.0f); // x 12..16
-    REQUIRE(cell_at(grid, 12.0f, 10.0f) == CellPassability::Obstacle);
+    grid.mark_obstacle(12.0f, 10.0f, 4.0f, 4.0f); // x 10..14
+    REQUIRE(cell_at(grid, 11.0f, 10.0f) == CellPassability::Obstacle);
 
     grid.clear_obstacle(10.0f, 10.0f, 4.0f, 4.0f);
     CHECK(cell_at(grid, 9.0f, 10.0f) == CellPassability::Passable);
-    CHECK(cell_at(grid, 12.0f, 10.0f) == CellPassability::Obstacle); // shared
-    CHECK(cell_at(grid, 15.0f, 10.0f) == CellPassability::Obstacle);
+    CHECK(cell_at(grid, 11.0f, 10.0f) == CellPassability::Obstacle);
+    CHECK(cell_at(grid, 13.0f, 10.0f) == CellPassability::Obstacle);
 
-    grid.clear_obstacle(14.0f, 10.0f, 4.0f, 4.0f);
-    CHECK(cell_at(grid, 12.0f, 10.0f) == CellPassability::Passable);
-    CHECK(cell_at(grid, 15.0f, 10.0f) == CellPassability::Passable);
+    grid.clear_obstacle(12.0f, 10.0f, 4.0f, 4.0f);
+    CHECK(cell_at(grid, 11.0f, 10.0f) == CellPassability::Passable);
+    CHECK(cell_at(grid, 13.0f, 10.0f) == CellPassability::Passable);
 
     // Clearing again (or clearing what was never marked) is harmless.
-    grid.clear_obstacle(14.0f, 10.0f, 4.0f, 4.0f);
-    CHECK(cell_at(grid, 15.0f, 10.0f) == CellPassability::Passable);
+    grid.clear_obstacle(12.0f, 10.0f, 4.0f, 4.0f);
+    CHECK(cell_at(grid, 13.0f, 10.0f) == CellPassability::Passable);
+}
+
+TEST_CASE("a footprint blocks the cells whose centres it covers", "[nav]") {
+    PathfindingGrid grid(flat_heightmap(), 0.0f, false, /*cell_size=*/2);
+    grid.mark_obstacle(40.0f, 40.0f, 5.0f, 5.0f); // x 37.5..42.5
+    CHECK(cell_at(grid, 37.25f, 40.0f) == CellPassability::Passable);
+    CHECK(cell_at(grid, 38.5f, 40.0f) == CellPassability::Obstacle);
+    CHECK(cell_at(grid, 41.5f, 40.0f) == CellPassability::Obstacle);
+    CHECK(cell_at(grid, 42.75f, 40.0f) == CellPassability::Passable);
+
+    grid.mark_obstacle(20.5f, 20.5f, 0.8f, 0.8f);
+    CHECK(cell_at(grid, 20.5f, 20.5f) == CellPassability::Obstacle);
+    CHECK(cell_at(grid, 18.5f, 20.5f) == CellPassability::Passable);
+    CHECK(cell_at(grid, 22.5f, 20.5f) == CellPassability::Passable);
 }
 
 TEST_CASE("a removed structure stops blocking paths", "[nav][m183]") {

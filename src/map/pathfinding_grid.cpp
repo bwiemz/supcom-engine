@@ -136,13 +136,27 @@ void PathfindingGrid::grid_to_world(u32 gx, u32 gz, f32& wx, f32& wz) const {
     wz = (static_cast<f32>(gz) + 0.5f) * static_cast<f32>(cell_size_);
 }
 
+void PathfindingGrid::covered_cells(f32 wx, f32 wz, f32 sizeX, f32 sizeZ, u32& gx0, u32& gz0,
+                                    u32& gx1, u32& gz1) const {
+    const f32 cs = static_cast<f32>(cell_size_);
+    const auto span = [&](f32 centre, f32 size, u32 cells, u32& lo, u32& hi) {
+        const f32 first = std::ceil((centre - size * 0.5f) / cs - 0.5f);
+        const f32 last = std::floor((centre + size * 0.5f) / cs - 0.5f);
+        const f32 top = static_cast<f32>(cells - 1);
+        if (first > last) {
+            lo = hi = static_cast<u32>(std::clamp(std::floor(centre / cs), 0.0f, top));
+            return;
+        }
+        lo = static_cast<u32>(std::clamp(first, 0.0f, top));
+        hi = static_cast<u32>(std::clamp(last, 0.0f, top));
+    };
+    span(wx, sizeX, grid_width_, gx0, gx1);
+    span(wz, sizeZ, grid_height_, gz0, gz1);
+}
+
 void PathfindingGrid::mark_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
-    // Convert world-space rectangle to grid cells
-    f32 half_x = sizeX * 0.5f;
-    f32 half_z = sizeZ * 0.5f;
     u32 gx0, gz0, gx1, gz1;
-    world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
-    world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
+    covered_cells(wx, wz, sizeX, sizeZ, gx0, gz0, gx1, gz1);
 
     if (obstacle_refs_.size() != cells_.size()) obstacle_refs_.assign(cells_.size(), 0);
     bool changed = false;
@@ -159,11 +173,8 @@ void PathfindingGrid::mark_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
 
 void PathfindingGrid::clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
     if (obstacle_refs_.size() != cells_.size()) return; // nothing was marked
-    f32 half_x = sizeX * 0.5f;
-    f32 half_z = sizeZ * 0.5f;
     u32 gx0, gz0, gx1, gz1;
-    world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
-    world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
+    covered_cells(wx, wz, sizeX, sizeZ, gx0, gz0, gx1, gz1);
 
     bool changed = false;
     for (u32 z = gz0; z <= gz1; ++z) {
