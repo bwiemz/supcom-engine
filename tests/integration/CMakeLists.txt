@@ -39,6 +39,7 @@ add_executable(osc_integration
     runner/jammer_blip_test.cpp
     runner/intel_field_test.cpp
     runner/beam_render_test.cpp
+    runner/selection_render_test.cpp
     runner/trail_render_test.cpp
     runner/particle_render_test.cpp
     runner/water_render_test.cpp

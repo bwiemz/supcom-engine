@@ -14,6 +14,35 @@
 
 namespace osc::renderer {
 
+std::vector<std::array<f32, 4>> line_runs(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick, u32 max_runs) {
+    std::vector<std::array<f32, 4>> runs;
+    const f32 dx = x1 - x0;
+    const f32 dy = y1 - y0;
+    const f32 width = std::max(2.0f * thick, 1.0f);
+    const bool x_major = std::abs(dx) >= std::abs(dy);
+    const f32 minor = x_major ? std::abs(dy) : std::abs(dx);
+    const u32 steps =
+        std::clamp(static_cast<u32>(std::ceil(minor / width)), 1u, std::max(max_runs, 1u));
+    runs.reserve(steps);
+    for (u32 i = 0; i < steps; ++i) {
+        const f32 t0 = static_cast<f32>(i) / static_cast<f32>(steps);
+        const f32 t1 = static_cast<f32>(i + 1) / static_cast<f32>(steps);
+        const f32 xa = x0 + dx * t0;
+        const f32 xb = x0 + dx * t1;
+        const f32 ya = y0 + dy * t0;
+        const f32 yb = y0 + dy * t1;
+        // Along the main axis the step's span; across it, the step's span
+        // and the line's width about it
+        const f32 half = width * 0.5f;
+        const f32 left = std::min(xa, xb) - (x_major ? 0.0f : half);
+        const f32 right = std::max(xa, xb) + (x_major ? 0.0f : half);
+        const f32 top = std::min(ya, yb) - (x_major ? half : 0.0f);
+        const f32 bottom = std::max(ya, yb) + (x_major ? half : 0.0f);
+        runs.push_back({left, top, right - left, bottom - top});
+    }
+    return runs;
+}
+
 std::unordered_set<std::string> intel_ring_types_for_filters(
     const std::vector<std::string>& filters) {
     std::unordered_set<std::string> types;
@@ -87,6 +116,13 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     inst.color[0] = r; inst.color[1] = g; inst.color[2] = b; inst.color[3] = a;
     quads_.push_back(inst);
     quad_count_++;
+}
+
+void OverlayRenderer::emit_line(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick, f32 r, f32 g, f32 b,
+                                f32 a) {
+    for (const auto& run : line_runs(x0, y0, x1, y1, thick)) {
+        emit_quad(run[0], run[1], run[2], run[3], r, g, b, a);
+    }
 }
 
 void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& events,
@@ -305,53 +341,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             }
         }
 
-        // --- Selection circle (projected 12-segment circle on ground) ---
         if (is_selected && select_boxes_) {
-            constexpr f32 RING_RADIUS = 2.5f;
-            constexpr f32 RING_THICK = 2.0f; // pixels
-            constexpr u32 SEL_SEGMENTS = 12;
-            constexpr f32 SEL_PI2 = 6.283185307f;
-
-            f32 prev_sx3 = 0, prev_sy3 = 0;
-            bool prev_valid3 = false;
-
-            for (u32 si = 0; si <= SEL_SEGMENTS; si++) {
-                f32 angle = static_cast<f32>(si) * SEL_PI2 /
-                            static_cast<f32>(SEL_SEGMENTS);
-                f32 wx = pos.x + RING_RADIUS * std::cos(angle);
-                f32 wz = pos.z + RING_RADIUS * std::sin(angle);
-
-                f32 sx_pt = 0, sy_pt = 0;
-                bool valid = world_to_screen(wx, pos.y, wz,
-                                              vp_matrix, sw, sh,
-                                              sx_pt, sy_pt);
-
-                if (valid && prev_valid3) {
-                    // Draw segment as AABB quad
-                    f32 ldx = sx_pt - prev_sx3;
-                    f32 ldy = sy_pt - prev_sy3;
-                    f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-                    if (len >= 1.0f) {
-                        f32 nx = -ldy / len * RING_THICK;
-                        f32 ny = ldx / len * RING_THICK;
-                        f32 min_x = std::min({prev_sx3 + nx, prev_sx3 - nx,
-                                              sx_pt + nx, sx_pt - nx});
-                        f32 min_y = std::min({prev_sy3 + ny, prev_sy3 - ny,
-                                              sy_pt + ny, sy_pt - ny});
-                        f32 max_x = std::max({prev_sx3 + nx, prev_sx3 - nx,
-                                              sx_pt + nx, sx_pt - nx});
-                        f32 max_y = std::max({prev_sy3 + ny, prev_sy3 - ny,
-                                              sy_pt + ny, sy_pt - ny});
-                        emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                                  0.2f, 1.0f, 0.2f, 0.8f);
-                    }
-                }
-
-                prev_sx3 = sx_pt;
-                prev_sy3 = sy_pt;
-                prev_valid3 = valid;
-            }
-
             // --- Adjacency lines (orange lines to adjacent structures) ---
             const auto adj_ids = snap.adjacent_of(entity);
             if (!adj_ids.empty() && cam_dist < 400.0f) {
@@ -373,133 +363,8 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                     if (len < 2.0f) continue;
 
                     constexpr f32 ADJ_THICK = 1.5f;
-                    f32 nx = -ldy / len * ADJ_THICK;
-                    f32 ny = ldx / len * ADJ_THICK;
-
-                    f32 min_x = std::min({sx + nx, sx - nx, adj_sx + nx, adj_sx - nx});
-                    f32 min_y = std::min({sy + ny, sy - ny, adj_sy + ny, adj_sy - ny});
-                    f32 max_x = std::max({sx + nx, sx - nx, adj_sx + nx, adj_sx - nx});
-                    f32 max_y = std::max({sy + ny, sy - ny, adj_sy + ny, adj_sy - ny});
-
-                    emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                              1.0f, 0.6f, 0.1f, 0.5f); // orange
+                    emit_line(sx, sy, adj_sx, adj_sy, ADJ_THICK, 1.0f, 0.6f, 0.1f, 0.5f); // orange
                 }
-            }
-        }
-    }
-
-    // --- Command lines (full queue for selected units) ---
-    if (selected_ids && !selected_ids->empty()) {
-        for (u32 uid : *selected_ids) {
-            auto* e = view.find(uid);
-            if (!e || !e->is_unit) continue;
-            // Its orders, then (a factory's) the rally orders what it builds
-            // takes (M206k), drawn on from where the orders end.
-            std::vector<sim::CommandRecord> cmds(snap.commands_of(*e).begin(),
-                                                 snap.commands_of(*e).end());
-            const auto rally = snap.rally_of(*e);
-            cmds.insert(cmds.end(), rally.begin(), rally.end());
-            if (cmds.empty()) continue;
-
-            // Start from unit position
-            auto pos = view.position(*e);
-            f32 prev_sx, prev_sy;
-            if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh,
-                                 prev_sx, prev_sy))
-                continue;
-
-            // Draw line + waypoint marker for each command in queue
-            constexpr u32 MAX_CMD_LINES = 8;
-            u32 cmd_drawn = 0;
-            for (auto& cmd : cmds) {
-                if (cmd_drawn >= MAX_CMD_LINES) break;
-
-                // Only draw spatial commands
-                if (cmd.type != sim::CommandType::Move &&
-                    cmd.type != sim::CommandType::Attack &&
-                    cmd.type != sim::CommandType::Patrol &&
-                    cmd.type != sim::CommandType::Guard &&
-                    cmd.type != sim::CommandType::Reclaim &&
-                    cmd.type != sim::CommandType::Repair &&
-                    cmd.type != sim::CommandType::BuildMobile &&
-                    cmd.type != sim::CommandType::Capture)
-                    continue;
-
-                f32 sx1, sy1;
-                bool projected = false;
-                // For entity-targeted commands, project target entity position
-                if (cmd.target_id > 0) {
-                    auto* target = view.find(cmd.target_id);
-                    if (target) {
-                        auto tp = view.position(*target);
-                        projected = world_to_screen(tp.x, tp.y, tp.z, vp_matrix,
-                                                     sw, sh, sx1, sy1);
-                    } else {
-                        // Dead target: skip if target_pos is zero (entity-only cmd)
-                        auto& tp = cmd.target_pos;
-                        if (tp.x == 0.0f && tp.y == 0.0f && tp.z == 0.0f) {
-                            cmd_drawn++;
-                            continue;
-                        }
-                        projected = world_to_screen(tp.x, tp.y, tp.z, vp_matrix,
-                                                     sw, sh, sx1, sy1);
-                    }
-                } else {
-                    projected = world_to_screen(cmd.target_pos.x, cmd.target_pos.y,
-                                                 cmd.target_pos.z, vp_matrix,
-                                                 sw, sh, sx1, sy1);
-                }
-                if (!projected) {
-                    cmd_drawn++;
-                    continue;
-                }
-
-                // Line color by command type
-                f32 lr = 0, lg = 0, lb = 0;
-                switch (cmd.type) {
-                    case sim::CommandType::Move:      lg = 1.0f; lb = 0.3f; break;
-                    case sim::CommandType::Attack:     lr = 1.0f; lg = 0.2f; break;
-                    case sim::CommandType::Patrol:     lb = 1.0f; lg = 0.5f; break;
-                    case sim::CommandType::Guard:      lg = 0.8f; lb = 0.8f; break;
-                    case sim::CommandType::Reclaim:    lg = 0.7f; lb = 0.2f; break;
-                    case sim::CommandType::Repair:     lg = 1.0f; break;
-                    case sim::CommandType::BuildMobile:lr = 0.3f; lg = 0.8f; lb = 1.0f; break;
-                    case sim::CommandType::Capture:    lr = 1.0f; lg = 1.0f; break;
-                    default: lg = 0.5f; break;
-                }
-
-                {
-                    // Fade alpha for queued commands (first is bright, rest dimmer)
-                    f32 alpha = (cmd_drawn == 0) ? 0.6f : 0.35f;
-
-                    // Draw line from prev to target
-                    f32 ldx = sx1 - prev_sx, ldy = sy1 - prev_sy;
-                    f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-                    if (len >= 2.0f) {
-                        constexpr f32 LINE_THICK = 1.5f;
-                        f32 nx = -ldy / len * LINE_THICK;
-                        f32 ny =  ldx / len * LINE_THICK;
-
-                        f32 min_x = std::min({prev_sx + nx, prev_sx - nx, sx1 + nx, sx1 - nx});
-                        f32 min_y = std::min({prev_sy + ny, prev_sy - ny, sy1 + ny, sy1 - ny});
-                        f32 max_x = std::max({prev_sx + nx, prev_sx - nx, sx1 + nx, sx1 - nx});
-                        f32 max_y = std::max({prev_sy + ny, prev_sy - ny, sy1 + ny, sy1 - ny});
-
-                        emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                                  lr, lg, lb, alpha);
-                    }
-
-                    // Waypoint marker (small diamond at target)
-                    constexpr f32 MARKER_SIZE = 6.0f;
-                    emit_quad(sx1 - MARKER_SIZE * 0.5f, sy1 - MARKER_SIZE * 0.5f,
-                              MARKER_SIZE, MARKER_SIZE,
-                              lr, lg, lb, alpha + 0.15f);
-
-                    prev_sx = sx1;
-                    prev_sy = sy1;
-                }
-
-                cmd_drawn++;
             }
         }
     }
@@ -547,20 +412,8 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                         f32 ldy = sy_pt - prev_sy2;
                         f32 len = std::sqrt(ldx * ldx + ldy * ldy);
                         if (len >= 1.0f) {
-                            f32 nx = -ldy / len * INTEL_LINE_THICK;
-                            f32 ny = ldx / len * INTEL_LINE_THICK;
-
-                            f32 min_x = std::min({prev_sx2 + nx, prev_sx2 - nx,
-                                                   sx_pt + nx, sx_pt - nx});
-                            f32 min_y = std::min({prev_sy2 + ny, prev_sy2 - ny,
-                                                   sy_pt + ny, sy_pt - ny});
-                            f32 max_x = std::max({prev_sx2 + nx, prev_sx2 - nx,
-                                                   sx_pt + nx, sx_pt - nx});
-                            f32 max_y = std::max({prev_sy2 + ny, prev_sy2 - ny,
-                                                   sy_pt + ny, sy_pt - ny});
-
-                            emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                                      cr, cg, cb, ca);
+                            emit_line(prev_sx2, prev_sy2, sx_pt, sy_pt, INTEL_LINE_THICK, cr, cg,
+                                      cb, ca);
                         }
                     }
 
@@ -622,16 +475,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             if (len < 2.0f) continue;
 
             constexpr f32 BEAM_THICK = 2.5f;
-            f32 nx = -ldy / len * BEAM_THICK;
-            f32 ny = ldx / len * BEAM_THICK;
-
-            f32 min_x = std::min({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-            f32 min_y = std::min({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-            f32 max_x = std::max({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-            f32 max_y = std::max({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-
-            emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                      br, bg, bb, ba);
+            emit_line(sx0, sy0, sx1, sy1, BEAM_THICK, br, bg, bb, ba);
         }
     }
 
@@ -664,17 +508,8 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             if (len < 2.0f) continue;
 
             constexpr f32 BEAM_THICK = 3.5f; // thicker for weapons
-            f32 nx = -ldy / len * BEAM_THICK;
-            f32 ny = ldx / len * BEAM_THICK;
-
-            f32 min_x = std::min({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-            f32 min_y = std::min({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-            f32 max_x = std::max({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-            f32 max_y = std::max({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-
             // Red/orange for weapon beams
-            emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                      1.0f, 0.4f, 0.1f, 0.8f);
+            emit_line(sx0, sy0, sx1, sy1, BEAM_THICK, 1.0f, 0.4f, 0.1f, 0.8f);
         }
     }
 
@@ -740,16 +575,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
 
                 f32 thick = fx_ptr->thickness;
                 if (thick < 1.0f) thick = 2.0f;
-                f32 nx = -ldy2 / len * thick;
-                f32 ny = ldx2 / len * thick;
-
-                f32 min_x = std::min({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-                f32 min_y = std::min({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-                f32 max_x = std::max({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-                f32 max_y = std::max({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-
-                emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                          0.8f, 0.9f, 1.0f, 0.6f); // pale blue beam
+                emit_line(sx0, sy0, sx1, sy1, thick, 0.8f, 0.9f, 1.0f, 0.6f); // pale blue beam
                 continue;
             }
 
@@ -787,16 +613,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 if (len >= 2.0f) {
                     f32 thick = fx_ptr->thickness;
                     if (thick < 1.0f) thick = 2.0f;
-                    f32 nx = -ldy2 / len * thick;
-                    f32 ny = ldx2 / len * thick;
-
-                    f32 min_x = std::min({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-                    f32 min_y = std::min({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-                    f32 max_x = std::max({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-                    f32 max_y = std::max({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-
-                    emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                              0.6f, 0.8f, 1.0f, 0.5f);
+                    emit_line(sx0, sy0, sx1, sy1, thick, 0.6f, 0.8f, 1.0f, 0.5f);
                 }
                 continue;
             }

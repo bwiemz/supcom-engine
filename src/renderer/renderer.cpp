@@ -411,6 +411,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
                          shadow_ds_layout_, texture_ds_layout_);
     // FA's beams, in the scene pass too (M214a)
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    command_graph_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    selection_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's sky (M210b)
@@ -2475,7 +2477,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
                            fi);
 
-    // Update game overlays (health bars, selection circles, command lines, game over)
+    command_graph_renderer_.update(
+        view, camera_, selected_ids, texture_cache_, L, unit_renderer_.shader_time() / 10.0f,
+        window_height_, is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT),
+        fi);
+    selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
+                               drag_box_, texture_cache_, L, fi);
+
+    // Update game overlays (health bars, selection circles, game over)
     {
         PROFILE_ZONE("Render::overlay_update");
         const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
@@ -2981,6 +2990,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // The last of the meshes, after the effects above the water: the
     // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
     draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
+    // The order lines and waypoints, over the world (TCommand)
+    command_graph_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+    selection_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
 
     // 5c. FA's refracting particles (M214d), as WRenViewport's
     // RenderRefractingEffects draws them: last, over a copy of the finished
@@ -4284,6 +4296,8 @@ void Renderer::shutdown() {
     particle_renderer_.destroy(device_, allocator_);
     runtime_decals_.destroy(device_, allocator_);
     beam_renderer_.destroy(device_, allocator_);
+    command_graph_renderer_.destroy(device_, allocator_);
+    selection_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);

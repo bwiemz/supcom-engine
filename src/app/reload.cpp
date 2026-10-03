@@ -231,10 +231,6 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     lua_pushstring(uiL, launch_scenario.c_str());
     lua_rawset(uiL, LUA_REGISTRYINDEX);
 
-    lua_pushstring(uiL, "__osc_hover_entity_id");
-    lua_pushnumber(uiL, 0);
-    lua_rawset(uiL, LUA_REGISTRYINDEX);
-
     lua_pushstring(uiL, "__osc_focus_army");
     lua_pushnumber(uiL, 0);
     lua_rawset(uiL, LUA_REGISTRYINDEX);
