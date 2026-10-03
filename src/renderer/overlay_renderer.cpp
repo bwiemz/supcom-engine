@@ -340,43 +340,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 }
             }
         }
-
-        // --- Selection circle (projected 12-segment circle on ground) ---
-        if (is_selected && select_boxes_) {
-            constexpr f32 RING_RADIUS = 2.5f;
-            constexpr f32 RING_THICK = 2.0f; // pixels
-            constexpr u32 SEL_SEGMENTS = 12;
-            constexpr f32 SEL_PI2 = 6.283185307f;
-
-            f32 prev_sx3 = 0, prev_sy3 = 0;
-            bool prev_valid3 = false;
-
-            for (u32 si = 0; si <= SEL_SEGMENTS; si++) {
-                f32 angle = static_cast<f32>(si) * SEL_PI2 /
-                            static_cast<f32>(SEL_SEGMENTS);
-                f32 wx = pos.x + RING_RADIUS * std::cos(angle);
-                f32 wz = pos.z + RING_RADIUS * std::sin(angle);
-
-                f32 sx_pt = 0, sy_pt = 0;
-                bool valid = world_to_screen(wx, pos.y, wz,
-                                              vp_matrix, sw, sh,
-                                              sx_pt, sy_pt);
-
-                if (valid && prev_valid3) {
-                    f32 ldx = sx_pt - prev_sx3;
-                    f32 ldy = sy_pt - prev_sy3;
-                    f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-                    if (len >= 1.0f) {
-                        emit_line(prev_sx3, prev_sy3, sx_pt, sy_pt, RING_THICK, 0.2f, 1.0f, 0.2f,
-                                  0.8f);
-                    }
-                }
-
-                prev_sx3 = sx_pt;
-                prev_sy3 = sy_pt;
-                prev_valid3 = valid;
-            }
-        }
     }
 
     // --- Intel range circles (radar/sonar/omni for selected units) ---
