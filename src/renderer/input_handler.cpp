@@ -21,6 +21,14 @@
 
 namespace osc::renderer {
 
+bool selectable(const sim::Entity& e) {
+    if (!e.is_unit() || e.destroyed() || e.unselectable()) {
+        return false;
+    }
+    const auto& unit = static_cast<const sim::Unit&>(e);
+    return !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
+}
+
 void InputHandler::update(Renderer& renderer, sim::SimState& sim,
                           f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
     f64 mx_d, my_d;
@@ -208,7 +216,7 @@ void InputHandler::handle_drag_select(Renderer& renderer,
     auto ids = sim.entity_registry().collect_in_rect(wx0, wz0, wx1, wz1);
     for (u32 id : ids) {
         auto* e = sim.entity_registry().find(id);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
+        if (!e || !selectable(*e)) continue;
         if (e->army() != player_army_) continue;
         selected_.insert(id);
     }
@@ -490,7 +498,7 @@ u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
 
     for (u32 id : nearby) {
         auto* e = sim.entity_registry().find(id);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
+        if (!e || !selectable(*e)) continue;
         if (e->army() != player_army_) continue;
 
         const sim::Vector3 pos = view_.position(*e);
