@@ -16819,10 +16819,20 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
         local list = EntityCategoryGetUnitList(buildable)
-        local power = false
-        for _, id in list do if id == 'ueb1101' then power = true end end
-        if not power or table.getn(list) < 10 then
-            error('buildable: ' .. table.getn(list) .. ' blueprints, T1 power ' .. tostring(power))
+        local power, factory = false, false
+        for _, id in list do
+            if id == 'ueb1101' then power = true end
+            if id == 'ueb0101' then factory = true end
+        end
+        if not power or not factory then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, T1 power ' .. tostring(power) ..
+                  ', land factory ' .. tostring(factory))
+        end
+        -- Its OnCreate restricts its tech 2 and 3 until its enhancements
+        for _, id in list do
+            if EntityCategoryContains(categories.TECH2 + categories.TECH3, id) then
+                error('a fresh commander may build ' .. id)
+            end
         end
         local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
         if table.getn(shown) < 1 then error('construction panel shows no build options') end
