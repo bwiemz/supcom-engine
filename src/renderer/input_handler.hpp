@@ -36,6 +36,8 @@ bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z);
 /// Cybran build bots, which Moho's selection skips)
 bool selectable(const sim::Entity& e);
 
+std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units);
+
 struct CommandMode {
     std::string mode; ///< "build", "order", "ping"...; empty for none
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack

@@ -42,6 +42,20 @@ bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z) {
     return !(positive && negative);
 }
 
+std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units) {
+    int best = std::numeric_limits<int>::max();
+    for (const auto& unit : units) {
+        best = std::min(best, unit.second);
+    }
+    std::vector<u32> kept;
+    for (const auto& [id, priority] : units) {
+        if (priority == best) {
+            kept.push_back(id);
+        }
+    }
+    return kept;
+}
+
 void InputHandler::update(Renderer& renderer, sim::SimState& sim,
                           f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
     f64 mx_d, my_d;
@@ -252,12 +266,22 @@ void InputHandler::handle_drag_select(Renderer& renderer,
     if (!shift)
         selected_.clear();
 
+    std::vector<std::pair<u32, int>> boxed;
     for (u32 id : sim.entity_registry().collect_in_rect(wx0, wz0, wx1, wz1)) {
         auto* e = sim.entity_registry().find(id);
         if (!e || !selectable(*e)) continue;
         if (e->army() != player_army_) continue;
         const sim::Vector3 pos = view_.position(*e);
         if (inside_ground_quad(drag_quad_, pos.x, pos.z)) {
+            boxed.emplace_back(id, static_cast<const sim::Unit*>(e)->selection_priority());
+        }
+    }
+    if (shift) {
+        for (const auto& unit : boxed) {
+            selected_.insert(unit.first);
+        }
+    } else {
+        for (u32 id : highest_selection_priority(boxed)) {
             selected_.insert(id);
         }
     }

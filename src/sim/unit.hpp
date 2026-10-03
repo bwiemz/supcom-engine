@@ -677,6 +677,9 @@ public:
     void restore_command_caps() { command_caps_ = original_command_caps_; }
     void snapshot_command_caps() { original_command_caps_ = command_caps_; }
     bool has_command_cap(const std::string& cap) const { return command_caps_.count(cap) > 0; }
+    /// General.SelectionPriority, 1 without one
+    int selection_priority() const { return selection_priority_; }
+    void set_selection_priority(int p) { selection_priority_ = std::max(p, 1); }
 
     // Build restrictions
     /// What it may not build grows by a category (Unit:AddBuildRestriction);
@@ -1325,6 +1328,7 @@ private:
     void end_silo_build(lua_State* L);
     // Adjacency system
     std::set<u32> adjacent_unit_ids_;
+    int selection_priority_ = 1;
     f32 skirt_size_x_ = 0;
     f32 skirt_size_z_ = 0;
     f32 skirt_offset_x_ = 0;

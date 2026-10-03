@@ -14,6 +14,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <spdlog/spdlog.h>
@@ -135,6 +136,15 @@ void test_selection_render(TestContext& ctx) {
     const bool none = r.selection_renderer().brackets().empty();
     r.set_select_boxes(true);
     t.check(none, "Test 6: ren_SelectBoxes off draws no brackets");
+
+    const u32 tank = spawn_unit(ctx, "__osc_sel_d", "uel0201", "ARMY_1", {sx, sz + 8});
+    const auto priority = [&](u32 id) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->selection_priority() : 0;
+    };
+    t.check(priority(own) == 3 && priority(tank) == 1,
+            fmt::format("Test 7: selection priority: engineer {}, tank {}", priority(own),
+                        priority(tank)));
 
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }

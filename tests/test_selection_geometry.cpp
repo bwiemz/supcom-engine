@@ -52,3 +52,12 @@ TEST_CASE("A bracket corner holds its stroke to a few pixels, within its box", "
     CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.1f) == Catch::Approx(1.6f));
     CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.15f) == Catch::Approx(2.3f));
 }
+
+TEST_CASE("A drag box keeps the units of the highest selection priority", "[selection]") {
+    using osc::renderer::highest_selection_priority;
+    using Ids = std::vector<osc::u32>;
+    CHECK(highest_selection_priority({{1, 3}, {2, 1}, {3, 5}}) == Ids{2});
+    CHECK(highest_selection_priority({{1, 3}, {3, 5}, {4, 3}}) == Ids{1, 4});
+    CHECK(highest_selection_priority({{3, 5}}) == Ids{3});
+    CHECK(highest_selection_priority({}).empty());
+}

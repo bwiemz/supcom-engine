@@ -1036,6 +1036,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     }
                     lua_pop(L, 1); // caps table (or nil)
                 }
+                lua_pushstring(L, "SelectionPriority");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    unit->set_selection_priority(static_cast<int>(lua_tonumber(L, -1)));
+                }
+                lua_pop(L, 1);
             }
             lua_pop(L, 2); // General (or nil) + bp table
             unit->snapshot_command_caps(); // what RestoreCommandCaps returns to
