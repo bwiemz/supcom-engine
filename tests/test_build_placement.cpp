@@ -152,6 +152,80 @@ TEST_CASE("placement: extractors need a free deposit", "[placement]") {
     CHECK_FALSE(after.can_build("mex", 30.0f, 40.0f)); // deposit taken
 }
 
+TEST_CASE("placement: an extractor goes on its deposit's own cell", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    osc::sim::ResourceDeposit mass;
+    mass.x = 30.5f;
+    mass.z = 40.5f;
+    sim.add_resource_deposit(mass);
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "mex") {
+            r.size_x = r.size_z = 1.0f;
+        }
+        return r;
+    };
+
+    StructurePlacement p(sim, 0, rules);
+    CHECK(p.can_build("mex", 30.5f, 40.5f));
+    CHECK_FALSE(p.can_build("mex", 31.5f, 40.5f));
+    CHECK_FALSE(p.can_build("mex", 29.5f, 39.5f));
+}
+
+TEST_CASE("placement: a structure's skirt is its pad", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    // An air factory's: footprint 5, skirt 8 from 1.5 outside it
+    auto* factory = spawn(sim, 0, 30.5f, 30.5f);
+    factory->add_category("STRUCTURE");
+    factory->set_footprint_size(5.0f, 5.0f);
+    factory->set_skirt(8.0f, 8.0f, -1.5f, -1.5f);
+    // A T1 extractor's or power generator's: footprint 1, skirt 2
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "pgen") {
+            r.size_x = r.size_z = 1.0f;
+            r.skirt_x = r.skirt_z = 2.0f;
+            r.skirt_off_x = r.skirt_off_z = -0.5f;
+        }
+        return r;
+    };
+
+    StructurePlacement p(sim, 0, rules);
+    CHECK_FALSE(p.can_build("pgen", 30.5f, 34.5f));
+    CHECK(p.can_build("pgen", 30.5f, 35.5f));
+    auto* engineer = spawn(sim, 0, 10.0f, 10.0f);
+    int along = 0;
+    for (int i = 0; i < 7; ++i) {
+        const osc::f32 x = 27.5f + static_cast<osc::f32>(i);
+        if (StructurePlacement(sim, 0, rules).can_build("pgen", x, 35.5f)) {
+            order_build(engineer, "pgen", x, 35.5f);
+            ++along;
+        }
+    }
+    CHECK(along == 4);
+}
+
+TEST_CASE("placement: an order not yet in a queue reserves its site", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    auto* engineer = spawn(sim, 0, 10.0f, 10.0f);
+    osc::sim::ScheduledCommand order;
+    order.exec_tick = sim.tick_count() + 1;
+    order.unit_ids = {engineer->entity_id()};
+    order.command.type = osc::sim::CommandType::BuildMobile;
+    order.command.target_pos = {30.0f, 0.0f, 30.0f};
+    order.command.blueprint_id = "pgen";
+    sim.command_scheduler().submit(order);
+
+    CHECK_FALSE(StructurePlacement(sim, 0, rules_for).can_build("pgen", 30.0f, 30.0f));
+    CHECK(StructurePlacement(sim, 1, rules_for).can_build("pgen", 30.0f, 30.0f));
+}
+
 TEST_CASE("placement: a seabed structure goes on the ground under the sea", "[placement]") {
     // An extractor's BuildOnLayerCaps give LAYER_Land and LAYER_Seabed: it
     // stands on dry land or on the sea floor, never afloat on its own.

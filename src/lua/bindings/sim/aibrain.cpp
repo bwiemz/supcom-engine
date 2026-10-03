@@ -1167,6 +1167,17 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
             r.on_seabed = cap("LAYER_Seabed");
         }
         lua_pop(L, 1);
+        const auto number = [L, phys](const char* key) {
+            lua_pushstring(L, key);
+            lua_rawget(L, phys);
+            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+            lua_pop(L, 1);
+            return v;
+        };
+        r.skirt_x = number("SkirtSizeX");
+        r.skirt_z = number("SkirtSizeZ");
+        r.skirt_off_x = number("SkirtOffsetX");
+        r.skirt_off_z = number("SkirtOffsetZ");
         lua_pushstring(L, "BuildRestriction");
         lua_rawget(L, phys);
         if (lua_type(L, -1) == LUA_TSTRING) {
