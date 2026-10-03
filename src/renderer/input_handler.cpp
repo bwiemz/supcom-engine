@@ -529,10 +529,18 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     ghost.x = wx;
     ghost.y = sim.terrain()->get_terrain_height(wx, wz);
     ghost.z = wz;
-    ghost.size_x = size_x;
-    ghost.size_z = size_z;
+    sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
     if (mode_hooks_.can_place) {
         ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
+        // can_place has read the blueprint's rules
+        pad = sim::StructureSite::of(sim.placement_rules(bp, [] { return sim::PlacementRules{}; }),
+                                     wx, wz);
+    }
+    ghost.pad_x0 = pad.x0;
+    ghost.pad_z0 = pad.z0;
+    ghost.pad_x1 = pad.x1;
+    ghost.pad_z1 = pad.z1;
+    if (mode_hooks_.can_place) {
         return ghost;
     }
     // Buildable unless the footprint covers impassable ground

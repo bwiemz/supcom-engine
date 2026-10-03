@@ -30,3 +30,20 @@ TEST_CASE("A footprint on screen is filled row by row, within its edges", "[over
 
     CHECK(convex_rows({0, 10, 20, 30}, {5, 5, 5, 5}, 2.0f).empty());
 }
+
+TEST_CASE("A placement outline covers its edges and leaves the middle", "[overlay]") {
+    const auto rows = osc::renderer::outline_rows({0, 20, 20, 0}, {0, 0, 20, 20}, 2.0f);
+    const auto covered = [&](f32 x, f32 y) {
+        for (const auto& q : rows) {
+            if (x >= q[0] && x <= q[0] + q[2] && y >= q[1] && y <= q[1] + q[3]) {
+                return true;
+            }
+        }
+        return false;
+    };
+    CHECK(covered(10, 0.5f));
+    CHECK(covered(19.5f, 10));
+    CHECK(covered(0.5f, 19.5f));
+    CHECK_FALSE(covered(10, 10));
+    CHECK_FALSE(covered(10, 3));
+}

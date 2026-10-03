@@ -108,6 +108,26 @@ std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
     return rows;
 }
 
+std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
+                                             const std::array<f32, 4>& ys, f32 thickness) {
+    std::vector<std::array<f32, 4>> rows;
+    for (size_t i = 0; i < 4; ++i) {
+        const size_t j = (i + 1) % 4;
+        const f32 dx = xs[j] - xs[i];
+        const f32 dy = ys[j] - ys[i];
+        const f32 len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-3f) {
+            continue;
+        }
+        const f32 nx = -dy / len * thickness * 0.5f;
+        const f32 ny = dx / len * thickness * 0.5f;
+        const auto edge = convex_rows({xs[i] + nx, xs[j] + nx, xs[j] - nx, xs[i] - nx},
+                                      {ys[i] + ny, ys[j] + ny, ys[j] - ny, ys[i] - ny}, 1.0f);
+        rows.insert(rows.end(), edge.begin(), edge.end());
+    }
+    return rows;
+}
+
 void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
                                  f32 r, f32 g, f32 b, f32 a) {
     if (quad_count_ >= MAX_OVERLAY_QUADS) return;
@@ -119,9 +139,9 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
-void OverlayRenderer::emit_convex(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys, f32 r,
-                                  f32 g, f32 b, f32 a) {
-    for (const auto& q : convex_rows(xs, ys, 2.0f)) {
+void OverlayRenderer::emit_outline(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys,
+                                   f32 r, f32 g, f32 b, f32 a) {
+    for (const auto& q : outline_rows(xs, ys, kOutlineThickness)) {
         emit_quad(q[0], q[1], q[2], q[3], r, g, b, a);
     }
 }
@@ -149,22 +169,22 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     camera.eye_position(eye_x, eye_y, eye_z);
 
     if (ghost) {
-        const f32 hx = ghost->size_x * 0.5f;
-        const f32 hz = ghost->size_z * 0.5f;
-        const std::array<std::array<f32, 2>, 4> corners = {
-            {{-hx, -hz}, {hx, -hz}, {hx, hz}, {-hx, hz}}};
+        const std::array<std::array<f32, 2>, 4> corners = {{{ghost->pad_x0, ghost->pad_z0},
+                                                            {ghost->pad_x1, ghost->pad_z0},
+                                                            {ghost->pad_x1, ghost->pad_z1},
+                                                            {ghost->pad_x0, ghost->pad_z1}}};
         std::array<f32, 4> xs{};
         std::array<f32, 4> ys{};
         bool shown = true;
         for (size_t i = 0; i < 4 && shown; ++i) {
-            shown = world_to_screen(ghost->x + corners[i][0], ghost->y, ghost->z + corners[i][1],
-                                    vp_matrix, sw, sh, xs[i], ys[i]);
+            shown = world_to_screen(corners[i][0], ghost->y, corners[i][1], vp_matrix, sw, sh,
+                                    xs[i], ys[i]);
         }
         if (shown) {
             if (ghost->valid) {
-                emit_convex(xs, ys, 0.2f, 0.9f, 0.3f, 0.35f);
+                emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
             } else {
-                emit_convex(xs, ys, 1.0f, 0.2f, 0.2f, 0.35f);
+                emit_outline(xs, ys, 0.9f, 0.0f, 0.0f, 1.0f);
             }
         }
     }
