@@ -210,6 +210,22 @@ TEST_CASE("The single-player lobby stays a loopback (M218a)", "[lobby][lua]") {
     )"));
 }
 
+TEST_CASE("The single-player lobby's launch tells its script, as a network lobby's does",
+          "[lobby][lua]") {
+    World w;
+    REQUIRE(w.run(R"(
+        local calls = {}
+        LaunchSinglePlayerSession = function(config) table.insert(calls, config.tag) end
+        local comm = setmetatable({GameLaunched = function(self)
+            table.insert(calls, 'launched')
+        end}, {__index = TestComm})
+        local sp = InternalCreateLobby(comm, 'None', 0, 8, 'Solo', nil, nil)
+        sp:LaunchGame({tag = 'session'})
+        assert(calls[1] == 'session' and calls[2] == 'launched',
+               'calls: ' .. tostring(calls[1]) .. ', ' .. tostring(calls[2]))
+    )"));
+}
+
 TEST_CASE("The LAN's discovery finds a hosted lobby, as the LAN screen sees it (M218b)",
           "[lobby][lua][discovery]") {
     // Discovery asks the loopback, on a port no other test holds
