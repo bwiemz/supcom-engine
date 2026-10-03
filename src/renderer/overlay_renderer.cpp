@@ -572,69 +572,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         }
     }
 
-    // --- Active operation beams (build/reclaim/repair/capture) ---
-    if (cam_dist < 600.0f) {
-        for (const sim::EntityRecord& entity : view.entities()) {
-            if (!entity.is_unit) continue;
-            if (recon_ && recon_->sight(entity) != Sight::Seen) continue;
-            const sim::EntityRecord* unit = &entity;
-
-            // Determine beam target and color
-            u32 target_id = 0;
-            f32 br = 0, bg = 0, bb = 0, ba = 0.6f;
-            if (unit->is_building()) {
-                target_id = unit->build_target_id;
-                br = 0.2f; bg = 0.9f; bb = 0.6f; // teal
-            } else if (unit->is_reclaiming()) {
-                target_id = unit->reclaim_target_id;
-                br = 0.9f; bg = 0.8f; bb = 0.2f; // gold
-            } else if (unit->is_repairing()) {
-                target_id = unit->repair_target_id;
-                br = 0.3f; bg = 1.0f; bb = 0.3f; // green
-            } else if (unit->is_capturing()) {
-                target_id = unit->capture_target_id;
-                br = 1.0f; bg = 1.0f; bb = 0.2f; // yellow
-            }
-            if (target_id == 0) continue;
-
-            auto* target = view.find(target_id);
-            if (!target) continue;
-
-            auto src_pos = view.position(entity);
-            auto dst_pos = view.position(*target);
-
-            // Distance cull
-            f32 dx = src_pos.x - eye_x;
-            f32 dz = src_pos.z - eye_z;
-            if (dx * dx + dz * dz > 600.0f * 600.0f) continue;
-
-            f32 sx0, sy0, sx1, sy1;
-            if (!world_to_screen(src_pos.x, src_pos.y, src_pos.z,
-                                  vp_matrix, sw, sh, sx0, sy0))
-                continue;
-            if (!world_to_screen(dst_pos.x, dst_pos.y, dst_pos.z,
-                                  vp_matrix, sw, sh, sx1, sy1))
-                continue;
-
-            // Draw beam line (thicker than command lines)
-            f32 ldx = sx1 - sx0, ldy = sy1 - sy0;
-            f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-            if (len < 2.0f) continue;
-
-            constexpr f32 BEAM_THICK = 2.5f;
-            f32 nx = -ldy / len * BEAM_THICK;
-            f32 ny = ldx / len * BEAM_THICK;
-
-            f32 min_x = std::min({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-            f32 min_y = std::min({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-            f32 max_x = std::max({sx0 + nx, sx0 - nx, sx1 + nx, sx1 - nx});
-            f32 max_y = std::max({sy0 + ny, sy0 - ny, sy1 + ny, sy1 - ny});
-
-            emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                      br, bg, bb, ba);
-        }
-    }
-
     // --- CollisionBeam rendering ---
     if (cam_dist < 600.0f) {
         for (const sim::EntityRecord& entity : view.entities()) {

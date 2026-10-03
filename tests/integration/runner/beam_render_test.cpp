@@ -321,6 +321,33 @@ void test_beam_render(TestContext& ctx) {
         }
         t.check(built, fmt::format("Test 7: a building engineer draws retail's build beams ({})",
                                    built ? seen_bp : "none"));
+        // Test 7b: and no line of the overlay's from it to what it builds
+        bool lined = false;
+        bool building = false;
+        const Frame frame = drawn(r);
+        for (const sim::EntityRecord& e : seen.cur().entities) {
+            const sim::EntityRecord* target =
+                e.is_unit && e.build_target_id != 0 ? seen.cur().find(e.build_target_id) : nullptr;
+            if (!target) {
+                continue;
+            }
+            building = true;
+            const sim::Vector3 mid{(e.position.x + target->position.x) / 2,
+                                   (e.position.y + target->position.y) / 2,
+                                   (e.position.z + target->position.z) / 2};
+            const auto at = screen_of(r, mid);
+            for (const Quad& q : frame.overlay) {
+                if (at && same_colour(q, 0.2f, 0.9f, 0.6f) &&
+                    std::abs(q.x - (*at)[0]) <= q.w / 2 + 1 &&
+                    std::abs(q.y - (*at)[1]) <= q.h / 2 + 1) {
+                    lined = true;
+                }
+            }
+        }
+        t.check(building && !lined,
+                fmt::format("Test 7b: no overlay line to the structure being built (building {}, "
+                            "lined {})",
+                            building, lined));
     }
 
     // Test 8: ARMY_2's beam in the fog (45 from ARMY_1's nearest) isn't
