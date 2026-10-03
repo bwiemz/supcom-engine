@@ -259,6 +259,11 @@ static int l_GetCursor(lua_State* L) {
 }
 ```
 
+*Done (2026-10-03), otherwise than sketched:* the system's cursor is hidden
+over the window from its creation (`Renderer::init`, `GLFW_CURSOR_HIDDEN`;
+`set_cursor_clip` keeps it hidden), since the engine draws FA's cursor itself.
+`GetCursor():Hide()`/`Show()` hide and show that drawn cursor.
+
 **Pulse effect helper:**
 FA's `effecthelpers.lua:Pulse(control, duration, min_alpha, max_alpha)` forks a thread that tweens `control:SetAlpha()` between min and max in a sine wave. This is pure Lua — if FA's `effecthelpers.lua` imports cleanly, use it as-is. If not, a simplified fallback:
 
