@@ -129,14 +129,19 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
                             r.video_options().graphics_fidelity, cam.keyboard_pan_speed()));
     }
 
-    // Test 3: SC_ToggleCursorClip holds a window's cursor, and "0" lets go
+    // Test 3: SC_ToggleCursorClip holds a window's cursor, and "0" lets go;
+    // the system's cursor stays hidden throughout
     {
+        const bool hidden_first = !r.system_cursor_shown();
         console->execute(L, "SC_ToggleCursorClip");
         const bool held = r.cursor_clipped();
         console->execute(L, "SC_ToggleCursorClip 0");
         const bool let_go = !r.cursor_clipped();
-        t.check(held && let_go,
-                fmt::format("Test 3: the cursor held ({}), then let go ({})", held, let_go));
+        const bool hidden_after = !r.system_cursor_shown();
+        t.check(held && let_go && hidden_first && hidden_after,
+                fmt::format("Test 3: the cursor held ({}), then let go ({}); the system's hidden "
+                            "before ({}) and after ({})",
+                            held, let_go, hidden_first, hidden_after));
     }
 
     // Test 4: ui_AlwaysRenderStrategicIcons draws the units' icons at a zoom
