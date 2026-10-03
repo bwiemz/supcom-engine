@@ -1388,6 +1388,31 @@ static int l_GetRolloverInfo(lua_State* L) {
     return 1;
 }
 
+void update_world_view_cursor(lua_State* L) {
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* view = static_cast<const ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!view || view->destroyed() || view->lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, view->lua_table_ref());
+    lua_pushstring(L, "OnUpdateCursor");
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            static bool reported = false;
+            if (!reported) {
+                spdlog::warn("OnUpdateCursor: {}", lua_tostring(L, -1));
+                reported = true;
+            }
+        }
+    }
+    lua_settop(L, top);
+}
+
 void register_user_bindings(LuaState& state) {
     lua_State* L = state.raw();
     // Globals of the UI state.

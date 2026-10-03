@@ -11795,10 +11795,14 @@ void test_right_click(TestContext& ctx) {
     check(head(*plane, CT::Dock, pad->entity_id()), "on a staging platform: the plane docks");
 
     if (prop) {
+        input.set_selected({eng->entity_id(), tank->entity_id()});
+        const auto shown_order =
+            input.right_button_order(ctx.sim, prop->position().x, prop->position().z);
         right_click({eng->entity_id(), tank->entity_id()}, *prop);
         check(head(*eng, CT::Reclaim, prop->entity_id()) && gave("Reclaim", prop->entity_id()) &&
-                  gave("Move", 0) && issued.size() == 2,
-              "on a wreck or prop: the engineer reclaims it, the tank moves there");
+                  gave("Move", 0) && issued.size() == 2 && shown_order == CT::Reclaim,
+              "on a wreck or prop: the engineer reclaims it, the tank moves there; the cursor "
+              "shows the reclaim");
     } else {
         check(false, "a reclaimable prop near by");
     }
@@ -11806,10 +11810,14 @@ void test_right_click(TestContext& ctx) {
     {
         input.set_selected({eng->entity_id()});
         const float gx = eng->position().x + 60.0f, gz = eng->position().z + 60.0f;
+        const auto shown_order = input.right_button_order(ctx.sim, gx, gz);
         const auto issued = input.right_click_at(ctx.sim, gx, gz, false);
         ctx.sim.tick();
-        check(issued.size() == 1 && issued[0].type == "Move" && head(*eng, CT::Move, 0),
-              "on open ground: a move");
+        input.set_selected({});
+        const auto no_order = input.right_button_order(ctx.sim, gx, gz);
+        check(issued.size() == 1 && issued[0].type == "Move" && head(*eng, CT::Move, 0) &&
+                  shown_order == CT::Move && !no_order,
+              "on open ground: a move, as the cursor shows; nothing selected, no order");
     }
     // Allied, the other army's tank is an ally: a right-click guards it.
     lua("SetAlliance('ARMY_1', 'ARMY_2', 'Ally')");
