@@ -31,6 +31,12 @@ public:
     bool empty() const { return op_ == Op::None; }
     bool matches(const std::unordered_set<std::string>& categories) const;
 
+    Op op() const { return op_; }
+    /// A Name's category
+    const std::string& category_name() const { return name_; }
+    /// A set operation's two operands
+    const std::vector<CategoryExpr>& operands() const { return operands_; }
+
 private:
     Op op_ = Op::None;
     std::string name_;
