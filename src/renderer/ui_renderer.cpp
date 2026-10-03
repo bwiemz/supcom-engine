@@ -495,11 +495,24 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                 argb_to_rgba(ctrl->color_mask(), cm);
                 cm[3] *= ctrl->alpha();
                 std::memcpy(entry.inst.color, cm, sizeof(cm));
-                if (ctrl->tiled() && ctrl->bitmap_width() > 0 && ctrl->bitmap_height() > 0) {
+                // The bitmap's size leaves out the texture's one-pixel
+                // border (ui_texture_dimensions); tiles repeat the file
+                const f32 bw = static_cast<f32>(ctrl->bitmap_width());
+                const f32 bh = static_cast<f32>(ctrl->bitmap_height());
+                if (ctrl->tiled() && bw > 0 && bh > 0) {
                     entry.inst.uv[0] = 0.0f;
                     entry.inst.uv[1] = 0.0f;
-                    entry.inst.uv[2] = width / static_cast<f32>(ctrl->bitmap_width());
-                    entry.inst.uv[3] = height / static_cast<f32>(ctrl->bitmap_height());
+                    entry.inst.uv[2] = width / (bw + 2.0f);
+                    entry.inst.uv[3] = height / (bh + 2.0f);
+                } else if (bw > 0 && bh > 0) {
+                    // Inside the border, as Moho draws it
+                    const auto inner = [](f32 uv, f32 size) {
+                        return (1.0f + uv * size) / (size + 2.0f);
+                    };
+                    entry.inst.uv[0] = inner(ctrl->uv_u0(), bw);
+                    entry.inst.uv[1] = inner(ctrl->uv_v0(), bh);
+                    entry.inst.uv[2] = inner(ctrl->uv_u1(), bw);
+                    entry.inst.uv[3] = inner(ctrl->uv_v1(), bh);
                 } else {
                     entry.inst.uv[0] = ctrl->uv_u0();
                     entry.inst.uv[1] = ctrl->uv_v0();
