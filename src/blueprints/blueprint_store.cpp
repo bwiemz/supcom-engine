@@ -126,6 +126,39 @@ void apply_unit_defaults(lua_State* L, int bp) {
     }
     lua_pop(L, 1);
 
+    // Its icon's name, which Moho's RUnitBlueprintDisplay defaults to the
+    // blueprint's id: no retail unit names it, and gamecommon.lua builds the
+    // build buttons' and the unit view's icon paths from it unguarded.
+    lua_pushstring(L, "Display");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Display");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Display");
+        lua_rawget(L, bp);
+    }
+    const int display = lua_gettop(L);
+    lua_pushstring(L, "IconName");
+    lua_rawget(L, display);
+    const bool unnamed = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (unnamed) {
+        lua_pushstring(L, "BlueprintId");
+        lua_rawget(L, bp);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            std::string id = lua_tostring(L, -1);
+            std::transform(id.begin(), id.end(), id.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            lua_pushstring(L, "IconName");
+            lua_pushstring(L, id.c_str());
+            lua_rawset(L, display);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
     // Every unit has a weapon list, if an empty one: Unit.DoDeathWeapon
     // loops over bp.Weapon on every death, and 321 of retail's 568 units
     // (engineers, economy, most structures) have none.

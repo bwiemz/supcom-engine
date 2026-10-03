@@ -68,6 +68,21 @@ TEST_CASE("A unit blueprint's omitted upgrade links read as 'none'", "[blueprint
     )"));
 }
 
+TEST_CASE("A unit blueprint's omitted icon name reads as its id", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bare = {BlueprintId = 'uab0101', Display = {Mesh = {}}}
+        RegisterUnitBlueprint(bare)
+        assert(bare.Display.IconName == 'uab0101', 'icon name not defaulted')
+        local upper = {BlueprintId = 'UEL0001'}
+        RegisterUnitBlueprint(upper)
+        assert(upper.Display.IconName == 'uel0001', 'no Display, or not lowered')
+        local named = {BlueprintId = 'named', Display = {IconName = 'other'}}
+        RegisterUnitBlueprint(named)
+        assert(named.Display.IconName == 'other', 'own icon name lost')
+    )"));
+}
+
 TEST_CASE("A unit blueprint's omitted threat levels and regeneration read as 0", "[blueprints]") {
     BlueprintWorld w;
     CHECK(w.check(R"(
