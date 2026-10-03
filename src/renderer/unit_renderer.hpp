@@ -140,6 +140,8 @@ public:
 
     /// Inject a single ghost mesh instance (for build preview).
     /// Call after update(). Returns true if the ghost was added.
+    void set_ghost_slots(u32 n) { ghost_slots_ = n; }
+
     bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
                       f32 r, f32 g, f32 b, f32 a,
                       TextureCache* tex_cache);
@@ -215,6 +217,7 @@ private:
     std::unordered_map<u32, MeshBirth> births_;
     u64 frame_ = 0;
     f32 shader_time_ = 0.0f;
+    u32 ghost_slots_ = 1;
 };
 
 } // namespace osc::renderer

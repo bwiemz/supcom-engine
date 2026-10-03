@@ -76,6 +76,15 @@ std::vector<std::pair<const sim::EntityRecord*, bool>>
 command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u32>* selected,
                     i32 player_army);
 
+struct PlannedSite {
+    std::string blueprint;
+    sim::Vector3 position;
+};
+
+std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
+                                             const std::unordered_set<u32>* selected,
+                                             i32 player_army);
+
 /// Draws the selected units' order lines and waypoints as Moho's
 /// UICommandGraph does, while Shift is held: each leg a textured strip on
 /// the ground, in its order's colours; each order's waypoint icon lying at
@@ -110,6 +119,8 @@ public:
     };
     const std::vector<Leg>& legs() const { return legs_; }
 
+    const std::vector<PlannedSite>& planned_sites() const { return planned_; }
+
     static constexpr u32 MAX_QUADS = 32768;
     /// Segments a leg's curve is drawn in (ui_CurveSegments)
     static constexpr u32 kCurveSegments = 20;
@@ -143,6 +154,7 @@ private:
     void* vertex_mapped_[FRAMES_IN_FLIGHT] = {};
     std::vector<Group> groups_;
     std::vector<Leg> legs_;
+    std::vector<PlannedSite> planned_;
     /// A structure blueprint's footprint and skirt: size x, z, skirt x, z,
     /// offset x, z
     const std::array<f32, 6>& pad_of(const std::string& bp, lua_State* L);

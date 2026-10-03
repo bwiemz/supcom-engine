@@ -158,3 +158,32 @@ TEST_CASE("Shift shows the selected units' orders and the army's build sites",
     }
     CHECK(got == std::vector<std::pair<osc::u32, bool>>{{1, true}, {2, false}, {3, true}});
 }
+
+TEST_CASE("A structure ordered and not started is a planned site", "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    const auto build = [](const char* bp, osc::f32 x) {
+        osc::sim::CommandRecord c;
+        c.type = osc::sim::CommandType::BuildMobile;
+        c.target_pos = {x, 0, 10};
+        c.blueprint_id = bp;
+        return c;
+    };
+    osc::sim::EntityRecord builder;
+    builder.id = 1;
+    builder.army = 0;
+    builder.is_unit = true;
+    builder.build_target_id = 7;
+    builder.command_offset = 0;
+    builder.command_count = 3;
+    world.commands = {build("ueb1101", 10), build("ueb1101", 12), build("ueb0101", 20)};
+    world.entities.push_back(builder);
+
+    const auto sites = osc::renderer::planned_build_sites(world, nullptr, 0);
+    REQUIRE(sites.size() == 2);
+    CHECK(sites[0].blueprint == "ueb1101");
+    CHECK(sites[0].position.x == Catch::Approx(12.0f));
+    CHECK(sites[1].blueprint == "ueb0101");
+
+    world.entities[0].build_target_id = 0;
+    CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 3);
+}

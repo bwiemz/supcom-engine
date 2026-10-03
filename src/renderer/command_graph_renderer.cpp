@@ -158,6 +158,23 @@ command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u3
     return out;
 }
 
+std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
+                                             const std::unordered_set<u32>* selected,
+                                             i32 player_army) {
+    std::vector<PlannedSite> sites;
+    for (const auto& [e, chosen] : command_graph_units(world, selected, player_army)) {
+        const auto orders = world.commands_of(*e);
+        for (size_t i = 0; i < orders.size(); ++i) {
+            const bool started = i == 0 && e->build_target_id != 0;
+            if (orders[i].type == sim::CommandType::BuildMobile &&
+                !orders[i].blueprint_id.empty() && !started) {
+                sites.push_back({orders[i].blueprint_id, orders[i].target_pos});
+            }
+        }
+    }
+    return sites;
+}
+
 std::string command_graph_key(sim::CommandType type) {
     switch (type) {
     case sim::CommandType::Move: return "UNITCOMMAND_Move";
@@ -429,10 +446,12 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                                   bool shown, u32 fi) {
     groups_.clear();
     legs_.clear();
+    planned_.clear();
     const sim::WorldSnapshot* cur = view.cur();
     if (!shown || !cur || !vertex_mapped_[fi]) {
         return;
     }
+    planned_ = planned_build_sites(*cur, selected, player_army);
 
     f32 ex = 0;
     f32 ey = 0;
@@ -511,8 +530,9 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             }
             const GPUTexture* wp_tex =
                 s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
+            const bool started = i == 0 && e->build_target_id != 0;
             // A build's site: its icon over the pad, outlined
-            if (wp_tex && !blueprint->empty() && per_px > 0.0f) {
+            if (wp_tex && !blueprint->empty() && !started && per_px > 0.0f) {
                 const auto& p = pad_of(*blueprint, L);
                 const auto pad = build_pad(to.x, to.z, p[0], p[1], p[2], p[3], p[4], p[5]);
                 const std::array<Vector3, 4> corner = {{{pad[0], to.y, pad[1]},
