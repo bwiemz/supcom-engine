@@ -2404,9 +2404,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
         // decides it below, from the same camera)
         const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
-    unit_renderer_.set_ghost_slots(
-        1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
-        static_cast<u32>(command_graph_renderer_.planned_sites().size()));
+        unit_renderer_.set_ghost_slots(
+            1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
+            static_cast<u32>(command_graph_renderer_.planned_sites().size()));
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
     }
