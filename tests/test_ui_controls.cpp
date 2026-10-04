@@ -799,3 +799,24 @@ TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrollin
     CHECK(lua_tonumber(L, -1) == 2);
     lua_pop(L, 1);
 }
+
+TEST_CASE("A control's class OnFrame and OnLoseKeyboardFocus are called, as its own would be",
+          "[ui][lua]") {
+    InputFixture f;
+    f.run(R"(
+        frames, lost = 0, 0
+        local Class = setmetatable({
+            OnFrame = function(self, dt) frames = frames + 1 end,
+            OnLoseKeyboardFocus = function(self) lost = lost + 1 end,
+        }, { __index = moho.control_methods })
+        a = setmetatable({}, { __index = Class })
+        InternalCreateGroup(a, GetFrame(0))
+        a:SetNeedsFrameUpdate(true)
+        b = box('b', GetFrame(0), 0, 0, 10, 10, 1)
+        a:AcquireKeyboardFocus(false)
+        b:AcquireKeyboardFocus(false)
+    )");
+    f.dispatch.update_controls(f.lua.raw(), f.registry, 0.1);
+    CHECK(f.check("frames == 1"));
+    CHECK(f.check("lost == 1"));
+}

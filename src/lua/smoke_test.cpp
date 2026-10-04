@@ -279,6 +279,15 @@ void SmokeTestHarness::install_all_method_interceptors(lua_State* L) {
         install_method_interceptor(L, e.key, e.name);
     }
 
+    // Blip.lua's class takes moho.blip_methods for its base, which class.lua
+    // accepts only with its Class metatable: made before that is replaced.
+    const int top = lua_gettop(L);
+    static constexpr char kImportBlip[] = "if import then pcall(import, '/lua/sim/Blip.lua') end";
+    if (luaL_loadbuffer(L, kImportBlip, sizeof(kImportBlip) - 1, "=smoke") == 0) {
+        lua_pcall(L, 0, 0, 0);
+    }
+    lua_settop(L, top);
+
     // Also intercept unit_methods and entity_methods via the moho table.
     // These use a different pattern: moho.unit_methods is the __index target.
     // We install a meta-metatable on those tables with an __index closure.

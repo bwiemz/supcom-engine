@@ -338,7 +338,7 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
         if (prev->lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, prev->lua_table_ref());
             lua_pushstring(L, "OnLoseKeyboardFocus");
-            lua_rawget(L, -2);
+            lua_gettable(L, -2);
             if (lua_isfunction(L, -1)) {
                 lua_pushvalue(L, -2);
                 lua_pcall(L, 1, 0, 0);
@@ -750,7 +750,7 @@ static int bitmap_Stop(lua_State* L) {
         ctrl->set_anim_playing(false);
         // Call OnAnimationStopped callback
         lua_pushstring(L, "OnAnimationStopped");
-        lua_rawget(L, 1);
+        lua_gettable(L, 1);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, 1);
             if (lua_pcall(L, 1, 0, 0) != 0) {
