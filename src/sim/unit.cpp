@@ -418,6 +418,10 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
         tick_manipulators(static_cast<f32>(dt), ctx.L);
         return false;
     }
+    report_health_band(ctx.L);
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
     auto& registry = ctx.registry;
 
     // A pickup whose load order is no longer the transport's head is over,
@@ -2382,6 +2386,35 @@ void Unit::call_lua_method(lua_State* L, const char* method_name) {
         lua_pop(L, 1); // non-function
     }
     lua_pop(L, 1); // tbl
+}
+
+void Unit::report_health_band(lua_State* L) {
+    const f32 band = max_health() > 0
+                         ? std::floor(std::clamp(health() / max_health(), 0.0f, 1.0f) * 4.0f) / 4.0f
+                         : 1.0f;
+    if (band == health_band_) {
+        return;
+    }
+    const f32 old = health_band_;
+    health_band_ = band;
+    if (is_being_built() || !L || lua_table_ref() < 0) {
+        return;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    lua_pushstring(L, "OnHealthChanged");
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return;
+    }
+    lua_pushvalue(L, -2);
+    lua_pushnumber(L, band);
+    lua_pushnumber(L, old);
+    if (lua_pcall(L, 3, 0, 0) != 0) {
+        spdlog::warn("OnHealthChanged error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
 }
 
 void Unit::call_lua_method_with_entity(lua_State* L, const char* method_name,

@@ -827,6 +827,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.jam_radius_max_);
     w.b(u.is_being_built_);
     w.f32v(u.max_speed_);
+    w.f32v(u.health_band_);
     save(w, u.navigator_);
     const UnitEconomy& ec = u.economy_;
     w.f64v(ec.production_mass);
@@ -1108,6 +1109,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.jam_radius_max_ = r.f32v();
     u.is_being_built_ = r.b();
     u.max_speed_ = r.f32v();
+    u.health_band_ = r.f32v();
     load(r, u.navigator_);
     u.navigator_.set_sim_state(&sim);
     UnitEconomy& ec = u.economy_;

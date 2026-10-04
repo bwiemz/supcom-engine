@@ -10202,6 +10202,36 @@ void test_range(TestContext& ctx) {
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
     )");
 
+    lua_check("Test 12d: a tank's health falls by quarters", R"(
+        __osc_hurt = __osc_spawn('uel0201', 'ARMY_1', 640.5, 160.5)
+        __osc_hurt_calls = {}
+        local changed = __osc_hurt.OnHealthChanged
+        __osc_hurt.OnHealthChanged = function(self, new, old)
+            changed(self, new, old)
+            table.insert(__osc_hurt_calls, new .. '<' .. old .. ':' .. table.getn(self.DamageEffectsBag[1]))
+        end
+        __osc_hurt:SetHealth(nil, __osc_hurt:GetMaxHealth() * 0.8)
+    )");
+    run(1);
+    lua_check("Test 12d: below half", R"(
+        __osc_hurt:SetHealth(nil, __osc_hurt:GetMaxHealth() * 0.6)
+    )");
+    run(1);
+    lua_check("Test 12d: repaired", R"(
+        __osc_hurt:SetHealth(nil, __osc_hurt:GetMaxHealth() * 0.9)
+    )");
+    run(1);
+    lua_check("Test 12d: OnHealthChanged has each quarter, and the script's damage effects follow",
+              R"(
+        local got = table.concat(__osc_hurt_calls, ' ')
+        local first = string.gsub(__osc_hurt_calls[2] or '', ':.*', '')
+        if table.getn(__osc_hurt_calls) ~= 3 or __osc_hurt_calls[1] ~= '0.75<1:0' or
+           first ~= '0.5<0.75' or __osc_hurt_calls[2] == '0.5<0.75:0' or
+           string.sub(__osc_hurt_calls[3], 1, 8) ~= '0.75<0.5' then
+            error('calls: ' .. got)
+        end
+    )");
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }

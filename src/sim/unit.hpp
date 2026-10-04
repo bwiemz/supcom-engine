@@ -359,6 +359,9 @@ public:
 
     /// Lua callback helpers: call self:method() or self:method(entity)
     void call_lua_method(lua_State* L, const char* method_name);
+    /// OnHealthChanged(new, old) when its health falls into another quarter,
+    /// as Moho reports it: each value the quarter it is in, rounded down
+    void report_health_band(lua_State* L);
     void call_lua_method_with_entity(lua_State* L, const char* method_name,
                                       Entity* arg_entity);
 
@@ -1211,6 +1214,7 @@ private:
     // Intel system
     std::unordered_map<std::string, IntelState> intel_states_;
     // Manipulator system
+    f32 health_band_ = 1.0f;
     std::vector<std::unique_ptr<Manipulator>> manipulators_;
     std::vector<BonePose> pose_; // empty: the bind pose
     // Reused each tick by update_pose (no allocation once sized).
