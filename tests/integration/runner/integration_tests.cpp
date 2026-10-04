@@ -713,7 +713,7 @@ void test_reclaim(TestContext& ctx) {
         -- Create a prop near the ACU (within reclaim range)
         local pos = acu:GetPosition()
         local prop = CreateProp({pos[1] + 3, pos[2], pos[3]},
-                                '/env/common/props/test_reclaim.bp')
+                                '/env/Crystalline/Props/Rocks/CrysCrystal01_prop.bp')
         if not prop then
             LOG('Reclaim test: CreateProp failed')
             return
@@ -729,6 +729,17 @@ void test_reclaim(TestContext& ctx) {
         prop:SetMaxHealth(50)
         prop:SetHealth(nil, 50)
         prop:SetFractionComplete(1.0)
+
+        __osc_reclaim_calls = {}
+        local start, stop = acu.OnStartReclaim, acu.OnStopReclaim
+        acu.OnStartReclaim = function(self, target)
+            table.insert(__osc_reclaim_calls, 'start ' .. tostring(target ~= nil))
+            return start(self, target)
+        end
+        acu.OnStopReclaim = function(self, target)
+            table.insert(__osc_reclaim_calls, 'stop ' .. tostring(target ~= nil))
+            return stop(self, target)
+        end
 
         -- Issue reclaim command
         IssueReclaim({acu}, prop)
@@ -757,6 +768,48 @@ void test_reclaim(TestContext& ctx) {
                          i + 1, ctx.sim.entity_registry().count());
         }
     }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local got = table.concat(__osc_reclaim_calls, ',')
+            if got ~= 'start true,stop true' then error('calls: ' .. got) end
+        )"))
+        spdlog::info("[PASS] Reclaim test: OnStartReclaim and OnStopReclaim, with the prop");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+
+    (void)ctx.lua_state.do_string(R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        local pos = acu:GetPosition()
+        local prop = CreateProp({pos[1] + 2, pos[2], pos[3]}, '/env/Crystalline/Props/Rocks/CrysCrystal01_prop.bp')
+        prop.MaxMassReclaim = 100
+        prop.MaxEnergyReclaim = 50
+        prop:SetMaxHealth(50)
+        prop:SetHealth(nil, 50)
+        prop:SetFractionComplete(1.0)
+        __osc_reclaim_calls = {}
+        IssueReclaim({acu}, prop)
+    )");
+    for (int i = 0; i < 100; ++i) {
+        ctx.sim.tick();
+        if (ctx.lua_state
+                .do_string("if not GetEntityById(__osc_test_acu_id(1)):IsUnitState('Reclaiming') "
+                           "then error('') end")
+                .ok()) {
+            break;
+        }
+    }
+    (void)ctx.lua_state.do_string("IssueStop({GetEntityById(__osc_test_acu_id(1))})");
+    for (int i = 0; i < 3; ++i) {
+        ctx.sim.tick();
+    }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local acu = GetEntityById(__osc_test_acu_id(1))
+            local got = table.concat(__osc_reclaim_calls, ',')
+            if got ~= 'start true,stop true' or acu:IsUnitState('Reclaiming') then
+                error('calls: ' .. got .. '; reclaiming ' .. tostring(acu:IsUnitState('Reclaiming')))
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: a stopped reclaim ends, with OnStopReclaim");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+
 
     // Verify: prop should be gone (destroyed or fraction=0)
     auto post_count = ctx.sim.entity_registry().count();
