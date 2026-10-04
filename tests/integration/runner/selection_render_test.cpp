@@ -146,6 +146,24 @@ void test_selection_render(TestContext& ctx) {
             fmt::format("Test 7: selection priority: engineer {}, tank {}", priority(own),
                         priority(tank)));
 
+    const u32 factory = spawn_unit(ctx, "__osc_sel_f", "ueb0101", "ARMY_1", {sx, sz - 20});
+    const auto* fe = ctx.sim.entity_registry().find(factory);
+    const sim::Vector3 fp = fe ? fe->position() : sim::Vector3{sx, 0, sz - 20};
+    const u32 builder = spawn_unit(ctx, "__osc_sel_g", "uel0105", "ARMY_1", {fp.x + 2.6f, fp.z});
+    seen.capture(ctx.sim);
+    seen.capture(ctx.sim);
+    input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
+    input.set_selected({builder});
+    const f32 click_x = fp.x + 1.8f;
+    const u32 under = input.unit_under(ctx.sim, click_x, fp.z);
+    input.left_click_at(ctx.sim, click_x, fp.z, false);
+    const auto& now = input.selected();
+    t.check(under == factory && now.size() == 1 && now.count(factory) == 1,
+            fmt::format("Test 8: a click on the factory by its builder selects the unit under "
+                        "the cursor ({}): {} selected, factory {}, builder {}",
+                        under == factory ? "the factory" : "not the factory", now.size(),
+                        now.count(factory), now.count(builder)));
+
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

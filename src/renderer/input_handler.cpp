@@ -287,11 +287,13 @@ void InputHandler::handle_left_click(Renderer& renderer,
     f32 wx, wz;
     if (!world_at(renderer, sim, mx, my, wx, wz)) return;
 
-    // Check if Shift is held (additive selection)
-    bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                 renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+    const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                       renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+    left_click_at(sim, wx, wz, shift);
+}
 
-    u32 picked = pick_unit(sim, wx, wz, 5.0f);
+void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
+    const u32 picked = unit_under(sim, wx, wz, true);
 
     if (!shift)
         selected_.clear();
@@ -667,12 +669,15 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     return issued;
 }
 
-u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz) const {
+u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) const {
     u32 best_id = 0;
     f32 best_d2 = std::numeric_limits<f32>::max();
     for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit() || !shown(*e)) {
+            continue;
+        }
+        if (own_only && (e->army() != player_army_ || !selectable(*e))) {
             continue;
         }
         const auto& unit = static_cast<const sim::Unit&>(*e);
@@ -723,31 +728,6 @@ bool InputHandler::shown(const sim::Entity& e) const {
     if (!recon_) return true;
     const sim::EntityRecord* record = view_.find(e.entity_id());
     return !record || shows_icon(recon_->sight(*record));
-}
-
-u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
-                            f32 radius) const {
-    auto nearby = sim.entity_registry().collect_in_radius(wx, wz, radius);
-
-    u32 best_id = 0;
-    f32 best_dist2 = std::numeric_limits<f32>::max();
-
-    for (u32 id : nearby) {
-        auto* e = sim.entity_registry().find(id);
-        if (!e || !selectable(*e)) continue;
-        if (e->army() != player_army_) continue;
-
-        const sim::Vector3 pos = view_.position(*e);
-        f32 dx = pos.x - wx;
-        f32 dz = pos.z - wz;
-        f32 d2 = dx * dx + dz * dz;
-        if (d2 < best_dist2) {
-            best_dist2 = d2;
-            best_id = id;
-        }
-    }
-
-    return best_id;
 }
 
 std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
