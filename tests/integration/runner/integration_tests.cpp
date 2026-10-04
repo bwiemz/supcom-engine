@@ -17201,6 +17201,35 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if mode[1] ~= 'build' then error('mode ' .. tostring(mode[1])) end
         import('/lua/ui/game/commandmode.lua').EndCommandMode(true)
     )");
+    lua_ok("Test 11r2: pick the mass extractor", R"(
+        __osc_test_acu_id = GetSelectedUnits()[1]:GetEntityId()
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1103'})
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        const auto acu_id = static_cast<osc::u32>(std::stoul(lua_tostring(L, -1)));
+        lua_pop(L, 1);
+        const auto* acu =
+            static_cast<const osc::sim::Unit*>(ctx.sim.entity_registry().find(acu_id));
+        const osc::sim::ResourceDeposit* near = nullptr;
+        for (const auto& d : ctx.sim.resource_deposits()) {
+            const auto dist = [&](const osc::sim::ResourceDeposit& o) {
+                return std::hypot(o.x - acu->position().x, o.z - acu->position().z);
+            };
+            if (d.type == osc::sim::ResourceDeposit::Mass && (!near || dist(d) < dist(*near))) {
+                near = &d;
+            }
+        }
+        const bool issued = near && click(near->x + 1.7f, near->z - 1.2f, false);
+        play(1);
+        const auto& q = acu->command_queue();
+        if (issued && !q.empty() && std::abs(q.back().target_pos.x - near->x) < 0.01f &&
+            std::abs(q.back().target_pos.z - near->z) < 0.01f) {
+            spdlog::info("[PASS] Test 11r2: a click beside a deposit builds the extractor on it");
+        } else {
+            osc::test_status::fail("[FAIL] Test 11r2: issued {}, {} orders", issued, q.size());
+        }
+    }
     lua_ok("Test 11s: pick the T1 power generator to drag", R"(
         __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
         import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})

@@ -3,6 +3,7 @@
 // asking for a spot, ordering the build, and asking again, so a spot with a
 // pending order must read as taken.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "map/heightmap.hpp"
@@ -317,4 +318,37 @@ TEST_CASE("placement: pending orders are gathered only for a site the terrain al
     CHECK(looked_up == std::vector<std::string>{"pgen", "factory"});
     CHECK(p.can_build("pgen", 42.0f, 30.0f));
     CHECK(looked_up.size() == 2); // gathered once
+}
+
+TEST_CASE("An extractor's cursor snaps to the nearest deposit within reach", "[placement]") {
+    using osc::sim::PlacementRules;
+    using osc::sim::ResourceDeposit;
+    using Deposit = PlacementRules::Deposit;
+    std::vector<ResourceDeposit> deposits;
+    deposits.push_back({10.5f, 0, 20.5f, 1.0f, ResourceDeposit::Mass});
+    deposits.push_back({13.5f, 0, 20.5f, 1.0f, ResourceDeposit::Hydrocarbon});
+    deposits.push_back({30.5f, 0, 30.5f, 3.0f, ResourceDeposit::Hydrocarbon});
+    deposits.push_back({16.5f, 0, 20.5f, 1.0f, ResourceDeposit::Mass});
+
+    const auto at = osc::sim::deposit_snap(deposits, Deposit::Mass, 12.7f, 19.2f, 1, 1, 4);
+    REQUIRE(at);
+    CHECK(at->first == Catch::Approx(10.5f));
+    CHECK(at->second == Catch::Approx(20.5f));
+
+    const auto nearer = osc::sim::deposit_snap(deposits, Deposit::Mass, 14.6f, 20.5f, 1, 1, 4);
+    REQUIRE(nearer);
+    CHECK(nearer->first == Catch::Approx(16.5f));
+
+    CHECK_FALSE(osc::sim::deposit_snap(deposits, Deposit::Mass, 10.5f, 26.5f, 1, 1, 4));
+    CHECK_FALSE(osc::sim::deposit_snap(deposits, Deposit::None, 10.5f, 20.5f, 1, 1, 4));
+
+    const auto hydro =
+        osc::sim::deposit_snap(deposits, Deposit::Hydrocarbon, 32.2f, 29.1f, 3, 3, 4);
+    REQUIRE(hydro);
+    CHECK(hydro->first == Catch::Approx(30.5f));
+    CHECK(hydro->second == Catch::Approx(30.5f));
+
+    CHECK(osc::sim::extract_snap_radius(0.1f) == Catch::Approx(4.0f));
+    CHECK(osc::sim::extract_snap_radius(0.01f) == Catch::Approx(0.9f));
+    CHECK(osc::sim::extract_snap_radius(1.0f) == Catch::Approx(20.0f));
 }

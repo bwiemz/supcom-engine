@@ -54,6 +54,41 @@ StructureSite StructureSite::of(const PlacementRules& r, f32 x, f32 z) {
     return of(x, z, r.size_x, r.size_z, r.skirt_x, r.skirt_z, r.skirt_off_x, r.skirt_off_z);
 }
 
+std::optional<std::pair<f32, f32>> deposit_snap(const std::vector<ResourceDeposit>& deposits,
+                                                PlacementRules::Deposit want, f32 x, f32 z,
+                                                f32 size_x, f32 size_z, f32 radius) {
+    if (want == PlacementRules::Deposit::None) {
+        return std::nullopt;
+    }
+    const auto type = want == PlacementRules::Deposit::Mass ? ResourceDeposit::Mass
+                                                            : ResourceDeposit::Hydrocarbon;
+    const f32 cx = std::nearbyint(x - size_x * 0.5f);
+    const f32 cz = std::nearbyint(z - size_z * 0.5f);
+    std::optional<std::pair<f32, f32>> best;
+    f32 best_dist = 0;
+    for (const auto& d : deposits) {
+        if (d.type != type) {
+            continue;
+        }
+        const f32 half = std::floor(std::nearbyint(d.size) * 0.5f);
+        const f32 dx = std::nearbyint(d.x - d.size * 0.5f) + half;
+        const f32 dz = std::nearbyint(d.z - d.size * 0.5f) + half;
+        const f32 dist = std::sqrt((dx - cx) * (dx - cx) + (dz - cz) * (dz - cz));
+        if (dist <= radius && (!best || dist < best_dist)) {
+            best = std::pair{dx + 0.5f, dz + 0.5f};
+            best_dist = dist;
+        }
+    }
+    return best;
+}
+
+f32 extract_snap_radius(f32 world_per_pixel) {
+    if (world_per_pixel <= 0) {
+        return 4.0f;
+    }
+    return std::clamp(4.0f / world_per_pixel, 20.0f, 90.0f) * world_per_pixel;
+}
+
 bool StructureSite::overlaps(const StructureSite& o) const {
     // Touching edges is fine: FA packs structures edge to edge.
     return x0 < o.x1 && o.x0 < x1 && z0 < o.z1 && o.z0 < z1;

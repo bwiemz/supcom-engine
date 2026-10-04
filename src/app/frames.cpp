@@ -73,6 +73,17 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
     lua_pushstring(uiL, "Physics");
     lua_rawget(uiL, bp);
     if (lua_istable(uiL, -1)) {
+        lua_pushstring(uiL, "BuildRestriction");
+        lua_rawget(uiL, -2);
+        if (lua_type(uiL, -1) == LUA_TSTRING) {
+            const std::string_view restriction = lua_tostring(uiL, -1);
+            if (restriction == "RULEUBR_OnMassDeposit") {
+                m.deposit = osc::sim::PlacementRules::Deposit::Mass;
+            } else if (restriction == "RULEUBR_OnHydrocarbonDeposit") {
+                m.deposit = osc::sim::PlacementRules::Deposit::Hydrocarbon;
+            }
+        }
+        lua_pop(uiL, 1);
         for (const char* key : {"SkirtSizeX", "SkirtSizeZ"}) {
             lua_pushstring(uiL, key);
             lua_rawget(uiL, -2);
