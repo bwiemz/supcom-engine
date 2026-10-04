@@ -1118,7 +1118,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         // for a SiloBuildingAmmo focus). A paused silo's helpers
         // wait, paying nothing; so do helpers out of reach.
         working = true;
-    if (is_building()) stop_assisting(ctx.L, &ctx.registry);
+        if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         if (within_reach(*target_unit, true, false)) {
             const SiloBuild& missile = target_unit->silo_build();
@@ -1131,7 +1131,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
     } else {
         // Target not building/reclaiming — stop if we were
-    if (is_building()) stop_assisting(ctx.L, &ctx.registry);
+        if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged and we have build_rate

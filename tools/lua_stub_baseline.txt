@@ -39,7 +39,6 @@ PBMRemoveBuildLocation brain_PBMRemoveBuildLocation
 PlayCommanderWarpInEffect stub_noop
 PlayFxRollOffEnd stub_noop
 RefreshSteamGames l_RefreshSteamGames
-RemoveArmyStatsTrigger brain_RemoveArmyStatsTrigger
 RemoveEnergyDependingEntity brain_RemoveEnergyDependingEntity
 RemoveScroller stub_noop
 RequestRefreshUI stub_noop
@@ -49,7 +48,6 @@ SessionIsReplay stub_false
 SetActiveBuildTemplate l_SetActiveBuildTemplate
 SetArmyColorIndex stub_noop
 SetArmyShowScore stub_noop
-SetArmyStatsTrigger brain_SetArmyStatsTrigger
 SetAuxiliaryParameter worldmesh_SetAuxiliaryParameter
 SetColor worldmesh_SetColor
 SetCommandSource stub_noop

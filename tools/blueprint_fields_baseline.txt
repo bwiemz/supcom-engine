@@ -89,16 +89,10 @@ RotationalVelocity
 SacrificeEnergyMult
 SacrificeMassMult
 Scrolling
-SelectionCenterOffsetX
 SelectionCenterOffsetY
-SelectionCenterOffsetZ
 SelectionMeshScaleX
 SelectionMeshScaleZ
 SelectionMeshUseTopAmount
-SelectionPriority
-SelectionSizeX
-SelectionSizeZ
-SelectionThickness
 SelectionYOffset
 ShowAssistRangeOnSelect
 ShowIntelOnSelect
