@@ -160,6 +160,18 @@ if(OSC_BUILD_TESTS)
         set_tests_properties(arch.state_io arch.state_io_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # Every Lua binding that does nothing is listed as a stub: one added
+        # unlisted passes the coverage ratchet and quietly drops what a script
+        # asks for.
+        add_test(NAME arch.lua_stubs
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_lua_stubs.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.lua_stubs_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_lua_stubs.py
+                         --self-test)
+        set_tests_properties(arch.lua_stubs arch.lua_stubs_self_test
+                             PROPERTIES LABELS "arch" TIMEOUT 60)
+
         # retail_ref.py, which asks retail FA itself for references: its config,
         # init file and reading of retail's log (retail isn't run here)
         add_test(NAME arch.retail_ref_self_test

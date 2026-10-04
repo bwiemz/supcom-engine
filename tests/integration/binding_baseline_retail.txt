@@ -23,6 +23,7 @@ G GetArmy                   # not Moho's as a global (a method of units and brai
 G IN_ClearKeyMap
 G InternalCreateMesh
 G IssueEnhance              # not Moho's
+G KillThread                # the UI state has only the blueprint phase's stand-in
 G RemoveProfileDirectories
 G SetQueueGrid              # not Moho's
 G SetQueueState             # not Moho's

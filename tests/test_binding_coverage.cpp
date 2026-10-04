@@ -1,6 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/binding_coverage.hpp"
+#include "lua/engine_bindings.hpp"
+#include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "ui/ui_control.hpp"
 
 #include <set>
 #include <string>
@@ -147,4 +151,21 @@ TEST_CASE("parameters and loop variables are definitions", "[coverage]") {
     }
     auto report = compute_coverage(r, {}, {});
     CHECK(report.missing_globals.empty());
+}
+
+TEST_CASE("A global left bound to a blueprint-phase stand-in counts as missing", "[coverage]") {
+    osc::lua::LuaState state;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_blueprint_bindings(state);
+    osc::lua::register_ui_bindings(state, registry);
+    std::set<std::string> stand_ins;
+    osc::lua::coverage::collect_stand_ins(state.raw(), stand_ins);
+    CHECK(stand_ins.count("ForkThread") == 0);
+    CHECK(stand_ins.count("Trace") == 0);
+
+    osc::lua::LuaState bare;
+    osc::lua::register_blueprint_bindings(bare);
+    std::set<std::string> all;
+    osc::lua::coverage::collect_stand_ins(bare.raw(), all);
+    CHECK(all == std::set<std::string>{"ForkThread", "KillThread"});
 }

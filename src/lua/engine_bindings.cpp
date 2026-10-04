@@ -353,6 +353,10 @@ static int l_ForkThread(lua_State* L) { lua_pushnil(L); return 1; }
 static int l_KillThread(lua_State*) { return 0; }
 // WaitFor is now implemented in sim_bindings.cpp with real yield/resume
 
+bool is_thread_stand_in(lua_CFunction f) {
+    return f == l_ForkThread || f == l_KillThread;
+}
+
 // Misc stubs
 static int l_Trace(lua_State*) { return 0; }
 static int l_BeginLoggingStats(lua_State*) { return 0; }
