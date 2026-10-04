@@ -18,6 +18,31 @@ constexpr f32 MAX_STRUCTURE_HALF_EXTENT = 16.0f;
 
 } // namespace
 
+std::vector<std::pair<f32, f32>> structure_line_sites(f32 x0, f32 z0, f32 x1, f32 z1, f32 size_x,
+                                                      f32 size_z, f32 spacing) {
+    const f32 hx = size_x * 0.5f;
+    const f32 hz = size_z * 0.5f;
+    const f32 cx0 = std::nearbyint(x0 - hx);
+    const f32 cz0 = std::nearbyint(z0 - hz);
+    const f32 dx = std::nearbyint(x1 - hx) - cx0;
+    const f32 dz = std::nearbyint(z1 - hz) - cz0;
+    const f32 along = std::max(std::abs(dx), std::abs(dz));
+    std::vector<std::pair<f32, f32>> sites;
+    if (along == 0.0f || spacing <= 0.0f) {
+        sites.emplace_back(cx0 + hx, cz0 + hz);
+        return sites;
+    }
+    const int count = static_cast<int>(std::floor(along / spacing)) + 1;
+    const f32 step_x = dx / along * spacing;
+    const f32 step_z = dz / along * spacing;
+    for (int i = 0; i < count; ++i) {
+        const f32 k = static_cast<f32>(i);
+        sites.emplace_back(std::nearbyint(cx0 + step_x * k) + hx,
+                           std::nearbyint(cz0 + step_z * k) + hz);
+    }
+    return sites;
+}
+
 StructureSite StructureSite::of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, f32 skirt_z,
                                 f32 off_x, f32 off_z) {
     const f32 x0 = x - size_x * 0.5f + std::min(off_x, 0.0f);

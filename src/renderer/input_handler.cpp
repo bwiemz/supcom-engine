@@ -67,6 +67,10 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     bool on_minimap = renderer.minimap().hit_test(mx, my, renderer.width(), renderer.height(),
                                                   map_w, map_h, mm_wx, mm_wz);
 
+    // FA's command mode (a build icon or order button picked in the UI)
+    // turns a world click into that command.
+    const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
+    const bool mode_active = mode.mode == "build" || mode.mode == "order";
     cursor_world_.reset();
     if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
         f32 wx = 0;
@@ -84,9 +88,25 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
         drag_start_x_ = mx;
         drag_start_y_ = my;
         dragging_ = false;
+        // In build mode a press starts a line, a click being one of no length
+        f32 wx = 0;
+        f32 wz = 0;
+        build_line_ = std::nullopt;
+        if (mode.mode == "build" && !lmb_on_minimap_ && world_at(renderer, sim, mx, my, wx, wz)) {
+            build_line_ = std::array<f32, 4>{wx, wz, wx, wz};
+            line_drag_build_ = mode.drag_build;
+            line_spacing_ = mode.drag_spacing;
+        }
     }
 
-    if (lmb && lmb_on_minimap_) {
+    if (lmb && build_line_) {
+        f32 wx = 0;
+        f32 wz = 0;
+        if (mode.drag_build && world_at(renderer, sim, mx, my, wx, wz)) {
+            (*build_line_)[2] = wx;
+            (*build_line_)[3] = wz;
+        }
+    } else if (lmb && lmb_on_minimap_) {
         if (on_minimap) renderer.camera().set_target(mm_wx, mm_wz);
     } else if (lmb && lmb_was_pressed_) {
         // Held down — check for drag
@@ -105,14 +125,22 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
         }
     }
 
-    // FA's command mode (a build icon or order button picked in the UI)
-    // turns a world click into that command.
-    const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
-    const bool mode_active = mode.mode == "build" || mode.mode == "order";
-
     if (!lmb && lmb_was_pressed_) {
         // Left button just released
-        if (lmb_on_minimap_) {
+        if (build_line_) {
+            const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                               renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+            const auto line = *build_line_;
+            build_line_ = std::nullopt;
+            if (mode.mode == "build") {
+                for (const auto& issued :
+                     build_line(sim, mode, line[0], line[1], line[2], line[3], shift)) {
+                    if (mode_hooks_.issued) {
+                        mode_hooks_.issued(issued);
+                    }
+                }
+            }
+        } else if (lmb_on_minimap_) {
             lmb_on_minimap_ = false; // the minimap's press: nothing more to do
         } else if (dragging_) {
             handle_drag_select(renderer, sim);
@@ -493,6 +521,61 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     return out;
 }
 
+std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const CommandMode& mode,
+                                                    f32 x0, f32 z0, f32 x1, f32 z1, bool shift) {
+    std::vector<IssuedCommand> issued;
+    if (mode.mode != "build" || mode.name.empty()) {
+        return issued;
+    }
+    // Mobile builders take the orders; factories build through their queue.
+    std::vector<u32> ids;
+    for (u32 uid : selected_) {
+        const auto* e = sim.entity_registry().find(uid);
+        if (!e || !e->is_unit() || e->destroyed()) {
+            continue;
+        }
+        const auto& u = static_cast<const sim::Unit&>(*e);
+        if (u.build_rate() > 0 && !u.has_category("STRUCTURE")) {
+            ids.push_back(uid);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    if (ids.empty()) {
+        return issued;
+    }
+    if (!mode.drag_build) {
+        x1 = x0;
+        z1 = z0;
+    }
+    for (const auto& [x, z] : sim::structure_line_sites(x0, z0, x1, z1, mode.footprint_x,
+                                                        mode.footprint_z, mode.drag_spacing)) {
+        if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, x, z)) {
+            continue;
+        }
+        const bool clear = issued.empty() && !shift;
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::BuildMobile;
+        cmd.blueprint_id = mode.name;
+        cmd.target_pos = {x, sim.terrain() ? sim.terrain()->get_surface_height(x, z) : 0.0f, z};
+        // Player-issued order: routed so a networked match broadcasts it.
+        sim.set_human_input_active(true);
+        sim.route_player_command(ids, cmd, clear);
+        sim.set_human_input_active(false);
+        IssuedCommand out;
+        out.type = "BuildMobile";
+        out.blueprint = mode.name;
+        out.position = cmd.target_pos;
+        out.clear = false;
+        issued.push_back(out);
+    }
+    // The last one tells commandmode.lua the line is done, ending the mode
+    // without Shift
+    if (!issued.empty()) {
+        issued.back().clear = !shift;
+    }
+    return issued;
+}
+
 u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
                                 f32 radius, bool reclaim) const {
     u32 best_id = 0;
@@ -549,48 +632,57 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
                                                    const sim::SimState& sim) const {
     const auto& bp = sim.build_ghost_bp();
     if (bp.empty() || !sim.terrain()) return std::nullopt;
+    const f32 size_x = sim.build_ghost_foot_x();
+    const f32 size_z = sim.build_ghost_foot_z();
+
+    const auto ghost_at = [&](f32 wx, f32 wz) {
+        BuildGhost ghost;
+        ghost.blueprint_id = bp;
+        ghost.x = wx;
+        ghost.y = sim.terrain()->get_terrain_height(wx, wz);
+        ghost.z = wz;
+        sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
+        if (mode_hooks_.can_place) {
+            ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
+            // can_place has read the blueprint's rules
+            pad = sim::StructureSite::of(
+                sim.placement_rules(bp, [] { return sim::PlacementRules{}; }), wx, wz);
+        } else if (const auto* grid = sim.pathfinding_grid()) {
+            // Buildable unless the footprint covers impassable ground
+            u32 gx0, gz0, gx1, gz1;
+            grid->world_to_grid(wx - size_x * 0.5f, wz - size_z * 0.5f, gx0, gz0);
+            grid->world_to_grid(wx + size_x * 0.5f, wz + size_z * 0.5f, gx1, gz1);
+            for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz) {
+                for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx) {
+                    ghost.valid = grid->get(gx, gz) != map::CellPassability::Impassable;
+                }
+            }
+        }
+        ghost.pad_x0 = pad.x0;
+        ghost.pad_z0 = pad.z0;
+        ghost.pad_x1 = pad.x1;
+        ghost.pad_z1 = pad.z1;
+        return ghost;
+    };
+
+    if (build_line_ && line_drag_build_) {
+        const auto& l = *build_line_;
+        const auto sites =
+            sim::structure_line_sites(l[0], l[1], l[2], l[3], size_x, size_z, line_spacing_);
+        BuildGhost ghost = ghost_at(sites.front().first, sites.front().second);
+        for (size_t i = 1; i < sites.size(); ++i) {
+            ghost.line.push_back(ghost_at(sites[i].first, sites[i].second));
+        }
+        return ghost;
+    }
     f64 mx = 0, my = 0;
     renderer.mouse_position(mx, my);
     f32 wx = 0, wz = 0;
     if (!world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz))
         return std::nullopt;
-
-    const f32 size_x = sim.build_ghost_foot_x();
-    const f32 size_z = sim.build_ghost_foot_z();
     // Where a build order at the cursor would place it
     sim::snap_structure_center(wx, wz, size_x, size_z);
-
-    BuildGhost ghost;
-    ghost.blueprint_id = bp;
-    ghost.x = wx;
-    ghost.y = sim.terrain()->get_terrain_height(wx, wz);
-    ghost.z = wz;
-    sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
-    if (mode_hooks_.can_place) {
-        ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
-        // can_place has read the blueprint's rules
-        pad = sim::StructureSite::of(sim.placement_rules(bp, [] { return sim::PlacementRules{}; }),
-                                     wx, wz);
-    }
-    ghost.pad_x0 = pad.x0;
-    ghost.pad_z0 = pad.z0;
-    ghost.pad_x1 = pad.x1;
-    ghost.pad_z1 = pad.z1;
-    if (mode_hooks_.can_place) {
-        return ghost;
-    }
-    // Buildable unless the footprint covers impassable ground
-    if (const auto* grid = sim.pathfinding_grid()) {
-        const f32 half_x = size_x * 0.5f;
-        const f32 half_z = size_z * 0.5f;
-        u32 gx0, gz0, gx1, gz1;
-        grid->world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
-        grid->world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
-        for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz)
-            for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx)
-                if (grid->get(gx, gz) == map::CellPassability::Impassable) ghost.valid = false;
-    }
-    return ghost;
+    return ghost_at(wx, wz);
 }
 
 } // namespace osc::renderer

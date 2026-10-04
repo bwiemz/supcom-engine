@@ -43,21 +43,48 @@ bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
 // ── FA's command mode (/lua/ui/game/commandmode.lua) ──
 static constexpr const char* kCommandModeModule = "/lua/ui/game/commandmode.lua";
 
-/// A unit blueprint's footprint from the UI state's blueprint store.
-static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f32& sx,
-                                osc::f32& sz) {
+/// The structure a build mode places, from the UI state's blueprint store:
+/// its footprint, and whether a drag lays a line of it (DRAGBUILD), its skirt
+/// apart.
+static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) {
     auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
-    auto* entry = store ? store->find(bp_id) : nullptr;
+    auto* entry = store ? store->find(m.name) : nullptr;
     if (!entry) return;
     store->push_lua_table(*entry, uiL);
-    const auto [fx, fz] = osc::sim::blueprint_footprint(uiL, lua_gettop(uiL));
+    const int bp = lua_gettop(uiL);
+    const auto [fx, fz] = osc::sim::blueprint_footprint(uiL, bp);
     if (fx > 0) {
-        sx = fx;
+        m.footprint_x = fx;
     }
     if (fz > 0) {
-        sz = fz;
+        m.footprint_z = fz;
+    }
+    lua_pushstring(uiL, "Categories");
+    lua_rawget(uiL, bp);
+    if (lua_istable(uiL, -1)) {
+        for (int i = 1, n = luaL_getn(uiL, -1); i <= n && !m.drag_build; ++i) {
+            lua_rawgeti(uiL, -1, i);
+            m.drag_build = lua_type(uiL, -1) == LUA_TSTRING &&
+                           std::string_view(lua_tostring(uiL, -1)) == "DRAGBUILD";
+            lua_pop(uiL, 1);
+        }
     }
     lua_pop(uiL, 1);
+    m.drag_spacing = std::max(m.footprint_x, m.footprint_z);
+    lua_pushstring(uiL, "Physics");
+    lua_rawget(uiL, bp);
+    if (lua_istable(uiL, -1)) {
+        for (const char* key : {"SkirtSizeX", "SkirtSizeZ"}) {
+            lua_pushstring(uiL, key);
+            lua_rawget(uiL, -2);
+            if (lua_isnumber(uiL, -1)) {
+                m.drag_spacing =
+                    std::max(m.drag_spacing, static_cast<osc::f32>(lua_tonumber(uiL, -1)));
+            }
+            lua_pop(uiL, 1);
+        }
+    }
+    lua_pop(uiL, 2);
 }
 
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the
@@ -122,8 +149,9 @@ osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
         lua_pop(uiL, 1);
     }
     lua_pop(uiL, 1);
-    if (m.mode == "build" && !m.name.empty())
-        blueprint_footprint(uiL, m.name, m.footprint_x, m.footprint_z);
+    if (m.mode == "build" && !m.name.empty()) {
+        build_mode_blueprint(uiL, m);
+    }
     if (m.mode == "order" && m.name == "RULEUCC_Script") m.script_args_at = script_order_at(uiL);
     return m;
 }

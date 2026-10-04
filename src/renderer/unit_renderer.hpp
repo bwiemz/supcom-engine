@@ -140,6 +140,7 @@ public:
 
     /// Inject a single ghost mesh instance (for build preview).
     /// Call after update(). Returns true if the ghost was added.
+    /// Room the next update() leaves for build ghosts
     void set_ghost_slots(u32 n) { ghost_slots_ = n; }
 
     bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
