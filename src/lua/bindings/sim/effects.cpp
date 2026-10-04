@@ -330,7 +330,7 @@ static int collision_beam_Enable(lua_State* L) {
     // Fire OnEnable callback on Lua table
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "OnEnable");
-        lua_rawget(L, 1);
+        lua_gettable(L, 1);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, 1); // self
             if (lua_pcall(L, 1, 0, 0) != 0) { lua_pop(L, 1); }
@@ -351,7 +351,7 @@ static int collision_beam_Disable(lua_State* L) {
     // Fire OnDisable callback on Lua table
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "OnDisable");
-        lua_rawget(L, 1);
+        lua_gettable(L, 1);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, 1); // self
             if (lua_pcall(L, 1, 0, 0) != 0) { lua_pop(L, 1); }

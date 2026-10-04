@@ -362,7 +362,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             bool handled = false;
             if (ev.type == UIEventType::MOUSE_MOTION) {
                 lua_pushstring(L, "OnMove");
-                lua_rawget(L, dragger_idx);
+                lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
                     lua_pushnumber(L, ev.mouse_x);
@@ -378,7 +378,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 handled = true;
             } else if (ev.type == UIEventType::BUTTON_RELEASE) {
                 lua_pushstring(L, "OnRelease");
-                lua_rawget(L, dragger_idx);
+                lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
                     lua_pushnumber(L, ev.mouse_x);
@@ -399,7 +399,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             } else if (ev.type == UIEventType::KEY_DOWN && ev.key_code == 256) {
                 // ESC = GLFW_KEY_ESCAPE = 256
                 lua_pushstring(L, "OnCancel");
-                lua_rawget(L, dragger_idx);
+                lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
                     if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -622,7 +622,7 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         lua_pushstring(L, "OnFrame");
-        lua_rawget(L, -2);
+        lua_gettable(L, -2);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, -2); // self
             lua_pushnumber(L, dt);
