@@ -74,6 +74,8 @@ struct EntityRecord {
     IconClass icon = IconClass::Generic;
     f32 footprint_size_x = 1;
     f32 footprint_size_z = 1;
+    bool is_structure = false;
+    f32 skirt_size_x = 0, skirt_size_z = 0, skirt_offset_x = 0, skirt_offset_z = 0;
     bool is_being_built = false;
     bool is_mobile = false; ///< Unit::is_mobile: its blueprint's motion type (M215a)
     /// Each army's recon of it (bit per army; M215d): in its line of sight

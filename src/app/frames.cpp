@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "lua/factory_queue.hpp"
+#include "sim/collision.hpp"
 #include "core/game_state.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
@@ -49,19 +50,14 @@ static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f
     auto* entry = store ? store->find(bp_id) : nullptr;
     if (!entry) return;
     store->push_lua_table(*entry, uiL);
-    lua_pushstring(uiL, "Footprint");
-    lua_rawget(uiL, -2);
-    if (lua_istable(uiL, -1)) {
-        lua_pushstring(uiL, "SizeX");
-        lua_rawget(uiL, -2);
-        if (lua_isnumber(uiL, -1)) sx = static_cast<osc::f32>(lua_tonumber(uiL, -1));
-        lua_pop(uiL, 1);
-        lua_pushstring(uiL, "SizeZ");
-        lua_rawget(uiL, -2);
-        if (lua_isnumber(uiL, -1)) sz = static_cast<osc::f32>(lua_tonumber(uiL, -1));
-        lua_pop(uiL, 1);
+    const auto [fx, fz] = osc::sim::blueprint_footprint(uiL, lua_gettop(uiL));
+    if (fx > 0) {
+        sx = fx;
     }
-    lua_pop(uiL, 2); // Footprint + blueprint
+    if (fz > 0) {
+        sz = fz;
+    }
+    lua_pop(uiL, 1);
 }
 
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the

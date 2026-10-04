@@ -1141,20 +1141,11 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         return r;
     }
     const int bp = lua_gettop(L);
-    auto number_field = [L](int table, const char* key, f32& out) {
-        lua_pushstring(L, key);
-        lua_rawget(L, table);
-        if (lua_isnumber(L, -1)) out = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    };
 
-    lua_pushstring(L, "Footprint");
-    lua_rawget(L, bp);
-    if (lua_istable(L, -1)) {
-        number_field(lua_gettop(L), "SizeX", r.size_x);
-        number_field(lua_gettop(L), "SizeZ", r.size_z);
+    if (const auto [fx, fz] = sim::blueprint_footprint(L, bp); fx > 0 && fz > 0) {
+        r.size_x = fx;
+        r.size_z = fz;
     }
-    lua_pop(L, 1);
 
     lua_pushstring(L, "Physics");
     lua_rawget(L, bp);
@@ -1176,6 +1167,17 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
             r.on_seabed = cap("LAYER_Seabed");
         }
         lua_pop(L, 1);
+        const auto number = [L, phys](const char* key) {
+            lua_pushstring(L, key);
+            lua_rawget(L, phys);
+            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+            lua_pop(L, 1);
+            return v;
+        };
+        r.skirt_x = number("SkirtSizeX");
+        r.skirt_z = number("SkirtSizeZ");
+        r.skirt_off_x = number("SkirtOffsetX");
+        r.skirt_off_z = number("SkirtOffsetZ");
         lua_pushstring(L, "BuildRestriction");
         lua_rawget(L, phys);
         if (lua_type(L, -1) == LUA_TSTRING) {
@@ -1988,6 +1990,11 @@ static void create_brain_unit(lua_State* L, const sim::ArmyBrain& brain, const s
         lua_pop(L, 1);
         lua_pushnil(L);
     }
+}
+
+bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
+                         f32 x, f32 z) {
+    return placement_for(L, sim, army).can_build(bp_id, x, z);
 }
 
 // Where a structure stands (Moho: a footprint that can sit on the seabed

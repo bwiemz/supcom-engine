@@ -36,6 +36,11 @@ void register_category_bindings(LuaState& state);
 /// carries it: retail reads positions as both pos[1] and pos.x.
 void push_vector_metatable(lua_State* L);
 
+/// Whether army `army` may build structure `bp_id` centred at (x, z), by
+/// StructurePlacement
+bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
+                         f32 x, f32 z);
+
 /// A structure blueprint's placement rules, as its Physics give them (the
 /// sim keeps them once read)
 const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
