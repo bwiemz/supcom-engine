@@ -1195,6 +1195,27 @@ void SimState::update_economies() {
         army->update_economy(entity_registry_, SECONDS_PER_TICK);
     }
     share_team_economy();
+    for (auto& army : armies_) {
+        for (const auto& name : army->take_fired_triggers()) {
+            if (army->lua_table_ref() < 0) {
+                continue;
+            }
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, army->lua_table_ref());
+            lua_pushstring(L_, "OnStatsTrigger");
+            lua_gettable(L_, -2);
+            if (lua_isfunction(L_, -1)) {
+                lua_pushvalue(L_, -2);
+                lua_pushstring(L_, name.c_str());
+                if (lua_pcall(L_, 2, 0, 0) != 0) {
+                    spdlog::warn("OnStatsTrigger error: {}", lua_tostring(L_, -1));
+                    lua_pop(L_, 1);
+                }
+            } else {
+                lua_pop(L_, 1);
+            }
+            lua_pop(L_, 1);
+        }
+    }
 }
 
 std::vector<std::vector<i32>> SimState::alliance_teams() const {

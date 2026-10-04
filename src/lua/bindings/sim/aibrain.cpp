@@ -2197,9 +2197,34 @@ static int brain_GetArmySkinName(lua_State* L) {
     return 1;
 }
 
+// brain:SetArmyStatsTrigger(stat, name, compare, value[, category])
+static int brain_SetArmyStatsTrigger(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain) {
+        return 0;
+    }
+    sim::StatTrigger t;
+    t.stat = luaL_checkstring(L, 2);
+    t.name = luaL_checkstring(L, 3);
+    t.compare = luaL_checkstring(L, 4);
+    t.value = luaL_checknumber(L, 5);
+    if (!lua_isnoneornil(L, 6)) {
+        t.category = "category";
+    }
+    brain->add_stat_trigger(std::move(t));
+    return 0;
+}
+
+// brain:RemoveArmyStatsTrigger(stat, name)
+static int brain_RemoveArmyStatsTrigger(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain) {
+        brain->remove_stat_trigger(luaL_checkstring(L, 2), luaL_checkstring(L, 3));
+    }
+    return 0;
+}
+
 // Not called in FA — named no-ops to replace generic stubs
-static int brain_SetArmyStatsTrigger(lua_State*) { return 0; }
-static int brain_RemoveArmyStatsTrigger(lua_State*) { return 0; }
 static int brain_RemoveEnergyDependingEntity(lua_State*) { return 0; }
 static int brain_PBMAddBuildLocation(lua_State*) { return 0; }
 static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
