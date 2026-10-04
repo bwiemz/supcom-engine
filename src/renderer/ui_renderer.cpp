@@ -212,8 +212,9 @@ void UIRenderer::emit_edit_quads(ui::UIControl* ctrl, TextureCache& tex_cache,
         ctrl->set_text_color(saved_color);
     }
 
-    // 3. Caret (blinking vertical line)
-    if (ctrl->caret_visible() && ctrl->input_enabled() && quad_count_ < MAX_UI_QUADS) {
+    // 3. Caret (blinking vertical line): only the focused Edit's, as Moho's
+    if (ctrl->has_keyboard_focus() && ctrl->caret_visible() && ctrl->input_enabled() &&
+        quad_count_ < MAX_UI_QUADS) {
         const FontAtlas* atlas = font_cache.get(ctrl->font_family(),
                                                  ctrl->font_pointsize());
         f32 caret_x = left + 2.0f; // small left padding
