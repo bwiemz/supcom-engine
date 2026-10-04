@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "app/support.hpp"
 #include "core/front_end_data.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
@@ -855,4 +856,28 @@ TEST_CASE("GameOptions parser preserves lobby scalar values and restrictions", "
     CHECK(saw_cheats);
     CHECK(saw_cheat_mult);
     CHECK_FALSE(saw_scenario);
+}
+
+TEST_CASE("The player plays the army set up as human, not the first", "[session]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.add_army("ARMY_5", "ARMY_5");
+
+    // No setup (a game not launched from a lobby): every army is human, as
+    // InitializeArmyAI makes it, and the player plays the first
+    CHECK(osc::app::human_army(lua.raw(), sim) == 0);
+
+    // Random spawn put the player in the lobby's fifth slot, an AI in the
+    // first two
+    REQUIRE(lua.do_string("ScenarioInfo = { ArmySetup = {\n"
+                          "  ARMY_1 = { Human = false }, ARMY_2 = { Human = false },\n"
+                          "  ARMY_5 = { Human = true } } }")
+                .ok());
+    CHECK(osc::app::human_army(lua.raw(), sim) == 2);
+
+    // AIs alone: watched from the first
+    REQUIRE(lua.do_string("ScenarioInfo.ArmySetup.ARMY_5.Human = false").ok());
+    CHECK(osc::app::human_army(lua.raw(), sim) == 0);
 }
