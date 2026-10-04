@@ -59,6 +59,9 @@ struct StructureSite {
     static StructureSite of(const PlacementRules& r, f32 x, f32 z);
 
     bool overlaps(const StructureSite& o) const;
+    /// Moho's build-mode adjacency: an edge within 1 of the other's, and the
+    /// span along it inside the other's or holding it
+    bool touches(const StructureSite& o) const;
 };
 
 /// Placement checks for one army at one moment. Collects the army's pending

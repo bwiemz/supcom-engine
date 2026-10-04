@@ -56,6 +56,10 @@ std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
 std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
                                                                const ReconView* recon);
 
+/// Which of `pads` a valid ghost on `ghost` lights up: those it touches
+std::vector<bool> adjacency_lit(const std::vector<sim::StructureSite>& pads,
+                                const sim::StructureSite& ghost);
+
 /// The outline of a quad on screen (corners in order), `thickness` wide, as
 /// convex_rows' rows of a pixel
 std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
