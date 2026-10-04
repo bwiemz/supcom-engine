@@ -263,6 +263,8 @@ public:
     /// screen), or let go.
     void set_cursor_clip(bool on);
     bool cursor_clipped() const { return cursor_clipped_; }
+    /// Whether the system's cursor shows over the window (it should not)
+    bool system_cursor_shown() const;
     bool bloom_enabled() const { return bloom_enabled_; }
     /// What the scene clears to: Moho's black, with no glow (M210b). The sky
     /// dome draws over it; a test's own scenery may set another backdrop.

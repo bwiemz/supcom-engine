@@ -1897,17 +1897,22 @@ static int unit_RestoreCommandCaps(lua_State* L) {
 
 // --- Build restrictions ---
 
+/// A build restriction's category: a category object, or a string as a
+/// blueprint's category list
+static sim::CategoryExpr restriction_arg(lua_State* L, int index) {
+    if (lua_type(L, index) == LUA_TSTRING) return sim::parse_category_list(lua_tostring(L, index));
+    return sim::compile_category(L, index);
+}
+
 static int unit_AddBuildRestriction(lua_State* L) {
     auto* u = check_unit(L);
-    if (u && lua_type(L, 2) == LUA_TSTRING)
-        u->add_build_restriction(lua_tostring(L, 2));
+    if (u) u->add_build_restriction(restriction_arg(L, 2));
     return 0;
 }
 
 static int unit_RemoveBuildRestriction(lua_State* L) {
     auto* u = check_unit(L);
-    if (u && lua_type(L, 2) == LUA_TSTRING)
-        u->remove_build_restriction(lua_tostring(L, 2));
+    if (u) u->remove_build_restriction(restriction_arg(L, 2));
     return 0;
 }
 

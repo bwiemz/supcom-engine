@@ -6,6 +6,7 @@
 #include "app/app.hpp"
 #include "app/bench.hpp"
 #include "app/support.hpp"
+#include "app/ui_clicks.hpp"
 #include "audio/sound_manager.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "core/front_end_data.hpp"
@@ -78,7 +79,7 @@ struct Options {
     bool mods_flow_test = false;
     bool campaign_flow_test = false; ///< (M209b)
     bool mods_flow_lobby = false;
-    std::vector<std::string> clicks; ///< --click <label>, in order
+    std::vector<UiClick> clicks; ///< --click <label>, --click-at <x>,<y>, in order
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's
     /// LAN lobby played to a game by two processes, offscreen (M218c).
     bool lan_game_host = false;
