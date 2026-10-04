@@ -61,9 +61,9 @@ would and fixes what breaks, each fix against Moho's own code (faf-re).
   - the intro's `NISMode('on')` then showed it again.
   The engine now applies the first sync first.
 - **Hiding** (`CMauiControl::SetHidden`, which `Hide` and `Show` call):
-  - `OnHide(hidden)` runs first; if it returns true, the control and its children stay as
-    they are;
-  - otherwise the flag is set, then each child goes through the same.
+  - the flag is set, then `OnHide(hidden)` runs; if it returns true, the children stay as
+    they are (retail's `Grid` shows its cells itself);
+  - otherwise each child goes through the same.
   The engine's `Hide`/`Show` skipped `OnHide`, and `SetHidden` didn't recurse, so a
   `Window`'s border (a group beside it, hidden by its `OnHide`) stayed up.
 - **Bitmap sizes:** `CMauiBitmap::SetTexture` sets the `BitmapWidth`/`BitmapHeight` LazyVars

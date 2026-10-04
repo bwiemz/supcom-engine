@@ -446,7 +446,7 @@ std::optional<int> App::Window::finish() {
         if (auto code = tests->after_window()) return code;
     }
     if (ui_clicks && !ui_clicks->done()) {
-        spdlog::error("--click '{}': the button never took a click", ui_clicks->waiting_for());
+        spdlog::error("{}", ui_clicks->never_clicked());
         return 1;
     }
     if (!screenshot_path.empty() && osc::renderer::Renderer::validation_error_count() > 0) {

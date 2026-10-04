@@ -926,7 +926,7 @@ static int l_SelectUnits(lua_State* L) {
                 auto eid = static_cast<u32>(lua_tonumber(L, -1));
                 if (sim) {
                     auto* entity = sim->entity_registry().find(eid);
-                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                    if (entity && renderer::selectable(*entity)) {
                         new_sel.insert(eid);
                     }
                 } else {
@@ -982,7 +982,7 @@ static int l_AddSelectUnits(lua_State* L) {
                 auto eid = static_cast<u32>(lua_tonumber(L, -1));
                 if (sim) {
                     auto* entity = sim->entity_registry().find(eid);
-                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                    if (entity && renderer::selectable(*entity)) {
                         sel.insert(eid);
                     }
                 } else {
@@ -1388,6 +1388,31 @@ static int l_GetRolloverInfo(lua_State* L) {
     return 1;
 }
 
+void update_world_view_cursor(lua_State* L) {
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* view = static_cast<const ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!view || view->destroyed() || view->lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, view->lua_table_ref());
+    lua_pushstring(L, "OnUpdateCursor");
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            static bool reported = false;
+            if (!reported) {
+                spdlog::warn("OnUpdateCursor: {}", lua_tostring(L, -1));
+                reported = true;
+            }
+        }
+    }
+    lua_settop(L, top);
+}
+
 void register_user_bindings(LuaState& state) {
     lua_State* L = state.raw();
     // Globals of the UI state.
@@ -1627,7 +1652,7 @@ void select_by_category(lua_State* L, const std::vector<std::string>& args) {
     f32 nearest_distance = std::numeric_limits<f32>::infinity();
     sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         const auto& u = static_cast<const sim::Unit&>(e);
-        if (u.destroyed() || u.unselectable() || u.army() != ih->player_army()) return;
+        if (!renderer::selectable(u) || u.army() != ih->player_army()) return;
         const auto& p = u.position();
         if (view && !view->is_sphere_visible(p.x, p.y, p.z, 0.0f)) return;
         if (idle && (u.busy() || !u.command_queue().empty())) return;
