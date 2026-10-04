@@ -16859,6 +16859,41 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if n < 5 then error('order grid holds ' .. n .. ' buttons') end
         if grid:IsHidden() then error('the order grid is hidden') end
     )");
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_radar = CreateUnitHPR('ueb3101', 'ARMY_1', x - 20, GetTerrainHeight(x - 20, z), z + 10, 0, 0, 0)
+        __osc_ui_scout = CreateUnitHPR('uea0101', 'ARMY_1', x - 24, GetTerrainHeight(x - 24, z) + 10, z + 10, 0, 0, 0)
+    )");
+    play(2);
+    {
+        osc::u32 radar = 0;
+        osc::u32 scout = 0;
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb3101") {
+                radar = e.entity_id();
+            } else if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "uea0101") {
+                scout = e.entity_id();
+            }
+        });
+        const std::string check = fmt::format(R"(
+            local acu = GetSelectedUnits()[1]
+            local function has(list, name)
+                for _, v in list do if v == name then return true end end
+                return false
+            end
+            SelectUnits({{{{EntityId = {}}}}})
+            local _, radar_toggles = GetUnitCommandData(GetSelectedUnits())
+            SelectUnits({{{{EntityId = {}}}}})
+            local scout_orders = GetUnitCommandData(GetSelectedUnits())
+            SelectUnits({{acu}})
+            if not has(radar_toggles, 'RULEUTC_IntelToggle') then error('the radar has no intel toggle') end
+            if not has(scout_orders, 'RULEUCC_Dock') then error('the scout has no dock order') end
+        )",
+                                              radar, scout);
+        lua_ok("Test 10g0: a radar's intel toggle and a scout's dock order", check.c_str());
+    }
+    sim_lua("__osc_ui_radar:Destroy() __osc_ui_scout:Destroy()");
+    play(2);
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
         local list = EntityCategoryGetUnitList(buildable)
