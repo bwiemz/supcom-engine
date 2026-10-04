@@ -607,7 +607,29 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     out.target_id = cmd.target_id;
     // Player-issued order: routed so a networked match broadcasts it.
     sim.set_human_input_active(true);
-    sim.route_player_command(ids, cmd, !shift);
+    // Moho's patrol starts where the group stands, or its queue ends, unless
+    // it is already patrolling: the loop runs back there
+    bool patrolling = false;
+    f32 ax = 0;
+    f32 az = 0;
+    for (u32 id : ids) {
+        const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
+        const auto& q = u.command_queue();
+        const sim::Vector3 at = shift && !q.empty() ? q.back().target_pos : u.position();
+        ax += at.x;
+        az += at.z;
+        patrolling |= shift && !q.empty() && q.back().type == sim::CommandType::Patrol;
+    }
+    if (cmd.type == sim::CommandType::Patrol && !patrolling) {
+        ax /= static_cast<f32>(ids.size());
+        az /= static_cast<f32>(ids.size());
+        sim::UnitCommand anchor = cmd;
+        anchor.target_pos = {ax, surface_y(ax, az), az};
+        sim.route_player_command(ids, anchor, !shift);
+        sim.route_player_command(ids, cmd, false);
+    } else {
+        sim.route_player_command(ids, cmd, !shift);
+    }
     sim.set_human_input_active(false);
     return out;
 }
