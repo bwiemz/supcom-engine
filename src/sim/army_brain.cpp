@@ -76,6 +76,49 @@ f64 ArmyBrain::get_economy_stored(const std::string& resource_type) const {
     return 0.0;
 }
 
+void ArmyBrain::remove_stat_trigger(const std::string& stat, const std::string& name) {
+    std::erase_if(stat_triggers_,
+                  [&](const StatTrigger& t) { return t.stat == stat && t.name == name; });
+}
+
+std::vector<std::string> ArmyBrain::take_fired_triggers() {
+    const auto holds = [&](const StatTrigger& t) {
+        if (!t.category.empty()) {
+            return false;
+        }
+        const f64 v = get_stat(t.stat);
+        if (t.compare == "LessThan") {
+            return v < t.value;
+        }
+        if (t.compare == "LessThanOrEqual") {
+            return v <= t.value;
+        }
+        if (t.compare == "GreaterThan") {
+            return v > t.value;
+        }
+        if (t.compare == "GreaterThanOrEqual") {
+            return v >= t.value;
+        }
+        return t.compare == "Equal" && v == t.value;
+    };
+    std::vector<std::string> fired;
+    for (const auto& t : stat_triggers_) {
+        if (std::find(fired.begin(), fired.end(), t.name) != fired.end()) {
+            continue;
+        }
+        const bool all =
+            std::all_of(stat_triggers_.begin(), stat_triggers_.end(),
+                        [&](const StatTrigger& o) { return o.name != t.name || holds(o); });
+        if (all) {
+            fired.push_back(t.name);
+        }
+    }
+    std::erase_if(stat_triggers_, [&](const StatTrigger& t) {
+        return std::find(fired.begin(), fired.end(), t.name) != fired.end();
+    });
+    return fired;
+}
+
 f64 ArmyBrain::get_economy_stored_ratio(const std::string& resource_type) const {
     if (resource_type == "MASS") {
         return economy_.mass.max_storage > 0
@@ -273,6 +316,8 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     stats_["Economy_Output_Energy"] = energy_consumed;
     stats_["Economy_AccumExcess_Mass"] += economy_.mass.overflow;
     stats_["Economy_AccumExcess_Energy"] += economy_.energy.overflow;
+    stats_["Economy_Ratio_Mass"] = get_economy_stored_ratio("MASS");
+    stats_["Economy_Ratio_Energy"] = get_economy_stored_ratio("ENERGY");
     stats_["Units_Active"] = static_cast<f64>(active_units);
     stats_["UnitCap_Current"] = static_cast<f64>(active_units);
     stats_["UnitCap_MaxCap"] = static_cast<f64>(unit_cap_);

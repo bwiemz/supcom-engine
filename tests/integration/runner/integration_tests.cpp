@@ -10202,6 +10202,23 @@ void test_range(TestContext& ctx) {
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
     )");
 
+    lua_check("Test 12g: a stats trigger on the mass store", R"(
+        local brain = GetArmyBrain('ARMY_1')
+        __osc_stat_calls = {}
+        local fired = brain.OnStatsTrigger
+        brain.OnStatsTrigger = function(self, name)
+            table.insert(__osc_stat_calls, name)
+            return fired(self, name)
+        end
+        brain:SetArmyStatsTrigger('Economy_Ratio_Mass', 'OscStore', 'GreaterThanOrEqual', 0)
+    )");
+    run(5);
+    lua_check("Test 12g: OnStatsTrigger came once", R"(
+        local n = 0
+        for _, name in __osc_stat_calls do if name == 'OscStore' then n = n + 1 end end
+        if n ~= 1 then error(n .. ' calls') end
+    )");
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }
