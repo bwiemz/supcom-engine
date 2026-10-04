@@ -158,6 +158,21 @@ command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u3
     return out;
 }
 
+bool build_started(const sim::WorldSnapshot& world, const sim::EntityRecord& builder, size_t index,
+                   const sim::CommandRecord& order) {
+    if (index == 0 && builder.build_target_id != 0) {
+        return true;
+    }
+    for (const auto& e : world.entities) {
+        if (e.is_unit && e.army == builder.army && e.blueprint_id == order.blueprint_id &&
+            std::abs(e.position.x - order.target_pos.x) < 0.5f &&
+            std::abs(e.position.z - order.target_pos.z) < 0.5f) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
                                              const std::unordered_set<u32>* selected,
                                              i32 player_army) {
@@ -165,9 +180,8 @@ std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
     for (const auto& [e, chosen] : command_graph_units(world, selected, player_army)) {
         const auto orders = world.commands_of(*e);
         for (size_t i = 0; i < orders.size(); ++i) {
-            const bool started = i == 0 && e->build_target_id != 0;
             if (orders[i].type == sim::CommandType::BuildMobile &&
-                !orders[i].blueprint_id.empty() && !started) {
+                !orders[i].blueprint_id.empty() && !build_started(world, *e, i, orders[i])) {
                 sites.push_back({orders[i].blueprint_id, orders[i].target_pos});
             }
         }
@@ -484,9 +498,12 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             sim::CommandType type;
             const CommandGraphStyle* style;
             const std::string* blueprint;
+            const sim::CommandRecord* order;
+            size_t index;
         };
         std::vector<LegOrder> leg_orders;
-        for (const sim::CommandRecord& c : cmds) {
+        for (size_t n = 0; n < cmds.size(); ++n) {
+            const sim::CommandRecord& c = cmds[n];
             const CommandGraphStyle* s = style(c.type, L);
             if (!s) continue;
             Vector3 to = c.target_pos;
@@ -498,10 +515,10 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                 }
             }
             chain.push_back(to);
-            leg_orders.push_back({c.type, s, &c.blueprint_id});
+            leg_orders.push_back({c.type, s, &c.blueprint_id, &c, n});
         }
         for (size_t i = 0; i < leg_orders.size(); ++i) {
-            const auto [type, s, blueprint] = leg_orders[i];
+            const auto [type, s, blueprint, order, index] = leg_orders[i];
             const Vector3& from = chain[i];
             const Vector3& to = chain[i + 1];
             if (lines.size() + waypoints.size() + kCurveSegments + 1 > MAX_QUADS) break;
@@ -530,21 +547,15 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             }
             const GPUTexture* wp_tex =
                 s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
-            const bool started = i == 0 && e->build_target_id != 0;
-            // A build's site: its icon over the pad, outlined
-            if (wp_tex && !blueprint->empty() && !started && per_px > 0.0f) {
+            const bool site = wp_tex && !blueprint->empty() && per_px > 0.0f &&
+                              !build_started(*cur, *e, index, *order);
+            if (site) {
                 const auto& p = pad_of(*blueprint, L);
                 const auto pad = build_pad(to.x, to.z, p[0], p[1], p[2], p[3], p[4], p[5]);
                 const std::array<Vector3, 4> corner = {{{pad[0], to.y, pad[1]},
                                                         {pad[2], to.y, pad[1]},
                                                         {pad[2], to.y, pad[3]},
                                                         {pad[0], to.y, pad[3]}}};
-                const auto& col = s->waypoint_selected_color;
-                const Vertex a = vertex(corner[0], 0.0f, 1.0f, col);
-                const Vertex b = vertex(corner[1], 1.0f, 1.0f, col);
-                const Vertex cc = vertex(corner[2], 1.0f, 0.0f, col);
-                const Vertex d = vertex(corner[3], 0.0f, 0.0f, col);
-                waypoints.push_back({wp_tex->descriptor_set, {a, b, cc, a, cc, d}});
                 const f32 half = kPadOutlinePx * 0.5f * per_px * length(sub(to, eye));
                 for (size_t k = 0; k < 4; ++k) {
                     std::array<Vector3, 4> q;
@@ -557,7 +568,8 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                             {tex_cache.fallback_descriptor(), {qa, qb, qc, qa, qc, qd}});
                     }
                 }
-            } else if (chosen && wp_tex && per_px > 0.0f) {
+            }
+            if ((site || chosen) && wp_tex && per_px > 0.0f) {
                 // Its world size, held between its least and most on screen
                 const f32 px_world = per_px * length(sub(to, eye));
                 f32 size = kWaypointSize * s->waypoint_selected_scale;

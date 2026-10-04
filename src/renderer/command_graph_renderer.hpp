@@ -19,6 +19,7 @@ namespace osc::sim {
 class FrameView;
 struct WorldSnapshot;
 struct EntityRecord;
+struct CommandRecord;
 } // namespace osc::sim
 
 namespace osc::renderer {
@@ -80,6 +81,11 @@ struct PlannedSite {
     std::string blueprint;
     sim::Vector3 position;
 };
+
+/// Whether the structure of `builder`'s `index`-th order stands: its builder
+/// is at it, or one of the army's is on the site
+bool build_started(const sim::WorldSnapshot& world, const sim::EntityRecord& builder, size_t index,
+                   const sim::CommandRecord& order);
 
 std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
                                              const std::unordered_set<u32>* selected,

@@ -187,3 +187,31 @@ TEST_CASE("A structure ordered and not started is a planned site", "[renderer][c
     world.entities[0].build_target_id = 0;
     CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 3);
 }
+
+TEST_CASE("A structure standing on its site is started for every builder ordered to it",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    osc::sim::CommandRecord order;
+    order.type = osc::sim::CommandType::BuildMobile;
+    order.target_pos = {20, 0, 20};
+    order.blueprint_id = "ueb0101";
+    osc::sim::EntityRecord factory;
+    factory.id = 5;
+    factory.army = 0;
+    factory.is_unit = true;
+    factory.is_being_built = true;
+    factory.blueprint_id = "ueb0101";
+    factory.position = {20, 0, 20};
+    osc::sim::EntityRecord walking;
+    walking.id = 2;
+    walking.army = 0;
+    walking.is_unit = true;
+    walking.command_offset = 0;
+    walking.command_count = 1;
+    world.commands = {order};
+    world.entities = {factory, walking};
+
+    CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).empty());
+    world.entities[0].position = {30, 0, 20};
+    CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 1);
+}
