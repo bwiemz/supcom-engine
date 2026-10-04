@@ -3,6 +3,7 @@
 #include <functional>
 
 #include "core/types.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/entity.hpp" // Vector3
 #include "sim/unit_command.hpp"
 #include "sim/world_snapshot.hpp"
@@ -39,6 +40,8 @@ struct CommandMode {
     f32 footprint_z = 1.0f;
     bool drag_build = false; ///< build: a drag lays a line of it (DRAGBUILD)
     f32 drag_spacing = 0.0f; ///< build: the line's spacing, its skirt
+    /// build: Physics.BuildRestriction's deposit, which the cursor snaps to
+    sim::PlacementRules::Deposit deposit = sim::PlacementRules::Deposit::None;
     /// An ability's order (RULEUCC_Script, M206w): the Script order's table
     /// for a click at a point -- the mode's own (TaskName, AbilityName) with
     /// the point as Location -- as sim::lua_to_bytes writes it.
@@ -178,6 +181,8 @@ public:
 
     /// Where the cursor at (mx, my) points on the ground: the terrain, or
     /// the water over it (M217a). Every click and drag resolves through it.
+    void snap_to_deposit(const sim::SimState& sim, const CommandMode& mode, f32& x, f32& z) const;
+    void measure_snap_radius(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my);
     static bool world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
                          f32& wx, f32& wz);
 
@@ -202,6 +207,7 @@ private:
     f32 drag_world_x1_ = 0, drag_world_z1_ = 0;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
     std::optional<std::array<f32, 4>> build_line_;
+    f32 snap_radius_ = 4.0f;
     bool line_drag_build_ = false;
     f32 line_spacing_ = 0.0f;
     std::optional<std::array<f32, 2>> cursor_world_;
