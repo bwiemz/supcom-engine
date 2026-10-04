@@ -628,10 +628,8 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Gone;
         }
 
-        // Set production rates (resources gained by reclaiming)
-        economy_.production_mass = max_mass * static_cast<f64>(reclaim_rate_);
-        economy_.production_energy = max_energy * static_cast<f64>(reclaim_rate_);
-        economy_.production_active = true;
+        economy_.reclaim_mass = max_mass * static_cast<f64>(reclaim_rate_);
+        economy_.reclaim_energy = max_energy * static_cast<f64>(reclaim_rate_);
 
         spdlog::info("Reclaim start: entity #{} reclaiming #{} "
                      "(mass={:.0f}, energy={:.0f}, time={:.1f}s)",

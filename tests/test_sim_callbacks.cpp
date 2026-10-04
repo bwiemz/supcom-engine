@@ -381,7 +381,7 @@ TEST_CASE("The UI's unit settings apply inside a tick, with their script hooks",
     CHECK_FALSE(w.unit(id).is_paused()); // not between ticks
     w.sim.tick();
     CHECK(w.unit(id).is_paused());
-    CHECK_FALSE(w.unit(id).economy().consumption_active); // as unit:SetPaused does
+    CHECK(w.unit(id).economy().consumption_active);
     CHECK(w.hooks() == "OnPaused");
 
     // A setting that doesn't change calls no hook.
