@@ -1017,11 +1017,11 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         working = true;
         u32 target_build_id = target_unit->build_target_id();
         if (!within_reach(*guarded_build, true, build_target_id_ == target_build_id)) {
-            if (is_building()) stop_assisting();
+            if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         } else {
             if (build_target_id_ != target_build_id) {
                 // Switch to new assist target
-                if (is_building()) stop_assisting();
+                if (is_building()) stop_assisting(ctx.L, &ctx.registry);
 
                 build_target_id_ = target_build_id;
                 build_command_id_ = cmd.command_id;
@@ -1042,19 +1042,24 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 spdlog::info("Guard assist: entity #{} assisting #{} "
                              "building target #{}",
                              entity_id(), cmd.target_id, target_build_id);
+                call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
+                                    "Repair");
+                if (destroyed() || !in_registry()) {
+                    return OrderStep::Gone;
+                }
             }
 
             // Progress the build with our own build rate
             if (build_target_id_ != 0) {
                 if (!progress_build_assist(dt, registry, econ_eff)) {
-                    stop_assisting();
+                    stop_assisting(ctx.L, &ctx.registry);
                 }
             }
         }
     } else if (guarded_reclaim && !guarded_reclaim->destroyed() && guarded_reclaim->reclaimable()) {
         // Assist reclaim: contribute reclaim power
         working = true;
-        if (is_building()) stop_assisting();
+        if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         u32 target_reclaim_id = target_unit->reclaim_target_id();
         if (!within_reach(*guarded_reclaim, false, false)) {
             if (is_reclaiming()) stop_reclaiming();
@@ -1095,7 +1100,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         // for a SiloBuildingAmmo focus). A paused silo's helpers
         // wait, paying nothing; so do helpers out of reach.
         working = true;
-        if (is_building()) stop_assisting();
+        if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming();
         if (within_reach(*target_unit, true, false)) {
             const SiloBuild& missile = target_unit->silo_build();
@@ -1108,7 +1113,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
     } else {
         // Target not building/reclaiming — stop if we were
-        if (is_building()) stop_assisting();
+        if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming();
 
         // Auto-repair: if target is damaged and we have build_rate

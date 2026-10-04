@@ -375,7 +375,8 @@ public:
                       map::PathfindingGrid* grid = nullptr);
 
     /// Assist helpers (Guard command)
-    void stop_assisting();
+    void stop_assisting(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
+    void call_build_callback(lua_State* L, const char* method, Entity* target, const char* order);
     bool progress_build_assist(f64 dt, EntityRegistry& registry,
                                 f32 efficiency = 1.0f);
 
