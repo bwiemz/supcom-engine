@@ -57,6 +57,10 @@ CoverageReport compute_coverage(const LuaReferences& refs,
 void collect_registered(lua_State* L, std::set<std::string>& globals,
                         std::set<std::string>& methods);
 
+/// Add the globals of L still bound to a blueprint-phase stand-in: they are
+/// missing there, whatever another state binds
+void collect_stand_ins(lua_State* L, std::set<std::string>& globals);
+
 /// Baseline entries are "G Name" / "M Name" lines; '#' starts a comment.
 std::set<std::string> parse_baseline(std::string_view text);
 

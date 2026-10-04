@@ -1,4 +1,5 @@
 #include "lua/binding_coverage.hpp"
+#include "lua/engine_bindings.hpp"
 
 #include "vfs/virtual_file_system.hpp"
 
@@ -274,6 +275,17 @@ CoverageReport compute_coverage(const LuaReferences& refs,
     return report; // std::map iteration: already sorted by name
 }
 
+void collect_stand_ins(lua_State* L, std::set<std::string>& globals) {
+    lua_pushnil(L);
+    while (lua_next(L, LUA_GLOBALSINDEX) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING && lua_iscfunction(L, -1) &&
+            is_thread_stand_in(lua_tocfunction(L, -1))) {
+            globals.insert(lua_tostring(L, -2));
+        }
+        lua_pop(L, 1);
+    }
+}
+
 void collect_registered(lua_State* L, std::set<std::string>& globals,
                         std::set<std::string>& methods) {
     auto add_string_keys = [&](int table, std::set<std::string>& into) {
@@ -394,6 +406,12 @@ int run_coverage_report(lua_State* sim_L, lua_State* ui_L,
     std::set<std::string> methods;
     if (sim_L) collect_registered(sim_L, globals, methods);
     if (ui_L) collect_registered(ui_L, globals, methods);
+    std::set<std::string> stand_ins;
+    if (sim_L) collect_stand_ins(sim_L, stand_ins);
+    if (ui_L) collect_stand_ins(ui_L, stand_ins);
+    for (const auto& name : stand_ins) {
+        globals.erase(name);
+    }
 
     const CoverageReport report = compute_coverage(refs, globals, methods);
     spdlog::info("Binding coverage: {} script files; {} global and {} method names "
