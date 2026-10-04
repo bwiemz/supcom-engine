@@ -51,10 +51,19 @@ void Unit::clear_commands(const char*) {
     navigator_.abort_move();
 }
 
+namespace {
+
+bool queued_build(const UnitCommand& c) {
+    return c.type == CommandType::BuildFactory ||
+           (c.type == CommandType::BuildMobile && !c.blueprint_id.empty());
+}
+
+} // namespace
+
 std::vector<BuildQueueEntry> Unit::factory_queue() const {
     std::vector<BuildQueueEntry> groups;
     for (const auto& c : command_queue_) {
-        if (c.type != CommandType::BuildFactory) continue;
+        if (!queued_build(c)) continue;
         if (!groups.empty() && groups.back().blueprint_id == c.blueprint_id) ++groups.back().count;
         else groups.push_back({c.blueprint_id, 1});
     }
@@ -70,7 +79,7 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     const std::string* run = nullptr;
     for (size_t i = 0; i < command_queue_.size(); ++i) {
         const auto& c = command_queue_[i];
-        if (c.type != CommandType::BuildFactory) continue;
+        if (!queued_build(c)) continue;
         if (!run || *run != c.blueprint_id) {
             if (++g > index) break;
             run = &c.blueprint_id;
@@ -81,6 +90,10 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     const bool in_progress = building_factory_order();
     bool cancel = false;
     for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it, --count) {
+        // A structure a builder is at stays its work, as Stop leaves it
+        if (*it == 0 && command_queue_[0].type == CommandType::BuildMobile && build_target_id_) {
+            break;
+        }
         if (*it == 0 && in_progress) cancel = true;
         command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
     }
@@ -95,14 +108,14 @@ void Unit::increase_build_count(int index, int count) {
     const std::string* run = nullptr;
     for (size_t i = 0; i < command_queue_.size(); ++i) {
         const auto& c = command_queue_[i];
-        if (c.type != CommandType::BuildFactory) continue;
+        if (!queued_build(c)) continue;
         if (!run || *run != c.blueprint_id) {
             if (++g > index) break;
             run = &c.blueprint_id;
         }
         if (g == index) last = i;
     }
-    if (!last) return;
+    if (!last || command_queue_[*last].type != CommandType::BuildFactory) return;
     // More of the same order, as Moho counts one factory command up: the
     // blueprint and the command it was issued as, none of the runtime state
     // of the group's last order (which may be the one under way).
