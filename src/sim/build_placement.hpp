@@ -20,6 +20,7 @@
 namespace osc::sim {
 
 class SimState;
+struct ResourceDeposit;
 
 /// What placement needs to know about a structure blueprint.
 struct PlacementRules {
@@ -36,6 +37,16 @@ struct PlacementRules {
     bool on_seabed = false; ///< it sits on the ground under water (an extractor)
     enum class Deposit : u8 { None, Mass, Hydrocarbon } deposit = Deposit::None;
 };
+
+/// Where Moho's build mode puts an extractor's cursor (x, z): the centre of
+/// the nearest deposit of its kind within `radius` cells of the cursor's
+/// cell, else none
+std::optional<std::pair<f32, f32>> deposit_snap(const std::vector<ResourceDeposit>& deposits,
+                                                PlacementRules::Deposit want, f32 x, f32 z,
+                                                f32 size_x, f32 size_z, f32 radius);
+
+/// ui_ExtractSnapTolerance, 4 world units, held between 20 and 90 pixels
+f32 extract_snap_radius(f32 world_per_pixel);
 
 /// Snap a structure's center to the build grid, as Moho does: the
 /// footprint's corner to the nearest whole cell, so odd footprints center on

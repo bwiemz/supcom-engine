@@ -35,6 +35,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     renderer.mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
     f32 my = static_cast<f32>(my_d);
+    measure_snap_radius(renderer, sim, mx, my);
 
     const bool lmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_LEFT);
     const bool rmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT);
@@ -205,6 +206,37 @@ bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, 
     return renderer.camera().pick_ground(mx, my, static_cast<f32>(renderer.width()),
                                          static_cast<f32>(renderer.height()), sim.terrain(), wx, wy,
                                          wz);
+}
+
+void InputHandler::snap_to_deposit(const sim::SimState& sim, const CommandMode& mode, f32& x,
+                                   f32& z) const {
+    if (mode.mode != "build") {
+        return;
+    }
+    if (const auto at = sim::deposit_snap(sim.resource_deposits(), mode.deposit, x, z,
+                                          mode.footprint_x, mode.footprint_z, snap_radius_)) {
+        x = at->first;
+        z = at->second;
+    }
+}
+
+void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimState& sim, f32 mx,
+                                       f32 my) {
+    f32 wx = 0;
+    f32 wz = 0;
+    const f32 width = static_cast<f32>(renderer.width());
+    if (width <= 0 || !world_at(renderer, sim, mx, my, wx, wz)) {
+        return;
+    }
+    const Camera& camera = renderer.camera();
+    f32 ex = 0;
+    f32 ey = 0;
+    f32 ez = 0;
+    camera.eye_position(ex, ey, ez);
+    const f32 wy = sim.terrain() ? sim.terrain()->get_terrain_height(wx, wz) : 0.0f;
+    const f32 dist =
+        std::sqrt((wx - ex) * (wx - ex) + (wy - ey) * (wy - ey) + (wz - ez) * (wz - ez));
+    snap_radius_ = sim::extract_snap_radius(2.0f * dist * std::tan(camera.fov() * 0.5f) / width);
 }
 
 void InputHandler::handle_left_click(Renderer& renderer,
@@ -451,6 +483,7 @@ constexpr OrderSpec kOrders[] = {
 
 std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     sim::SimState& sim, const CommandMode& mode, f32 wx, f32 wz, bool shift) {
+    snap_to_deposit(sim, mode, wx, wz);
     IssuedCommand out;
     out.clear = !shift;
     sim::UnitCommand cmd;
@@ -527,6 +560,8 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     if (mode.mode != "build" || mode.name.empty()) {
         return issued;
     }
+    snap_to_deposit(sim, mode, x0, z0);
+    snap_to_deposit(sim, mode, x1, z1);
     // Mobile builders take the orders; factories build through their queue.
     std::vector<u32> ids;
     for (u32 uid : selected_) {
@@ -678,8 +713,10 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     f64 mx = 0, my = 0;
     renderer.mouse_position(mx, my);
     f32 wx = 0, wz = 0;
-    if (!world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz))
+    if (!world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz)) {
         return std::nullopt;
+    }
+    snap_to_deposit(sim, mode_hooks_.current ? mode_hooks_.current() : CommandMode{}, wx, wz);
     // Where a build order at the cursor would place it
     sim::snap_structure_center(wx, wz, size_x, size_z);
     return ghost_at(wx, wz);
