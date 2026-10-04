@@ -10286,6 +10286,31 @@ void test_range(TestContext& ctx) {
         if __osc_arm_prep == 0 then error('OnPrepareArmToBuild never ran') end
     )");
 
+    lua_check("Test 12e: an engineer guards one building a generator", R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveResource('MASS', 10000)
+        brain:GiveResource('ENERGY', 100000)
+        local a = __osc_spawn('uel0105', 'ARMY_1', 640.5, 120.5)
+        __osc_helper = __osc_spawn('uel0105', 'ARMY_1', 643.5, 120.5)
+        __osc_helper_calls = {}
+        local start, stop = __osc_helper.OnStartBuild, __osc_helper.OnStopBuild
+        __osc_helper.OnStartBuild = function(self, unit, order)
+            table.insert(__osc_helper_calls, 'start ' .. tostring(order))
+            return start(self, unit, order)
+        end
+        __osc_helper.OnStopBuild = function(self, unit)
+            table.insert(__osc_helper_calls, 'stop')
+            return stop(self, unit)
+        end
+        IssueBuildMobile({a}, __osc_at(640.5, 124.5), 'ueb1101', {})
+        IssueGuard({__osc_helper}, a)
+    )");
+    run(300);
+    lua_check("Test 12e: the guard's help starts and stops as a repair's", R"(
+        local got = table.concat(__osc_helper_calls, ',')
+        if got ~= 'start Repair,stop' then error('calls: ' .. got) end
+    )");
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }

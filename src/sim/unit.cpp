@@ -420,7 +420,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
         // the old one.
         if (build_target_id_ != 0 && build_released_with_order_ &&
             !(head && head->command_id == build_command_id_))
-            stop_assisting();
+            stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming() &&
             !(head && (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
                        head->type == CommandType::Patrol))) {
@@ -965,7 +965,35 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
     work_progress_ = 0.0f;
 }
 
-void Unit::stop_assisting() {
+void Unit::call_build_callback(lua_State* L, const char* method, Entity* target,
+                               const char* order) {
+    if (!L || lua_table_ref() < 0 || !target || target->destroyed() ||
+        target->lua_table_ref() < 0) {
+        return;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return;
+    }
+    lua_pushvalue(L, -2);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+    if (order) {
+        lua_pushstring(L, order);
+    }
+    if (lua_pcall(L, order ? 3 : 2, 0, 0) != 0) {
+        spdlog::warn("{} error: {}", method, lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
+    if (L && registry && build_target_id_ != 0) {
+        call_build_callback(L, "OnStopBuild", registry->find(build_target_id_), nullptr);
+    }
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
     economy_.consumption_active = false;
