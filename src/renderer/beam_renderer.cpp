@@ -266,8 +266,13 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
         if (recon && !recon->sees_beam(view, start, end)) continue;
         // Past its LODCutoff (its nearer end), not drawn.
         if (bp->lod_cutoff > 0 &&
-            std::min(length(sub(start, eye)), length(sub(end, eye))) > bp->lod_cutoff)
+            std::min(length(sub(start, eye)), length(sub(end, eye))) > bp->lod_cutoff) {
+            drawn_effects_.insert(fx.id);
+            if (fx.entity_id) {
+                drawn_entities_.insert(fx.entity_id);
+            }
             continue;
+        }
         const GPUTexture* tex = bp->texture.empty() ? nullptr : tex_cache.get(bp->texture);
         if (!tex) continue; // loading, or not there
 

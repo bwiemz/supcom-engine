@@ -228,7 +228,12 @@ void test_beam_render(TestContext& ctx) {
                     weapon ? "drawn" : "not drawn", placeholder));
 
     // Test 5: the LOD beam, 5 its cutoff, isn't drawn from 60 away.
-    t.check(!beam_of(r, lod) && beam_of(r, de), "Test 5: past its LODCutoff a beam isn't drawn");
+    const bool lod_line = std::any_of(f.overlay.begin(), f.overlay.end(), [](const Quad& q) {
+        return same_colour(q, 0.8f, 0.9f, 1.0f);
+    });
+    t.check(
+        !beam_of(r, lod) && beam_of(r, de) && !lod_line,
+        fmt::format("Test 5: past its LODCutoff a beam isn't drawn; overlay line: {}", lod_line));
 
     // Test 6: in the frame, the additive beam adds its colour, red at its
     // start and blue at its end; the subtractive one takes colour away.
