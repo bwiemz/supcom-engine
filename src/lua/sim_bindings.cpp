@@ -1,4 +1,5 @@
 #include "lua/sim_bindings.hpp"
+#include "lua/engine_bindings.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -4356,7 +4357,9 @@ static int l_STR_Utf8Len(lua_State* L) {
 
 static int l_STR_Utf8SubString(lua_State* L) {
     const char* str = luaL_checkstring(L, 1);
-    lua_pushstring(L, str); // simplified
+    const int start = static_cast<int>(luaL_checknumber(L, 2));
+    const int count = static_cast<int>(luaL_checknumber(L, 3));
+    lua_pushstring(L, utf8_substring(str, start, count).c_str());
     return 1;
 }
 

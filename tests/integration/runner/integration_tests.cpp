@@ -15553,6 +15553,39 @@ void test_text(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 13: Text parent linkage failed"); }
     }
 
+    // Test 14: a Text's Width is its Lua binding's, whatever text it is given
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local Text = import('/lua/maui/text.lua').Text\n"
+            "local t = Text(Frame('WrapParent'))\n"
+            "t:SetFont('Arial', 14)\n"
+            "t.Left:Set(24)\n"
+            "t.Right:Set(385)\n"
+            "t:SetClipToWidth(true)\n"
+            "t:SetText('Light')\n"
+            "local clipped = t.Width()\n"
+            "t:SetClipToWidth(false)\n"
+            "t:SetText('Light Gunship')\n"
+            "local fitted = t.Width()\n"
+            "LOG('Text width: clipped=' .. clipped .. ' fitted=' .. fitted)\n"
+            "return clipped == 361 and fitted == math.floor(t.TextAdvance())\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 14 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 14: a Text's Width keeps its binding");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 14: SetText overrode a Text's Width");
+        }
+    }
+
     spdlog::info("Text test: {}/{} passed", pass, pass + fail);
 }
 
