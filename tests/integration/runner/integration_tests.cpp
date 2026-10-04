@@ -10626,6 +10626,36 @@ void test_factory_rally(TestContext& ctx) {
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; its 2 builds expected')
         end
     )");
+    lua_check("an air factory builds an engineer, rallied left", R"(
+        __osc_air = __osc_spawn('urb0102', 1, 680, 140)
+        IssueClearFactoryCommands({__osc_air})
+        IssueFactoryRallyPoint({__osc_air}, {660, GetTerrainHeight(660, 140), 140})
+        IssueBuildFactory({__osc_air}, 'url0105', 1)
+        __osc_eng = false
+        __osc_strayed = 0
+        __osc_rolled_to = false
+    )");
+    for (int i = 0; i < 400; ++i) {
+        run(1);
+        (void)ctx.lua_state.do_string(R"(
+            __osc_eng = __osc_eng or __osc_building(__osc_air) or false
+            if __osc_eng and not __osc_eng:IsBeingBuilt() and not __osc_rolled_to then
+                local p = __osc_eng:GetPosition()
+                __osc_strayed = math.max(__osc_strayed, math.abs(p[3] - 140.35))
+                if __osc_air.MoveCommand and IsCommandDone(__osc_air.MoveCommand) then
+                    __osc_rolled_to = p
+                end
+            end
+        )");
+    }
+    lua_check("the engineer rolls straight off to the roll-off point", R"(
+        local p = __osc_rolled_to
+        if not p then error('the roll-off move never ended') end
+        if VDist2(p[1], p[3], 677.25, 140.35) > 0.25 then
+            error('rolled off to ' .. p[1] .. ', ' .. p[3] .. '; 677.25, 140.35 expected')
+        end
+        if __osc_strayed > 0.5 then error('strayed ' .. __osc_strayed .. ' from its line') end
+    )");
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
 }
 
