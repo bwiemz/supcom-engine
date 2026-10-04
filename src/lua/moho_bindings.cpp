@@ -2629,14 +2629,36 @@ static int l_GetUnitCommandData(lua_State* L) {
 
     if (!sim || !lua_istable(L, 1)) return 3;
 
-    static const char* all_caps[] = {
-        "RULEUCC_Move", "RULEUCC_Attack", "RULEUCC_Guard", "RULEUCC_Patrol",
-        "RULEUCC_Stop", "RULEUCC_RetaliateToggle", "RULEUCC_Repair",
-        "RULEUCC_Capture", "RULEUCC_Reclaim", "RULEUCC_Overcharge",
-        "RULEUCC_Transport", "RULEUCC_Ferry", "RULEUCC_Sacrifice",
-        "RULEUCC_Nuke", "RULEUCC_Tactical", "RULEUCC_Teleport",
-        "RULEUCC_Dive", "RULEUCC_Pause", nullptr
-    };
+    static const char* all_caps[] = {"RULEUCC_Move",
+                                     "RULEUCC_Attack",
+                                     "RULEUCC_Guard",
+                                     "RULEUCC_Patrol",
+                                     "RULEUCC_Stop",
+                                     "RULEUCC_RetaliateToggle",
+                                     "RULEUCC_Repair",
+                                     "RULEUCC_Capture",
+                                     "RULEUCC_Reclaim",
+                                     "RULEUCC_Overcharge",
+                                     "RULEUCC_Transport",
+                                     "RULEUCC_Ferry",
+                                     "RULEUCC_Sacrifice",
+                                     "RULEUCC_Nuke",
+                                     "RULEUCC_Tactical",
+                                     "RULEUCC_Teleport",
+                                     "RULEUCC_Dive",
+                                     "RULEUCC_Pause",
+                                     "RULEUCC_Dock",
+                                     "RULEUCC_SiloBuildNuke",
+                                     "RULEUCC_SiloBuildTactical",
+                                     "RULEUCC_Script",
+                                     nullptr};
+    // General.ToggleCaps: orders.lua's script buttons
+    static const char* unit_toggles[] = {"RULEUTC_ShieldToggle",     "RULEUTC_WeaponToggle",
+                                         "RULEUTC_JammingToggle",    "RULEUTC_IntelToggle",
+                                         "RULEUTC_ProductionToggle", "RULEUTC_StealthToggle",
+                                         "RULEUTC_GenericToggle",    "RULEUTC_SpecialToggle",
+                                         "RULEUTC_CloakToggle",      nullptr};
+    std::unordered_set<std::string> common_toggles;
 
     bool first_unit = true;
     std::unordered_set<std::string> common_caps;
@@ -2659,6 +2681,11 @@ static int l_GetUnitCommandData(lua_State* L) {
                     common_caps.insert(*cap);
                 }
             }
+            for (const char** cap = unit_toggles; *cap; ++cap) {
+                if (unit->has_toggle_cap(*cap)) {
+                    common_toggles.insert(*cap);
+                }
+            }
             first_unit = false;
         } else {
             // Intersect: remove caps the current unit doesn't have
@@ -2670,6 +2697,8 @@ static int l_GetUnitCommandData(lua_State* L) {
                     ++it;
                 }
             }
+            std::erase_if(common_toggles,
+                          [&](const std::string& cap) { return !unit->has_toggle_cap(cap); });
         }
         lua_pop(L, 1); // unit table
     }
@@ -2693,6 +2722,12 @@ static int l_GetUnitCommandData(lua_State* L) {
     int tidx = 1;
     for (const char** tc = toggle_caps; *tc; ++tc) {
         if (common_caps.count(*tc)) {
+            lua_pushstring(L, *tc);
+            lua_rawseti(L, toggles_tbl, tidx++);
+        }
+    }
+    for (const char** tc = unit_toggles; *tc; ++tc) {
+        if (common_toggles.count(*tc)) {
             lua_pushstring(L, *tc);
             lua_rawseti(L, toggles_tbl, tidx++);
         }
