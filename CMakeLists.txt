@@ -160,6 +160,17 @@ if(OSC_BUILD_TESTS)
         set_tests_properties(arch.state_io arch.state_io_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # Every blueprint field only the engine reads is one it reads, or listed
+        # as not read yet: a field ignored loads without a word.
+        add_test(NAME arch.blueprint_fields
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_fields.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.blueprint_fields_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_fields.py
+                         --self-test)
+        set_tests_properties(arch.blueprint_fields arch.blueprint_fields_self_test
+                             PROPERTIES LABELS "arch" TIMEOUT 60)
+
         # retail_ref.py, which asks retail FA itself for references: its config,
         # init file and reading of retail's log (retail isn't run here)
         add_test(NAME arch.retail_ref_self_test
