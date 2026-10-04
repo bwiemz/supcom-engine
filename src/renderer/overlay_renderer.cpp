@@ -156,6 +156,15 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
+std::vector<bool> adjacency_lit(const std::vector<sim::StructureSite>& pads,
+                                const sim::StructureSite& ghost) {
+    std::vector<bool> lit(pads.size(), false);
+    for (size_t i = 0; i < pads.size(); ++i) {
+        lit[i] = pads[i].touches(ghost);
+    }
+    return lit;
+}
+
 void OverlayRenderer::emit_outline(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys,
                                    f32 r, f32 g, f32 b, f32 a) {
     for (const auto& q : outline_rows(xs, ys, kOutlineThickness)) {
@@ -186,39 +195,43 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     camera.eye_position(eye_x, eye_y, eye_z);
 
     if (ghost) {
-        const std::array<std::array<f32, 2>, 4> corners = {{{ghost->pad_x0, ghost->pad_z0},
-                                                            {ghost->pad_x1, ghost->pad_z0},
-                                                            {ghost->pad_x1, ghost->pad_z1},
-                                                            {ghost->pad_x0, ghost->pad_z1}}};
-        std::array<f32, 4> xs{};
-        std::array<f32, 4> ys{};
-        bool shown = true;
-        for (size_t i = 0; i < 4 && shown; ++i) {
-            shown = world_to_screen(corners[i][0], ghost->y, corners[i][1], vp_matrix, sw, sh,
-                                    xs[i], ys[i]);
+        constexpr f32 kDim = 216.0f / 255.0f;
+        const auto pads = structure_pads(view, recon_);
+        std::vector<sim::StructureSite> sites;
+        sites.reserve(pads.size());
+        for (const auto& pad : pads) {
+            sites.push_back(pad.first);
         }
-        if (shown) {
-            if (ghost->valid) {
-                emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
-            } else {
-                emit_outline(xs, ys, 0.9f, 0.0f, 0.0f, 1.0f);
-            }
+        const sim::StructureSite ghost_site{ghost->pad_x0, ghost->pad_z0, ghost->pad_x1,
+                                            ghost->pad_z1};
+        std::vector<bool> lit(sites.size(), false);
+        if (ghost->valid) {
+            lit = adjacency_lit(sites, ghost_site);
         }
-    }
-    if (ghost) {
-        for (const auto& [pad, y] : structure_pads(view, recon_)) {
+        const auto outline = [&](const sim::StructureSite& pad, f32 y, f32 r, f32 g, f32 a) {
             const std::array<std::array<f32, 2>, 4> corners = {
                 {{pad.x0, pad.z0}, {pad.x1, pad.z0}, {pad.x1, pad.z1}, {pad.x0, pad.z1}}};
             std::array<f32, 4> xs{};
             std::array<f32, 4> ys{};
-            bool shown = true;
-            for (size_t i = 0; i < 4 && shown; ++i) {
-                shown = world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
-                                        ys[i]);
+            for (size_t i = 0; i < 4; ++i) {
+                if (!world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
+                                     ys[i])) {
+                    return;
+                }
             }
-            if (shown) {
-                emit_outline(xs, ys, 0.0f, 0.8f, 0.0f, 1.0f);
-            }
+            emit_outline(xs, ys, r, g, 0.0f, a);
+        };
+        const bool ghost_lit = std::find(lit.begin(), lit.end(), true) != lit.end();
+        if (!ghost->valid) {
+            outline(ghost_site, ghost->y, kDim, 0.0f, kDim);
+        } else if (ghost_lit) {
+            outline(ghost_site, ghost->y, 0.0f, 1.0f, 1.0f);
+        } else {
+            outline(ghost_site, ghost->y, 0.0f, kDim, kDim);
+        }
+        for (size_t i = 0; i < pads.size(); ++i) {
+            outline(pads[i].first, pads[i].second, 0.0f, lit[i] ? 1.0f : kDim,
+                    lit[i] ? 1.0f : kDim);
         }
     }
 

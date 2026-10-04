@@ -74,3 +74,19 @@ TEST_CASE("Placing a structure outlines the pads of those standing", "[overlay]"
     CHECK(pads[0].first.z0 == Catch::Approx(36.5f));
     CHECK(pads[0].second == Catch::Approx(4.0f));
 }
+
+TEST_CASE("A ghost lights the pads it touches edge on, its span inside", "[overlay]") {
+    using osc::sim::StructureSite;
+    const StructureSite factory{26.5f, 36.5f, 34.5f, 44.5f};
+    const StructureSite beside{34.5f, 39.5f, 36.5f, 41.5f};
+    CHECK(osc::renderer::adjacency_lit({factory}, beside) == std::vector<bool>{true});
+    CHECK(osc::renderer::adjacency_lit({factory}, {34.5f, 43.5f, 36.5f, 45.5f}) ==
+          std::vector<bool>{false});
+    CHECK(osc::renderer::adjacency_lit({factory}, {35.5f, 39.5f, 37.5f, 41.5f}) ==
+          std::vector<bool>{false});
+    CHECK(osc::renderer::adjacency_lit({factory}, {34.5f, 30.0f, 42.5f, 50.0f}) ==
+          std::vector<bool>{true});
+
+    const StructureSite other{36.5f, 36.5f, 44.5f, 44.5f};
+    CHECK(osc::renderer::adjacency_lit({factory, other}, beside) == std::vector<bool>{true, true});
+}

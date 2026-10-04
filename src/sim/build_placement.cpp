@@ -34,6 +34,19 @@ bool StructureSite::overlaps(const StructureSite& o) const {
     return x0 < o.x1 && o.x0 < x1 && z0 < o.z1 && o.z0 < z1;
 }
 
+bool StructureSite::touches(const StructureSite& o) const {
+    const auto nested = [](f32 a0, f32 a1, f32 b0, f32 b1) {
+        return (a0 >= b0 && b1 >= a1) || (b0 >= a0 && a1 >= b1);
+    };
+    if (std::abs(x0 - o.x1) < 1.0f || std::abs(x1 - o.x0) < 1.0f) {
+        return nested(z0, z1, o.z0, o.z1);
+    }
+    if (std::abs(z0 - o.z1) < 1.0f || std::abs(z1 - o.z0) < 1.0f) {
+        return nested(x0, x1, o.x0, o.x1);
+    }
+    return false;
+}
+
 StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules)
     : sim_(sim), army_(army), lookup_(std::move(rules)) {}
 
