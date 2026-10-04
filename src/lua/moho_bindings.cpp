@@ -1891,6 +1891,13 @@ static int l_ui_ForkThread(lua_State* L) {
     return tm->fork_thread(L);
 }
 
+static int l_ui_KillThread(lua_State* L) {
+    if (auto* tm = get_ui_threads(L)) {
+        tm->kill_handle(L, 1);
+    }
+    return 0;
+}
+
 /// WaitSeconds(n): convert seconds to frame count, yield with frame count.
 /// ThreadManager::resume_all() interprets yielded numbers as RELATIVE wait counts.
 static constexpr f64 UI_FRAMES_PER_SECOND = 60.0;
@@ -4517,6 +4524,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // UI thread/coroutine globals
     state.register_function("ForkThread", l_ui_ForkThread);
+    state.register_function("KillThread", l_ui_KillThread);
     state.register_function("WaitSeconds", l_ui_WaitSeconds);
     state.register_function("WaitTicks", l_ui_WaitTicks);
 
