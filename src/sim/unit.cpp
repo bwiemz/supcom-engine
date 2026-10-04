@@ -277,6 +277,8 @@ void Unit::begin_dying() {
     economy_.production_mass = 0;
     economy_.production_energy = 0;
     economy_.production_active = false;
+    economy_.reclaim_mass = 0;
+    economy_.reclaim_energy = 0;
     // Its missile under way, and a repair on a staging platform (M206r),
     // stop asking for resources.
     abandon_silo_build();
@@ -1037,14 +1039,8 @@ void Unit::stop_reclaiming(lua_State* L, EntityRegistry* registry) {
     if (L && registry && reclaim_target_id_ != 0) {
         call_lua_method_with_entity(L, "OnStopReclaim", registry->find(reclaim_target_id_));
     }
-    // Only clear production rates if we were the primary reclaimer
-    // (assisters don't set production rates, so nothing to clear)
-    if (reclaim_target_id_ != 0 && economy_.production_active &&
-        reclaim_rate_ > 0) {
-        economy_.production_mass = 0;
-        economy_.production_energy = 0;
-        economy_.production_active = false;
-    }
+    economy_.reclaim_mass = 0;
+    economy_.reclaim_energy = 0;
     reclaim_target_id_ = 0;
     reclaim_rate_ = 0;
 }
