@@ -169,7 +169,6 @@ if(OSC_BUILD_TESTS)
         add_test(NAME arch.retail_hooks_self_test
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_retail_hooks.py
                          --self-test)
-        set_tests_properties(arch.retail_hooks arch.retail_hooks_self_test
 
         # Every Lua binding that does nothing is listed as a stub: one added
         # unlisted passes the coverage ratchet and quietly drops what a script
@@ -180,7 +179,18 @@ if(OSC_BUILD_TESTS)
         add_test(NAME arch.lua_stubs_self_test
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_lua_stubs.py
                          --self-test)
-        set_tests_properties(arch.lua_stubs arch.lua_stubs_self_test
+
+        # Every blueprint field only the engine reads is one it reads, or listed
+        # as not read yet: a field ignored loads without a word.
+        add_test(NAME arch.blueprint_fields
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_fields.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.blueprint_fields_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_fields.py
+                         --self-test)
+        set_tests_properties(arch.retail_hooks arch.retail_hooks_self_test
+                             arch.lua_stubs arch.lua_stubs_self_test
+                             arch.blueprint_fields arch.blueprint_fields_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
         # retail_ref.py, which asks retail FA itself for references: its config,
