@@ -799,3 +799,15 @@ TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrollin
     CHECK(lua_tonumber(L, -1) == 2);
     lua_pop(L, 1);
 }
+
+TEST_CASE("A press reaches uimain's OnMouseButtonPress, a module function", "[ui][lua][input]") {
+    InputFixture f;
+    f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) "
+          "__modules = __modules or {} "
+          "__modules['/lua/ui/uimain.lua'] = { OnMouseButtonPress = function(e) pressed = e.Type "
+          "end }");
+    f.dispatch.on_cursor_pos(50, 50);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("pressed == 'ButtonPress'"));
+}

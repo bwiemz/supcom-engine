@@ -467,30 +467,20 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             hover_control_ = target;
         }
 
-        // Call UIMain.OnMouseButtonPress for global click handlers
-        // (e.g. Combo close-on-outside-click via AddOnMouseClickedFunc)
+        // uimain.OnMouseButtonPress: its click handlers close a combo's list
+        // and the like on a click outside them
         if (ev.type == UIEventType::BUTTON_PRESS) {
-            lua_pushstring(L, "OnMouseButtonPress");
-            lua_rawget(L, LUA_GLOBALSINDEX);
-            if (lua_isfunction(L, -1)) {
-                lua_newtable(L);
-                lua_pushstring(L, "Type");
-                lua_pushstring(L, "ButtonPress");
-                lua_rawset(L, -3);
-                lua_pushstring(L, "x");
-                lua_pushnumber(L, ev.mouse_x);
-                lua_rawset(L, -3);
-                lua_pushstring(L, "y");
-                lua_pushnumber(L, ev.mouse_y);
-                lua_rawset(L, -3);
-                if (lua_pcall(L, 1, 0, 0) != 0) {
-                    report_ui_callback_error(fmt::format(
-                        "OnMouseButtonPress error: {}", lua_tostring(L, -1)));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
+            lua_newtable(L);
+            lua_pushstring(L, "Type");
+            lua_pushstring(L, "ButtonPress");
+            lua_rawset(L, -3);
+            lua_pushstring(L, "x");
+            lua_pushnumber(L, ev.mouse_x);
+            lua_rawset(L, -3);
+            lua_pushstring(L, "y");
+            lua_pushnumber(L, ev.mouse_y);
+            lua_rawset(L, -3);
+            core::call_ui_callback(L, core::kUiMainModule, "OnMouseButtonPress", 1);
         }
 
         // A scrollbar takes a left press its script leaves
