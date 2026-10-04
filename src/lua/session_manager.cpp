@@ -132,16 +132,14 @@ void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
                            const std::vector<u32>& army_colors) {
     if (!cfg || !brain) return;
     brain->set_faction(cfg->faction);
-    // The session's colour index names GameColors.ArmyColors[index + 1], as
-    // Moho reads it. Without that table, the engine's own stand in.
-    const int color_idx = cfg->army_color >= 0 ? cfg->army_color : cfg->player_color;
-    if (color_idx >= 0 && color_idx < static_cast<int>(army_colors.size())) {
-        const u32 argb = army_colors[static_cast<size_t>(color_idx)];
+    const int color_idx = cfg->army_color >= 1 ? cfg->army_color : cfg->player_color;
+    if (color_idx >= 1 && color_idx <= static_cast<int>(army_colors.size())) {
+        const u32 argb = army_colors[static_cast<size_t>(color_idx - 1)];
         brain->set_color(static_cast<u8>(argb >> 16), static_cast<u8>(argb >> 8),
                          static_cast<u8>(argb));
-    } else if (army_colors.empty() && color_idx >= 0 &&
-               color_idx < static_cast<int>(kArmyColors.size())) {
-        const auto& color = kArmyColors[static_cast<size_t>(color_idx)];
+    } else if (army_colors.empty() && color_idx >= 1 &&
+               color_idx <= static_cast<int>(kArmyColors.size())) {
+        const auto& color = kArmyColors[static_cast<size_t>(color_idx - 1)];
         brain->set_color(color[0], color[1], color[2]);
     }
     if (cfg->handicap > 0) brain->set_handicap(cfg->handicap / 100.0);

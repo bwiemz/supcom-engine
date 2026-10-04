@@ -118,18 +118,19 @@ void test_army_colors(TestContext& ctx) {
                         colors.size(), colors.empty() ? 0u : colors[0],
                         colors.size() > 1 ? colors[1] : 0u, game_colors.player_colors.size()));
 
-    // Test 2: a slot's colour index names ArmyColors[index + 1] (Moho's
-    // ResolveArmyColorByIndex): index 1 is DarkGreen.
     {
         auto* brain = ctx.sim.get_army(0);
         lua::ArmySlotConfig slot;
         slot.army_color = 1;
         lua::apply_config_to_brain(&slot, brain, colors);
-        const bool ok = brain && brain->has_color() && brain->color_r() == 0 &&
-                        brain->color_g() == 100 && brain->color_b() == 0;
-        t.check(ok, fmt::format("Test 2: colour index 1 gives ({}, {}, {})",
-                                brain ? brain->color_r() : 0, brain ? brain->color_g() : 0,
-                                brain ? brain->color_b() : 0));
+        const bool red = brain && brain->has_color() && brain->color_r() == 0xE8 &&
+                         brain->color_g() == 0x0A && brain->color_b() == 0x0A;
+        slot.army_color = 2;
+        lua::apply_config_to_brain(&slot, brain, colors);
+        const bool green =
+            brain && brain->color_r() == 0 && brain->color_g() == 100 && brain->color_b() == 0;
+        t.check(red && green,
+                fmt::format("Test 2: colour index 1 red {}, 2 DarkGreen {}", red, green));
     }
 
     spdlog::info("Army colors test: {}/{} passed", t.pass, t.pass + t.fail);
