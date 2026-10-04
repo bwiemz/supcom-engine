@@ -378,8 +378,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         // Phase 1: reach the site. In range when the gap to its skirt
         // is within MaxBuildDistance and the builder is off the
         // skirt (Moho's CUnitMobileBuildTask); else it walks just
-        // clear of the skirt, one cell out, and builds from there or
-        // gives up.
+        // clear of the skirt, one cell out, and builds from there if
+        // in range, or gives up.
         if (cmd.site_skirt_x <= 0) {
             const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
             cmd.site_skirt_x = sx;
@@ -405,7 +405,11 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                                 is_amphibious() || is_hover());
         }
         if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
-        if (!reachable()) {
+        // After the walk only range decides: the pathfinder may have moved
+        // its goal onto the site
+        const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+        const bool in_range = work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+        if (!reachable() && !(cmd.approached && in_range)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
