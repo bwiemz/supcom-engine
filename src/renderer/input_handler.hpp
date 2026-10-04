@@ -37,6 +37,8 @@ struct CommandMode {
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
     f32 footprint_x = 1.0f; ///< build: the structure's footprint
     f32 footprint_z = 1.0f;
+    bool drag_build = false; ///< build: a drag lays a line of it (DRAGBUILD)
+    f32 drag_spacing = 0.0f; ///< build: the line's spacing, its skirt
     /// An ability's order (RULEUCC_Script, M206w): the Script order's table
     /// for a click at a point -- the mode's own (TaskName, AbilityName) with
     /// the point as Location -- as sim::lua_to_bytes writes it.
@@ -121,6 +123,17 @@ public:
     /// units; what was issued comes back (headless clicks and tests).
     std::vector<IssuedCommand> right_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
 
+    /// A build mode's press from (x0, z0) released at (x1, z1), as Moho lays
+    /// a build drag: the structure along the line (at the press alone unless
+    /// it is DRAGBUILD), each site it may stand on a build order for the
+    /// selection's mobile builders; the first clears their queues unless
+    /// `shift`, the rest queue. Reported, only the last clears.
+    std::vector<IssuedCommand> build_line(sim::SimState& sim, const CommandMode& mode, f32 x0,
+                                          f32 z0, f32 x1, f32 z1, bool shift);
+
+    /// The build line being dragged ({x0, z0, x1, z1}), while the button is held
+    std::optional<std::array<f32, 4>> build_line_drag() const { return build_line_; }
+
     /// The orders a right-click at (wx, wz) would give the selection, each
     /// with its units, unissued
     std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
@@ -188,6 +201,9 @@ private:
     f32 drag_world_x0_ = 0, drag_world_z0_ = 0;
     f32 drag_world_x1_ = 0, drag_world_z1_ = 0;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
+    std::optional<std::array<f32, 4>> build_line_;
+    bool line_drag_build_ = false;
+    f32 line_spacing_ = 0.0f;
     std::optional<std::array<f32, 2>> cursor_world_;
 
     // Right mouse state (commands)

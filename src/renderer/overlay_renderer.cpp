@@ -233,16 +233,26 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     if (ghost) {
         constexpr f32 kDim = 216.0f / 255.0f;
         const auto pads = structure_pads(view, recon_);
-        std::vector<sim::StructureSite> sites;
-        sites.reserve(pads.size());
+        std::vector<sim::StructureSite> pad_sites;
+        pad_sites.reserve(pads.size());
         for (const auto& pad : pads) {
-            sites.push_back(pad.first);
+            pad_sites.push_back(pad.first);
         }
-        const sim::StructureSite ghost_site{ghost->pad_x0, ghost->pad_z0, ghost->pad_x1,
-                                            ghost->pad_z1};
-        std::vector<bool> lit(sites.size(), false);
-        if (ghost->valid) {
-            lit = adjacency_lit(sites, ghost_site);
+        std::vector<const BuildGhost*> ghost_sites{ghost};
+        for (const BuildGhost& site : ghost->line) {
+            ghost_sites.push_back(&site);
+        }
+        std::vector<bool> lit(pad_sites.size(), false);
+        std::vector<bool> ghost_lit(ghost_sites.size(), false);
+        for (size_t ghost_index = 0; ghost_index < ghost_sites.size(); ++ghost_index) {
+            const BuildGhost& site = *ghost_sites[ghost_index];
+            if (!site.valid) continue;
+            const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
+            const auto site_lit = adjacency_lit(pad_sites, site_pad);
+            for (size_t pad_index = 0; pad_index < site_lit.size(); ++pad_index) {
+                lit[pad_index] = lit[pad_index] || site_lit[pad_index];
+                ghost_lit[ghost_index] = ghost_lit[ghost_index] || site_lit[pad_index];
+            }
         }
         const auto outline = [&](const sim::StructureSite& pad, f32 y, f32 r, f32 g, f32 a) {
             const std::array<std::array<f32, 2>, 4> corners = {
@@ -257,13 +267,16 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             }
             emit_outline(xs, ys, r, g, 0.0f, a);
         };
-        const bool ghost_lit = std::find(lit.begin(), lit.end(), true) != lit.end();
-        if (!ghost->valid) {
-            outline(ghost_site, ghost->y, kDim, 0.0f, kDim);
-        } else if (ghost_lit) {
-            outline(ghost_site, ghost->y, 0.0f, 1.0f, 1.0f);
-        } else {
-            outline(ghost_site, ghost->y, 0.0f, kDim, kDim);
+        for (size_t i = 0; i < ghost_sites.size(); ++i) {
+            const BuildGhost& site = *ghost_sites[i];
+            const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
+            if (!site.valid) {
+                outline(site_pad, site.y, kDim, 0.0f, kDim);
+            } else if (ghost_lit[i]) {
+                outline(site_pad, site.y, 0.0f, 1.0f, 1.0f);
+            } else {
+                outline(site_pad, site.y, 0.0f, kDim, kDim);
+            }
         }
         for (size_t i = 0; i < pads.size(); ++i) {
             outline(pads[i].first, pads[i].second, 0.0f, lit[i] ? 1.0f : kDim,

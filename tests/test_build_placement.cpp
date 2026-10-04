@@ -247,8 +247,6 @@ TEST_CASE("placement: a seabed structure goes on the ground under the sea", "[pl
 }
 
 TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
-    // Odd footprints center on a cell, even ones on a cell corner, so the
-    // footprint covers whole cells -- the ghost and the order agree.
     float x = 10.3f, z = 20.8f;
     osc::sim::snap_structure_center(x, z, 1.0f, 1.0f);
     CHECK(x == 10.5f);
@@ -257,12 +255,31 @@ TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
     x = 10.3f; z = 20.8f;
     osc::sim::snap_structure_center(x, z, 2.0f, 4.0f);
     CHECK(x == 10.0f);
-    CHECK(z == 20.0f);
+    CHECK(z == 21.0f);
 
     x = 10.9f; z = 20.1f;
     osc::sim::snap_structure_center(x, z, 3.0f, 2.0f);
     CHECK(x == 10.5f);
     CHECK(z == 20.0f);
+}
+
+TEST_CASE("A build drag lays its structure along the drag", "[placement]") {
+    using osc::sim::structure_line_sites;
+    using Sites = std::vector<std::pair<osc::f32, osc::f32>>;
+    CHECK(structure_line_sites(10.3f, 20.7f, 10.3f, 20.7f, 1, 1, 1) == Sites{{10.5f, 20.5f}});
+    CHECK(structure_line_sites(10.3f, 20.7f, 15.6f, 20.2f, 1, 1, 1) == Sites{{10.5f, 20.5f},
+                                                                             {11.5f, 20.5f},
+                                                                             {12.5f, 20.5f},
+                                                                             {13.5f, 20.5f},
+                                                                             {14.5f, 20.5f},
+                                                                             {15.5f, 20.5f}});
+    CHECK(structure_line_sites(0.5f, 0.5f, 6.5f, 0.5f, 1, 1, 2) ==
+          Sites{{0.5f, 0.5f}, {2.5f, 0.5f}, {4.5f, 0.5f}, {6.5f, 0.5f}});
+    CHECK(structure_line_sites(1, 1, 11, 1, 2, 2, 4) == Sites{{1, 1}, {5, 1}, {9, 1}});
+    CHECK(structure_line_sites(0.5f, 0.5f, 4.5f, 2.5f, 1, 1, 1) ==
+          Sites{{0.5f, 0.5f}, {1.5f, 0.5f}, {2.5f, 1.5f}, {3.5f, 2.5f}, {4.5f, 2.5f}});
+    CHECK(structure_line_sites(0.5f, 4.5f, 0.5f, 0.5f, 1, 1, 2) ==
+          Sites{{0.5f, 4.5f}, {0.5f, 2.5f}, {0.5f, 0.5f}});
 }
 
 TEST_CASE("placement: a blueprint's rules are read once per game", "[placement]") {
