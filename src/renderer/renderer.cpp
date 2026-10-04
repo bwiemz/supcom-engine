@@ -413,6 +413,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
                          shadow_ds_layout_, texture_ds_layout_);
     // FA's beams, in the scene pass too (M214a)
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    command_graph_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's sky (M210b)
@@ -2390,12 +2391,20 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // A playable rect the scripts synced since: what's outside it now hides
     playable_rect_.apply(view);
 
+    // Before the meshes: its planned sites are ghosts among them
+    command_graph_renderer_.update(
+        view, camera_, selected_ids, player_army_, texture_cache_, L,
+        unit_renderer_.shader_time() / 10.0f, window_height_,
+        is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT), fi);
+
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
         // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
         // decides it below, from the same camera)
         const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
+        unit_renderer_.set_ghost_slots(
+            1 + static_cast<u32>(command_graph_renderer_.planned_sites().size()));
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
     }
@@ -2415,6 +2424,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         if (ghost_mesh) {
             unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z,
                                         gr, gg, gb, ga, &texture_cache_);
+        }
+    }
+    for (const auto& site : command_graph_renderer_.planned_sites()) {
+        if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
+            unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
+                                        0.2f, 0.9f, 0.3f, 0.2f, &texture_cache_);
         }
     }
 
@@ -2477,7 +2492,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
                            fi);
 
-    // Update game overlays (health bars, selection circles, command lines, game over)
+    // Update game overlays (health bars, selection circles, game over)
     {
         PROFILE_ZONE("Render::overlay_update");
         const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
@@ -2983,6 +2998,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // The last of the meshes, after the effects above the water: the
     // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
     draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
+    // The order lines and waypoints, over the world (TCommand)
+    command_graph_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
 
     // 5c. FA's refracting particles (M214d), as WRenViewport's
     // RenderRefractingEffects draws them: last, over a copy of the finished
@@ -4290,6 +4307,7 @@ void Renderer::shutdown() {
     particle_renderer_.destroy(device_, allocator_);
     runtime_decals_.destroy(device_, allocator_);
     beam_renderer_.destroy(device_, allocator_);
+    command_graph_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
