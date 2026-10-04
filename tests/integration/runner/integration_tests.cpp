@@ -15243,6 +15243,30 @@ void test_bitmap(TestContext& ctx) {
         }
     }
 
+    // Test 14: a texture's size leaves out its one-pixel border, as retail's
+    // GetTextureDimensions does (604x36 in the file), unless told another
+    {
+        auto result = ctx.lua_state.do_string(
+            "local box = '/textures/ui/common/dialogs/options-02/content-box_bmp.dds'\n"
+            "local w, h = GetTextureDimensions(box)\n"
+            "local fw, fh = GetTextureDimensions(box, 0)\n"
+            "return w == 602 and h == 34 and fw == 604 and fh == 36\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 14 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 14: a texture's size leaves out its border");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 14: a texture's size counts its border");
+        }
+    }
+
     // Test 15: a control's lazy var depends on one the scripts made: both from
     // the lazyvar module the scripts' import has, whose dependencies hold
     {

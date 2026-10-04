@@ -101,6 +101,10 @@ std::string lowercase_arg(lua_State* L, int idx);
 sim::Manipulator* check_manip_base(lua_State* L);
 int been_destroyed_check(lua_State* L);
 std::pair<i32, i32> read_dds_dimensions(lua_State* L, const std::string& path);
+/// A UI texture's size as Moho takes it: the file's less a border of
+/// `border` pixels each side, one unless given (FA's UI textures carry one,
+/// which Moho neither counts nor draws)
+std::pair<i32, i32> ui_texture_dimensions(lua_State* L, const std::string& path, i32 border = 1);
 /// The colour at stack index `idx`, as Moho's SCR_DecodeColor decodes it;
 /// a Lua error for an unknown one.
 u32 check_color(lua_State* L, int idx);

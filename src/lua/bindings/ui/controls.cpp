@@ -573,7 +573,7 @@ static int bitmap_SetNewTexture(lua_State* L) {
         ctrl->set_textures(std::move(textures));
         if (!ctrl->textures().empty()) {
             ctrl->set_texture_path(ctrl->textures()[0]);
-            auto [w, h] = read_dds_dimensions(L, ctrl->texture_path());
+            auto [w, h] = ui_texture_dimensions(L, ctrl->texture_path());
             ctrl->set_bitmap_width(w);
             ctrl->set_bitmap_height(h);
         }
@@ -582,7 +582,7 @@ static int bitmap_SetNewTexture(lua_State* L) {
         std::string path = lua_tostring(L, 2);
         ctrl->set_texture_path(path);
         ctrl->set_textures({path});
-        auto [w, h] = read_dds_dimensions(L, path);
+        auto [w, h] = ui_texture_dimensions(L, path);
         ctrl->set_bitmap_width(w);
         ctrl->set_bitmap_height(h);
         ctrl->set_has_solid_color(false);
