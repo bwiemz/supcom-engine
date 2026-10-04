@@ -94,6 +94,9 @@ public:
 private:
     /// Fire HandleEvent on a control. Returns true if event was consumed.
     bool fire_handle_event(lua_State* L, UIControl* ctrl, const UIEvent& ev);
+    /// A key or character for a focused Edit taking input: Moho's CMauiEdit
+    /// edits its text and calls its On* methods. False: not the Edit's.
+    bool edit_event(lua_State* L, UIControl* edit, const UIEvent& ev);
     /// Call the control's method `name` (found through its class) with
     /// `arg` if given; false if it has none.
     bool run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg = nullptr);

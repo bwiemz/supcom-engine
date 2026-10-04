@@ -3,6 +3,9 @@
 #include "ui/ui_control.hpp"
 #include "core/game_state.hpp"
 #include "ui/console.hpp"
+#include "ui/edit_text.hpp"
+
+#include <functional>
 #include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
 #include "ui/lazyvar.hpp"
@@ -325,6 +328,92 @@ bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
     return consumed;
 }
 
+namespace {
+
+bool call_edit(lua_State* L, UIControl* edit, const char* method, int nargs,
+               const std::function<void()>& push) {
+    if (edit->lua_table_ref() < 0) {
+        return false;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, edit->lua_table_ref());
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushvalue(L, -2);
+    push();
+    if (lua_pcall(L, 1 + nargs, 1, 0) != 0) {
+        report_ui_callback_error(fmt::format("{} error: {}", method, lua_tostring(L, -1)));
+        lua_pop(L, 2);
+        return false;
+    }
+    const bool handled = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 2);
+    return handled;
+}
+
+} // namespace
+
+bool UIDispatch::edit_event(lua_State* L, UIControl* edit, const UIEvent& ev) {
+    if (edit->control_type() != UIControl::ControlType::Edit || !edit->input_enabled() ||
+        ev.type == UIEventType::KEY_UP) {
+        return false;
+    }
+    EditText t{edit->text_content(), edit->caret_position()};
+    const std::string old = t.text;
+    const auto push_text = [&] { lua_pushstring(L, t.text.c_str()); };
+    const auto char_pressed = [&](u32 code) {
+        return call_edit(L, edit, "OnCharPressed", 1,
+                         [&] { lua_pushnumber(L, static_cast<lua_Number>(code)); });
+    };
+    if (ev.type == UIEventType::CHAR) {
+        if (ev.char_code < 32 || ev.char_code == 127 || char_pressed(ev.char_code)) {
+            return true;
+        }
+        t.insert(ev.char_code, edit->max_chars());
+    } else {
+        switch (ev.key_code) {
+        case GLFW_KEY_BACKSPACE: t.erase_before(); break;
+        case GLFW_KEY_DELETE: t.erase_after(); break;
+        case GLFW_KEY_LEFT: t.left(); break;
+        case GLFW_KEY_RIGHT: t.right(); break;
+        case GLFW_KEY_HOME: t.home(); break;
+        case GLFW_KEY_END: t.end(); break;
+        case GLFW_KEY_TAB: char_pressed('\t'); return true;
+        case GLFW_KEY_ENTER:
+        case GLFW_KEY_KP_ENTER: call_edit(L, edit, "OnEnterPressed", 1, push_text); return true;
+        case GLFW_KEY_ESCAPE:
+            if (call_edit(L, edit, "OnEscPressed", 1, push_text)) {
+                return true;
+            }
+            t.text.clear();
+            t.caret = 0;
+            break;
+        default:
+            if (ev.key_code >= GLFW_KEY_SPACE && ev.key_code <= GLFW_KEY_GRAVE_ACCENT &&
+                (ev.modifiers & (GLFW_MOD_CONTROL | GLFW_MOD_ALT | GLFW_MOD_SUPER)) == 0) {
+                return true;
+            }
+            call_edit(L, edit, "OnNonTextKeyPressed", 2, [&] {
+                lua_pushnumber(L, windows_key_code(ev.key_code));
+                push_event_table(L, ev);
+            });
+            return true;
+        }
+    }
+    edit->set_caret_position(t.caret);
+    if (t.text != old) {
+        edit->set_text_content(t.text);
+        call_edit(L, edit, "OnTextChanged", 2, [&] {
+            push_text();
+            lua_pushstring(L, old.c_str());
+        });
+    }
+    return true;
+}
+
 void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
     if (pending_events_.empty()) return;
 
@@ -435,8 +524,11 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         if (ev.type == UIEventType::KEY_DOWN ||
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
-            if (auto* focus = registry.keyboard_focus()) fire_handle_event(L, focus, ev);
-            else if (auto* capture = registry.input_capture()) fire_handle_event(L, capture, ev);
+            if (auto* focus = registry.keyboard_focus()) {
+                if (!edit_event(L, focus, ev)) {
+                    fire_handle_event(L, focus, ev);
+                }
+            } else if (auto* capture = registry.input_capture()) fire_handle_event(L, capture, ev);
             else if (ev.type == UIEventType::KEY_DOWN) handle_key(L, ev);
             continue;
         }
