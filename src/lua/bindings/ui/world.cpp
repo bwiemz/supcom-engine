@@ -4,6 +4,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "renderer/input_handler.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -244,8 +245,33 @@ static int worldview_CameraReset(lua_State* /*L*/) { return 0; }
 
 static int worldview_EnableResourceRendering(lua_State* /*L*/) { return 0; }
 
+/// The order the right button would give at the cursor, by its cursor name
+/// in the skin (skins.lua's cursors); nil for none
 static int worldview_GetRightMouseButtonOrder(lua_State* L) {
-    lua_pushnil(L);
+    lua_pushstring(L, "__osc_input_handler");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* input = static_cast<const renderer::InputHandler*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    auto* sim = get_sim(L);
+    const auto at = input ? input->cursor_world() : std::nullopt;
+    const std::optional<sim::CommandType> order =
+        at && sim ? input->right_button_order(*sim, (*at)[0], (*at)[1]) : std::nullopt;
+    const char* name = nullptr;
+    switch (order.value_or(sim::CommandType::Stop)) {
+    case sim::CommandType::Move: name = "RULEUCC_Move"; break;
+    case sim::CommandType::Attack: name = "RULEUCC_Attack"; break;
+    case sim::CommandType::Capture: name = "RULEUCC_Capture"; break;
+    case sim::CommandType::Guard: name = "RULEUCC_Guard"; break;
+    case sim::CommandType::Repair: name = "RULEUCC_Repair"; break;
+    case sim::CommandType::Reclaim: name = "RULEUCC_Reclaim"; break;
+    case sim::CommandType::TransportLoad: name = "RULEUCC_CallTransport"; break;
+    default: break; // Dock has no cursor of its own
+    }
+    if (name) {
+        lua_pushstring(L, name);
+    } else {
+        lua_pushnil(L);
+    }
     return 1;
 }
 

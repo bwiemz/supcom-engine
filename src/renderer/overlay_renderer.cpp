@@ -376,31 +376,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 prev_sy3 = sy_pt;
                 prev_valid3 = valid;
             }
-
-            // --- Adjacency lines (orange lines to adjacent structures) ---
-            const auto adj_ids = snap.adjacent_of(entity);
-            if (!adj_ids.empty() && cam_dist < 400.0f) {
-                for (u32 adj_id : adj_ids) {
-                    // Only draw each pair once (lower id draws the line)
-                    if (adj_id < entity.id) continue;
-
-                    auto* adj = view.find(adj_id);
-                    if (!adj) continue;
-
-                    auto adj_pos = view.position(*adj);
-                    f32 adj_sx, adj_sy;
-                    if (!world_to_screen(adj_pos.x, adj_pos.y, adj_pos.z,
-                                          vp_matrix, sw, sh, adj_sx, adj_sy))
-                        continue;
-
-                    f32 ldx = adj_sx - sx, ldy = adj_sy - sy;
-                    f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-                    if (len < 2.0f) continue;
-
-                    constexpr f32 ADJ_THICK = 1.5f;
-                    emit_line(sx, sy, adj_sx, adj_sy, ADJ_THICK, 1.0f, 0.6f, 0.1f, 0.5f); // orange
-                }
-            }
         }
     }
 
@@ -457,60 +432,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                     prev_valid2 = valid;
                 }
             }
-        }
-    }
-
-    // --- Active operation beams (build/reclaim/repair/capture) ---
-    if (cam_dist < 600.0f) {
-        for (const sim::EntityRecord& entity : view.entities()) {
-            if (!entity.is_unit) continue;
-            if (recon_ && recon_->sight(entity) != Sight::Seen) continue;
-            const sim::EntityRecord* unit = &entity;
-
-            // Determine beam target and color
-            u32 target_id = 0;
-            f32 br = 0, bg = 0, bb = 0, ba = 0.6f;
-            if (unit->is_building()) {
-                target_id = unit->build_target_id;
-                br = 0.2f; bg = 0.9f; bb = 0.6f; // teal
-            } else if (unit->is_reclaiming()) {
-                target_id = unit->reclaim_target_id;
-                br = 0.9f; bg = 0.8f; bb = 0.2f; // gold
-            } else if (unit->is_repairing()) {
-                target_id = unit->repair_target_id;
-                br = 0.3f; bg = 1.0f; bb = 0.3f; // green
-            } else if (unit->is_capturing()) {
-                target_id = unit->capture_target_id;
-                br = 1.0f; bg = 1.0f; bb = 0.2f; // yellow
-            }
-            if (target_id == 0) continue;
-
-            auto* target = view.find(target_id);
-            if (!target) continue;
-
-            auto src_pos = view.position(entity);
-            auto dst_pos = view.position(*target);
-
-            // Distance cull
-            f32 dx = src_pos.x - eye_x;
-            f32 dz = src_pos.z - eye_z;
-            if (dx * dx + dz * dz > 600.0f * 600.0f) continue;
-
-            f32 sx0, sy0, sx1, sy1;
-            if (!world_to_screen(src_pos.x, src_pos.y, src_pos.z,
-                                  vp_matrix, sw, sh, sx0, sy0))
-                continue;
-            if (!world_to_screen(dst_pos.x, dst_pos.y, dst_pos.z,
-                                  vp_matrix, sw, sh, sx1, sy1))
-                continue;
-
-            // Draw beam line (thicker than command lines)
-            f32 ldx = sx1 - sx0, ldy = sy1 - sy0;
-            f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-            if (len < 2.0f) continue;
-
-            constexpr f32 BEAM_THICK = 2.5f;
-            emit_line(sx0, sy0, sx1, sy1, BEAM_THICK, br, bg, bb, ba);
         }
     }
 
