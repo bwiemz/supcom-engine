@@ -631,6 +631,46 @@ void push_font_lazyvars(lua_State* L, int self_idx, ui::UIControl* ctrl) {
 
 // --- Factory functions (registered as globals) ---
 
+namespace {
+
+/// LazyVar.Create of the lazyvar module the scripts' own import holds
+/// (__modules): a lazy var depends on another only within one module, and
+/// userInit's globalInit starts an import of its own, with a fresh
+/// __modules, after the bindings cached theirs. Imported here if no script
+/// has yet; the cached one if there is no import. Pushes it, or nil.
+void push_lazyvar_create(lua_State* L) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__modules");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "/lua/lazyvar.lua");
+        lua_rawget(L, -2);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_pushstring(L, "import");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            lua_pushstring(L, "/lua/lazyvar.lua");
+            if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0) {
+                lua_pushnil(L);
+            }
+        }
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Create");
+            lua_rawget(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_replace(L, top + 1);
+                lua_settop(L, top + 1);
+                return;
+            }
+        }
+    }
+    lua_settop(L, top);
+    lua_pushstring(L, "__osc_lazyvar_create");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+}
+
+} // namespace
+
 /// Helper: create a LazyVar for a control and store it as self[name].
 /// Calls LazyVar.Create(0) from /lua/lazyvar.lua.
 void create_lazyvar(lua_State* L, int self_idx, const char* name) {
@@ -638,8 +678,7 @@ void create_lazyvar(lua_State* L, int self_idx, const char* name) {
     if (self_idx < 0) self_idx = lua_gettop(L) + self_idx + 1;
 
     // Get the LazyVar Create function from the lazyvar module
-    lua_pushstring(L, "__osc_lazyvar_create");
-    lua_rawget(L, LUA_REGISTRYINDEX);
+    push_lazyvar_create(L);
     if (lua_isfunction(L, -1)) {
         lua_pushnumber(L, 0);
         lua_call(L, 1, 1); // returns LazyVar table
@@ -1436,12 +1475,57 @@ static int l_InternalCreateLobby(lua_State* L) {
 
 // --- UI bootstrap globals (M76) ---
 
+/// The root frame's lazy vars, made with the lazyvar module the scripts
+/// import now, at the values they had: the engine makes the frame before
+/// the scripts' import.lua starts its modules afresh, and a lazy var made
+/// by one copy of the module does not tell another's of its changes (a
+/// splash movie laid out on the frame kept the size it was first given).
+static void renew_root_lazyvars(lua_State* L, int frame_idx) {
+    const int top = lua_gettop(L);
+    push_lazyvar_create(L);
+    lua_pushstring(L, "__osc_root_lazyvar_create");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool renew = lua_isfunction(L, -2) && !lua_rawequal(L, -1, -2);
+    lua_pop(L, 1);
+    if (!renew) {
+        lua_settop(L, top);
+        return;
+    }
+    static const char* const kRenew =
+        "return function(frame, create)\n"
+        "    for _, k in { 'Left', 'Top', 'Right', 'Bottom', 'Width', 'Height', 'Depth' } do\n"
+        "        local old = rawget(frame, k)\n"
+        "        rawset(frame, k, create(old and old() or 0))\n"
+        "    end\n"
+        "end\n";
+    if (luaL_loadbuffer(L, kRenew, std::strlen(kRenew), "the root frame's lazy vars") != 0 ||
+        lua_pcall(L, 0, 1, 0) != 0) {
+        spdlog::warn("Renewing the root frame's lazy vars: {}", lua_tostring(L, -1));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushvalue(L, frame_idx);
+    lua_pushvalue(L, top + 1); // Create
+    if (lua_pcall(L, 2, 0, 0) != 0) {
+        spdlog::warn("Renewing the root frame's lazy vars: {}", lua_tostring(L, -1));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "__osc_root_lazyvar_create");
+    lua_pushvalue(L, top + 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_settop(L, top);
+}
+
 /// GetFrame(head) -> root frame table (only head 0 supported)
 static int l_GetFrame(lua_State* L) {
     int head = static_cast<int>(luaL_optnumber(L, 1, 0));
     if (head != 0) { lua_pushnil(L); return 1; }
     lua_pushstring(L, "__osc_root_frame");
     lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        renew_root_lazyvars(L, lua_gettop(L));
+    }
     return 1;
 }
 
@@ -2415,10 +2499,69 @@ static std::vector<std::string> buildable_category_strings(lua_State* L,
 /// its BuildableCategory entries (each "A B" meaning A and B), across the
 /// selection the intersection -- the options every selected unit has. A
 /// selection that builds nothing gets a category no unit is in.
-static void push_buildable_category(lua_State* L,
-                                    const std::vector<std::vector<std::string>>& per_unit) {
+/// A unit's buildable categories, and what it may not build
+struct UnitBuildable {
+    std::vector<std::string> lists;
+    const sim::CategoryExpr* restriction = nullptr;
+};
+
+/// Pushes a compiled category as a description the combine helper builds
+/// back: {op = 'all'}, {op = 'name', name = ...} or {op = '+' | '*' | '-',
+/// l = ..., r = ...}
+static void push_category_description(lua_State* L, const sim::CategoryExpr& c, int depth = 0) {
+    lua_newtable(L);
+    const auto field = [L](const char* key, const char* value) {
+        lua_pushstring(L, key);
+        lua_pushstring(L, value);
+        lua_rawset(L, -3);
+    };
+    using Op = sim::CategoryExpr::Op;
+    switch (c.op()) {
+    case Op::All: field("op", "all"); return;
+    case Op::Name:
+        field("op", "name");
+        field("name", c.category_name().c_str());
+        return;
+    case Op::Union:
+    case Op::Intersection:
+    case Op::Difference:
+        if (c.operands().size() == 2 && depth < 64) {
+            field("op", c.op() == Op::Union ? "+" : c.op() == Op::Intersection ? "*" : "-");
+            lua_pushstring(L, "l");
+            push_category_description(L, c.operands()[0], depth + 1);
+            lua_rawset(L, -3);
+            lua_pushstring(L, "r");
+            push_category_description(L, c.operands()[1], depth + 1);
+            lua_rawset(L, -3);
+            return;
+        }
+        break;
+    case Op::None: break;
+    }
+    field("op", "none");
+}
+
+static void push_buildable_category(lua_State* L, const std::vector<UnitBuildable>& per_unit) {
+    // Each unit's lists joined, less its build restriction; then what the
+    // selection all can build
     static const char* kCombine =
-        "return function(lists)\n"
+        "local function build(d)\n"
+        "  if d.op == 'all' then return categories.ALLUNITS end\n"
+        "  if d.op == 'name' then return ParseEntityCategory(d.name) end\n"
+        "  if d.op == 'none' then return nil end\n"
+        "  local a, b = build(d.l), build(d.r)\n"
+        "  if d.op == '+' then\n"
+        "    if not a then return b elseif not b then return a end\n"
+        "    return a + b\n"
+        "  end\n"
+        "  if d.op == '*' then\n"
+        "    if not a or not b then return nil end\n"
+        "    return a * b\n"
+        "  end\n"
+        "  if not a then return nil elseif not b then return a end\n"
+        "  return a - b\n"
+        "end\n"
+        "return function(lists, restrictions)\n"
         "  local result\n"
         "  for i = 1, table.getn(lists) do\n"
         "    local u\n"
@@ -2427,6 +2570,8 @@ static void push_buildable_category(lua_State* L,
         "      if u then u = u + c else u = c end\n"
         "    end\n"
         "    if not u then return categories.OSC_BUILDS_NOTHING end\n"
+        "    local restricted = restrictions[i] and build(restrictions[i])\n"
+        "    if restricted then u = u - restricted end\n"
         "    if result then result = result * u else result = u end\n"
         "  end\n"
         "  return result or categories.OSC_BUILDS_NOTHING\n"
@@ -2449,13 +2594,19 @@ static void push_buildable_category(lua_State* L,
     lua_newtable(L);
     for (size_t i = 0; i < per_unit.size(); ++i) {
         lua_newtable(L);
-        for (size_t j = 0; j < per_unit[i].size(); ++j) {
-            lua_pushstring(L, per_unit[i][j].c_str());
+        for (size_t j = 0; j < per_unit[i].lists.size(); ++j) {
+            lua_pushstring(L, per_unit[i].lists[j].c_str());
             lua_rawseti(L, -2, static_cast<int>(j + 1));
         }
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
-    if (lua_pcall(L, 1, 1, 0) != 0) {
+    lua_newtable(L);
+    for (size_t i = 0; i < per_unit.size(); ++i) {
+        if (!per_unit[i].restriction || per_unit[i].restriction->empty()) continue;
+        push_category_description(L, *per_unit[i].restriction);
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    if (lua_pcall(L, 2, 1, 0) != 0) {
         spdlog::warn("buildable category: {}", lua_tostring(L, -1));
         lua_pop(L, 1);
         lua_newtable(L);
@@ -2483,7 +2634,7 @@ static int l_GetUnitCommandData(lua_State* L) {
 
     bool first_unit = true;
     std::unordered_set<std::string> common_caps;
-    std::vector<std::vector<std::string>> buildable;
+    std::vector<UnitBuildable> buildable;
 
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
@@ -2494,7 +2645,7 @@ static int l_GetUnitCommandData(lua_State* L) {
             continue;
         }
         auto* unit = static_cast<sim::Unit*>(entity);
-        buildable.push_back(buildable_category_strings(L, unit));
+        buildable.push_back({buildable_category_strings(L, unit), &unit->build_restriction()});
 
         if (first_unit) {
             for (const char** cap = all_caps; *cap; ++cap) {
@@ -4674,6 +4825,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
             create_lazyvar(L, -1, "Width");
             create_lazyvar(L, -1, "Height");
             create_lazyvar(L, -1, "Depth");
+            // The module they were made with (see renew_root_lazyvars)
+            lua_pushstring(L, "__osc_root_lazyvar_create");
+            push_lazyvar_create(L);
+            lua_rawset(L, LUA_REGISTRYINDEX);
 
             // Store in registry as __osc_root_frame
             lua_pushstring(L, "__osc_root_frame");
