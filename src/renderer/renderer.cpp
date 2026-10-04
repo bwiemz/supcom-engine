@@ -114,6 +114,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         glfwTerminate();
         return false;
     }
+    // The engine draws FA's cursor: the system's stays hidden over the window
+    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     window_width_ = width;
     window_height_ = height;
     camera_.set_viewport(static_cast<f32>(width), static_cast<f32>(height));
@@ -3907,11 +3909,15 @@ std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
 
 void Renderer::set_cursor_clip(bool on) {
     // Moho clips only a windowed head (ClipCursor to its rect): GLFW's
-    // captured cursor
+    // captured cursor; the system's stays hidden either way
     cursor_clipped_ = on && window_ && !fullscreen();
     if (window_)
         glfwSetInputMode(window_, GLFW_CURSOR,
-                         cursor_clipped_ ? GLFW_CURSOR_CAPTURED : GLFW_CURSOR_NORMAL);
+                         cursor_clipped_ ? GLFW_CURSOR_CAPTURED : GLFW_CURSOR_HIDDEN);
+}
+
+bool Renderer::system_cursor_shown() const {
+    return window_ && glfwGetInputMode(window_, GLFW_CURSOR) == GLFW_CURSOR_NORMAL;
 }
 
 void Renderer::set_vsync(bool on) {

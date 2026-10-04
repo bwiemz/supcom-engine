@@ -69,20 +69,49 @@ def load_args(game_args: list[str]) -> list[str]:
     return kept
 
 
+MH_MAGIC_64 = 0xFEEDFACF
+LC_UUID = 0x1B
+
+
+def macho_uuid(data: bytearray) -> range | None:
+    """Where a 64-bit Mach-O's LC_UUID lies in `data`, if it has one."""
+    if len(data) < 32 or int.from_bytes(data[0:4], "little") != MH_MAGIC_64:
+        return None
+    ncmds = int.from_bytes(data[16:20], "little")
+    at = 32
+    for _ in range(ncmds):
+        cmd = int.from_bytes(data[at : at + 4], "little")
+        size = int.from_bytes(data[at + 4 : at + 8], "little")
+        if cmd == LC_UUID:
+            return range(at + 8, at + 24)
+        at += size
+    return None
+
+
 def rebuilt(exe: Path, out: Path) -> Path:
     """A copy of `exe` as another binary of its build would be, its code
-    where it was: its ELF build-id note (in its first pages) flipped, else
-    (no note: the engine knows the binary by its file's digest) a byte more."""
+    where it was: its linker's build id flipped (ELF's note in its first
+    pages, Mach-O's LC_UUID, signed again for macOS to run it), else (no
+    build id: the engine knows the binary by its file's digest) a byte
+    more."""
     data = bytearray(exe.read_bytes())
     note = re.search(rb"\x04\x00\x00\x00(.{4})\x03\x00\x00\x00GNU\x00", data[: 1 << 16], re.DOTALL)
+    uuid = macho_uuid(data)
     if note:
         size = int.from_bytes(note.group(1), "little")
         for i in range(note.end(), note.end() + size):
+            data[i] ^= 0xFF
+    elif uuid:
+        for i in uuid:
             data[i] ^= 0xFF
     else:
         data.append(0)
     _ = out.write_bytes(bytes(data))
     out.chmod(0o755)
+    if uuid:
+        _ = subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(out)], check=True, capture_output=True
+        )
     return out
 
 

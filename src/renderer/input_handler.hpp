@@ -4,12 +4,14 @@
 
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3
+#include "sim/unit_command.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <array>
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -25,6 +27,11 @@ struct BuildGhost;
 
 /// FA's command mode (/lua/ui/game/commandmode.lua): what a world click
 /// does after the player picked a build icon or an order button.
+/// Whether the player may select `e`: a live unit not made unselectable
+/// (SetUnSelectable), not still being built, and not INSIGNIFICANTUNIT (the
+/// Cybran build bots, which Moho's selection skips)
+bool selectable(const sim::Entity& e);
+
 struct CommandMode {
     std::string mode; ///< "build", "order", "ping"...; empty for none
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
@@ -127,6 +134,18 @@ public:
     /// The build line being dragged ({x0, z0, x1, z1}), while the button is held
     std::optional<std::array<f32, 4>> build_line_drag() const { return build_line_; }
 
+    /// The orders a right-click at (wx, wz) would give the selection, each
+    /// with its units, unissued
+    std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
+    right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const;
+
+    /// What the right button would order at (wx, wz), as the world view's
+    /// GetRightMouseButtonOrder asks at the cursor: the first order not a
+    /// move, else a move; none without a selection
+    std::optional<sim::CommandType> right_button_order(sim::SimState& sim, f32 wx, f32 wz) const;
+
+    /// Where the cursor points on the ground, while over the world
+    std::optional<std::array<f32, 2>> cursor_world() const { return cursor_world_; }
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {
         selected_ = sel;
@@ -185,6 +204,7 @@ private:
     std::optional<std::array<f32, 4>> build_line_;
     bool line_drag_build_ = false;
     f32 line_spacing_ = 0.0f;
+    std::optional<std::array<f32, 2>> cursor_world_;
 
     // Right mouse state (commands)
     bool rmb_was_pressed_ = false;

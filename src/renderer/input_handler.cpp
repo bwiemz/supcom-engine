@@ -21,6 +21,14 @@
 
 namespace osc::renderer {
 
+bool selectable(const sim::Entity& e) {
+    if (!e.is_unit() || e.destroyed() || e.unselectable()) {
+        return false;
+    }
+    const auto& unit = static_cast<const sim::Unit&>(e);
+    return !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
+}
+
 void InputHandler::update(Renderer& renderer, sim::SimState& sim,
                           f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
     f64 mx_d, my_d;
@@ -63,6 +71,14 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     // turns a world click into that command.
     const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
     const bool mode_active = mode.mode == "build" || mode.mode == "order";
+    cursor_world_.reset();
+    if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
+        f32 wx = 0;
+        f32 wz = 0;
+        if (world_at(renderer, sim, mx, my, wx, wz)) {
+            cursor_world_ = std::array<f32, 2>{wx, wz};
+        }
+    }
 
     // --- Left mouse: selection, or the minimap ---
     // A press that begins on the minimap is the minimap's until released: it
@@ -237,7 +253,7 @@ void InputHandler::handle_drag_select(Renderer& renderer,
     auto ids = sim.entity_registry().collect_in_rect(wx0, wz0, wx1, wz1);
     for (u32 id : ids) {
         auto* e = sim.entity_registry().find(id);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
+        if (!e || !selectable(*e)) continue;
         if (e->army() != player_army_) continue;
         selected_.insert(id);
     }
@@ -263,8 +279,8 @@ void InputHandler::handle_right_click(Renderer& renderer,
                   selected_.size(), wx, wz);
 }
 
-std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 wx, f32 wz,
-                                                        bool shift) {
+std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
+InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
     auto& registry = sim.entity_registry();
     const sim::ArmyBrain* me = sim.get_army(player_army_);
     const auto allied = [&](i32 army) {
@@ -358,8 +374,27 @@ std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 
         if (it == groups.end()) groups.push_back({cmd, {id}});
         else it->second.push_back(id);
     }
+    return groups;
+}
+
+std::optional<sim::CommandType> InputHandler::right_button_order(sim::SimState& sim, f32 wx,
+                                                                 f32 wz) const {
+    const auto groups = right_click_orders(sim, wx, wz);
+    if (groups.empty()) {
+        return std::nullopt;
+    }
+    for (const auto& group : groups) {
+        if (group.first.type != sim::CommandType::Move) {
+            return group.first.type;
+        }
+    }
+    return sim::CommandType::Move;
+}
+
+std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 wx, f32 wz,
+                                                        bool shift) {
     std::vector<IssuedCommand> issued;
-    for (const auto& [cmd, units] : groups) {
+    for (const auto& [cmd, units] : right_click_orders(sim, wx, wz)) {
         // Player-issued: routed so it applies inside a tick (and a networked
         // match broadcasts it); a move goes to factories as their rally point.
         sim.set_human_input_active(true);
@@ -577,7 +612,7 @@ u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
 
     for (u32 id : nearby) {
         auto* e = sim.entity_registry().find(id);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
+        if (!e || !selectable(*e)) continue;
         if (e->army() != player_army_) continue;
 
         const sim::Vector3 pos = view_.position(*e);

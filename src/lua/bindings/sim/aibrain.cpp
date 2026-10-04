@@ -1193,11 +1193,15 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
     return r;
 }
 
+const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
+                                           const std::string& bp_id) {
+    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, bp_id); });
+}
+
 static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim,
                                              i32 army) {
-    return sim::StructurePlacement(sim, army, [L, &sim](const std::string& bp_id) {
-        return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, bp_id); });
-    });
+    return sim::StructurePlacement(
+        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); });
 }
 
 // Builder types whose FindPlaceToBuild answer is a deposit, not a template
@@ -1993,11 +1997,9 @@ bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const
     return placement_for(L, sim, army).can_build(bp_id, x, z);
 }
 
-/// Where a structure stands: on the ground for one that can sit on the
-/// seabed (Moho: its footprint occupies OC_SEABED, which BuildOnLayerCaps'
-/// LAYER_Seabed gives), else on the water's surface where there is water.
-static f32 structure_elevation(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x,
-                               f32 z) {
+// Where a structure stands (Moho: a footprint that can sit on the seabed
+// occupies OC_SEABED, which BuildOnLayerCaps' LAYER_Seabed gives).
+f32 structure_elevation(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x, f32 z) {
     const auto* terrain = sim.terrain();
     if (!terrain) return 0.0f;
     return rules.on_seabed ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
