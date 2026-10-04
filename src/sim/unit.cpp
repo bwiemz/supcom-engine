@@ -43,6 +43,18 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
         command_queue_.clear();
         navigator_.abort_move();
     }
+    // Moho's queue puts a patrol point added to a running patrol before the
+    // loop's oldest point: the loop goes on through it in the order given
+    if (cmd.type == CommandType::Patrol && command_queue_.size() > 1 &&
+        command_queue_.front().type == CommandType::Patrol) {
+        const auto oldest = std::min_element(
+            command_queue_.begin(), command_queue_.end(),
+            [](const UnitCommand& a, const UnitCommand& b) { return a.command_id < b.command_id; });
+        if (oldest != command_queue_.begin()) {
+            command_queue_.insert(oldest, cmd);
+            return;
+        }
+    }
     command_queue_.push_back(cmd);
 }
 
