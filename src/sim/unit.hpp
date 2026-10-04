@@ -45,6 +45,11 @@ struct BuildQueueEntry {
     int count = 1;
 };
 
+struct UnitEconomy;
+/// unit:GetResourceConsumed(): the share it obtains of what it asks for, at
+/// its army's efficiencies (1 asking for nothing)
+f64 resource_fraction(const UnitEconomy& econ, f64 mass_efficiency, f64 energy_efficiency);
+
 struct UnitEconomy {
     f64 production_mass = 0.0;
     f64 production_energy = 0.0;
