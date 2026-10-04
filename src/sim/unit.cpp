@@ -396,6 +396,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (build_target_id_ != 0 && build_released_with_order_ &&
             !(head && head->command_id == build_command_id_))
             stop_assisting();
+        if (is_reclaiming() &&
+            !(head && (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
+                       head->type == CommandType::Patrol))) {
+            stop_reclaiming(ctx.L, &ctx.registry);
+            if (destroyed() || !in_registry()) {
+                return;
+            }
+        }
     }
 
     // Paused units skip their orders, and what follows them, but still
@@ -965,7 +973,17 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
     return new_frac < 1.0f;
 }
 
-void Unit::stop_reclaiming() {
+void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
+    reclaim_target_id_ = target_id;
+    if (L) {
+        call_lua_method_with_entity(L, "OnStartReclaim", registry.find(target_id));
+    }
+}
+
+void Unit::stop_reclaiming(lua_State* L, EntityRegistry* registry) {
+    if (L && registry && reclaim_target_id_ != 0) {
+        call_lua_method_with_entity(L, "OnStopReclaim", registry->find(reclaim_target_id_));
+    }
     // Only clear production rates if we were the primary reclaimer
     // (assisters don't set production rates, so nothing to clear)
     if (reclaim_target_id_ != 0 && economy_.production_active &&
@@ -1013,22 +1031,22 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
 bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
     auto* target = registry.find(reclaim_target_id_);
     if (!target || target->destroyed() || !target->reclaimable()) {
-        stop_reclaiming();
+        stop_reclaiming(L, &registry);
         return false;
     }
 
     if (reclaim_rate_ <= 0) {
-        stop_reclaiming();
+        stop_reclaiming(L, &registry);
         return false;
     }
 
     // Already fully reclaimed (e.g., an assister finished it)
     if (target->fraction_complete() <= 0.0f) {
         u32 tid = reclaim_target_id_;
+        stop_reclaiming(L, &registry);
         call_on_reclaimed(tid, registry, L);
         spdlog::info("Reclaim complete: entity #{} finished reclaiming #{}",
                      entity_id(), tid);
-        stop_reclaiming();
         return false;
     }
 
@@ -1038,10 +1056,10 @@ bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
 
     if (new_frac <= 0.0f) {
         u32 tid = reclaim_target_id_;
+        stop_reclaiming(L, &registry);
         call_on_reclaimed(tid, registry, L);
         spdlog::info("Reclaim complete: entity #{} finished reclaiming #{}",
                      entity_id(), tid);
-        stop_reclaiming();
         return false;
     }
 

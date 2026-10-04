@@ -383,7 +383,8 @@ public:
     u32 reclaim_target_id() const { return reclaim_target_id_; }
     void set_reclaim_target_id(u32 id) { reclaim_target_id_ = id; }
     bool is_reclaiming() const { return reclaim_target_id_ != 0; }
-    void stop_reclaiming();
+    void begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry);
+    void stop_reclaiming(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry);
 
