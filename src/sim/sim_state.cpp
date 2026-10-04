@@ -2142,7 +2142,7 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
     int brain_tbl = lua_gettop(L_);
 
     lua_pushstring(L_, "OnIntelChange");
-    lua_rawget(L_, brain_tbl);
+    lua_gettable(L_, brain_tbl);
     if (!lua_isfunction(L_, -1)) {
         lua_pop(L_, 2); // pop non-function + brain_tbl
         return;

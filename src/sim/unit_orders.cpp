@@ -378,8 +378,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         // Phase 1: reach the site. In range when the gap to its skirt
         // is within MaxBuildDistance and the builder is off the
         // skirt (Moho's CUnitMobileBuildTask); else it walks just
-        // clear of the skirt, one cell out, and builds from there or
-        // gives up.
+        // clear of the skirt, one cell out, and builds from there if
+        // in range, or gives up.
         if (cmd.site_skirt_x <= 0) {
             const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
             cmd.site_skirt_x = sx;
@@ -405,7 +405,11 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                                 is_amphibious() || is_hover());
         }
         if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
-        if (!reachable()) {
+        // After the walk only range decides: the pathfinder may have moved
+        // its goal onto the site
+        const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+        const bool in_range = work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+        if (!reachable() && !(cmd.approached && in_range)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -548,13 +552,13 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
-        if (is_reclaiming()) stop_reclaiming();
+        if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed() || !target->reclaimable()) {
-        if (is_reclaiming()) stop_reclaiming();
+        if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -583,12 +587,12 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
-                if (is_reclaiming()) stop_reclaiming();
+                if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
                 command_queue_.pop_front();
                 return OrderStep::Next;
             }
         } else if (gap > max_build_distance_) {
-            stop_reclaiming();
+            stop_reclaiming(ctx.L, &ctx.registry);
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -597,7 +601,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 
     // Start reclaim if not already reclaiming this target
     if (reclaim_target_id_ != cmd.target_id) {
-        if (is_reclaiming()) stop_reclaiming();
+        if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         const ReclaimCosts costs = reclaim_costs(L, *this, *target, static_cast<f64>(build_rate_));
         const f64 max_mass = costs.mass, max_energy = costs.energy;
@@ -608,8 +612,11 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         f64 reclaim_time = costs.time;
         if (reclaim_time <= 0) reclaim_time = 0.01;
 
-        reclaim_target_id_ = cmd.target_id;
         reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
+        begin_reclaim(cmd.target_id, ctx.L, ctx.registry);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
 
         // Set production rates (resources gained by reclaiming)
         economy_.production_mass = max_mass * static_cast<f64>(reclaim_rate_);
@@ -1057,13 +1064,16 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_building()) stop_assisting();
         u32 target_reclaim_id = target_unit->reclaim_target_id();
         if (!within_reach(*guarded_reclaim, false, false)) {
-            if (is_reclaiming()) stop_reclaiming();
+            if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         } else {
             if (reclaim_target_id_ != target_reclaim_id) {
                 // Switch to new reclaim target
-                if (is_reclaiming()) stop_reclaiming();
+                if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
-                reclaim_target_id_ = target_reclaim_id;
+                begin_reclaim(target_reclaim_id, ctx.L, ctx.registry);
+                if (destroyed() || !in_registry()) {
+                    return OrderStep::Gone;
+                }
 
                 // Compute own reclaim rate based on own build_rate
                 // (assister contributes speed but NOT duplicate resources
@@ -1085,7 +1095,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
 
             if (reclaim_target_id_ != 0) {
                 if (!progress_reclaim_assist(dt, registry)) {
-                    stop_reclaiming();
+                    stop_reclaiming(ctx.L, &ctx.registry);
                 }
             }
         }
@@ -1096,7 +1106,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         // wait, paying nothing; so do helpers out of reach.
         working = true;
         if (is_building()) stop_assisting();
-        if (is_reclaiming()) stop_reclaiming();
+        if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         if (within_reach(*target_unit, true, false)) {
             const SiloBuild& missile = target_unit->silo_build();
             const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
@@ -1109,7 +1119,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     } else {
         // Target not building/reclaiming — stop if we were
         if (is_building()) stop_assisting();
-        if (is_reclaiming()) stop_reclaiming();
+        if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged and we have build_rate
         if (repairs && target_unit->health() < target_unit->max_health()) {

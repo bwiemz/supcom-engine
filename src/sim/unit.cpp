@@ -51,10 +51,19 @@ void Unit::clear_commands(const char*) {
     navigator_.abort_move();
 }
 
+namespace {
+
+bool queued_build(const UnitCommand& c) {
+    return c.type == CommandType::BuildFactory ||
+           (c.type == CommandType::BuildMobile && !c.blueprint_id.empty());
+}
+
+} // namespace
+
 std::vector<BuildQueueEntry> Unit::factory_queue() const {
     std::vector<BuildQueueEntry> groups;
     for (const auto& c : command_queue_) {
-        if (c.type != CommandType::BuildFactory) continue;
+        if (!queued_build(c)) continue;
         if (!groups.empty() && groups.back().blueprint_id == c.blueprint_id) ++groups.back().count;
         else groups.push_back({c.blueprint_id, 1});
     }
@@ -70,7 +79,7 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     const std::string* run = nullptr;
     for (size_t i = 0; i < command_queue_.size(); ++i) {
         const auto& c = command_queue_[i];
-        if (c.type != CommandType::BuildFactory) continue;
+        if (!queued_build(c)) continue;
         if (!run || *run != c.blueprint_id) {
             if (++g > index) break;
             run = &c.blueprint_id;
@@ -81,6 +90,10 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     const bool in_progress = building_factory_order();
     bool cancel = false;
     for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it, --count) {
+        // A structure a builder is at stays its work, as Stop leaves it
+        if (*it == 0 && command_queue_[0].type == CommandType::BuildMobile && build_target_id_) {
+            break;
+        }
         if (*it == 0 && in_progress) cancel = true;
         command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
     }
@@ -95,14 +108,14 @@ void Unit::increase_build_count(int index, int count) {
     const std::string* run = nullptr;
     for (size_t i = 0; i < command_queue_.size(); ++i) {
         const auto& c = command_queue_[i];
-        if (c.type != CommandType::BuildFactory) continue;
+        if (!queued_build(c)) continue;
         if (!run || *run != c.blueprint_id) {
             if (++g > index) break;
             run = &c.blueprint_id;
         }
         if (g == index) last = i;
     }
-    if (!last) return;
+    if (!last || command_queue_[*last].type != CommandType::BuildFactory) return;
     // More of the same order, as Moho counts one factory command up: the
     // blueprint and the command it was issued as, none of the runtime state
     // of the group's last order (which may be the one under way).
@@ -396,6 +409,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (build_target_id_ != 0 && build_released_with_order_ &&
             !(head && head->command_id == build_command_id_))
             stop_assisting();
+        if (is_reclaiming() &&
+            !(head && (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
+                       head->type == CommandType::Patrol))) {
+            stop_reclaiming(ctx.L, &ctx.registry);
+            if (destroyed() || !in_registry()) {
+                return;
+            }
+        }
     }
 
     // Paused units skip their orders, and what follows them, but still
@@ -965,7 +986,17 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
     return new_frac < 1.0f;
 }
 
-void Unit::stop_reclaiming() {
+void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
+    reclaim_target_id_ = target_id;
+    if (L) {
+        call_lua_method_with_entity(L, "OnStartReclaim", registry.find(target_id));
+    }
+}
+
+void Unit::stop_reclaiming(lua_State* L, EntityRegistry* registry) {
+    if (L && registry && reclaim_target_id_ != 0) {
+        call_lua_method_with_entity(L, "OnStopReclaim", registry->find(reclaim_target_id_));
+    }
     // Only clear production rates if we were the primary reclaimer
     // (assisters don't set production rates, so nothing to clear)
     if (reclaim_target_id_ != 0 && economy_.production_active &&
@@ -1013,22 +1044,22 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
 bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
     auto* target = registry.find(reclaim_target_id_);
     if (!target || target->destroyed() || !target->reclaimable()) {
-        stop_reclaiming();
+        stop_reclaiming(L, &registry);
         return false;
     }
 
     if (reclaim_rate_ <= 0) {
-        stop_reclaiming();
+        stop_reclaiming(L, &registry);
         return false;
     }
 
     // Already fully reclaimed (e.g., an assister finished it)
     if (target->fraction_complete() <= 0.0f) {
         u32 tid = reclaim_target_id_;
+        stop_reclaiming(L, &registry);
         call_on_reclaimed(tid, registry, L);
         spdlog::info("Reclaim complete: entity #{} finished reclaiming #{}",
                      entity_id(), tid);
-        stop_reclaiming();
         return false;
     }
 
@@ -1038,10 +1069,10 @@ bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
 
     if (new_frac <= 0.0f) {
         u32 tid = reclaim_target_id_;
+        stop_reclaiming(L, &registry);
         call_on_reclaimed(tid, registry, L);
         spdlog::info("Reclaim complete: entity #{} finished reclaiming #{}",
                      entity_id(), tid);
-        stop_reclaiming();
         return false;
     }
 

@@ -2,6 +2,11 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+#include <utility>
+
 namespace osc::ui {
 
 namespace {
@@ -145,6 +150,29 @@ i32 windows_key_code(i32 glfw_key) {
     case GLFW_KEY_MENU: return 0x5D;
     default: return 0;
     }
+}
+
+std::vector<i32> glfw_keys_named(std::string_view name) {
+    std::string lower(name);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    static const std::pair<std::string_view, std::vector<i32>> kNames[] = {
+        {"shift", {GLFW_KEY_LEFT_SHIFT, GLFW_KEY_RIGHT_SHIFT}},
+        {"ctrl", {GLFW_KEY_LEFT_CONTROL, GLFW_KEY_RIGHT_CONTROL}},
+        {"alt", {GLFW_KEY_LEFT_ALT, GLFW_KEY_RIGHT_ALT}},
+        {"leftshift", {GLFW_KEY_LEFT_SHIFT}},
+        {"rightshift", {GLFW_KEY_RIGHT_SHIFT}},
+        {"leftctrl", {GLFW_KEY_LEFT_CONTROL}},
+        {"rightctrl", {GLFW_KEY_RIGHT_CONTROL}},
+        {"leftalt", {GLFW_KEY_LEFT_ALT}},
+        {"rightalt", {GLFW_KEY_RIGHT_ALT}},
+    };
+    for (const auto& [key_name, keys] : kNames) {
+        if (lower == key_name) {
+            return keys;
+        }
+    }
+    return {};
 }
 
 i32 moho_mouse_button(i32 glfw_button) {

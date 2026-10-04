@@ -4,6 +4,8 @@
 
 #include <GLFW/glfw3.h>
 
+#include <vector>
+
 using osc::ui::moho_key_code;
 using osc::ui::moho_mouse_button;
 using osc::ui::windows_key_code;
@@ -92,4 +94,15 @@ TEST_CASE("A mouse button's KeyCode is wx's button number", "[ui][input]") {
     CHECK(moho_mouse_button(GLFW_MOUSE_BUTTON_MIDDLE) == 2);
     CHECK(moho_mouse_button(GLFW_MOUSE_BUTTON_RIGHT) == 3);
     CHECK(moho_mouse_button(GLFW_MOUSE_BUTTON_4) == 0);
+}
+
+TEST_CASE("A modifier named as keyNames.lua names it is its GLFW keys", "[ui][input]") {
+    using osc::ui::glfw_keys_named;
+    using Keys = std::vector<osc::i32>;
+    CHECK(glfw_keys_named("Shift") == Keys{GLFW_KEY_LEFT_SHIFT, GLFW_KEY_RIGHT_SHIFT});
+    CHECK(glfw_keys_named("ctrl") == Keys{GLFW_KEY_LEFT_CONTROL, GLFW_KEY_RIGHT_CONTROL});
+    CHECK(glfw_keys_named("Alt") == Keys{GLFW_KEY_LEFT_ALT, GLFW_KEY_RIGHT_ALT});
+    CHECK(glfw_keys_named("RightShift") == Keys{GLFW_KEY_RIGHT_SHIFT});
+    CHECK(glfw_keys_named("LeftAlt") == Keys{GLFW_KEY_LEFT_ALT});
+    CHECK(glfw_keys_named("NoSuchKey").empty());
 }

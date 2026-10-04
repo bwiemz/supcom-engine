@@ -7,6 +7,7 @@
 #include "lua/game_mods.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/session_manager.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/sim_loader.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/bone_cache.hpp"
@@ -34,6 +35,47 @@ osc::sim::GameSetup launch_setup(lua_State* uiL, const osc::sim::Replay* replay,
     setup.scenario = scenario;
     setup.seed = seed;
     return setup;
+}
+
+int human_army(lua_State* simL, osc::sim::SimState& sim) {
+    if (!simL) {
+        return 0;
+    }
+    const int top = lua_gettop(simL);
+    lua_pushstring(simL, "ScenarioInfo");
+    lua_rawget(simL, LUA_GLOBALSINDEX);
+    int setup = 0;
+    if (lua_istable(simL, -1)) {
+        lua_pushstring(simL, "ArmySetup");
+        lua_gettable(simL, -2);
+        if (lua_istable(simL, -1)) {
+            setup = lua_gettop(simL);
+        }
+    }
+    int found = -1;
+    for (size_t i = 0; i < sim.army_count() && found < 0; ++i) {
+        const auto* army = sim.get_army(static_cast<osc::i32>(i));
+        if (!army) {
+            continue;
+        }
+        bool human = true;
+        if (setup != 0) {
+            lua_pushstring(simL, army->name().c_str());
+            lua_gettable(simL, setup);
+            if (lua_istable(simL, -1)) {
+                lua_pushstring(simL, "Human");
+                lua_gettable(simL, -2);
+                human = lua_toboolean(simL, -1) != 0;
+                lua_pop(simL, 1);
+            }
+            lua_pop(simL, 1);
+        }
+        if (human) {
+            found = static_cast<int>(i);
+        }
+    }
+    lua_settop(simL, top);
+    return found < 0 ? 0 : found;
 }
 
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
@@ -235,9 +277,10 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     lua_pushnumber(uiL, 0);
     lua_rawset(uiL, LUA_REGISTRYINDEX);
 
-    lua_pushstring(uiL, "__osc_focus_army");
-    lua_pushnumber(uiL, 0);
-    lua_rawset(uiL, LUA_REGISTRYINDEX);
+    // The player plays the army the lobby set up as theirs: not always the
+    // first, as a lobby gives the player the slot taken (its start spot)
+    osc::lua::set_focus_army(sim_lua_state->raw(), uiL,
+                             human_army(sim_lua_state->raw(), *sim_state));
 
     // 17. Clear selection
     if (input_handler) input_handler->set_selected({});

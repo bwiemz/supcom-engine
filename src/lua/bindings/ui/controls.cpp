@@ -333,12 +333,11 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
     bool blocks = lua_toboolean(L, 2) != 0;
     auto* prev = reg->keyboard_focus();
     if (prev && prev != ctrl) {
-        prev->set_keyboard_focus(false);
         // Call OnLoseKeyboardFocus on previous
         if (prev->lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, prev->lua_table_ref());
             lua_pushstring(L, "OnLoseKeyboardFocus");
-            lua_rawget(L, -2);
+            lua_gettable(L, -2);
             if (lua_isfunction(L, -1)) {
                 lua_pushvalue(L, -2);
                 lua_pcall(L, 1, 0, 0);
@@ -349,7 +348,6 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
         }
     }
 
-    ctrl->set_keyboard_focus(true);
     ctrl->set_blocks_key_down(blocks);
     reg->set_keyboard_focus(ctrl);
     return 0;
@@ -361,7 +359,6 @@ static int control_AbandonKeyboardFocus(lua_State* L) {
     if (!ctrl || !reg) return 0;
 
     if (reg->keyboard_focus() == ctrl) {
-        ctrl->set_keyboard_focus(false);
         reg->set_keyboard_focus(nullptr);
     }
     return 0;
@@ -573,7 +570,7 @@ static int bitmap_SetNewTexture(lua_State* L) {
         ctrl->set_textures(std::move(textures));
         if (!ctrl->textures().empty()) {
             ctrl->set_texture_path(ctrl->textures()[0]);
-            auto [w, h] = read_dds_dimensions(L, ctrl->texture_path());
+            auto [w, h] = ui_texture_dimensions(L, ctrl->texture_path());
             ctrl->set_bitmap_width(w);
             ctrl->set_bitmap_height(h);
         }
@@ -582,7 +579,7 @@ static int bitmap_SetNewTexture(lua_State* L) {
         std::string path = lua_tostring(L, 2);
         ctrl->set_texture_path(path);
         ctrl->set_textures({path});
-        auto [w, h] = read_dds_dimensions(L, path);
+        auto [w, h] = ui_texture_dimensions(L, path);
         ctrl->set_bitmap_width(w);
         ctrl->set_bitmap_height(h);
         ctrl->set_has_solid_color(false);
@@ -750,7 +747,7 @@ static int bitmap_Stop(lua_State* L) {
         ctrl->set_anim_playing(false);
         // Call OnAnimationStopped callback
         lua_pushstring(L, "OnAnimationStopped");
-        lua_rawget(L, 1);
+        lua_gettable(L, 1);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, 1);
             if (lua_pcall(L, 1, 0, 0) != 0) {

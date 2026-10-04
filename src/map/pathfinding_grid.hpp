@@ -70,11 +70,10 @@ public:
     /// Convert grid coordinates to world position (cell center).
     void grid_to_world(u32 gx, u32 gz, f32& wx, f32& wz) const;
 
-    /// Mark a rectangular footprint as Obstacle.
+    /// Mark a rectangular footprint as Obstacle: the cells whose centres it
+    /// covers, or the one its centre is in when it covers none.
     /// (wx, wz) = center in world coords, sizeX/sizeZ in world units.
-    /// Obstacles are reference-counted per cell: adjacent footprints can
-    /// share a border cell after rounding, and it must stay blocked until
-    /// every footprint covering it is cleared.
+    /// Reference-counted per cell.
     void mark_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ);
 
     /// Undo one mark_obstacle() with the same rectangle. A cell returns to
@@ -86,6 +85,9 @@ public:
     u64 version() const { return version_; }
 
 private:
+    void covered_cells(f32 wx, f32 wz, f32 sizeX, f32 sizeZ, u32& gx0, u32& gz0, u32& gx1,
+                       u32& gz1) const;
+
     bool passable_cell(CellPassability cell, u32 index, const MoveClass& m) const {
         switch (m.kind) {
         case MoveClass::Kind::Air: return true;

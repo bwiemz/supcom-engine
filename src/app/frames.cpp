@@ -2,6 +2,7 @@
 // and the lobby's launch (M192 step 2, moved from app.cpp).
 
 #include "app/app_internal.hpp"
+#include "lua/factory_queue.hpp"
 #include "core/game_state.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
@@ -259,6 +260,13 @@ void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 /// focus changes, OnSync), then the game UI's beat functions.
 void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL) {
     if (sim_lua) osc::lua::sync_beat(sim_lua->raw(), uiL);
+    lua_pushstring(uiL, "__osc_factory_queue");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    auto* queue = static_cast<osc::lua::FactoryQueueDisplay*>(lua_touserdata(uiL, -1));
+    lua_pop(uiL, 1);
+    if (queue && sim) {
+        queue->report_change(uiL, *sim);
+    }
     if (sim) osc::lua::notify_focus_army_damage(uiL, *sim);
     osc::core::call_game_beat(uiL);
 }

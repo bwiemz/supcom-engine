@@ -713,7 +713,7 @@ void test_reclaim(TestContext& ctx) {
         -- Create a prop near the ACU (within reclaim range)
         local pos = acu:GetPosition()
         local prop = CreateProp({pos[1] + 3, pos[2], pos[3]},
-                                '/env/common/props/test_reclaim.bp')
+                                '/env/Crystalline/Props/Rocks/CrysCrystal01_prop.bp')
         if not prop then
             LOG('Reclaim test: CreateProp failed')
             return
@@ -729,6 +729,17 @@ void test_reclaim(TestContext& ctx) {
         prop:SetMaxHealth(50)
         prop:SetHealth(nil, 50)
         prop:SetFractionComplete(1.0)
+
+        __osc_reclaim_calls = {}
+        local start, stop = acu.OnStartReclaim, acu.OnStopReclaim
+        acu.OnStartReclaim = function(self, target)
+            table.insert(__osc_reclaim_calls, 'start ' .. tostring(target ~= nil))
+            return start(self, target)
+        end
+        acu.OnStopReclaim = function(self, target)
+            table.insert(__osc_reclaim_calls, 'stop ' .. tostring(target ~= nil))
+            return stop(self, target)
+        end
 
         -- Issue reclaim command
         IssueReclaim({acu}, prop)
@@ -757,6 +768,48 @@ void test_reclaim(TestContext& ctx) {
                          i + 1, ctx.sim.entity_registry().count());
         }
     }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local got = table.concat(__osc_reclaim_calls, ',')
+            if got ~= 'start true,stop true' then error('calls: ' .. got) end
+        )"))
+        spdlog::info("[PASS] Reclaim test: OnStartReclaim and OnStopReclaim, with the prop");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+
+    (void)ctx.lua_state.do_string(R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        local pos = acu:GetPosition()
+        local prop = CreateProp({pos[1] + 2, pos[2], pos[3]}, '/env/Crystalline/Props/Rocks/CrysCrystal01_prop.bp')
+        prop.MaxMassReclaim = 100
+        prop.MaxEnergyReclaim = 50
+        prop:SetMaxHealth(50)
+        prop:SetHealth(nil, 50)
+        prop:SetFractionComplete(1.0)
+        __osc_reclaim_calls = {}
+        IssueReclaim({acu}, prop)
+    )");
+    for (int i = 0; i < 100; ++i) {
+        ctx.sim.tick();
+        if (ctx.lua_state
+                .do_string("if not GetEntityById(__osc_test_acu_id(1)):IsUnitState('Reclaiming') "
+                           "then error('') end")
+                .ok()) {
+            break;
+        }
+    }
+    (void)ctx.lua_state.do_string("IssueStop({GetEntityById(__osc_test_acu_id(1))})");
+    for (int i = 0; i < 3; ++i) {
+        ctx.sim.tick();
+    }
+    if (auto r = ctx.lua_state.do_string(R"(
+            local acu = GetEntityById(__osc_test_acu_id(1))
+            local got = table.concat(__osc_reclaim_calls, ',')
+            if got ~= 'start true,stop true' or acu:IsUnitState('Reclaiming') then
+                error('calls: ' .. got .. '; reclaiming ' .. tostring(acu:IsUnitState('Reclaiming')))
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: a stopped reclaim ends, with OnStopReclaim");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
+
 
     // Verify: prop should be gone (destroyed or fraction=0)
     auto post_count = ctx.sim.entity_registry().count();
@@ -10105,6 +10158,10 @@ void test_range(TestContext& ctx) {
         __osc_prize:SetFireState(1)
         IssueCapture({__osc_taker}, __osc_prize)
 
+        __osc_shop = __osc_spawn('ueb0101', 'ARMY_1', 610.5, 160.5)
+        __osc_onsite = __osc_spawn('uel0001', 'ARMY_1', 610.5, 165.5)
+        IssueBuildMobile({__osc_onsite}, __osc_at(610.5, 165.5), 'ueb1101', {})
+
         -- The queue: orders after the first wait their turn.
         __osc_queued = __osc_spawn('uel0201', 'ARMY_1', 680.5, 100.5)
         IssueMove({__osc_queued}, __osc_at(690, 100.5))
@@ -10200,6 +10257,17 @@ void test_range(TestContext& ctx) {
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
         if d < 5 then error(string.format('the ACU is %.2f from its target', d)) end
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
+    )");
+
+    lua_check("Test 12b: a builder on its site builds there once clear of it", R"(
+        local built = false
+        for _, u in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.ueb1101, false) do
+            if __osc_from(u, 610.5, 165.5) < 1 then built = true end
+        end
+        if not built then
+            error('no power generator on the site; the ACU has ' ..
+                  table.getn(__osc_onsite:GetCommandQueue()) .. ' orders')
+        end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
@@ -10625,6 +10693,36 @@ void test_factory_rally(TestContext& ctx) {
         if __osc_queue(__osc_a) ~= 2 then
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; its 2 builds expected')
         end
+    )");
+    lua_check("an air factory builds an engineer, rallied left", R"(
+        __osc_air = __osc_spawn('urb0102', 1, 680, 140)
+        IssueClearFactoryCommands({__osc_air})
+        IssueFactoryRallyPoint({__osc_air}, {660, GetTerrainHeight(660, 140), 140})
+        IssueBuildFactory({__osc_air}, 'url0105', 1)
+        __osc_eng = false
+        __osc_strayed = 0
+        __osc_rolled_to = false
+    )");
+    for (int i = 0; i < 400; ++i) {
+        run(1);
+        (void)ctx.lua_state.do_string(R"(
+            __osc_eng = __osc_eng or __osc_building(__osc_air) or false
+            if __osc_eng and not __osc_eng:IsBeingBuilt() and not __osc_rolled_to then
+                local p = __osc_eng:GetPosition()
+                __osc_strayed = math.max(__osc_strayed, math.abs(p[3] - 140.35))
+                if __osc_air.MoveCommand and IsCommandDone(__osc_air.MoveCommand) then
+                    __osc_rolled_to = p
+                end
+            end
+        )");
+    }
+    lua_check("the engineer rolls straight off to the roll-off point", R"(
+        local p = __osc_rolled_to
+        if not p then error('the roll-off move never ended') end
+        if VDist2(p[1], p[3], 677.25, 140.35) > 0.25 then
+            error('rolled off to ' .. p[1] .. ', ' .. p[3] .. '; 677.25, 140.35 expected')
+        end
+        if __osc_strayed > 0.5 then error('strayed ' .. __osc_strayed .. ' from its line') end
     )");
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
 }
@@ -15243,6 +15341,30 @@ void test_bitmap(TestContext& ctx) {
         }
     }
 
+    // Test 14: a texture's size leaves out its one-pixel border, as retail's
+    // GetTextureDimensions does (604x36 in the file), unless told another
+    {
+        auto result = ctx.lua_state.do_string(
+            "local box = '/textures/ui/common/dialogs/options-02/content-box_bmp.dds'\n"
+            "local w, h = GetTextureDimensions(box)\n"
+            "local fw, fh = GetTextureDimensions(box, 0)\n"
+            "return w == 602 and h == 34 and fw == 604 and fh == 36\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 14 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 14: a texture's size leaves out its border");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 14: a texture's size counts its border");
+        }
+    }
+
     // Test 15: a control's lazy var depends on one the scripts made: both from
     // the lazyvar module the scripts' import has, whose dependencies hold
     {
@@ -15527,6 +15649,39 @@ void test_text(TestContext& ctx) {
         else spdlog::warn("Test 13 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 13: Text parent linkage correct"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 13: Text parent linkage failed"); }
+    }
+
+    // Test 14: a Text's Width is its Lua binding's, whatever text it is given
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local Text = import('/lua/maui/text.lua').Text\n"
+            "local t = Text(Frame('WrapParent'))\n"
+            "t:SetFont('Arial', 14)\n"
+            "t.Left:Set(24)\n"
+            "t.Right:Set(385)\n"
+            "t:SetClipToWidth(true)\n"
+            "t:SetText('Light')\n"
+            "local clipped = t.Width()\n"
+            "t:SetClipToWidth(false)\n"
+            "t:SetText('Light Gunship')\n"
+            "local fitted = t.Width()\n"
+            "LOG('Text width: clipped=' .. clipped .. ' fitted=' .. fitted)\n"
+            "return clipped == 361 and fitted == math.floor(t.TextAdvance())\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 14 Lua error: {}", result.error().message);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 14: a Text's Width keeps its binding");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 14: SetText overrode a Text's Width");
+        }
     }
 
     spdlog::info("Text test: {}/{} passed", pass, pass + fail);
@@ -16859,6 +17014,41 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if n < 5 then error('order grid holds ' .. n .. ' buttons') end
         if grid:IsHidden() then error('the order grid is hidden') end
     )");
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_radar = CreateUnitHPR('ueb3101', 'ARMY_1', x - 20, GetTerrainHeight(x - 20, z), z + 10, 0, 0, 0)
+        __osc_ui_scout = CreateUnitHPR('uea0101', 'ARMY_1', x - 24, GetTerrainHeight(x - 24, z) + 10, z + 10, 0, 0, 0)
+    )");
+    play(2);
+    {
+        osc::u32 radar = 0;
+        osc::u32 scout = 0;
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb3101") {
+                radar = e.entity_id();
+            } else if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "uea0101") {
+                scout = e.entity_id();
+            }
+        });
+        const std::string check = fmt::format(R"(
+            local acu = GetSelectedUnits()[1]
+            local function has(list, name)
+                for _, v in list do if v == name then return true end end
+                return false
+            end
+            SelectUnits({{{{EntityId = {}}}}})
+            local _, radar_toggles = GetUnitCommandData(GetSelectedUnits())
+            SelectUnits({{{{EntityId = {}}}}})
+            local scout_orders = GetUnitCommandData(GetSelectedUnits())
+            SelectUnits({{acu}})
+            if not has(radar_toggles, 'RULEUTC_IntelToggle') then error('the radar has no intel toggle') end
+            if not has(scout_orders, 'RULEUCC_Dock') then error('the scout has no dock order') end
+        )",
+                                              radar, scout);
+        lua_ok("Test 10g0: a radar's intel toggle and a scout's dock order", check.c_str());
+    }
+    sim_lua("__osc_ui_radar:Destroy() __osc_ui_scout:Destroy()");
+    play(2);
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
         local list = EntityCategoryGetUnitList(buildable)
@@ -16890,6 +17080,40 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         end
         commandmode.EndCommandMode(true)
     )");
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_mex = CreateUnitHPR('ueb1103', 'ARMY_1', x + 12, GetTerrainHeight(x + 12, z), z - 12, 0, 0, 0)
+    )");
+    osc::u32 mex_id = 0;
+    ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb1103") {
+            mex_id = e.entity_id();
+        }
+    });
+    play(2);
+    const std::string select_mex = fmt::format(R"(
+        __osc_test_acu = GetSelectedUnits()[1]
+        SelectUnits({{{{EntityId = {}}}}})
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        local list = EntityCategoryGetUnitList(buildable)
+        if table.getn(list) ~= 1 or list[1] ~= 'ueb1202' then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, ' .. tostring(list[1]))
+        end
+    )",
+                                               mex_id);
+    lua_ok("Test 10g3: a T1 extractor offers its upgrade", select_mex.c_str());
+    play(2);
+    lua_ok("Test 10g4: the construction panel shows it", R"(
+        local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
+        local upgrade = false
+        for _, item in shown do
+            if item.id == 'ueb1202' then upgrade = true end
+        end
+        if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
+        SelectUnits({__osc_test_acu})
+    )");
+    sim_lua("__osc_ui_mex:Destroy()");
+    play(2);
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
     // for auto mode, and after a tick the sim's unit has it.
     lua_ok("Test 10h: ProcessInfo requests auto mode", R"(
@@ -16981,6 +17205,13 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10q: queue three engineers at a factory", R"(
         local f = GetUnitById(__osc_test_factory_id)
         if not f then error('no factory') end
+        __osc_queue_reports = {}
+        local gamemain = import('/lua/ui/game/gamemain.lua')
+        local forward = gamemain.OnQueueChanged
+        gamemain.OnQueueChanged = function(queue)
+            table.insert(__osc_queue_reports, queue)
+            forward(queue)
+        end
         SelectUnits({f})
         IssueBlueprintCommand('UNITCOMMAND_BuildFactory', 'uel0105', 3)
         if table.getn(SetCurrentFactoryForQueueDisplay(f)) ~= 0 then
@@ -16993,12 +17224,18 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if table.getn(q) ~= 1 or q[1].id ~= 'uel0105' or q[1].count ~= 3 then
             error('queue: ' .. table.getn(q) .. ' entries, ' .. tostring(q[1] and q[1].count))
         end
+        local told = __osc_queue_reports[table.getn(__osc_queue_reports)]
+        if not told or not told[1] or told[1].count ~= 3 then
+            error('OnQueueChanged: ' .. table.getn(__osc_queue_reports) .. ' reports')
+        end
         DecreaseBuildCountInQueue(1, 1)
     )");
     play(1);
     lua_ok("Test 10s: two left; five more (a shift-click)", R"(
         local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
         if not q[1] or q[1].count ~= 2 then error('count ' .. tostring(q[1] and q[1].count)) end
+        local told = __osc_queue_reports[table.getn(__osc_queue_reports)]
+        if not told[1] or told[1].count ~= 2 then error('told ' .. tostring(told[1] and told[1].count)) end
         IncreaseBuildCountInQueue(1, 5)
     )");
     play(1);
@@ -17013,6 +17250,30 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     if (army1_unit("uel0105"))
         osc::test_status::fail("[FAIL] Test 10s2: Stop left the factory's engineer half-built");
     else spdlog::info("[PASS] Test 10s2: Stop took the engineer under construction");
+    lua_ok("Test 10s3: select the commander", "SelectUnits(GetArmyAvatars())");
+    sim_lua(R"(
+        local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
+        local p = acu:GetPosition()
+        IssueBuildMobile({acu}, Vector(p[1] + 10, 0, p[3]), 'ueb1101', {})
+        IssueBuildMobile({acu}, Vector(p[1] + 14, 0, p[3]), 'ueb1101', {})
+        IssueBuildMobile({acu}, Vector(p[1] + 10, 0, p[3] + 8), 'ueb1105', {})
+    )");
+    play(1);
+    lua_ok("Test 10s4: the commander's builds are its queue", R"(
+        local q = SetCurrentFactoryForQueueDisplay(GetArmyAvatars()[1])
+        if table.getn(q) ~= 2 or q[1].id ~= 'ueb1101' or q[1].count ~= 2 or
+           q[2].id ~= 'ueb1105' or q[2].count ~= 1 then
+            error(table.getn(q) .. ' groups, ' .. tostring(q[1] and q[1].count))
+        end
+        IssueCommand('UNITCOMMAND_Stop')
+    )");
+    play(1);
+    sim_lua(R"(
+        for _, u in ArmyBrains[1]:GetListOfUnits(categories.STRUCTURE, false) do
+            if u:IsBeingBuilt() then u:Destroy() end
+        end
+    )");
+    play(1);
     lua_ok("Test 10t: stopped; an enhancement for the commander", R"(
         local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
         if table.getn(q) ~= 0 then error(table.getn(q) .. ' entries after Stop') end

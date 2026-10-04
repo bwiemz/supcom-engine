@@ -277,7 +277,15 @@ void SlideManipulator::set_goal(f32 x, f32 y, f32 z) {
 }
 
 void SlideManipulator::tick(f32 dt) {
-    if (speed_ <= 0) return;
+    // Moho's slider at a negative speed is at its goal at once (retail's
+    // build effects SetSpeed(-1), then WaitFor it)
+    if (speed_ < 0) {
+        current_ = goal_;
+        return;
+    }
+    if (speed_ == 0) {
+        return;
+    }
 
     f32 dx = goal_.x - current_.x;
     f32 dy = goal_.y - current_.y;

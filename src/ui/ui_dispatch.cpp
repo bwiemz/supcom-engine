@@ -301,6 +301,28 @@ bool UIDispatch::ui_has_mouse(lua_State* L, UIControlRegistry& registry, f64 x, 
     return hit && hit != root && !dynamic_cast<WorldView*>(hit);
 }
 
+namespace {
+
+/// The row of an ItemList under a mouse event; -1 off its rows
+i32 item_list_row(lua_State* L, const UIControl& list, const UIEvent& ev) {
+    i32 row = -1;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, list.lua_table_ref());
+    const int tbl = lua_gettop(L);
+    if (lua_istable(L, tbl)) {
+        const auto rect =
+            control_rect(read_lazyvar(L, tbl, "Left"), read_lazyvar(L, tbl, "Top"),
+                         read_lazyvar(L, tbl, "Right"), read_lazyvar(L, tbl, "Bottom"),
+                         read_lazyvar(L, tbl, "Width"), read_lazyvar(L, tbl, "Height"));
+        if (ev.mouse_x >= rect.x && ev.mouse_x < rect.x + rect.w) {
+            row = item_list_row_at(list, rect.h, static_cast<f32>(ev.mouse_y - rect.y));
+        }
+    }
+    lua_settop(L, tbl - 1);
+    return row;
+}
+
+} // namespace
+
 bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
                                     const UIEvent& ev) {
     if (!ctrl || ctrl->lua_table_ref() < 0) return false;
@@ -362,7 +384,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             bool handled = false;
             if (ev.type == UIEventType::MOUSE_MOTION) {
                 lua_pushstring(L, "OnMove");
-                lua_rawget(L, dragger_idx);
+                lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
                     lua_pushnumber(L, ev.mouse_x);
@@ -378,7 +400,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 handled = true;
             } else if (ev.type == UIEventType::BUTTON_RELEASE) {
                 lua_pushstring(L, "OnRelease");
-                lua_rawget(L, dragger_idx);
+                lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
                     lua_pushnumber(L, ev.mouse_x);
@@ -399,7 +421,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             } else if (ev.type == UIEventType::KEY_DOWN && ev.key_code == 256) {
                 // ESC = GLFW_KEY_ESCAPE = 256
                 lua_pushstring(L, "OnCancel");
-                lua_rawget(L, dragger_idx);
+                lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
                     if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -467,6 +489,10 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             hover_control_ = target;
         }
 
+        if (ev.type == UIEventType::MOUSE_MOTION) {
+            hover_item_list(L, target, ev);
+        }
+
         // Call UIMain.OnMouseButtonPress for global click handlers
         // (e.g. Combo close-on-outside-click via AddOnMouseClickedFunc)
         if (ev.type == UIEventType::BUTTON_PRESS) {
@@ -493,6 +519,18 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             }
         }
 
+        // An Edit takes the focus on a left press its script leaves, the
+        // press going no further (Moho's CMauiEdit): retail's edit.lua asks
+        // for none, a field clicked into is the one typed into.
+        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
+            target && !target->destroyed() &&
+            target->control_type() == UIControl::ControlType::Edit && target->input_enabled()) {
+            if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
+                run_script(L, target, "AcquireFocus");
+            }
+            continue;
+        }
+
         // A scrollbar takes a left press its script leaves
         if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
             target && !target->destroyed() &&
@@ -501,6 +539,23 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 press_scrollbar(L, target, ev);
             }
             continue;
+        }
+
+        // An ItemList takes a left press on a row its script leaves: its
+        // OnClick(row, event), the press going no further (Moho's
+        // CMauiItemList). A Combo's list picks its item so, the Combo under
+        // it not toggling its list back.
+        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
+            target && !target->destroyed() &&
+            target->control_type() == UIControl::ControlType::ItemList) {
+            const i32 row = item_list_row(L, *target, ev);
+            if (row >= 0) {
+                if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
+                    const f64 at = row;
+                    run_script(L, target, "OnClick", &at, &ev);
+                }
+                continue;
+            }
         }
 
         // Dispatch to hit target, then walk up ancestors.
@@ -596,6 +651,27 @@ void UIDispatch::drag_thumb(lua_State* L, const UIEvent& ev) {
         dragged_top(scroll_values(L, *bar), point.track, thumb.length, point.at - thumb_grab_));
 }
 
+void UIDispatch::hover_item_list(lua_State* L, UIControl* target, const UIEvent& ev) {
+    UIControl* const list =
+        target && !target->destroyed() && target->control_type() == UIControl::ControlType::ItemList
+            ? target
+            : nullptr;
+    const i32 row = list ? item_list_row(L, *list, ev) : -1;
+    if (list == mouseover_list_ && row == mouseover_row_) {
+        return;
+    }
+    if (mouseover_list_ && mouseover_list_ != list && mouseover_row_ >= 0) {
+        const f64 none = -1;
+        run_script(L, mouseover_list_, "OnMouseoverItem", &none);
+    }
+    if (list && (list == mouseover_list_ || row >= 0)) {
+        const f64 at = row;
+        run_script(L, list, "OnMouseoverItem", &at);
+    }
+    mouseover_list_ = list;
+    mouseover_row_ = row;
+}
+
 void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
                                   f64 dt) {
     // Snapshot control pointers before iterating.  OnFrame callbacks (e.g.
@@ -622,7 +698,7 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         lua_pushstring(L, "OnFrame");
-        lua_rawget(L, -2);
+        lua_gettable(L, -2);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, -2); // self
             lua_pushnumber(L, dt);
@@ -695,7 +771,8 @@ void UIDispatch::activate_chat(lua_State* L, const UIEvent& ev) {
     lua_settop(L, top);
 }
 
-bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg) {
+bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg,
+                            const UIEvent* event) {
     if (ctrl->destroyed() || ctrl->lua_table_ref() < 0) return false;
     lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
     lua_pushstring(L, name);
@@ -708,6 +785,10 @@ bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, con
     int args = 1;
     if (arg) {
         lua_pushnumber(L, *arg);
+        ++args;
+    }
+    if (event) {
+        push_event_table(L, *event);
         ++args;
     }
     if (lua_pcall(L, args, 0, 0) != 0) {

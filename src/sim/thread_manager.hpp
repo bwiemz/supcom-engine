@@ -48,6 +48,8 @@ public:
     /// bag) must not kill the thread that took its ref: the serial must
     /// match too. Serial 0 matches the ref alone.
     void kill_thread(int ref, u64 serial = 0);
+    /// KillThread(handle): the ForkThread handle at stack `index`
+    void kill_handle(lua_State* L, int index);
 
     /// Store a pointer to this ThreadManager in the Lua registry
     /// so thread wrapper Destroy() can find it.

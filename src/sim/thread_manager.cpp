@@ -231,6 +231,24 @@ int ThreadManager::fork_thread(lua_State* L) {
     return 1;
 }
 
+void ThreadManager::kill_handle(lua_State* L, int index) {
+    if (!lua_istable(L, index)) {
+        return;
+    }
+    lua_pushstring(L, "_c_ref");
+    lua_rawget(L, index);
+    lua_pushstring(L, "_c_serial");
+    lua_rawget(L, index);
+    if (lua_isnumber(L, -2)) {
+        const int ref = static_cast<int>(lua_tonumber(L, -2));
+        const u64 serial = lua_isnumber(L, -1) ? static_cast<u64>(lua_tonumber(L, -1)) : 0;
+        if (ref >= 0) {
+            kill_thread(ref, serial);
+        }
+    }
+    lua_pop(L, 2);
+}
+
 void ThreadManager::kill_thread(int ref, u64 serial) {
     auto match = [&](const ThreadEntry& t) {
         return t.lua_ref == ref && (serial == 0 || t.serial == serial);

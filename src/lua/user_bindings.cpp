@@ -25,6 +25,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/waitable.hpp"
 #include "ui/console.hpp"
+#include "ui/key_codes.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
 #include "ui/wld_ui_provider.hpp"
@@ -1251,17 +1252,22 @@ static int l_IssueBlueprintCommand(lua_State* L) {
     return 0;
 }
 
-/// IsKeyDown(keyCode) — checks if a GLFW key is currently pressed.
+/// IsKeyDown(keyCode | keyName): whether a key is held, a modifier by its
+/// name
 static int l_IsKeyDown(lua_State* L) {
-    auto* r = get_renderer(L);
-    if (!r) {
-        lua_pushboolean(L, 0);
-        return 1;
+    std::vector<int> keys;
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        keys = ui::glfw_keys_named(lua_tostring(L, 1));
+    } else {
+        // FA key codes map to GLFW key codes for most keys
+        keys.push_back(static_cast<int>(luaL_checknumber(L, 1)));
     }
-
-    // FA key codes map to GLFW key codes for most keys
-    int key_code = static_cast<int>(luaL_checknumber(L, 1));
-    lua_pushboolean(L, r->is_key_pressed(key_code) ? 1 : 0);
+    auto* r = get_renderer(L);
+    bool down = false;
+    for (int key : keys) {
+        down = down || (r && r->is_key_pressed(key));
+    }
+    lua_pushboolean(L, down ? 1 : 0);
     return 1;
 }
 

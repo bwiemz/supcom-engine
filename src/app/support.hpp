@@ -80,6 +80,12 @@ u64 new_game_seed(const std::string& seed_arg, bool reproducible);
 sim::GameSetup launch_setup(lua_State* uiL, const sim::Replay* replay, const std::string& scenario,
                             u64 seed);
 
+/// The player's army in a game it plays alone: the first human one, by its
+/// index in the sim -- as InitializeArmyAI decides, one with no
+/// ScenarioInfo.ArmySetup entry, or one whose entry is Human; with none (AIs
+/// alone), the first.
+int human_army(lua_State* simL, sim::SimState& sim);
+
 /// Replace the game with a new one of `launch_scenario` (or `replay`): a
 /// fresh sim Lua state and sim, its scenario, its boot and its session, and
 /// the renderer's scene. The pointers may be null (headless). The renderer

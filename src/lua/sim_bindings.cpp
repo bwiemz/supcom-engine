@@ -1,4 +1,5 @@
 #include "lua/sim_bindings.hpp"
+#include "lua/engine_bindings.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -1556,22 +1557,8 @@ static int l_ForkThread(lua_State* L) {
 }
 
 static int l_KillThread(lua_State* L) {
-    // KillThread accepts a thread wrapper table (from ForkThread)
-    if (lua_istable(L, 1)) {
-        lua_pushstring(L, "_c_ref");
-        lua_rawget(L, 1);
-        lua_pushstring(L, "_c_serial");
-        lua_rawget(L, 1);
-        if (lua_isnumber(L, -2)) {
-            int ref = static_cast<int>(lua_tonumber(L, -2));
-            // The serial names the thread: its ref may be another's by now.
-            const u64 serial = lua_isnumber(L, -1) ? static_cast<u64>(lua_tonumber(L, -1)) : 0;
-            auto* sim = get_sim(L);
-            if (sim && ref >= 0) {
-                sim->thread_manager().kill_thread(ref, serial);
-            }
-        }
-        lua_pop(L, 2);
+    if (auto* sim = get_sim(L)) {
+        sim->thread_manager().kill_handle(L, 1);
     }
     return 0;
 }
@@ -3858,10 +3845,7 @@ static int l_ParseEntityCategory(lua_State* L) {
         return 1;
     }
 
-    // Uppercase the input
-    std::string input(raw);
-    for (auto& c : input)
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const std::string input(raw);
 
     // Split by spaces
     std::vector<std::string> words;
@@ -4356,7 +4340,9 @@ static int l_STR_Utf8Len(lua_State* L) {
 
 static int l_STR_Utf8SubString(lua_State* L) {
     const char* str = luaL_checkstring(L, 1);
-    lua_pushstring(L, str); // simplified
+    const int start = static_cast<int>(luaL_checknumber(L, 2));
+    const int count = static_cast<int>(luaL_checknumber(L, 3));
+    lua_pushstring(L, utf8_substring(str, start, count).c_str());
     return 1;
 }
 

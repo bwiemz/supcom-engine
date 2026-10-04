@@ -567,6 +567,67 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     CHECK(f.check("hotkeys == 11"));
 }
 
+TEST_CASE("Only the Edit with the focus has it, as it moves between them", "[ui][lua][input]") {
+    InputFixture f;
+    lua_State* L = f.lua.raw();
+    f.run(R"(
+        function edit()
+            local e = setmetatable({}, { __index = moho.edit_methods })
+            InternalCreateEdit(e, GetFrame(0))
+            return e
+        end
+        nickname = edit() address = edit() port = edit()
+    )");
+    auto* nickname = control_of(L, "nickname");
+    auto* address = control_of(L, "address");
+    auto* port = control_of(L, "port");
+    REQUIRE(nickname);
+    REQUIRE(address);
+    REQUIRE(port);
+    const auto focused = [&] {
+        return std::vector<bool>{nickname->has_keyboard_focus(), address->has_keyboard_focus(),
+                                 port->has_keyboard_focus()};
+    };
+
+    // None draws a caret until one takes the focus
+    CHECK(focused() == std::vector<bool>{false, false, false});
+    f.run("nickname:AcquireFocus()");
+    CHECK(focused() == std::vector<bool>{true, false, false});
+    // Taken by another, by either of Moho's calls: the first one loses it
+    f.run("address:AcquireFocus()");
+    CHECK(focused() == std::vector<bool>{false, true, false});
+    f.run("moho.control_methods.AcquireKeyboardFocus(port, false)");
+    CHECK(focused() == std::vector<bool>{false, false, true});
+    // Let go by one without it: the focus stays
+    f.run("nickname:AbandonFocus()");
+    CHECK(focused() == std::vector<bool>{false, false, true});
+    f.run("moho.control_methods.AbandonKeyboardFocus(port)");
+    CHECK(focused() == std::vector<bool>{false, false, false});
+    CHECK(f.registry.keyboard_focus() == nullptr);
+
+    // A field clicked into takes the focus from the one that had it; one
+    // whose script takes the press does not
+    f.run("nickname:AcquireFocus()");
+    f.run(R"(
+        function place(e, l, t, r, b)
+            rawset(e, 'Left', l) rawset(e, 'Top', t) rawset(e, 'Right', r) rawset(e, 'Bottom', b)
+            rawset(e, 'Width', r - l) rawset(e, 'Height', b - t) rawset(e, 'Depth', 1)
+        end
+        place(address, 0, 0, 100, 20) place(port, 0, 30, 100, 50)
+        port.HandleEvent = function(self, event) return event.Type == 'ButtonPress' end
+    )");
+    f.dispatch.on_cursor_pos(50, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(focused() == std::vector<bool>{false, true, false});
+    CHECK(f.registry.keyboard_focus() == address);
+    f.dispatch.on_cursor_pos(50, 40);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(focused() == std::vector<bool>{false, true, false});
+}
+
 TEST_CASE("The world has the mouse only where no UI, and no capture, holds it",
           "[ui][lua][input]") {
     InputFixture f;
@@ -766,6 +827,64 @@ TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lu
     CHECK(list->scroll_top() == 15);
 }
 
+TEST_CASE("An ItemList takes a press on a row and tells of the row under the mouse",
+          "[ui][lua][input]") {
+    InputFixture f;
+    // A Combo's list over the Combo, as retail's combo.lua lays them: rows
+    // 18 high at the 14-point font (no font file here), from the fourth.
+    f.run(R"(
+        combo = box('combo', GetFrame(0), 0, 0, 100, 200, 1)
+        combo.eats = true
+        list = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(list, combo)
+        list:SetNewFont('Arial', 14)
+        rawset(list, 'Left', 0) rawset(list, 'Top', 0)
+        rawset(list, 'Right', 100) rawset(list, 'Bottom', 90)
+        rawset(list, 'Width', 100) rawset(list, 'Height', 90)
+        rawset(list, 'Depth', 2)
+        for i = 1, 20 do list:AddItem('row ' .. i) end
+        list:ScrollToBottom() list:ShowItem(3)
+        list.HandleEvent = function(self, event)
+            table.insert(handled, { who = 'list', event = event })
+            return self.eats
+        end
+        clicks = {}
+        list.OnClick = function(self, row, event)
+            table.insert(clicks, row .. ':' .. event.Type)
+        end
+        over = {}
+        list.OnMouseoverItem = function(self, row) table.insert(over, row) end
+    )");
+    REQUIRE(control_of(f.lua.raw(), "list")->scroll_top() == 3);
+
+    // Over its third shown row; along it, no news; off its side, none
+    f.dispatch.on_cursor_pos(50, 40);
+    f.dispatch.on_cursor_pos(60, 45);
+    f.deliver();
+    CHECK(f.check("table.concat(over, ',') == '5'"));
+
+    // A press there: its row, the Combo under it not told
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("table.concat(clicks, ',') == '5:ButtonPress'"));
+    CHECK(f.check("whos('ButtonPress') == 'list'"));
+
+    // One its script takes is the script's
+    f.run("handled = {} clicks = {} list.eats = true");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.getn(clicks) == 0 and whos('ButtonPress') == 'list'"));
+
+    // Off its rows: -1, and a press goes on to the Combo
+    f.run("handled = {} list.eats = nil");
+    f.dispatch.on_cursor_pos(50, 150);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.concat(over, ',') == '5,-1'"));
+    CHECK(f.check("table.getn(clicks) == 0 and whos('ButtonPress') == 'combo'"));
+}
+
 TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrolling",
           "[ui][lua][scroll]") {
     osc::lua::LuaState lua;
@@ -798,4 +917,25 @@ TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrollin
     lua_getglobal(L, "scrolled");
     CHECK(lua_tonumber(L, -1) == 2);
     lua_pop(L, 1);
+}
+
+TEST_CASE("A control's class OnFrame and OnLoseKeyboardFocus are called, as its own would be",
+          "[ui][lua]") {
+    InputFixture f;
+    f.run(R"(
+        frames, lost = 0, 0
+        local Class = setmetatable({
+            OnFrame = function(self, dt) frames = frames + 1 end,
+            OnLoseKeyboardFocus = function(self) lost = lost + 1 end,
+        }, { __index = moho.control_methods })
+        a = setmetatable({}, { __index = Class })
+        InternalCreateGroup(a, GetFrame(0))
+        a:SetNeedsFrameUpdate(true)
+        b = box('b', GetFrame(0), 0, 0, 10, 10, 1)
+        a:AcquireKeyboardFocus(false)
+        b:AcquireKeyboardFocus(false)
+    )");
+    f.dispatch.update_controls(f.lua.raw(), f.registry, 0.1);
+    CHECK(f.check("frames == 1"));
+    CHECK(f.check("lost == 1"));
 }

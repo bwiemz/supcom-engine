@@ -20,6 +20,7 @@ add_executable(osc_tests
     test_image.cpp
     test_navigation_throttle.cpp
     test_build_placement.cpp
+    test_manipulators.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_interpolation.cpp
@@ -53,6 +54,7 @@ add_executable(osc_tests
     test_console_keymap.cpp
     test_overlay_filters.cpp
     test_command_graph.cpp
+    test_utf8_substring.cpp
     test_font_cache.cpp
     test_minimap_area.cpp
     test_xact.cpp

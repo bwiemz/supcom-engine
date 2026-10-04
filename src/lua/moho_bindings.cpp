@@ -537,6 +537,14 @@ std::pair<i32, i32> read_dds_dimensions(lua_State* L, const std::string& path) {
     return {static_cast<i32>(w_raw), static_cast<i32>(h_raw)};
 }
 
+std::pair<i32, i32> ui_texture_dimensions(lua_State* L, const std::string& path, i32 border) {
+    const auto [w, h] = read_dds_dimensions(L, path);
+    if (w == 0 && h == 0) {
+        return {0, 0};
+    }
+    return {std::max(1, w - 2 * border), std::max(1, h - 2 * border)};
+}
+
 // ====================================================================
 // Text methods (M73)
 // ====================================================================
@@ -617,16 +625,6 @@ void push_font_lazyvars(lua_State* L, int self_idx, ui::UIControl* ctrl) {
     set_lazyvar_value(L, self_idx, "FontDescent", ctrl->font_descent());
     set_lazyvar_value(L, self_idx, "FontExternalLeading", ctrl->font_external_leading());
     set_lazyvar_value(L, self_idx, "TextAdvance", ctrl->text_advance());
-
-    // Auto-size text control: Width = TextAdvance, Height = ascent + descent
-    // FA's engine does this internally so layout works for text-based controls.
-    if (ctrl->text_advance() > 0) {
-        set_lazyvar_value(L, self_idx, "Width", ctrl->text_advance());
-    }
-    f32 line_height = ctrl->font_ascent() + std::abs(ctrl->font_descent());
-    if (line_height > 0) {
-        set_lazyvar_value(L, self_idx, "Height", line_height);
-    }
 }
 
 // --- Factory functions (registered as globals) ---
@@ -1039,7 +1037,8 @@ static int l_GetTextureDimensions(lua_State* L) {
         return 2;
     }
     std::string path = lua_tostring(L, 1);
-    auto [w, h] = read_dds_dimensions(L, path);
+    const i32 border = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    auto [w, h] = ui_texture_dimensions(L, path, border);
     if (w == 0 && h == 0) {
         lua_pushnil(L);
         lua_pushnil(L);
@@ -1891,6 +1890,13 @@ static int l_ui_ForkThread(lua_State* L) {
     return tm->fork_thread(L);
 }
 
+static int l_ui_KillThread(lua_State* L) {
+    if (auto* tm = get_ui_threads(L)) {
+        tm->kill_handle(L, 1);
+    }
+    return 0;
+}
+
 /// WaitSeconds(n): convert seconds to frame count, yield with frame count.
 /// ThreadManager::resume_all() interprets yielded numbers as RELATIVE wait counts.
 static constexpr f64 UI_FRAMES_PER_SECOND = 60.0;
@@ -2623,14 +2629,36 @@ static int l_GetUnitCommandData(lua_State* L) {
 
     if (!sim || !lua_istable(L, 1)) return 3;
 
-    static const char* all_caps[] = {
-        "RULEUCC_Move", "RULEUCC_Attack", "RULEUCC_Guard", "RULEUCC_Patrol",
-        "RULEUCC_Stop", "RULEUCC_RetaliateToggle", "RULEUCC_Repair",
-        "RULEUCC_Capture", "RULEUCC_Reclaim", "RULEUCC_Overcharge",
-        "RULEUCC_Transport", "RULEUCC_Ferry", "RULEUCC_Sacrifice",
-        "RULEUCC_Nuke", "RULEUCC_Tactical", "RULEUCC_Teleport",
-        "RULEUCC_Dive", "RULEUCC_Pause", nullptr
-    };
+    static const char* all_caps[] = {"RULEUCC_Move",
+                                     "RULEUCC_Attack",
+                                     "RULEUCC_Guard",
+                                     "RULEUCC_Patrol",
+                                     "RULEUCC_Stop",
+                                     "RULEUCC_RetaliateToggle",
+                                     "RULEUCC_Repair",
+                                     "RULEUCC_Capture",
+                                     "RULEUCC_Reclaim",
+                                     "RULEUCC_Overcharge",
+                                     "RULEUCC_Transport",
+                                     "RULEUCC_Ferry",
+                                     "RULEUCC_Sacrifice",
+                                     "RULEUCC_Nuke",
+                                     "RULEUCC_Tactical",
+                                     "RULEUCC_Teleport",
+                                     "RULEUCC_Dive",
+                                     "RULEUCC_Pause",
+                                     "RULEUCC_Dock",
+                                     "RULEUCC_SiloBuildNuke",
+                                     "RULEUCC_SiloBuildTactical",
+                                     "RULEUCC_Script",
+                                     nullptr};
+    // General.ToggleCaps: orders.lua's script buttons
+    static const char* unit_toggles[] = {"RULEUTC_ShieldToggle",     "RULEUTC_WeaponToggle",
+                                         "RULEUTC_JammingToggle",    "RULEUTC_IntelToggle",
+                                         "RULEUTC_ProductionToggle", "RULEUTC_StealthToggle",
+                                         "RULEUTC_GenericToggle",    "RULEUTC_SpecialToggle",
+                                         "RULEUTC_CloakToggle",      nullptr};
+    std::unordered_set<std::string> common_toggles;
 
     bool first_unit = true;
     std::unordered_set<std::string> common_caps;
@@ -2653,6 +2681,11 @@ static int l_GetUnitCommandData(lua_State* L) {
                     common_caps.insert(*cap);
                 }
             }
+            for (const char** cap = unit_toggles; *cap; ++cap) {
+                if (unit->has_toggle_cap(*cap)) {
+                    common_toggles.insert(*cap);
+                }
+            }
             first_unit = false;
         } else {
             // Intersect: remove caps the current unit doesn't have
@@ -2664,6 +2697,8 @@ static int l_GetUnitCommandData(lua_State* L) {
                     ++it;
                 }
             }
+            std::erase_if(common_toggles,
+                          [&](const std::string& cap) { return !unit->has_toggle_cap(cap); });
         }
         lua_pop(L, 1); // unit table
     }
@@ -2687,6 +2722,12 @@ static int l_GetUnitCommandData(lua_State* L) {
     int tidx = 1;
     for (const char** tc = toggle_caps; *tc; ++tc) {
         if (common_caps.count(*tc)) {
+            lua_pushstring(L, *tc);
+            lua_rawseti(L, toggles_tbl, tidx++);
+        }
+    }
+    for (const char** tc = unit_toggles; *tc; ++tc) {
+        if (common_toggles.count(*tc)) {
             lua_pushstring(L, *tc);
             lua_rawseti(L, toggles_tbl, tidx++);
         }
@@ -4517,6 +4558,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // UI thread/coroutine globals
     state.register_function("ForkThread", l_ui_ForkThread);
+    state.register_function("KillThread", l_ui_KillThread);
     state.register_function("WaitSeconds", l_ui_WaitSeconds);
     state.register_function("WaitTicks", l_ui_WaitTicks);
 
