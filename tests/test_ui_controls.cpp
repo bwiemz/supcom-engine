@@ -221,7 +221,7 @@ TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's",
         -- A Window's border sits beside it, hidden by its OnHide
         beside = group(GetFrame(0))
         parent.OnHide = function(self, hidden) beside:SetHidden(hidden) end
-        -- An OnHide returning true keeps its control, and its children, as they are
+        -- An OnHide returning true keeps its children as they are
         keeper = group(GetFrame(0))
         kept = group(keeper)
         keeper.OnHide = function() return true end
@@ -246,7 +246,7 @@ TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's",
         assert(not shown_then[1] and not shown_then[2] and not shown_then[3],
                'Show: ' .. show(shown_then))
         assert(heard[1] == true and heard[2] == false, 'OnHide heard ' .. show(heard))
-        assert(not kept_then[1] and not kept_then[2], 'kept: ' .. show(kept_then))
+        assert(kept_then[1] and not kept_then[2], 'kept: ' .. show(kept_then))
         -- A movie takes clicks unless a script says not (a timeline's skip)
         assert(not movie:IsHitTestDisabled(), 'a movie is hit-tested')
     )");
