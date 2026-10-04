@@ -1272,7 +1272,6 @@ static int l_IsKeyDown(lua_State* L) {
 }
 
 /// GetRolloverInfo() — returns a rich table describing the hovered or first-selected unit (M142a).
-/// Checks __osc_hover_entity_id registry key first; falls back to first selected unit.
 static int l_GetRolloverInfo(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) {
@@ -1282,22 +1281,14 @@ static int l_GetRolloverInfo(lua_State* L) {
 
     sim::Unit* unit = nullptr;
 
-    // 1. Try hover entity from WorldView HitTest
-    lua_pushstring(L, "__osc_hover_entity_id");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_isnumber(L, -1)) {
-        u32 hover_id = static_cast<u32>(lua_tonumber(L, -1));
-        if (hover_id != 0) {
-            auto* entity = sim->entity_registry().find(hover_id);
-            if (entity && entity->is_unit() && !entity->destroyed())
-                unit = static_cast<sim::Unit*>(entity);
+    auto* input = get_input_handler(L);
+    if (input && input->hovered() != 0) {
+        auto* entity = sim->entity_registry().find(input->hovered());
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            unit = static_cast<sim::Unit*>(entity);
         }
     }
-    lua_pop(L, 1);
-
-    // 2. Fall back to first selected unit
     if (!unit) {
-        auto* input = get_input_handler(L);
         if (input && !input->selected().empty()) {
             u32 first_id = *input->selected().begin();
             auto* entity = sim->entity_registry().find(first_id);

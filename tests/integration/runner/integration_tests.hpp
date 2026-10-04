@@ -127,6 +127,8 @@ void test_intel_fields(TestContext& ctx);
 void test_destroyed_handle(TestContext& ctx);
 /// --beam-render-test (M214a), in beam_render_test.cpp.
 void test_beam_render(TestContext& ctx);
+/// --selection-render-test, in selection_render_test.cpp.
+void test_selection_render(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.
 void test_trail_render(TestContext& ctx);
 /// --particle-render-test (M214c), in particle_render_test.cpp.

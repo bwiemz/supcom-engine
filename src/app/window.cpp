@@ -216,9 +216,6 @@ void App::Window::publish_window_objects() {
     publish("__osc_input_handler", &input_handler);
     publish("__osc_factory_queue", &factory_queue);
     publish("__osc_sim_callback_queue", &sim_callback_queue);
-    lua_pushstring(uL, "__osc_hover_entity_id");
-    lua_pushnumber(uL, 0);
-    lua_rawset(uL, LUA_REGISTRYINDEX);
     // The UI's root frame is the window's, and the options screen
     // lists the display's modes (M217h)
     size_root_frame(uL, root_width, root_height);

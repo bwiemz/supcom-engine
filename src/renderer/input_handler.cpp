@@ -29,6 +29,33 @@ bool selectable(const sim::Entity& e) {
     return !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
 }
 
+bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z) {
+    bool positive = false;
+    bool negative = false;
+    for (size_t i = 0; i < 4; ++i) {
+        const sim::Vector3& a = q[i];
+        const sim::Vector3& b = q[(i + 1) % 4];
+        const f32 cross = (b.x - a.x) * (z - a.z) - (b.z - a.z) * (x - a.x);
+        positive = positive || cross > 0;
+        negative = negative || cross < 0;
+    }
+    return !(positive && negative);
+}
+
+std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units) {
+    int best = std::numeric_limits<int>::max();
+    for (const auto& unit : units) {
+        best = std::min(best, unit.second);
+    }
+    std::vector<u32> kept;
+    for (const auto& [id, priority] : units) {
+        if (priority == best) {
+            kept.push_back(id);
+        }
+    }
+    return kept;
+}
+
 void InputHandler::update(Renderer& renderer, sim::SimState& sim,
                           f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
     f64 mx_d, my_d;
@@ -73,11 +100,15 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
     const bool mode_active = mode.mode == "build" || mode.mode == "order";
     cursor_world_.reset();
+    hovered_ = 0;
     if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
         f32 wx = 0;
         f32 wz = 0;
         if (world_at(renderer, sim, mx, my, wx, wz)) {
             cursor_world_ = std::array<f32, 2>{wx, wz};
+            if (!dragging_) {
+                hovered_ = unit_under(sim, wx, wz);
+            }
         }
     }
 
@@ -123,6 +154,17 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             // Update world-space drag rect
             world_at(renderer, sim, drag_start_x_, drag_start_y_, drag_world_x0_, drag_world_z0_);
             world_at(renderer, sim, drag_end_x_, drag_end_y_, drag_world_x1_, drag_world_z1_);
+            const std::array<std::array<f32, 2>, 4> screen = {{{drag_start_x_, drag_start_y_},
+                                                               {drag_end_x_, drag_start_y_},
+                                                               {drag_end_x_, drag_end_y_},
+                                                               {drag_start_x_, drag_end_y_}}};
+            for (size_t i = 0; i < 4; ++i) {
+                f32 wx = 0;
+                f32 wz = 0;
+                world_at(renderer, sim, screen[i][0], screen[i][1], wx, wz);
+                const f32 wy = sim.terrain() ? sim.terrain()->get_surface_height(wx, wz) : 0.0f;
+                drag_quad_[i] = {wx, wy, wz};
+            }
         }
     }
 
@@ -268,31 +310,45 @@ void InputHandler::handle_left_click(Renderer& renderer,
 
 void InputHandler::handle_drag_select(Renderer& renderer,
                                       sim::SimState& sim) {
-    f32 wx0, wz0, wx1, wz1;
-    if (!world_at(renderer, sim, drag_start_x_, drag_start_y_, wx0, wz0)) return;
-    if (!world_at(renderer, sim, drag_end_x_, drag_end_y_, wx1, wz1)) return;
-
-    // Normalize rect
-    if (wx0 > wx1) std::swap(wx0, wx1);
-    if (wz0 > wz1) std::swap(wz0, wz1);
+    f32 wx0 = drag_quad_[0].x;
+    f32 wx1 = wx0;
+    f32 wz0 = drag_quad_[0].z;
+    f32 wz1 = wz0;
+    for (const sim::Vector3& p : drag_quad_) {
+        wx0 = std::min(wx0, p.x);
+        wx1 = std::max(wx1, p.x);
+        wz0 = std::min(wz0, p.z);
+        wz1 = std::max(wz1, p.z);
+    }
 
     bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                  renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
     if (!shift)
         selected_.clear();
 
-    // Use spatial grid to find units in rect
-    auto ids = sim.entity_registry().collect_in_rect(wx0, wz0, wx1, wz1);
-    for (u32 id : ids) {
+    std::vector<std::pair<u32, int>> boxed;
+    for (u32 id : sim.entity_registry().collect_in_rect(wx0, wz0, wx1, wz1)) {
         auto* e = sim.entity_registry().find(id);
         if (!e || !selectable(*e)) continue;
         if (e->army() != player_army_) continue;
-        selected_.insert(id);
+        const sim::Vector3 pos = view_.position(*e);
+        if (inside_ground_quad(drag_quad_, pos.x, pos.z)) {
+            boxed.emplace_back(id, static_cast<const sim::Unit*>(e)->selection_priority());
+        }
+    }
+    if (shift) {
+        for (const auto& unit : boxed) {
+            selected_.insert(unit.first);
+        }
+    } else {
+        for (u32 id : highest_selection_priority(boxed)) {
+            selected_.insert(id);
+        }
     }
 
     selection_event_ = true;
-    spdlog::debug("Drag select: {} units in rect ({:.0f},{:.0f})-({:.0f},{:.0f})",
-                  selected_.size(), wx0, wz0, wx1, wz1);
+    spdlog::debug("Drag select: {} units in ({:.0f},{:.0f})-({:.0f},{:.0f})", selected_.size(), wx0,
+                  wz0, wx1, wz1);
 }
 
 void InputHandler::handle_right_click(Renderer& renderer,
@@ -609,6 +665,37 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
         issued.back().clear = !shift;
     }
     return issued;
+}
+
+u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz) const {
+    u32 best_id = 0;
+    f32 best_d2 = std::numeric_limits<f32>::max();
+    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
+        const auto* e = sim.entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit() || !shown(*e)) {
+            continue;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(*e);
+        const sim::Vector3 pos = view_.position(*e);
+        const sim::Vector3 right = sim::quat_rotate(view_.orientation(*e), {1, 0, 0});
+        const f32 len = std::sqrt(right.x * right.x + right.z * right.z);
+        const f32 rx = len > 1e-4f ? right.x / len : 1.0f;
+        const f32 rz = len > 1e-4f ? right.z / len : 0.0f;
+        const f32 dx = wx - pos.x;
+        const f32 dz = wz - pos.z;
+        const f32 along_x = dx * rx + dz * rz;
+        const f32 along_z = -dx * rz + dz * rx;
+        if (std::abs(along_x) > std::max(unit.size_x(), 0.5f) * 0.5f ||
+            std::abs(along_z) > std::max(unit.size_z(), 0.5f) * 0.5f) {
+            continue;
+        }
+        const f32 d2 = dx * dx + dz * dz;
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best_id = id;
+        }
+    }
+    return best_id;
 }
 
 u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,

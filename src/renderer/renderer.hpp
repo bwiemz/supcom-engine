@@ -34,6 +34,7 @@
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_graph_renderer.hpp"
+#include "renderer/selection_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "renderer/trail_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
@@ -204,6 +205,13 @@ public:
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     const CommandGraphRenderer& command_graph_renderer() const { return command_graph_renderer_; }
+    const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
+    /// The unit under the cursor (0: none) and the drag box's corners on the
+    /// ground, for the next render()
+    void set_selection_marks(u32 hovered, std::optional<std::array<sim::Vector3, 4>> drag) {
+        hovered_ = hovered;
+        drag_box_ = drag;
+    }
     /// The trail segments drawn last frame (tests read them; M214b).
     const TrailRenderer& trail_renderer() const { return trail_renderer_; }
     /// The map's water (tests read its water map and Fresnel table; M213a).
@@ -229,7 +237,10 @@ public:
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
-    void set_select_boxes(bool on) { overlay_renderer_.set_select_boxes(on); }
+    void set_select_boxes(bool on) {
+        overlay_renderer_.set_select_boxes(on);
+        selection_renderer_.set_enabled(on);
+    }
     bool select_boxes() const { return overlay_renderer_.select_boxes(); }
     /// The strategic icons drawn last frame (tests read them).
     const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
@@ -714,6 +725,9 @@ private:
     const map::Terrain* terrain_ = nullptr;
     BeamRenderer beam_renderer_;
     CommandGraphRenderer command_graph_renderer_;
+    SelectionRenderer selection_renderer_;
+    u32 hovered_ = 0;
+    std::optional<std::array<sim::Vector3, 4>> drag_box_;
     BeamBlueprintCache beam_bp_cache_;
     TrailRenderer trail_renderer_;
     TrailBlueprintCache trail_bp_cache_;
