@@ -182,7 +182,10 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
             energy_income += econ.production_energy;
         }
 
-        if (econ.consumption_active) {
+        mass_income += econ.reclaim_mass;
+        energy_income += econ.reclaim_energy;
+
+        if (econ.consumption_active && !unit.is_paused()) {
             mass_consumption += econ.consumption_mass;
             energy_consumption += econ.consumption_energy;
         }

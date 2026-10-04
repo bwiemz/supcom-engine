@@ -97,6 +97,62 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
 }
 
+TEST_CASE("A paused unit keeps producing and its army pays for none of its work",
+          "[army][economy]") {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto extractor = std::make_unique<osc::sim::Unit>();
+    extractor->set_army(0);
+    extractor->economy().production_mass = 2.0;
+    extractor->economy().production_active = true;
+    extractor->pause(true);
+    auto builder = std::make_unique<osc::sim::Unit>();
+    builder->set_army(0);
+    builder->economy().consumption_mass = 4.0;
+    builder->economy().consumption_active = true;
+    builder->pause(true);
+    auto* b = builder.get();
+    registry.register_entity(std::move(extractor));
+    registry.register_entity(std::move(builder));
+
+    for (int i = 0; i < 10; ++i) {
+        brain.update_economy(registry, 0.1);
+    }
+    CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 2.0) < 1e-9);
+    CHECK(brain.get_stat("Economy_TotalConsumed_Mass") == 0.0);
+
+    b->pause(false);
+    for (int i = 0; i < 10; ++i) {
+        brain.update_economy(registry, 0.1);
+    }
+    CHECK(std::abs(brain.get_stat("Economy_TotalConsumed_Mass") - 4.0) < 1e-9);
+}
+
+TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",
+          "[army][economy]") {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto acu = std::make_unique<osc::sim::Unit>();
+    acu->set_army(0);
+    acu->economy().production_mass = 1.0;
+    acu->economy().production_active = true;
+    acu->economy().reclaim_mass = 3.0;
+    auto* a = acu.get();
+    registry.register_entity(std::move(acu));
+
+    for (int i = 0; i < 10; ++i) {
+        brain.update_economy(registry, 0.1);
+    }
+    CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 4.0) < 1e-9);
+
+    a->stop_reclaiming();
+    CHECK(a->economy().production_mass == 1.0);
+    CHECK(a->economy().production_active);
+    CHECK(a->economy().reclaim_mass == 0.0);
+}
+
 TEST_CASE("ArmyBrain explicit color state", "[army][color]") {
     osc::sim::ArmyBrain brain;
 

@@ -60,6 +60,9 @@ struct UnitEconomy {
     /// own request, beside the consumption the unit's script sets.
     f64 silo_mass = 0.0;
     f64 silo_energy = 0.0;
+    /// What its reclaim brings in per second, beside its own production
+    f64 reclaim_mass = 0.0;
+    f64 reclaim_energy = 0.0;
     /// What an aircraft docked at a staging platform asks per second for its
     /// repair there (M206r): the platform's RepairConsume*, only while the
     /// aircraft is damaged.
@@ -198,15 +201,9 @@ public:
     // Pause state
     bool is_paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
-    /// Pause or resume the unit's work, as unit:SetPaused does: pausing also
-    /// stops its economy activity (FA's scripts restart it on resume).
-    void pause(bool p) {
-        paused_ = p;
-        if (p) {
-            economy_.production_active = false;
-            economy_.consumption_active = false;
-        }
-    }
+    /// Pause or resume the unit's work, as unit:SetPaused does. Moho's paused
+    /// unit keeps producing; its army pays for none of its work meanwhile.
+    void pause(bool p) { paused_ = p; }
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }

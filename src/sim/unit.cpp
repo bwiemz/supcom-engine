@@ -252,6 +252,8 @@ void Unit::begin_dying() {
     economy_.production_mass = 0;
     economy_.production_energy = 0;
     economy_.production_active = false;
+    economy_.reclaim_mass = 0;
+    economy_.reclaim_energy = 0;
     // Its missile under way, and a repair on a staging platform (M206r),
     // stop asking for resources.
     abandon_silo_build();
@@ -966,14 +968,8 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 }
 
 void Unit::stop_reclaiming() {
-    // Only clear production rates if we were the primary reclaimer
-    // (assisters don't set production rates, so nothing to clear)
-    if (reclaim_target_id_ != 0 && economy_.production_active &&
-        reclaim_rate_ > 0) {
-        economy_.production_mass = 0;
-        economy_.production_energy = 0;
-        economy_.production_active = false;
-    }
+    economy_.reclaim_mass = 0;
+    economy_.reclaim_energy = 0;
     reclaim_target_id_ = 0;
     reclaim_rate_ = 0;
 }
