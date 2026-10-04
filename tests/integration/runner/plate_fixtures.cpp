@@ -194,6 +194,8 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
     const std::string create =
         prop ? fmt::format("CreatePropHPR('{}', {}, {}, {}, 0, 0, 0)", bp, x, ground_y, z)
              : fmt::format("CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)", bp, x, z);
+    // A naval factory slides its build point (BuildAttachBone) aside; the
+    // plate's mesh has no such bone, so the slide would take the whole plate.
     // A mesh blueprint as retail's are, with IconFadeInZoom (130, as most of
     // retail's): without one, Moho shows its unit's strategic icon at any
     // zoom (M215c), over what the test measures.
@@ -211,6 +213,9 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
                                         "bp.Display.MeshBlueprint = mesh\n"
                                         "bp.Display.UniformScale = 1\n"
                                         "__osc_last_plate = {6}\n"
+                                        "if __osc_last_plate.BuildPointSlider then\n"
+                                        "  __osc_last_plate.BuildPointSlider:Destroy()\n"
+                                        "end\n"
                                         "Warp(__osc_last_plate, Vector({7}, {8}, {9}))\n",
                                         key, plate.shader, plate.albedo, plate.normals,
                                         file(plate.lookup), bp, create, x, ground_y + 0.5f + lift,
