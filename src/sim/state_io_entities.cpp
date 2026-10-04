@@ -1083,6 +1083,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     save_strings(w, u.command_caps_);
     save_strings(w, u.original_command_caps_);
     save(w, u.build_restriction_);
+    w.i32v(u.selection_priority_);
     w.f32v(u.elevation_override_);
     w.b(u.dying_);
     w.b(u.transferred_);
@@ -1378,6 +1379,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     u.original_command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     load(r, u.build_restriction_);
+    u.selection_priority_ = r.i32v();
     u.elevation_override_ = r.f32v();
     u.dying_ = r.b();
     u.transferred_ = r.b();
