@@ -136,6 +136,9 @@ public:
 
     /// Where the cursor points on the ground, while over the world
     std::optional<std::array<f32, 2>> cursor_world() const { return cursor_world_; }
+
+    void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {
         selected_ = sel;
@@ -163,7 +166,7 @@ public:
     u32 hovered() const { return hovered_; }
 
     /// The shown unit whose box, turned with it, holds (wx, wz), or 0
-    u32 unit_under(sim::SimState& sim, f32 wx, f32 wz) const;
+    u32 unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
 
     /// Drag box corners in screen pixels (valid when is_dragging).
     void drag_rect(f32& x0, f32& y0, f32& x1, f32& y1) const {
@@ -216,9 +219,6 @@ private:
     void handle_drag_select(Renderer& renderer, sim::SimState& sim);
     void handle_right_click(Renderer& renderer, sim::SimState& sim,
                             f32 mx, f32 my);
-
-    /// Find the nearest player-owned unit to a world XZ point within radius.
-    u32 pick_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;
 
     /// The live unit of any army nearest (wx, wz) within `radius`, or 0.
     /// With `reclaim`, the nearest thing a Reclaim order takes: a unit or a
