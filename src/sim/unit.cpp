@@ -610,7 +610,13 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
     f32 bx = build_at_self ? position().x : cmd.target_pos.x;
     f32 bz = build_at_self ? position().z : cmd.target_pos.z;
     lua_pushnumber(L, bx);
-    lua_pushnumber(L, 0); // y = 0 (terrain height not queried yet)
+    // Built in place, at the builder's height; elsewhere, nil: where the
+    // structure stands there (__osc_create_building_unit works it out)
+    if (build_at_self) {
+        lua_pushnumber(L, position().y);
+    } else {
+        lua_pushnil(L);
+    }
     lua_pushnumber(L, bz);
 
     if (lua_pcall(L, 5, 2, 0) != 0) {

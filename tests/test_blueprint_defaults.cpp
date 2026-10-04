@@ -43,6 +43,58 @@ TEST_CASE("A unit blueprint's omitted collision offsets read as 0", "[blueprints
     )"));
 }
 
+TEST_CASE("A unit blueprint's omitted upgrade links read as 'none'", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        -- A T1 power generator names none; construction.lua builds a
+        -- structure whose UpgradesFrom is 'none', else upgrades to it
+        local bare = {BlueprintId = 'ueb1101', General = {Category = 'Economy'}}
+        RegisterUnitBlueprint(bare)
+        local g = bare.General
+        assert(g.UpgradesFrom == 'none' and g.UpgradesTo == 'none' and
+               g.UpgradesFromBase == 'none', 'links not defaulted')
+        assert(g.Category == 'Economy', 'General lost')
+        -- Without a General at all
+        local none = {BlueprintId = 'none'}
+        RegisterUnitBlueprint(none)
+        assert(none.General.UpgradesFrom == 'none', 'no General: not defaulted')
+        -- An upgrade's own links stay
+        local t2 = {BlueprintId = 'uab1201', General = {UpgradesFrom = 'uab1101',
+                                                        UpgradesTo = 'uab1301'}}
+        RegisterUnitBlueprint(t2)
+        assert(t2.General.UpgradesFrom == 'uab1101' and t2.General.UpgradesTo == 'uab1301',
+               'own links lost')
+        assert(t2.General.UpgradesFromBase == 'none', 'base')
+    )"));
+}
+
+TEST_CASE("A unit blueprint's omitted icon name reads as its id", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bare = {BlueprintId = 'uab0101', Display = {Mesh = {}}}
+        RegisterUnitBlueprint(bare)
+        assert(bare.Display.IconName == 'uab0101', 'icon name not defaulted')
+        local upper = {BlueprintId = 'UEL0001'}
+        RegisterUnitBlueprint(upper)
+        assert(upper.Display.IconName == 'uel0001', 'no Display, or not lowered')
+        local named = {BlueprintId = 'named', Display = {IconName = 'other'}}
+        RegisterUnitBlueprint(named)
+        assert(named.Display.IconName == 'other', 'own icon name lost')
+    )"));
+}
+
+TEST_CASE("A unit blueprint's omitted strategic icon name reads as empty", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bot = {BlueprintId = 'ura0001'}
+        RegisterUnitBlueprint(bot)
+        assert(bot.StrategicIconName == '', 'strategic icon name not defaulted')
+        local named = {BlueprintId = 'uel0105', StrategicIconName = 'icon_land1_engineer'}
+        RegisterUnitBlueprint(named)
+        assert(named.StrategicIconName == 'icon_land1_engineer', 'own name lost')
+    )"));
+}
+
 TEST_CASE("A unit blueprint's omitted threat levels and regeneration read as 0", "[blueprints]") {
     BlueprintWorld w;
     CHECK(w.check(R"(

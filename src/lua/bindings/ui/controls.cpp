@@ -230,13 +230,16 @@ static bool call_on_hide(lua_State* L, ui::UIControl& ctrl, bool hidden) {
     return kept;
 }
 
-/// Moho's CMauiControl::SetHidden, which Hide and Show call too: OnHide
-/// first (true: the control stays as it is, and so do its children), then
-/// its flag, then each child the same way. (A Window keeps its border in a
-/// group beside it, which its OnHide hides with it.)
+/// Moho's CMauiControl::SetHidden, which Hide and Show call too: the
+/// control's flag, then OnHide (true: its children stay as they are, as
+/// maui/grid.lua's keeps its cells), then each child the same way. (A
+/// Window keeps its border in a group beside it, which its OnHide hides with
+/// it.)
 static void set_hidden(lua_State* L, ui::UIControl& ctrl, bool hidden) {
-    if (call_on_hide(L, ctrl, hidden)) return;
     ctrl.set_hidden(hidden);
+    if (call_on_hide(L, ctrl, hidden)) {
+        return;
+    }
     const std::vector<ui::UIControl*> children = ctrl.children(); // a callback may change them
     for (ui::UIControl* child : children) {
         if (child && !child->destroyed()) set_hidden(L, *child, hidden);
