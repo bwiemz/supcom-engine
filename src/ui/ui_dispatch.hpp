@@ -73,6 +73,8 @@ public:
     void forget_controls() {
         hover_control_ = nullptr;
         thumb_drag_ = nullptr;
+        mouseover_list_ = nullptr;
+        mouseover_row_ = -1;
     }
 
     /// Current mouse position (updated by cursor pos callback).
@@ -95,8 +97,9 @@ private:
     /// Fire HandleEvent on a control. Returns true if event was consumed.
     bool fire_handle_event(lua_State* L, UIControl* ctrl, const UIEvent& ev);
     /// Call the control's method `name` (found through its class) with
-    /// `arg` if given; false if it has none.
-    bool run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg = nullptr);
+    /// `arg`, then `event`, if given; false if it has none.
+    bool run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg = nullptr,
+                    const UIEvent* event = nullptr);
     /// A key going down with no control focused and no capture: the key
     /// map's action, run through the console (CUIKeyHandler::OnKeyDown).
     void handle_key(lua_State* L, const UIEvent& ev);
@@ -110,6 +113,9 @@ private:
     void press_scrollbar(lua_State* L, UIControl* bar, const UIEvent& ev);
     /// The dragged thumb follows the mouse until its button is let go
     void drag_thumb(lua_State* L, const UIEvent& ev);
+    /// The mouse over an ItemList's row (Moho's CMauiItemList): its
+    /// OnMouseoverItem(row) when the row changes, -1 once off its rows
+    void hover_item_list(lua_State* L, UIControl* target, const UIEvent& ev);
 
     std::vector<UIEvent> pending_events_;
     f64 mouse_x_ = 0;
@@ -118,6 +124,8 @@ private:
     UIControl* hover_control_ = nullptr;
     UIControl* thumb_drag_ = nullptr; ///< the scrollbar whose thumb is dragged
     f32 thumb_grab_ = 0;              ///< where along its thumb it was taken
+    UIControl* mouseover_list_ = nullptr; ///< the ItemList told of a row under the mouse
+    i32 mouseover_row_ = -1;              ///< that row
 };
 
 } // namespace osc::ui
