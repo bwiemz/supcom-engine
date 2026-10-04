@@ -347,7 +347,7 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
 
     // Register file I/O bindings on ui_L for lobby map enumeration (M148c)
     // IMPORTANT: must come BEFORE register_ui_bindings so that the real
-    // ForkThread/WaitSeconds/Sound overwrite the blueprint stubs.
+    // ForkThread/KillThread/WaitSeconds/Sound overwrite the blueprint stubs.
     osc::lua::register_blueprint_bindings(ui_lua_state);
 
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);

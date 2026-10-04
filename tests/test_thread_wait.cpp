@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "sim/thread_manager.hpp"
 #include "sim/waitable.hpp"
+#include "ui/ui_control.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -237,4 +240,26 @@ TEST_CASE("SuspendCurrentThread sleeps until ResumeThread, as SingleEvent waits"
     REQUIRE(state.do_string("ResumeThread(me)"));
     tm.resume_all(56);
     CHECK(state.do_string("assert(resumed == 2)"));
+}
+
+TEST_CASE("The UI's KillThread ends a thread its ForkThread made", "[threads][ui]") {
+    osc::lua::LuaState state;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_blueprint_bindings(state);
+    osc::lua::register_ui_bindings(state, registry);
+    lua_State* L = state.raw();
+    osc::sim::ThreadManager tm(L);
+    lua_pushstring(L, "__osc_ui_thread_manager");
+    lua_pushlightuserdata(L, &tm);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    REQUIRE(state.do_string("n = 0 t = ForkThread(function() while true do n = n + 1 "
+                            "WaitTicks(1) end end)"));
+    tm.resume_all(1);
+    tm.resume_all(2);
+    REQUIRE(state.do_string("KillThread(t) before = n"));
+    tm.resume_all(3);
+    tm.resume_all(4);
+    REQUIRE(state.do_string("assert(n == before, 'ran on after KillThread')"));
+    CHECK(tm.active_count() == 0);
 }
