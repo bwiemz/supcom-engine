@@ -8,6 +8,7 @@
 #include "ui/console.hpp"
 #include "ui/keymap.hpp"
 #include "ui/scroll.hpp"
+#include "ui/edit_text.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "ui/world_view.hpp"
 
@@ -938,4 +939,59 @@ TEST_CASE("A control's class OnFrame and OnLoseKeyboardFocus are called, as its 
     f.dispatch.update_controls(f.lua.raw(), f.registry, 0.1);
     CHECK(f.check("frames == 1"));
     CHECK(f.check("lost == 1"));
+}
+
+TEST_CASE("An Edit's text is edited by character, at its caret", "[ui][edit]") {
+    osc::ui::EditText t;
+    CHECK(t.insert('a', 0));
+    CHECK(t.insert(0xE9, 0));
+    CHECK(t.insert('b', 0));
+    CHECK(t.text == "a\xC3\xA9"
+                    "b");
+    t.left();
+    CHECK(t.erase_before());
+    CHECK(t.text == "ab");
+    CHECK(t.caret == 1);
+    CHECK(t.erase_after());
+    CHECK(t.text == "a");
+    CHECK_FALSE(t.erase_after());
+    t.home();
+    CHECK(t.insert('x', 2));
+    CHECK_FALSE(t.insert('y', 2));
+    CHECK(t.text == "xa");
+    t.end();
+    CHECK(t.caret == 2);
+}
+
+TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's does",
+          "[ui][lua][input][edit]") {
+    InputFixture f;
+    f.run(R"(
+        calls = {}
+        local Class = setmetatable({
+            OnTextChanged = function(self, new, old) table.insert(calls, 'changed ' .. new .. '<' .. old) end,
+            OnCharPressed = function(self, c) table.insert(calls, 'char ' .. c) return c == 63 end,
+            OnEnterPressed = function(self, text) table.insert(calls, 'enter ' .. text) end,
+            OnEscPressed = function(self, text) table.insert(calls, 'esc ' .. text) return false end,
+            OnNonTextKeyPressed = function(self, key, event)
+                table.insert(calls, 'key ' .. key .. (event.Modifiers.Shift and ' shift' or ''))
+            end,
+        }, { __index = moho.edit_methods })
+        e = setmetatable({}, { __index = Class })
+        InternalCreateEdit(e, GetFrame(0))
+    )");
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "e"));
+    f.dispatch.on_char('h');
+    f.dispatch.on_char('?');
+    f.dispatch.on_char('i');
+    f.dispatch.on_key(GLFW_KEY_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_key(GLFW_KEY_BACKSPACE, GLFW_PRESS, 0);
+    f.dispatch.on_key(GLFW_KEY_UP, GLFW_PRESS, GLFW_MOD_SHIFT);
+    f.dispatch.on_key(GLFW_KEY_ENTER, GLFW_PRESS, 0);
+    f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
+    f.deliver();
+    f.registry.set_keyboard_focus(nullptr);
+    CHECK(f.check("table.concat(calls, ';') == 'char 104;changed h<;char 63;char 105;changed hi<h;"
+                  "changed i<hi;key 38 shift;enter i;esc i;changed <i'"));
+    CHECK(f.check("e:GetText() == ''"));
 }

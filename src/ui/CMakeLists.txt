@@ -2,6 +2,7 @@ add_library(osc_ui STATIC
     ui_control.cpp
     ui_dispatch.cpp
     key_codes.cpp
+    edit_text.cpp
     console.cpp
     font_metrics_provider.cpp
     keymap.cpp
