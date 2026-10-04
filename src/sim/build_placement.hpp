@@ -24,6 +24,12 @@ class SimState;
 struct PlacementRules {
     f32 size_x = 1.0f; ///< footprint, world units
     f32 size_z = 1.0f;
+    /// Physics.SkirtSizeX/Z and SkirtOffsetX/Z: the pad no other structure's
+    /// may overlap (none: the footprint)
+    f32 skirt_x = 0.0f;
+    f32 skirt_z = 0.0f;
+    f32 skirt_off_x = 0.0f;
+    f32 skirt_off_z = 0.0f;
     bool on_land = true;   ///< Physics.BuildOnLayerCaps
     bool on_water = false;
     bool on_seabed = false; ///< it sits on the ground under water (an extractor)
@@ -43,10 +49,14 @@ inline void snap_structure_center(f32& x, f32& z, f32 size_x, f32 size_z) {
 /// Blueprint lookup (blueprints live in Lua); unknown ids get defaults.
 using PlacementRulesLookup = std::function<PlacementRules(const std::string& bp_id)>;
 
-/// An axis-aligned footprint centered at (x, z), sizes in world units.
+/// The pad a structure takes, an axis-aligned rect in world units.
 struct StructureSite {
-    f32 x = 0, z = 0;
-    f32 size_x = 1.0f, size_z = 1.0f;
+    f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+
+    /// The skirt of a footprint `size_x` by `size_z` centred at (x, z)
+    static StructureSite of(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x = 0, f32 skirt_z = 0,
+                            f32 off_x = 0, f32 off_z = 0);
+    static StructureSite of(const PlacementRules& r, f32 x, f32 z);
 
     bool overlaps(const StructureSite& o) const;
 };
