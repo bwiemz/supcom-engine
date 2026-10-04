@@ -10202,6 +10202,21 @@ void test_range(TestContext& ctx) {
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
     )");
 
+    lua_check("Test 12f: SetScale takes a scale for each axis", R"(
+        __osc_scaled = __osc_spawn('uel0201', 'ARMY_1', 640.5, 100.5)
+        __osc_scaled:SetScale(1, 0.2, 3)
+        __osc_scaled_id = tonumber(__osc_scaled:GetEntityId())
+    )");
+    {
+        lua_getglobal(ctx.lua_state.raw(), "__osc_scaled_id");
+        const auto id = static_cast<osc::u32>(lua_tonumber(ctx.lua_state.raw(), -1));
+        lua_pop(ctx.lua_state.raw(), 1);
+        const auto* e = ctx.sim.entity_registry().find(id);
+        check(e && e->scale_x() == 1.0f && std::abs(e->scale_y() - 0.2f) < 1e-6f &&
+                  e->scale_z() == 3.0f,
+              "Test 12f: the entity has the scale of each axis");
+    }
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }

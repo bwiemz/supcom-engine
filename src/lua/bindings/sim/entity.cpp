@@ -791,8 +791,10 @@ static int entity_SetVizToNeutrals(lua_State* L) {
 
 static int entity_SetScale(lua_State* L) {
     auto* e = check_entity(L); if (!e) return 0;
-    auto s = static_cast<f32>(luaL_checknumber(L, 2));
-    e->set_scale(s, s, s);
+    const auto x = static_cast<f32>(luaL_checknumber(L, 2));
+    const auto y = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : x;
+    const auto z = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : x;
+    e->set_scale(x, y, z);
     return 0;
 }
 
