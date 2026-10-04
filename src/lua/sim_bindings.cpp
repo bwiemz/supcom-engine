@@ -1381,14 +1381,19 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
 
 /// Internal: create a unit in "being built" state.
 /// Called from C++ build processing via Lua registry.
-/// Args: (bp_id, army_1based, x, y, z)
+/// Args: (bp_id, army_1based, x, y, z); y nil: where the structure stands
+/// at (x, z) -- on the ground, the water or the seabed, as Moho places it
 /// Returns: entity_id, lua_table (2 values)
 static int l_create_building_unit(lua_State* L) {
     const char* bp_id = luaL_checkstring(L, 1);
     int army = static_cast<int>(lua_tonumber(L, 2)) - 1;
     f32 x = static_cast<f32>(lua_tonumber(L, 3));
-    f32 y = static_cast<f32>(lua_tonumber(L, 4));
     f32 z = static_cast<f32>(lua_tonumber(L, 5));
+    f32 y = static_cast<f32>(lua_tonumber(L, 4));
+    if (lua_isnil(L, 4)) {
+        auto* sim = get_sim(L);
+        y = sim ? structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
+    }
 
     u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/true);
     if (id == 0) {
@@ -1462,12 +1467,14 @@ static int l_CreateUnit2(lua_State* L) {
     f32 x = static_cast<f32>(lua_tonumber(L, 4));
     f32 z = static_cast<f32>(lua_tonumber(L, 5));
 
-    // Rewrite stack for l_CreateUnit: bp, army, x, 0, z
+    // Rewrite stack for l_CreateUnit: bp, army, x, y, z -- y where the unit
+    // stands at (x, z), as for a structure built there
+    const f32 y = structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
     lua_pushnumber(L, army + 1); // re-encode as 1-based; l_CreateUnit calls resolve_army
     lua_pushnumber(L, x);
-    lua_pushnumber(L, 0);
+    lua_pushnumber(L, y);
     lua_pushnumber(L, z);
     return l_CreateUnit(L);
 }

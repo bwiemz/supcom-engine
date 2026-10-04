@@ -679,10 +679,23 @@ public:
     bool has_command_cap(const std::string& cap) const { return command_caps_.count(cap) > 0; }
 
     // Build restrictions
-    void add_build_restriction(const std::string& id) { build_restrictions_.insert(id); }
-    void remove_build_restriction(const std::string& id) { build_restrictions_.erase(id); }
-    void restore_build_restrictions() { build_restrictions_.clear(); }
-    bool is_build_restricted(const std::string& id) const { return build_restrictions_.count(id) > 0; }
+    /// What it may not build grows by a category (Unit:AddBuildRestriction);
+    /// remove_build_restriction takes one off it
+    void add_build_restriction(CategoryExpr category) {
+        build_restriction_ =
+            build_restriction_.empty()
+                ? std::move(category)
+                : CategoryExpr::combine(CategoryExpr::Op::Union, std::move(build_restriction_),
+                                        std::move(category));
+    }
+    void remove_build_restriction(CategoryExpr category) {
+        if (build_restriction_.empty()) return;
+        build_restriction_ = CategoryExpr::combine(
+            CategoryExpr::Op::Difference, std::move(build_restriction_), std::move(category));
+    }
+    void restore_build_restrictions() { build_restriction_ = {}; }
+    /// What it may not build (empty: no restriction)
+    const CategoryExpr& build_restriction() const { return build_restriction_; }
 
     // Elevation override
     f32 elevation_override() const { return elevation_override_; }
@@ -1376,7 +1389,7 @@ private:
     std::unordered_set<std::string> command_caps_;
     std::unordered_set<std::string> original_command_caps_;
     // Build restrictions
-    std::unordered_set<std::string> build_restrictions_;
+    CategoryExpr build_restriction_;
     // Elevation override
     f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
     bool dying_ = false;             ///< killed; see begin_dying
