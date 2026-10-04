@@ -154,6 +154,26 @@ TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",
     CHECK(a->economy().reclaim_mass == 0.0);
 }
 
+TEST_CASE("A stats trigger fires once, when all its conditions hold", "[army][stats]") {
+    osc::sim::ArmyBrain brain;
+    brain.set_stat("Units_Active", 3);
+    brain.set_stat("Economy_Ratio_Mass", 0.05);
+    brain.add_stat_trigger({"Economy_Ratio_Mass", "Low", "LessThan", 0.1, ""});
+    brain.add_stat_trigger({"Units_Active", "Both", "GreaterThanOrEqual", 3, ""});
+    brain.add_stat_trigger({"Economy_Ratio_Mass", "Both", "GreaterThan", 0.5, ""});
+    brain.add_stat_trigger({"Units_Active", "Cat", "GreaterThan", 0, "category"});
+
+    CHECK(brain.take_fired_triggers() == std::vector<std::string>{"Low"});
+    CHECK(brain.take_fired_triggers().empty());
+
+    brain.set_stat("Economy_Ratio_Mass", 0.6);
+    CHECK(brain.take_fired_triggers() == std::vector<std::string>{"Both"});
+
+    brain.remove_stat_trigger("Units_Active", "Cat");
+    brain.add_stat_trigger({"Units_Active", "Equal3", "Equal", 3, ""});
+    CHECK(brain.take_fired_triggers() == std::vector<std::string>{"Equal3"});
+}
+
 TEST_CASE("ArmyBrain explicit color state", "[army][color]") {
     osc::sim::ArmyBrain brain;
 

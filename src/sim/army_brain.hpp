@@ -45,6 +45,15 @@ struct EconomyState {
 
 /// The C++ backing object for moho.aibrain_methods.
 /// Each army in the game has one ArmyBrain.
+/// One condition of a named army stats trigger
+struct StatTrigger {
+    std::string stat;
+    std::string name;
+    std::string compare; ///< LessThan, LessThanOrEqual, GreaterThan, GreaterThanOrEqual, Equal
+    f64 value = 0.0;
+    std::string category; ///< a category's count: not counted yet, so never holds
+};
+
 class ArmyBrain {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
@@ -208,6 +217,12 @@ public:
     }
     void add_stat(const std::string& key, f64 delta) { stats_[key] += delta; }
 
+    void add_stat_trigger(StatTrigger t) { stat_triggers_.push_back(std::move(t)); }
+    void remove_stat_trigger(const std::string& stat, const std::string& name);
+    /// The triggers whose conditions all hold, in the order first set, each
+    /// taken off: Moho's fire once (retail's scripts set them again)
+    std::vector<std::string> take_fired_triggers();
+
     // Moho's army stats, under retail's names (aibrain.lua reads them for
     // the score). Units_Killed is this army's *losses* and Enemies_Killed its
     // kills; Units_History counts units built. The *Value_* stats sum those
@@ -287,6 +302,7 @@ private:
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;
+    std::vector<StatTrigger> stat_triggers_;
 };
 
 } // namespace osc::sim
