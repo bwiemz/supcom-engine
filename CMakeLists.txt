@@ -160,6 +160,18 @@ if(OSC_BUILD_TESTS)
         set_tests_properties(arch.state_io arch.state_io_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # Every callback retail FA runs by name is one the engine makes, or
+        # listed as not made yet: a callback never made passes the coverage
+        # ratchet, and the script's behaviour is just missing.
+        add_test(NAME arch.retail_hooks
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_retail_hooks.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.retail_hooks_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_retail_hooks.py
+                         --self-test)
+        set_tests_properties(arch.retail_hooks arch.retail_hooks_self_test
+                             PROPERTIES LABELS "arch" TIMEOUT 60)
+
         # retail_ref.py, which asks retail FA itself for references: its config,
         # init file and reading of retail's log (retail isn't run here)
         add_test(NAME arch.retail_ref_self_test
