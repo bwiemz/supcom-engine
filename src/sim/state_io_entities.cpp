@@ -639,6 +639,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.f32v(x.idle_time_);
         w.b(x.has_target_);
         w.b(x.on_target_);
+        w.b(x.builder_arm_);
         break;
     }
     case ManipKind::Slaver: {
@@ -760,6 +761,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->idle_time_ = r.f32v();
         x->has_target_ = r.b();
         x->on_target_ = r.b();
+        x->builder_arm_ = r.b();
         m = std::move(x);
         break;
     }

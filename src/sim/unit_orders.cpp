@@ -268,6 +268,9 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
+    if (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile) {
+        aim_builder_arms(nullptr, ctx.L);
+    }
     while (!command_queue_.empty()) {
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the tick ends, see EntityRegistry::collect_garbage).
@@ -414,6 +417,13 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             return OrderStep::Next;
         }
         navigator_.abort_move();
+        {
+            const Vector3 site{cmd.target_pos.x, cmd.target_pos.y + 0.5f, cmd.target_pos.z};
+            aim_builder_arms(&site, L);
+            if (destroyed() || !in_registry()) {
+                return OrderStep::Gone;
+            }
+        }
 
         // Phase 2: Spawn skeleton unit
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
