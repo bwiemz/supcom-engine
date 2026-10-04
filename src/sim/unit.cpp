@@ -28,6 +28,21 @@ void Unit::add_weapon(std::unique_ptr<Weapon> w) {
     weapons_.push_back(std::move(w));
 }
 
+f64 resource_fraction(const UnitEconomy& econ, f64 mass_efficiency, f64 energy_efficiency) {
+    const bool consuming = econ.consumption_active;
+    const bool mass = consuming && econ.consumption_mass > 0;
+    const bool energy = (consuming && econ.consumption_energy > 0) ||
+                        (econ.maintenance_active && econ.energy_maintenance_override > 0);
+    f64 fraction = 1.0;
+    if (mass) {
+        fraction = std::min(fraction, mass_efficiency);
+    }
+    if (energy) {
+        fraction = std::min(fraction, energy_efficiency);
+    }
+    return fraction;
+}
+
 Weapon* Unit::get_weapon(i32 index) {
     if (index < 0 || index >= static_cast<i32>(weapons_.size()))
         return nullptr;

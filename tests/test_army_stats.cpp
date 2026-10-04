@@ -856,3 +856,19 @@ TEST_CASE("GameOptions parser preserves lobby scalar values and restrictions", "
     CHECK(saw_cheat_mult);
     CHECK_FALSE(saw_scenario);
 }
+
+TEST_CASE("A unit's resource fraction counts only what it asks for", "[economy]") {
+    osc::sim::UnitEconomy radar;
+    radar.maintenance_active = true;
+    radar.energy_maintenance_override = 20;
+    CHECK(osc::sim::resource_fraction(radar, 0.2, 1.0) == 1.0);
+    CHECK(osc::sim::resource_fraction(radar, 1.0, 0.5) == 0.5);
+
+    osc::sim::UnitEconomy builder;
+    builder.consumption_active = true;
+    builder.consumption_mass = 4;
+    builder.consumption_energy = 20;
+    CHECK(osc::sim::resource_fraction(builder, 0.3, 0.6) == 0.3);
+
+    CHECK(osc::sim::resource_fraction(osc::sim::UnitEconomy{}, 0.1, 0.1) == 1.0);
+}

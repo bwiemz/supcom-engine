@@ -1228,8 +1228,6 @@ static int unit_RemoveSpecifiedEnhancement(lua_State* L) {
 }
 
 // GetResourceConsumed(self) → number
-// Returns min(mass_efficiency, energy_efficiency) for the unit's army.
-// FA Lua does arithmetic on this value (e.g. `obtained * SecondsPerTick()`).
 static int unit_GetResourceConsumed(lua_State* L) {
     auto* u = check_unit(L);
     if (!u || u->army() < 0) {
@@ -1246,8 +1244,8 @@ static int unit_GetResourceConsumed(lua_State* L) {
         lua_pushnumber(L, 1.0);
         return 1;
     }
-    f64 eff = std::min(brain->mass_efficiency(), brain->energy_efficiency());
-    lua_pushnumber(L, eff);
+    lua_pushnumber(L, sim::resource_fraction(u->economy(), brain->mass_efficiency(),
+                                             brain->energy_efficiency()));
     return 1;
 }
 
