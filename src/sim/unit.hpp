@@ -861,6 +861,9 @@ public:
     Manipulator* add_manipulator(std::unique_ptr<Manipulator> m);
     void remove_manipulator(Manipulator* m);
     void tick_manipulators(f32 dt, lua_State* L);
+    /// Turn the builder arms to `at`, or back with none; Moho's mobile build
+    /// task calls OnPrepareArmToBuild as an arm takes its site
+    void aim_builder_arms(const Vector3* at, lua_State* L);
     void destroy_all_manipulators();
     const std::vector<std::unique_ptr<Manipulator>>& manipulators() const { return manipulators_; }
 

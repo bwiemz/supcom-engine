@@ -10105,6 +10105,15 @@ void test_range(TestContext& ctx) {
         __osc_prize:SetFireState(1)
         IssueCapture({__osc_taker}, __osc_prize)
 
+        __osc_armed = __osc_spawn('uel0001', 'ARMY_1', 650.5, 130.5)
+        __osc_arm_prep = 0
+        local prepare = __osc_armed.OnPrepareArmToBuild
+        __osc_armed.OnPrepareArmToBuild = function(self)
+            __osc_arm_prep = __osc_arm_prep + 1
+            return prepare(self)
+        end
+        IssueBuildMobile({__osc_armed}, __osc_at(658.5, 130.5), 'ueb2101', {})
+
         -- The queue: orders after the first wait their turn.
         __osc_queued = __osc_spawn('uel0201', 'ARMY_1', 680.5, 100.5)
         IssueMove({__osc_queued}, __osc_at(690, 100.5))
@@ -10200,6 +10209,14 @@ void test_range(TestContext& ctx) {
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
         if d < 5 then error(string.format('the ACU is %.2f from its target', d)) end
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
+    )");
+
+    lua_check("Test 12c: an ACU's build arm turns to its site, east of it", R"(
+        local heading = __osc_armed.BuildArmManipulator:GetHeadingPitch()
+        if math.abs(math.abs(heading) - math.pi / 2) > 0.3 then
+            error('arm heading ' .. heading)
+        end
+        if __osc_arm_prep == 0 then error('OnPrepareArmToBuild never ran') end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");

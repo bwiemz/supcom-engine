@@ -3403,6 +3403,7 @@ static int l_CreateBuilderArmController(lua_State* L) {
     if (!unit) return stub_dummy_object(L);
 
     auto manip = std::make_unique<sim::AimManipulator>();
+    manip->set_builder_arm(true);
 
     // arg 2 = yawBone
     if (lua_gettop(L) >= 2) {

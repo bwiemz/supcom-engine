@@ -245,6 +245,9 @@ public:
     }
     void clear_target() { has_target_ = false; }
     bool has_target() const { return has_target_; }
+    /// CreateBuilderArmController's: the unit's build orders aim it
+    void set_builder_arm(bool b) { builder_arm_ = b; }
+    bool builder_arm() const { return builder_arm_; }
     /// An arcing weapon's launch angle above the horizontal: the pitch to
     /// take instead of the straight line to the target (none: the line).
     void set_elevation(std::optional<f32> radians) { elevation_ = radians; }
@@ -268,6 +271,7 @@ private:
     f32 idle_time_ = 0;
     bool has_target_ = false;
     bool on_target_ = false;
+    bool builder_arm_ = false;
 };
 
 // ---------------------------------------------------------------------------
