@@ -390,3 +390,118 @@ TEST_CASE("An extractor's cursor snaps to the nearest deposit within reach", "[p
     CHECK(osc::sim::extract_snap_radius(0.01f) == Catch::Approx(0.9f));
     CHECK(osc::sim::extract_snap_radius(1.0f) == Catch::Approx(20.0f));
 }
+
+namespace {
+
+/// 128x128 map of dry land at ~7.8, with a plateau ~2.3 higher for
+/// 40 <= x < 60, and sea (water 5.0) beyond x = 96 at depth `sea_floor`.
+void make_step_world(SimState& sim, osc::u16 sea_floor = 100) {
+    std::vector<osc::u16> heights((kMapSize + 1) * (kMapSize + 1), 1000);
+    for (osc::u32 z = 0; z <= kMapSize; ++z) {
+        for (osc::u32 x = 40; x < 60; ++x) heights[z * (kMapSize + 1) + x] = 1300;
+        for (osc::u32 x = 96; x <= kMapSize; ++x) heights[z * (kMapSize + 1) + x] = sea_floor;
+    }
+    osc::map::Heightmap hm(kMapSize, kMapSize, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 5.0f, true));
+    sim.build_pathfinding_grid();
+}
+
+} // namespace
+
+TEST_CASE("placement: a structure's skirt must be flat within MaxGroundVariation", "[placement]") {
+    // Moho's OCCUPY_CheckAreaFlatness: every height point under the skirt
+    // within MaxGroundVariation (default 1.0) of the others.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_step_world(sim);
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "wall") {
+            r.size_x = r.size_z = 2.0f;
+            r.max_ground_variation = 50.0f; // walls take any slope
+        }
+        return r;
+    };
+    StructurePlacement p(sim, 0, rules);
+    CHECK(p.can_build("pgen", 20.0f, 20.0f));       // flat
+    CHECK(p.can_build("pgen", 50.0f, 20.0f));       // on the plateau, flat
+    CHECK_FALSE(p.can_build("pgen", 40.0f, 20.0f)); // across its 2.3 step
+    CHECK(p.can_build("wall", 40.0f, 20.0f));
+}
+
+TEST_CASE("placement: a FlattenSkirt structure needs only its skirt's edge near its level",
+          "[placement]") {
+    // OCCUPY_CheckEdgeFlatness: the ring just outside the skirt, against the
+    // ceiling of the last point read, the level the ground is cut to.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    std::vector<osc::u16> heights((kMapSize + 1) * (kMapSize + 1), 1024); // 8.0
+    // A 2.3 bump at (20, 20), inside a 4x4 skirt centred there
+    heights[20 * (kMapSize + 1) + 20] = 1324;
+    osc::map::Heightmap hm(kMapSize, kMapSize, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    sim.build_pathfinding_grid();
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r;
+        r.size_x = r.size_z = 4.0f;
+        r.flatten_skirt = bp == "flattened";
+        return r;
+    };
+    const osc::map::Terrain& t = *sim.terrain();
+    CHECK(osc::sim::occupy_layers(t, rules("plain"), 20.0f, 20.0f) == 0);
+    CHECK(osc::sim::occupy_layers(t, rules("flattened"), 20.0f, 20.0f) ==
+          osc::sim::placement_layer::Land);
+}
+
+TEST_CASE("placement: a structure in the water needs MinWaterDepth over its skirt", "[placement]") {
+    // Moho drops Water, Sub and Seabed unless the skirt's highest point is
+    // MinWaterDepth under the surface; Land needs it all above the water.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_step_world(sim); // sea floor ~0.8: 4.2 deep
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "deepfactory") {
+            r = rules_for("seafactory");
+            r.min_water_depth = 5.0f;
+        } else if (bp == "shallowfactory") {
+            r = rules_for("seafactory");
+            r.min_water_depth = 1.5f;
+        }
+        return r;
+    };
+    StructurePlacement p(sim, 0, rules);
+    CHECK(p.can_build("shallowfactory", 110.0f, 20.0f));
+    CHECK_FALSE(p.can_build("deepfactory", 110.0f, 20.0f));
+    const osc::map::Terrain& t = *sim.terrain();
+    // A land structure with a point of its skirt under the water: no land
+    CHECK(osc::sim::occupy_layers(t, rules("pgen"), 96.0f, 20.0f) == 0);
+}
+
+TEST_CASE("placement: a structure built only under the surface goes in deep water", "[placement]") {
+    // The Cybran HARMS: BuildOnLayerCaps LAYER_Sub alone, MinWaterDepth 2.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_step_world(sim);
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "harms") {
+            r.size_x = r.size_z = 2.0f;
+            r.skirt_x = r.skirt_z = 3.0f;
+            r.on_land = false;
+            r.on_sub = true;
+            r.min_water_depth = 2.0f;
+            r.flatten_skirt = true;
+        }
+        return r;
+    };
+    StructurePlacement p(sim, 0, rules);
+    CHECK(p.can_build("harms", 110.0f, 20.0f));
+    CHECK_FALSE(p.can_build("harms", 20.0f, 20.0f));
+
+    LuaGuard g2;
+    SimState shallow(g2.L, nullptr);
+    make_step_world(shallow, 500); // sea floor ~3.9: 1.1 deep
+    StructurePlacement q(shallow, 0, rules);
+    CHECK_FALSE(q.can_build("harms", 110.0f, 20.0f));
+}

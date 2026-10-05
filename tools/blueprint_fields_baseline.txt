@@ -33,7 +33,6 @@ KLiftDamping
 KRoll
 KRollDamping
 LAYER_Air
-LAYER_Sub
 LayerChangeOffsetHeight
 LayerTransitionDuration
 LifeBarHeight
@@ -42,12 +41,10 @@ LifeBarRender
 LifeBarSize
 LiftFactor
 MaxBounceCount
-MaxGroundVariation
 MaxSlope
 MaxSteerForce
 MaxZigZag
 MinBounceCount
-MinWaterDepth
 MuzzleVelocityRandom
 NeedPrep
 NeedToFaceTargetToBuild

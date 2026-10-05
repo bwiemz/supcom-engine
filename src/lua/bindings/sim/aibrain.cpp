@@ -1146,6 +1146,15 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         r.size_x = fx;
         r.size_z = fz;
     }
+    lua_pushstring(L, "Footprint");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "MinWaterDepth");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) r.min_water_depth = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
 
     lua_pushstring(L, "Physics");
     lua_rawget(L, bp);
@@ -1165,6 +1174,7 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
             r.on_land = cap("LAYER_Land");
             r.on_water = cap("LAYER_Water");
             r.on_seabed = cap("LAYER_Seabed");
+            r.on_sub = cap("LAYER_Sub");
         }
         lua_pop(L, 1);
         const auto number = [L, phys](const char* key) {
@@ -1178,6 +1188,14 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         r.skirt_z = number("SkirtSizeZ");
         r.skirt_off_x = number("SkirtOffsetX");
         r.skirt_off_z = number("SkirtOffsetZ");
+        lua_pushstring(L, "MaxGroundVariation");
+        lua_rawget(L, phys);
+        if (lua_isnumber(L, -1)) r.max_ground_variation = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_pushstring(L, "FlattenSkirt");
+        lua_rawget(L, phys);
+        r.flatten_skirt = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
         lua_pushstring(L, "BuildRestriction");
         lua_rawget(L, phys);
         if (lua_type(L, -1) == LUA_TSTRING) {
