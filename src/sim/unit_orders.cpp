@@ -280,11 +280,38 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the tick ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
+        if (!command_queue_.front().begun) {
+            // Its scripts may change the queue, or kill the unit: look again.
+            begin_order(command_queue_.front(), ctx.L);
+            continue;
+        }
         const OrderStep step = run_order(command_queue_.front(), dt, ctx, econ_eff);
         if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
     }
     return true;
+}
+
+void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
+    cmd.begun = true;
+    // Moho's move, patrol, guard and attack tasks, as they are made: an
+    // Immobile NeedUnpack unit's attacker drops its desired target, and with
+    // it every weapon's (CAiAttackerImpl::SetDesiredTarget). Retail's
+    // DefaultProjectileWeapon packs up on OnLostTarget and, packed, calls
+    // SetImmobile(false).
+    if (!immobile_ || !need_unpack_) return;
+    switch (cmd.type) {
+    case CommandType::Move:
+    case CommandType::Patrol:
+    case CommandType::Guard:
+    case CommandType::Attack: break;
+    default: return;
+    }
+    for (size_t i = 0; i < weapons_.size(); ++i) {
+        // A script may kill the unit, and with it its weapons.
+        if (destroyed() || is_dying()) return;
+        weapons_[i]->drop_target(L);
+    }
 }
 
 OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
@@ -621,6 +648,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         // go round them for ever within this one.
         auto finished = std::move(cmd);
         finished.patrol_claimed.clear();
+        finished.begun = false; // Moho makes each leg a new patrol task
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));
         return OrderStep::Hold;

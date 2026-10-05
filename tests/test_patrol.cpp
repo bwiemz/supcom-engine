@@ -253,6 +253,29 @@ TEST_CASE("A patrol breaks off to attack an enemy within its GuardScanRadius of 
     CHECK(tank->position().x > 95.0f);
 }
 
+TEST_CASE("A NeedUnpack patrol breaks off only for an enemy it can hit from where it stands",
+          "[patrol]") {
+    // FindBestEnemy: a NeedUnpack unit's candidate needs an Available firing
+    // solution, so its patrol leaves alone what is within GuardScanRadius but
+    // out of its weapon's reach.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 5.0f;
+    tank->add_weapon(std::move(gun));
+    tank->set_guard_scan_radius(20.0f);
+    tank->set_need_unpack(true);
+    still(sim, 1, 40.0f, 25.0f);
+    Unit* on_route = still(sim, 1, 60.0f, 12.0f);
+    tank->push_command(patrol(100.0f, 10.0f, 1), true);
+    const auto seen = break_offs(sim, *tank, CommandType::Attack, 300);
+    REQUIRE(!seen.empty());
+    CHECK(seen.front() == on_route->entity_id());
+}
+
 TEST_CASE("A patrol goes for an enemy ahead on its route only within its GuardScanRadius",
           "[patrol]") {
     LuaGuard g;

@@ -326,6 +326,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.from_patrol);
     w.i32v(c.patrol_scan);
     save_ids(w, c.patrol_claimed);
+    w.b(c.begun);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -360,6 +361,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.from_patrol = r.b();
     c.patrol_scan = r.i32v();
     c.patrol_claimed = load_ids(r);
+    c.begun = r.b();
 }
 
 // ------------------------------------------------------------- Navigator
@@ -847,6 +849,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.cap_cost_);
     w.f32v(u.max_build_distance_);
     w.f32v(u.guard_scan_radius_);
+    w.b(u.need_unpack_);
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.naval_draft_);
@@ -1156,6 +1159,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.cap_cost_ = r.f32v();
     u.max_build_distance_ = r.f32v();
     u.guard_scan_radius_ = r.f32v();
+    u.need_unpack_ = r.b();
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.naval_draft_ = r.f32v();

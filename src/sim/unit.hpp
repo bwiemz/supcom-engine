@@ -165,6 +165,11 @@ public:
     /// AI.GuardScanRadius: how far off its route a patrol takes on work.
     f32 guard_scan_radius() const { return guard_scan_radius_; }
     void set_guard_scan_radius(f32 r) { guard_scan_radius_ = r; }
+    /// AI.NeedUnpack: its weapon unpacks, holding the unit still, before it
+    /// fires (retail's mobile artillery). A new order packs it up, and it
+    /// looks for no targets while it moves (see begin_order).
+    bool need_unpack() const { return need_unpack_; }
+    void set_need_unpack(bool b) { need_unpack_ = b; }
 
     const std::string& layer() const { return layer_; }
     void set_layer(const std::string& l) { layer_ = l; }
@@ -1069,6 +1074,11 @@ private:
     bool tick_lifecycle(f64 dt, SimContext& ctx);
     /// Run orders from the head of the queue until one holds (unit_orders.cpp).
     bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
+    /// An order's first run (on a patrol, each leg's): what Moho's task
+    /// does as it is made. A Move, Patrol, Guard or Attack drops the weapons'
+    /// targets of an immobile NeedUnpack unit, so its weapon packs up and
+    /// the unit can go.
+    void begin_order(UnitCommand& cmd, lua_State* L);
     /// Coasting, amphibious layer changes, air separation, fuel.
     bool tick_after_orders(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
@@ -1222,6 +1232,7 @@ private:
     f32 cap_cost_ = 1.0f;           // Moho's RUnitBlueprint default
     f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
     f32 guard_scan_radius_ = 25.0f;
+    bool need_unpack_ = false;
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units

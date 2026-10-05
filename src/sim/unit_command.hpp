@@ -143,6 +143,9 @@ struct UnitCommand {
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
     std::vector<u32> patrol_claimed;
+    /// Unit::begin_order has run for it: the order has started (a patrol's
+    /// leg, until it goes round). Runtime state.
+    bool begun = false;
 };
 
 } // namespace osc::sim
