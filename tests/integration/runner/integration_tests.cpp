@@ -10286,6 +10286,24 @@ void test_range(TestContext& ctx) {
         if __osc_arm_prep == 0 then error('OnPrepareArmToBuild never ran') end
     )");
 
+    lua_check("Test 12h setup", R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveResource('MASS', 10000)
+        brain:GiveResource('ENERGY', 100000)
+        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 600.5, 190.5)
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(600.5, 182.5), 'ueb2101', {})
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(608.5, 190.5), 'ueb2101', {})
+    )");
+    run(300);
+    lua_check("Test 12h: the next build in the queue turns the ACU's torso to its site", R"(
+        local n = table.getn(__osc_queued_acu:GetCommandQueue())
+        if n ~= 1 or not __osc_queued_acu:IsUnitState('Building') then
+            error('not building its second; ' .. n .. ' orders')
+        end
+        local v = __osc_queued_acu:GetBoneDirection('Torso')
+        if v[1] < 0.9 then error(string.format('torso faces (%.2f, %.2f)', v[1], v[3])) end
+    )");
+
     lua_check("Test 12e: an engineer guards one building a generator", R"(
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveResource('MASS', 10000)
