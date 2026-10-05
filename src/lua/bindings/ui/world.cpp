@@ -433,15 +433,9 @@ const MethodEntry ui_worldview_methods[] = {
 // --- Camera methods (M136a) ---
 
 
-// Camera calls Moho's camera doesn't have: accepted and ignored (the camera's
-// own methods are the UI bindings', M217f/g)
-static int camera_Ignored(lua_State* /*L*/) { return 0; }
-
+// The camera's methods are the UI bindings' (M217f/g), added to this class.
 // clang-format off
 const MethodEntry camera_methods[] = {
-    {"Lock", camera_Ignored},
-    {"Unlock", camera_Ignored},
-    {"SyncPlayableRect", camera_Ignored},
     {nullptr, nullptr},
 };
 // clang-format on

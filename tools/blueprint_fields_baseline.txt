@@ -26,7 +26,6 @@ CirclingRadiusVsAirMult
 CirclingTurnMult
 CollideEntity
 CombatTurnSpeed
-DevStatus
 DirectionX
 DirectionY
 DirectionZ
@@ -46,9 +45,7 @@ KRoll
 KRollDamping
 KTurn
 KTurnDamping
-Killed
 LAYER_Air
-LAYER_Orbit
 LAYER_Sub
 LayerChangeOffsetHeight
 LayerTransitionDuration
@@ -71,7 +68,6 @@ NeedToFaceTargetToBuild
 NeedUnpack
 OccupancyCaps
 OccupyRects
-Orbit
 PlaceholderMeshName
 PositionY
 PredictAheadForBombDrop
@@ -98,7 +94,6 @@ Silhouette
 SinkLower
 SlavedToBody
 SlavedToBodyArcRange
-Spawn
 SpawnRandomRotation
 StandUpright
 StartTurnDistance

@@ -1,0 +1,5 @@
+# Engine-only blueprint fields that need no reader (tools/check_blueprint_fields.py),
+# "<field>  # why"
+DevStatus  # a projectile's development note; nothing reads it
+LAYER_Orbit  # every retail blueprint sets it false; nothing builds in or moves to orbit
+Orbit  # set only by the CampaignBranch mod's all_units.bp

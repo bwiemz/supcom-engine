@@ -8,6 +8,10 @@ lists the stubs there are, each as "<Lua name> <C++ function>"; this check
 fails on a do-nothing binding missing from it, and on a listed one that now
 does something or is gone.
 
+tools/lua_stub_accepted.txt lists the do-nothing bindings that are right as
+they are, each with its reason after a '#': Moho's own method does nothing,
+or the binding is a fallback for a function retail's Lua defines itself.
+
 A body does nothing when it makes no call but reading arguments, pushing
 nothing and logging, assigns nothing, and returns 0 on every path; a
 lua_stubs:: helper counts too.
@@ -129,11 +133,34 @@ def read_names(path: Path) -> set[str]:
     return out
 
 
-def problems_of(stubs: set[str], baseline: set[str]) -> list[str]:
+def read_accepted(path: Path) -> dict[str, str]:
+    """Each accepted entry, and its reason (the text after its '#')."""
+    out: dict[str, str] = {}
+    if not path.exists():
+        return out
+    for line in path.read_text().splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        entry, _, reason = line.partition("#")
+        entry = " ".join(entry.split())
+        if entry:
+            out[entry] = reason.strip()
+    return out
+
+
+def problems_of(stubs: set[str], baseline: set[str],
+                accepted: dict[str, str] | None = None) -> list[str]:
+    accepted = accepted or {}
     out = [f"{s}: a binding that does nothing; implement it, or list it in "
-           "tools/lua_stub_baseline.txt" for s in sorted(stubs - baseline)]
+           "tools/lua_stub_baseline.txt" for s in sorted(stubs - baseline - accepted.keys())]
     out += [f"{s}: no longer a stub; take it off tools/lua_stub_baseline.txt"
             for s in sorted(baseline - stubs)]
+    out += [f"{s}: no longer a stub; take it off tools/lua_stub_accepted.txt"
+            for s in sorted(accepted.keys() - stubs)]
+    out += [f"{s}: in both tools/lua_stub_baseline.txt and tools/lua_stub_accepted.txt"
+            for s in sorted(baseline & accepted.keys())]
+    out += [f"{s}: accepted without a reason; give it one after a '#' in "
+            "tools/lua_stub_accepted.txt" for s, why in sorted(accepted.items()) if not why]
     return out
 
 
@@ -163,6 +190,17 @@ def self_test() -> int:
     if len(problems_of({"A l_A"}, {"A l_A", "Z l_Z"})) != 1:
         print("self-test: stale baseline entry")
         return 1
+    cases = [
+        ({"A l_A", "B l_B"}, {"A l_A"}, {"B l_B": "Moho's does nothing"}, 0),
+        ({"A l_A"}, set(), {"A l_A": ""}, 1),
+        ({"A l_A"}, {"A l_A"}, {"A l_A": "why"}, 1),
+        ({"A l_A"}, {"A l_A"}, {"Z l_Z": "why"}, 1),
+    ]
+    for stubs, baseline, accepted, n in cases:
+        if len(problems_of(stubs, baseline, accepted)) != n:
+            print(f"self-test: stubs {sorted(stubs)}, baseline {sorted(baseline)}, accepted "
+                  f"{accepted}: want {n} problem(s)")
+            return 1
     print("self-test: ok")
     return 0
 
@@ -179,12 +217,13 @@ def main(argv: list[str]) -> int:
         return 2
     root = Path(argv[0])
     problems = problems_of(stubs_of(sources_of(root)),
-                           read_names(root / "tools" / "lua_stub_baseline.txt"))
+                           read_names(root / "tools" / "lua_stub_baseline.txt"),
+                           read_accepted(root / "tools" / "lua_stub_accepted.txt"))
     for p in problems:
         print(p)
     if problems:
         return 1
-    print("lua stubs: each do-nothing binding is in the baseline")
+    print("lua stubs: each do-nothing binding is in the baseline or accepted")
     return 0
 
 
