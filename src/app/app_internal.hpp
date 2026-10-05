@@ -84,6 +84,7 @@ struct Options {
     bool mods_flow_test = false;
     bool campaign_flow_test = false; ///< (M209b)
     bool tutorial_flow_test = false; ///< its tutorial route (campaign_flow_test is set too)
+    bool outro_flow_test = false;    ///< its outro route (campaign_flow_test is set too)
     bool mods_flow_lobby = false;
     std::vector<UiClick> clicks; ///< --click <label>, --click-at <x>,<y>, in order
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's

@@ -101,6 +101,11 @@ std::optional<FoundControl> find_control(lua_State* L, ui::UIControlRegistry& co
 /// A find_control match for a button whose label reads what `loc` localizes to.
 std::string labelled(const char* loc);
 
+/// The control a click at (x, y) would reach, as the dispatch hit-tests:
+/// from the top input capture, else the root frame (null: none).
+const ui::UIControl* control_at(lua_State* L, ui::UIDispatch& input,
+                                ui::UIControlRegistry& controls, f64 x, f64 y);
+
 /// A player's left click on `found`, once it takes one: the mouse there,
 /// pressed and let go. False if it doesn't take one yet.
 bool click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& controls,

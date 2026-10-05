@@ -12,6 +12,9 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
@@ -173,6 +176,42 @@ constexpr const char* kTutorialAttack = R"(
     return 'ordered'
 )";
 
+/// The outro route's profile: X1CA_001-005 finished as the UEF, the
+/// timeline seen (operation select's first visit plays it otherwise).
+constexpr const char* kOutroSeed = R"(
+    local Prefs = import('/lua/user/prefs.lua')
+    Prefs.SetToCurrentProfile('ViewedTimeline', true)
+    local campaign = import('/lua/ui/campaign/campaignmanager.lua')
+    for _, op in {'X1CA_001', 'X1CA_002', 'X1CA_003', 'X1CA_004', 'X1CA_005'} do
+        campaign.OperationVictory({campaignID = 'uef', opKey = op, difficulty = 2, success = true,
+                                   allPrimary = true, allSecondary = false}, true)
+    end
+    if not campaign.IsOperationSelectable('uef', 'X1CA_006') then
+        return 'X1CA_006 is not selectable'
+    end
+    return 'ok'
+)";
+
+/// Operation select's X1CA_006 entry title (find_control match).
+constexpr const char* kLastOperationTitle =
+    "return c.GetText and c:GetText() == "
+    "LOC(import('/maps/X1CA_006/X1CA_006_operation.lua').operationData.long_name)";
+
+/// X1CA_006 won, once the sim has its campaign (the briefing's launch).
+constexpr const char* kEndLastOperation = R"(
+    local info = ScenarioInfo.campaignInfo
+    if not info then return 'wait' end
+    if info.opKey ~= 'X1CA_006' or info.campaignID ~= 'uef' then
+        return 'ScenarioInfo.campaignInfo is ' .. repr(info)
+    end
+    import('/lua/ScenarioFramework.lua').EndOperation(true, true, false)
+    return 'ended'
+)";
+
+/// The outro's movies, in the order score.lua plays them after X1CA_006
+constexpr std::array<const char*, 3> kOutroMovies = {"FMV_SCX_Outro", "Credits_UEF",
+                                                     "FMV_SCX_Post_Outro"};
+
 /// The operation whose briefing shows (operationbriefing.CreateUI records it)
 constexpr const char* kBriefingShown = R"(
     local shown = import('/lua/user/prefs.lua').GetFromCurrentProfile('Last_Op_Selected')
@@ -211,6 +250,55 @@ std::optional<FoundControl> capturing_movie(lua_State* L, ui::UIControlRegistry&
     const f64 y = ui::read_lazyvar(L, t, "Top") + ui::read_lazyvar(L, t, "Height") / 2;
     lua_pop(L, 1);
     return FoundControl{capture, x, y};
+}
+
+/// A shown movie control playing a file whose name holds `name` (any case),
+/// at its centre.
+std::optional<FoundControl> playing_movie(lua_State* L, ui::UIControlRegistry& controls,
+                                          const char* name) {
+    std::string want = name;
+    std::transform(want.begin(), want.end(), want.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    for (const auto& c : controls.all()) {
+        std::string file = c->movie_filename();
+        std::transform(file.begin(), file.end(), file.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (file.find(want) == std::string::npos || c->lua_table_ref() < 0) continue;
+        bool up = true;
+        for (const ui::UIControl* p = c.get(); p; p = p->parent())
+            up = up && !p->destroyed() && !p->hidden();
+        if (!up) continue;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, c->lua_table_ref());
+        const int t = lua_gettop(L);
+        const f64 x = ui::read_lazyvar(L, t, "Left") + ui::read_lazyvar(L, t, "Width") / 2;
+        const f64 y = ui::read_lazyvar(L, t, "Top") + ui::read_lazyvar(L, t, "Height") / 2;
+        lua_pop(L, 1);
+        return FoundControl{c.get(), x, y};
+    }
+    return std::nullopt;
+}
+
+/// A player's click at `at` (a movie playing under an input capture takes
+/// it, whatever control is there).
+void click_at(ui::UIDispatch& input, const FoundControl& at) {
+    input.on_cursor_pos(at.x, at.y);
+    input.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    input.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+}
+
+/// A player's click on an entry's title (operation select's entries are
+/// bitmaps with a title over them), once the click would reach that entry:
+/// the entry or a control inside it is what the mouse hits there, not a
+/// screen still animating in. False if not yet.
+bool click_entry(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& controls,
+                 const std::optional<FoundControl>& title) {
+    if (!title || !title->control->parent()) return false;
+    const ui::UIControl* entry = title->control->parent();
+    const ui::UIControl* hit = control_at(L, input, controls, title->x, title->y);
+    while (hit && hit != entry) hit = hit->parent();
+    if (!hit) return false;
+    click_at(input, *title);
+    return true;
 }
 
 } // namespace
@@ -261,7 +349,7 @@ void CampaignFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const si
         return;
     case Step::FirstBriefing:
         if (press(labelled("<LOC opbrief_0002>Back")))
-            next(tutorial_ ? Step::TutorialEntry : Step::Select);
+            next(route_ == Route::Tutorial ? Step::TutorialEntry : Step::Select);
         return;
     case Step::Select:
         // Operation select, its last operation (X1CA_001) chosen
@@ -352,14 +440,11 @@ void CampaignFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const si
             next(Step::TutorialLaunch);
             return;
         }
-        const auto title = find_control(
-            L, controls,
-            "return c.GetText and c:GetText() == LOC('<LOC sel_campaign_0000>Tutorial')");
-        if (title) {
-            input.on_cursor_pos(title->x, title->y);
-            input.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
-            input.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
-        }
+        (void)click_entry(
+            L, input, controls,
+            find_control(
+                L, controls,
+                "return c.GetText and c:GetText() == LOC('<LOC sel_campaign_0000>Tutorial')"));
         return;
     }
     case Step::TutorialLaunch:
@@ -426,6 +511,103 @@ void CampaignFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const si
         }
         return;
     }
+    case Step::OutroSeed: {
+        if (!ordered_) {
+            const auto result = evaluate(L, kOutroSeed);
+            if (!result || *result != "ok") {
+                fail("seeding the profile: " + result.value_or("nothing"));
+                return;
+            }
+            ordered_ = true;
+        }
+        if (press(labelled("<LOC _Campaign>"))) next(Step::OutroPick);
+        return;
+    }
+    case Step::OutroPick: {
+        // X1CA_006's title picked (its entry under it), then Select
+        if (!ordered_) {
+            ordered_ =
+                click_entry(L, input, controls, find_control(L, controls, kLastOperationTitle));
+            return;
+        }
+        if (press(labelled("<LOC sel_campaign_0013>Select"))) next(Step::OutroBriefing);
+        return;
+    }
+    case Step::OutroBriefing: {
+        if (!find_control(L, controls, labelled("<LOC opbrief_0003>Launch"))) return;
+        const auto shown = evaluate(L, kBriefingShown);
+        if (shown && *shown == "X1CA_006") {
+            if (press(labelled("<LOC opbrief_0003>Launch"))) next(Step::OutroEnd);
+        } else if (press(labelled("<LOC opbrief_0002>Back"))) {
+            next(Step::OutroPick); // the click picked another: again
+        }
+        return;
+    }
+    case Step::OutroEnd: {
+        if (!sim_lua) return;
+        const auto result = evaluate(sim_lua->raw(), kEndLastOperation);
+        if (result && *result == "wait") return;
+        if (!result || *result != "ended") {
+            fail("ending X1CA_006: " + result.value_or("nothing"));
+            return;
+        }
+        next(Step::OutroOk);
+        return;
+    }
+    case Step::OutroOk:
+        if (press(labelled("<LOC _Ok>"))) next(Step::OutroMovies);
+        return;
+    case Step::OutroMovies: {
+        // Each movie seen playing, then skipped as a player would; the score
+        // screen's Continue once they have all played
+        for (size_t i = 0; i < kOutroMovies.size(); ++i) {
+            const auto movie = playing_movie(L, controls, kOutroMovies[i]);
+            if (!movie) continue;
+            movies_seen_ |= 1u << i;
+            if (step_frames_ % 60 == 0) click_at(input, *movie);
+        }
+        if (!find_control(L, controls, labelled("<LOC _Continue>"))) return;
+        if (movies_seen_ != (1u << kOutroMovies.size()) - 1) {
+            fail(fmt::format("the score screen came after movies {:#x} of the outro's 0x7",
+                             movies_seen_));
+            return;
+        }
+        if (press(labelled("<LOC _Continue>"))) next(Step::OutroMenu);
+        return;
+    }
+    case Step::OutroMenu:
+        // After the campaign's last operation there is no next briefing
+        if (sim) return;
+        if (press(labelled("<LOC _Campaign>"))) next(Step::OutroCredits);
+        return;
+    case Step::OutroCredits: {
+        if (!ordered_) {
+            ordered_ = click_entry(
+                L, input, controls,
+                find_control(
+                    L, controls,
+                    "return c.GetText and c:GetText() == LOC('<LOC sel_campaign_0008>Credits')"));
+            return;
+        }
+        if (press(labelled("<LOC sel_campaign_0016>Play Movie"))) next(Step::OutroFaction);
+        return;
+    }
+    case Step::OutroFaction:
+        if (press(kUefButton)) next(Step::OutroCreditsMovie);
+        return;
+    case Step::OutroCreditsMovie: {
+        if (const auto movie = playing_movie(L, controls, "Credits_UEF")) {
+            ordered_ = true; // seen
+            if (step_frames_ % 60 == 0) click_at(input, *movie);
+            return;
+        }
+        if (ordered_ && find_control(L, controls, labelled("<LOC sel_campaign_0012>Back"))) {
+            passed_ = true;
+            done_ = true;
+            next(Step::Done);
+        }
+        return;
+    }
     case Step::Done: return;
     }
 }
@@ -436,9 +618,13 @@ void CampaignFlowTest::fail(const std::string& why) {
 }
 
 void CampaignFlowTest::finish() const {
-    if (passed_ && tutorial_) {
+    if (passed_ && route_ == Route::Tutorial) {
         spdlog::info("[PASS] tutorial-flow: from operation select through the tutorial's zoom, "
                      "move and attack missions to its build-mass mission, in {} frames",
+                     frames_);
+    } else if (passed_ && route_ == Route::Outro) {
+        spdlog::info("[PASS] outro-flow: X1CA_006 won, the outro's movies played, and the UEF's "
+                     "credits from operation select, in {} frames",
                      frames_);
     } else if (passed_) {
         spdlog::info("[PASS] campaign-flow: from the main menu through X1CA_001 to X1CA_002's "

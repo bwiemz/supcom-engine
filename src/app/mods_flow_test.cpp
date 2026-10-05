@@ -93,6 +93,13 @@ bool shown(const ui::UIControl* c) {
 /// takes the click instead; a player would wait.
 bool takes_click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& controls,
                  const FoundControl& found) {
+    return control_at(L, input, controls, found.x, found.y) == found.control;
+}
+
+} // namespace
+
+const ui::UIControl* control_at(lua_State* L, ui::UIDispatch& input,
+                                ui::UIControlRegistry& controls, f64 x, f64 y) {
     ui::UIControl* hit_root = controls.input_capture();
     if (!hit_root) {
         lua_pushstring(L, "__osc_root_frame");
@@ -105,10 +112,8 @@ bool takes_click(lua_State* L, ui::UIDispatch& input, ui::UIControlRegistry& con
         }
         lua_pop(L, 1);
     }
-    return hit_root && input.hit_test(L, hit_root, found.x, found.y) == found.control;
+    return hit_root ? input.hit_test(L, hit_root, x, y) : nullptr;
 }
-
-} // namespace
 
 std::string labelled(const char* loc) {
     return fmt::format("return c.label and c.label.GetText and c.label:GetText() == LOC('{}')",

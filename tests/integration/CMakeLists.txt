@@ -259,6 +259,14 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # The campaign's end (roadmap item 5): X1CA_006 won, retail's outro,
+    # credits and post-credits movies played in turn, then the credits again
+    # from operation select.
+    add_test(NAME data.outro_flow COMMAND opensupcom --outro-flow-test)
+    set_tests_properties(data.outro_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 
     # M221b: a skirmish with the player's mods -- two test mods in a
     # temporary Documents folder's mods folder and retail's Resource Rich,
