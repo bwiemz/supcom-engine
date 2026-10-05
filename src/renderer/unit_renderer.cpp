@@ -286,12 +286,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
-        // (whether or not it is in view).
-        const std::string& mesh_key =
-            entity.mesh_override.empty() ? entity.blueprint_id : entity.mesh_override;
+        // (whether or not it is in view): its blueprint never changes, its
+        // override's changes are counted.
         MeshBirth& birth = births_[entity.id];
-        if (birth.frame == 0 || birth.mesh != mesh_key) {
-            birth.mesh = mesh_key;
+        if (birth.frame == 0 || birth.mesh_changes != entity.mesh_changes) {
+            birth.mesh_changes = entity.mesh_changes;
             birth.tick = now;
         }
         birth.frame = frame_;

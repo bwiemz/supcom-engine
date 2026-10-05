@@ -200,7 +200,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     enum8(w, e.viz_neutrals_);
     save_shape(w, e.collision_shape_);
     save_shape(w, e.default_collision_shape_);
-    w.str(e.mesh_override_);
+    w.str(e.mesh_override_); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
     w.b(e.unselectable_);
     w.b(e.is_wreckage_);
     w.u32v(e.parent_entity_id_);
