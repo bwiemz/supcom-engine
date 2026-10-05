@@ -6,12 +6,10 @@ method OnAnimTerrainCollision
 method OnAnimationFinished
 method OnAnimationFrame
 method OnAnimationStopped
-method OnApplicationResize
 method OnAssignedFocusEntity
 method OnAttachedKilled
 method OnAutoModeOff
 method OnAutoModeOn
-method OnBeat
 method OnBeingBuiltProgress
 method OnBuildProgress
 method OnCancel
@@ -21,10 +19,6 @@ method OnClick
 method OnCollision
 method OnCollisionCheck
 method OnCollisionCheckWeapon
-method OnCommandDragBegin
-method OnCommandDragEnd
-method OnCommandGraphShow
-method OnCommandIssued
 method OnConsumptionActive
 method OnConsumptionInActive
 method OnCreate
@@ -35,7 +29,6 @@ method OnDamage
 method OnDamageBy
 method OnDecayed
 method OnDestroy
-method OnDetectAdjacencyBonus
 method OnDetectedBy
 method OnDisable
 method OnDisableWeapon
@@ -55,7 +48,6 @@ method OnFailedUnitTransfer
 method OnFerryPointSet
 method OnFinished
 method OnFire
-method OnFocusArmyUnitDamaged
 method OnFrame
 method OnGetDamageAbsorption
 method OnGotFuel
@@ -76,7 +68,6 @@ method OnLostTarget
 method OnMotionHorzEventChange
 method OnMotionTurnEventChange
 method OnMotionVertEventChange
-method OnMouseButtonPress
 method OnMouseoverItem
 method OnMove
 method OnNonTextKeyPressed
@@ -91,14 +82,12 @@ method OnPreCreate
 method OnPrepareArmToBuild
 method OnProductionActive
 method OnProductionInActive
-method OnQueueChanged
 method OnReclaimed
 method OnRelease
 method OnRemoveFromStorage
 method OnRunOutOfFuel
 method OnScriptBitClear
 method OnScriptBitSet
-method OnSelectionChanged
 method OnSiloBuildEnd
 method OnSiloBuildStart
 method OnSpawnPreBuiltUnits
@@ -133,7 +122,6 @@ method OnSubtitle
 method OnTeleportUnit
 method OnTerrainTypeChange
 method OnTextChanged
-method OnTrackUnit
 method OnTransportAborted
 method OnTransportAttach
 method OnTransportDetach
@@ -143,7 +131,6 @@ method OnUnitCapLimitReached
 method OnUnitsAddedToPlatoon
 method OnUnpaused
 method OnUpdateCursor
-method OnUserPause
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
 module /lua/multiplayer/gpgnet.lua:CreateUI
 module /lua/ui/game/chat.lua:ActivateChat

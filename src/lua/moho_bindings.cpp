@@ -475,13 +475,6 @@ static const MethodEntry empty_methods[] = {
 // clang-format on
 
 // clang-format off
-static const MethodEntry economy_event_methods[] = {
-    {"Destroy",                 stub_noop},
-    {nullptr, nullptr},
-};
-// clang-format on
-
-// clang-format off
 static const MethodEntry decal_handle_methods[] = {
     {"Destroy",                 destroy_tracked_object},
     {"BeenDestroyed",           been_destroyed_check},
@@ -1659,7 +1652,7 @@ static const MohoClassDef moho_classes[] = {
     {"sound_methods",           empty_methods,           nullptr},
     {"CDamage",                 empty_methods,           nullptr},
     {"CDecalHandle",            decal_handle_methods,    nullptr},
-    {"EconomyEvent",            economy_event_methods,   nullptr},
+    {"EconomyEvent",            empty_methods,           nullptr},
     {"EntityCategory",          entity_category_methods, nullptr},
     {"CPrefetchSet",            empty_methods,           nullptr},
     {"MotorFallDown",           motor_falldown_methods,  nullptr},

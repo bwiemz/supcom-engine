@@ -6124,9 +6124,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     });
 
     // Session/network
-    state.register_function("GpgNetSend", stub_noop);
     state.register_function("SessionIsActive", l_SessionIsActive);
-    state.register_function("SessionIsMultiplayer", stub_false);
     state.register_function("SessionIsReplay", stub_false);
     state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
     state.register_function("GetCurrentCommandSource", stub_zero);
@@ -6135,9 +6133,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // MetaImpact(entity, pos, radius, amount): the physics push a big impact
     // gives nearby units (Projectile.DoMetaImpact) -- cosmetic, not simulated.
     state.register_function("MetaImpact", stub_noop);
-    state.register_function("BeginLogging", stub_noop);
-    state.register_function("EndLogging", stub_noop);
-    state.register_function("SuspendSim", stub_noop);
     state.register_function("ResumeSim", l_sim_ResumeSim);
 
     // Time/profiling
@@ -6145,7 +6140,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
                             l_GetGameTimeSeconds);
     state.register_function("GetSystemTimeSecondsOnlyForProfileUse",
                             l_GetGameTimeSeconds);
-    state.register_function("GetFrustumTick", stub_zero);
 
     // Army init functions
     state.register_function("InternalCreateArmy", l_InternalCreateArmy);
@@ -6157,7 +6151,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyAIPersonality", l_SetArmyAIPersonality);
     state.register_function("SetIgnoreArmyUnitCap", stub_noop);
     state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
-    state.register_function("CreatePropInSimCallback", stub_noop);
     state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);
     state.register_function("ArmyIsOutOfGame", l_ArmyIsOutOfGame);
 

@@ -84,8 +84,6 @@ namespace osc::lua {
 
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 
-static int (*const stub_return_true)(lua_State*) = lua_stubs::return_true;
-
 /// Look up Blueprint.Audio[soundName] for entity e.
 /// On success pushes 3 values (Blueprint, Audio, audioEntry) and returns true.
 /// On failure pops any partial pushes and returns false.
@@ -2465,7 +2463,6 @@ const MethodEntry unit_methods[] = {
     {"GetCreator",                  unit_GetCreator},
     {"IsInCategory",                unit_IsInCategory},
     {"IsOverchargePaused",          unit_IsOverchargePaused},
-    {"OccupyGround",               stub_return_true},
     {"ResetSpeedAndAccel",          unit_ResetSpeedAndAccel},
     {"AddToggleCap",                unit_AddToggleCap},
     {"RemoveToggleCap",             unit_RemoveToggleCap},
