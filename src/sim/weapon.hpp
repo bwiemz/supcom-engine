@@ -96,6 +96,7 @@ public:
     CategoryExpr restrict_disallow;        // TargetRestrictDisallow
     CategoryExpr restrict_only_allow;      // TargetRestrictOnlyAllow
     bool above_water_targets_only = false; // AboveWaterTargetsOnly
+    bool yaw_only_on_target = false;       // YawOnlyOnTarget: its aim controllers ignore the pitch
     bool above_water_fire_only = false;    // AboveWaterFireOnly
     bool always_recheck_target = true;     // AlwaysRecheckTarget
     u32 target_check_period = 30;          // TargetCheckInterval, in ticks

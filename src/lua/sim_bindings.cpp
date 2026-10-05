@@ -518,7 +518,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     for (auto [field, flag] :
                          {std::pair{"AboveWaterTargetsOnly", &weapon->above_water_targets_only},
                           std::pair{"AboveWaterFireOnly", &weapon->above_water_fire_only},
-                          std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target}}) {
+                          std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
+                          std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target}}) {
                         lua_pushstring(L, field);
                         lua_gettable(L, we);
                         if (lua_isboolean(L, -1)) {
@@ -3592,9 +3593,11 @@ static int l_CreateAimController(lua_State* L) {
 
     // arg 2 = the label: OnStartTracking's argument, SetFireControl's key.
     // A weapon's controllers aim for it (Weapon::update_aim).
-    if (weapon)
+    if (weapon) {
         manip->set_weapon(weapon->weapon_index,
                           lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "");
+        manip->set_yaw_only_on_target(weapon->yaw_only_on_target);
+    }
     // arg 3 = yawBone
     if (lua_gettop(L) >= 3) {
         manip->set_yaw_bone(manip_resolve_bone(unit, L, 3));
