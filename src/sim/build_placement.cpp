@@ -2,6 +2,7 @@
 #include "core/dmath.hpp"
 
 #include "map/pathfinding_grid.hpp"
+#include "map/terrain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -236,6 +237,16 @@ bool StructurePlacement::on_deposit(const PlacementRules& r, f32 x, f32 z) const
         }
     }
     return false;
+}
+
+// Moho: a footprint that can sit on the seabed occupies OC_SEABED, which
+// BuildOnLayerCaps' LAYER_Seabed gives.
+f32 structure_elevation(const SimState& sim, const PlacementRules& rules, f32 x, f32 z) {
+    const auto* terrain = sim.terrain();
+    if (!terrain) {
+        return 0.0f;
+    }
+    return rules.on_seabed ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
 }
 
 } // namespace osc::sim

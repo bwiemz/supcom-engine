@@ -1997,14 +1997,6 @@ bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const
     return placement_for(L, sim, army).can_build(bp_id, x, z);
 }
 
-// Where a structure stands (Moho: a footprint that can sit on the seabed
-// occupies OC_SEABED, which BuildOnLayerCaps' LAYER_Seabed gives).
-f32 structure_elevation(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x, f32 z) {
-    const auto* terrain = sim.terrain();
-    if (!terrain) return 0.0f;
-    return rules.on_seabed ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
-}
-
 // brain:CreateResourceBuildingNearest(bp, x, z) -> unit or nil: the
 // resource building on the free deposit of its kind nearest (x, z) -- a
 // hydrocarbon plant's on hydrocarbon, anything else's on mass (Moho's
@@ -2040,7 +2032,7 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     for (const auto& c : candidates) {
         if (!placement.can_build(bp, c.x, c.z)) continue;
         create_brain_unit(L, *brain, bp, c.x,
-                          structure_elevation(*sim, placement.rules(bp), c.x, c.z), c.z);
+                          sim::structure_elevation(*sim, placement.rules(bp), c.x, c.z), c.z);
         if (!lua_isnil(L, -1)) return 1;
         lua_pop(L, 1);
     }
@@ -2095,7 +2087,7 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    create_brain_unit(L, *brain, bp, at_x, structure_elevation(*sim, rules, at_x, at_z), at_z);
+    create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z), at_z);
     return 1;
 }
 
