@@ -2607,7 +2607,6 @@ void Unit::remove_manipulator(Manipulator* m) {
 }
 
 void Unit::aim_builder_arms(const Vector3* at, lua_State* L) {
-    bool taken = false;
     for (auto& m : manipulators_) {
         auto* arm = dynamic_cast<AimManipulator*>(m.get());
         if (!arm || !arm->builder_arm()) {
@@ -2617,10 +2616,9 @@ void Unit::aim_builder_arms(const Vector3* at, lua_State* L) {
             arm->clear_target();
             continue;
         }
-        taken |= !arm->has_target();
         arm->set_target(*at, 0.2617994f);
     }
-    if (taken && L) {
+    if (at && L) {
         call_lua_method(L, "OnPrepareArmToBuild");
     }
 }
