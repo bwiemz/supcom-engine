@@ -22,9 +22,7 @@ method OnPostLoad
 method OnSpecialAction
 method OnStart
 method OnStartBuilderTracking
-method OnStartRepeatQueue
 method OnStopBuilderTracking
-method OnStopRepeatQueue
 method OnSubtitle
 method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand

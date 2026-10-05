@@ -2752,10 +2752,8 @@ static int l_TryCopyPose(lua_State* L) {
     return 0;
 }
 
-/// NotifyUpgrade(from, to): tells the user layer that `from` is becoming
-/// `to` so selection and avatars follow the upgrade. stub: cosmetic until
-/// the FA in-game UI runs (roadmap M187).
-static int l_NotifyUpgrade(lua_State* /*L*/) { return 0; }
+/// NotifyUpgrade(from, to): defined with the army transfers below.
+static int l_NotifyUpgrade(lua_State* L);
 
 /// IssueFactoryAssist(units, factory): assist a factory == guard it.
 static int l_IssueFactoryAssist(lua_State* L);
@@ -5320,6 +5318,94 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
         }
     }
     return transferable_unit(sim, new_id) ? new_id : 0;
+}
+
+/// NotifyUpgrade(from, to): an upgrade's new unit takes over from the old
+/// one, as Moho's cfunc_NotifyUpgradeL hands it over. Retail calls it from
+/// OnStopBuild as the upgrade finishes, then destroys `from`.
+/// 1. `to` gets `from`'s orders, but the upgrade that made it.
+/// 2. A factory's rally orders replace the new factory's.
+/// 3. `to` takes `from`'s place in its platoon, in its squad.
+/// 4. The repeat flag carries over, `to` told OnStartRepeatQueue or
+///    OnStopRepeatQueue as it turns on or off.
+/// 5. `to` keeps `from`'s share of health.
+/// 6. Units guarding `from` guard `to`.
+/// (Moho also queues the pair for the allies' UI; the engine's selection
+/// follows an upgrade on its own.)
+static int l_NotifyUpgrade(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return luaL_error(L, "NotifyUpgrade(from,to)\n  expected 2 args, but got %d",
+                          lua_gettop(L));
+    auto* sim = get_sim(L);
+    const auto live = [](sim::Entity* e) -> sim::Unit* {
+        if (!e || e->destroyed() || !e->is_unit()) return nullptr;
+        auto* u = static_cast<sim::Unit*>(e);
+        return u->is_dying() ? nullptr : u;
+    };
+    sim::Unit* from = live(check_entity(L, 1));
+    sim::Unit* to = live(check_entity(L, 2));
+    if (!from) return luaL_error(L, "Passed in invalid source object to upgrade");
+    if (!to) return luaL_error(L, "Passed in invalid destination object to upgrade");
+    if (!sim) return 0;
+
+    const auto same_blueprint = [](const std::string& a, const std::string& b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) ==
+                          std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    for (const sim::UnitCommand& cmd : std::vector<sim::UnitCommand>(from->command_queue().begin(),
+                                                                     from->command_queue().end())) {
+        if (cmd.type == sim::CommandType::Upgrade &&
+            same_blueprint(cmd.blueprint_id, to->blueprint_id()))
+            continue;
+        to->append_command(cmd);
+    }
+
+    if (from->keeps_rally_orders() && to->keeps_rally_orders()) {
+        to->clear_rally_orders();
+        for (const sim::UnitCommand& rally : from->rally_orders()) to->add_rally_order(rally);
+    }
+
+    if (auto* brain = sim->get_army(from->army())) {
+        const auto platoon_of = [brain](u32 id) -> sim::Platoon* {
+            for (size_t i = 0; i < brain->platoon_count(); ++i) {
+                sim::Platoon* p = brain->platoon_at(i);
+                if (p && !p->destroyed() && p->has_unit(id)) return p;
+            }
+            return nullptr;
+        };
+        if (sim::Platoon* p = platoon_of(to->entity_id())) p->remove_unit(to->entity_id());
+        if (sim::Platoon* p = platoon_of(from->entity_id())) {
+            const std::string squad = p->get_unit_squad(from->entity_id());
+            p->add_unit(to->entity_id());
+            p->set_unit_squad(to->entity_id(), squad);
+            p->remove_unit(from->entity_id());
+        }
+    }
+
+    const u32 from_id = from->entity_id();
+    const u32 to_id = to->entity_id();
+    const bool repeat = from->repeat_queue();
+    const bool was = to->repeat_queue();
+    to->set_repeat_queue(repeat);
+    if (repeat && !was) to->call_lua_method(L, "OnStartRepeatQueue");
+    else if (!repeat && was) to->call_lua_method(L, "OnStopRepeatQueue");
+
+    // The scripts above may have ended either unit.
+    from = live(sim->entity_registry().find(from_id));
+    to = live(sim->entity_registry().find(to_id));
+    if (!from || !to) return 0;
+    if (from->max_health() > 0.0f) {
+        const f32 health = to->max_health() * (from->health() / from->max_health());
+        if (health != to->health()) to->set_health(health);
+    }
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
+        if (!e.destroyed() && e.is_unit())
+            static_cast<sim::Unit&>(e).retarget_guard(from_id, to_id);
+    });
+    return 0;
 }
 
 // ChangeUnitArmy(unit, army): Moho's cfunc_ChangeUnitArmyL. The unit (and
