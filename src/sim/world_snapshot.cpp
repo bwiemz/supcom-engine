@@ -128,8 +128,10 @@ void capture_anchor(const SimState& sim, const IEffect& fx, EffectRecord& r) {
 void capture_frame(const SimState& sim, const IEffect& fx, EffectRecord& r) {
     const EffectType t = fx.type();
     if (t != EffectType::EMITTER_AT_ENTITY && t != EffectType::EMITTER_AT_BONE &&
-        t != EffectType::ATTACHED_EMITTER)
+        t != EffectType::ATTACHED_EMITTER && t != EffectType::LIGHT_PARTICLE &&
+        t != EffectType::LIGHT_PARTICLE_INTEL) {
         return;
+    }
     if (fx.has_frame()) {
         r.framed = true;
         r.frame_position = fx.frame_position();
@@ -424,6 +426,9 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         }
         r.army = fx->army();
         r.light_size = fx->light_size();
+        r.light_lifetime = fx->light_duration();
+        r.glow_texture = fx->glow_texture();
+        r.ramp_texture = fx->ramp_texture();
         r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
         r.length = static_cast<f32>(fx->get_param("LENGTH"));
         r.decal = fx->decal();

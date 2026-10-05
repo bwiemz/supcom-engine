@@ -553,3 +553,42 @@ TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][s
     sim.tick();
     CHECK(history.events().deaths.empty());
 }
+
+TEST_CASE("A light reaches the renderer where its entity was and with its particle textures",
+          "[interp][snapshot][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    const osc::u32 id = spawn_at(sim, {4, 5, 6});
+
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &entity(sim, id));
+    lua_rawset(L, -3);
+    lua_setglobal(L, "ent");
+
+    REQUIRE(lua.do_string("CreateLightParticle(ent, -1, 1, 7, 8, 'glow_02', 'ramp_blue_22')\n"
+                          "CreateLightParticleIntel(ent, -1, 1, 4, 6, '', 'ramp_flare_02')\n"
+                          "CreateLightParticle(ent, -1, 1, 4, 6, 'glow_02', '')")
+                .ok());
+    entity(sim, id).set_position({40, 5, 60});
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.effects.size() == 2);
+
+    const osc::sim::EffectRecord& light = snap.effects[0];
+    CHECK(light.type == osc::sim::EffectType::LIGHT_PARTICLE);
+    CHECK(light.framed);
+    CHECK(light.frame_position.x == 4.0f);
+    CHECK(light.frame_position.z == 6.0f);
+    CHECK(light.light_size == 7.0f);
+    CHECK(light.light_lifetime == 8.0f);
+    CHECK(light.glow_texture == "/textures/particles/glow_02.dds");
+    CHECK(light.ramp_texture == "/textures/particles/ramp_blue_22.dds");
+
+    const osc::sim::EffectRecord& intel = snap.effects[1];
+    CHECK(intel.type == osc::sim::EffectType::LIGHT_PARTICLE_INTEL);
+    CHECK(intel.glow_texture == "/textures/particles/beam_white_01.dds");
+}
