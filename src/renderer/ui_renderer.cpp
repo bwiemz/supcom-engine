@@ -246,7 +246,7 @@ void UIRenderer::emit_edit_quads(ui::UIControl* ctrl, TextureCache& tex_cache,
         caret.inst.rect[2] = caret_w; caret.inst.rect[3] = caret_h;
         std::memcpy(caret.inst.uv, full_uv, sizeof(full_uv));
         argb_to_rgba(ctrl->caret_color(), caret.inst.color);
-        caret.inst.color[3] *= alpha;
+        caret.inst.color[3] = ctrl->caret_alpha() * alpha;
         quads_.push_back(caret);
         quad_count_++;
     }

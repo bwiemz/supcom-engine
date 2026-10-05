@@ -903,6 +903,7 @@ static int l_InternalCreateEdit(lua_State* L) {
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateEdit: failed to create control");
     ctrl->set_control_type(ui::UIControl::ControlType::Edit);
+    ctrl->set_needs_frame_update(true);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);

@@ -15,6 +15,20 @@ void UIControl::set_movie_player(std::unique_ptr<video::MoviePlayer> m) {
 
 // --- UIControl ---
 
+void UIControl::advance_caret_cycle(f32 dt) {
+    caret_time_ += dt;
+    if (caret_time_ > caret_cycle_secs_) {
+        caret_time_ = 0.0f;
+    }
+}
+
+f32 UIControl::caret_alpha() const {
+    const f32 half = caret_cycle_secs_ * 0.5f;
+    const f32 rise = caret_time_ <= half ? caret_time_ : caret_cycle_secs_ - caret_time_;
+    const f32 blend = caret_cycle_secs_ > 0.0f ? rise / half : 1.0f;
+    return caret_min_alpha_ + (caret_max_alpha_ - caret_min_alpha_) * blend;
+}
+
 void UIControl::set_parent(UIControl* p) {
     if (parent_ == p) return;
     if (parent_) parent_->remove_child(this);
