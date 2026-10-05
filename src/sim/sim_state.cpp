@@ -678,6 +678,44 @@ bool SimState::command_queued(u32 command_id) const {
     return found;
 }
 
+std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const {
+    std::map<u32, QueueWithPending> queues;
+    for (const auto& scheduled : command_scheduler_.pending()) {
+        if (scheduled.callback || scheduled.command.factory) {
+            continue;
+        }
+        const UnitCommand& cmd = scheduled.command;
+        for (const u32 id : scheduled.unit_ids) {
+            const Entity* e = entity_registry_.find(id);
+            if (!e || e->destroyed() || !e->is_unit()) {
+                continue;
+            }
+            const auto& unit = static_cast<const Unit&>(*e);
+            auto [it, fresh] = queues.try_emplace(id);
+            QueueWithPending& queue = it->second;
+            if (fresh) {
+                queue.orders.assign(unit.command_queue().begin(), unit.command_queue().end());
+                queue.kept_from_queue = queue.orders.size();
+            }
+            if (cmd.type == CommandType::Stop) {
+                queue.orders.clear();
+                queue.kept_from_queue = 0;
+                continue;
+            }
+            if (cmd.type == CommandType::SiloBuildNuke ||
+                cmd.type == CommandType::SiloBuildTactical || !takes_command(unit, cmd)) {
+                continue;
+            }
+            if (scheduled.clear_existing) {
+                queue.orders.clear();
+                queue.kept_from_queue = 0;
+            }
+            queue.orders.push_back(cmd);
+        }
+    }
+    return queues;
+}
+
 void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                                     bool clear_existing) {
     // Moho's UI splits these three by the RALLYPOINT category
