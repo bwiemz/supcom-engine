@@ -221,6 +221,45 @@ static f32 blueprint_cap_cost(lua_State* L, const blueprints::BlueprintStore& st
     return cost;
 }
 
+/// A blueprint's AI.InitialAutoMode: whether the unit starts in auto mode
+/// (silos building missiles, Cybran hives assisting); false when unset.
+static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::BlueprintStore& store,
+                                        const blueprints::BlueprintEntry& entry) {
+    bool on = false;
+    const int top = lua_gettop(L);
+    store.push_lua_table(entry, L);
+    lua_pushstring(L, "AI");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "InitialAutoMode");
+        lua_gettable(L, -2);
+        on = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) != 0 : lua_toboolean(L, -1) != 0;
+    }
+    lua_settop(L, top);
+    return on;
+}
+
+/// Moho's Unit, as it is made: SetAutoMode(AI.InitialAutoMode) just before
+/// OnPreCreate, which tells the script OnAutoModeOn or OnAutoModeOff either
+/// way (Unit::SetAutoMode always does). `tbl` is the unit's table.
+static void tell_initial_auto_mode(lua_State* L, sim::SimState& sim, u32 id, int tbl) {
+    const auto* e = sim.entity_registry().find(id);
+    if (!e || !e->is_unit()) return;
+    const bool on = static_cast<const sim::Unit*>(e)->auto_mode();
+    const char* hook = on ? "OnAutoModeOn" : "OnAutoModeOff";
+    lua_pushstring(L, hook);
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("Unit {} error: {}", hook, lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+}
+
 // ====================================================================
 // Shared unit creation core — creates C++ Unit + Lua table.
 // Returns entity ID (0 on failure). Leaves Lua table on top of stack.
@@ -265,6 +304,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     unit->set_army(army);
     unit->set_position({x, y, z});
     unit->set_cap_cost(cap_cost);
+    if (entry) unit->set_auto_mode(blueprint_initial_auto_mode(L, *store, *entry));
 
     if (being_built) {
         unit->set_fraction_complete(0.0f);
@@ -1381,6 +1421,7 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
 
     // Lua table is now on top of stack
     int tbl = lua_gettop(L);
+    tell_initial_auto_mode(L, sim, id, tbl);
 
     // OnPreCreate
     lua_pushstring(L, "OnPreCreate");
@@ -1514,6 +1555,7 @@ static int l_create_building_unit(lua_State* L) {
 
     // Lua table on top of stack
     int tbl = lua_gettop(L);
+    if (auto* sim = get_sim(L)) tell_initial_auto_mode(L, *sim, id, tbl);
 
     // OnPreCreate
     lua_pushstring(L, "OnPreCreate");

@@ -860,6 +860,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.consumption_energy);
     w.b(ec.production_active);
     w.b(ec.consumption_active);
+    w.b(ec.script_consumption_active);
     w.b(ec.maintenance_active);
     w.f64v(ec.energy_maintenance_override);
     w.f64v(ec.storage_mass);
@@ -1148,6 +1149,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.consumption_energy = r.f64v();
     ec.production_active = r.b();
     ec.consumption_active = r.b();
+    ec.script_consumption_active = r.b();
     ec.maintenance_active = r.b();
     ec.energy_maintenance_override = r.f64v();
     ec.storage_mass = r.f64v();
