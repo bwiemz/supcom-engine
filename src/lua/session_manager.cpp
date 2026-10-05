@@ -129,15 +129,15 @@ void push_game_option(lua_State* L, int table_idx, const std::string& key,
 } // anonymous namespace
 
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
-                           const std::vector<u32>& army_colors) {
+                           const std::vector<u32>& player_colors) {
     if (!cfg || !brain) return;
     brain->set_faction(cfg->faction);
-    const int color_idx = cfg->army_color >= 1 ? cfg->army_color : cfg->player_color;
-    if (color_idx >= 1 && color_idx <= static_cast<int>(army_colors.size())) {
-        const u32 argb = army_colors[static_cast<size_t>(color_idx - 1)];
+    const int color_idx = cfg->player_color >= 1 ? cfg->player_color : cfg->army_color;
+    if (color_idx >= 1 && color_idx <= static_cast<int>(player_colors.size())) {
+        const u32 argb = player_colors[static_cast<size_t>(color_idx - 1)];
         brain->set_color(static_cast<u8>(argb >> 16), static_cast<u8>(argb >> 8),
                          static_cast<u8>(argb));
-    } else if (army_colors.empty() && color_idx >= 1 &&
+    } else if (player_colors.empty() && color_idx >= 1 &&
                color_idx <= static_cast<int>(kArmyColors.size())) {
         const auto& color = kArmyColors[static_cast<size_t>(color_idx - 1)];
         brain->set_color(color[0], color[1], color[2]);
@@ -416,14 +416,14 @@ Result<void> SessionManager::start_session(LuaState& state,
     spdlog::info("  Creating army brains ({} of {} armies)...",
                  army_limit, meta.armies.size());
     i32 brains_created = 0;
-    const std::vector<u32> army_colors = sim::read_game_colors(L).army_colors;
+    const std::vector<u32> player_colors = sim::read_game_colors(L).player_colors;
     for (size_t i = 0; i < army_limit; i++) {
         auto result = create_army_brain(L, sim, static_cast<i32>(i), armies[i], armies[i]);
         if (!result) {
             spdlog::warn("  Failed to create brain for {}: {}", armies[i], result.error().message);
         } else {
             auto* brain = sim.get_army(static_cast<i32>(i));
-            apply_config_to_brain(slot_config_for_army(static_cast<int>(i)), brain, army_colors);
+            apply_config_to_brain(slot_config_for_army(static_cast<int>(i)), brain, player_colors);
             apply_game_options_to_brain(game_options_, brain);
             brains_created++;
         }
