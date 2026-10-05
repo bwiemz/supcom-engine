@@ -6766,6 +6766,39 @@ void test_projectile(TestContext& ctx) {
         }
     }
 
+    {
+        lua_State* L = ctx.lua_state.raw();
+        const auto first_weapon = [&](const char* bp) -> const osc::sim::Weapon* {
+            auto r = ctx.lua_state.do_string(
+                fmt::format("return tonumber(CreateUnitHPR('{}', 'ARMY_1', 300, 0, 300, 0, 0, "
+                            "0):GetEntityId())",
+                            bp));
+            if (!r) {
+                return nullptr;
+            }
+            osc::sim::Entity* e = nullptr;
+            if (lua_isnumber(L, -1)) {
+                e = ctx.sim.entity_registry().find(static_cast<osc::u32>(lua_tonumber(L, -1)));
+            }
+            lua_pop(L, 1);
+            return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e)->get_weapon(0) : nullptr;
+        };
+        const osc::sim::Weapon* gun = first_weapon("uel0201");
+        const osc::sim::Weapon* blast = first_weapon("uab1101");
+        if (gun && gun->lead_target && gun->always_recheck_target && blast &&
+            blast->target_check_period == 30) {
+            pass++;
+            spdlog::info("[PASS] Test 4b: a weapon blueprint's LeadTarget, AlwaysRecheckTarget "
+                         "and TargetCheckInterval left out are Moho's defaults");
+        } else {
+            fail++;
+            osc::test_status::fail(
+                "[FAIL] Test 4b: uel0201's gun: lead {}, recheck {}; uab1101's: check every {}",
+                gun && gun->lead_target, gun && gun->always_recheck_target,
+                blast ? blast->target_check_period : 0u);
+        }
+    }
+
     // M200a: projectiles are instances of their script classes. A UEF T1
     // tank's gun makes TDFGauss01 objects: OnCreate has run, retail's
     // PassDamageData works, and the shot leaves from the muzzle bone.
@@ -7123,9 +7156,12 @@ void test_targeting(TestContext& ctx) {
         -- Restrictions: tactical missile defence only shoots TACTICAL MISSILE.
         __osc_tmd = __osc_spawn('ueb4201', 'ARMY_1', 300, 850)
         __osc_tmd_foe = __osc_spawn('uel0201', 'ARMY_2', 312, 850)
-        -- Rechecks: a Loyalist's HeavyBolter (weapon 2) rechecks, and moves
-        -- to a better target; its Disintigrator (weapon 1) keeps its first.
+        -- Retail leaves the Disintigrator's AlwaysRecheckTarget out (true);
+        -- FAF's blueprints-weapons.lua turns it off, as here.
+        local disintegrator = __blueprints['url0303'].Weapon[1]
+        disintegrator.AlwaysRecheckTarget = false
         __osc_loyalist = __osc_spawn('url0303', 'ARMY_1', 220, 910)
+        disintegrator.AlwaysRecheckTarget = nil
         __osc_recheck_pgen = __osc_spawn('ueb1101', 'ARMY_2', 228, 910)
         -- AboveWaterTargetsOnly: nothing on the seabed.
         __osc_shore = __osc_spawn('uel0201', 'ARMY_1', 205, 730)

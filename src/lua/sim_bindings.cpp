@@ -377,7 +377,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
                     lua_pushstring(L, "LeadTarget");
                     lua_gettable(L, we);
-                    weapon->lead_target = lua_toboolean(L, -1) != 0;
+                    if (lua_isboolean(L, -1)) {
+                        weapon->lead_target = lua_toboolean(L, -1) != 0;
+                    }
                     lua_pop(L, 1);
 
                     lua_pushstring(L, "FireOnDeath");
@@ -446,7 +448,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target}}) {
                         lua_pushstring(L, field);
                         lua_gettable(L, we);
-                        *flag = lua_toboolean(L, -1) != 0;
+                        if (lua_isboolean(L, -1)) {
+                            *flag = lua_toboolean(L, -1) != 0;
+                        }
                         lua_pop(L, 1);
                     }
                     lua_pushstring(L, "TargetCheckInterval");

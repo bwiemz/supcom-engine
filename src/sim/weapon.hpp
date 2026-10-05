@@ -38,7 +38,7 @@ public:
     /// low or the high of the two arcs gravity allows at its muzzle velocity.
     enum class Arc : u8 { None, Low, High };
     Arc ballistic_arc = Arc::None;
-    bool lead_target = false; ///< LeadTarget: aim where a moving target will be
+    bool lead_target = true;                 ///< LeadTarget: aim where a moving target will be
     f32 muzzle_velocity_reduce_distance = 0; // MuzzleVelocityReduceDistance
     struct ProjectilePhysics {
         bool track_target = false;
@@ -93,8 +93,8 @@ public:
     CategoryExpr restrict_only_allow;      // TargetRestrictOnlyAllow
     bool above_water_targets_only = false; // AboveWaterTargetsOnly
     bool above_water_fire_only = false;    // AboveWaterFireOnly
-    bool always_recheck_target = false;    // AlwaysRecheckTarget
-    u32 target_check_period = 1;           // TargetCheckInterval, in ticks
+    bool always_recheck_target = true;     // AlwaysRecheckTarget
+    u32 target_check_period = 30;          // TargetCheckInterval, in ticks
     int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table

@@ -304,6 +304,7 @@ TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
     osc::sim::Weapon w;
     w.muzzle_velocity = 100;
     const Vector3 ahead{0, 0, 1};
+    w.lead_target = false;
     CHECK(w.aim_point(*missile, owner, owner.position(), ahead).z == Approx(1.0f));
     w.lead_target = true;
     CHECK(w.aim_point(*missile, owner, owner.position(), ahead).z == Approx(4.6376f));
