@@ -22,7 +22,6 @@ GetCurrentCommandSource stub_zero
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IssuePause stub_noop
 MetaImpact stub_noop
-NotifyUpgrade l_NotifyUpgrade
 RefreshSteamGames l_RefreshSteamGames
 RemoveScroller stub_noop
 RequestRefreshUI stub_noop
