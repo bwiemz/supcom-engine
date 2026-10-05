@@ -92,6 +92,7 @@ enum EmitterCurveId : u8 {
 /// particle.fx's REFRACT blend (M214d): drawn apart, last, over a copy of
 /// the frame.
 constexpr i32 kBlendRefract = 5;
+constexpr i32 kBlendAdd = 3;
 
 struct EmitterBlueprintData {
     std::string blueprint_id; ///< its VFS path
@@ -109,6 +110,7 @@ struct EmitterBlueprintData {
     bool align_rotation = false;
     bool align_to_bone = false;
     bool flat = false;
+    bool light = false;          ///< particle.fx's TLight
     bool emit_if_visible = true; ///< emits only while the player could see it
     bool catchup_emit = true;
     bool create_if_visible = false; ///< made only if the player could see it then

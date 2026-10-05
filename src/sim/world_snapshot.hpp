@@ -137,6 +137,8 @@ struct EffectRecord {
     f32 scale = 1;
     i32 army = -1;
     f32 light_size = 0;
+    f32 light_lifetime = 0; ///< ticks
+    std::string glow_texture, ramp_texture;
     f32 thickness = 0; ///< the THICKNESS param
     f32 length = 0;    ///< the LENGTH param
     /// A beam's reach (M214a), found at capture: none; from `beam_start` to

@@ -212,7 +212,7 @@ void test_particle_render(TestContext& ctx) {
     const u32 c2_id = spawn_unit(ctx, "__osc_pt_c2", "uel0105", "ARMY_1", c2, kLift);
     const u32 g = spawn_unit(ctx, "__osc_pt_g", "uel0105", "ARMY_1", g0, kLift);
     (void)spawn_unit(ctx, "__osc_pt_h", "uel0105", "ARMY_1", h0, kLift);
-    (void)spawn_unit(ctx, "__osc_pt_l", "uel0105", "ARMY_1", l0, kLift);
+    const u32 l = spawn_unit(ctx, "__osc_pt_l", "uel0105", "ARMY_1", l0, kLift);
     (void)spawn_unit(ctx, "__osc_pt_f", "uel0105", "ARMY_2", f0, kLift);
 
     OffscreenShots shots(ctx);
@@ -692,6 +692,54 @@ void test_particle_render(TestContext& ctx) {
                 fmt::format("Test 14: at low fidelity a LowFidelity = false emitter is never "
                             "made {}, nor once raised {}; made at high, it draws",
                             left_out, stays));
+    }
+
+    // Test 15: a light (CreateLightParticle; particle.fx's TLight) is one
+    // flat glow, 2 * its size across, where its unit was made: drawn
+    // through the ground its unit is sunk 2 under, gone after its lifetime.
+    {
+        (void)r.texture_cache().get_blocking("/textures/particles/glow_03.dds");
+        (void)r.texture_cache().get_blocking("/textures/particles/ramp_flare_02.dds");
+        look_at(l0.x, l0.z, 50.0f);
+        step();
+        const ImageRGBA8 without = shots.grab();
+        const f32 sunk = height(l0.x, l0.z) - 2.0f;
+        warp("__osc_pt_l", l0.x, l0.z, sunk);
+        run_lua(ctx, "CreateLightParticle(__osc_pt_l, -1, 1, 4, 5, 'glow_03', 'ramp_flare_02')\n");
+        step();
+        const ImageRGBA8 lit = shots.grab();
+        u32 light_fx = 0;
+        for (const sim::EffectRecord& fx : seen.cur().effects) {
+            if (fx.type == sim::EffectType::LIGHT_PARTICLE && fx.entity_id == l) {
+                light_fx = fx.id;
+            }
+        }
+        const auto ps = particles_of(r, light_fx);
+        const sim::Vector3 at{l0.x, sunk, l0.z};
+        const bool flat = ps.size() == 1 && near3(ps.front().center, at, 1e-2f) &&
+                          near3(ps.front().axis_x, {4, 0, 0}) &&
+                          near3(ps.front().axis_y, {0, 0, 4});
+        const auto brightness = [&](const ImageRGBA8& img) {
+            const auto sp = screen_of(r, at);
+            if (!sp || img.width == 0) {
+                return 0.0f;
+            }
+            const u32 x = static_cast<u32>(std::clamp((*sp)[0], 0.0f, img.width - 1.0f));
+            const u32 y = static_cast<u32>(std::clamp((*sp)[1], 0.0f, img.height - 1.0f));
+            const u8* q = &img.pixels[(static_cast<size_t>(y) * img.width + x) * 4];
+            return (q[0] + q[1] + q[2]) / 255.0f;
+        };
+        const f32 added = brightness(lit) - brightness(without);
+        for (int i = 0; i < 6; ++i) {
+            step();
+        }
+        const ImageRGBA8 after = shots.grab();
+        const f32 left = brightness(after) - brightness(without);
+        const bool gone = particles_of(r, light_fx).empty();
+        t.check(flat && added > 0.1f && gone && std::abs(left) < 0.05f,
+                fmt::format("Test 15: a light flat where made {} ({} particles), through the "
+                            "ground adds {:+.2f}; after its lifetime gone {}, {:+.2f}",
+                            flat, ps.size(), added, gone, left));
     }
 
     spdlog::info("Particle test: {}/{} passed", t.pass, t.pass + t.fail);

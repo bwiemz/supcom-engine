@@ -52,11 +52,13 @@ private:
     struct Group {
         bool under_water = false;
         i32 blendmode = 0;
+        bool light = false;
         VkDescriptorSet texture = VK_NULL_HANDLE, ramp = VK_NULL_HANDLE;
         u32 offset = 0, count = 0;
     };
 
     std::array<VkPipeline, 5> pipelines_{};
+    VkPipeline light_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     // The refracting ones' (M214d): their pipeline, and the background, a
     // third set.
