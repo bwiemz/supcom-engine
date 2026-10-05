@@ -115,6 +115,9 @@ struct UnitCommand {
     /// whether the factory is still busy rolling the unit off (runtime
     /// state; 0 while it builds). See Unit::order_build_in_place.
     i32 rolloff_wait = 0;
+    /// A build its army's unit cap stopped: ticks until it tries again, as
+    /// Moho's build tasks wait 10 at the cap (runtime state; 0 otherwise).
+    i32 cap_wait = 0;
     /// A carrier's unload that launches its stored units (M206q; runtime
     /// state): those still to go, and ticks until the next leaves (-1: the
     /// launch has not started).

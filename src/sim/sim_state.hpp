@@ -259,6 +259,16 @@ public:
     ArmyBrain* get_army_by_name(const std::string& name);
     size_t army_count() const { return armies_.size(); }
 
+    /// Moho's Sim::CreateUnit gate: whether `army` may make a unit that
+    /// costs `cap_cost` -- yes when it ignores its cap, or its units' cost
+    /// plus this stays within it. Over it, its brain hears
+    /// OnUnitCapLimitReached when `tell` is set (a script's or a builder's
+    /// unit; a transfer's is silent).
+    bool unit_cap_allows(i32 army, f32 cap_cost, bool tell);
+    /// The army's brain hears `method`, a script callback with no
+    /// arguments (looked up through its class; its errors are logged).
+    void brain_hears(i32 army, const char* method);
+
     /// Iterate armies (for range-for or indexed access).
     ArmyBrain* army_at(size_t i) {
         return i < armies_.size() ? armies_[i].get() : nullptr;

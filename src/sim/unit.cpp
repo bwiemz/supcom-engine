@@ -648,15 +648,14 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
     tick_manipulators(static_cast<f32>(dt), L);
 }
 
-bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
-                       lua_State* L) {
+Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L) {
     // Call __osc_create_building_unit from Lua registry
     lua_pushstring(L, "__osc_create_building_unit");
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_isfunction(L, -1)) {
         spdlog::warn("start_build: __osc_create_building_unit not registered");
         lua_pop(L, 1);
-        return false;
+        return BuildStart::Failed;
     }
 
     lua_pushstring(L, cmd.blueprint_id.c_str());
@@ -674,17 +673,20 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
         lua_pushnil(L);
     }
     lua_pushnumber(L, bz);
+    // Held to the unit cap, but for an upgrade (Moho makes those uncapped).
+    lua_pushboolean(L, cmd.type != CommandType::Upgrade);
 
-    if (lua_pcall(L, 5, 2, 0) != 0) {
+    if (lua_pcall(L, 6, 2, 0) != 0) {
         spdlog::warn("start_build pcall failed: {}", lua_tostring(L, -1));
         lua_pop(L, 1);
-        return false;
+        return BuildStart::Failed;
     }
 
-    // Returns: entity_id, lua_table
+    // Returns: entity_id, lua_table (nil, "cap" at the unit cap)
     if (lua_isnil(L, -2)) {
+        const bool at_cap = lua_type(L, -1) == LUA_TSTRING;
         lua_pop(L, 2);
-        return false;
+        return at_cap ? BuildStart::AtCap : BuildStart::Failed;
     }
 
     build_target_id_ = static_cast<u32>(lua_tonumber(L, -2));
@@ -697,7 +699,7 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
     if (!target) {
         lua_pop(L, 2);
         build_target_id_ = 0;
-        return false;
+        return BuildStart::Failed;
     }
 
     // Read economy data from the target blueprint via the __blueprints global
@@ -797,7 +799,7 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
 
     lua_pop(L, 2); // pop entity_id + target_tbl from create_building_unit
     work_progress_ = 0.0f;
-    return true;
+    return BuildStart::Started;
 }
 
 bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,

@@ -142,13 +142,14 @@ f64 ArmyBrain::get_economy_trend(const std::string& resource_type) const {
     return get_economy_income(resource_type) - get_economy_usage(resource_type);
 }
 
-i32 ArmyBrain::get_unit_cost_total(const EntityRegistry& registry) const {
-    i32 count = 0;
+f32 ArmyBrain::get_unit_cost_total(const EntityRegistry& registry) const {
+    f32 total = 0.0f;
     registry.for_each_unit([&](const Entity& e) {
-        if (e.army() == index_ && !e.destroyed() && e.is_unit())
-            count++;
+        if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
+        const auto& unit = static_cast<const Unit&>(e);
+        if (!unit.is_dying()) total += unit.cap_cost();
     });
-    return count;
+    return total;
 }
 
 bool ArmyBrain::is_build_restricted(
@@ -214,10 +215,12 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     f64 total_storage_energy = 200.0 + bonus_storage_energy_;
 
     u32 active_units = 0;
+    f32 cap_used = 0.0f; // get_unit_cost_total, in the same pass
     registry.for_each_unit([&](const Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
         ++active_units;
         const auto& unit = static_cast<const Unit&>(e);
+        if (!unit.is_dying()) cap_used += unit.cap_cost();
         const auto& econ = unit.economy();
 
         if (econ.production_active) {
@@ -322,7 +325,7 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     stats_["Economy_Ratio_Mass"] = get_economy_stored_ratio("MASS");
     stats_["Economy_Ratio_Energy"] = get_economy_stored_ratio("ENERGY");
     stats_["Units_Active"] = static_cast<f64>(active_units);
-    stats_["UnitCap_Current"] = static_cast<f64>(active_units);
+    stats_["UnitCap_Current"] = static_cast<f64>(cap_used);
     stats_["UnitCap_MaxCap"] = static_cast<f64>(unit_cap_);
 }
 
