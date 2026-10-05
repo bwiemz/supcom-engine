@@ -74,6 +74,7 @@ public:
     struct Group {
         bool under_water = false;
         i32 blendmode = 0;
+        bool light = false;
         std::string texture, ramp;
         u32 offset = 0, count = 0;
     };
@@ -102,9 +103,9 @@ public:
     };
     std::vector<EmitterView> emitters() const;
 
-    /// Whether effect `id` is an emitter it draws (the overlay leaves those
-    /// to it).
-    bool draws_effect(u32 id) const { return emitters_.count(id) > 0; }
+    /// Whether effect `id` is an emitter or a light it draws (the overlay
+    /// leaves those to it).
+    bool draws_effect(u32 id) const { return emitters_.count(id) > 0 || lights_.count(id) > 0; }
     /// Whether effect `id` is an emitter it never made (CreateIfVisible and
     /// unseen, or left out at this fidelity) and so never draws: the overlay
     /// leaves those be too.
@@ -169,6 +170,9 @@ private:
     /// Take effect `fx`'s runtime overrides over `base` (M214d).
     static void apply_overrides(Emitter& e, const sim::EffectRecord& fx,
                                 const EmitterBlueprintData& base);
+    /// A light's one particle, born on `tick`; a LightParticleIntel the
+    /// player's army doesn't see then is never made.
+    void make_light(const sim::EffectRecord& fx, const sim::FrameView& view, u32 tick);
     /// Emit one tick's particles, `ticks` back (Tick).
     void emit(u32 id, Emitter& e, u32 ticks, u32 now_tick, const map::Terrain* terrain);
     /// A uniform [0, 1) draw from the renderer's own stream (splitmix64),
@@ -177,6 +181,7 @@ private:
 
     const ReconView* recon_ = nullptr;
     std::unordered_map<u32, Emitter> emitters_;
+    std::unordered_set<u32> lights_;
     std::unordered_set<u32> unknown_; ///< effects with no emitter blueprint
     std::unordered_set<u32>
         unmade_; ///< never made: unseen CreateIfVisible, or not at this fidelity

@@ -2972,36 +2972,44 @@ static int l_AttachBeamEntityToEntity(lua_State* L) {
     return 1;
 }
 
-// CreateLightParticle(entity, bone, army, size, duration, glowTex, rampTex)
-// CreateLightParticleIntel — identical signature
-static int l_CreateLightParticle(lua_State* L) {
+// cfunc_CreateLightParticleL, CEffectManagerImpl::CreateLightParticle
+static int create_light_particle(lua_State* L, sim::EffectType type) {
     auto* sim = get_sim(L);
-    if (!sim) return 0;
+    if (!sim) {
+        return 0;
+    }
     auto* entity = effect_check_entity(L, 1);
-    i32 bone = effect_bone_arg(L, 2, entity, -1);
-    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    const std::string ramp = luaL_optstring(L, 7, "");
+    if (!entity || ramp.empty()) {
+        return 0;
+    }
+    const std::string glow = luaL_optstring(L, 6, "");
     f32 size = static_cast<f32>(luaL_optnumber(L, 4, 1.0));
     f32 duration = static_cast<f32>(luaL_optnumber(L, 5, 1.0));
-    const char* glow = luaL_optstring(L, 6, "");
-    const char* ramp = luaL_optstring(L, 7, "");
     auto* fx = sim->effect_registry().create();
-    fx->set_type(sim::EffectType::LIGHT_PARTICLE);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
-    fx->set_bone_index(bone);
-    fx->set_army(army);
+    fx->set_type(type);
+    fx->set_entity_id(entity->entity_id());
+    fx->set_bone_index(effect_bone_arg(L, 2, entity, -1));
+    fx->set_army(static_cast<i32>(luaL_optnumber(L, 3, 0)));
     fx->set_light_size(size);
     fx->set_light_duration(duration);
-    fx->set_glow_texture(glow);
-    fx->set_ramp_texture(ramp);
-    // A flash: its duration is in ticks (the commander's warp-in flashes
-    // for 4 and 10), and it ends by itself -- it lingered forever before.
+    fx->set_glow_texture(glow.empty() ? std::string("/textures/particles/beam_white_01.dds")
+                                      : "/textures/particles/" + glow + ".dds");
+    fx->set_ramp_texture("/textures/particles/" + ramp + ".dds");
+    frame_at(*fx, entity, fx->bone_index());
     if (duration > 0) {
         fx->set_param("LIFETIME", duration * sim::SimState::SECONDS_PER_TICK);
         fx->set_birth_time(sim->game_time());
     }
-    // Light particles are fire-and-forget, no method chaining needed.
-    // Return nil (same as original stub_noop) — FA doesn't use the return value.
     return 0;
+}
+
+static int l_CreateLightParticle(lua_State* L) {
+    return create_light_particle(L, sim::EffectType::LIGHT_PARTICLE);
+}
+
+static int l_CreateLightParticleIntel(lua_State* L) {
+    return create_light_particle(L, sim::EffectType::LIGHT_PARTICLE_INTEL);
 }
 
 // Runtime decals and splats (M212c), as faf-re's cfunc_CreateDecalL,
@@ -5935,7 +5943,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("CreateBeamEmitter", l_CreateBeamEmitter);
     state.register_function("CreateBeamEmitterOnEntity", l_CreateAttachedEmitter); // same sig as attached
     state.register_function("CreateLightParticle", l_CreateLightParticle);
-    state.register_function("CreateLightParticleIntel", l_CreateLightParticle); // same
+    state.register_function("CreateLightParticleIntel", l_CreateLightParticleIntel);
     state.register_function("CreateDecal", l_CreateDecal);
     state.register_function("CreateSplat", l_CreateSplat);
     state.register_function("CreateSplatOnBone", l_CreateSplatOnBone);

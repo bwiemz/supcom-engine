@@ -582,7 +582,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             // fidelity (M214b).
             if (trails_ && (trails_->draws_effect(fx_ptr->id) || trails_->unmade(fx_ptr->id)))
                 continue;
-            // And emitters the particle system draws (M214c).
+            // And emitters and lights the particle system draws (M214c).
             // (One it never made, CreateIfVisible or left out at this
             // fidelity, shows nothing at all.)
             if (particles_ &&
@@ -671,7 +671,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 continue;
             }
 
-            // An emitter, or a light, shows where the player's army sees it
+            // An emitter shows where the player's army sees it
             // (CEfxEmitter::CanSeeCam; M215b).
             if (recon_ && !recon_->sees_at(view, -1, wx, wz)) continue;
 
@@ -679,17 +679,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             f32 sx_fx, sy_fx;
             if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx_fx, sy_fx))
                 continue;
-
-            // Light particle: larger glowing circle
-            if (type == sim::EffectType::LIGHT_PARTICLE) {
-                f32 size = fx_ptr->light_size * fx_ptr->scale;
-                if (size < 1.0f) size = 4.0f;
-                f32 screen_size = size * 3.0f; // scale to screen pixels
-                emit_quad(sx_fx - screen_size * 0.5f, sy_fx - screen_size * 0.5f,
-                          screen_size, screen_size,
-                          1.0f, 0.9f, 0.5f, 0.6f); // warm glow
-                continue;
-            }
 
             // Emitter particles: small colored dot at effect position
             f32 psize = 4.0f * fx_ptr->scale;
