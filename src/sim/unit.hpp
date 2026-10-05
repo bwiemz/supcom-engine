@@ -362,6 +362,15 @@ public:
                    : 0;
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
+    /// `cmd` at the back of the queue as it is (NotifyUpgrade's copy of an
+    /// old unit's orders, a patrol's points in their order).
+    void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
+    /// A unit guarding `from` (its current order a Guard of it) guards `to`.
+    void retarget_guard(u32 from, u32 to) {
+        if (!command_queue_.empty() && command_queue_.front().type == CommandType::Guard &&
+            command_queue_.front().target_id == from)
+            command_queue_.front().target_id = to;
+    }
     void clear_commands(const char* source = "?");
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
