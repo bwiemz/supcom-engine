@@ -609,7 +609,20 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     } else {
         return std::nullopt; // no mode, or one without a world click (ping)
     }
-    if (ids.empty()) return std::nullopt;
+    // An Attack on bare ground: a mobile unit on ReturnFire attack-moves
+    // there, and only the others get the ground attack (Moho's
+    // SplitSelectionForAggressiveMove).
+    std::vector<u32> attack_movers;
+    if (cmd.type == sim::CommandType::Attack && cmd.target_id == 0) {
+        std::vector<u32> rest;
+        for (u32 id : ids) {
+            const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
+            (u.is_mobile() && u.fire_state() == 0 ? attack_movers : rest).push_back(id);
+        }
+        ids = std::move(rest);
+        if (ids.empty()) out.type = "AggressiveMove";
+    }
+    if (ids.empty() && attack_movers.empty()) return std::nullopt;
 
     cmd.target_pos = {wx, surface_y(wx, wz), wz};
     out.position = cmd.target_pos;
@@ -665,8 +678,13 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         anchor.target_pos = {ax, surface_y(ax, az), az};
         sim.route_player_command(ids, anchor, !shift);
         sim.route_player_command(ids, cmd, false);
-    } else {
+    } else if (!ids.empty()) {
         sim.route_player_command(ids, cmd, !shift);
+    }
+    if (!attack_movers.empty()) {
+        sim::UnitCommand move = cmd;
+        move.type = sim::CommandType::AggressiveMove;
+        sim.route_player_command(attack_movers, move, !shift);
     }
     sim.set_human_input_active(false);
     return out;

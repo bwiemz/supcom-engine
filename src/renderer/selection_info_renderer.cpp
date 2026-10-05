@@ -20,6 +20,7 @@ static const char* command_name(sim::CommandType type) {
     case sim::CommandType::Attack: return "Attacking";
     case sim::CommandType::Guard: return "Guarding";
     case sim::CommandType::Patrol: return "Patrolling";
+    case sim::CommandType::AggressiveMove: return "Attack-moving";
     case sim::CommandType::BuildMobile: return "Building";
     case sim::CommandType::BuildFactory: return "Producing";
     case sim::CommandType::Reclaim: return "Reclaiming";

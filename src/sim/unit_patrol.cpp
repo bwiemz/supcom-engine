@@ -43,6 +43,10 @@ struct PatrolBox {
 };
 
 PatrolBox patrol_box(const Unit& unit, const UnitCommand& leg) {
+    // The box runs to the leg from the queue's tail when that is another
+    // patrol point, else from the unit. Moho reads only the tail, whatever
+    // the leg: an attack-move with a patrol queued after it measures from
+    // that patrol's point too (faf-re RecomputePatrolSearchBox).
     const auto& queue = unit.command_queue();
     const UnitCommand& last = queue.back();
     const Vector3 to = leg.target_pos;
@@ -200,7 +204,10 @@ Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
     if (!sim || !has_category(kPatrolHelper)) {
         return nullptr;
     }
-    if (!cmd.formation.empty() && (has_category(kCommand) || has_category(kSacu))) {
+    // In formation (an attack-move always is: Moho makes its patrol task so)
+    // a commander or support commander leaves the helping to the others.
+    const bool in_formation = cmd.type == CommandType::AggressiveMove || !cmd.formation.empty();
+    if (in_formation && (has_category(kCommand) || has_category(kSacu))) {
         return nullptr;
     }
     const ArmyBrain* brain = army() >= 0 ? sim->army_at(static_cast<size_t>(army())) : nullptr;

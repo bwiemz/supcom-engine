@@ -63,6 +63,7 @@ add_executable(osc_integration
     runner/notify_upgrade_test.cpp
     runner/need_unpack_test.cpp
     runner/guard_engage_test.cpp
+    runner/attack_move_test.cpp
     runner/air_attack_test.cpp
 )
 target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)

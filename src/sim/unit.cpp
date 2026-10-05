@@ -441,8 +441,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
             !(head && head->command_id == build_command_id_))
             stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming() &&
-            !(head && (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
-                       head->type == CommandType::Patrol))) {
+            !(head &&
+              (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
+               head->type == CommandType::Patrol || head->type == CommandType::AggressiveMove))) {
             stop_reclaiming(ctx.L, &ctx.registry);
             if (destroyed() || !in_registry()) {
                 return;
