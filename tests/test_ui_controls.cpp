@@ -1019,8 +1019,39 @@ TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's 
     f.deliver();
     f.registry.set_keyboard_focus(nullptr);
     CHECK(f.check("table.concat(calls, ';') == 'char 104;changed h<;char 63;char 105;changed hi<h;"
-                  "changed i<hi;key 38 shift;enter i;esc i;changed <i'"));
+                  "changed i<hi;key 38 shift;enter i;changed <i;esc '"));
     CHECK(f.check("e:GetText() == ''"));
+}
+
+TEST_CASE("Enter and Esc clear an Edit, or on an empty one drop the focus, unless handled",
+          "[ui][lua][input][edit]") {
+    InputFixture f;
+    f.run(R"(
+        sent = {}
+        e = setmetatable({}, { __index = setmetatable({
+            OnEnterPressed = function(self, text) table.insert(sent, text) return self.keep end,
+        }, { __index = moho.edit_methods }) })
+        InternalCreateEdit(e, GetFrame(0))
+    )");
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "e"));
+    f.dispatch.on_char('h');
+    f.dispatch.on_char('i');
+    f.dispatch.on_key(GLFW_KEY_ENTER, GLFW_PRESS, 0);
+    f.dispatch.on_key(GLFW_KEY_ENTER, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.concat(sent, ',') == 'hi,' and e:GetText() == ''"));
+    CHECK(f.registry.keyboard_focus() == nullptr);
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "e"));
+    f.run("e.keep = true e:SetText('ok')");
+    f.dispatch.on_key(GLFW_KEY_KP_ENTER, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("e:GetText() == 'ok'"));
+    CHECK(f.registry.keyboard_focus() == control_of(f.lua.raw(), "e"));
+
+    f.run("e:SetText('')");
+    f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.registry.keyboard_focus() == nullptr);
 }
 
 TEST_CASE("A press reaches uimain's OnMouseButtonPress, a module function", "[ui][lua][input]") {
