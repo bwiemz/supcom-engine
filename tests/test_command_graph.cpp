@@ -188,6 +188,33 @@ TEST_CASE("A structure ordered and not started is a planned site", "[renderer][c
     CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 3);
 }
 
+TEST_CASE("A structure ordered and not yet run is planned in place of the one under way",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    osc::sim::CommandRecord building;
+    building.type = osc::sim::CommandType::BuildMobile;
+    building.target_pos = {10, 0, 10};
+    building.blueprint_id = "ueb1101";
+    osc::sim::CommandRecord ordered = building;
+    ordered.target_pos = {20, 0, 10};
+    ordered.blueprint_id = "ueb0101";
+    ordered.pending = true;
+    osc::sim::EntityRecord builder;
+    builder.id = 1;
+    builder.army = 0;
+    builder.is_unit = true;
+    builder.build_target_id = 7;
+    builder.command_count = 1;
+    world.commands = {building};
+    world.pending_commands = {ordered};
+    world.pending_queues = {{1, 0, 1}};
+    world.entities.push_back(builder);
+
+    const auto sites = osc::renderer::planned_build_sites(world, nullptr, 0);
+    REQUIRE(sites.size() == 1);
+    CHECK(sites[0].blueprint == "ueb0101");
+}
+
 TEST_CASE("A structure standing on its site is started for every builder ordered to it",
           "[renderer][command_graph]") {
     osc::sim::WorldSnapshot world;

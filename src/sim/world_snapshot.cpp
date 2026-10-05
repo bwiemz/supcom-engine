@@ -166,6 +166,11 @@ void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
     }
 }
 
+CommandRecord command_record(const UnitCommand& c, bool pending) {
+    return {c.type, c.target_id, c.target_pos,
+            c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(), pending};
+}
+
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.unit_id = u.unit_id();
     r.icon = icon_class(u);
@@ -224,16 +229,12 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
 
     r.command_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.command_queue()) {
-        out.commands.push_back(
-            {c.type, c.target_id, c.target_pos,
-             c.type == CommandType::BuildMobile ? c.blueprint_id : std::string()});
+        out.commands.push_back(command_record(c, false));
     }
     r.command_count = static_cast<u32>(out.commands.size()) - r.command_offset;
     r.rally_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.rally_orders()) {
-        out.commands.push_back(
-            {c.type, c.target_id, c.target_pos,
-             c.type == CommandType::BuildMobile ? c.blueprint_id : std::string()});
+        out.commands.push_back(command_record(c, false));
     }
     r.rally_count = static_cast<u32>(out.commands.size()) - r.rally_offset;
 
@@ -257,6 +258,15 @@ const EntityRecord* WorldSnapshot::find(u32 id) const {
     return it != entities.end() && it->id == id ? &*it : nullptr;
 }
 
+std::span<const CommandRecord> WorldSnapshot::orders_of(const EntityRecord& e) const {
+    const auto it = std::lower_bound(pending_queues.begin(), pending_queues.end(), e.id,
+                                     [](const PendingQueue& q, u32 v) { return q.id < v; });
+    if (it == pending_queues.end() || it->id != e.id) {
+        return commands_of(e);
+    }
+    return {pending_commands.data() + it->offset, it->count};
+}
+
 void WorldSnapshot::clear() {
     tick = 0;
     entities.clear();
@@ -269,6 +279,9 @@ void WorldSnapshot::clear() {
     sight.clear();
     player_result = 0;
     fake_blips.clear();
+    pending_commands.clear();
+    pending_queues.clear();
+    pending_serial = 0;
 }
 
 /// The jammers' fakes each army senses where they fall and doesn't know
@@ -454,6 +467,24 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
 
     capture_sight(sim, sight_army, out.sight);
     out.player_result = sim.player_result();
+    capture_pending(sim, out);
+}
+
+void capture_pending(const SimState& sim, WorldSnapshot& out) {
+    out.pending_commands.clear();
+    out.pending_queues.clear();
+    out.pending_serial = sim.command_scheduler().submitted();
+    if (sim.playback()) {
+        return;
+    }
+    for (const auto& [id, queue] : sim.queues_with_pending()) {
+        const auto offset = static_cast<u32>(out.pending_commands.size());
+        for (size_t i = 0; i < queue.orders.size(); ++i) {
+            const bool pending = i >= queue.kept_from_queue;
+            out.pending_commands.push_back(command_record(queue.orders[i], pending));
+        }
+        out.pending_queues.push_back({id, offset, static_cast<u32>(queue.orders.size())});
+    }
 }
 
 std::vector<std::string> world_blueprints(const SimState& sim) {
@@ -488,6 +519,15 @@ void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
     if (army == sight_army_) return;
     sight_army_ = army;
     if (sim && captured_ > 0) capture_sight(*sim, army, snaps_[cur_].sight);
+}
+
+void WorldHistory::refresh_pending(const SimState& sim) {
+    WorldSnapshot& cur = snaps_[cur_];
+    if (captured_ == 0 || cur.tick != sim.tick_count() ||
+        cur.pending_serial == sim.command_scheduler().submitted()) {
+        return;
+    }
+    capture_pending(sim, cur);
 }
 
 void WorldHistory::clear() {

@@ -160,7 +160,7 @@ command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u3
 
 bool build_started(const sim::WorldSnapshot& world, const sim::EntityRecord& builder, size_t index,
                    const sim::CommandRecord& order) {
-    if (index == 0 && builder.build_target_id != 0) {
+    if (index == 0 && !order.pending && builder.build_target_id != 0) {
         return true;
     }
     for (const auto& e : world.entities) {
@@ -178,7 +178,7 @@ std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
                                              i32 player_army) {
     std::vector<PlannedSite> sites;
     for (const auto& [e, chosen] : command_graph_units(world, selected, player_army)) {
-        const auto orders = world.commands_of(*e);
+        const auto orders = world.orders_of(*e);
         for (size_t i = 0; i < orders.size(); ++i) {
             if (orders[i].type == sim::CommandType::BuildMobile &&
                 !orders[i].blueprint_id.empty() && !build_started(world, *e, i, orders[i])) {
@@ -369,8 +369,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
         const u32 uid = e->id;
         // Its orders, then (a factory's) the rally orders what it builds
         // takes, drawn on from where its orders end
-        std::vector<sim::CommandRecord> cmds(cur->commands_of(*e).begin(),
-                                             cur->commands_of(*e).end());
+        std::vector<sim::CommandRecord> cmds(cur->orders_of(*e).begin(), cur->orders_of(*e).end());
         const auto rally = cur->rally_of(*e);
         cmds.insert(cmds.end(), rally.begin(), rally.end());
         std::vector<Vector3> chain{view.position(*e)};

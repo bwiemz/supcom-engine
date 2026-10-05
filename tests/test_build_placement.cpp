@@ -223,8 +223,26 @@ TEST_CASE("placement: an order not yet in a queue reserves its site", "[placemen
     order.command.blueprint_id = "pgen";
     sim.command_scheduler().submit(order);
 
-    CHECK_FALSE(StructurePlacement(sim, 0, rules_for).can_build("pgen", 30.0f, 30.0f));
-    CHECK(StructurePlacement(sim, 1, rules_for).can_build("pgen", 30.0f, 30.0f));
+    CHECK_FALSE(StructurePlacement(sim, 0, rules_for, true).can_build("pgen", 30.0f, 30.0f));
+    CHECK(StructurePlacement(sim, 1, rules_for, true).can_build("pgen", 30.0f, 30.0f));
+    CHECK(StructurePlacement(sim, 0, rules_for).can_build("pgen", 30.0f, 30.0f));
+}
+
+TEST_CASE("placement: an order not yet run that replaces a queue frees its sites", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    auto* engineer = spawn(sim, 0, 10.0f, 10.0f);
+    order_build(engineer, "pgen", 30.0f, 30.0f);
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::BuildMobile;
+    cmd.target_pos = {40.0f, 0.0f, 30.0f};
+    cmd.blueprint_id = "pgen";
+    sim.schedule_command(0, {engineer->entity_id()}, cmd, true);
+
+    StructurePlacement p(sim, 0, rules_for, true);
+    CHECK(p.can_build("pgen", 30.0f, 30.0f));
+    CHECK_FALSE(p.can_build("pgen", 40.0f, 30.0f));
 }
 
 TEST_CASE("placement: a seabed structure goes on the ground under the sea", "[placement]") {
