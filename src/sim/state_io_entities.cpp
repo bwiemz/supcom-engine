@@ -1487,6 +1487,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
 void StateIO::save(StateWriter& w, const Prop& p) {
     save(w, static_cast<const Entity&>(p));
     w.tag("PROP");
+    // untargetable: its blueprint's (read_prop_blueprint)
     w.f32v(p.sink_rate);
     w.size(p.pose.size());
     for (const auto& m : p.pose)

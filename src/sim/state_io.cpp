@@ -12,6 +12,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
+#include "sim/prop_script.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -140,6 +141,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             load(r, *p);
             if (auto* bones = sim.bone_cache())
                 p->set_bone_data(bones->get(p->blueprint_id(), sim.lua_state()));
+            read_prop_blueprint(sim.lua_state(), *p);
             e = std::move(p);
             break;
         }
