@@ -171,8 +171,16 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return false;
+    if (!winged_speed_ok(owner)) return false;
     if (need_compute_bomb_drop && !bomb_ready(owner, *at, registry)) return false;
     return true;
+}
+
+bool Weapon::winged_speed_ok(const Unit& owner) const {
+    if (!auto_initiate_attack_command || !owner.air_combat_rules().winged) return true;
+    const Vector3& v = owner.velocity();
+    const f32 speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return speed >= owner.max_airspeed() * owner.speed_mult() * 0.25f;
 }
 
 bool Weapon::bomb_ready(const Unit& owner, const Vector3& at,
@@ -439,6 +447,10 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
     if (best_id == 0) return;
     target_entity_id = best_id;
+    // An idle aircraft's weapon with AutoInitiateAttackCommand makes the pick
+    // its unit's attack order (Moho's CAcquireTargetTask, CheckAutoInitiate).
+    if (auto_initiate_attack_command && owner.is_mobile() && owner.auto_initiate_allowed(registry))
+        owner.request_auto_attack(best_id);
     if (Entity* target = registry.find(best_id); target && target->is_projectile())
         static_cast<Projectile&>(*target).shooters.emplace_back(owner.entity_id(), weapon_index);
 }
@@ -521,7 +533,9 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
     if (!target && !has_ground_target) return false;
     const Vector3 at = target ? target->position() : ground_target;
 
-    // A bomb only at its release point (bomb_ready).
+    // A bomb only at its release point (bomb_ready); a winged auto-attacker
+    // only under way.
+    if (!winged_speed_ok(owner)) return false;
     if (need_compute_bomb_drop && !bomb_ready(owner, at, registry)) return false;
 
     // Resolve muzzle bone position for projectile spawn
