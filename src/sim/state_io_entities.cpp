@@ -463,6 +463,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.str(wp.projectile_bp_id);
     w.str(wp.fire_control_label);
     w.b(wp.need_compute_bomb_drop);
+    w.b(wp.auto_initiate_attack_command);
     w.f32v(wp.bomb_drop_threshold);
     w.size(wp.target_priorities.size());
     for (const CategoryExpr& c : wp.target_priorities) save(w, c);
@@ -523,6 +524,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.projectile_bp_id = r.str();
     wp.fire_control_label = r.str();
     wp.need_compute_bomb_drop = r.b();
+    wp.auto_initiate_attack_command = r.b();
     wp.bomb_drop_threshold = r.f32v();
     wp.target_priorities.resize(r.size(5));
     for (CategoryExpr& c : wp.target_priorities) load(r, c);
@@ -924,6 +926,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.enhance_slot_);
     w.b(u.immobile_);
     w.b(u.factory_assist_build_);
+    // auto_attack_target_ isn't saved: a weapon sets it and the unit uses it
+    // in the same update.
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
     w.i32v(u.assist_rolloff_wait_);

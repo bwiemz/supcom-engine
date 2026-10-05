@@ -567,6 +567,15 @@ public:
 
     // Unit states (generic string-based state tracking)
     bool has_unit_state(const std::string& state) const { return unit_states_.count(state) > 0; }
+    /// Moho's CheckAutoInitiate: an idle unit -- no orders, or only an
+    /// attack whose target is gone -- may take an attack order of its
+    /// weapons' own choosing.
+    bool auto_initiate_allowed(const EntityRegistry& registry) const;
+    /// A weapon with AutoInitiateAttackCommand picked `target`: the unit
+    /// attacks it once its weapons are done this tick (the first pick wins).
+    void request_auto_attack(u32 target) {
+        if (auto_attack_target_ == 0) auto_attack_target_ = target;
+    }
     void set_unit_state(const std::string& state, bool v) {
         if (v) unit_states_.insert(state);
         else   unit_states_.erase(state);
@@ -1267,6 +1276,7 @@ private:
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     bool factory_assist_build_ = false;           // see factory_assist_build()
+    u32 auto_attack_target_ = 0;                  // request_auto_attack's, used the same tick
     /// The order a build (build_target_id_) is for, and whether the builder
     /// lets it go once that order is no longer the head (M206u): a mobile
     /// build, a repair's or a guard's help. A factory's build is cancelled

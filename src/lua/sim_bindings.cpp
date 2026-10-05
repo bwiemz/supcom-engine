@@ -578,6 +578,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                         weapon->need_compute_bomb_drop = true;
                     lua_pop(L, 1);
 
+                    // AutoInitiateAttackCommand: an idle aircraft attacks on its own
+                    lua_pushstring(L, "AutoInitiateAttackCommand");
+                    lua_gettable(L, we);
+                    weapon->auto_initiate_attack_command = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+
                     // BombDropThreshold (distance threshold for overhead check)
                     lua_pushstring(L, "BombDropThreshold");
                     lua_gettable(L, we);

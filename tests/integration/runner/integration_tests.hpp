@@ -187,6 +187,7 @@ void test_change_army(TestContext& ctx);
 void test_unit_cap(TestContext& ctx);
 void test_unit_hooks(TestContext& ctx);
 void test_air_attack_run(TestContext& ctx);
+void test_air_auto_engage(TestContext& ctx);
 void test_air_turn(TestContext& ctx);
 void test_air_staging(TestContext& ctx);
 void test_factory_assist(TestContext& ctx);

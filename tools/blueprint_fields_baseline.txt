@@ -2,7 +2,6 @@
 AimsStraightOnDisable
 AltMotionType
 AttackAngle
-AutoInitiateAttackCommand
 AutoLandTime
 BankFactor
 BankForward
