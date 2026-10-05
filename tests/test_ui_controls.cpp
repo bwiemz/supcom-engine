@@ -443,6 +443,18 @@ TEST_CASE("A press no control eats reaches each control under the mouse once", "
     CHECK(f.check("whos('ButtonPress') == 'label,item'"));
 }
 
+TEST_CASE("DisableHitTest(true) lets the mouse through a control's children too",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run("button = box('button', GetFrame(0), 0, 0, 100, 100, 11) "
+          "brackets = box('brackets', GetFrame(0), 0, 0, 100, 100, 12) "
+          "corner = box('corner', brackets, 0, 0, 100, 100, 12) "
+          "brackets:DisableHitTest(true)");
+    f.dispatch.on_cursor_pos(50, 50);
+    f.deliver();
+    CHECK(f.check("whos('MouseEnter') == 'button'"));
+}
+
 namespace {
 
 /// Test-mode failure counting, on for a scope (and the tally cleared).

@@ -270,9 +270,20 @@ static int control_IsHidden(lua_State* L) {
     return 1;
 }
 
+static void disable_hit_test(ui::UIControl* ctrl, bool recursive) {
+    ctrl->set_hit_test_disabled(true);
+    if (recursive) {
+        for (auto* child : ctrl->children()) {
+            disable_hit_test(child, true);
+        }
+    }
+}
+
 static int control_DisableHitTest(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_hit_test_disabled(true);
+    if (ctrl) {
+        disable_hit_test(ctrl, lua_toboolean(L, 2) != 0);
+    }
     return 0;
 }
 
