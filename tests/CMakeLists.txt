@@ -22,6 +22,7 @@ add_executable(osc_tests
     test_build_placement.cpp
     test_manipulators.cpp
     test_patrol.cpp
+    test_guard.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_interpolation.cpp

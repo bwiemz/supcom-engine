@@ -39,7 +39,7 @@ set(OSC_DATA_TESTS_GATE
     economy-test edit-render-test edit-test effect-intel-test emitter-test enhance-test
     script-order-test
     gameui-test impact-test influence-test issue-handles-test
-    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test
+    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test
     full-smoke-test ghost-render-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-blip-test jammer-test keyboard-test keymap-test

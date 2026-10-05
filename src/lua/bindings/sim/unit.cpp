@@ -222,8 +222,7 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "BeingBuilt") == 0)
             result = u->is_being_built();
         else if (std::strcmp(state, "Guarding") == 0)
-            result = !u->command_queue().empty() &&
-                     u->command_queue().front().type == sim::CommandType::Guard;
+            result = u->guard_order() != nullptr; // fighting for it too
         else if (std::strcmp(state, "Reclaiming") == 0)
             result = u->is_reclaiming();
         else if (std::strcmp(state, "Repairing") == 0)
@@ -334,9 +333,7 @@ static int unit_GetGuards(lua_State* L) {
     sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         auto* other = static_cast<sim::Unit*>(&e);
-        if (other->command_queue().empty()) return;
-        const auto& front = other->command_queue().front();
-        if (front.type == sim::CommandType::Guard && front.target_id == my_id) {
+        if (other->guarded_unit_id() == my_id) {
             if (other->lua_table_ref() >= 0) {
                 lua_pushnumber(L, idx++);
                 lua_rawgeti(L, LUA_REGISTRYINDEX, other->lua_table_ref());
@@ -2154,9 +2151,8 @@ static int unit_GetGuardedEntity(lua_State* L) {
     auto* u = check_unit(L);
     auto* sim = get_sim(L);
     sim::Entity* target = nullptr;
-    if (u && sim && !u->command_queue().empty() &&
-        u->command_queue().front().type == sim::CommandType::Guard)
-        target = sim->entity_registry().find(u->command_queue().front().target_id);
+    if (u && sim && u->guarded_unit_id() != 0)
+        target = sim->entity_registry().find(u->guarded_unit_id());
     if (target && target->is_unit() && !target->destroyed()) push_unit_for_ui(L, target);
     else lua_pushnil(L);
     return 1;

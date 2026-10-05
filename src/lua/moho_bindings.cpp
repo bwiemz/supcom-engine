@@ -2320,11 +2320,13 @@ static int l_GetAssistingUnitsList(lua_State* L) {
     const auto targets = ui_unit_list(L, 1);
     std::unordered_set<u32> ids;
     for (auto* u : targets) ids.insert(u->entity_id());
-    push_ui_unit_array(L, focus_army_units(L, [&](const sim::Unit& u) {
-        const auto& q = u.command_queue();
-        return !q.empty() && q.front().type == sim::CommandType::Guard &&
-               ids.count(q.front().target_id) > 0;
-    }), false);
+    push_ui_unit_array(L,
+                       focus_army_units(L,
+                                        [&](const sim::Unit& u) {
+                                            return u.guarded_unit_id() != 0 &&
+                                                   ids.count(u.guarded_unit_id()) > 0;
+                                        }),
+                       false);
     return 1;
 }
 

@@ -327,6 +327,11 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.patrol_scan);
     save_ids(w, c.patrol_claimed);
     w.b(c.begun);
+    w.b(c.from_guard);
+    w.b(c.guard_returning);
+    w.b(c.leash_armed);
+    w.u32v(c.leash_anchor_id);
+    w.vec3(c.leash_anchor_pos);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -362,6 +367,11 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.patrol_scan = r.i32v();
     c.patrol_claimed = load_ids(r);
     c.begun = r.b();
+    c.from_guard = r.b();
+    c.guard_returning = r.b();
+    c.leash_armed = r.b();
+    c.leash_anchor_id = r.u32v();
+    c.leash_anchor_pos = r.vec3();
 }
 
 // ------------------------------------------------------------- Navigator
@@ -850,6 +860,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.max_build_distance_);
     w.f32v(u.guard_scan_radius_);
     w.b(u.need_unpack_);
+    w.f32v(u.guard_return_radius_);
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.naval_draft_);
@@ -1160,6 +1171,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.max_build_distance_ = r.f32v();
     u.guard_scan_radius_ = r.f32v();
     u.need_unpack_ = r.b();
+    u.guard_return_radius_ = r.f32v();
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.naval_draft_ = r.f32v();

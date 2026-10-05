@@ -137,8 +137,8 @@ struct UnitCommand {
     /// refuel gives up, rather than waits, when there is no room, and ends
     /// without waiting for others. Runtime state.
     bool from_patrol = false;
-    /// A patrol's ticks to wait before it next looks about (Moho's patrol
-    /// task runs every 6 ticks). Runtime state.
+    /// A patrol's or guard's ticks to wait before it next looks about
+    /// (Moho's patrol and guard tasks run every 6 ticks). Runtime state.
     i32 patrol_scan = 0;
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
@@ -146,6 +146,22 @@ struct UnitCommand {
     /// Unit::begin_order has run for it: the order has started (a patrol's
     /// leg, until it goes round). Runtime state.
     bool begun = false;
+    /// An Attack a guard broke off for, ahead of it (Moho's guard task
+    /// pushing its attack task, SetEnemy). Runtime state.
+    bool from_guard = false;
+    /// A guard back from a fight, going home before it looks about again
+    /// (Moho's guard task in its Starting state). Runtime state.
+    bool guard_returning = false;
+    /// A guard's or patrol's break-off Attack has come within weapon range
+    /// of its target (Moho's attacker has its desired target then): from
+    /// now on it ends once the unit is GuardReturnRadius from its anchor.
+    /// Runtime state.
+    bool leash_armed = false;
+    /// That leash's anchor: the guarded unit, while it lives (0: none),
+    /// else the point (Moho's GuardedPos: a guarded point, or where a patrol
+    /// broke off). Runtime state.
+    u32 leash_anchor_id = 0;
+    Vector3 leash_anchor_pos;
 };
 
 } // namespace osc::sim

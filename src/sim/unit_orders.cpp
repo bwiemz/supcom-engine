@@ -393,6 +393,26 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     f32 dz = target->position().z - position().z;
     f32 dist2 = dx * dx + dz * dz;
     f32 range2 = best_range * best_range;
+    // A guard's or patrol's fight goes only so far (Moho's acquire task,
+    // CheckTargetGuardExempt): once the unit has come within reach of its
+    // target, it gives up beyond GuardReturnRadius of what it guards, or of
+    // where its patrol broke off, and the guard or patrol carries on.
+    if (cmd.from_guard || cmd.from_patrol) {
+        if (dist2 <= range2 || cmd.engaged) cmd.leash_armed = true;
+        if (cmd.leash_armed) {
+            const Entity* by = cmd.leash_anchor_id ? registry.find(cmd.leash_anchor_id) : nullptr;
+            const Vector3 anchor = by && !by->destroyed() ? by->position() : cmd.leash_anchor_pos;
+            const f32 ax = position().x - anchor.x;
+            const f32 ay = position().y - anchor.y;
+            const f32 az = position().z - anchor.z;
+            if (ax * ax + ay * ay + az * az > guard_return_radius_ * guard_return_radius_) {
+                if (cmd.engaged) end_attack_run(*this);
+                navigator_.abort_move();
+                command_queue_.pop_front();
+                return OrderStep::Next;
+            }
+        }
+    }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
     // the target to the attacker and CalcMoveAir flies the combat tactics
@@ -621,6 +641,9 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             attack.type = CommandType::Attack;
             attack.target_id = enemy->entity_id();
             attack.target_pos = enemy->position();
+            // Moho's patrol task keeps where it broke off (GuardedPos): the
+            // fight's leash runs from there.
+            attack.leash_anchor_pos = position();
             return break_off(std::move(attack));
         }
         if (Entity* work = find_patrol_work(cmd, ctx)) {
@@ -992,13 +1015,98 @@ void Unit::hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx) {
     }
 }
 
+bool Unit::guard_reacts(const Unit* guarded) const {
+    // Moho's guard task (its constructor's classification): an engineer
+    // guarding an engineer or a factory only helps; anything else takes on
+    // enemies if it has a weapon to. (A factory guarding a factory assists
+    // before it would ever look.)
+    static const CategoryName kEngineer{"ENGINEER"};
+    static const CategoryName kFactory{"FACTORY"};
+    if (guarded && has_category(kEngineer) &&
+        (guarded->has_category(kEngineer) || guarded->has_category(kFactory)))
+        return false;
+    return scan_weapon() != nullptr;
+}
+
+void Unit::walk_to(const Vector3& goal, f64 dt, SimContext& ctx) {
+    const Vector3 heading = navigator_.goal();
+    if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
+        std::abs(heading.z - goal.z) > 1.0f) {
+        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+    }
+    nav_update(dt, ctx.terrain);
+}
+
+std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarded,
+                                            const Vector3& ref, f64 dt, SimContext& ctx) {
+    if (!guard_reacts(guarded)) return std::nullopt;
+    // Back from a fight, it goes home before it looks about again (Moho's
+    // Starting state: within its guarded unit's footprint and half its
+    // GuardScanRadius of it, or of the point).
+    if (cmd.guard_returning) {
+        const f32 size =
+            guarded ? std::max(guarded->footprint_size_x(), guarded->footprint_size_z()) : 1.0f;
+        const f32 home = size + 0.5f * guard_scan_radius_;
+        const f32 dx = position().x - ref.x;
+        const f32 dy = position().y - ref.y;
+        const f32 dz = position().z - ref.z;
+        if (dx * dx + dy * dy + dz * dz > home * home) {
+            walk_to(ref, dt, ctx);
+            return OrderStep::Hold;
+        }
+        cmd.guard_returning = false;
+        cmd.patrol_scan = 5; // this Execute returns 7: the next look is 6 ticks on
+        return std::nullopt;
+    }
+    // It looks every 6 ticks (Moho's Execute returns 7), and not while it
+    // helps: Moho's help is a task of its own above the guard's.
+    if (is_building() || is_reclaiming() || is_repairing()) return std::nullopt;
+    if (cmd.patrol_scan > 0) {
+        --cmd.patrol_scan;
+        return std::nullopt;
+    }
+    cmd.patrol_scan = 5;
+    Entity* enemy =
+        best_enemy(ctx.registry.units_in_radius(position().x, position().z, guard_scan_radius_),
+                   guard_scan_radius_, ctx);
+    if (!enemy) return std::nullopt;
+    // Moho's SetEnemy: its attack task above the guard's, the fight
+    // leashed to what it guards.
+    UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = enemy->entity_id();
+    attack.target_pos = enemy->position();
+    attack.command_id = cmd.command_id;
+    attack.from_guard = true;
+    attack.leash_anchor_id = guarded ? guarded->entity_id() : 0;
+    attack.leash_anchor_pos = ref;
+    cmd.guard_returning = true;
+    navigator_.abort_move();
+    command_queue_.push_front(std::move(attack)); // cmd stays valid: a deque keeps references
+    return OrderStep::Next;
+}
+
+OrderStep Unit::order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // A place to guard (IssueGuard at a position): Moho's guard task with
+    // no guarded unit, its reference the point.
+    if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, dt, ctx)) return *step;
+    const f32 dx = cmd.target_pos.x - position().x;
+    const f32 dz = cmd.target_pos.z - position().z;
+    if (dx * dx + dz * dz > 2.0f * 2.0f) {
+        walk_to(cmd.target_pos, dt, ctx);
+    } else if (navigator_.is_moving()) {
+        navigator_.abort_move();
+    }
+    return OrderStep::Hold;
+}
+
 OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         end_guard_build(registry, L);
-        command_queue_.pop_front();
-        return OrderStep::Next;
+        return order_guard_point(cmd, dt, ctx);
     }
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
@@ -1095,6 +1203,11 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
         return OrderStep::Hold;
     }
+
+    // Enemies near it come before helping (Moho's guard task looks for one
+    // after factory assist, before build, reclaim and repair help).
+    if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), dt, ctx))
+        return *step;
 
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair

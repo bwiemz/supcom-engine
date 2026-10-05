@@ -83,30 +83,55 @@ bool nearly_full(const ResourceState& r) {
 
 } // namespace
 
-Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
+const Weapon* Unit::scan_weapon() const {
+    for (const auto& w : weapons_) {
+        if (w->weapon_index == 0) {
+            return w->dummy || w->fire_on_death || w->manual_fire ? nullptr : w.get();
+        }
+    }
+    return nullptr;
+}
+
+bool Unit::target_exempt(const Unit& enemy, const EntityRegistry& registry) const {
+    // Moho's CAiAttackerImpl::IsTargetExempt: what its own queue reclaims or
+    // captures, and what its army's engineers are capturing.
+    for (const UnitCommand& c : command_queue_) {
+        if ((c.type == CommandType::Reclaim || c.type == CommandType::Capture) &&
+            c.target_id == enemy.entity_id()) {
+            return true;
+        }
+    }
+    if (!enemy.is_being_captured()) {
+        return false;
+    }
+    static const CategoryName kEngineer{"ENGINEER"};
+    bool capturing = false;
+    registry.for_each_unit([&](const Entity& e) {
+        if (capturing || e.destroyed() || e.army() != army()) {
+            return;
+        }
+        const auto& u = static_cast<const Unit&>(e);
+        capturing = !u.is_dying() && u.capture_target_id() == enemy.entity_id() &&
+                    u.has_category(kEngineer);
+    });
+    return capturing;
+}
+
+Entity* Unit::best_enemy(const std::vector<Entity*>& candidates, f32 range, SimContext& ctx) {
     const SimState* sim = ctx.sim;
     if (!sim || is_being_built() || army() < 0) {
         return nullptr;
     }
-    const Weapon* weapon = nullptr;
-    for (const auto& w : weapons_) {
-        if (w->weapon_index == 0) {
-            weapon = w.get();
-            break;
-        }
-    }
-    if (!weapon || weapon->dummy || weapon->fire_on_death || weapon->manual_fire) {
+    const Weapon* weapon = scan_weapon();
+    if (!weapon) {
         return nullptr;
     }
     static const CategoryName kBenign{"BENIGN"};
-    const PatrolBox box = patrol_box(*this, cmd);
-    const f32 radius = guard_scan_radius();
     Entity* best = nullptr;
     int best_priority = 0;
     f32 best_dist2 = 0;
-    for (const u32 id : box.collect(ctx.registry)) {
-        Entity* e = ctx.registry.find(id);
-        if (!e || e->destroyed() || !e->is_unit() || !box.contains(e->position())) {
+    for (Entity* e : candidates) {
+        if (!e || e->destroyed() || !e->is_unit()) {
             continue;
         }
         const auto& enemy = static_cast<const Unit&>(*e);
@@ -116,7 +141,7 @@ Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
         const f32 dx = enemy.position().x - position().x;
         const f32 dz = enemy.position().z - position().z;
         const f32 dist2 = dx * dx + dz * dz;
-        if (dist2 > radius * radius) {
+        if (dist2 > range * range) {
             continue;
         }
         if (sim->recon_of(enemy, static_cast<u32>(army())) == 0 || enemy.has_category(kBenign)) {
@@ -125,6 +150,9 @@ Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
         const bool air = enemy.is_air_unit();
         if ((enemy.parent_entity_id() != 0 && (air || enemy.is_being_built())) ||
             (air && enemy.is_being_built()) || (!air && off_map(*sim, enemy.position(), 0))) {
+            continue;
+        }
+        if (target_exempt(enemy, ctx.registry)) {
             continue;
         }
         if (!weapon->can_pick(*this, enemy, sim)) {
@@ -148,6 +176,18 @@ Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
         }
     }
     return best;
+}
+
+Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
+    const PatrolBox box = patrol_box(*this, cmd);
+    std::vector<Entity*> candidates;
+    for (const u32 id : box.collect(ctx.registry)) {
+        Entity* e = ctx.registry.find(id);
+        if (e && !e->destroyed() && e->is_unit() && box.contains(e->position())) {
+            candidates.push_back(e);
+        }
+    }
+    return best_enemy(candidates, guard_scan_radius(), ctx);
 }
 
 Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
