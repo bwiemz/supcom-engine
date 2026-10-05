@@ -46,7 +46,7 @@ set(OSC_DATA_TESTS_GATE
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test normal-test
     onframe-test particle-render-test path-test phase2-test phase3-test phase4-test phase5-test
-    persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test
+    patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test
     repair-test right-click-test scale-test scissor-test scrollbar-render-test selection-render-test session-command-test shadow-test
     mesh-capacity-test shield-render-test shield-test silo-test sky-test smoke-test spatial-test strata-test

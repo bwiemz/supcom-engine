@@ -776,6 +776,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     rules.repair_mass = number("RepairConsumeMass", rules.repair_mass);
                     rules.scan_radius = number("StagingPlatformScanRadius", rules.scan_radius);
                     unit->set_staging_rules(rules);
+                    unit->set_guard_scan_radius(
+                        number("GuardScanRadius", unit->guard_scan_radius()));
                 }
                 lua_pop(L, 1);
                 // Air.TransportHoverHeight: how low a transport hovers to load

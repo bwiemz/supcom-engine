@@ -208,7 +208,9 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             circle(*pad);
             if (still_waiting(cmd.dock_wait)) return OrderStep::Hold;
             if (!pad->transport_has_available_storage()) {
-                if (cmd.patrol_refuel) return finish(); // a patrol flies on instead
+                if (cmd.from_patrol) { // a patrol flies on instead
+                    return finish();
+                }
                 cmd.dock_wait = kRefuelPollTicks;
                 return OrderStep::Hold;
             }
@@ -253,7 +255,9 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         TransportSlots* slots = pad->transport_slots();
         if (!air_class_ || !slots ||
             !slots->assign(entity_id(), transport_class_, transport_attach_bone())) {
-            if (cmd.patrol_refuel) return finish(); // a patrol flies on instead
+            if (cmd.from_patrol) { // a patrol flies on instead
+                return finish();
+            }
             cmd.dock_wait = kRefuelPollTicks;
             return OrderStep::Hold;
         }
@@ -321,7 +325,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Hold;
     }
     set_unit_state("Refueling", false);
-    if (command_queue_.size() > 1 && !cmd.patrol_refuel) {
+    if (command_queue_.size() > 1 && !cmd.from_patrol) {
         bool waiting_for_others = false;
         registry.for_each_unit([&](Entity& e) {
             if (waiting_for_others || e.destroyed() || !e.is_unit() || &e == this) return;

@@ -152,6 +152,8 @@ public:
     /// radius, and height within MaxHeightDiff when that is set.
     /// Priorities are not checked: an attack order can pick any such unit.
     bool can_target(const Unit& owner, const Entity& target, const SimState* sim) const;
+    /// can_target, wherever the target is.
+    bool can_pick(const Unit& owner, const Entity& target, const SimState* sim) const;
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.

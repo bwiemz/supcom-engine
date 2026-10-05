@@ -13,6 +13,11 @@ public:
 
     /// Its blueprint is UNTARGETABLE (a deposit's marker): no click picks it.
     bool untargetable = false;
+    /// Its blueprint is RECLAIMABLE: a patrol may reclaim it.
+    bool reclaimable_category = false;
+    /// Its blueprint's Economy.ReclaimMassMax and ReclaimEnergyMax.
+    f32 reclaim_mass_max = 0;
+    f32 reclaim_energy_max = 0;
 
     /// SinkAway: how fast the prop sinks into the ground (units/s, <= 0).
     f32 sink_rate = 0;
