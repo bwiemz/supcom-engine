@@ -125,8 +125,10 @@ public:
     void spawn_prebuilt_units(lua_State* L, sim::SimState& sim);
 
 private:
-    /// ScenarioInfo.ArmySetup, one entry per army of the game, by name.
-    void setup_army_info(lua_State* L, const std::vector<std::string>& armies);
+    /// ScenarioInfo.ArmySetup, one entry per army of the game, by name, and
+    /// ScenarioInfo.Options' defaults (`operation`: a campaign operation's
+    /// launch, which names no victory condition).
+    void setup_army_info(lua_State* L, const std::vector<std::string>& armies, bool operation);
     Result<void> call_setup_session(lua_State* L);
     void extract_start_positions(lua_State* L, sim::SimState& sim);
     Result<void> create_army_brain(lua_State* L, sim::SimState& sim,

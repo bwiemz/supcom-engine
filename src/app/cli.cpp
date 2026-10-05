@@ -97,6 +97,10 @@ void print_usage() {
               << "                     mod manager with a player's clicks\n"
               << "  --campaign-flow-test Offscreen: the campaign through retail's screens, from\n"
               << "                     the main menu through X1CA_001 to X1CA_002's briefing\n"
+              << "  --tutorial-flow-test Offscreen: the tutorial from operation select, through\n"
+              << "                     its first missions\n"
+              << "  --outro-flow-test  Offscreen: X1CA_006 won, the outro movies, then the\n"
+              << "                     credits from operation select\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
@@ -304,6 +308,11 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.mods_flow_test = parse_flag(argc, argv, "--mods-flow-test");
     // --campaign-flow-test: the campaign through retail's screens (M209b).
     o.campaign_flow_test = parse_flag(argc, argv, "--campaign-flow-test");
+    // --tutorial-flow-test: the same screens to the tutorial, played a while.
+    o.tutorial_flow_test = parse_flag(argc, argv, "--tutorial-flow-test");
+    // --outro-flow-test: the campaign's end, its outro movies and credits.
+    o.outro_flow_test = parse_flag(argc, argv, "--outro-flow-test");
+    o.campaign_flow_test = o.campaign_flow_test || o.tutorial_flow_test || o.outro_flow_test;
     o.mods_flow_lobby = parse_flag(argc, argv, "--mods-flow-lobby"); // (M221c)
     // --click <label>, --click-at <x>,<y>, repeatable: where a player
     // clicks, in order
@@ -400,7 +409,8 @@ const char* test_mode_flag(int argc, char* argv[]) {
         const std::string_view arg = argv[i];
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
                           arg != "--replay-flow-test" && arg != "--load-flow-test" &&
-                          arg != "--mods-flow-test" && arg != "--campaign-flow-test";
+                          arg != "--mods-flow-test" && arg != "--campaign-flow-test" &&
+                          arg != "--tutorial-flow-test" && arg != "--outro-flow-test";
         if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join")
             return argv[i];
     }
