@@ -84,7 +84,11 @@ public:
     std::string projectile_bp_id;          // ChangeProjectileBlueprint
     std::string fire_control_label;   // SetFireControl: whose OnTarget gates firing
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
-    f32 bomb_drop_threshold = 1.5f;      // BombDropThreshold (Moho's default)
+    /// AutoInitiateAttackCommand: an idle aircraft attacks what this weapon
+    /// picks (Moho's CAcquireTargetTask), and a winged one's fires only at
+    /// a quarter of its top speed.
+    bool auto_initiate_attack_command = false;
+    f32 bomb_drop_threshold = 1.5f; // BombDropThreshold (Moho's default)
     // Targeting: SetTargetingPriorities (compiled; a candidate must match
     // one, and earlier ones win), the blueprint's restrictions (empty: none)
     // and how often targets are looked for.
@@ -158,6 +162,9 @@ public:
     /// aircraft's velocity, lands on `at` -- or where a moving target will
     /// be, by its PredictAheadForBombDrop (Moho's UnitWeapon::CanFire).
     bool bomb_ready(const Unit& owner, const Vector3& at, const EntityRegistry& registry) const;
+    /// A winged aircraft's AutoInitiateAttackCommand weapon fires only at a
+    /// quarter of its top speed or more (Moho's UnitWeapon::CanFire).
+    bool winged_speed_ok(const Unit& owner) const;
 
     /// Whether this weapon may shoot `target` from where `owner` stands: an
     /// enemy (by alliance, when `sim` is given), targetable, on a layer the

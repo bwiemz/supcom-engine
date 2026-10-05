@@ -184,3 +184,85 @@ void test_air_attack_run(TestContext& ctx) {
 }
 
 } // namespace osc::test
+
+namespace osc::test {
+
+// --air-auto-engage-test: an idle aircraft's AutoInitiateAttackCommand
+// weapon makes its pick the unit's attack order (Moho's CAcquireTargetTask,
+// CheckAutoInitiate):
+// 1. an idle fighter (UEA0102) attacks an enemy bomber passing within its
+//    reach (25 x TrackingRadius 1.25);
+// 2. one on hold fire stays idle;
+// 3. one on a move order keeps it;
+// 4. an idle bomber (UEA0103) attacks an enemy tank 45 out (its reach 50).
+void test_air_auto_engage(TestContext& ctx) {
+    spdlog::info("=== AIR AUTO ENGAGE TEST: idle aircraft attack on their own ===");
+    int pass = 0, fail = 0;
+    const auto record = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            test_status::fail("[FAIL] {}", what);
+        }
+    };
+    auto r = ctx.lua_state.do_string(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        local function make(bp, army, dx, dz, up)
+            local px, pz = x + dx, z + dz
+            local u = CreateUnitHPR(bp, army, px, GetTerrainHeight(px, pz) + (up or 0), pz, 0, 0, 0)
+            return u, tonumber(u:GetEntityId())
+        end
+        -- The fighters, 20 west of the bomber's path north.
+        __auto_f1, __auto_f1_id = make('uea0102', 'ARMY_1', 20, -40, 20)
+        __auto_f2, __auto_f2_id = make('uea0102', 'ARMY_1', 20, 0, 20)
+        __auto_f2:SetFireState(1)
+        __auto_f3, __auto_f3_id = make('uea0102', 'ARMY_1', 20, 40, 20)
+        IssueMove({__auto_f3}, {x + 20, 0, z + 300})
+        __auto_bomber, __auto_bomber_id = make('uea0103', 'ARMY_2', 40, -80, 18)
+        IssueMove({__auto_bomber}, {x + 40, 0, z + 300})
+        -- The bomber and the tank, well away.
+        __auto_b1, __auto_b1_id = make('uea0103', 'ARMY_1', 200, -150, 18)
+        __auto_tank, __auto_tank_id = make('uel0201', 'ARMY_2', 245, -150, 0)
+    )");
+    record(static_cast<bool>(r), r ? "setup" : "setup: " + r.error().message);
+    if (!r) return;
+    lua_State* L = ctx.lua_state.raw();
+    const auto id = [&](const char* name) {
+        lua_pushstring(L, name);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto v = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+        lua_pop(L, 1);
+        return v;
+    };
+    auto& registry = ctx.sim.entity_registry();
+    const auto head = [&](u32 unit_id) -> const sim::UnitCommand* {
+        auto* e = registry.find(unit_id);
+        if (!e || e->destroyed() || !e->is_unit()) return nullptr;
+        const auto& q = static_cast<sim::Unit*>(e)->command_queue();
+        return q.empty() ? nullptr : &q.front();
+    };
+    const u32 bomber = id("__auto_bomber_id");
+    const u32 tank = id("__auto_tank_id");
+    bool f1_attacked = false, b1_attacked = false;
+    for (int tick = 0; tick < 120 && !(f1_attacked && b1_attacked); ++tick) {
+        ctx.sim.tick();
+        if (const auto* c = head(id("__auto_f1_id"));
+            c && c->type == sim::CommandType::Attack && c->target_id == bomber)
+            f1_attacked = true;
+        if (const auto* c = head(id("__auto_b1_id"));
+            c && c->type == sim::CommandType::Attack && c->target_id == tank)
+            b1_attacked = true;
+    }
+    record(f1_attacked, "Test 1: an idle fighter attacks an enemy bomber passing by");
+    const auto* f2 = head(id("__auto_f2_id"));
+    record(!f2 || f2->type != sim::CommandType::Attack,
+           "Test 2: a fighter on hold fire stays idle");
+    const auto* f3 = head(id("__auto_f3_id"));
+    record(f3 && f3->type == sim::CommandType::Move, "Test 3: a fighter on a move order keeps it");
+    record(b1_attacked, "Test 4: an idle bomber attacks an enemy tank 45 out");
+    spdlog::info("Air auto engage test: {}/{} passed", pass, pass + fail);
+}
+
+} // namespace osc::test

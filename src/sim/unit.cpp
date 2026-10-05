@@ -642,10 +642,33 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
             if (destroyed() || dying_) break;
             weapon->update(*this, registry, L, ctx.sim);
         }
+        // A weapon's own pick for an idle aircraft: its attack order,
+        // clearing the queue, issued as the sim's own (Moho's
+        // CAcquireTargetTask issues it to the unit alone).
+        if (const u32 target_id = auto_attack_target_; target_id != 0) {
+            auto_attack_target_ = 0;
+            const Entity* target = registry.find(target_id);
+            if (ctx.sim && target && !target->destroyed() && !destroyed() && !dying_) {
+                UnitCommand attack;
+                attack.type = CommandType::Attack;
+                attack.target_id = target_id;
+                attack.target_pos = target->position();
+                ctx.sim->route_command({entity_id()}, attack, true);
+            }
+        }
     }
 
     // Update manipulators (rotators, animators, sliders, aim controllers)
     tick_manipulators(static_cast<f32>(dt), L);
+}
+
+bool Unit::auto_initiate_allowed(const EntityRegistry& registry) const {
+    if (command_queue_.empty()) return true;
+    if (command_queue_.size() != 1) return false;
+    const UnitCommand& only = command_queue_.front();
+    if (only.type != CommandType::Attack || only.target_id == 0) return false;
+    const Entity* target = registry.find(only.target_id);
+    return !target || target->destroyed();
 }
 
 Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L) {

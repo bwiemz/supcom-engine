@@ -28,7 +28,7 @@
 #     renderer, four frames per tick: a walking ACU moves every frame).
 
 set(OSC_DATA_TESTS_GATE
-    adjacency-test ai-test aim-test air-attack-run-test air-staging-test air-turn-test anim-render-test anim-test arc-test area-test armor-test
+    adjacency-test ai-test aim-test air-attack-run-test air-auto-engage-test air-staging-test air-turn-test anim-render-test anim-test arc-test area-test armor-test
     army-colors-test audio-test
     beam-render-test beam-test beam-weapon-test binding-tail-test bitmap-test blend-test bone-test border-render-test build-test
     camera-test
