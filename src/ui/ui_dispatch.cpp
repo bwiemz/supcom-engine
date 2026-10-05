@@ -647,6 +647,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         // is on top in child order.
         bool consumed = false;
         std::unordered_set<UIControl*> skip_set;
+        std::unordered_set<UIControl*> told;
         constexpr int kMaxRetries = 16;
 
         for (int attempt = 0; attempt < kMaxRetries && !consumed; ++attempt) {
@@ -654,7 +655,10 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
 
             UIControl* c = target;
             while (c) {
-                if (fire_handle_event(L, c, ev)) { consumed = true; break; }
+                if (told.insert(c).second && fire_handle_event(L, c, ev)) {
+                    consumed = true;
+                    break;
+                }
                 c = c->parent();
             }
 
