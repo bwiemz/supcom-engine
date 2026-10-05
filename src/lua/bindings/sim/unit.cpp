@@ -982,15 +982,30 @@ static int unit_GetConsumptionPerSecondMass(lua_State* L) {
     return 1;
 }
 
+// unit:SetConsumptionActive(flag): as Moho's Unit::SetConsumptionActive,
+// the script hears OnConsumptionActive or OnConsumptionInActive when its
+// flag changes -- the flag the scripts set, apart from the engine's own
+// switching of the economy drain while the unit builds or repairs.
 static int unit_SetConsumptionActive(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->economy().consumption_active = lua_toboolean(L, 2) != 0;
+    if (!u) return 0;
+    const bool on = lua_toboolean(L, 2) != 0;
+    auto& econ = u->economy();
+    econ.consumption_active = on;
+    const bool was = econ.script_consumption_active;
+    econ.script_consumption_active = on;
+    if (was != on) u->call_lua_method(L, on ? "OnConsumptionActive" : "OnConsumptionInActive");
     return 0;
 }
 
+// unit:SetProductionActive(flag): Moho's tells the script
+// OnProductionActive or OnProductionInActive every time.
 static int unit_SetProductionActive(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->economy().production_active = lua_toboolean(L, 2) != 0;
+    if (!u) return 0;
+    const bool on = lua_toboolean(L, 2) != 0;
+    u->economy().production_active = on;
+    u->call_lua_method(L, on ? "OnProductionActive" : "OnProductionInActive");
     return 0;
 }
 
@@ -2035,9 +2050,14 @@ static int unit_DisableSonarStealth(lua_State* L) {
     if (u) u->disable_intel("SonarStealth");
     return 0;
 }
+// unit:SetAutoMode(flag): Moho's Unit::SetAutoMode tells the script
+// OnAutoModeOn or OnAutoModeOff every time, changed or not.
 static int unit_SetAutoMode(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_auto_mode(lua_toboolean(L, 2) != 0);
+    if (!u) return 0;
+    const bool on = lua_toboolean(L, 2) != 0;
+    u->set_auto_mode(on);
+    u->call_lua_method(L, on ? "OnAutoModeOn" : "OnAutoModeOff");
     return 0;
 }
 static int unit_GetAutoMode(lua_State* L) {
