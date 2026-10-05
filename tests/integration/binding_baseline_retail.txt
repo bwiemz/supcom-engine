@@ -20,7 +20,6 @@ G ERROR                     # not Moho's: a retail typo (error)
 G ExecLuaInSim
 G GenerateBuildTemplateFromSelection
 G GetArmy                   # not Moho's as a global (a method of units and brains)
-G IN_ClearKeyMap
 G InternalCreateMesh
 G IssueEnhance              # not Moho's
 G RemoveProfileDirectories

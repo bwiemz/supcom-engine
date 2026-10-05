@@ -588,6 +588,11 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 11"));
+
+    f.run("IN_ClearKeyMap()");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 11"));
 }
 
 TEST_CASE("Only the Edit with the focus has it, as it moves between them", "[ui][lua][input]") {
