@@ -24,7 +24,6 @@ DirectionY
 DirectionZ
 EffectiveRadius
 GroundCollisionOffset
-GuardReturnRadius
 HideLifebars
 HoverOverAttack
 IgnoreIfDisabled

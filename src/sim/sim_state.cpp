@@ -2949,6 +2949,20 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             // An order a NeedUnpack unit has begun (its pack-up done), only
             // then: other units' orders hash as before.
             if (cmd.begun && u.need_unpack()) orders.mix(0x4245474eu); // "BEGN"
+            // A guard's fight and its way home, only then.
+            if (cmd.from_guard || cmd.guard_returning) {
+                orders.mix(0x47415244u); // "GARD"
+                orders.mix((cmd.from_guard ? 1u : 0u) | (cmd.guard_returning ? 2u : 0u));
+            }
+            // A guard's or patrol's fight's leash, only once it has one.
+            const Vector3& anchor = cmd.leash_anchor_pos;
+            if (cmd.leash_armed || cmd.leash_anchor_id != 0 || anchor.x != 0 || anchor.y != 0 ||
+                anchor.z != 0) {
+                orders.mix(0x4c455348u); // "LESH"
+                orders.mix(cmd.leash_armed ? 1u : 0u);
+                orders.mix(cmd.leash_anchor_id);
+                mix_vec(orders, cmd.leash_anchor_pos);
+            }
             if (cmd.from_patrol || !cmd.patrol_claimed.empty()) {
                 orders.mix(0x5054524cu); // "PTRL"
                 orders.mix(cmd.from_patrol ? 1u : 0u);

@@ -13,6 +13,7 @@
 #include <deque>
 #include <memory>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -162,9 +163,14 @@ public:
     /// (walls 0.1; drones, build bots and satellites 0).
     f32 cap_cost() const { return cap_cost_; }
     void set_cap_cost(f32 c) { cap_cost_ = c; }
-    /// AI.GuardScanRadius: how far off its route a patrol takes on work.
+    /// AI.GuardScanRadius: how far off its route a patrol takes on work,
+    /// and how far from itself a guard takes on enemies.
     f32 guard_scan_radius() const { return guard_scan_radius_; }
     void set_guard_scan_radius(f32 r) { guard_scan_radius_ = r; }
+    /// AI.GuardReturnRadius: how far from what it guards (or where its
+    /// patrol broke off) a unit chases an enemy it has reached.
+    f32 guard_return_radius() const { return guard_return_radius_; }
+    void set_guard_return_radius(f32 r) { guard_return_radius_ = r; }
     /// AI.NeedUnpack: its weapon unpacks, holding the unit still, before it
     /// fires (retail's mobile artillery). A new order packs it up, and it
     /// looks for no targets while it moves (see begin_order).
@@ -395,21 +401,36 @@ public:
         return command_queue_;
     }
     /// The unit this one guards (GetGuardedUnit): its current order's
-    /// target when that is a Guard, else 0.
+    /// target when that is a Guard, else 0. Fighting for its guard, it still
+    /// guards (Moho keeps the guarded unit while the attack task runs).
     u32 guarded_unit_id() const {
-        return !command_queue_.empty() && command_queue_.front().type == CommandType::Guard
-                   ? command_queue_.front().target_id
-                   : 0;
+        const UnitCommand* guard = guard_order();
+        return guard ? guard->target_id : 0;
+    }
+    /// The Guard it is carrying out: the head order, or the one beneath a
+    /// fight it broke off for (null: it guards nothing).
+    const UnitCommand* guard_order() const {
+        size_t i = 0;
+        while (i < command_queue_.size() && command_queue_[i].from_guard) ++i;
+        if (i == command_queue_.size() || command_queue_[i].type != CommandType::Guard)
+            return nullptr;
+        return &command_queue_[i];
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
     /// `cmd` at the back of the queue as it is (NotifyUpgrade's copy of an
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
-    /// A unit guarding `from` (its current order a Guard of it) guards `to`.
+    /// A unit guarding `from` (its current order a Guard of it, or a fight
+    /// for that Guard) guards `to`.
     void retarget_guard(u32 from, u32 to) {
-        if (!command_queue_.empty() && command_queue_.front().type == CommandType::Guard &&
-            command_queue_.front().target_id == from)
-            command_queue_.front().target_id = to;
+        for (UnitCommand& c : command_queue_) {
+            if (c.from_guard) {
+                if (c.leash_anchor_id == from) c.leash_anchor_id = to;
+                continue;
+            }
+            if (c.type == CommandType::Guard && c.target_id == from) c.target_id = to;
+            return;
+        }
     }
     void clear_commands(const char* source = "?");
 
@@ -1114,6 +1135,31 @@ private:
     /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
     /// CUnitPatrolTask::FindTarget), or null.
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
+    /// Whether a guard of `guarded` (null: of a point) takes on enemies.
+    bool guard_reacts(const Unit* guarded) const;
+    /// A guard's fight (Moho's guard task, GetBestEnemy and its Starting
+    /// state): going home after one, or, every 6 ticks, an enemy within its
+    /// GuardScanRadius taken on as an Attack ahead of the guard. The step,
+    /// or nothing while the guard goes on as before. `ref` is what it
+    /// guards: the guarded unit's position, or the point.
+    std::optional<OrderStep> guard_engage(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
+                                          f64 dt, SimContext& ctx);
+    /// A Guard of a point: go there, and take on enemies near it.
+    OrderStep order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// Head for `goal`, setting a new path only when it moved by a unit.
+    void walk_to(const Vector3& goal, f64 dt, SimContext& ctx);
+    /// Moho's FindBestEnemy with the unit's primary weapon: of `candidates`
+    /// (in id order), the enemy within `range` (XZ) of the unit it takes on
+    /// first, or null (unit_patrol.cpp).
+    Entity* best_enemy(const std::vector<Entity*>& candidates, f32 range, SimContext& ctx);
+    /// The weapon a guard or patrol looks for enemies with (Moho's
+    /// GetPrimaryWeapon: weapon 0, unless it fires only on death, by hand,
+    /// or not at all), or null.
+    const Weapon* scan_weapon() const;
+    /// An enemy its scans leave alone (Moho's IsTargetExempt): the target of
+    /// a reclaim or capture in its queue, or a unit its army's engineers are
+    /// capturing.
+    bool target_exempt(const Unit& enemy, const EntityRegistry& registry) const;
     /// What a patrolling PATROLHELPER breaks off to reclaim or repair
     /// (Moho's EvaluatePatrolReclaimAttack), or null.
     Entity* find_patrol_work(const UnitCommand& cmd, SimContext& ctx);
@@ -1232,6 +1278,7 @@ private:
     f32 cap_cost_ = 1.0f;           // Moho's RUnitBlueprint default
     f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
     f32 guard_scan_radius_ = 25.0f;
+    f32 guard_return_radius_ = 50.0f;
     bool need_unpack_ = false;
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
