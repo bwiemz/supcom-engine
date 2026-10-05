@@ -1015,6 +1015,12 @@ static int l_SimCallback(lua_State* L) {
     lua_pop(L, 1);
 
     if (entry.func_name.empty()) return 0; // no function name = skip
+    // The engine's own callbacks (a defeat, a post-load...) are the engine's
+    // to issue, not a script's.
+    if (entry.func_name.rfind(sim::kEngineCallbackPrefix, 0) == 0) {
+        spdlog::warn("SimCallback: '{}' is the engine's own; not sent", entry.func_name);
+        return 0;
+    }
 
     // Read Args field (table of key→value)
     lua_pushstring(L, "Args");

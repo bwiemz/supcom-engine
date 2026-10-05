@@ -35,6 +35,15 @@ inline constexpr const char* kDefeatArmyCallback = "__osc_DefeatArmy";
 /// source asks (Moho's CMDST_RequestPause).
 inline constexpr const char* kRequestPauseCallback = "__osc_RequestPause";
 
+/// Func name of a loaded game's post-load: Moho's SimSync.SyncPlayableRect,
+/// then the global OnPostLoad(), which re-send to the new UI what only the
+/// sim remembers (campaign mode, objectives, transmissions...). A load
+/// schedules it, so it is in the game's history and replays with it.
+inline constexpr const char* kPostLoadCallback = "__osc_PostLoad";
+
+/// The engine's own callbacks start with this; a script may not issue one.
+inline constexpr const char* kEngineCallbackPrefix = "__osc_";
+
 /// A SimCallback argument: FA's callbacks carry strings, numbers and bools.
 using SimCallbackArg = std::variant<std::string, f64, bool>;
 

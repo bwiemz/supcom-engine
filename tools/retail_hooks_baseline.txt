@@ -18,7 +18,6 @@ method OnKeyboardFocusChange
 method OnNukeArmed
 method OnPlayBusyStagingPlatformsVO
 method OnPlayNoStagingPlatformsVO
-method OnPostLoad
 method OnSpecialAction
 method OnStart
 method OnStartBuilderTracking

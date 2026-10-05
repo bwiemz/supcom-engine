@@ -126,7 +126,11 @@ void App::Window::handle_launch() {
                     lua_pushnumber(uiL, -1);
                     lua_rawset(uiL, LUA_REGISTRYINDEX);
                 }
-                if (launch_save && sim_state) {
+                const bool loading_save = launch_save && sim_state;
+                if (loading_save) {
+                    // Its interface waits for the load's post-load (see
+                    // finish_world_ui_after_post_load).
+                    world_ui_after_post_load = kPostLoadUnscheduled;
                     // The player's game, restored from its snapshot
                     // (M208c). Without one, or if the restore fails
                     // (the sim it spoiled booted again), caught up
@@ -171,9 +175,15 @@ void App::Window::handle_launch() {
                     instrument_harness->install_all_method_interceptors(sim_lua_state->raw());
                 }
 
-                // Build the game interface; the loading dialog fades out
-                finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value(),
-                                sim_lua_state.get(), sim_state.get());
+                // Build the game interface; the loading dialog fades out. A
+                // loaded game's waits for its post-load (the next tick of a
+                // restore, the end of a catch-up): see
+                // finish_world_ui_after_post_load.
+                if (!loading_save || !sim_state) {
+                    world_ui_after_post_load.reset(); // a load left before its post-load
+                    finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value(),
+                                    sim_lua_state.get(), sim_state.get());
+                }
             }
         } else {
             lua_pop(uiL, 1);
@@ -196,6 +206,7 @@ void App::Window::handle_return_to_lobby() {
             lua_rawset(uiL, LUA_REGISTRYINDEX);
 
             spdlog::info("Returning to lobby...");
+            world_ui_after_post_load.reset(); // a load abandoned before its post-load
 
             // Tear down any multiplayer session/transport before the
             // sim it references is destroyed.
