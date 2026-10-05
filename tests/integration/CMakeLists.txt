@@ -251,6 +251,14 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # The tutorial from operation select (roadmap item 5): its opening, with no
+    # army given a commander (Moho spawns none for an operation), then its
+    # zoom, move and attack missions, played as a player would.
+    add_test(NAME data.tutorial_flow COMMAND opensupcom --tutorial-flow-test)
+    set_tests_properties(data.tutorial_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 
     # M221b: a skirmish with the player's mods -- two test mods in a
     # temporary Documents folder's mods folder and retail's Resource Rich,

@@ -362,8 +362,8 @@ std::optional<int> App::Window::start_flows() {
     }
     // --campaign-flow-test: the campaign through retail's screens (M209b)
     if (opt.campaign_flow_test) {
-        spdlog::info("=== campaign flow test ===");
-        campaign_flow.emplace();
+        spdlog::info("=== {} flow test ===", opt.tutorial_flow_test ? "tutorial" : "campaign");
+        campaign_flow.emplace(opt.tutorial_flow_test);
     }
     if (!opt.clicks.empty()) {
         ui_clicks.emplace(opt.clicks);
@@ -423,7 +423,8 @@ std::optional<int> App::Window::finish() {
     }
     if (campaign_flow) {
         campaign_flow->finish();
-        return finish_test_run("campaign-flow-test");
+        return finish_test_run(opt.tutorial_flow_test ? "tutorial-flow-test"
+                                                      : "campaign-flow-test");
     }
     if (opt.replay_flow_test) {
         auto is_replay = ui_lua_state.do_string(
