@@ -232,3 +232,38 @@ TEST_CASE("A directional animation runs backward while its unit backs up", "[pos
     anim.tick(0.25f); // moving ahead again: forward
     CHECK_THAT(anim.animation_fraction(), WithinAbs(0.75, 1e-6));
 }
+
+TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its pitch",
+          "[pose][aim]") {
+    // YawOnlyOnTarget (the Torrent's missile racks: pitch fixed at 55 deg):
+    // Moho's CAimManipulator::CheckTracking skips the pitch lane's test. The
+    // barrel still turns toward the target, within its arc.
+    for (const bool yaw_only : {false, true}) {
+        BoneData bd = make_two_bones();
+        Unit unit;
+        unit.set_bone_data(&bd);
+        unit.init_animated_bones();
+        auto& aim =
+            static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+        aim.set_yaw_bone(0);
+        aim.set_pitch_bone(1);
+        aim.set_firing_arc(-180.0f, 180.0f, 90.0f, 55.0f, 55.0f, 90.0f);
+        aim.set_yaw_only_on_target(yaw_only);
+        // Level, 100 ahead and 30 degrees to the side: the heading must turn.
+        const f32 side = 100.0f * std::sin(0.5235988f);
+        const f32 ahead = 100.0f * std::cos(0.5235988f);
+        aim.set_target({side, 1.0f, ahead}, 2.0f * 0.0174533f);
+        bool ever = false;
+        bool early = false;
+        for (int t = 0; t < 20; ++t) {
+            unit.tick_manipulators(0.1f, nullptr);
+            // 30 degrees at 90 a second takes 3-4 ticks
+            if (t < 2 && aim.on_target()) early = true;
+            ever = ever || aim.on_target();
+        }
+        CHECK(ever == yaw_only);
+        CHECK_FALSE(early);
+        CHECK_THAT(aim.pitch(), WithinAbs(55.0 * 0.0174533, 1e-3));
+        CHECK_THAT(aim.heading(), WithinAbs(0.5235988, 2.0 * 0.0174533));
+    }
+}

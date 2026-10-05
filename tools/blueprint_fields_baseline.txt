@@ -84,5 +84,4 @@ UseFiringSolutionInsteadOfAimBone
 UseOOBTestZoom
 WobbleFactor
 WobbleSpeed
-YawOnlyOnTarget
 ZigZagFrequency

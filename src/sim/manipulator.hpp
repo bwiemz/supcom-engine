@@ -245,6 +245,11 @@ public:
     }
     void clear_target() { has_target_ = false; }
     bool has_target() const { return has_target_; }
+    /// Its weapon's YawOnlyOnTarget: on target once the heading is, whatever
+    /// the pitch (the barrel still turns toward it). Moho copies the weapon's
+    /// blueprint into the controller as it is made.
+    void set_yaw_only_on_target(bool b) { yaw_only_on_target_ = b; }
+    bool yaw_only_on_target() const { return yaw_only_on_target_; }
     /// CreateBuilderArmController's: the unit's build orders aim it
     void set_builder_arm(bool b) { builder_arm_ = b; }
     bool builder_arm() const { return builder_arm_; }
@@ -272,6 +277,7 @@ private:
     bool has_target_ = false;
     bool on_target_ = false;
     bool builder_arm_ = false;
+    bool yaw_only_on_target_ = false;
 };
 
 // ---------------------------------------------------------------------------

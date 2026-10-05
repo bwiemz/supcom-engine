@@ -491,6 +491,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     save(w, wp.restrict_disallow);
     save(w, wp.restrict_only_allow);
     w.b(wp.above_water_targets_only);
+    w.b(wp.yaw_only_on_target);
     w.b(wp.above_water_fire_only);
     w.b(wp.always_recheck_target);
     w.u32v(wp.target_check_period);
@@ -561,6 +562,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     load(r, wp.restrict_disallow);
     load(r, wp.restrict_only_allow);
     wp.above_water_targets_only = r.b();
+    wp.yaw_only_on_target = r.b();
     wp.above_water_fire_only = r.b();
     wp.always_recheck_target = r.b();
     wp.target_check_period = r.u32v();
@@ -676,6 +678,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.b(x.has_target_);
         w.b(x.on_target_);
         w.b(x.builder_arm_);
+        w.b(x.yaw_only_on_target_);
         break;
     }
     case ManipKind::Slaver: {
@@ -798,6 +801,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->has_target_ = r.b();
         x->on_target_ = r.b();
         x->builder_arm_ = r.b();
+        x->yaw_only_on_target_ = r.b();
         m = std::move(x);
         break;
     }
