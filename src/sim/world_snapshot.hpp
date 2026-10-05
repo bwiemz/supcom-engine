@@ -30,6 +30,7 @@ struct CommandRecord {
     Vector3 target_pos;
     std::string blueprint_id; ///< what a build order builds
     bool pending = false;
+    bool from_guard = false; ///< a fight its Guard (behind it) broke off for
 };
 
 struct PendingQueue {

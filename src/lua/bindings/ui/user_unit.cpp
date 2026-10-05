@@ -375,9 +375,12 @@ int uu_GetGuardedEntity(lua_State* L) {
     const sim::WorldSnapshot* world = r ? ui_world(L) : nullptr;
     u32 guarded = 0;
     if (world) {
-        const auto commands = world->commands_of(*r);
-        if (!commands.empty() && commands.front().type == sim::CommandType::Guard)
-            guarded = commands.front().target_id;
+        // Fighting for its guard, it still guards (as Unit::guard_order)
+        for (const sim::CommandRecord& c : world->commands_of(*r)) {
+            if (c.from_guard) continue;
+            if (c.type == sim::CommandType::Guard) guarded = c.target_id;
+            break;
+        }
     }
     push_user_unit_or_nil(L, guarded);
     return 1;

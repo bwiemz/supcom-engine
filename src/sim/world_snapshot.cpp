@@ -170,8 +170,9 @@ void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
 }
 
 CommandRecord command_record(const UnitCommand& c, bool pending) {
-    return {c.type, c.target_id, c.target_pos,
-            c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(), pending};
+    return {c.type,       c.target_id,
+            c.target_pos, c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(),
+            pending,      c.from_guard};
 }
 
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {

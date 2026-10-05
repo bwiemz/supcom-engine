@@ -73,10 +73,9 @@ f32 accel(const Unit& u) {
     return a > 0 ? a : u.max_speed();
 }
 
-/// The unit its head order guards, or 0.
+/// The unit its head order guards (or fights for, guarding), or 0.
 u32 guarded(const Unit& u) {
-    const auto& q = u.command_queue();
-    return !q.empty() && q.front().type == CommandType::Guard ? q.front().target_id : 0;
+    return u.guarded_unit_id();
 }
 
 /// The transport its head order waits for, or 0.

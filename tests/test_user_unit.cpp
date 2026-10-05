@@ -327,3 +327,30 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     CHECK(text_arg(pending.back(), "Action") == "SetRepeatQueue");
     CHECK(pending.back().unit_ids == std::vector<osc::u32>{w.id});
 }
+
+TEST_CASE("A guard fighting for its guard still guards, as a UI script sees it", "[userunit]") {
+    // Moho keeps the guarded unit while the guard's attack task runs; the
+    // engine's fight is an Attack ahead of the Guard (from_guard).
+    UiWorld w;
+    auto& u = w.unit();
+    auto ward = std::make_unique<osc::sim::Unit>();
+    ward->set_army(1);
+    const osc::u32 ward_id = w.sim.entity_registry().register_entity(std::move(ward));
+    osc::sim::UnitCommand fight;
+    fight.type = osc::sim::CommandType::Attack;
+    fight.from_guard = true;
+    u.push_command(fight, false);
+    osc::sim::UnitCommand guard;
+    guard.type = osc::sim::CommandType::Guard;
+    guard.target_id = ward_id;
+    u.push_command(guard, false);
+    auto result = w.ui.do_string(R"(
+        local guarded = units[1]:GetGuardedEntity()
+        if not guarded or guarded:GetEntityId() ~= ')" +
+                                 std::to_string(ward_id) + R"(' then
+            error('guards ' .. tostring(guarded and guarded:GetEntityId()))
+        end
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    CHECK(result.ok());
+}

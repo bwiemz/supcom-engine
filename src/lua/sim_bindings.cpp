@@ -909,6 +909,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     unit->set_staging_rules(rules);
                     unit->set_guard_scan_radius(
                         number("GuardScanRadius", unit->guard_scan_radius()));
+                    unit->set_guard_return_radius(
+                        number("GuardReturnRadius", unit->guard_return_radius()));
                     lua_pushstring(L, "NeedUnpack");
                     lua_rawget(L, -2);
                     unit->set_need_unpack(lua_toboolean(L, -1) != 0);
@@ -5241,13 +5243,18 @@ static int l_IssueGuard(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
 
-    auto* target = extract_entity(L, 2);
-    if (!target || target->destroyed() || !target->is_unit()) return 0;
-
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Guard;
-    cmd.target_id = target->entity_id();
-    cmd.target_pos = target->position();
+    if (lua_istable(L, 2) && !is_object_handle(L, 2)) {
+        // A place to guard (retail's AI guards bases and markers by
+        // position): only mobile units take it (SimState::takes_command).
+        cmd.target_pos = extract_position(L, 2);
+    } else {
+        auto* target = extract_entity(L, 2);
+        if (!target || target->destroyed() || !target->is_unit()) return 0;
+        cmd.target_id = target->entity_id();
+        cmd.target_pos = target->position();
+    }
     return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 

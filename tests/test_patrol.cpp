@@ -22,6 +22,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -274,6 +275,52 @@ TEST_CASE("A NeedUnpack patrol breaks off only for an enemy it can hit from wher
     const auto seen = break_offs(sim, *tank, CommandType::Attack, 300);
     REQUIRE(!seen.empty());
     CHECK(seen.front() == on_route->entity_id());
+}
+
+TEST_CASE("A patrol's chase ends at GuardReturnRadius from where it broke off", "[patrol]") {
+    // Moho's patrol task keeps where it broke off (GuardedPos), and the
+    // acquire task's leash ends the attack once the unit, having reached its
+    // target, is GuardReturnRadius from there.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 5.0f;
+    tank->add_weapon(std::move(gun));
+    tank->set_guard_scan_radius(20.0f);
+    tank->set_guard_return_radius(30.0f);
+    Unit* runner = walker(sim, 22.0f, 18.0f);
+    runner->set_army(1);
+    runner->set_max_speed(3.0f);
+    osc::sim::UnitCommand away;
+    away.type = CommandType::Move;
+    away.target_pos = {22.0f, 0.0f, 120.0f};
+    away.command_id = 9;
+    runner->push_command(away, true);
+    tank->push_command(patrol(100.0f, 10.0f, 1), true);
+    const auto fighting = [&] {
+        const auto& q = tank->command_queue();
+        return !q.empty() && q.front().from_patrol && q.front().type == CommandType::Attack;
+    };
+    for (int t = 0; t < 30 && !fighting(); ++t) sim.tick();
+    REQUIRE(fighting());
+    const osc::sim::Vector3 from = tank->command_queue().front().leash_anchor_pos;
+    CHECK(std::hypot(from.x - tank->position().x, from.z - tank->position().z) < 1.0f);
+    float farthest = 0;
+    bool armed = false;
+    for (int t = 0; t < 400 && fighting(); ++t) {
+        sim.tick();
+        farthest = std::max(farthest, static_cast<float>(std::hypot(tank->position().x - from.x,
+                                                                    tank->position().z - from.z)));
+        armed = armed || (fighting() && tank->command_queue().front().leash_armed);
+    }
+    CHECK(armed);
+    CHECK_FALSE(fighting());
+    CHECK(farthest <= 32.0f);
+    REQUIRE(!tank->command_queue().empty());
+    CHECK(tank->command_queue().front().type == CommandType::Patrol);
 }
 
 TEST_CASE("A patrol goes for an enemy ahead on its route only within its GuardScanRadius",
