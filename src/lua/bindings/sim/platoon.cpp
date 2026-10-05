@@ -304,11 +304,11 @@ static bool no_formation(const std::string& name) {
 }
 
 // platoon:MoveToLocation(position, useTransports), AggressiveMoveToLocation,
-// and MoveToTarget(unit): a move for every unit, queued after its current
-// orders (retail's AI queues one per waypoint of the route it chose, after a
-// Stop). Units move in the formation they were assigned (the platoon's
-// override first), each group laid out in its slots (M204).
-static int platoon_MoveToLocation(lua_State* L) {
+// and MoveToTarget(unit): a move (an attack-move) for every unit, queued
+// after its current orders (retail's AI queues one per waypoint of the route
+// it chose, after a Stop). Units move in the formation they were assigned
+// (the platoon's override first), each group laid out in its slots (M204).
+static int platoon_order_to(lua_State* L, sim::CommandType type) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
     if (!platoon || !sim || !lua_istable(L, 2)) {
@@ -330,7 +330,7 @@ static int platoon_MoveToLocation(lua_State* L) {
 
     u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
-    cmd.type = sim::CommandType::Move;
+    cmd.type = type;
     cmd.target_pos = pos;
     cmd.command_id = cmd_id;
 
@@ -356,6 +356,13 @@ static int platoon_MoveToLocation(lua_State* L) {
     }
     lua_pushnumber(L, cmd_id);
     return 1;
+}
+
+static int platoon_MoveToLocation(lua_State* L) {
+    return platoon_order_to(L, sim::CommandType::Move);
+}
+static int platoon_AggressiveMoveToLocation(lua_State* L) {
+    return platoon_order_to(L, sim::CommandType::AggressiveMove);
 }
 
 static int platoon_Patrol(lua_State* L) {
@@ -1293,7 +1300,7 @@ const MethodEntry platoon_methods[] = {
     {"MoveToLocation",              platoon_MoveToLocation},
     {"MoveToTarget",                platoon_MoveToLocation},
     {"Patrol",                      platoon_Patrol},
-    {"AggressiveMoveToLocation",    platoon_MoveToLocation},
+    {"AggressiveMoveToLocation",    platoon_AggressiveMoveToLocation},
     {"AttackTarget",                platoon_AttackTarget},
     {"GuardTarget",                 platoon_GuardTarget},
     {"IsOpponentAIRunning",         platoon_IsOpponentAIRunning},

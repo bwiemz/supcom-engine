@@ -513,3 +513,85 @@ TEST_CASE("A patrol broken off to reclaim plays on the same after a restore",
     }
     CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
 }
+
+TEST_CASE("An attack-move goes for an enemy near its route, then ends where it arrives",
+          "[patrol][attack-move]") {
+    // Moho's AggressiveMove: one leg of its patrol task, the order removed
+    // when the leg is done.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 5.0f;
+    tank->add_weapon(std::move(gun));
+    tank->set_guard_scan_radius(20.0f);
+    Unit* near = still(sim, 1, 50.0f, 22.0f);
+    osc::sim::UnitCommand go;
+    go.type = CommandType::AggressiveMove;
+    go.target_pos = {100.0f, 0.0f, 10.0f};
+    go.command_id = 1;
+    tank->push_command(go, true);
+    const auto seen = break_offs(sim, *tank, CommandType::Attack, 120);
+    REQUIRE(seen == std::vector<osc::u32>{near->entity_id()});
+    sim.entity_registry().unregister_entity(near->entity_id());
+    for (int t = 0; t < 400 && !tank->command_queue().empty(); ++t) {
+        sim.tick();
+    }
+    CHECK(tank->command_queue().empty());
+    CHECK(tank->position().x > 95.0f);
+}
+
+TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol it reclaims",
+          "[patrol][attack-move]") {
+    // Moho's patrol task in formation, as an attack-move's always is: COMMAND
+    // and SACU_BEHAVIOR units skip the helpers' sweep.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* acu = engineer(sim, 10.0f, 10.0f);
+    acu->add_category("COMMAND");
+    Prop* stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f);
+    osc::sim::UnitCommand go;
+    go.type = CommandType::AggressiveMove;
+    go.target_pos = {90.0f, 0.0f, 10.0f};
+    go.command_id = 1;
+    acu->push_command(go, true);
+    CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300).empty());
+
+    acu->push_command(patrol(10.0f, 10.0f, 2), true);
+    CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300) ==
+          std::vector<osc::u32>{stone->entity_id()});
+}
+
+TEST_CASE("An Attack on bare ground attack-moves a mobile unit on ReturnFire, and not others",
+          "[patrol][attack-move]") {
+    // Moho's SplitSelectionForAggressiveMove (the UI's RULEUCC_Attack arm).
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eager = walker(sim, 10.0f, 10.0f);
+    Unit* holding = walker(sim, 10.0f, 30.0f);
+    for (Unit* u : {eager, holding}) {
+        u->add_command_cap("RULEUCC_Attack");
+        u->set_motion_type("RULEUMT_Land"); // mobile
+    }
+    holding->set_fire_state(1); // HoldFire
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eager->entity_id(), holding->entity_id()});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Attack";
+    REQUIRE(input.click_in_command_mode(sim, mode, 90.0f, 60.0f, false));
+    sim.tick();
+    REQUIRE(!eager->command_queue().empty());
+    CHECK(eager->command_queue().front().type == CommandType::AggressiveMove);
+    CHECK(eager->command_queue().front().target_pos.x == 90.0f);
+    for (const auto& c : holding->command_queue()) {
+        CHECK(c.type != CommandType::AggressiveMove);
+    }
+}

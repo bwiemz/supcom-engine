@@ -303,6 +303,7 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     switch (cmd.type) {
     case CommandType::Move:
     case CommandType::Patrol:
+    case CommandType::AggressiveMove:
     case CommandType::Guard:
     case CommandType::Attack: break;
     default: return;
@@ -322,7 +323,8 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::BuildMobile: return order_build_mobile(cmd, dt, ctx, econ_eff);
     case CommandType::BuildFactory:
     case CommandType::Upgrade: return order_build_in_place(cmd, dt, ctx, econ_eff);
-    case CommandType::Patrol: return order_patrol(cmd, dt, ctx);
+    case CommandType::Patrol:
+    case CommandType::AggressiveMove: return order_patrol(cmd, dt, ctx);
     case CommandType::Reclaim: return order_reclaim(cmd, dt, ctx);
     case CommandType::Repair: return order_repair(cmd, dt, ctx, econ_eff);
     case CommandType::Capture: return order_capture(cmd, dt, ctx, econ_eff);
@@ -664,7 +666,13 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
                             is_amphibious() || is_hover());
     }
-    if (!nav_update(dt, ctx.terrain)) {
+    if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
+        // An attack-move is one leg: Moho's dispatch removes the order when
+        // its patrol task is done.
+        if (cmd.type == CommandType::AggressiveMove) {
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
         // Reached patrol point — cycle to back of queue (moved out first:
         // cmd is the element pop_front destroys). The next leg starts next
         // tick: a patrol whose points it already stands on would otherwise

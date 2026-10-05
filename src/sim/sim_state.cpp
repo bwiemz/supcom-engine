@@ -763,7 +763,8 @@ void SimState::apply_factory_command(const std::vector<u32>& unit_ids, const Uni
 std::vector<std::pair<u32, UnitCommand>>
 SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitCommand& command) const {
     std::vector<std::pair<u32, UnitCommand>> out;
-    if (!command.formation.empty() && command.type == CommandType::Move) {
+    if (!command.formation.empty() &&
+        (command.type == CommandType::Move || command.type == CommandType::AggressiveMove)) {
         const auto slots = plan_formation(
             L_, entity_registry_, terrain_.get(), unit_ids, command.formation, command.target_pos,
             command.has_facing ? std::optional<f32>(command.facing) : std::nullopt);

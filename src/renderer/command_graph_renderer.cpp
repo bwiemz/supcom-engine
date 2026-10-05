@@ -108,16 +108,17 @@ CommandGraphStyle fallback_style() {
     return s;
 }
 
-constexpr std::array<sim::CommandType, 18> kDrawnTypes = {
-    sim::CommandType::Move,          sim::CommandType::Attack,
-    sim::CommandType::Guard,         sim::CommandType::Patrol,
-    sim::CommandType::BuildMobile,   sim::CommandType::Reclaim,
-    sim::CommandType::Repair,        sim::CommandType::Capture,
-    sim::CommandType::TransportLoad, sim::CommandType::TransportUnload,
-    sim::CommandType::Nuke,          sim::CommandType::Tactical,
-    sim::CommandType::Overcharge,    sim::CommandType::Sacrifice,
-    sim::CommandType::Teleport,      sim::CommandType::Ferry,
-    sim::CommandType::Dock,          sim::CommandType::Script,
+constexpr std::array<sim::CommandType, 19> kDrawnTypes = {
+    sim::CommandType::Move,           sim::CommandType::Attack,
+    sim::CommandType::Guard,          sim::CommandType::Patrol,
+    sim::CommandType::BuildMobile,    sim::CommandType::Reclaim,
+    sim::CommandType::Repair,         sim::CommandType::Capture,
+    sim::CommandType::TransportLoad,  sim::CommandType::TransportUnload,
+    sim::CommandType::Nuke,           sim::CommandType::Tactical,
+    sim::CommandType::Overcharge,     sim::CommandType::Sacrifice,
+    sim::CommandType::Teleport,       sim::CommandType::Ferry,
+    sim::CommandType::Dock,           sim::CommandType::Script,
+    sim::CommandType::AggressiveMove,
 };
 
 } // namespace
@@ -254,6 +255,7 @@ std::string command_graph_key(sim::CommandType type) {
     case sim::CommandType::Attack: return "UNITCOMMAND_Attack";
     case sim::CommandType::Guard: return "UNITCOMMAND_Guard";
     case sim::CommandType::Patrol: return "UNITCOMMAND_Patrol";
+    case sim::CommandType::AggressiveMove: return "UNITCOMMAND_AggressiveMove";
     case sim::CommandType::BuildMobile: return "UNITCOMMAND_BuildMobile";
     case sim::CommandType::Reclaim: return "UNITCOMMAND_Reclaim";
     case sim::CommandType::Repair: return "UNITCOMMAND_Repair";
