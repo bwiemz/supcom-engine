@@ -200,6 +200,7 @@ constexpr Mode kModesBefore[] = {
     {"--guard-engage-test", test_guard_engage, false},
     {"--attack-move-test", test_attack_move, false},
     {"--placement-layers-test", test_placement_layers, false},
+    {"--yaw-only-test", test_yaw_only, false},
     {"--air-attack-run-test", test_air_attack_run, false},
     {"--air-auto-engage-test", test_air_auto_engage, false},
     {"--air-turn-test", test_air_turn, false},

@@ -443,7 +443,10 @@ void AimManipulator::tick(f32 dt) {
             want_heading = std::clamp(want_heading, yaw_min_, yaw_max_);
         }
         if (pitches) {
-            reachable = reachable && want_pitch >= pitch_min_ && want_pitch <= pitch_max_;
+            // YawOnlyOnTarget: the pitch is no part of being on target (Moho's
+            // CAimManipulator::CheckTracking skips the pitch lane's test).
+            if (!yaw_only_on_target_)
+                reachable = reachable && want_pitch >= pitch_min_ && want_pitch <= pitch_max_;
             want_pitch = std::clamp(want_pitch, pitch_min_, pitch_max_);
         }
     } else {
@@ -466,7 +469,7 @@ void AimManipulator::tick(f32 dt) {
     if (!has_target_) return;
     const f32 heading_error =
         std::fabs(full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_);
-    const f32 pitch_error = pitches ? std::fabs(want_pitch - pitch_) : 0.0f;
+    const f32 pitch_error = pitches && !yaw_only_on_target_ ? std::fabs(want_pitch - pitch_) : 0.0f;
     on_target_ = reachable && heading_error <= tolerance_ && pitch_error <= tolerance_;
 }
 

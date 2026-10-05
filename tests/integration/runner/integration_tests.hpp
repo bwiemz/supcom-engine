@@ -197,6 +197,7 @@ void test_need_unpack(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
 void test_attack_move(TestContext& ctx);
 void test_placement_layers(TestContext& ctx);
+void test_yaw_only(TestContext& ctx);
 void test_air_attack_run(TestContext& ctx);
 void test_air_auto_engage(TestContext& ctx);
 void test_air_turn(TestContext& ctx);

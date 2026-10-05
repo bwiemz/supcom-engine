@@ -65,6 +65,7 @@ add_executable(osc_integration
     runner/guard_engage_test.cpp
     runner/attack_move_test.cpp
     runner/placement_layers_test.cpp
+    runner/yaw_only_test.cpp
     runner/air_attack_test.cpp
 )
 target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)

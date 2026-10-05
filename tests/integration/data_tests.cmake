@@ -56,6 +56,7 @@ set(OSC_DATA_TESTS_GATE
     tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
     uiboot-test uirender-test unit-cap-test unit-hooks-test unit-intel-test unitsound-test upgrade-test vet-adj-render-test
     vet-test vfx-render-test victory-test water-reflection-test water-render-test weapon-test wreck-test
+    yaw-only-test
 )
 
 set(OSC_DATA_TESTS_RETAIL_GAP
