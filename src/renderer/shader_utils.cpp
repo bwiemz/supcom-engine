@@ -1388,6 +1388,10 @@ void main() {
         local += (0.05 / s) * (cos(15.0 * rdm * local.x * s) + sin(20.0 * rdm * local.z * s));
         local.y *= mix(0.69, 1.0, rdm);
     }
+    if (pc.technique == 27u) {
+        // PositionNormalOffsetVS(0.05)
+        local += inNormal * (0.05 / length(inModel[1].xyz));
+    }
     vec4 skinnedPos = bone * vec4(local, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     // At Low the undulating trees take VertexNormalVS: no sway (M211m)
@@ -1766,6 +1770,12 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
 void main() {
     vec3 worldNormal = computeNormal(fragUV);
     vec3 S = sunDirection();
+    if (pc.technique == 27u) {
+        outColor = vec4(clamp(fragColor.rgb * computeLight(dot(S, fragVertexNormal), 1.0, 1.0, 1.0),
+                              0.0, 1.0),
+                        0.2);
+        return;
+    }
     float NdotL = dot(worldNormal, S);
     float shadow = calcShadow(fragWorldPos);
     vec3 light = computeLight(NdotL, shadow, 1.0, 1.0);

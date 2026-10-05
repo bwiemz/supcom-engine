@@ -89,18 +89,20 @@ void OffscreenShots::recapture() {
     history_.capture(ctx_.sim);
 }
 
-void OffscreenShots::redraw(const std::unordered_set<u32>* selected) {
+void OffscreenShots::redraw(const std::unordered_set<u32>* selected,
+                            const renderer::BuildGhost* ghost) {
     // The sight of the army the test watches (it may have changed since)
     history_.set_sight_army(renderer_.player_army(), &ctx_.sim);
     renderer_.render(sim::FrameView(&history_.prev(), &history_.cur(), 1.0f), history_.events(),
-                     nullptr, ctx_.L, nullptr, selected);
+                     ghost, ctx_.L, nullptr, selected);
     renderer_.poll_events(0.016);
 }
 
-ImageRGBA8 OffscreenShots::grab(const std::unordered_set<u32>* selected) {
+ImageRGBA8 OffscreenShots::grab(const std::unordered_set<u32>* selected,
+                                const renderer::BuildGhost* ghost) {
     ImageRGBA8 shot;
     renderer_.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
-    redraw(selected);
+    redraw(selected, ghost);
     return shot;
 }
 
