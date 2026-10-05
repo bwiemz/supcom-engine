@@ -15408,6 +15408,7 @@ void test_bitmap(TestContext& ctx) {
     // BitmapHeight, as Moho's CMauiBitmap::SetTexture sets them, unless a
     // script sized it itself: retail's ResetLayout sizes it by them, the
     // campaign's faction icons by half of them, and a number stays put.
+    // A texture's size leaves out its one-pixel border (80x80 is 78x78).
     {
         auto result = ctx.lua_state.do_string(
             "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
