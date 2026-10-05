@@ -909,6 +909,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     unit->set_staging_rules(rules);
                     unit->set_guard_scan_radius(
                         number("GuardScanRadius", unit->guard_scan_radius()));
+                    lua_pushstring(L, "NeedUnpack");
+                    lua_rawget(L, -2);
+                    unit->set_need_unpack(lua_toboolean(L, -1) != 0);
+                    lua_pop(L, 1);
                 }
                 lua_pop(L, 1);
                 // Air.TransportHoverHeight: how low a transport hovers to load

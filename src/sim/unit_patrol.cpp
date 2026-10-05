@@ -130,6 +130,12 @@ Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
         if (!weapon->can_pick(*this, enemy, sim)) {
             continue;
         }
+        // A unit that unpacks to fire takes on only what it can hit from
+        // where it stands (FindBestEnemy: a NeedUnpack unit's candidate needs
+        // an Available firing solution).
+        if (need_unpack_ && !weapon->can_target(*this, enemy, sim)) {
+            continue;
+        }
         const int priority = weapon->priority_of(enemy);
         if (priority < 0) {
             continue;

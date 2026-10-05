@@ -281,6 +281,12 @@ void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry
     if (const std::optional<Vector3> at = target_point(registry)) last_order_point = at;
 }
 
+void Weapon::drop_target(lua_State* L) {
+    const bool had = has_target();
+    set_target_entity(0);
+    if (had && fires_through_script()) call_script(L, "OnLostTarget");
+}
+
 void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
                              const TargetMark& previous) {
     // Each callback may kill the unit or disable the weapon.
@@ -380,6 +386,14 @@ int Weapon::priority_of(const Entity& target) const {
 }
 
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
+    // A unit that unpacks to fire looks for nothing while a move takes it
+    // somewhere, or while it boards a transport (Moho's CAcquireTargetTask:
+    // the Moving, TransportLoading and WaitingForTransport states).
+    const auto& queue = owner.command_queue();
+    const CommandType head = queue.empty() ? CommandType::Stop : queue.front().type;
+    if (owner.need_unpack() && (head == CommandType::Move || head == CommandType::TransportLoad ||
+                                head == CommandType::WaitForFerry))
+        return;
     // An aircraft's weapons take its ordered target at any range: Moho's
     // CAcquireTargetTask gives a flier the attacker's desired target out of
     // reach too, so it is kept through the runs' loops.
@@ -405,6 +419,8 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
 
     // A ground target its script set stays until the script changes it.
     if (has_ground_target) return;
+    // Attacking, a unit that unpacks to fire takes its ordered target only.
+    if (owner.need_unpack() && head == CommandType::Attack) return;
 
     // Otherwise look for targets every TargetCheckInterval: when there is
     // none, or, with AlwaysRecheckTarget, for one of a better priority.

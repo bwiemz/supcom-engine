@@ -51,7 +51,6 @@ MinWaterDepth
 MuzzleVelocityRandom
 NeedPrep
 NeedToFaceTargetToBuild
-NeedUnpack
 OccupancyCaps
 OccupyRects
 PlaceholderMeshName
