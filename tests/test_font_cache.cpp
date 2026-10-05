@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "core/utf8.hpp"
 #include "renderer/font_cache.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "vfs/directory_mount.hpp"
@@ -10,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -23,6 +25,23 @@ fs::path find_system_ttf() {
              !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
             auto ext = it->path().extension().string();
             if (ext == ".ttf" || ext == ".TTF") return it->path();
+        }
+    }
+    return {};
+}
+
+/// A font with accented Latin and Cyrillic letters on this machine; the tests skip without one.
+fs::path find_wide_ttf() {
+    for (const char* dir : {"/usr/share/fonts", "/usr/local/share/fonts", "/Library/Fonts",
+                            "/System/Library/Fonts/Supplemental", "C:/Windows/Fonts"}) {
+        std::error_code ec;
+        for (auto it = fs::recursive_directory_iterator(dir, ec);
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            const auto name = it->path().filename().string();
+            if (name == "DejaVuSans.ttf" || name == "LiberationSans-Regular.ttf" ||
+                name == "Arial.ttf" || name == "arial.ttf") {
+                return it->path();
+            }
         }
     }
     return {};
@@ -131,4 +150,51 @@ TEST_CASE("A font's text metrics are GDI's whole pixels, as Moho's Text and Edit
     for (const auto& e : zeroes) {
         check(zeroes_tables(), e);
     }
+}
+
+TEST_CASE("UTF-8 text is read a character at a time and a stray byte stands for itself", "[font]") {
+    const std::string text = "a\xD0\x96\xE2\x80\x94\xF0\x9F\x98\x80\xE9z\xD0";
+    std::vector<osc::u32> read;
+    for (size_t i = 0; i < text.size();) {
+        read.push_back(osc::next_codepoint(text, i));
+    }
+    CHECK(read == std::vector<osc::u32>{'a', 0x416, 0x2014, 0x1F600, 0xE9, 'z', 0xD0});
+}
+
+TEST_CASE("A font's atlas holds its accented Latin and Cyrillic letters, and text is measured "
+          "by character",
+          "[font]") {
+    const fs::path ttf = find_wide_ttf();
+    if (ttf.empty()) {
+        SKIP("no font with accented Latin and Cyrillic letters installed");
+    }
+
+    const fs::path root = fs::temp_directory_path() / "osc_font_cache_wide_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "fonts");
+    fs::copy_file(ttf, root / "fonts" / "arial.ttf");
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+
+    osc::renderer::FontCache cache;
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
+               VK_NULL_HANDLE, &vfs);
+    const auto* atlas = cache.get("Arial", 20);
+    REQUIRE(atlas);
+    for (osc::u32 cp : {0xDFu, 0x141u, 0x10Cu}) {
+        CHECK(atlas->glyphs.count(cp) == 1);
+    }
+    const auto zhe = atlas->glyphs.find(0x416);
+    REQUIRE(zhe != atlas->glyphs.end());
+    CHECK(zhe->second.width > 0.0f);
+    CHECK(zhe->second.x_advance > 0.0f);
+
+    osc::ui::FontMetricsProvider metrics;
+    metrics.set_vfs(&vfs);
+    const std::string text = "\xD0\x96\xD0\x96";
+    CHECK_THAT(cache.string_advance("Arial", 20, text),
+               Catch::Matchers::WithinAbs(2.0f * zhe->second.x_advance, 0.01));
+    CHECK_THAT(metrics.string_advance("Arial", 20, text),
+               Catch::Matchers::WithinAbs(2.0f * zhe->second.x_advance, 0.01));
+    fs::remove_all(root);
 }
