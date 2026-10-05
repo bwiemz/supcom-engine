@@ -154,8 +154,11 @@ static const TObject *luaV_getnotable (lua_State *L, const TObject *t,
   if (ttisnil(tm)) {
     /* Moho: so does indexing a boolean. Retail's and FAF's Unit.lua mark a
        dead unit's UnitData entry `false`, and SimSync's
-       NoteFocusArmyChanged reads data.OwnerArmy of every entry. */
-    if (ttisboolean(t))
+       NoteFocusArmyChanged reads data.OwnerArmy of every entry. And
+       indexing a function: retail's ScenarioFramework.PlayDialogue reads
+       v.vid of every field of a dialogue's table, its Callback among them,
+       so every campaign dialogue with a callback relies on it. */
+    if (ttisboolean(t) || ttisfunction(t))
       return &luaO_nilobject;
     luaG_typeerror(L, t, "index");
   }
@@ -203,8 +206,15 @@ void luaV_settable (lua_State *L, const TObject *t, TObject *key, StkId val) {
       }
       /* else will try the tag method */
     }
-    else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_NEWINDEX)))
+    else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_NEWINDEX))) {
+      /* Moho: a field set on a boolean is dropped. Retail's
+         /lua/ui/game/diplomacy.lua opens with `local parent = false;
+         parent.Items = {}`, and its UserSync imports it for
+         Sync.SetAlliedVictory, which retail's OnPostLoad sends after every
+         load. */
+      if (ttisboolean(t)) return;
       luaG_typeerror(L, t, "index");
+    }
     if (ttisfunction(tm)) {
       callTM(L, tm, t, key, val);
       return;

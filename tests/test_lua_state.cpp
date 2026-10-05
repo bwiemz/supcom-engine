@@ -747,7 +747,8 @@ TEST_CASE("Fresh front-end boot clears stale chat history", "[lua][ui]") {
     CHECK(global_string(L, "boot_first_text").empty());
 }
 
-TEST_CASE("Moho Lua: indexing nil or a boolean gives nil, other values still error",
+TEST_CASE("Moho Lua: indexing nil, a boolean or a function gives nil; setting on a boolean is "
+          "dropped; numbers still error",
           "[lua][luaplus]") {
     LuaState state;
     // Retail's and FAF's Unit.lua mark a dead unit's UnitData entry false;
@@ -767,5 +768,25 @@ TEST_CASE("Moho Lua: indexing nil or a boolean gives nil, other values still err
     INFO((ok ? std::string() : ok.error().message));
     CHECK(ok);
     CHECK_FALSE(state.do_string("local n = 5; return n.field"));
-    CHECK_FALSE(state.do_string("local f = function() end; return f.field"));
+    // A function's field is nil too: retail's ScenarioFramework.PlayDialogue
+    // reads v.vid of every field of a dialogue's table, its Callback among
+    // them, before it forks that callback.
+    auto function_field = state.do_string(R"(
+        local dialogue = { { text = 'x', vid = 'y.sfd' }, Callback = function() end }
+        for k, v in dialogue do
+            if v.vid == nil and type(v) ~= 'function' then error('vid of ' .. k) end
+        end
+    )");
+    INFO((function_field ? std::string() : function_field.error().message));
+    CHECK(function_field);
+    // A field set on a boolean is dropped: retail's diplomacy.lua opens with
+    // `local parent = false; parent.Items = {}`.
+    auto boolean_set = state.do_string(R"(
+        local parent = false
+        parent.Items = {}
+        if parent ~= false or parent.Items ~= nil then error('set on a boolean') end
+    )");
+    INFO((boolean_set ? std::string() : boolean_set.error().message));
+    CHECK(boolean_set);
+    CHECK_FALSE(state.do_string("local n = 5; n.field = 1"));
 }
