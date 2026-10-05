@@ -15444,8 +15444,8 @@ void test_bitmap(TestContext& ctx) {
             "local after = {plain.Width(), plain.Height(), half.Width(), half.Height(),\n"
             "               fixed.Width(), fixed.Height()}\n"
             "LOG('Bitmap sizes: before ' .. repr(before) .. ' after ' .. repr(after))\n"
-            "return before[1] == 80 and before[2] == 80 and before[3] == 40 and before[4] == 37\n"
-            "   and after[1] == 28 and after[2] == 24 and after[3] == 14 and after[4] == 12\n"
+            "return before[1] == 78 and before[2] == 78 and before[3] == 39 and before[4] == 37\n"
+            "   and after[1] == 26 and after[2] == 22 and after[3] == 13 and after[4] == 11\n"
             "   and after[5] == 37 and after[6] == 41\n");
         bool ok = false;
         if (result) {

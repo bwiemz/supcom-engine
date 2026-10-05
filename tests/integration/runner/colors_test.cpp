@@ -133,6 +133,19 @@ void test_army_colors(TestContext& ctx) {
                 fmt::format("Test 2: colour index 1 red {}, 2 DarkGreen {}", red, green));
     }
 
+    {
+        auto* brain = ctx.sim.get_army(0);
+        lua::ArmySlotConfig slot;
+        slot.player_color = 2;
+        slot.army_color = 1;
+        lua::apply_config_to_brain(&slot, brain, game_colors.player_colors);
+        const bool green =
+            brain && brain->color_r() == 0 && brain->color_g() == 100 && brain->color_b() == 0;
+        t.check(green, fmt::format("Test 2b: a lobby slot's PlayerColor 2, its ArmyColor left 1, "
+                                   "is DarkGreen: {}",
+                                   green));
+    }
+
     spdlog::info("Army colors test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

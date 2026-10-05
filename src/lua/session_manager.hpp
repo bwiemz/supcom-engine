@@ -40,9 +40,9 @@ GameOptionsConfig read_game_options(lua_State* L, int table_idx);
 sim::GameSetup read_session_config(lua_State* L, int table_idx);
 
 /// Give an army's brain its slot's faction, colour and handicap. The slot's
-/// colour index is a Lua index into army_colors (sim::read_game_colors).
+/// PlayerColor is a Lua index into player_colors (sim::read_game_colors).
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
-                           const std::vector<u32>& army_colors);
+                           const std::vector<u32>& player_colors);
 
 /// Whether the session's scripts decide the game, so the engine's own
 /// adjudication stands down, as Moho has none: retail's /lua/victory.lua
