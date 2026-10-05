@@ -147,6 +147,9 @@ public:
         target_entity_id = id;
         has_ground_target = false;
     }
+    /// Aim at nothing now, its script told OnLostTarget at once if it had a
+    /// target (Moho's UnitWeapon::SetTarget with a cleared target).
+    void drop_target(lua_State* L);
     /// Where it is aiming: its target unit's position or its ground target.
     /// Nothing without a target, or when its target is gone.
     std::optional<Vector3> target_point(const EntityRegistry& registry) const;

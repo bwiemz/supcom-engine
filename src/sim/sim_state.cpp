@@ -2946,6 +2946,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(cmd.dock_phase));
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.dock_wait)));
             }
+            // An order a NeedUnpack unit has begun (its pack-up done), only
+            // then: other units' orders hash as before.
+            if (cmd.begun && u.need_unpack()) orders.mix(0x4245474eu); // "BEGN"
             if (cmd.from_patrol || !cmd.patrol_claimed.empty()) {
                 orders.mix(0x5054524cu); // "PTRL"
                 orders.mix(cmd.from_patrol ? 1u : 0u);
