@@ -607,22 +607,51 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     out.target_id = cmd.target_id;
     // Player-issued order: routed so a networked match broadcasts it.
     sim.set_human_input_active(true);
-    // Moho's patrol starts where the group stands, or its queue ends, unless
-    // it is already patrolling: the loop runs back there
+    // Moho's patrol starts where the group stands, or where the last unit's queue ends with the
+    // orders not yet run, unless one is patrolling (ResolveGroupMoveAnchorOrDetectPatrol)
     bool patrolling = false;
+    const sim::UnitCommand* queue_end = nullptr;
     f32 ax = 0;
     f32 az = 0;
+    const auto pending =
+        shift ? sim.command_scheduler().pending() : std::vector<sim::ScheduledCommand>();
     for (u32 id : ids) {
         const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
-        const auto& q = u.command_queue();
-        const sim::Vector3 at = shift && !q.empty() ? q.back().target_pos : u.position();
-        ax += at.x;
-        az += at.z;
-        patrolling |= shift && !q.empty() && q.back().type == sim::CommandType::Patrol;
+        ax += u.position().x;
+        az += u.position().z;
+        if (!shift) {
+            continue;
+        }
+        const auto& queue = u.command_queue();
+        const sim::UnitCommand* last = queue.empty() ? nullptr : &queue.back();
+        for (const auto& scheduled : pending) {
+            const sim::UnitCommand& order = scheduled.command;
+            if (scheduled.callback || order.factory ||
+                std::find(scheduled.unit_ids.begin(), scheduled.unit_ids.end(), id) ==
+                    scheduled.unit_ids.end()) {
+                continue;
+            }
+            if (order.type == sim::CommandType::Stop) {
+                last = nullptr;
+            } else if (order.type != sim::CommandType::SiloBuildNuke &&
+                       order.type != sim::CommandType::SiloBuildTactical &&
+                       sim.takes_command(u, order)) {
+                last = &order;
+            }
+        }
+        if (last) {
+            patrolling |= last->type == sim::CommandType::Patrol;
+            queue_end = last;
+        }
     }
     if (cmd.type == sim::CommandType::Patrol && !patrolling) {
-        ax /= static_cast<f32>(ids.size());
-        az /= static_cast<f32>(ids.size());
+        if (queue_end) {
+            ax = queue_end->target_pos.x;
+            az = queue_end->target_pos.z;
+        } else {
+            ax /= static_cast<f32>(ids.size());
+            az /= static_cast<f32>(ids.size());
+        }
         sim::UnitCommand anchor = cmd;
         anchor.target_pos = {ax, surface_y(ax, az), az};
         sim.route_player_command(ids, anchor, !shift);
