@@ -7,6 +7,10 @@
 // - Back to operation select, Select, then the briefing's Launch;
 // - X1CA_001 loads, its interface in campaign mode and hidden for its
 //   intro; its faction dialog takes a click on the UEF;
+// - once it has given objectives, the game is saved as a campaign save
+//   (InternalSaveGame, the CampaignSave type), listed, and loaded
+//   (LoadSavedGame, as the Load dialog does); in the new UI state the
+//   post-load has put campaign mode back and re-sent the objectives;
 // - the operation is ended as its scripts end it on a win
 //   (ScenarioFramework.EndOperation), its campaignInfo checked first;
 // - the result dialog's Ok, the score screen's Continue;
@@ -49,6 +53,8 @@ private:
         Select,        ///< operation select: Select
         Launch,        ///< the briefing: Launch
         Faction,       ///< in the game: the UEF
+        Save,          ///< its objectives given: a campaign save, then its load
+        Loaded,        ///< the loaded game: campaign mode and objectives back
         End,           ///< the faction taken: the operation won
         Ok,            ///< "Operation completed"
         Continue,      ///< the score screen
@@ -57,6 +63,7 @@ private:
     };
 
     void fail(const std::string& why);
+    u32 objectives_ = 0; ///< how many the UI held when the game was saved
     void next(Step step);
 
     Step step_ = Step::Campaign;

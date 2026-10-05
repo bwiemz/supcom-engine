@@ -33,6 +33,13 @@ void App::Window::load_flow_frame() {
                 "saved game catches up') end");
             if (!r) osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
         }
+        // A loaded game's interface waits for the load's own post-load: a
+        // catch-up through a history that holds earlier loads' post-loads
+        // must not bring it up as it replays them.
+        if (catch_up && !world_ui_after_post_load)
+            osc::test_status::fail("[FAIL] load-flow: load {}'s interface came up as it caught "
+                                   "up, at tick {}",
+                                   load_flow_phase + 1, sim_state ? sim_state->tick_count() : 0);
         if (sim_state && load_flow_saw_catch_up && !catch_up && !load_flow_resumed_at) {
             // (a restore resumes at its saved tick, whatever the
             // frame has run since)

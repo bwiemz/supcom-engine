@@ -35,6 +35,9 @@ constexpr const char* kRegistryKey = "__osc_special_files";
 constexpr SpecialFiles::Type kTypes[] = {
     {"Replay", "replays", "oscreplay"},
     {"SaveGame", "savegames", "oscsave"},
+    // A campaign's saves sit with the others, under their own extension, as
+    // Moho keeps them (its save-game folder, USER_GetCampaignSaveExt).
+    {"CampaignSave", "savegames", "osccampaignsave"},
 };
 
 const SpecialFiles::Type* check_type(lua_State* L, int idx) {
@@ -211,7 +214,8 @@ int l_InternalSaveGame(lua_State* L) {
     else if (mp_net_state().active()) refused = "A multiplayer game can't be saved.";
     else if (sim->resuming()) refused = "The game is still loading.";
     else if (sim->playback()) refused = "A replay can't be saved.";
-    else if (!files || !files->holds(*SpecialFiles::find_type("SaveGame"), file))
+    else if (!files || (!files->holds(*SpecialFiles::find_type("SaveGame"), file) &&
+                        !files->holds(*SpecialFiles::find_type("CampaignSave"), file)))
         refused = "Games are saved only in the savegames folder.";
     bool worked = false;
     const char* errmsg = refused;

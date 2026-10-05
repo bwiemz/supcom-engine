@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 
@@ -75,6 +76,53 @@ constexpr const char* kEndOperation = R"(
     end
     import('/lua/ScenarioFramework.lua').EndOperation(true, true, false)
     return 'ended'
+)";
+
+/// Once the faction is picked and the UI holds objectives: the game saved
+/// as a campaign save in the current profile, listed, then loaded as the
+/// Load dialog loads it. The UI's objective count, or "wait", or an error.
+constexpr const char* kSaveAndLoad = R"(
+    local held = 0
+    for _ in import('/lua/ui/game/objectives2.lua').GetCurrentObjectiveTable() or {} do
+        held = held + 1
+    end
+    if held == 0 then return 'wait' end
+    local profile = import('/lua/user/prefs.lua').GetCurrentProfile()
+    profile = profile and profile.Name or 'Player'
+    local data = GetSpecialFiles('CampaignSave')
+    local file = data.directory .. profile .. '/flow.' .. data.extension
+    local result
+    InternalSaveGame(file, 'flow', function(worked, errmsg)
+        result = {worked = worked, errmsg = errmsg}
+    end)
+    if not (result and result.worked) then
+        return 'error: InternalSaveGame: ' .. tostring(result and result.errmsg)
+    end
+    local listed = false
+    for _, name in GetSpecialFiles('CampaignSave').files[profile] or {} do
+        if name == 'flow' then listed = true end
+    end
+    if not listed then return 'error: the campaign save is not listed' end
+    rawset(_G, '__osc_flow_before_load', true)
+    local worked, err, detail = LoadSavedGame(file)
+    if not worked then
+        return 'error: LoadSavedGame: ' .. tostring(err) .. ' ' .. tostring(detail)
+    end
+    return tostring(held)
+)";
+
+/// In the loaded game's UI state (a new one: the old one's marker is gone),
+/// once the post-load has run: campaign mode, and the objectives' count.
+constexpr const char* kLoadedInterface = R"(
+    if rawget(_G, '__osc_flow_before_load') then return 'wait' end
+    local held = 0
+    for _ in import('/lua/ui/game/objectives2.lua').GetCurrentObjectiveTable() or {} do
+        held = held + 1
+    end
+    if held == 0 or not import('/lua/ui/campaign/campaignmanager.lua').campaignMode then
+        return 'wait'
+    end
+    return tostring(held)
 )";
 
 /// The operation whose briefing shows (operationbriefing.CreateUI records it)
@@ -178,7 +226,43 @@ void CampaignFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const si
             fail("during the intro: " + result.value_or("nothing"));
             return;
         }
-        if (press(kUefButton)) next(Step::End);
+        if (press(kUefButton)) next(Step::Save);
+        return;
+    }
+    case Step::Save: {
+        if (!sim_lua) return;
+        const auto picked = evaluate(sim_lua->raw(), R"(
+            local info = ScenarioInfo.campaignInfo
+            return info and info.campaignID == 'uef' and 'yes' or 'wait')");
+        if (!picked || *picked != "yes") return;
+        const auto result = evaluate(L, kSaveAndLoad);
+        if (result && *result == "wait") return;
+        if (!result || result->rfind("error: ", 0) == 0) {
+            fail("saving and loading X1CA_001: " + result.value_or("nothing"));
+            return;
+        }
+        objectives_ = static_cast<u32>(std::strtoul(result->c_str(), nullptr, 10));
+        next(Step::Loaded);
+        return;
+    }
+    case Step::Loaded: {
+        if (!sim) return;
+        const auto result = evaluate(L, kLoadedInterface);
+        if (result && *result == "wait") return;
+        if (!result || result->rfind("error: ", 0) == 0) {
+            fail("after loading X1CA_001: " + result.value_or("nothing"));
+            return;
+        }
+        const auto held = static_cast<u32>(std::strtoul(result->c_str(), nullptr, 10));
+        if (held != objectives_) {
+            fail(fmt::format("after loading X1CA_001: the UI holds {} objectives, {} before", held,
+                             objectives_));
+            return;
+        }
+        spdlog::info("campaign-flow: loaded X1CA_001 from its campaign save, in campaign mode "
+                     "with its {} objectives",
+                     held);
+        next(Step::End);
         return;
     }
     case Step::End: {

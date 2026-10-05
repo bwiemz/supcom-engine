@@ -38,6 +38,7 @@ bool App::Window::frame() {
     advance_sim(dt);
 
     run_beats(dt, beat_tick0);
+    finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
     if (sim_state && sim_lua_state) submit_sim_callbacks(sim_callback_queue, *sim_state);
@@ -232,6 +233,14 @@ void App::Window::advance_sim(double dt) {
     }
 }
 
+void App::Window::finish_world_ui_after_post_load() {
+    if (!world_ui_after_post_load || !sim_state) return;
+    if (sim_state->post_loads_run() <= *world_ui_after_post_load) return;
+    world_ui_after_post_load.reset();
+    finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value(),
+                    sim_lua_state.get(), sim_state.get());
+}
+
 void App::Window::run_beats(double dt, u32 beat_tick0) {
     // Moho's sim beat reaches the user side once per tick, and
     // keeps running at the tick rate while paused.
@@ -359,8 +368,10 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
         world_interp.history.set_sight_army(focus, sim_state.get()); // its sight, from now
     }
 
-    // Player input: selection + commands
-    if (sim_state) {
+    // Player input: selection + commands. Not while a loaded game's
+    // interface waits for its post-load: there is no game UI to tell yet.
+    const bool interface_up = !world_ui_after_post_load;
+    if (sim_state && interface_up) {
         current_command_mode = read_command_mode(ui_lua_state.raw());
         sync_build_ghost(*sim_state, current_command_mode, ghost_from_mode);
         input_handler.update(renderer, *sim_state, dt, [&] {
@@ -375,7 +386,7 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
 
     // Selections are a game's: at the front end (after a return to the
     // lobby cleared the selection) there is no game UI to tell.
-    if (sim_state) {
+    if (sim_state && interface_up) {
         dispatch_selection_change(ui_lua_state.raw(), prev_selection, input_handler.selected(),
                                   input_handler.take_selection_event());
     } else {

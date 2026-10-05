@@ -299,6 +299,10 @@ public:
         tick_observer_ = std::move(fn);
     }
     u32 tick_count() const { return tick_count_; }
+    /// How many post-loads (kPostLoadCallback) this sim has run: a loaded
+    /// game builds its interface once its own has (the window's wait).
+    u32 post_loads_run() const { return post_loads_run_; }
+    void note_post_load() { ++post_loads_run_; }
     f64 game_time() const { return game_time_; }
 
     // --- Command scheduling (deterministic / lockstep-ready) ---
@@ -963,6 +967,7 @@ private:
     EconomyEventRegistry economy_events_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
+    u32 post_loads_run_ = 0; ///< the host's count (post_loads_run), not game state
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;

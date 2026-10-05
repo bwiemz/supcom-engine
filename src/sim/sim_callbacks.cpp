@@ -236,6 +236,57 @@ void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
 
 } // namespace
 
+namespace {
+
+/// Moho's post-load (Sim.cpp, after a load): SimSync.SyncPlayableRect of
+/// the playable area, then the global OnPostLoad(); a script error in
+/// either is logged, as Moho's Warnf.
+void post_load(SimState& sim, lua_State* L) {
+    sim.note_post_load();
+    const auto call = [&](const char* what, int args) {
+        if (lua_pcall(L, args, 0, 0) != 0) {
+            spdlog::warn("{} failed: {}", what, lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    };
+    if (sim.has_playable_rect()) {
+        lua_pushstring(L, "import");
+        lua_gettable(L, LUA_GLOBALSINDEX);
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, "/lua/SimSync.lua");
+            if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+                lua_pushstring(L, "SyncPlayableRect");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    // A Rect, as Moho's SCR_ToLua<gpg::Rect2<int>> makes it:
+                    // x0, y0, x1, y1.
+                    lua_newtable(L);
+                    const f32 corners[4] = {sim.playable_x0(), sim.playable_z0(), sim.playable_x1(),
+                                            sim.playable_z1()};
+                    const char* keys[4] = {"x0", "y0", "x1", "y1"};
+                    for (int i = 0; i < 4; ++i) {
+                        lua_pushstring(L, keys[i]);
+                        lua_pushnumber(L, corners[i]);
+                        lua_rawset(L, -3);
+                    }
+                    call("SyncPlayableRect in /lua/SimSync.lua", 1);
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1); // the module, or import's error
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pushstring(L, "OnPostLoad");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) call("OnPostLoad()", 0);
+    else lua_pop(L, 1);
+}
+
+} // namespace
+
 void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     lua_State* L = L_;
     const int top = lua_gettop(L);
@@ -245,6 +296,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
     else if (cb.func_name == kIncreaseBuildCountCallback) increase_build_count(*this, cb);
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
+    else if (cb.func_name == kPostLoadCallback) post_load(*this, L);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

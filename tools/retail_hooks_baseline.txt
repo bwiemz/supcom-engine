@@ -20,7 +20,6 @@ method OnKeyboardFocusChange
 method OnNukeArmed
 method OnPlayBusyStagingPlatformsVO
 method OnPlayNoStagingPlatformsVO
-method OnPostLoad
 method OnProductionActive
 method OnProductionInActive
 method OnSpecialAction

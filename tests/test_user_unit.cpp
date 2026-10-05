@@ -7,6 +7,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/user_bindings.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
@@ -326,4 +327,16 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     CHECK(pending.back().func_name == osc::sim::kProcessInfoCallback);
     CHECK(text_arg(pending.back(), "Action") == "SetRepeatQueue");
     CHECK(pending.back().unit_ids == std::vector<osc::u32>{w.id});
+}
+
+TEST_CASE("A UI script can't issue the engine's own callbacks", "[userunit][simcallback]") {
+    // The engine's callbacks (a defeat, a post-load...) start with __osc_;
+    // a script's SimCallback naming one is not sent.
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    REQUIRE(w.ui.do_string("SimCallback({Func = '__osc_DefeatArmy', Args = {Army = 0}})").ok());
+    REQUIRE(w.ui.do_string("SimCallback({Func = '__osc_PostLoad'})").ok());
+    CHECK(w.queue.drain().empty());
+    REQUIRE(w.ui.do_string("SimCallback({Func = 'OnRename', Args = {}})").ok());
+    CHECK(w.queue.drain().size() == 1);
 }

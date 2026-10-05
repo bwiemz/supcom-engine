@@ -6,6 +6,7 @@
 #include "lua/smoke_test.hpp"
 #include "platform/crash_handler.hpp"
 
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_snapshot.hpp"
 
 #include <chrono>
@@ -173,7 +174,16 @@ App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
     spdlog::info("Saved game '{}': restored at tick {} in {:.0f} ms", save.name, save.tick,
                  std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
                      .count());
+    post_load();
     return Restore::Done;
+}
+
+void App::post_load() {
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kPostLoadCallback;
+    sim_state->submit_callback(std::move(entry));
+    if (world_ui_after_post_load) world_ui_after_post_load = sim_state->post_loads_run();
+    spdlog::info("Saved game: its post-load follows tick {}", sim_state->tick_count());
 }
 
 bool App::check_catch_up() {
@@ -190,6 +200,7 @@ bool App::check_catch_up() {
                      sim_state->tick_count());
         std::printf("LOAD resumed tick=%u\n", sim_state->tick_count());
         catch_up.reset();
+        post_load();
     }
     return true;
 }
