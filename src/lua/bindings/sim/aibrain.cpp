@@ -2217,8 +2217,7 @@ static int brain_RemoveArmyStatsTrigger(lua_State* L) {
     return 0;
 }
 
-// Not called in FA — named no-ops to replace generic stubs
-static int brain_RemoveEnergyDependingEntity(lua_State*) { return 0; }
+// Fallbacks for brains whose Lua class doesn't define them (FA's AIBrain does)
 static int brain_PBMAddBuildLocation(lua_State*) { return 0; }
 static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
 // brain:SetUpAttackVectorsToArmy([category]): the attack vectors on the
@@ -2632,7 +2631,6 @@ const MethodEntry aibrain_methods[] = {
     {"GetEconomyUsage",             brain_GetEconomyUsage},
     // TrackJammer — defined in JammerManagerBrainComponent (Lua)
     {"RemoveArmyStatsTrigger",      brain_RemoveArmyStatsTrigger},
-    {"RemoveEnergyDependingEntity", brain_RemoveEnergyDependingEntity},
     {"GiveStorage",                 brain_GiveStorage},
     {"OnUnitStopBeingBuilt",        brain_OnUnitStopBeingBuilt},
     {"OnVictory",                   brain_OnVictory},

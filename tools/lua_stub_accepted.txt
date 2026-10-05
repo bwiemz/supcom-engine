@@ -1,0 +1,23 @@
+# Lua bindings that do nothing and are right to (tools/check_lua_stubs.py),
+# "<Lua name> <C++ function>  # why"
+#
+# Moho's own does nothing, or there is nothing here for it to do.
+AudioSetLanguage stub_noop  # the sim state's: the sim plays no sound (the UI state's is real)
+KillThread l_KillThread  # the stand-in for states without threads; the sim's is real
+Trace l_Trace  # Lua call tracing, a developer aid
+SetData histogram_SetData  # Moho's Histogram control draws nothing
+SetXIncrement histogram_SetXIncrement  # Moho's Histogram control draws nothing
+SetYIncrement histogram_SetYIncrement  # Moho's Histogram control draws nothing
+UpdateSteamLobby lobby_UpdateSteamLobby  # Steam lobby metadata; there is no Steam here
+#
+# Fallbacks for functions retail's and FAF's Lua define themselves: the
+# script's own wins, and these only stop a nil call where it is missing.
+OnUnitStopBeingBuilt brain_OnUnitStopBeingBuilt  # FAF's AIBrain defines it; retail never calls it
+PBMAddBuildLocation brain_PBMAddBuildLocation  # the AIBrain class defines it
+PBMRemoveBuildLocation brain_PBMRemoveBuildLocation  # the AIBrain class defines it
+PlayCommanderWarpInEffect stub_noop  # each ACU's script defines it
+PlayFxRollOffEnd stub_noop  # the factory classes define it
+SetupBuildBones stub_noop  # Unit.lua defines it
+TurnOffPoolAI <lambda>  # platoon.lua defines it
+ResetSyncTable stub_noop  # SimSync.lua defines it
+SetIgnoreArmyCap l_SetIgnoreArmyCap  # not Moho's: retail's AIBrain.IgnoreArmyUnitCap calls it

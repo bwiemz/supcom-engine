@@ -53,9 +53,12 @@ def lua_defined(sources: list[str]) -> set[str]:
 def hooks_from(exe: bytes, sources: list[str]) -> list[str]:
     runs = strings(exe)
     on_names = {r.decode() for r in runs if EXE_ON.fullmatch(r)}
-    methods = sorted(on_names & lua_defined(sources))
     modules = sorted({f"{m.group(1).decode()}:{m.group(2).decode()}"
                       for r in runs for m in [EXE_MODULE.search(r)] if m})
+    # A module function's name is in the exe too, and the module defines it:
+    # it is that module hook, not a method as well.
+    module_names = {m.rsplit(":", 1)[1] for m in modules}
+    methods = sorted((on_names & lua_defined(sources)) - module_names)
     return [f"method {n}" for n in methods] + [f"module {m}" for m in modules]
 
 
@@ -123,8 +126,10 @@ def check(root: Path) -> list[str]:
 
 
 def self_test() -> int:
-    exe = b"\x00OnStartReclaim\x00OnNothing\x00Error running '/lua/ui/game/gamemain.lua:OnBeat'\x00"
-    lua = ["function Unit:OnStartReclaim(self, target)\n-- function Unit:OnNothing()\nend"]
+    exe = (b"\x00OnStartReclaim\x00OnNothing\x00OnBeat\x00"
+           b"Error running '/lua/ui/game/gamemain.lua:OnBeat'\x00")
+    lua = ["function Unit:OnStartReclaim(self, target)\n-- function Unit:OnNothing()\nend",
+           "function OnBeat()\nend"]
     got = hooks_from(exe, lua)
     want = ["method OnStartReclaim", "module /lua/ui/game/gamemain.lua:OnBeat"]
     if got != want:
