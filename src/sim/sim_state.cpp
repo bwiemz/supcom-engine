@@ -2901,11 +2901,18 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.rolloff_wait)));
             }
             // A refuel under way (M206r), only once it has a slot or waits.
-            if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0 || cmd.patrol_refuel) {
+            if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {
                 orders.mix(0x444f434bu); // "DOCK"
                 orders.mix(static_cast<u64>(cmd.dock_phase));
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.dock_wait)));
-                orders.mix(cmd.patrol_refuel ? 1u : 0u);
+            }
+            if (cmd.from_patrol || !cmd.patrol_claimed.empty()) {
+                orders.mix(0x5054524cu); // "PTRL"
+                orders.mix(cmd.from_patrol ? 1u : 0u);
+                orders.mix(static_cast<u64>(cmd.patrol_claimed.size()));
+                for (u32 id : cmd.patrol_claimed) {
+                    orders.mix(id);
+                }
             }
             // A carrier's launch under way (M206q), only then.
             if (cmd.launch_wait >= 0) {

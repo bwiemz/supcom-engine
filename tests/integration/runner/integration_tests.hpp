@@ -125,6 +125,8 @@ void test_jammer_blips(TestContext& ctx);
 void test_intel_fields(TestContext& ctx);
 /// --destroyed-handle-test, in destroyed_handle_test.cpp.
 void test_destroyed_handle(TestContext& ctx);
+/// --patrol-test, in patrol_test.cpp.
+void test_patrol(TestContext& ctx);
 /// --beam-render-test (M214a), in beam_render_test.cpp.
 void test_beam_render(TestContext& ctx);
 /// --selection-render-test, in selection_render_test.cpp.

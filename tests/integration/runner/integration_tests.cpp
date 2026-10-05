@@ -13133,7 +13133,7 @@ void test_air_staging(TestContext& ctx) {
             ctx.sim.tick();
             const auto& q1 = p1->command_queue();
             if (broke_off < 0 && !q1.empty() && q1.front().type == osc::sim::CommandType::Dock &&
-                q1.front().patrol_refuel && q1.front().target_id == pad->entity_id())
+                q1.front().from_patrol && q1.front().target_id == pad->entity_id())
                 broke_off = i;
             p2_broke =
                 p2_broke || (!p2->command_queue().empty() &&

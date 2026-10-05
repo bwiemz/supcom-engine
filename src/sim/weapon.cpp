@@ -229,7 +229,7 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
     fire_clock = fire_period();
 }
 
-bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim) const {
+bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* sim) const {
     // A weapon shoots units, or, with TargetType RULEWTT_Projectile, the
     // other side's projectiles (M206b).
     if (target.destroyed() || target.entity_id() == owner.entity_id()) return false;
@@ -255,9 +255,14 @@ bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState*
         if (above_water_targets_only && proj.in_water) return false;
     }
     const auto& categories = target_categories(target);
-    if (!restrict_only_allow.empty() && !restrict_only_allow.matches(categories)) return false;
-    if (restrict_disallow.matches(categories)) return false;
+    return (restrict_only_allow.empty() || restrict_only_allow.matches(categories)) &&
+           !restrict_disallow.matches(categories);
+}
 
+bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim) const {
+    if (!can_pick(owner, target, sim)) {
+        return false;
+    }
     const f32 dx = target.position().x - owner.position().x;
     const f32 dz = target.position().z - owner.position().z;
     const f32 dist2 = dx * dx + dz * dz;

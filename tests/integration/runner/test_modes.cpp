@@ -203,6 +203,7 @@ constexpr Mode kModesBefore[] = {
     {"--jammer-blip-test", test_jammer_blips, false},
     {"--intel-field-test", test_intel_fields, false},
     {"--destroyed-handle-test", test_destroyed_handle, false},
+    {"--patrol-test", test_patrol, false},
     {"--terrain-tex-test", test_terrain_tex, false},
     {"--shadow-test", test_shadow, false},
     {"--massstub4-test", test_massstub4, false},
@@ -386,6 +387,7 @@ void IntegrationModes::print_usage() const {
               << "  --intel-field-test Stealth fields and underwater sight, with retail's units "
                  "(M215g)\n"
               << "  --destroyed-handle-test A destroyed entity's handle lasts the tick\n"
+              << "  --patrol-test      A patrol reclaims and attacks along its route\n"
               << "  --issue-handles-test Issue* takes one unit or a list, and skips non-units\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"

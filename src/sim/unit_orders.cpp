@@ -516,13 +516,19 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
 }
 
 OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
-    // Every 6 ticks (Moho's patrol task returns 7), an aircraft low on fuel or damaged
-    // looks for a staging platform, and breaks off to refuel there; the
-    // patrol goes on after (Moho's FindPlatform and IssueRefuelTask).
+    // Moho's CUnitPatrolTask::Execute, every 6 ticks (it returns 7).
     if (cmd.patrol_scan > 0) {
         --cmd.patrol_scan;
-    } else if (is_air_unit()) {
-        cmd.patrol_scan = 5; // the next look 6 ticks on
+    } else {
+        cmd.patrol_scan = 5;
+        const auto break_off = [&](UnitCommand order) {
+            order.command_id = cmd.command_id;
+            order.from_patrol = true;
+            navigator_.abort_move();
+            command_queue_.push_front(
+                std::move(order)); // cmd stays valid: a deque keeps references
+            return OrderStep::Hold;
+        };
         if (Unit* pad = find_platform(ctx)) {
             // As Moho's patrol task does (TransportResetReservation): a
             // carrier's landing points go round again from the first, so two
@@ -533,11 +539,26 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             refuel.type = CommandType::Dock;
             refuel.target_id = pad->entity_id();
             refuel.target_pos = pad->position();
-            refuel.command_id = cmd.command_id;
-            refuel.patrol_refuel = true;
-            navigator_.abort_move();
-            command_queue_.push_front(refuel); // cmd stays valid: a deque keeps references
-            return OrderStep::Hold;
+            return break_off(std::move(refuel));
+        }
+        if (Entity* enemy = find_patrol_target(cmd, ctx)) {
+            UnitCommand attack;
+            attack.type = CommandType::Attack;
+            attack.target_id = enemy->entity_id();
+            attack.target_pos = enemy->position();
+            return break_off(std::move(attack));
+        }
+        if (Entity* work = find_patrol_work(cmd, ctx)) {
+            UnitCommand order;
+            order.target_id = work->entity_id();
+            order.target_pos = work->position();
+            if (work->is_unit() && ctx.sim->is_ally(army(), work->army())) {
+                order.type = CommandType::Repair;
+            } else {
+                order.type = CommandType::Reclaim;
+                cmd.patrol_claimed.push_back(work->entity_id());
+            }
+            return break_off(std::move(order));
         }
     }
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
@@ -551,6 +572,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         // tick: a patrol whose points it already stands on would otherwise
         // go round them for ever within this one.
         auto finished = std::move(cmd);
+        finished.patrol_claimed.clear();
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));
         return OrderStep::Hold;
