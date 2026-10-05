@@ -76,6 +76,25 @@ FR = faf-re `src/sdk/moho/` (the decompiled FAF build of Moho).
 - The orders checksum mixes the new fields only when set ("GARD", "LESH"), so games without guards and patrols hash as before.
 - No RNG draws.
 
+## Attack-move (PR 4c)
+
+**What Moho does:**
+- `UNITCOMMAND_AggressiveMove` is the patrol task for one leg, made in formation (FR `ai/IAiCommandDispatchImpl.cpp:736-742`). When the leg ends, the dispatch removes the command; it does not rotate it to the back (:1005-1013).
+- Its search box runs from where the unit stands to the goal. The exception is a Patrol queued behind it: Moho takes the box's far end from the queue's tail whenever that is a distinct Patrol, whatever the current leg (FR `CUnitPatrolTask.cpp:759-776`), and the engine does the same.
+- Being in formation, COMMAND and SACU_BEHAVIOR units skip the helpers' sweep.
+- `IsUnitState('Patrolling')` holds throughout.
+- **Who issues it:**
+  - `CPlatoon::AggressiveMoveToLocation` and `IssueFormAggressiveMove`, laid out in formation;
+  - retail's UI, for an Attack on bare ground. Every mobile unit on ReturnFire is sent an AggressiveMove, and only the others get a ground Attack (`SplitSelectionForAggressiveMove`, FR `sim/CWldSession.cpp:7448-7465`).
+
+**The engine** had made all of these plain moves.
+
+**Change:**
+- `CommandType::AggressiveMove` (81, the engine's own numbering), run by `order_patrol`. On arrival the order is popped.
+- The Issue, Form and platoon bindings issue it, and the formation layout covers it.
+- The input handler splits a ground Attack as Moho's UI does.
+- The order line uses retail's `UNITCOMMAND_AggressiveMove` style.
+
 ## Deviations, accepted
 
 - The leash is checked every tick, where Moho checks once per TargetCheckInterval.

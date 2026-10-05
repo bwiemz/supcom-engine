@@ -45,6 +45,10 @@ enum class CommandType : u8 {
     // script_args' TaskName names runs it (retail's EnhanceTask,
     // TargetLocation).
     Script = 80,
+    // An attack-move (Moho's UNITCOMMAND_AggressiveMove): one leg of a
+    // patrol, engaging and, for engineers, reclaiming and repairing on the
+    // way; the order ends where it arrives.
+    AggressiveMove = 81,
 };
 
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
