@@ -39,14 +39,22 @@ public:
     enum class Arc : u8 { None, Low, High };
     Arc ballistic_arc = Arc::None;
     bool lead_target = false; ///< LeadTarget: aim where a moving target will be
+    f32 muzzle_velocity_reduce_distance = 0; // MuzzleVelocityReduceDistance
+    struct ProjectilePhysics {
+        bool track_target = false;
+        bool use_gravity = true;
+        f32 max_speed = 0;
+    };
+    std::optional<ProjectilePhysics> projectile_physics;
 
     /// The launch angle above the horizontal for a shot `dist` away and
     /// `rise` above: its arc's, at its muzzle velocity under gravity (45
     /// degrees, the furthest, when out of reach).
     f32 launch_elevation(f32 dist, f32 rise) const;
-    /// Where to aim at `target` from `from`: the middle of its collision
-    /// shape, where it will be when the shot arrives for a weapon that leads.
-    Vector3 aim_point(const Entity& target, const Vector3& from) const;
+    /// Where to aim at `target` from a muzzle at `muzzle` facing
+    /// `muzzle_forward`: Moho's CAimManipulator::Aim.
+    Vector3 aim_point(const Entity& target, const Unit& owner, const Vector3& muzzle,
+                      const Vector3& muzzle_forward) const;
     bool fire_on_death = false;
     /// DummyWeapon, or a Death weapon (a structure's explosion): never one
     /// a unit attacks with.

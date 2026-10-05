@@ -276,6 +276,11 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
   will be when the shot arrives, refined once.
 - **Left:** `MuzzleVelocityReduceDistance` (25 weapons) and a blueprint
   `Lifetime` are not read yet.
+  *Done (2026-10-05): the lead is Moho's `CAimManipulator::Aim`: a tick
+  ahead, then an intercept at the tracking projectile's `MaxSpeed`, along
+  the muzzle's level speed for a falling one, else at the muzzle velocity
+  (cut by `MuzzleVelocityReduceDistance`), none when no shot can meet it.
+  The launch speed is not cut yet.*
 
 ### M201f: area damage and shields
 

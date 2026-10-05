@@ -26,6 +26,66 @@ namespace {
 constexpr f32 kGravity = Projectile::GRAVITY;
 constexpr f32 kPi = 3.14159265358979f;
 
+// Moho's PredictInterceptPointConstantSpeed. Retail takes the lead term as
+// |v| d sin(pi/2 - cos), not |v| d cos; kept as retail has it.
+Vector3 intercept_at_speed(const Vector3& at, const Vector3& v, f32 speed, const Vector3& muzzle) {
+    const f32 v_len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (v_len < 0.001f) {
+        return at;
+    }
+    const Vector3 d{muzzle.x - at.x, muzzle.y - at.y, muzzle.z - at.z};
+    const f32 dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (dist * dist < 0.0001f) {
+        return at;
+    }
+    const f32 cos_angle =
+        (v.x / v_len) * (d.x / dist) + (v.y / v_len) * (d.y / dist) + (v.z / v_len) * (d.z / dist);
+    const f32 speed_delta = v_len * v_len - speed * speed;
+    if (speed_delta * speed_delta < 0.0001f) {
+        return at;
+    }
+    const f32 a = kPi * 0.5f - cos_angle;
+    const f32 a2 = a * a;
+    const f32 term = ((a2 * 0.00761f - 0.16605f) * a2 + 1.0f) * a * dist * v_len;
+    const f32 disc = term * term - speed_delta * dist * dist;
+    if (disc < 0.0f) {
+        return at;
+    }
+    const f32 time = (term - std::sqrt(disc)) / speed_delta;
+    return {at.x + v.x * time, at.y + v.y * time, at.z + v.z * time};
+}
+
+// Moho's PredictInterceptPointFromForwardVelocity.
+Vector3 intercept_across(const Vector3& at, const Vector3& v, f32 across, const Vector3& muzzle) {
+    if (across <= 0.001f) {
+        return at;
+    }
+    const f32 inv = 1.0f / across;
+    const auto time_to = [&](f32 x, f32 z) {
+        return std::sqrt((muzzle.x - x) * (muzzle.x - x) + (muzzle.z - z) * (muzzle.z - z)) * inv;
+    };
+    f32 time = time_to(at.x, at.z);
+    for (int i = 0; i < 10; ++i) {
+        const f32 previous = time;
+        time = time_to(at.x + v.x * time, at.z + v.z * time);
+        if (std::fabs(time - previous) <= 0.1f) {
+            break;
+        }
+    }
+    return {at.x + v.x * time, at.y + v.y * time, at.z + v.z * time};
+}
+
+i32 find_muzzle_bone(const Unit& owner, const std::string& name) {
+    if (name.empty() || !owner.bone_data()) {
+        return -1;
+    }
+    return owner.bone_data()->find_bone(name);
+}
+
+Vector3 owner_facing(const Unit& owner) {
+    return quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+}
+
 bool has_omni_detection(const Unit& owner, const Entity& target, const SimState* sim) {
     if (!sim || owner.army() < 0) return false;
     return (sim->recon_of(target, static_cast<u32>(owner.army())) & SimState::kReconOmni) != 0;
@@ -399,8 +459,12 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
         if (aim->is_destroyed()) continue;
         const bool was_tracking = aim->has_target();
         if (aiming) {
-            const Vector3 from = owner.position();
-            const Vector3 at = target ? aim_point(*target, from) : ground_target;
+            const i32 bone = find_muzzle_bone(owner, muzzle_bone_name);
+            const Vector3 from = bone >= 0 ? owner.bone_world_position(bone) : owner.position();
+            const Vector3 at =
+                target ? aim_point(*target, owner, from,
+                                   bone >= 0 ? owner.bone_world_forward(bone) : owner_facing(owner))
+                       : ground_target;
             aim->set_target(at, firing_tolerance * kDegToRad);
             if (ballistic_arc != Arc::None && !need_compute_bomb_drop) {
                 const f32 dx = at.x - from.x;
@@ -446,12 +510,9 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
     // From the muzzle as the turret is posed now.
     Vector3 spawn_pos = owner.position();
     std::optional<Vector3> muzzle_dir;
-    if (!muzzle_bone_name.empty() && owner.bone_data()) {
-        const i32 bone = owner.bone_data()->find_bone(muzzle_bone_name);
-        if (bone >= 0) {
-            spawn_pos = owner.bone_world_position(bone);
-            muzzle_dir = owner.bone_world_forward(bone);
-        }
+    if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0) {
+        spawn_pos = owner.bone_world_position(bone);
+        muzzle_dir = owner.bone_world_forward(bone);
     }
 
     const std::string& layer = owner.layer();
@@ -482,28 +543,40 @@ f32 Weapon::launch_elevation(f32 dist, f32 rise) const {
     return osc::dmath::atan2(ballistic_arc == Arc::High ? v2 + root : v2 - root, kGravity * dist);
 }
 
-Vector3 Weapon::aim_point(const Entity& target, const Vector3& from) const {
-    // The middle of what it is shooting at, not its feet.
-    Vector3 at = collision_centre(target);
-    if (!lead_target || muzzle_velocity <= 0) return at;
-    // Where it will be when the shot arrives (a unit, or a missile): the
-    // flight time to where it is now, once refined.
-    Vector3 v;
-    if (target.is_unit()) v = static_cast<const Unit&>(target).velocity();
-    else if (target.is_projectile()) v = static_cast<const Projectile&>(target).velocity;
-    else return at;
-    for (int pass = 0; pass < 2; ++pass) {
-        const f32 dx = at.x - from.x;
-        const f32 dz = at.z - from.z;
-        const f32 dist = std::sqrt(dx * dx + dz * dz);
-        f32 across = muzzle_velocity;
-        if (ballistic_arc != Arc::None)
-            across *= osc::dmath::cos(launch_elevation(dist, at.y - from.y));
-        const f32 time = across > 0.001f ? dist / across : 0.0f;
-        const Vector3 now = collision_centre(target);
-        at = {now.x + v.x * time, now.y + v.y * time, now.z + v.z * time};
+Vector3 Weapon::aim_point(const Entity& target, const Unit& owner, const Vector3& muzzle,
+                          const Vector3& muzzle_forward) const {
+    constexpr f32 kTick = 0.1f;
+    Vector3 v{};
+    if (target.is_unit()) {
+        v = static_cast<const Unit&>(target).velocity();
+    } else if (target.is_projectile()) {
+        v = static_cast<const Projectile&>(target).velocity;
     }
-    return at;
+    const Vector3 centre = collision_centre(target);
+    const Vector3 at{centre.x + v.x * kTick, centre.y + v.y * kTick, centre.z + v.z * kTick};
+    if (!lead_target) {
+        return at;
+    }
+    Vector3 from = muzzle;
+    if (owner.is_mobile()) {
+        const Vector3& own = owner.velocity();
+        from = {from.x + own.x * kTick, from.y + own.y * kTick, from.z + own.z * kTick};
+    }
+    const f32 across =
+        std::sqrt((from.x - at.x) * (from.x - at.x) + (from.z - at.z) * (from.z - at.z));
+    f32 speed = muzzle_velocity;
+    if (muzzle_velocity_reduce_distance > across) {
+        speed = std::sqrt(across / muzzle_velocity_reduce_distance) * muzzle_velocity;
+    }
+    if (projectile_physics && projectile_physics->track_target) {
+        return intercept_at_speed(at, v, projectile_physics->max_speed, from);
+    }
+    if (projectile_physics && projectile_physics->use_gravity) {
+        const f32 level =
+            std::sqrt(muzzle_forward.x * muzzle_forward.x + muzzle_forward.z * muzzle_forward.z);
+        return intercept_across(at, v, level * speed, from);
+    }
+    return intercept_at_speed(at, v, speed, from);
 }
 
 Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
@@ -514,13 +587,13 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     // or along the owner's facing to its reach with none.
     Vector3 aim;
     if (target) {
-        aim = aim_point(*target, spawn_pos);
+        aim = aim_point(*target, owner, spawn_pos, muzzle_dir.value_or(owner_facing(owner)));
     } else if (has_ground_target) {
         aim = ground_target;
     } else if (manual_fire && last_order_point) {
         aim = *last_order_point;
     } else {
-        const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+        const Vector3 forward = owner_facing(owner);
         const f32 len = std::sqrt(forward.x * forward.x + forward.z * forward.z);
         const f32 reach = max_range > 0 ? max_range : 10.0f;
         aim = len > 0.001f ? Vector3{spawn_pos.x + forward.x / len * reach, spawn_pos.y,

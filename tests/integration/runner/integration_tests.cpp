@@ -7976,16 +7976,16 @@ void test_arc(TestContext& ctx) {
         osc::sim::Unit target;
         target.set_position({50, 0, 0});
         target.set_velocity({2, 0, 1});
-        const auto at = w.aim_point(target, {0, 0, 0});
-        // Straight shots meet it at t = 2.78 s, at (55.56, 2.78); two
-        // refinements from t = 2.5 s come within a few hundredths.
-        check(at.x > 55.4f && at.x < 55.6f && at.z > 2.7f && at.z < 2.8f,
+        const osc::sim::Unit shooter;
+        const auto at = w.aim_point(target, shooter, {0, 0, 0}, {1, 0, 0});
+        check(at.x > 54.8f && at.x < 55.0f && at.z > 2.4f && at.z < 2.5f,
               fmt::format("Test 4: a leading weapon aims at ({:.2f}, {:.2f}), where the "
                           "target will be",
                           at.x, at.z));
         w.lead_target = false;
-        const auto still = w.aim_point(target, {0, 0, 0});
-        check(still.x == 50.0f && still.z == 0.0f, "Test 5: one that doesn't lead aims at it");
+        const auto still = w.aim_point(target, shooter, {0, 0, 0}, {1, 0, 0});
+        check(std::abs(still.x - 50.2f) < 0.001f && std::abs(still.z - 0.1f) < 0.001f,
+              "Test 5: one that doesn't lead aims at it a tick ahead");
     }
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
