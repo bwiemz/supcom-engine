@@ -2151,6 +2151,34 @@ std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
     return held;
 }
 
+bool SimState::unit_cap_allows(i32 army, f32 cap_cost, bool tell) {
+    ArmyBrain* brain = get_army(army);
+    if (!brain || brain->ignores_unit_cap() || brain->unit_cap() < 0) return true;
+    if (brain->get_unit_cost_total(entity_registry_) + cap_cost <=
+        static_cast<f32>(brain->unit_cap()))
+        return true;
+    if (tell) brain_hears(army, "OnUnitCapLimitReached");
+    return false;
+}
+
+void SimState::brain_hears(i32 army, const char* method) {
+    ArmyBrain* brain = get_army(army);
+    if (!brain || !L_ || brain->lua_table_ref() < 0) return;
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, brain->lua_table_ref());
+    lua_pushstring(L_, method);
+    lua_gettable(L_, -2);
+    if (lua_isfunction(L_, -1)) {
+        lua_pushvalue(L_, -2);
+        if (lua_pcall(L_, 1, 0, 0) != 0) {
+            spdlog::warn("{} error: {}", method, lua_tostring(L_, -1));
+            lua_pop(L_, 1);
+        }
+    } else {
+        lua_pop(L_, 1);
+    }
+    lua_pop(L_, 1);
+}
+
 void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
                                     const char* recon_type, bool val) {
     auto* brain = get_army(static_cast<i32>(army_idx));
@@ -2861,6 +2889,11 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             if (cmd.rolloff_wait != 0) {
                 orders.mix(0x524f4c4cu); // "ROLL"
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.rolloff_wait)));
+            }
+            // A build waiting out its army's unit cap, only then.
+            if (cmd.cap_wait != 0) {
+                orders.mix(0x43415057u); // "CAPW"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.cap_wait)));
             }
             // A refuel under way (M206r), only once it has a slot or waits.
             if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0 || cmd.patrol_refuel) {

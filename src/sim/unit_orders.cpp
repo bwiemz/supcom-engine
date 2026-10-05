@@ -79,12 +79,8 @@ bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
     auto* brain = ctx.sim->get_army(builder.army());
     if (!brain) return false;
 
-    if (brain->unit_cap() >= 0 && brain->get_unit_cost_total(ctx.registry) >= brain->unit_cap()) {
-        spdlog::info("Build blocked: army {} unit cap {} reached for {}", builder.army(),
-                     brain->unit_cap(), cmd.blueprint_id);
-        return true;
-    }
-
+    // (The unit cap is no rule of the order's: the unit's making checks it,
+    // and the builder waits it out -- start_build, kCapRetryTicks.)
     auto categories = read_blueprint_categories(ctx.L, cmd.blueprint_id);
     if (!categories.empty() && brain->is_build_restricted(categories)) {
         spdlog::info("Build blocked: army {} restricted blueprint {}", builder.army(),
@@ -426,12 +422,18 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         }
 
         // Phase 2: Spawn skeleton unit
+        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (!start_build(cmd, registry, L)) {
-            command_queue_.pop_front();
+        const u32 building = cmd.command_id; // cmd may go with the scripts' changes
+        switch (start_build(cmd, registry, L)) {
+        case BuildStart::Started: break;
+        case BuildStart::AtCap: return hold_for_unit_cap(building);
+        case BuildStart::Failed:
+            if (!command_queue_.empty() && command_queue_.front().command_id == building)
+                command_queue_.pop_front();
             return OrderStep::Next;
         }
     }
@@ -454,12 +456,18 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     }
     if (build_target_id_ == 0) {
         // Factory: spawn immediately at own position
+        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (!start_build(cmd, registry, L)) {
-            command_queue_.pop_front();
+        const u32 building = cmd.command_id; // cmd may go with the scripts' changes
+        switch (start_build(cmd, registry, L)) {
+        case BuildStart::Started: break;
+        case BuildStart::AtCap: return hold_for_unit_cap(building);
+        case BuildStart::Failed:
+            if (!command_queue_.empty() && command_queue_.front().command_id == building)
+                command_queue_.pop_front();
             return OrderStep::Next;
         }
     }
@@ -482,6 +490,23 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+    return OrderStep::Hold;
+}
+
+/// Ticks a build waits at its army's unit cap before trying again: Moho's
+/// build tasks return 10 there (a task waits 9 ticks and runs on the 10th),
+/// the brain hearing OnUnitCapLimitReached at each try.
+constexpr i32 kCapRetryTicks = 10;
+
+bool Unit::waits_out_unit_cap(UnitCommand& cmd) {
+    if (cmd.cap_wait <= 0) return false;
+    --cmd.cap_wait;
+    return cmd.cap_wait > 0;
+}
+
+OrderStep Unit::hold_for_unit_cap(u32 command_id) {
+    if (!command_queue_.empty() && command_queue_.front().command_id == command_id)
+        command_queue_.front().cap_wait = kCapRetryTicks;
     return OrderStep::Hold;
 }
 
@@ -958,6 +983,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             command_queue_.push_front(std::move(order));
             return OrderStep::Next;
         }
+        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        const u32 guarded_factory = cmd.target_id;
         auto& queue = target_unit->command_queue_;
         for (size_t i = 0; i < queue.size() && L; ++i) {
             if (queue[i].type != CommandType::BuildFactory) continue;
@@ -973,8 +1000,24 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             // not, as the guarded factory drops it when it comes to it.
             if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
             if (repeat_queue_) queue.push_back(taken);
-            factory_assist_build_ = start_build(build, registry, L);
-            if (factory_assist_build_) build_command_id_ = cmd.command_id; // the guard's
+            const u32 guard_id = cmd.command_id; // cmd may go with the scripts' changes
+            const BuildStart started = start_build(build, registry, L);
+            if (started == BuildStart::AtCap) {
+                // At the army's unit cap the order goes back where it was
+                // (Moho's build task holds it, waiting), and the factory
+                // tries again later.
+                auto* guarded = registry.find(guarded_factory);
+                if (guarded && !guarded->destroyed() && guarded->is_unit()) {
+                    auto& its = static_cast<Unit*>(guarded)->command_queue_;
+                    if (repeat_queue_ && !its.empty() && its.back().command_id == taken.command_id)
+                        its.pop_back();
+                    its.insert(its.begin() + static_cast<std::ptrdiff_t>(std::min(i, its.size())),
+                               taken);
+                }
+                return hold_for_unit_cap(guard_id);
+            }
+            factory_assist_build_ = started == BuildStart::Started;
+            if (factory_assist_build_) build_command_id_ = guard_id; // the guard's
             break;
         }
         return OrderStep::Hold;

@@ -15,7 +15,6 @@ BreakOffTrigger
 CameraFollowTimeout
 CameraFollowsProjectile
 CannotAttackGround
-CapCost
 CatchUpAcc
 CirclingDirChange
 CirclingElevationChangeRatio

@@ -14,7 +14,6 @@ method OnDamageBy
 method OnDecayed
 method OnDoubleClick
 method OnFailedToBeBuilt
-method OnFailedUnitTransfer
 method OnIconsVisible
 method OnKeySelect
 method OnKeyboardFocusChange
@@ -32,7 +31,6 @@ method OnStopBuilderTracking
 method OnStopRepeatQueue
 method OnSubtitle
 method OnTerrainTypeChange
-method OnUnitCapLimitReached
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
 module /lua/ui/game/commandgraph.lua:OnCommandDragBegin
 module /lua/ui/game/commandgraph.lua:OnCommandDragEnd

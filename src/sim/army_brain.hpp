@@ -143,6 +143,10 @@ public:
     // --- Unit tracking ---
     i32 unit_cap() const { return unit_cap_; }
     void set_unit_cap(i32 cap) { unit_cap_ = cap; }
+    /// SetIgnoreArmyUnitCap: the army makes units past its cap (campaign
+    /// scripts set it around a big spawn).
+    bool ignores_unit_cap() const { return ignore_unit_cap_; }
+    void set_ignore_unit_cap(bool ignore) { ignore_unit_cap_ = ignore; }
 
     // --- Handicap ---
     // Fraction (0..1) by which this army's resource income is reduced. 0 = full
@@ -152,7 +156,9 @@ public:
         handicap_ = h < 0.0 ? 0.0 : (h > 0.95 ? 0.95 : h);
     }
 
-    i32 get_unit_cost_total(const EntityRegistry& registry) const;
+    /// Moho's GetArmyUnitCostTotal: the CapCost of every unit the army has,
+    /// unfinished ones too, but those already dying.
+    f32 get_unit_cost_total(const EntityRegistry& registry) const;
     std::vector<Entity*> get_units(EntityRegistry& registry) const;
 
     // --- Alliance ---
@@ -281,6 +287,7 @@ private:
     f64 event_energy_ = 0.0;
     f64 energy_efficiency_ = 1.0;
     i32 unit_cap_ = 1000;
+    bool ignore_unit_cap_ = false;
     f64 handicap_ = 0.0;
     f64 bonus_storage_mass_ = 0.0;   // from GiveStorage
     f64 bonus_storage_energy_ = 0.0;

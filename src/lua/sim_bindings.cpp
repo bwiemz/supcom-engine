@@ -159,14 +159,41 @@ static void push_unit_class(lua_State* L, const char* bp_id) {
     }
 }
 
+/// Whether a unit counts against its army's unit cap as it is made (Moho's
+/// Sim::CreateUnit gate), and whether the brain hears it when it doesn't
+/// fit: scripts' and builders' units tell, a transfer's is silent, and an
+/// army's initial units and upgrades aren't capped.
+enum class CapGate { None, Silent, Tell };
+
+/// A blueprint's General.CapCost: 1 when it gives none (Moho's default).
+static f32 blueprint_cap_cost(lua_State* L, const blueprints::BlueprintStore& store,
+                              const blueprints::BlueprintEntry& entry) {
+    f32 cost = 1.0f;
+    const int top = lua_gettop(L);
+    store.push_lua_table(entry, L);
+    lua_pushstring(L, "General");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "CapCost");
+        lua_gettable(L, -2);
+        if (lua_type(L, -1) == LUA_TNUMBER) cost = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_settop(L, top);
+    return cost;
+}
+
 // ====================================================================
 // Shared unit creation core — creates C++ Unit + Lua table.
 // Returns entity ID (0 on failure). Leaves Lua table on top of stack.
 // If being_built: fraction_complete=0, health=1, is_being_built=true.
-// Does NOT call any Lua callbacks — callers handle those.
+// Does NOT call any Lua callbacks — callers handle those (but the brain's
+// OnUnitCapLimitReached, under CapGate::Tell). A unit over its army's cap
+// is not made: 0, with *at_cap set.
 // ====================================================================
-static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
-                             f32 x, f32 y, f32 z, bool being_built) {
+static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f32 y, f32 z,
+                            bool being_built, CapGate gate = CapGate::None,
+                            bool* at_cap = nullptr) {
+    if (at_cap) *at_cap = false;
     auto* sim = get_sim(L);
     if (!sim) return 0;
 
@@ -176,6 +203,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     auto* entry = store ? store->find(bp_id) : nullptr;
     if (store && !entry) {
         spdlog::warn("CreateUnit: unknown unit blueprint '{}'", bp_id);
+        return 0;
+    }
+    const f32 cap_cost = entry ? blueprint_cap_cost(L, *store, *entry) : 1.0f;
+    if (gate != CapGate::None && !sim->unit_cap_allows(army, cap_cost, gate == CapGate::Tell)) {
+        if (at_cap) *at_cap = true;
         return 0;
     }
 
@@ -193,6 +225,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     unit->set_unit_id(bp_id);
     unit->set_army(army);
     unit->set_position({x, y, z});
+    unit->set_cap_cost(cap_cost);
 
     if (being_built) {
         unit->set_fraction_complete(0.0f);
@@ -1246,8 +1279,10 @@ static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
 /// CreateUnit(blueprintId, army, x, y, z, qx, qy, qz, qw, layer)
 /// CreateUnit and CreateUnitHPR: a complete unit at (x, y, z) facing
 /// `orientation`, its script told as retail's are (OnPreCreate, OnCreate,
-/// OnStopBeingBuilt).
-static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation);
+/// OnStopBeingBuilt). Over the army's unit cap it is an error, "<what>(<bp>)
+/// failed", as Moho's is.
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation,
+                                const char* what = "CreateUnit", CapGate gate = CapGate::Tell);
 
 // CreateUnit(bp, army, x, y, z, qx, qy, qz, qw[, layer])
 static int l_CreateUnit(lua_State* L) {
@@ -1272,11 +1307,13 @@ static int l_CreateUnit(lua_State* L) {
 /// stands, before its scripts run (Moho's transfer passes the old unit's
 /// transform and layer, elevation fixed): its layer, and an aircraft's
 /// height and heading. Leaves its table on the stack and returns its id; 0,
-/// with nothing pushed, when the blueprint makes none.
+/// with nothing pushed, when the blueprint makes none or `gate` finds the
+/// army at its unit cap (*at_cap set).
 static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_id, int army,
                                const sim::Vector3& pos, const sim::Quaternion& orientation,
-                               const sim::Unit* place_of = nullptr) {
-    u32 id = create_unit_core(L, bp_id, army, pos.x, pos.y, pos.z, /*being_built=*/false);
+                               const sim::Unit* place_of, CapGate gate, bool* at_cap = nullptr) {
+    u32 id =
+        create_unit_core(L, bp_id, army, pos.x, pos.y, pos.z, /*being_built=*/false, gate, at_cap);
     if (id == 0) return 0;
     if (auto* made = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
         made->set_orientation(orientation);
@@ -1365,7 +1402,8 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     return id; // its table on the stack
 }
 
-static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation) {
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation, const char* what,
+                                CapGate gate) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateUnit: no SimState");
 
@@ -1382,15 +1420,22 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
         pos = {static_cast<f32>(lua_tonumber(L, 3)), static_cast<f32>(lua_tonumber(L, 4)),
                static_cast<f32>(lua_tonumber(L, 5))};
     }
-    if (spawn_complete_unit(L, *sim, bp_id, army, pos, orientation) == 0) lua_pushnil(L);
+    bool at_cap = false;
+    if (spawn_complete_unit(L, *sim, bp_id, army, pos, orientation, nullptr, gate, &at_cap) == 0) {
+        if (at_cap) return luaL_error(L, "%s(%s) failed", what, bp_id);
+        lua_pushnil(L);
+    }
     return 1; // its table (or nil)
 }
 
 /// Internal: create a unit in "being built" state.
 /// Called from C++ build processing via Lua registry.
-/// Args: (bp_id, army_1based, x, y, z); y nil: where the structure stands
-/// at (x, z) -- on the ground, the water or the seabed, as Moho places it
-/// Returns: entity_id, lua_table (2 values)
+/// Args: (bp_id, army_1based, x, y, z[, capped]); y nil: where the structure
+/// stands at (x, z) -- on the ground, the water or the seabed, as Moho
+/// places it. capped (default true): held to the army's unit cap, its brain
+/// told when over it (an upgrade passes false: Moho makes those uncapped).
+/// Returns: entity_id, lua_table (2 values); nil, nil -- or nil, "cap" when
+/// the army is at its cap.
 static int l_create_building_unit(lua_State* L) {
     const char* bp_id = luaL_checkstring(L, 1);
     int army = static_cast<int>(lua_tonumber(L, 2)) - 1;
@@ -1402,10 +1447,14 @@ static int l_create_building_unit(lua_State* L) {
         y = sim ? structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
     }
 
-    u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/true);
+    const bool capped = lua_gettop(L) < 6 || lua_isnil(L, 6) || lua_toboolean(L, 6) != 0;
+    bool at_cap = false;
+    u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/true,
+                              capped ? CapGate::Tell : CapGate::None, &at_cap);
     if (id == 0) {
         lua_pushnil(L);
-        lua_pushnil(L);
+        if (at_cap) lua_pushstring(L, "cap");
+        else lua_pushnil(L);
         return 2;
     }
 
@@ -1459,7 +1508,8 @@ static int l_CreateUnitHPR(lua_State* L) {
     const auto angle = [L](int idx) {
         return lua_isnumber(L, idx) ? static_cast<f32>(lua_tonumber(L, idx)) : 0.0f;
     };
-    return create_complete_unit(L, sim::euler_to_quat(angle(7), angle(6), angle(8)));
+    return create_complete_unit(L, sim::euler_to_quat(angle(7), angle(6), angle(8)),
+                                "CreateUnitHPR");
 }
 
 static int l_CreateUnit2(lua_State* L) {
@@ -1532,7 +1582,8 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
     lua_pushnumber(L, pos.x);
     lua_pushnumber(L, pos.y);
     lua_pushnumber(L, pos.z);
-    int result = l_CreateUnit(L);
+    // Not held to the unit cap (Moho makes it without Sim::CreateUnit's gate).
+    int result = create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
 
     // Give initial resources (mirrors GiveInitialResources in ACUUnit.lua)
     if (gift_mass > 0.0 || gift_energy > 0.0) {
@@ -2549,9 +2600,9 @@ static int l_GetCueBank(lua_State* L) {
     return 2;
 }
 
-/// SetIgnoreArmyCap(brain, bool): the AI's cheat exemption from the unit
-/// cap. The cap is not enforced yet (ArmyBrain::unit_cap is informational),
-/// so there is nothing to exempt. stub: no-op until unit caps are enforced.
+/// SetIgnoreArmyCap(brain, bool): not Moho's. Retail's own
+/// AIBrain.IgnoreArmyUnitCap calls it, where FA would fail on a nil call;
+/// it does nothing here (SetIgnoreArmyUnitCap is the real exemption).
 static int l_SetIgnoreArmyCap(lua_State* /*L*/) { return 0; }
 
 /// TryCopyPose(unit, prop, bool): copy the dying unit's animation pose onto
@@ -4436,6 +4487,20 @@ static int l_SetArmyUnitCap(lua_State* L) {
     return 0;
 }
 
+/// SetIgnoreArmyUnitCap(army, flag): the army makes units past its unit cap
+/// (Moho's CArmyImpl::SetUseUnitCap; campaign scripts set it around a big
+/// spawn, and a capture under ScenarioFramework).
+static int l_SetIgnoreArmyUnitCap(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return luaL_error(L, "SetIgnoreArmyUnitCap(army, flag): expected 2 args, got %d",
+                          lua_gettop(L));
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    if (auto* brain = sim->get_army(resolve_army(L, 1, sim)))
+        brain->set_ignore_unit_cap(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
 static int l_GetArmyUnitCap(lua_State* L) {
     auto* sim = get_sim(L);
     i32 army = resolve_army(L, 1, sim);
@@ -5070,7 +5135,8 @@ static sim::Unit* transferable_unit(sim::SimState& sim, u32 id) {
 
 /// Move `unit_id` to `army` (0-based) as Moho's TransferUnit does, its
 /// stored and carried units with it: the new unit's id, 0 when none was
-/// made (the unit is dead, or its blueprint makes none).
+/// made (the unit is dead, its blueprint makes none, or the new army is at
+/// its unit cap -- its brain then hears OnFailedUnitTransfer).
 static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army) {
     auto& registry = sim.entity_registry();
     sim::Unit* unit = transferable_unit(sim, unit_id);
@@ -5105,9 +5171,13 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
     unit = transferable_unit(sim, unit_id);
     if (!unit) return 0;
     const std::string bp = unit->blueprint_id();
-    const u32 new_id =
-        spawn_complete_unit(L, sim, bp.c_str(), army, unit->position(), unit->orientation(), unit);
-    if (new_id == 0) return 0;
+    bool at_cap = false;
+    const u32 new_id = spawn_complete_unit(L, sim, bp.c_str(), army, unit->position(),
+                                           unit->orientation(), unit, CapGate::Silent, &at_cap);
+    if (new_id == 0) {
+        if (at_cap) sim.brain_hears(army, "OnFailedUnitTransfer");
+        return 0;
+    }
     lua_pop(L, 1);
     unit = transferable_unit(sim, unit_id);
     auto* fresh = transferable_unit(sim, new_id);
@@ -6149,7 +6219,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyFactionIndex", l_SetArmyFactionIndex);
     state.register_function("SetArmyColorIndex", stub_noop);
     state.register_function("SetArmyAIPersonality", l_SetArmyAIPersonality);
-    state.register_function("SetIgnoreArmyUnitCap", stub_noop);
+    state.register_function("SetIgnoreArmyUnitCap", l_SetIgnoreArmyUnitCap);
     state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
     state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);
     state.register_function("ArmyIsOutOfGame", l_ArmyIsOutOfGame);

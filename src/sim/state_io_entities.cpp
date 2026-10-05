@@ -317,6 +317,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.u32v(c.beacon_id);
     w.u32v(c.assigned_id);
     w.i32v(c.rolloff_wait);
+    w.i32v(c.cap_wait);
     save_ids(w, c.launch_queue);
     w.i32v(c.launch_wait);
     enum8(w, c.dock_phase);
@@ -348,6 +349,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.beacon_id = r.u32v();
     c.assigned_id = r.u32v();
     c.rolloff_wait = r.i32v();
+    c.cap_wait = r.i32v();
     c.launch_queue = load_ids(r);
     c.launch_wait = r.i32v();
     c.dock_phase = enum8<DockPhase>(r);
@@ -820,6 +822,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.unit_id_);
     w.str(u.armor_type_);
     w.f32v(u.build_rate_);
+    w.f32v(u.cap_cost_);
     w.f32v(u.max_build_distance_);
     w.str(u.layer_);
     w.str(u.motion_type_);
@@ -1105,6 +1108,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.unit_id_ = r.str();
     u.armor_type_ = r.str();
     u.build_rate_ = r.f32v();
+    u.cap_cost_ = r.f32v();
     u.max_build_distance_ = r.f32v();
     u.layer_ = r.str();
     u.motion_type_ = r.str();

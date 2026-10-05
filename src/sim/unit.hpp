@@ -119,6 +119,10 @@ public:
     f32 max_build_distance() const { return max_build_distance_; }
     void set_max_build_distance(f32 d) { max_build_distance_ = d; }
     void set_build_rate(f32 r) { build_rate_ = r; }
+    /// General.CapCost: what the unit counts against its army's unit cap
+    /// (walls 0.1; drones, build bots and satellites 0).
+    f32 cap_cost() const { return cap_cost_; }
+    void set_cap_cost(f32 c) { cap_cost_ = c; }
 
     const std::string& layer() const { return layer_; }
     void set_layer(const std::string& l) { layer_ = l; }
@@ -367,9 +371,12 @@ public:
     void call_lua_method_with_entity(lua_State* L, const char* method_name,
                                       Entity* arg_entity);
 
-    /// Build helpers called from the order handlers (unit_orders.cpp)
-    bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
-                     lua_State* L);
+    /// Build helpers called from the order handlers (unit_orders.cpp).
+    /// What start_build made of a build: its unit started; nothing, and the
+    /// order goes; or nothing yet, the army being at its unit cap (an
+    /// upgrade isn't held to it), and the builder tries again later.
+    enum class BuildStart { Started, Failed, AtCap };
+    BuildStart start_build(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
     /// Works on the build under way; false once it has ended, and then
     /// `built` (if given) says whether the unit was finished or the build
     /// failed.
@@ -1020,6 +1027,12 @@ private:
     /// Whether a factory whose unit is built still holds for the roll-off,
     /// counting `wait` down (see the definition).
     bool holds_for_rolloff(i32& wait) const;
+    /// Whether a build its army's unit cap stopped still waits, counting
+    /// its cap_wait down (it tries again once that runs out).
+    static bool waits_out_unit_cap(UnitCommand& cmd);
+    /// A build its army's unit cap stopped: the order `command_id` (if
+    /// still at the head -- the brain's scripts ran) waits kCapRetryTicks.
+    OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
     OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
@@ -1134,6 +1147,7 @@ private:
     std::string unit_id_;
     std::string armor_type_ = "Default";
     f32 build_rate_ = 1.0f;
+    f32 cap_cost_ = 1.0f;           // Moho's RUnitBlueprint default
     f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
