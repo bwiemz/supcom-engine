@@ -211,7 +211,7 @@ private:
     /// When each entity's mesh instance was made: FA makes one when an
     /// entity appears or changes mesh, stamped with the tick (material.x).
     struct MeshBirth {
-        std::string mesh; ///< the blueprint or override it was drawn with
+        u32 mesh_changes = 0; ///< the entity's Entity::mesh_changes when drawn
         u32 tick = 0;
         u64 frame = 0; ///< the last update that saw it
     };

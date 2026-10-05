@@ -63,6 +63,7 @@ struct EntityRecord {
     i32 army = -1;
     std::string blueprint_id;
     std::string mesh_override;
+    u32 mesh_changes = 0; ///< Entity::mesh_changes
     f32 scale_x = 1, scale_y = 1, scale_z = 1;
     f32 fraction_complete = 1;
     f32 health = 0, max_health = 0;
@@ -241,6 +242,16 @@ struct WorldSnapshot {
     SightMap sight;        ///< the sight army's (WorldHistory::set_sight_army)
     i32 player_result = 0; ///< SimState::player_result()
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
+
+    /// Unique per capture (WorldHistory::capture), 0 for one made otherwise.
+    u64 serial = 0;
+    /// Each entity's place in the snapshot captured before this one (the
+    /// one whose serial is `previous_serial`): the same entity, not
+    /// teleported since (its snap_serial), else kNoPrevious. A frame pairs
+    /// the two records by it rather than searching (FrameView).
+    std::vector<u32> previous;
+    u64 previous_serial = 0;
+    static constexpr u32 kNoPrevious = 0xFFFFFFFFu;
 
     const EntityRecord* find(u32 id) const;
     const ArmyRecord* army(i32 index) const {
