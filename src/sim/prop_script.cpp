@@ -109,6 +109,23 @@ void read_prop_blueprint(lua_State* L, Prop& prop) {
             std::unordered_set<std::string> categories;
             collect_blueprint_categories(L, lua_gettop(L), categories);
             prop.untargetable = categories.count("UNTARGETABLE") > 0;
+            prop.reclaimable_category = categories.count("RECLAIMABLE") > 0;
+            lua_pushstring(L, "Economy");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                const auto number = [&](const char* key) {
+                    lua_pushstring(L, key);
+                    lua_rawget(L, -2);
+                    const f32 v = lua_type(L, -1) == LUA_TNUMBER
+                                      ? static_cast<f32>(lua_tonumber(L, -1))
+                                      : 0.0f;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                prop.reclaim_mass_max = number("ReclaimMassMax");
+                prop.reclaim_energy_max = number("ReclaimEnergyMax");
+            }
+            lua_pop(L, 1);
         }
         lua_pop(L, 1);
     }
