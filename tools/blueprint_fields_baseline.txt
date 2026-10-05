@@ -32,7 +32,6 @@ EffectiveRadius
 EngageDistance
 GroundCollisionOffset
 GuardReturnRadius
-GuardScanRadius
 HideLifebars
 HoverOverAttack
 IgnoreIfDisabled
@@ -63,7 +62,6 @@ MinAirspeed
 MinBounceCount
 MinWaterDepth
 MuzzleVelocityRandom
-MuzzleVelocityReduceDistance
 NeedPrep
 NeedToFaceTargetToBuild
 NeedUnpack

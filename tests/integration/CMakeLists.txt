@@ -14,6 +14,7 @@ add_executable(osc_integration
     runner/persist_test.cpp
     runner/wave_test.cpp
     runner/movie_test.cpp
+    runner/edit_text_test.cpp
     runner/keymap_test.cpp
     runner/camera_moves_test.cpp
     runner/window_test.cpp
@@ -30,6 +31,7 @@ add_executable(osc_integration
     runner/skinning_test.cpp
     runner/prop_material_test.cpp
     runner/clipped_shadow_test.cpp
+    runner/shadow_map_test.cpp
     runner/unit_intel_test.cpp
     runner/intel_probe.cpp
     runner/strategic_icon_test.cpp
@@ -40,6 +42,7 @@ add_executable(osc_integration
     runner/intel_field_test.cpp
     runner/beam_render_test.cpp
     runner/selection_render_test.cpp
+    runner/ghost_render_test.cpp
     runner/trail_render_test.cpp
     runner/particle_render_test.cpp
     runner/water_render_test.cpp
@@ -54,6 +57,7 @@ add_executable(osc_integration
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
     runner/script_order_test.cpp
+    runner/patrol_test.cpp
     runner/unit_cap_test.cpp
 )
 target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)

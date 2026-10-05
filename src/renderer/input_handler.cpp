@@ -6,6 +6,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
+#include "sim/prop.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -20,6 +21,14 @@
 #include <vector>
 
 namespace osc::renderer {
+
+namespace {
+
+bool targetable_prop(const sim::Entity& e) {
+    return e.is_prop() && !static_cast<const sim::Prop&>(e).untargetable;
+}
+
+} // namespace
 
 bool selectable(const sim::Entity& e) {
     if (!e.is_unit() || e.destroyed() || e.unselectable()) {
@@ -405,7 +414,7 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
             const sim::Entity* e = live(id);
             if (!e) continue;
             const bool ally = e->is_unit() && allied(e->army());
-            const bool wreck = e->is_prop() && e->reclaimable();
+            const bool wreck = targetable_prop(*e) && e->reclaimable();
             if (!ally && !wreck) continue;
             const sim::Vector3 pos = view_.position(*e);
             const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
@@ -607,22 +616,51 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     out.target_id = cmd.target_id;
     // Player-issued order: routed so a networked match broadcasts it.
     sim.set_human_input_active(true);
-    // Moho's patrol starts where the group stands, or its queue ends, unless
-    // it is already patrolling: the loop runs back there
+    // Moho's patrol starts where the group stands, or where the last unit's queue ends with the
+    // orders not yet run, unless one is patrolling (ResolveGroupMoveAnchorOrDetectPatrol)
     bool patrolling = false;
+    const sim::UnitCommand* queue_end = nullptr;
     f32 ax = 0;
     f32 az = 0;
+    const auto pending =
+        shift ? sim.command_scheduler().pending() : std::vector<sim::ScheduledCommand>();
     for (u32 id : ids) {
         const auto& u = static_cast<const sim::Unit&>(*sim.entity_registry().find(id));
-        const auto& q = u.command_queue();
-        const sim::Vector3 at = shift && !q.empty() ? q.back().target_pos : u.position();
-        ax += at.x;
-        az += at.z;
-        patrolling |= shift && !q.empty() && q.back().type == sim::CommandType::Patrol;
+        ax += u.position().x;
+        az += u.position().z;
+        if (!shift) {
+            continue;
+        }
+        const auto& queue = u.command_queue();
+        const sim::UnitCommand* last = queue.empty() ? nullptr : &queue.back();
+        for (const auto& scheduled : pending) {
+            const sim::UnitCommand& order = scheduled.command;
+            if (scheduled.callback || order.factory ||
+                std::find(scheduled.unit_ids.begin(), scheduled.unit_ids.end(), id) ==
+                    scheduled.unit_ids.end()) {
+                continue;
+            }
+            if (order.type == sim::CommandType::Stop) {
+                last = nullptr;
+            } else if (order.type != sim::CommandType::SiloBuildNuke &&
+                       order.type != sim::CommandType::SiloBuildTactical &&
+                       sim.takes_command(u, order)) {
+                last = &order;
+            }
+        }
+        if (last) {
+            patrolling |= last->type == sim::CommandType::Patrol;
+            queue_end = last;
+        }
     }
     if (cmd.type == sim::CommandType::Patrol && !patrolling) {
-        ax /= static_cast<f32>(ids.size());
-        az /= static_cast<f32>(ids.size());
+        if (queue_end) {
+            ax = queue_end->target_pos.x;
+            az = queue_end->target_pos.z;
+        } else {
+            ax /= static_cast<f32>(ids.size());
+            az /= static_cast<f32>(ids.size());
+        }
         sim::UnitCommand anchor = cmd;
         anchor.target_pos = {ax, surface_y(ax, az), az};
         sim.route_player_command(ids, anchor, !shift);
@@ -732,7 +770,7 @@ u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
     for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
         auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !shown(*e)) continue;
-        if (reclaim ? !((e->is_unit() || e->is_prop()) && e->reclaimable()) : !e->is_unit())
+        if (reclaim ? !((e->is_unit() || targetable_prop(*e)) && e->reclaimable()) : !e->is_unit())
             continue;
         const sim::Vector3 pos = view_.position(*e);
         const f32 dx = pos.x - wx;
@@ -752,50 +790,53 @@ bool InputHandler::shown(const sim::Entity& e) const {
     return !record || shows_icon(recon_->sight(*record));
 }
 
-std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
-                                                   const sim::SimState& sim) const {
+BuildGhost InputHandler::ghost_at(const sim::SimState& sim, f32 wx, f32 wz) const {
     const auto& bp = sim.build_ghost_bp();
-    if (bp.empty() || !sim.terrain()) return std::nullopt;
     const f32 size_x = sim.build_ghost_foot_x();
     const f32 size_z = sim.build_ghost_foot_z();
-
-    const auto ghost_at = [&](f32 wx, f32 wz) {
-        BuildGhost ghost;
-        ghost.blueprint_id = bp;
-        ghost.x = wx;
-        ghost.y = sim.terrain()->get_terrain_height(wx, wz);
-        ghost.z = wz;
-        sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
-        if (mode_hooks_.can_place) {
-            ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
-            // can_place has read the blueprint's rules
-            pad = sim::StructureSite::of(
-                sim.placement_rules(bp, [] { return sim::PlacementRules{}; }), wx, wz);
-        } else if (const auto* grid = sim.pathfinding_grid()) {
-            // Buildable unless the footprint covers impassable ground
-            u32 gx0, gz0, gx1, gz1;
-            grid->world_to_grid(wx - size_x * 0.5f, wz - size_z * 0.5f, gx0, gz0);
-            grid->world_to_grid(wx + size_x * 0.5f, wz + size_z * 0.5f, gx1, gz1);
-            for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz) {
-                for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx) {
-                    ghost.valid = grid->get(gx, gz) != map::CellPassability::Impassable;
-                }
+    BuildGhost ghost;
+    ghost.blueprint_id = bp;
+    ghost.x = wx;
+    ghost.y = sim.terrain() ? sim.terrain()->get_terrain_height(wx, wz) : 0.0f;
+    ghost.z = wz;
+    sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
+    if (mode_hooks_.can_place) {
+        ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
+        // can_place has read the blueprint's rules
+        const auto& rules = sim.placement_rules(bp, [] { return sim::PlacementRules{}; });
+        pad = sim::StructureSite::of(rules, wx, wz);
+        ghost.y = sim::structure_elevation(sim, rules, wx, wz);
+    } else if (const auto* grid = sim.pathfinding_grid()) {
+        // Buildable unless the footprint covers impassable ground
+        u32 gx0, gz0, gx1, gz1;
+        grid->world_to_grid(wx - size_x * 0.5f, wz - size_z * 0.5f, gx0, gz0);
+        grid->world_to_grid(wx + size_x * 0.5f, wz + size_z * 0.5f, gx1, gz1);
+        for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz) {
+            for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx) {
+                ghost.valid = grid->get(gx, gz) != map::CellPassability::Impassable;
             }
         }
-        ghost.pad_x0 = pad.x0;
-        ghost.pad_z0 = pad.z0;
-        ghost.pad_x1 = pad.x1;
-        ghost.pad_z1 = pad.z1;
-        return ghost;
-    };
+    }
+    ghost.pad_x0 = pad.x0;
+    ghost.pad_z0 = pad.z0;
+    ghost.pad_x1 = pad.x1;
+    ghost.pad_z1 = pad.z1;
+    return ghost;
+}
+
+std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
+                                                    const sim::SimState& sim) const {
+    if (sim.build_ghost_bp().empty() || !sim.terrain()) return std::nullopt;
+    const f32 size_x = sim.build_ghost_foot_x();
+    const f32 size_z = sim.build_ghost_foot_z();
 
     if (build_line_ && line_drag_build_) {
         const auto& l = *build_line_;
         const auto sites =
             sim::structure_line_sites(l[0], l[1], l[2], l[3], size_x, size_z, line_spacing_);
-        BuildGhost ghost = ghost_at(sites.front().first, sites.front().second);
+        BuildGhost ghost = ghost_at(sim, sites.front().first, sites.front().second);
         for (size_t i = 1; i < sites.size(); ++i) {
-            ghost.line.push_back(ghost_at(sites[i].first, sites[i].second));
+            ghost.line.push_back(ghost_at(sim, sites[i].first, sites[i].second));
         }
         return ghost;
     }
@@ -808,7 +849,7 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     snap_to_deposit(sim, mode_hooks_.current ? mode_hooks_.current() : CommandMode{}, wx, wz);
     // Where a build order at the cursor would place it
     sim::snap_structure_center(wx, wz, size_x, size_z);
-    return ghost_at(wx, wz);
+    return ghost_at(sim, wx, wz);
 }
 
 } // namespace osc::renderer

@@ -93,6 +93,7 @@ f32 ParticleSystem::random() {
 
 void ParticleSystem::clear() {
     emitters_.clear();
+    lights_.clear();
     unknown_.clear();
     unmade_.clear();
     particles_.clear();
@@ -251,6 +252,35 @@ void ParticleSystem::emit(u32 id, Emitter& e, u32 ticks, u32 now_tick,
     }
 }
 
+void ParticleSystem::make_light(const sim::EffectRecord& fx, const sim::FrameView& view, u32 tick) {
+    const Vector3& at = fx.frame_position;
+    if (fx.type == sim::EffectType::LIGHT_PARTICLE_INTEL && recon_ &&
+        !recon_->sees_at(view, -1, at.x, at.z)) {
+        unmade_.insert(fx.id);
+        return;
+    }
+    lights_.insert(fx.id);
+    if (particles_.size() >= MAX_PARTICLES) {
+        return;
+    }
+    auto bp = std::make_shared<EmitterBlueprintData>();
+    bp->texture = fx.glow_texture;
+    bp->ramp_texture = fx.ramp_texture;
+    bp->blendmode = kBlendAdd;
+    bp->flat = true;
+    bp->light = true;
+    Particle p;
+    p.bp = bp.get();
+    p.own = std::move(bp);
+    p.effect_id = fx.id;
+    p.born = static_cast<f64>(tick);
+    p.lifetime = fx.light_lifetime;
+    p.position = at;
+    p.begin_size = fx.light_size;
+    p.end_size = fx.light_size;
+    particles_.push_back(p);
+}
+
 void ParticleSystem::apply_overrides(Emitter& e, const sim::EffectRecord& fx,
                                      const EmitterBlueprintData& base) {
     auto own = std::make_shared<EmitterBlueprintData>(base);
@@ -323,6 +353,13 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
         if (!fx.framed) continue;
         live.insert(fx.id);
         if (unknown_.count(fx.id) || unmade_.count(fx.id)) continue;
+        if (fx.type == sim::EffectType::LIGHT_PARTICLE ||
+            fx.type == sim::EffectType::LIGHT_PARTICLE_INTEL) {
+            if (!lights_.count(fx.id)) {
+                make_light(fx, view, tick);
+            }
+            continue;
+        }
         auto it = emitters_.find(fx.id);
         const Frame frame{fx.frame_position, fx.frame_rotation};
         const Vector3 offset{fx.offset_x, fx.offset_y, fx.offset_z};
@@ -385,7 +422,7 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
     // Emitters gone from the world stop; their particles live on.
     for (auto it = emitters_.begin(); it != emitters_.end();)
         it = live.count(it->first) ? std::next(it) : emitters_.erase(it);
-    for (auto* set : {&unknown_, &unmade_})
+    for (auto* set : {&lights_, &unknown_, &unmade_})
         for (auto it = set->begin(); it != set->end();)
             it = live.count(*it) ? std::next(it) : set->erase(it);
     last_tick_ = tick;
@@ -446,6 +483,9 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
         if (x.sort_order != y.sort_order) return x.sort_order < y.sort_order;
         if (x.texture != y.texture) return x.texture < y.texture;
         if (x.ramp_texture != y.ramp_texture) return x.ramp_texture < y.ramp_texture;
+        if (x.light != y.light) {
+            return y.light;
+        }
         return x.blendmode < y.blendmode;
     });
 
@@ -518,11 +558,14 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
         const bool under = bp.sort_order < 0 && bp.blendmode != kBlendRefract;
         const auto offset = static_cast<u32>(instances_.size());
         instances_.push_back(inst);
-        const bool same = !groups_.empty() && groups_.back().under_water == under &&
-                          groups_.back().blendmode == bp.blendmode &&
-                          groups_.back().texture == bp.texture &&
-                          groups_.back().ramp == bp.ramp_texture;
-        if (!same) groups_.push_back({under, bp.blendmode, bp.texture, bp.ramp_texture, offset, 0});
+        const bool same =
+            !groups_.empty() && groups_.back().under_water == under &&
+            groups_.back().blendmode == bp.blendmode && groups_.back().light == bp.light &&
+            groups_.back().texture == bp.texture && groups_.back().ramp == bp.ramp_texture;
+        if (!same) {
+            groups_.push_back(
+                {under, bp.blendmode, bp.light, bp.texture, bp.ramp_texture, offset, 0});
+        }
         ++groups_.back().count;
         drawn_.push_back(
             {p.effect_id, pos, ax, ay, t, p.lifetime, uv, p.ramp_selection, bp.blendmode, under});

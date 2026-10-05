@@ -1,5 +1,6 @@
 #include "renderer/ui_renderer.hpp"
 #include "renderer/vk_cmd.hpp"
+#include "core/utf8.hpp"
 #include "ui/lazyvar.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "ui/scroll.hpp"
@@ -118,10 +119,10 @@ void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
     }
 
     // Emit one quad per glyph
-    for (unsigned char c : text) {
+    for (size_t i = 0; i < text.size();) {
         if (quad_count_ >= MAX_UI_QUADS) break;
 
-        auto git = atlas->glyphs.find(static_cast<u32>(c));
+        auto git = atlas->glyphs.find(next_codepoint(text, i));
         if (git == atlas->glyphs.end()) {
             // Unknown glyph — advance by space width
             auto space = atlas->glyphs.find(32);
@@ -221,9 +222,9 @@ void UIRenderer::emit_edit_quads(ui::UIControl* ctrl, TextureCache& tex_cache,
         if (atlas) {
             // Advance cursor_x through glyphs up to caret_position
             i32 pos = ctrl->caret_position();
-            for (i32 i = 0; i < pos && i < static_cast<i32>(text.size()); i++) {
-                auto git = atlas->glyphs.find(static_cast<u32>(
-                    static_cast<unsigned char>(text[i])));
+            size_t at = 0;
+            for (i32 n = 0; n < pos && at < text.size(); n++) {
+                auto git = atlas->glyphs.find(next_codepoint(text, at));
                 if (git != atlas->glyphs.end()) {
                     caret_x += git->second.x_advance;
                 } else {
@@ -245,7 +246,7 @@ void UIRenderer::emit_edit_quads(ui::UIControl* ctrl, TextureCache& tex_cache,
         caret.inst.rect[2] = caret_w; caret.inst.rect[3] = caret_h;
         std::memcpy(caret.inst.uv, full_uv, sizeof(full_uv));
         argb_to_rgba(ctrl->caret_color(), caret.inst.color);
-        caret.inst.color[3] *= alpha;
+        caret.inst.color[3] = ctrl->caret_alpha() * alpha;
         quads_.push_back(caret);
         quad_count_++;
     }
@@ -317,9 +318,9 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
             f32 baseline_y = row_y + font_line(*ctrl, *atlas).ascent;
             f32 cursor_x = left + 2.0f;
 
-            for (unsigned char c : items[i]) {
+            for (size_t at = 0; at < items[i].size();) {
                 if (quad_count_ >= MAX_UI_QUADS) break;
-                auto git = atlas->glyphs.find(static_cast<u32>(c));
+                auto git = atlas->glyphs.find(next_codepoint(items[i], at));
                 if (git == atlas->glyphs.end()) {
                     auto sp = atlas->glyphs.find(32);
                     cursor_x += sp != atlas->glyphs.end()
@@ -529,6 +530,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                 movies_ && ctrl->movie_playing() ? movies_->descriptor(ctrl) : VK_NULL_HANDLE;
             if (ds) {
                 entry.texture_ds = ds;
+                entry.movie = ctrl;
                 entry.inst.color[0] = entry.inst.color[1] = entry.inst.color[2] = 1.0f;
                 entry.inst.color[3] = ctrl->alpha();
                 entry.inst.uv[0] = 0.0f;
@@ -733,6 +735,19 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
                 {q.inst.rect[0], q.inst.rect[1], q.inst.rect[2], q.inst.rect[3]},
                 q.depth, world_views_);
         });
+    }
+
+    // Which movies reached the screen: one that didn't (hidden, or under a
+    // world view) decodes nothing until it does (UIDispatch::movie_frame).
+    std::vector<const ui::UIControl*> drawn_movies;
+    for (const QuadEntry& q : quads_)
+        if (q.movie) drawn_movies.push_back(q.movie);
+    for (const auto& ptr : registry.all()) {
+        ui::UIControl* ctrl = ptr.get();
+        if (!ctrl || ctrl->destroyed() || ctrl->control_type() != ui::UIControl::ControlType::Movie)
+            continue;
+        ctrl->set_movie_on_screen(std::find(drawn_movies.begin(), drawn_movies.end(), ctrl) !=
+                                  drawn_movies.end());
     }
 
     // Emit cursor quad at mouse position (topmost depth)

@@ -560,28 +560,46 @@ void test_effect_intel(TestContext& ctx) {
                         "not in the fog ({}, {})",
                         half_seen_beams, half_seen_placeholders, fog_beams, fog_placeholders));
 
-    // Test 6: a light, and a beam fixed to a
-    // unit, show where the player's army sees them.
+    // Test 6: a LightParticleIntel is made where the player's army sees it,
+    // a LightParticle anywhere; a beam fixed to a unit shows where it sees
+    // it. The overlay draws no light.
     const auto count_colour = [](const Frame& fr, f32 cr, f32 cg, f32 cb) {
         return std::count_if(fr.overlay.begin(), fr.overlay.end(),
                              [&](const Quad& q) { return same_colour(q, cr, cg, cb); });
     };
-    run_lua(ctx, "CreateLightParticle(__osc_fx_fog, -1, 2, 4, 100, 'glow_03', 'ramp_flare_02')\n"
+    const auto lights = [&](sim::EffectType type) {
+        size_t n = 0;
+        for (const sim::EffectRecord& fx : seen.cur().effects) {
+            if (fx.type == type) {
+                n += particles(fx.id);
+            }
+        }
+        return n;
+    };
+    run_lua(ctx, "CreateLightParticleIntel(__osc_fx_fog, -1, 2, 4, 100, 'glow_03', "
+                 "'ramp_flare_02')\n"
+                 "CreateLightParticle(__osc_fx_fog, -1, 2, 4, 100, 'glow_03', 'ramp_flare_02')\n"
                  "CreateAttachedBeam(__osc_fx_fog, -1, 2, 5, 1, "
                  "'/effects/emitters/build_beam_01_emit.bp')\n");
     f = next();
-    const auto fog_lights = count_colour(f, 1.0f, 0.9f, 0.5f);
+    const auto fog_intel = lights(sim::EffectType::LIGHT_PARTICLE_INTEL);
+    const auto fog_lights = lights(sim::EffectType::LIGHT_PARTICLE);
     const auto fog_attached = count_colour(f, 0.6f, 0.8f, 1.0f);
-    run_lua(ctx, "CreateLightParticle(__osc_fx_seen, -1, 2, 4, 100, 'glow_03', 'ramp_flare_02')\n"
+    run_lua(ctx, "CreateLightParticleIntel(__osc_fx_seen, -1, 2, 4, 100, 'glow_03', "
+                 "'ramp_flare_02')\n"
                  "CreateAttachedBeam(__osc_fx_seen, -1, 2, 5, 1, "
                  "'/effects/emitters/build_beam_01_emit.bp')\n");
     f = next();
-    const auto seen_lights = count_colour(f, 1.0f, 0.9f, 0.5f);
+    const auto seen_intel = lights(sim::EffectType::LIGHT_PARTICLE_INTEL);
     const auto seen_attached = count_colour(f, 0.6f, 0.8f, 1.0f);
-    t.check(fog_lights == 0 && fog_attached == 0 && seen_lights == 1 && seen_attached == 1,
-            fmt::format("Test 6: a light and an attached beam draw in sight ({}, {}), not in the "
-                        "fog ({}, {})",
-                        seen_lights, seen_attached, fog_lights, fog_attached));
+    const auto light_quads = count_colour(f, 1.0f, 0.9f, 0.5f);
+    t.check(fog_intel == 0 && seen_intel == 1 && fog_lights == 1 && fog_attached == 0 &&
+                seen_attached == 1 && light_quads == 0,
+            fmt::format("Test 6: an intel light is made in sight ({}), not in the fog ({}); a "
+                        "light in the fog ({}); an attached beam draws in sight ({}), not in the "
+                        "fog ({}); overlay lights {}",
+                        seen_intel, fog_intel, fog_lights, seen_attached, fog_attached,
+                        light_quads));
 
     // Test 7: ARMY_2's shield draws where the player's army sees it: its
     // mesh (M211k; shield.lua's SetVizToEnemies('Intel')).

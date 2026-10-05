@@ -46,6 +46,9 @@ bool App::Window::frame() {
 
     update_ui(dt);
 
+    if (sim_state) {
+        world_interp.history.refresh_pending(*sim_state);
+    }
     // This frame's world, between the last two ticks: what is
     // drawn and what clicks pick.
     const osc::sim::FrameView frame_view = world_interp.view();

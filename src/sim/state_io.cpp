@@ -12,6 +12,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
+#include "sim/prop_script.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -24,9 +25,10 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 6; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 7; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                             // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
-                            // 6: unit cap costs, the army's cap exemption, build cap waits
+                            // 6: weapons' lead physics;
+                            // 7: unit cap costs, the army's cap exemption, build cap waits
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -141,6 +143,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             load(r, *p);
             if (auto* bones = sim.bone_cache())
                 p->set_bone_data(bones->get(p->blueprint_id(), sim.lua_state()));
+            read_prop_blueprint(sim.lua_state(), *p);
             e = std::move(p);
             break;
         }

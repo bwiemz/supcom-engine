@@ -123,6 +123,9 @@ public:
     /// (walls 0.1; drones, build bots and satellites 0).
     f32 cap_cost() const { return cap_cost_; }
     void set_cap_cost(f32 c) { cap_cost_ = c; }
+    /// AI.GuardScanRadius: how far off its route a patrol takes on work.
+    f32 guard_scan_radius() const { return guard_scan_radius_; }
+    void set_guard_scan_radius(f32 r) { guard_scan_radius_ = r; }
 
     const std::string& layer() const { return layer_; }
     void set_layer(const std::string& l) { layer_ = l; }
@@ -1035,6 +1038,12 @@ private:
     OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
     OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
+    /// CUnitPatrolTask::FindTarget), or null.
+    Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
+    /// What a patrolling PATROLHELPER breaks off to reclaim or repair
+    /// (Moho's EvaluatePatrolReclaimAttack), or null.
+    Entity* find_patrol_work(const UnitCommand& cmd, SimContext& ctx);
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -1149,6 +1158,7 @@ private:
     f32 build_rate_ = 1.0f;
     f32 cap_cost_ = 1.0f;           // Moho's RUnitBlueprint default
     f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
+    f32 guard_scan_radius_ = 25.0f;
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units

@@ -31,6 +31,7 @@
 #include "renderer/particle_renderer.hpp"
 #include "renderer/decal_math.hpp"
 #include "renderer/runtime_decal_renderer.hpp"
+#include "renderer/shadow_camera.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_graph_renderer.hpp"
@@ -44,6 +45,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <atomic>
 #include <functional>
 #include <optional>
@@ -376,7 +378,11 @@ public:
     /// the same on every run. 0 restores wall-clock timing.
     void set_fixed_frame_dt(f32 dt) { fixed_frame_dt_ = dt; }
 
-    static constexpr u32 SHADOW_MAP_SIZE = 4096;
+    /// Moho's shadow map (ren_ShadowSize, M210c).
+    static constexpr u32 SHADOW_MAP_SIZE = kShadowSize;
+    /// Whether the last frame had a light camera: none at shadow fidelity
+    /// 0, past ren_ShadowLOD, or with no terrain in view (M210c).
+    bool shadow_camera_valid() const { return shadow_camera_valid_; }
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
     /// What the last frame cost (M223b's render benchmark reads it after
@@ -442,7 +448,6 @@ private:
     void recreate_swapchain();
     void create_shadow_resources();
     void create_shadow_pipelines();
-    std::array<f32, 16> compute_light_vp() const;
 
     // GLFW
     GLFWwindow* window_ = nullptr;
@@ -665,11 +670,35 @@ private:
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
 
-    // Shadow mapping
+    // Shadow mapping (Moho's, M210c): a colour map (R the caster's light
+    // depth, G 0 under a mesh), its depth buffer, and the blur's two
+    // targets; B is the terrain's mask (the blur's, or a copy of G).
     AllocatedImage shadow_image_{};
-    VkSampler shadow_sampler_ = VK_NULL_HANDLE;
+    AllocatedImage shadow_depth_{};
+    AllocatedImage shadow_blur_a_{};
+    AllocatedImage shadow_blur_b_{};
+    VkSampler shadow_sampler_ = VK_NULL_HANDLE;        ///< point, clamped (one tap)
+    VkSampler shadow_linear_sampler_ = VK_NULL_HANDLE; ///< bilinear, white outside
     VkRenderPass shadow_render_pass_ = VK_NULL_HANDLE;
+    VkRenderPass shadow_blur_pass_ = VK_NULL_HANDLE;
     VkFramebuffer shadow_framebuffer_ = VK_NULL_HANDLE;
+    VkFramebuffer shadow_blur_a_fb_ = VK_NULL_HANDLE;
+    VkFramebuffer shadow_blur_b_fb_ = VK_NULL_HANDLE;
+    VkPipeline shadow_blur_h_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline shadow_blur_v_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline shadow_copy_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout shadow_blur_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool shadow_blur_ds_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet shadow_blur_h_ds_ = VK_NULL_HANDLE; ///< the map, point
+    VkDescriptorSet shadow_blur_v_ds_ = VK_NULL_HANDLE; ///< target A, bilinear
+    /// The heightfield's min/max pyramid the light camera fits to (built
+    /// with the scene's terrain).
+    std::unique_ptr<HeightBounds> height_bounds_;
+    /// Whether this frame has a light camera (none past ren_ShadowLOD, or
+    /// with no terrain in view): without one, nothing is shadowed.
+    bool shadow_camera_valid_ = false;
+    /// Record the shadow map, its blur and the light UBO's shadow state.
+    void record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj);
 
     VkPipeline shadow_terrain_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout shadow_terrain_layout_ = VK_NULL_HANDLE;
@@ -693,6 +722,7 @@ private:
         f32 sun_ambience[4];  ///< rgb; w: 1 for the TTerrainXP terrain shader
         f32 shadow_fill[4];   ///< rgb
         f32 specular[4];      ///< SpecularColor
+        f32 shadow[4]; ///< x: a light camera this frame, y: the meshes' bias, z: the map's size
     };
     /// The scene's ground, for the camera's focus (M217a).
     std::optional<map::Heightmap> ground_;

@@ -336,10 +336,11 @@ static int edit_GetCaretPosition(lua_State* L) {
 static int edit_SetCaretCycle(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    f32 secs = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 1.0f;
-    f32 min_a = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0.0f;
-    f32 max_a = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 1.0f;
-    ctrl->set_caret_cycle(secs, min_a, max_a);
+    // Moho keeps each alpha as the low byte of SCR_DecodeColor's value
+    const auto alpha = [&](int idx) {
+        return static_cast<f32>(check_color(L, idx) & 0xFF) / 255.0f;
+    };
+    ctrl->set_caret_cycle(static_cast<f32>(luaL_checknumber(L, 2)), alpha(3), alpha(4));
     return 0;
 }
 

@@ -135,6 +135,45 @@ static int l_c_CreateEntity(lua_State* L) {
 // ====================================================================
 
 /// Push the generic Unit class (or moho.unit_methods, or nil).
+static std::optional<sim::Weapon::ProjectilePhysics> projectile_physics(lua_State* L,
+                                                                        const std::string& id) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, id.c_str());
+        lua_rawget(L, -2);
+    }
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+    }
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return std::nullopt;
+    }
+    sim::Weapon::ProjectilePhysics physics;
+    lua_pushstring(L, "TrackTarget");
+    lua_rawget(L, -2);
+    if (lua_isboolean(L, -1)) {
+        physics.track_target = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    lua_pushstring(L, "UseGravity");
+    lua_rawget(L, -2);
+    if (lua_isboolean(L, -1)) {
+        physics.use_gravity = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    lua_pushstring(L, "MaxSpeed");
+    lua_rawget(L, -2);
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        physics.max_speed = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_settop(L, top);
+    return physics;
+}
+
 static void push_generic_unit_class(lua_State* L) {
     lua_pushstring(L, "__unit_class");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -351,6 +390,14 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     if (lua_isnumber(L, -1)) weapon->muzzle_velocity = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
 
+                    lua_pushstring(L, "MuzzleVelocityReduceDistance");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1)) {
+                        weapon->muzzle_velocity_reduce_distance =
+                            static_cast<f32>(lua_tonumber(L, -1));
+                    }
+                    lua_pop(L, 1);
+
                     lua_pushstring(L, "BallisticArc");
                     lua_gettable(L, we);
                     if (lua_type(L, -1) == LUA_TSTRING) {
@@ -363,7 +410,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
 
                     lua_pushstring(L, "LeadTarget");
                     lua_gettable(L, we);
-                    weapon->lead_target = lua_toboolean(L, -1) != 0;
+                    if (lua_isboolean(L, -1)) {
+                        weapon->lead_target = lua_toboolean(L, -1) != 0;
+                    }
                     lua_pop(L, 1);
 
                     lua_pushstring(L, "FireOnDeath");
@@ -432,7 +481,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target}}) {
                         lua_pushstring(L, field);
                         lua_gettable(L, we);
-                        *flag = lua_toboolean(L, -1) != 0;
+                        if (lua_isboolean(L, -1)) {
+                            *flag = lua_toboolean(L, -1) != 0;
+                        }
                         lua_pop(L, 1);
                     }
                     lua_pushstring(L, "TargetCheckInterval");
@@ -511,6 +562,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                         std::transform(pid.begin(), pid.end(), pid.begin(),
                                        [](unsigned char c) { return std::tolower(c); });
                         weapon->projectile_bp_id = pid;
+                        weapon->projectile_physics = projectile_physics(L, pid);
                     }
                     lua_pop(L, 1);
 
@@ -809,6 +861,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     rules.repair_mass = number("RepairConsumeMass", rules.repair_mass);
                     rules.scan_radius = number("StagingPlatformScanRadius", rules.scan_radius);
                     unit->set_staging_rules(rules);
+                    unit->set_guard_scan_radius(
+                        number("GuardScanRadius", unit->guard_scan_radius()));
                 }
                 lua_pop(L, 1);
                 // Air.TransportHoverHeight: how low a transport hovers to load
@@ -1444,7 +1498,7 @@ static int l_create_building_unit(lua_State* L) {
     f32 y = static_cast<f32>(lua_tonumber(L, 4));
     if (lua_isnil(L, 4)) {
         auto* sim = get_sim(L);
-        y = sim ? structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
+        y = sim ? sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
     }
 
     const bool capped = lua_gettop(L) < 6 || lua_isnil(L, 6) || lua_toboolean(L, 6) != 0;
@@ -1526,7 +1580,7 @@ static int l_CreateUnit2(lua_State* L) {
 
     // Rewrite stack for l_CreateUnit: bp, army, x, y, z -- y where the unit
     // stands at (x, z), as for a structure built there
-    const f32 y = structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
+    const f32 y = sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
     lua_pushnumber(L, army + 1); // re-encode as 1-based; l_CreateUnit calls resolve_army
@@ -3023,36 +3077,44 @@ static int l_AttachBeamEntityToEntity(lua_State* L) {
     return 1;
 }
 
-// CreateLightParticle(entity, bone, army, size, duration, glowTex, rampTex)
-// CreateLightParticleIntel — identical signature
-static int l_CreateLightParticle(lua_State* L) {
+// cfunc_CreateLightParticleL, CEffectManagerImpl::CreateLightParticle
+static int create_light_particle(lua_State* L, sim::EffectType type) {
     auto* sim = get_sim(L);
-    if (!sim) return 0;
+    if (!sim) {
+        return 0;
+    }
     auto* entity = effect_check_entity(L, 1);
-    i32 bone = effect_bone_arg(L, 2, entity, -1);
-    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    const std::string ramp = luaL_optstring(L, 7, "");
+    if (!entity || ramp.empty()) {
+        return 0;
+    }
+    const std::string glow = luaL_optstring(L, 6, "");
     f32 size = static_cast<f32>(luaL_optnumber(L, 4, 1.0));
     f32 duration = static_cast<f32>(luaL_optnumber(L, 5, 1.0));
-    const char* glow = luaL_optstring(L, 6, "");
-    const char* ramp = luaL_optstring(L, 7, "");
     auto* fx = sim->effect_registry().create();
-    fx->set_type(sim::EffectType::LIGHT_PARTICLE);
-    fx->set_entity_id(entity ? entity->entity_id() : 0);
-    fx->set_bone_index(bone);
-    fx->set_army(army);
+    fx->set_type(type);
+    fx->set_entity_id(entity->entity_id());
+    fx->set_bone_index(effect_bone_arg(L, 2, entity, -1));
+    fx->set_army(static_cast<i32>(luaL_optnumber(L, 3, 0)));
     fx->set_light_size(size);
     fx->set_light_duration(duration);
-    fx->set_glow_texture(glow);
-    fx->set_ramp_texture(ramp);
-    // A flash: its duration is in ticks (the commander's warp-in flashes
-    // for 4 and 10), and it ends by itself -- it lingered forever before.
+    fx->set_glow_texture(glow.empty() ? std::string("/textures/particles/beam_white_01.dds")
+                                      : "/textures/particles/" + glow + ".dds");
+    fx->set_ramp_texture("/textures/particles/" + ramp + ".dds");
+    frame_at(*fx, entity, fx->bone_index());
     if (duration > 0) {
         fx->set_param("LIFETIME", duration * sim::SimState::SECONDS_PER_TICK);
         fx->set_birth_time(sim->game_time());
     }
-    // Light particles are fire-and-forget, no method chaining needed.
-    // Return nil (same as original stub_noop) — FA doesn't use the return value.
     return 0;
+}
+
+static int l_CreateLightParticle(lua_State* L) {
+    return create_light_particle(L, sim::EffectType::LIGHT_PARTICLE);
+}
+
+static int l_CreateLightParticleIntel(lua_State* L) {
+    return create_light_particle(L, sim::EffectType::LIGHT_PARTICLE_INTEL);
 }
 
 // Runtime decals and splats (M212c), as faf-re's cfunc_CreateDecalL,
@@ -6005,7 +6067,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("CreateBeamEmitter", l_CreateBeamEmitter);
     state.register_function("CreateBeamEmitterOnEntity", l_CreateAttachedEmitter); // same sig as attached
     state.register_function("CreateLightParticle", l_CreateLightParticle);
-    state.register_function("CreateLightParticleIntel", l_CreateLightParticle); // same
+    state.register_function("CreateLightParticleIntel", l_CreateLightParticleIntel);
     state.register_function("CreateDecal", l_CreateDecal);
     state.register_function("CreateSplat", l_CreateSplat);
     state.register_function("CreateSplatOnBone", l_CreateSplatOnBone);

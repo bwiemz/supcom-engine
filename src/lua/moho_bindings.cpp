@@ -896,6 +896,7 @@ static int l_InternalCreateEdit(lua_State* L) {
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateEdit: failed to create control");
     ctrl->set_control_type(ui::UIControl::ControlType::Edit);
+    ctrl->set_needs_frame_update(true);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);
@@ -2954,6 +2955,17 @@ static int l_IN_RemoveKeyMapTable(lua_State* L) {
     return 0;
 }
 
+static int l_IN_ClearKeyMap(lua_State* L) {
+    lua_pushstring(L, "__osc_keymap_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* reg = static_cast<osc::ui::KeyMapRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (reg) {
+        reg->clear();
+    }
+    return 0;
+}
+
 /// EntityCategoryGetUnitList(category) — ui_L version (M140a)
 /// Returns an array of blueprint IDs whose categories match the given category expression.
 static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
@@ -4605,6 +4617,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetUnitById", l_GetUnitById);
     state.register_function("IN_AddKeyMapTable",        l_IN_AddKeyMapTable);
     state.register_function("IN_RemoveKeyMapTable", l_IN_RemoveKeyMapTable);
+    state.register_function("IN_ClearKeyMap", l_IN_ClearKeyMap);
 
     // Blueprint query globals (M140)
     state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);

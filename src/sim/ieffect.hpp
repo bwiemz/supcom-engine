@@ -35,10 +35,11 @@ enum class EffectType : u8 {
     BEAM_EMITTER,          // CreateBeamEmitter (unattached beam visual)
     ATTACHED_BEAM,         // CreateAttachedBeam (fixed-length beam on entity)
     BEAM_ENTITY_TO_ENTITY, // AttachBeamEntityToEntity / CreateBeamEntityToEntity
-    LIGHT_PARTICLE,        // CreateLightParticle / CreateLightParticleIntel
+    LIGHT_PARTICLE,        // CreateLightParticle
     DECAL,                 // CreateDecal
     SPLAT,                 // CreateSplat
     TRAIL_EMITTER,         // CreateTrail (a projectile's or unit's polytrail, follows it)
+    LIGHT_PARTICLE_INTEL,  // CreateLightParticleIntel
 };
 
 /// Lightweight tracked VFX object. Returned by Create*Emitter/Beam/Decal globals.

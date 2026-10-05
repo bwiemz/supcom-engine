@@ -191,6 +191,9 @@ public:
     void set_caret_cycle(f32 secs, f32 min_a, f32 max_a) {
         caret_cycle_secs_ = secs; caret_min_alpha_ = min_a; caret_max_alpha_ = max_a;
     }
+    /// Moho's CMauiEdit::Frame: the caret's alpha goes min -> max -> min each cycle
+    void advance_caret_cycle(f32 dt);
+    f32 caret_alpha() const;
 
     // --- ItemList state ---
     const std::vector<std::string>& items() const { return items_; }
@@ -302,6 +305,12 @@ public:
     /// Stop was called (and Play not since).
     bool movie_stopped() const { return movie_stopped_; }
     void set_movie_stopped(bool s) { movie_stopped_ = s; }
+    /// Whether its frame reached the screen in the last frame the UI drew
+    /// (the UI renderer's to say; true until it does). A movie off screen
+    /// runs its clock without decoding: retail's loading movie plays on,
+    /// hidden under the world view, for the whole game.
+    bool movie_on_screen() const { return movie_on_screen_; }
+    void set_movie_on_screen(bool v) { movie_on_screen_ = v; }
 
     // --- WorldMesh state ---
     bool world_mesh_hidden() const { return world_mesh_hidden_; }
@@ -370,9 +379,10 @@ private:
     bool bg_visible_ = true;
     bool input_enabled_ = true;
     i32 max_chars_ = 0; // 0 = unlimited
-    f32 caret_cycle_secs_ = 1.0f;
-    f32 caret_min_alpha_ = 0.0f;
+    f32 caret_cycle_secs_ = 1.5f;
+    f32 caret_min_alpha_ = 62.0f / 255.0f;
     f32 caret_max_alpha_ = 1.0f;
+    f32 caret_time_ = 0.0f;
 
     // ItemList state
     std::vector<std::string> items_;
@@ -422,6 +432,7 @@ private:
     bool movie_playing_ = false;
     bool movie_looping_ = false;
     bool movie_stopped_ = false;
+    bool movie_on_screen_ = true;
 
     // WorldMesh state
     bool world_mesh_hidden_ = false;

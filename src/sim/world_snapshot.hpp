@@ -29,6 +29,12 @@ struct CommandRecord {
     u32 target_id = 0;
     Vector3 target_pos;
     std::string blueprint_id; ///< what a build order builds
+    bool pending = false;
+};
+
+struct PendingQueue {
+    u32 id = 0;
+    u32 offset = 0, count = 0; ///< into WorldSnapshot::pending_commands
 };
 
 /// An intel range a unit has on (the renderer rings it when selected).
@@ -63,6 +69,7 @@ struct EntityRecord {
     i32 army = -1;
     std::string blueprint_id;
     std::string mesh_override;
+    u32 mesh_changes = 0; ///< Entity::mesh_changes
     f32 scale_x = 1, scale_y = 1, scale_z = 1;
     f32 fraction_complete = 1;
     f32 health = 0, max_health = 0;
@@ -137,6 +144,8 @@ struct EffectRecord {
     f32 scale = 1;
     i32 army = -1;
     f32 light_size = 0;
+    f32 light_lifetime = 0; ///< ticks
+    std::string glow_texture, ramp_texture;
     f32 thickness = 0; ///< the THICKNESS param
     f32 length = 0;    ///< the LENGTH param
     /// A beam's reach (M214a), found at capture: none; from `beam_start` to
@@ -241,6 +250,19 @@ struct WorldSnapshot {
     SightMap sight;        ///< the sight army's (WorldHistory::set_sight_army)
     i32 player_result = 0; ///< SimState::player_result()
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
+    std::vector<CommandRecord> pending_commands;
+    std::vector<PendingQueue> pending_queues; ///< ascending id
+    u64 pending_serial = 0;
+
+    /// Unique per capture (WorldHistory::capture), 0 for one made otherwise.
+    u64 serial = 0;
+    /// Each entity's place in the snapshot captured before this one (the
+    /// one whose serial is `previous_serial`): the same entity, not
+    /// teleported since (its snap_serial), else kNoPrevious. A frame pairs
+    /// the two records by it rather than searching (FrameView).
+    std::vector<u32> previous;
+    u64 previous_serial = 0;
+    static constexpr u32 kNoPrevious = 0xFFFFFFFFu;
 
     const EntityRecord* find(u32 id) const;
     const ArmyRecord* army(i32 index) const {
@@ -257,6 +279,8 @@ struct WorldSnapshot {
     std::span<const CommandRecord> commands_of(const EntityRecord& e) const {
         return {commands.data() + e.command_offset, e.command_count};
     }
+    /// Moho's UserUnit:GetCommandQueue: the queue with the orders not yet run
+    std::span<const CommandRecord> orders_of(const EntityRecord& e) const;
     std::span<const IntelRecord> intel_of(const EntityRecord& e) const {
         return {intel.data() + e.intel_offset, e.intel_count};
     }
@@ -271,6 +295,8 @@ struct WorldSnapshot {
 /// left out. Ids are sequential and never reused within a session, so two
 /// snapshots can be matched by id.
 void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army = -1);
+
+void capture_pending(const SimState& sim, WorldSnapshot& out);
 
 /// The blueprints of everything in the world (meshes to preload).
 std::vector<std::string> world_blueprints(const SimState& sim);
@@ -326,6 +352,7 @@ public:
     /// the sim, a new army's sight is taken into the newest capture at once,
     /// not at the next tick.
     void set_sight_army(i32 army, const SimState* sim = nullptr);
+    void refresh_pending(const SimState& sim);
     i32 sight_army() const { return sight_army_; }
     /// Forget everything (a new session).
     void clear();

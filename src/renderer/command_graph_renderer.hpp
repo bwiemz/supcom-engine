@@ -5,10 +5,12 @@
 #include "renderer/world_quad_batch.hpp"
 #include "sim/entity.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -72,8 +74,7 @@ std::array<f32, 4> build_pad(f32 x, f32 z, f32 size_x, f32 size_z, f32 skirt_x, 
                              f32 off_x, f32 off_z);
 
 /// The units whose orders the command graph shows, each with whether it is
-/// selected: the selected ones (their orders), and the army's others (their
-/// build sites alone)
+/// selected: the selected ones, and the army's others
 std::vector<std::pair<const sim::EntityRecord*, bool>>
 command_graph_units(const sim::WorldSnapshot& world, const std::unordered_set<u32>* selected,
                     i32 player_army);
@@ -92,7 +93,34 @@ std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
                                              const std::unordered_set<u32>* selected,
                                              i32 player_army);
 
-/// Draws the selected units' order lines and waypoints as Moho's
+/// A unit's orders as the graph draws them: the places from the unit through
+/// each order's target, and each leg's order and colours
+struct CommandGraphPath {
+    struct Leg {
+        sim::CommandRecord order;
+        size_t index = 0; ///< in the unit's orders, then its rally orders
+        const CommandGraphStyle* style = nullptr;
+        std::array<f32, 4> line_color{};
+        std::array<f32, 4> waypoint_color{};
+        f32 waypoint_scale = 1.0f;
+        bool closes = false; ///< the leg back to the loop's first order
+    };
+    const sim::EntityRecord* unit = nullptr;
+    bool chosen = false;
+    std::vector<sim::Vector3> chain;
+    std::vector<Leg> legs;
+};
+
+/// The paths of command_graph_units: a selected unit's in its style's
+/// selected colours, another's in its plain ones. A path whose first patrol,
+/// guard or ground attack is not its last runs back to it, as Moho's
+/// AddCommandQueueToCommandGraph links the loop.
+std::vector<CommandGraphPath>
+command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,
+                    i32 player_army,
+                    const std::function<const CommandGraphStyle*(sim::CommandType)>& style_of);
+
+/// Draws the army's units' order lines and waypoints as Moho's
 /// UICommandGraph does, while Shift is held: each leg a textured strip on
 /// the ground, in its order's colours; each order's waypoint icon lying at
 /// its end.

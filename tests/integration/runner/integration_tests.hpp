@@ -109,6 +109,8 @@ void test_skinning(TestContext& ctx);
 void test_prop_materials(TestContext& ctx);
 /// --clipped-shadow-test (M211j), in clipped_shadow_test.cpp.
 void test_clipped_shadows(TestContext& ctx);
+/// --shadow-map-test (M210c), in shadow_map_test.cpp.
+void test_shadow_map(TestContext& ctx);
 /// --unit-intel-test (M215a) and --effect-intel-test (M215b), in
 /// unit_intel_test.cpp.
 void test_unit_intel(TestContext& ctx);
@@ -125,10 +127,14 @@ void test_jammer_blips(TestContext& ctx);
 void test_intel_fields(TestContext& ctx);
 /// --destroyed-handle-test, in destroyed_handle_test.cpp.
 void test_destroyed_handle(TestContext& ctx);
+/// --patrol-test, in patrol_test.cpp.
+void test_patrol(TestContext& ctx);
 /// --beam-render-test (M214a), in beam_render_test.cpp.
 void test_beam_render(TestContext& ctx);
 /// --selection-render-test, in selection_render_test.cpp.
 void test_selection_render(TestContext& ctx);
+/// --ghost-render-test, in ghost_render_test.cpp.
+void test_ghost_render(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.
 void test_trail_render(TestContext& ctx);
 /// --particle-render-test (M214c), in particle_render_test.cpp.

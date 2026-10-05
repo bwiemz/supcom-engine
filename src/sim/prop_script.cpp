@@ -1,6 +1,7 @@
 #include "sim/prop_script.hpp"
 
 #include "core/test_status.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/bone_cache.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
@@ -19,6 +20,7 @@ extern "C" {
 #include <cctype>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::sim {
@@ -94,8 +96,45 @@ std::string lowercase(std::string s) {
 
 } // namespace
 
+void read_prop_blueprint(lua_State* L, Prop& prop) {
+    if (!L) {
+        return;
+    }
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, lowercase(prop.blueprint_id()).c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            std::unordered_set<std::string> categories;
+            collect_blueprint_categories(L, lua_gettop(L), categories);
+            prop.untargetable = categories.count("UNTARGETABLE") > 0;
+            prop.reclaimable_category = categories.count("RECLAIMABLE") > 0;
+            lua_pushstring(L, "Economy");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                const auto number = [&](const char* key) {
+                    lua_pushstring(L, key);
+                    lua_rawget(L, -2);
+                    const f32 v = lua_type(L, -1) == LUA_TNUMBER
+                                      ? static_cast<f32>(lua_tonumber(L, -1))
+                                      : 0.0f;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                prop.reclaim_mass_max = number("ReclaimMassMax");
+                prop.reclaim_energy_max = number("ReclaimEnergyMax");
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
     if (!L) return;
+    read_prop_blueprint(L, prop);
     const std::string bp_id = lowercase(prop.blueprint_id());
     if (!prop.bone_data() && !bp_id.empty()) {
         if (auto* bones = sim.bone_cache()) prop.set_bone_data(bones->get(bp_id, L));

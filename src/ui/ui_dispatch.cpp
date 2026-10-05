@@ -378,7 +378,8 @@ bool call_edit(lua_State* L, UIControl* edit, const char* method, int nargs,
 
 } // namespace
 
-bool UIDispatch::edit_event(lua_State* L, UIControl* edit, const UIEvent& ev) {
+bool UIDispatch::edit_event(lua_State* L, UIControlRegistry& registry, UIControl* edit,
+                            const UIEvent& ev) {
     if (edit->control_type() != UIControl::ControlType::Edit || !edit->input_enabled() ||
         ev.type == UIEventType::KEY_UP) {
         return false;
@@ -405,14 +406,22 @@ bool UIDispatch::edit_event(lua_State* L, UIControl* edit, const UIEvent& ev) {
         case GLFW_KEY_END: t.end(); break;
         case GLFW_KEY_TAB: char_pressed('\t'); return true;
         case GLFW_KEY_ENTER:
-        case GLFW_KEY_KP_ENTER: call_edit(L, edit, "OnEnterPressed", 1, push_text); return true;
-        case GLFW_KEY_ESCAPE:
-            if (call_edit(L, edit, "OnEscPressed", 1, push_text)) {
+        case GLFW_KEY_KP_ENTER:
+        case GLFW_KEY_ESCAPE: {
+            const char* method = ev.key_code == GLFW_KEY_ESCAPE ? "OnEscPressed" : "OnEnterPressed";
+            if (call_edit(L, edit, method, 1, push_text) || edit->destroyed()) {
+                return true;
+            }
+            if (t.text.empty()) {
+                if (registry.keyboard_focus() == edit) {
+                    registry.set_keyboard_focus(nullptr);
+                }
                 return true;
             }
             t.text.clear();
             t.caret = 0;
             break;
+        }
         default:
             if (ev.key_code >= GLFW_KEY_SPACE && ev.key_code <= GLFW_KEY_GRAVE_ACCENT &&
                 (ev.modifiers & (GLFW_MOD_CONTROL | GLFW_MOD_ALT | GLFW_MOD_SUPER)) == 0) {
@@ -547,7 +556,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
             if (auto* focus = registry.keyboard_focus()) {
-                if (!edit_event(L, focus, ev)) {
+                if (!edit_event(L, registry, focus, ev)) {
                     fire_handle_event(L, focus, ev);
                 }
             } else if (auto* capture = registry.input_capture()) fire_handle_event(L, capture, ev);
@@ -647,6 +656,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         // is on top in child order.
         bool consumed = false;
         std::unordered_set<UIControl*> skip_set;
+        std::unordered_set<UIControl*> told;
         constexpr int kMaxRetries = 16;
 
         for (int attempt = 0; attempt < kMaxRetries && !consumed; ++attempt) {
@@ -654,7 +664,10 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
 
             UIControl* c = target;
             while (c) {
-                if (fire_handle_event(L, c, ev)) { consumed = true; break; }
+                if (told.insert(c).second && fire_handle_event(L, c, ev)) {
+                    consumed = true;
+                    break;
+                }
                 c = c->parent();
             }
 
@@ -794,6 +807,9 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
             lua_pop(L, 1);
         }
         lua_pop(L, 1); // control table
+        if (!ctrl->destroyed() && ctrl->control_type() == UIControl::ControlType::Edit) {
+            ctrl->advance_caret_cycle(static_cast<f32>(dt));
+        }
     }
 }
 
@@ -899,11 +915,13 @@ void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
     }
     video::MoviePlayer* movie = ctrl->movie_player();
     if (!movie) return;
-    // Sofdec's clock runs on its own; here it moves with the frames.
+    // Sofdec's clock runs on its own; here it moves with the frames. A movie
+    // off screen decodes nothing: back on screen, update_frame catches up to
+    // the frame due, as it does for one that decodes slower than it plays.
     movie->advance(dt);
     if (movie->finished()) {
         if (ctrl->movie_looping()) {
-            movie->restart();
+            movie->restart(ctrl->movie_on_screen());
         } else {
             ctrl->set_movie_playing(false);
             ctrl->set_needs_frame_update(false);
@@ -911,7 +929,7 @@ void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
         }
         return;
     }
-    movie->update_frame();
+    if (ctrl->movie_on_screen()) movie->update_frame();
 }
 
 } // namespace osc::ui

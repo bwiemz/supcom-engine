@@ -1198,10 +1198,11 @@ const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& si
     return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, bp_id); });
 }
 
-static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim,
-                                             i32 army) {
+static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim, i32 army,
+                                             bool scheduled = false) {
     return sim::StructurePlacement(
-        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); });
+        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); },
+        scheduled);
 }
 
 // Builder types whose FindPlaceToBuild answer is a deposit, not a template
@@ -1994,15 +1995,7 @@ static void create_brain_unit(lua_State* L, const sim::ArmyBrain& brain, const s
 
 bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
                          f32 x, f32 z) {
-    return placement_for(L, sim, army).can_build(bp_id, x, z);
-}
-
-// Where a structure stands (Moho: a footprint that can sit on the seabed
-// occupies OC_SEABED, which BuildOnLayerCaps' LAYER_Seabed gives).
-f32 structure_elevation(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x, f32 z) {
-    const auto* terrain = sim.terrain();
-    if (!terrain) return 0.0f;
-    return rules.on_seabed ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+    return placement_for(L, sim, army, true).can_build(bp_id, x, z);
 }
 
 // brain:CreateResourceBuildingNearest(bp, x, z) -> unit or nil: the
@@ -2040,7 +2033,7 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
     for (const auto& c : candidates) {
         if (!placement.can_build(bp, c.x, c.z)) continue;
         create_brain_unit(L, *brain, bp, c.x,
-                          structure_elevation(*sim, placement.rules(bp), c.x, c.z), c.z);
+                          sim::structure_elevation(*sim, placement.rules(bp), c.x, c.z), c.z);
         if (!lua_isnil(L, -1)) return 1;
         lua_pop(L, 1);
     }
@@ -2095,7 +2088,7 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    create_brain_unit(L, *brain, bp, at_x, structure_elevation(*sim, rules, at_x, at_z), at_z);
+    create_brain_unit(L, *brain, bp, at_x, sim::structure_elevation(*sim, rules, at_x, at_z), at_z);
     return 1;
 }
 

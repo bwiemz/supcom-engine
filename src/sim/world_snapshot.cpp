@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <functional>
 
 namespace osc::sim {
 
@@ -128,8 +129,10 @@ void capture_anchor(const SimState& sim, const IEffect& fx, EffectRecord& r) {
 void capture_frame(const SimState& sim, const IEffect& fx, EffectRecord& r) {
     const EffectType t = fx.type();
     if (t != EffectType::EMITTER_AT_ENTITY && t != EffectType::EMITTER_AT_BONE &&
-        t != EffectType::ATTACHED_EMITTER)
+        t != EffectType::ATTACHED_EMITTER && t != EffectType::LIGHT_PARTICLE &&
+        t != EffectType::LIGHT_PARTICLE_INTEL) {
         return;
+    }
     if (fx.has_frame()) {
         r.framed = true;
         r.frame_position = fx.frame_position();
@@ -164,6 +167,11 @@ void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
         if (f.vision) r.los_now |= 1u << a;
         if (f.any()) r.detected |= 1u << a;
     }
+}
+
+CommandRecord command_record(const UnitCommand& c, bool pending) {
+    return {c.type, c.target_id, c.target_pos,
+            c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(), pending};
 }
 
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
@@ -224,16 +232,12 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
 
     r.command_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.command_queue()) {
-        out.commands.push_back(
-            {c.type, c.target_id, c.target_pos,
-             c.type == CommandType::BuildMobile ? c.blueprint_id : std::string()});
+        out.commands.push_back(command_record(c, false));
     }
     r.command_count = static_cast<u32>(out.commands.size()) - r.command_offset;
     r.rally_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.rally_orders()) {
-        out.commands.push_back(
-            {c.type, c.target_id, c.target_pos,
-             c.type == CommandType::BuildMobile ? c.blueprint_id : std::string()});
+        out.commands.push_back(command_record(c, false));
     }
     r.rally_count = static_cast<u32>(out.commands.size()) - r.rally_offset;
 
@@ -257,8 +261,20 @@ const EntityRecord* WorldSnapshot::find(u32 id) const {
     return it != entities.end() && it->id == id ? &*it : nullptr;
 }
 
+std::span<const CommandRecord> WorldSnapshot::orders_of(const EntityRecord& e) const {
+    const auto it = std::lower_bound(pending_queues.begin(), pending_queues.end(), e.id,
+                                     [](const PendingQueue& q, u32 v) { return q.id < v; });
+    if (it == pending_queues.end() || it->id != e.id) {
+        return commands_of(e);
+    }
+    return {pending_commands.data() + it->offset, it->count};
+}
+
 void WorldSnapshot::clear() {
     tick = 0;
+    serial = 0;
+    previous.clear();
+    previous_serial = 0;
     entities.clear();
     bones.clear();
     commands.clear();
@@ -269,6 +285,9 @@ void WorldSnapshot::clear() {
     sight.clear();
     player_result = 0;
     fake_blips.clear();
+    pending_commands.clear();
+    pending_queues.clear();
+    pending_serial = 0;
 }
 
 /// The jammers' fakes each army senses where they fall and doesn't know
@@ -368,6 +387,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.army = e.army();
         r.blueprint_id = e.blueprint_id();
         r.mesh_override = e.mesh_override();
+        r.mesh_changes = e.mesh_changes();
         r.scale_x = e.scale_x();
         r.scale_y = e.scale_y();
         r.scale_z = e.scale_z();
@@ -424,6 +444,9 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         }
         r.army = fx->army();
         r.light_size = fx->light_size();
+        r.light_lifetime = fx->light_duration();
+        r.glow_texture = fx->glow_texture();
+        r.ramp_texture = fx->ramp_texture();
         r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
         r.length = static_cast<f32>(fx->get_param("LENGTH"));
         r.decal = fx->decal();
@@ -454,6 +477,24 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
 
     capture_sight(sim, sight_army, out.sight);
     out.player_result = sim.player_result();
+    capture_pending(sim, out);
+}
+
+void capture_pending(const SimState& sim, WorldSnapshot& out) {
+    out.pending_commands.clear();
+    out.pending_queues.clear();
+    out.pending_serial = sim.command_scheduler().submitted();
+    if (sim.playback()) {
+        return;
+    }
+    for (const auto& [id, queue] : sim.queues_with_pending()) {
+        const auto offset = static_cast<u32>(out.pending_commands.size());
+        for (size_t i = 0; i < queue.orders.size(); ++i) {
+            const bool pending = i >= queue.kept_from_queue;
+            out.pending_commands.push_back(command_record(queue.orders[i], pending));
+        }
+        out.pending_queues.push_back({id, offset, static_cast<u32>(queue.orders.size())});
+    }
 }
 
 std::vector<std::string> world_blueprints(const SimState& sim) {
@@ -469,7 +510,25 @@ std::vector<std::string> world_blueprints(const SimState& sim) {
 
 void WorldHistory::capture(const SimState& sim) {
     cur_ = 1 - cur_;
-    capture_world(sim, snaps_[cur_], sight_army_);
+    WorldSnapshot& now = snaps_[cur_];
+    capture_world(sim, now, sight_army_);
+    static u64 next_serial = 0;
+    now.serial = ++next_serial;
+    // Each entity's record in the capture before (both ascending by id).
+    const WorldSnapshot& before = snaps_[1 - cur_];
+    now.previous.assign(now.entities.size(), WorldSnapshot::kNoPrevious);
+    now.previous_serial = 0;
+    if (captured_ > 0 && before.serial != 0) {
+        size_t j = 0;
+        for (size_t i = 0; i < now.entities.size(); ++i) {
+            const EntityRecord& e = now.entities[i];
+            while (j < before.entities.size() && before.entities[j].id < e.id) ++j;
+            if (j < before.entities.size() && before.entities[j].id == e.id &&
+                before.entities[j].snap_serial == e.snap_serial)
+                now.previous[i] = static_cast<u32>(j);
+        }
+        now.previous_serial = before.serial;
+    }
     ++captured_;
     // The sim forgets its events once the tick is over: keep them until
     // the renderer shows them.
@@ -490,6 +549,15 @@ void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
     if (sim && captured_ > 0) capture_sight(*sim, army, snaps_[cur_].sight);
 }
 
+void WorldHistory::refresh_pending(const SimState& sim) {
+    WorldSnapshot& cur = snaps_[cur_];
+    if (captured_ == 0 || cur.tick != sim.tick_count() ||
+        cur.pending_serial == sim.command_scheduler().submitted()) {
+        return;
+    }
+    capture_pending(sim, cur);
+}
+
 void WorldHistory::clear() {
     for (auto& s : snaps_) s.clear();
     captured_ = 0;
@@ -500,13 +568,26 @@ FrameView::Pair FrameView::lookup(u32 id) const {
     if (!cur_) return {};
     const EntityRecord* to = cur_->find(id);
     if (!to) return {};
-    const EntityRecord* from = prev_ ? prev_->find(id) : nullptr;
-    if (from && from->snap_serial != to->snap_serial) from = nullptr;
-    return {from, to};
+    return pair_for(*to);
 }
 
 FrameView::Pair FrameView::pair_for(const EntityRecord& e) const {
-    const EntityRecord* from = prev_ ? prev_->find(e.id) : nullptr;
+    if (!prev_) return {nullptr, &e};
+    // One of the newest tick's records, whose previous record the history
+    // has found already: no search (std::less orders any two pointers).
+    if (cur_ && prev_->serial != 0 && cur_->previous_serial == prev_->serial &&
+        cur_->previous.size() == cur_->entities.size() && !cur_->entities.empty()) {
+        const EntityRecord* first = cur_->entities.data();
+        const std::less<const EntityRecord*> before;
+        if (!before(&e, first) && before(&e, first + cur_->entities.size())) {
+            const u32 j = cur_->previous[static_cast<size_t>(&e - first)];
+            if (j == WorldSnapshot::kNoPrevious) return {nullptr, &e};
+            // (A copy edited since could have moved it: then search.)
+            if (j < prev_->entities.size() && prev_->entities[j].id == e.id)
+                return {&prev_->entities[j], &e};
+        }
+    }
+    const EntityRecord* from = prev_->find(e.id);
     if (from && from->snap_serial != e.snap_serial) from = nullptr;
     return {from, &e};
 }

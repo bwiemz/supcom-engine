@@ -159,6 +159,81 @@ TEST_CASE("Shift shows the selected units' orders and the army's build sites",
     CHECK(got == std::vector<std::pair<osc::u32, bool>>{{1, true}, {2, false}, {3, true}});
 }
 
+TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its selected colours",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    for (osc::u32 id : {1u, 2u}) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = 0;
+        e.is_unit = true;
+        e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
+        e.command_offset = static_cast<osc::u32>(world.commands.size());
+        e.command_count = 1;
+        osc::sim::CommandRecord move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = {50, 0, 50};
+        world.commands.push_back(move);
+        world.entities.push_back(e);
+    }
+    osc::renderer::CommandGraphStyle style;
+    style.line_color = {0, 1, 1, 0.2f};
+    style.line_selected_color = {0, 1, 1, 0.87f};
+    style.waypoint_color = {1, 1, 1, 0.27f};
+    style.waypoint_selected_color = {1, 1, 1, 1};
+    style.waypoint_scale = 0.5f;
+    const std::unordered_set<osc::u32> selected{1};
+    const auto paths =
+        osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), &selected, 0,
+                                           [&](osc::sim::CommandType) { return &style; });
+    REQUIRE(paths.size() == 2);
+    REQUIRE(paths[1].legs.size() == 1);
+    CHECK(paths[0].chosen);
+    CHECK(paths[0].legs[0].line_color == style.line_selected_color);
+    CHECK_FALSE(paths[1].chosen);
+    CHECK(paths[1].chain.size() == 2);
+    CHECK(paths[1].legs[0].line_color == style.line_color);
+    CHECK(paths[1].legs[0].waypoint_color == style.waypoint_color);
+    CHECK(paths[1].legs[0].waypoint_scale == 0.5f);
+}
+
+TEST_CASE("A patrol's path runs back to its first patrol point", "[renderer][command_graph]") {
+    using osc::sim::CommandType;
+    const auto path_of = [](const std::vector<std::pair<CommandType, osc::f32>>& orders) {
+        osc::sim::WorldSnapshot world;
+        osc::sim::EntityRecord e;
+        e.id = 1;
+        e.army = 0;
+        e.is_unit = true;
+        e.command_count = static_cast<osc::u32>(orders.size());
+        for (const auto& [type, x] : orders) {
+            osc::sim::CommandRecord c;
+            c.type = type;
+            c.target_pos = {x, 0, 0};
+            world.commands.push_back(c);
+        }
+        world.entities.push_back(e);
+        osc::renderer::CommandGraphStyle style;
+        const auto paths =
+            osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), nullptr,
+                                               0, [&](CommandType) { return &style; });
+        REQUIRE(paths.size() == 1);
+        return paths[0];
+    };
+    const auto loop =
+        path_of({{CommandType::Move, 10}, {CommandType::Patrol, 20}, {CommandType::Patrol, 30}});
+    REQUIRE(loop.legs.size() == 4);
+    CHECK(loop.legs[3].closes);
+    CHECK(loop.chain[3].x == 30.0f);
+    CHECK(loop.chain[4].x == 20.0f);
+    const auto onward =
+        path_of({{CommandType::Patrol, 20}, {CommandType::Patrol, 30}, {CommandType::Move, 40}});
+    REQUIRE(onward.legs.size() == 4);
+    CHECK(onward.chain[4].x == 20.0f);
+    CHECK(path_of({{CommandType::Move, 10}, {CommandType::Patrol, 20}}).legs.size() == 2);
+    CHECK(path_of({{CommandType::Move, 10}, {CommandType::Move, 20}}).legs.size() == 2);
+}
+
 TEST_CASE("A structure ordered and not started is a planned site", "[renderer][command_graph]") {
     osc::sim::WorldSnapshot world;
     const auto build = [](const char* bp, osc::f32 x) {
@@ -186,6 +261,33 @@ TEST_CASE("A structure ordered and not started is a planned site", "[renderer][c
 
     world.entities[0].build_target_id = 0;
     CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 3);
+}
+
+TEST_CASE("A structure ordered and not yet run is planned in place of the one under way",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    osc::sim::CommandRecord building;
+    building.type = osc::sim::CommandType::BuildMobile;
+    building.target_pos = {10, 0, 10};
+    building.blueprint_id = "ueb1101";
+    osc::sim::CommandRecord ordered = building;
+    ordered.target_pos = {20, 0, 10};
+    ordered.blueprint_id = "ueb0101";
+    ordered.pending = true;
+    osc::sim::EntityRecord builder;
+    builder.id = 1;
+    builder.army = 0;
+    builder.is_unit = true;
+    builder.build_target_id = 7;
+    builder.command_count = 1;
+    world.commands = {building};
+    world.pending_commands = {ordered};
+    world.pending_queues = {{1, 0, 1}};
+    world.entities.push_back(builder);
+
+    const auto sites = osc::renderer::planned_build_sites(world, nullptr, 0);
+    REQUIRE(sites.size() == 1);
+    CHECK(sites[0].blueprint == "ueb0101");
 }
 
 TEST_CASE("A structure standing on its site is started for every builder ordered to it",

@@ -633,124 +633,194 @@ void Renderer::create_framebuffers() {
 }
 
 void Renderer::create_shadow_resources() {
-    // --- Shadow depth image (2048x2048, D32_SFLOAT, samplable) ---
-    {
+    // Moho's shadow map (M210c): a colour map, R the caster's depth along
+    // the light and G 0 where a mesh is the surface nearest the sun; its
+    // depth buffer; and the blur's two targets (B the terrain's mask). FA's
+    // map is G16R16 (A8R8G8B8 at shadow fidelity 1, where nothing reads R).
+    constexpr VkFormat kMapFormat = VK_FORMAT_R16G16_UNORM;
+    const auto make_image = [&](AllocatedImage& img, VkFormat format, VkImageUsageFlags usage,
+                                VkImageAspectFlags aspect) {
         VkImageCreateInfo img_ci{};
         img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.format = VK_FORMAT_D32_SFLOAT;
+        img_ci.format = format;
         img_ci.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1};
         img_ci.mipLevels = 1;
         img_ci.arrayLayers = 1;
         img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
         img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        img_ci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-                     | VK_IMAGE_USAGE_SAMPLED_BIT;
-
+        img_ci.usage = usage;
         VmaAllocationCreateInfo alloc_ci{};
         alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
         alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-
-        VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                       &shadow_image_.image, &shadow_image_.allocation, nullptr));
-
+        VK_CHECK(
+            vmaCreateImage(allocator_, &img_ci, &alloc_ci, &img.image, &img.allocation, nullptr));
         VkImageViewCreateInfo view_ci{};
         view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_ci.image = shadow_image_.image;
+        view_ci.image = img.image;
         view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_ci.format = VK_FORMAT_D32_SFLOAT;
-        view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        view_ci.format = format;
+        view_ci.subresourceRange.aspectMask = aspect;
         view_ci.subresourceRange.levelCount = 1;
         view_ci.subresourceRange.layerCount = 1;
-        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &shadow_image_.view));
-    }
+        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
+    };
+    const VkImageUsageFlags colour_usage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    make_image(shadow_image_, kMapFormat, colour_usage, VK_IMAGE_ASPECT_COLOR_BIT);
+    make_image(shadow_blur_a_, kMapFormat, colour_usage, VK_IMAGE_ASPECT_COLOR_BIT);
+    make_image(shadow_blur_b_, kMapFormat, colour_usage, VK_IMAGE_ASPECT_COLOR_BIT);
+    make_image(shadow_depth_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+               VK_IMAGE_ASPECT_DEPTH_BIT);
 
-    // --- Shadow render pass (depth-only) ---
+    // The map's pass: colour and depth, both cleared (to 1: lit, and far).
+    // The map is shared by every frame in flight:
+    //   [0] incoming: the last frame's reads (and depth writes) finish
+    //       before this frame overwrites it;
+    //   [1] outgoing: its writes are visible to the blur and the scene.
     {
-        VkAttachmentDescription depth_att{};
+        VkAttachmentDescription colour_att{};
+        colour_att.format = kMapFormat;
+        colour_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        colour_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colour_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colour_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colour_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colour_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colour_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkAttachmentDescription depth_att = colour_att;
         depth_att.format = VK_FORMAT_D32_SFLOAT;
-        depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
-        depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        depth_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        const std::array<VkAttachmentDescription, 2> attachments = {colour_att, depth_att};
 
-        VkAttachmentReference depth_ref{};
-        depth_ref.attachment = 0;
-        depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
+        VkAttachmentReference colour_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 0;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colour_ref;
         subpass.pDepthStencilAttachment = &depth_ref;
 
-        // The single shadow map is shared by all frames in flight.
-        //   [0] incoming: the previous frame's shadow SAMPLING must finish
-        //       before this frame overwrites the map (write-after-read).
-        //   [1] outgoing: this frame's depth writes are visible to sampling.
+        std::array<VkSubpassDependency, 2> deps{};
+        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[0].dstSubpass = 0;
+        deps[0].srcStageMask =
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[1].srcSubpass = 0;
+        deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        VkRenderPassCreateInfo rp_ci{};
+        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp_ci.attachmentCount = static_cast<u32>(attachments.size());
+        rp_ci.pAttachments = attachments.data();
+        rp_ci.subpassCount = 1;
+        rp_ci.pSubpasses = &subpass;
+        rp_ci.dependencyCount = static_cast<u32>(deps.size());
+        rp_ci.pDependencies = deps.data();
+        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_));
+    }
+
+    // The blur's passes: colour alone, cleared to 1. Each reads the target
+    // the pass before wrote (that pass's outgoing dependency), and writes
+    // one the last frame's scene may still be reading.
+    {
+        VkAttachmentDescription colour_att{};
+        colour_att.format = kMapFormat;
+        colour_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        colour_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colour_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colour_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colour_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colour_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colour_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkAttachmentReference colour_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colour_ref;
+
         std::array<VkSubpassDependency, 2> deps{};
         deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
         deps[0].dstSubpass = 0;
         deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        deps[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                             | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         deps[0].srcAccessMask = 0; // WAR: an execution dependency suffices
-        deps[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                              | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         deps[1].srcSubpass = 0;
         deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-        deps[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                             | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        deps[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
         VkRenderPassCreateInfo rp_ci{};
         rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         rp_ci.attachmentCount = 1;
-        rp_ci.pAttachments = &depth_att;
+        rp_ci.pAttachments = &colour_att;
         rp_ci.subpassCount = 1;
         rp_ci.pSubpasses = &subpass;
         rp_ci.dependencyCount = static_cast<u32>(deps.size());
         rp_ci.pDependencies = deps.data();
-
-        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_));
+        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_blur_pass_));
     }
 
-    // --- Shadow framebuffer ---
+    // Framebuffers: the map with its depth; the blur's targets.
     {
-        VkFramebufferCreateInfo fb_ci{};
-        fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fb_ci.renderPass = shadow_render_pass_;
-        fb_ci.attachmentCount = 1;
-        fb_ci.pAttachments = &shadow_image_.view;
-        fb_ci.width = SHADOW_MAP_SIZE;
-        fb_ci.height = SHADOW_MAP_SIZE;
-        fb_ci.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &shadow_framebuffer_));
+        const auto make_fb = [&](VkFramebuffer& fb, VkRenderPass pass,
+                                 std::initializer_list<VkImageView> views) {
+            const std::vector<VkImageView> list(views);
+            VkFramebufferCreateInfo fb_ci{};
+            fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fb_ci.renderPass = pass;
+            fb_ci.attachmentCount = static_cast<u32>(list.size());
+            fb_ci.pAttachments = list.data();
+            fb_ci.width = SHADOW_MAP_SIZE;
+            fb_ci.height = SHADOW_MAP_SIZE;
+            fb_ci.layers = 1;
+            VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &fb));
+        };
+        make_fb(shadow_framebuffer_, shadow_render_pass_, {shadow_image_.view, shadow_depth_.view});
+        make_fb(shadow_blur_a_fb_, shadow_blur_pass_, {shadow_blur_a_.view});
+        make_fb(shadow_blur_b_fb_, shadow_blur_pass_, {shadow_blur_b_.view});
     }
 
-    // --- Shadow comparison sampler (for sampler2DShadow) ---
+    // Samplers: point and clamped (the meshes' one tap, FA's shadowSampler,
+    // and the blur's point taps); bilinear with a white border (the PCF's
+    // taps, FA's shadowPCFSampler, and the terrain's mask, ShadowSampler).
     {
         VkSamplerCreateInfo ci{};
         ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ci.magFilter = VK_FILTER_NEAREST;
+        ci.minFilter = VK_FILTER_NEAREST;
+        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        ci.maxLod = 0.0f;
+        VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_));
         ci.magFilter = VK_FILTER_LINEAR;
         ci.minFilter = VK_FILTER_LINEAR;
-        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         ci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-        ci.compareEnable = VK_TRUE;
-        ci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-        ci.maxLod = 1.0f;
-        VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_));
+        VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_linear_sampler_));
     }
 
     // --- Light UBO (LightUboData, persistently mapped, per-frame for FIF safety) ---
-    static_assert(sizeof(LightUboData) == 144, "LightUBO is std140: a mat4 and five vec4s");
+    static_assert(sizeof(LightUboData) == 160, "LightUBO is std140: a mat4 and six vec4s");
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo ubo_ci{};
         ubo_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -768,11 +838,13 @@ void Renderer::create_shadow_resources() {
     }
     upload_lighting();
 
-    // --- Shadow descriptor set layout (binding 0: shadow sampler, binding 1: light UBO,
-    // bindings 2-4: the environment cubes meshes reflect, "<default>", "<aeon>" and
-    // "<seraphim>", M211a/b; 5-6: FA's anisotropic and insect lookups, M211b) ---
+    // --- Shadow descriptor set layout (binding 0: the shadow map, point-sampled,
+    // binding 1: light UBO, bindings 2-4: the environment cubes meshes reflect,
+    // "<default>", "<aeon>" and "<seraphim>", M211a/b; 5-6: FA's anisotropic and
+    // insect lookups, M211b; 7: the shadow map, bilinear, white outside, the
+    // meshes' PCF; 8: the terrain's mask, likewise, M210c) ---
     {
-        std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, 9> bindings{};
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[0].descriptorCount = 1;
@@ -783,7 +855,7 @@ void Renderer::create_shadow_resources() {
         bindings[1].descriptorCount = 1;
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
 
-        for (u32 b = 2; b < 7; ++b) {
+        for (u32 b = 2; b < 9; ++b) {
             bindings[b].binding = b;
             bindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             bindings[b].descriptorCount = 1;
@@ -800,7 +872,7 @@ void Renderer::create_shadow_resources() {
     // --- Shadow descriptor pool + per-frame sets ---
     {
         std::array<VkDescriptorPoolSize, 2> pool_sizes{};
-        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 * FRAMES_IN_FLIGHT};
+        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8 * FRAMES_IN_FLIGHT};
         pool_sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, FRAMES_IN_FLIGHT};
 
         VkDescriptorPoolCreateInfo pool_ci{};
@@ -822,13 +894,17 @@ void Renderer::create_shadow_resources() {
             img_info.sampler = shadow_sampler_;
             img_info.imageView = shadow_image_.view;
             img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo pcf_info = img_info;
+            pcf_info.sampler = shadow_linear_sampler_;
+            VkDescriptorImageInfo mask_info = pcf_info;
+            mask_info.imageView = shadow_blur_b_.view;
 
             VkDescriptorBufferInfo buf_info{};
             buf_info.buffer = light_ubo_[i].buffer;
             buf_info.offset = 0;
             buf_info.range = sizeof(LightUboData);
 
-            std::array<VkWriteDescriptorSet, 2> writes{};
+            std::array<VkWriteDescriptorSet, 4> writes{};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstSet = shadow_ds_[i];
             writes[0].dstBinding = 0;
@@ -842,13 +918,58 @@ void Renderer::create_shadow_resources() {
             writes[1].descriptorCount = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[1].pBufferInfo = &buf_info;
+            writes[2] = writes[0];
+            writes[2].dstBinding = 7;
+            writes[2].pImageInfo = &pcf_info;
+            writes[3] = writes[0];
+            writes[3].dstBinding = 8;
+            writes[3].pImageInfo = &mask_info;
 
             vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
                                         nullptr);
         }
     }
 
-    spdlog::info("Shadow resources created ({}x{} depth map)", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    // The blur's sources: the map (point taps), then target A (bilinear).
+    {
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        VkDescriptorPoolCreateInfo pool_ci{};
+        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_ci.maxSets = 2;
+        pool_ci.poolSizeCount = 1;
+        pool_ci.pPoolSizes = &size;
+        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &shadow_blur_ds_pool_));
+        const std::array<VkDescriptorSetLayout, 2> layouts = {texture_ds_layout_,
+                                                              texture_ds_layout_};
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = shadow_blur_ds_pool_;
+        alloc_info.descriptorSetCount = static_cast<u32>(layouts.size());
+        alloc_info.pSetLayouts = layouts.data();
+        std::array<VkDescriptorSet, 2> sets{};
+        VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, sets.data()));
+        shadow_blur_h_ds_ = sets[0];
+        shadow_blur_v_ds_ = sets[1];
+        const VkDescriptorImageInfo map_info{shadow_sampler_, shadow_image_.view,
+                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo a_info{shadow_linear_sampler_, shadow_blur_a_.view,
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (size_t i = 0; i < writes.size(); ++i) {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = sets[i];
+            writes[i].dstBinding = 0;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        }
+        writes[0].pImageInfo = &map_info;
+        writes[1].pImageInfo = &a_info;
+        vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
+                                    nullptr);
+    }
+
+    spdlog::info("Shadow resources created ({}x{} map, its depth and the blur's targets)",
+                 SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
 }
 
 void Renderer::upload_lighting() {
@@ -868,19 +989,178 @@ void Renderer::upload_lighting() {
     for (int i = 0; i < 4; ++i) d.specular[i] = l.specular[i];
     for (u32 f = 0; f < FRAMES_IN_FLIGHT; ++f) {
         if (!light_ubo_mapped_[f]) continue;
-        // The matrix (the first 64 bytes) is the shadow pass's, each frame.
-        std::memcpy(static_cast<char*>(light_ubo_mapped_[f]) + sizeof(d.light_vp),
-                    reinterpret_cast<const char*>(&d) + sizeof(d.light_vp),
-                    sizeof(d) - sizeof(d.light_vp));
+        // The matrix (the first 64 bytes) and the shadow's state (the last
+        // 16) are the shadow pass's, each frame.
+        std::memcpy(static_cast<char*>(light_ubo_mapped_[f]) +
+                        offsetof(LightUboData, sun_direction),
+                    reinterpret_cast<const char*>(&d) + offsetof(LightUboData, sun_direction),
+                    offsetof(LightUboData, shadow) - offsetof(LightUboData, sun_direction));
     }
 }
 
-std::array<f32, 16> Renderer::compute_light_vp() const {
-    // Looking down the map's sun, as every lit shader lights by it (M210a),
-    // over a box centred on the camera's focus, proportional to zoom.
-    const f32 half = std::clamp(camera_.eye_distance() * 0.8f, 50.0f, 800.0f);
-    return math::light_view_proj(lighting_.sun_direction, camera_.focus_x(), camera_.focus_y(),
-                                 camera_.focus_z(), half);
+void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) {
+    if (!shadow_render_pass_ || !shadow_framebuffer_ || !light_ubo_mapped_[fi]) return;
+    PROFILE_ZONE("Render::shadow_pass");
+
+    // Moho's light camera (Shadow::PrepareLightCamera, M210c): none at
+    // shadow fidelity 0, past ren_ShadowLOD, or with no terrain in view;
+    // without one nothing is shadowed.
+    std::optional<std::array<f32, 16>> light;
+    if (shadow_fidelity() > 0 && height_bounds_) {
+        ShadowView sight;
+        sight.view_proj = view_proj;
+        sight.forward = camera_.direction();
+        sight.zoom = camera_.zoom();
+        sight.sun = {lighting_.sun_direction[0], lighting_.sun_direction[1],
+                     lighting_.sun_direction[2]};
+        light = shadow_camera(sight, *height_bounds_);
+    }
+    shadow_camera_valid_ = light.has_value();
+    static constexpr std::array<f32, 16> kIdentity = {1, 0, 0, 0, 0, 1, 0, 0,
+                                                      0, 0, 1, 0, 0, 0, 0, 1};
+    const std::array<f32, 16> light_vp = light ? *light : kIdentity;
+    auto* ubo = static_cast<char*>(light_ubo_mapped_[fi]);
+    std::memcpy(ubo, light_vp.data(), sizeof(f32) * 16);
+    const std::array<f32, 4> state = {shadow_camera_valid_ ? 1.0f : 0.0f, kShadowBias,
+                                      static_cast<f32>(SHADOW_MAP_SIZE), 0.0f};
+    std::memcpy(ubo + offsetof(LightUboData, shadow), state.data(), sizeof(state));
+
+    // Every pass clears its target to 1 (lit, and far) and draws inside a
+    // one-pixel border, which keeps the clear: a lookup off the volume
+    // reads lit (Shadow::RenderShadowMap's viewport).
+    constexpr u32 n = SHADOW_MAP_SIZE;
+    const VkViewport inset{1.0f, 1.0f, static_cast<f32>(n - 2), static_cast<f32>(n - 2),
+                           0.0f, 1.0f};
+    const VkRect2D inset_rect{{1, 1}, {n - 2, n - 2}};
+    const auto begin = [&](VkRenderPass pass, VkFramebuffer fb, u32 clear_count,
+                           const VkClearValue* clears) {
+        VkRenderPassBeginInfo rp{};
+        rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rp.renderPass = pass;
+        rp.framebuffer = fb;
+        rp.renderArea.extent = {n, n};
+        rp.clearValueCount = clear_count;
+        rp.pClearValues = clears;
+        vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &inset);
+        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &inset_rect);
+    };
+
+    // The map: the terrain (R its depth over 128, G 1), then the meshes
+    // and the placeholder cubes (R their depth, G 0).
+    std::array<VkClearValue, 2> clears{};
+    clears[0].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
+    clears[1].depthStencil = {1.0f, 0};
+    begin(shadow_render_pass_, shadow_framebuffer_, static_cast<u32>(clears.size()), clears.data());
+    if (light) {
+        // Shadow terrain
+        if (terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               shadow_terrain_pipeline_);
+            vkc::push_constants(cmd_buf_[fi], shadow_terrain_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                sizeof(f32) * 16, light_vp.data());
+
+            VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+            vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+        }
+
+        // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
+        if (!strategic_icon_renderer_.is_strategic_zoom() &&
+            !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_[fi]) {
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               shadow_mesh_pipeline_);
+
+            // Bind bone SSBO at set=0
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      shadow_mesh_layout_, 0, 1, &bone_ds_[fi], 0, nullptr);
+
+            struct ShadowMeshPC {
+                f32 lightVP[16];
+                u32 boneBase;
+                u32 bonesPerInst;
+                u32 technique; // MeshTechnique (M211f)
+                f32 time;      // FA's time, for the swaying trees (M211j)
+                u32 lane;      // the lane by graphics fidelity: at Low wrecks cast none (M211n)
+            } spc{};
+            static_assert(sizeof(ShadowMeshPC) == 84, "matches shadow_mesh_vert/frag's push block");
+            std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
+            spc.time = unit_renderer_.shader_time();
+            spc.lane = static_cast<u32>(fidelity());
+            VkDescriptorSet albedo_fallback = texture_cache_.fallback_descriptor();
+
+            for (auto& group : unit_renderer_.mesh_groups()) {
+                if (!group.mesh || group.instance_count == 0) continue;
+                // Only a technique with a depth stage casts a shadow.
+                if (!has_depth_stage(drawn_technique(group))) continue;
+
+                spc.boneBase = group.bone_base_offset;
+                spc.bonesPerInst = group.bones_per_instance;
+                spc.technique = static_cast<u32>(base_technique(drawn_technique(group)));
+                vkc::push_constants(cmd_buf_[fi], shadow_mesh_layout_,
+                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                    sizeof(spc), &spc);
+                // The albedo, whose alpha cuts an alpha-tested mesh's shadow
+                // (DepthClip, M211j).
+                VkDescriptorSet albedo = group.texture_ds ? group.texture_ds : albedo_fallback;
+                if (albedo) {
+                    vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                              shadow_mesh_layout_, 1, 1, &albedo, 0, nullptr);
+                }
+
+                VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
+                                    unit_renderer_.mesh_instance_buffer()};
+                VkDeviceSize buf_offsets[] = {0, static_cast<VkDeviceSize>(group.instance_offset) *
+                                                     sizeof(MeshInstance)};
+                vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
+                vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
+                                     VK_INDEX_TYPE_UINT32);
+                vkc::draw_indexed(cmd_buf_[fi], group.mesh->index_count, group.instance_count, 0, 0,
+                                  0);
+            }
+        }
+
+        // Shadow cubes (skip when strategic zoom active)
+        if (!strategic_icon_renderer_.is_strategic_zoom() &&
+            unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                               shadow_unit_pipeline_);
+            vkc::push_constants(cmd_buf_[fi], shadow_unit_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                sizeof(f32) * 16, light_vp.data());
+
+            VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
+                                unit_renderer_.cube_instance_buffer()};
+            VkDeviceSize offsets[] = {0, 0};
+            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
+            vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
+                              unit_renderer_.cube_instance_count(), 0, 0, 0);
+        }
+    }
+    vkCmdEndRenderPass(cmd_buf_[fi]);
+
+    // The terrain's mask, B: Moho's blur, once (across into A, down into
+    // B), or with ren_ShadowBlur off a copy of the map's G.
+    const auto pass = [&](VkFramebuffer fb, VkPipeline pipeline, VkDescriptorSet source) {
+        begin(shadow_blur_pass_, fb, 1, clears.data());
+        if (pipeline && source && shadow_blur_layout_) {
+            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      shadow_blur_layout_, 0, 1, &source, 0, nullptr);
+            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+        }
+        vkCmdEndRenderPass(cmd_buf_[fi]);
+    };
+    if (video_options_.shadow_blur) {
+        pass(shadow_blur_a_fb_, shadow_blur_h_pipeline_, shadow_blur_h_ds_);
+        pass(shadow_blur_b_fb_, shadow_blur_v_pipeline_, shadow_blur_v_ds_);
+    } else {
+        pass(shadow_blur_b_fb_, shadow_copy_pipeline_, shadow_blur_h_ds_);
+    }
 }
 
 void Renderer::create_pipelines() {
@@ -1246,18 +1526,25 @@ void Renderer::create_shadow_pipelines() {
     auto sv = compile_glsl(device_, shaders::shadow_vert, "shadow.vert", true);
     auto smv = compile_glsl(device_, shaders::shadow_mesh_vert, "shadow_mesh.vert", true);
     auto suv = compile_glsl(device_, shaders::shadow_unit_vert, "shadow_unit.vert", true);
-    auto sf = compile_glsl(device_, shaders::shadow_frag, "shadow.frag", false);
+    auto stf = compile_glsl(device_, shaders::shadow_terrain_frag, "shadow_terrain.frag", false);
+    auto scf = compile_glsl(device_, shaders::shadow_caster_frag, "shadow_caster.frag", false);
     auto smf = compile_glsl(device_, shaders::shadow_mesh_frag, "shadow_mesh.frag", false);
-
-    if (!sv || !smv || !suv || !sf || !smf) {
-        spdlog::error("Shadow shader compilation failed");
-        auto safe_destroy = [&](VkShaderModule m) {
+    auto qv = compile_glsl(device_, shaders::bloom_bright_vert, "shadow_quad.vert", true);
+    auto bhf = compile_glsl(device_, shaders::shadow_blur_h_frag, "shadow_blur_h.frag", false);
+    auto bvf = compile_glsl(device_, shaders::shadow_blur_v_frag, "shadow_blur_v.frag", false);
+    auto bcf = compile_glsl(device_, shaders::shadow_copy_frag, "shadow_copy.frag", false);
+    const std::array<VkShaderModule, 10> modules = {sv, smv, suv, stf, scf, smf, qv, bhf, bvf, bcf};
+    const auto destroy_modules = [&] {
+        for (VkShaderModule m : modules)
             if (m) vkDestroyShaderModule(device_, m, nullptr);
-        };
-        safe_destroy(sv); safe_destroy(smv); safe_destroy(suv); safe_destroy(sf);
-        safe_destroy(smf);
+    };
+    if (std::find(modules.begin(), modules.end(), VK_NULL_HANDLE) != modules.end()) {
+        spdlog::error("Shadow shader compilation failed");
+        destroy_modules();
         return;
     }
+    // Moho's map (M210c) takes R and G; nothing writes B or A.
+    constexpr VkColorComponentFlags kRG = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT;
 
     // --- Shadow terrain pipeline (depth-only, same vertex layout as terrain) ---
     {
@@ -1270,16 +1557,16 @@ void Renderer::create_shadow_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
 
-        shadow_terrain_pipeline_ = PipelineBuilder()
-            .set_shaders(sv, sf)
-            .set_vertex_input(&binding, 1, attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, true)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
-            .set_no_color_attachment()
-            .set_depth_bias(4.0f, 1.5f)
-            .build(device_, shadow_render_pass_, &shadow_terrain_layout_);
+        // TTerrainDepth's state: no culling, and no depth bias (M210c)
+        shadow_terrain_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(sv, stf)
+                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                .set_depth_test(true, true)
+                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
+                .set_color_write_mask(kRG)
+                .build(device_, shadow_render_pass_, &shadow_terrain_layout_);
     }
 
     // --- Shadow mesh pipeline (depth-only, blend-weight skinning) ---
@@ -1319,8 +1606,7 @@ void Renderer::create_shadow_pipelines() {
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(bone_ds_layout_)    // set=0: bone SSBO
                 .add_descriptor_set_layout(texture_ds_layout_) // set=1: albedo (M211j)
-                .set_no_color_attachment()
-                .set_depth_bias(4.0f, 1.5f)
+                .set_color_write_mask(kRG)
                 .build(device_, shadow_render_pass_, &shadow_mesh_layout_);
     }
 
@@ -1341,25 +1627,40 @@ void Renderer::create_shadow_pipelines() {
         attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT,       offsetof(CubeInstance, scale)};
         attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, r)};
 
-        shadow_unit_pipeline_ = PipelineBuilder()
-            .set_shaders(suv, sf)
-            .set_vertex_input(bindings.data(),
-                              static_cast<u32>(bindings.size()),
-                              attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, true)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
-            .set_no_color_attachment()
-            .set_depth_bias(4.0f, 1.5f)
-            .build(device_, shadow_render_pass_, &shadow_unit_layout_);
+        shadow_unit_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(suv, scf)
+                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                                  static_cast<u32>(attrs.size()))
+                .set_depth_test(true, true)
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
+                .set_color_write_mask(kRG)
+                .build(device_, shadow_render_pass_, &shadow_unit_layout_);
     }
 
-    vkDestroyShaderModule(device_, sv, nullptr);
-    vkDestroyShaderModule(device_, smv, nullptr);
-    vkDestroyShaderModule(device_, suv, nullptr);
-    vkDestroyShaderModule(device_, sf, nullptr);
-    vkDestroyShaderModule(device_, smf, nullptr);
+    // The blur's passes and the copy (M210c): a screen triangle over the
+    // target, reading the pass before's from set 0.
+    {
+        const auto blur = [&](VkShaderModule frag, VkPipelineLayout* layout) {
+            return PipelineBuilder()
+                .set_shaders(qv, frag)
+                .set_depth_test(false, false)
+                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_color_write_mask(kRG)
+                .set_descriptor_set_layout(texture_ds_layout_)
+                .build(device_, shadow_blur_pass_, layout);
+        };
+        shadow_blur_h_pipeline_ = blur(bhf, &shadow_blur_layout_);
+        VkPipelineLayout same = VK_NULL_HANDLE;
+        shadow_blur_v_pipeline_ = blur(bvf, &same);
+        if (same) vkDestroyPipelineLayout(device_, same, nullptr);
+        same = VK_NULL_HANDLE;
+        shadow_copy_pipeline_ = blur(bcf, &same);
+        if (same) vkDestroyPipelineLayout(device_, same, nullptr);
+    }
+
+    destroy_modules();
 
     spdlog::info("Shadow pipelines created (terrain + mesh + unit)");
 }
@@ -1832,6 +2133,8 @@ void Renderer::clear_scene() {
     runtime_decals_.clear();
     emitter_bp_cache_.clear();
     terrain_ = nullptr;
+    height_bounds_.reset();
+    shadow_camera_valid_ = false;
     beam_bp_cache_.clear();
     // The trails' segments point into their blueprint cache (M214b).
     trail_renderer_.clear();
@@ -1900,6 +2203,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // is replaced on a reload.
     ground_ = terrain->heightmap();
     camera_.set_ground(&*ground_, terrain->has_water(), terrain->water_elevation());
+    // The light camera fits the terrain in view (M210c).
+    height_bounds_ = std::make_unique<HeightBounds>(*ground_);
 
     terrain_mesh_.build(*terrain, device_, allocator_, cmd_pool_,
                         graphics_queue_);
@@ -2416,27 +2721,26 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // Build preview ghost — a semi-transparent mesh where input places it
     if (ghost && !ghost->blueprint_id.empty()) {
-        // Green = valid, Red = invalid, semi-transparent
+        // Green = valid, Red = invalid
         f32 gr = ghost->valid ? 0.2f : 1.0f;
         f32 gg = ghost->valid ? 0.9f : 0.2f;
         f32 gb = ghost->valid ? 0.3f : 0.2f;
-        f32 ga = 0.35f;
 
         const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
         if (ghost_mesh) {
-            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z,
-                                        gr, gg, gb, ga, &texture_cache_);
+            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
+                                        &texture_cache_);
             for (const BuildGhost& site : ghost->line) {
                 unit_renderer_.inject_ghost(ghost_mesh, site.x, site.y, site.z,
                                             site.valid ? 0.2f : 1.0f, site.valid ? 0.9f : 0.2f,
-                                            site.valid ? 0.3f : 0.2f, ga, &texture_cache_);
+                                            site.valid ? 0.3f : 0.2f, &texture_cache_);
             }
         }
     }
     for (const auto& site : command_graph_renderer_.planned_sites()) {
         if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
             unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
-                                        0.2f, 0.9f, 0.3f, 0.2f, &texture_cache_);
+                                        0.2f, 0.9f, 0.3f, &texture_cache_);
         }
     }
 
@@ -2593,130 +2897,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     movie_textures_.record(cmd_buf_[fi]);
 
     // ==================== SHADOW PASS ====================
-    if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_[fi]) {
-        PROFILE_ZONE("Render::shadow_pass");
-        // Update light UBO
-        auto light_vp = compute_light_vp();
-        std::memcpy(light_ubo_mapped_[fi], light_vp.data(), sizeof(f32) * 16);
-
-        VkClearValue shadow_clear{};
-        shadow_clear.depthStencil = {1.0f, 0};
-
-        VkRenderPassBeginInfo shadow_rp{};
-        shadow_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        shadow_rp.renderPass = shadow_render_pass_;
-        shadow_rp.framebuffer = shadow_framebuffer_;
-        shadow_rp.renderArea.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
-        shadow_rp.clearValueCount = 1;
-        shadow_rp.pClearValues = &shadow_clear;
-        vkCmdBeginRenderPass(cmd_buf_[fi], &shadow_rp, VK_SUBPASS_CONTENTS_INLINE);
-
-        VkViewport shadow_vp{};
-        shadow_vp.width = static_cast<f32>(SHADOW_MAP_SIZE);
-        shadow_vp.height = static_cast<f32>(SHADOW_MAP_SIZE);
-        shadow_vp.minDepth = 0.0f;
-        shadow_vp.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &shadow_vp);
-
-        VkRect2D shadow_sc{};
-        shadow_sc.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
-        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &shadow_sc);
-
-        // At shadow fidelity 0 nothing casts (Moho makes no shadow map): the
-        // map stays cleared, all lit (M211m)
-        const bool casting = shadow_fidelity() > 0;
-        // Shadow terrain
-        if (casting && terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
-            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               shadow_terrain_pipeline_);
-            vkc::push_constants(cmd_buf_[fi], shadow_terrain_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                                sizeof(f32) * 16, light_vp.data());
-
-            VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
-            VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
-            vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
-                                 VK_INDEX_TYPE_UINT32);
-            vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
-        }
-
-        // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
-        if (casting && !strategic_icon_renderer_.is_strategic_zoom() &&
-            !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_[fi]) {
-            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               shadow_mesh_pipeline_);
-
-            // Bind bone SSBO at set=0
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      shadow_mesh_layout_, 0, 1, &bone_ds_[fi], 0, nullptr);
-
-            struct ShadowMeshPC {
-                f32 lightVP[16];
-                u32 boneBase;
-                u32 bonesPerInst;
-                u32 technique; // MeshTechnique (M211f)
-                f32 time;      // FA's time, for the swaying trees (M211j)
-                u32 lane;      // the lane by graphics fidelity: at Low wrecks cast none (M211n)
-            } spc{};
-            static_assert(sizeof(ShadowMeshPC) == 84, "matches shadow_mesh_vert/frag's push block");
-            std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
-            spc.time = unit_renderer_.shader_time();
-            spc.lane = static_cast<u32>(fidelity());
-            VkDescriptorSet albedo_fallback = texture_cache_.fallback_descriptor();
-
-            for (auto& group : unit_renderer_.mesh_groups()) {
-                if (!group.mesh || group.instance_count == 0) continue;
-                // Only a technique with a depth stage casts a shadow.
-                if (!has_depth_stage(group.mesh->technique)) continue;
-
-                spc.boneBase = group.bone_base_offset;
-                spc.bonesPerInst = group.bones_per_instance;
-                spc.technique = static_cast<u32>(base_technique(group.mesh->technique));
-                vkc::push_constants(cmd_buf_[fi], shadow_mesh_layout_,
-                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                    sizeof(spc), &spc);
-                // The albedo, whose alpha cuts an alpha-tested mesh's shadow
-                // (DepthClip, M211j).
-                VkDescriptorSet albedo = group.texture_ds ? group.texture_ds : albedo_fallback;
-                if (albedo) {
-                    vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                              shadow_mesh_layout_, 1, 1, &albedo, 0, nullptr);
-                }
-
-                VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
-                                    unit_renderer_.mesh_instance_buffer()};
-                VkDeviceSize buf_offsets[] = {
-                    0,
-                    static_cast<VkDeviceSize>(group.instance_offset) *
-                        sizeof(MeshInstance)};
-                vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
-                vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
-                                     VK_INDEX_TYPE_UINT32);
-                vkc::draw_indexed(cmd_buf_[fi], group.mesh->index_count, group.instance_count, 0, 0,
-                                  0);
-            }
-        }
-
-        // Shadow cubes (skip when strategic zoom active)
-        if (!strategic_icon_renderer_.is_strategic_zoom() &&
-            unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
-            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                               shadow_unit_pipeline_);
-            vkc::push_constants(cmd_buf_[fi], shadow_unit_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                                sizeof(f32) * 16, light_vp.data());
-
-            VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
-                                unit_renderer_.cube_instance_buffer()};
-            VkDeviceSize offsets[] = {0, 0};
-            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
-            vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
-                                 VK_INDEX_TYPE_UINT32);
-            vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
-                              unit_renderer_.cube_instance_count(), 0, 0, 0);
-        }
-
-        vkCmdEndRenderPass(cmd_buf_[fi]);
-    }
+    record_shadow_pass(fi, vp);
 
     // ==================== NORMALS ====================
     // Moho's DrawTerrainNormal (M212e): the terrain's normals into the
@@ -3369,8 +3550,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // Moho's buckets (M213b): a technique's render stage puts it
         // before the water or after it, or after the effects too (the
         // shields', M211k); only units are reflected.
-        const bool after_effects = is_post_effect_technique(group.mesh->technique);
-        const bool after_water = is_post_water_technique(group.mesh->technique);
+        const MeshTechnique technique = drawn_technique(group);
+        const bool after_effects = is_post_effect_technique(technique);
+        const bool after_water = is_post_water_technique(technique);
         if ((stage == MeshPass::AfterEffects) != after_effects ||
             (stage == MeshPass::BeforeWater && after_water) ||
             (stage == MeshPass::AfterWater && !after_water) ||
@@ -3426,7 +3608,6 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // sets bound stay bound). A build technique's base pass blends
         // colour only (Aeon's at alpha 1: opaque); UEF's and Cybran's
         // overlays blend alpha too, Aeon's colour only.
-        const MeshTechnique technique = group.mesh->technique;
         std::array<VkPipeline, 2> passes = {group.fading ? mesh_fade_pipeline_ : mesh_pipeline_,
                                             VK_NULL_HANDLE};
         if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
@@ -3451,6 +3632,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // leaves the depth state at D3D's default).
         else if (is_personal_shield_technique(technique))
             passes[1] = shield_pipelines_[static_cast<u32>(ShieldState::BlendDepthWrite)];
+        else if (technique == MeshTechnique::UnitPlace) {
+            passes[0] = mesh_overlay_pipeline_;
+        }
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
         for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
@@ -3474,10 +3658,11 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             mesh_pc.pass = pass;
             mesh_pc.lane = static_cast<u32>(lane);
             // Meshes take shadows above shadow fidelity 1, and not on the
-            // Low lane: one tap, or High's five at 3 with ren_ShadowBlur
+            // Low lane: one tap, or High's five at 3 with ren_ShadowBlur.
+            // With no light camera this frame, none (M210c).
             const int shadows = shadow_fidelity();
             mesh_pc.shadow_mode =
-                lane == 0 || shadows <= 1
+                lane == 0 || shadows <= 1 || !shadow_camera_valid_
                     ? 0u
                     : (lane == 2 && shadows == 3 && video_options_.shadow_blur ? 2u : 1u);
             vkc::push_constants(cmd, mesh_layout_,
@@ -4356,12 +4541,22 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, shadow_mesh_layout_, nullptr);
     vkDestroyPipeline(device_, shadow_unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, shadow_unit_layout_, nullptr);
+    vkDestroyPipeline(device_, shadow_blur_h_pipeline_, nullptr);
+    vkDestroyPipeline(device_, shadow_blur_v_pipeline_, nullptr);
+    vkDestroyPipeline(device_, shadow_copy_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, shadow_blur_layout_, nullptr);
+    if (shadow_blur_ds_pool_) vkDestroyDescriptorPool(device_, shadow_blur_ds_pool_, nullptr);
     vkDestroyFramebuffer(device_, shadow_framebuffer_, nullptr);
+    vkDestroyFramebuffer(device_, shadow_blur_a_fb_, nullptr);
+    vkDestroyFramebuffer(device_, shadow_blur_b_fb_, nullptr);
     vkDestroyRenderPass(device_, shadow_render_pass_, nullptr);
+    vkDestroyRenderPass(device_, shadow_blur_pass_, nullptr);
     if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
-    if (shadow_image_.view) vkDestroyImageView(device_, shadow_image_.view, nullptr);
-    if (shadow_image_.image)
-        vmaDestroyImage(allocator_, shadow_image_.image, shadow_image_.allocation);
+    if (shadow_linear_sampler_) vkDestroySampler(device_, shadow_linear_sampler_, nullptr);
+    for (AllocatedImage* img : {&shadow_image_, &shadow_depth_, &shadow_blur_a_, &shadow_blur_b_}) {
+        if (img->view) vkDestroyImageView(device_, img->view, nullptr);
+        if (img->image) vmaDestroyImage(allocator_, img->image, img->allocation);
+    }
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         if (light_ubo_[i].buffer)
             vmaDestroyBuffer(allocator_, light_ubo_[i].buffer, light_ubo_[i].allocation);

@@ -238,6 +238,52 @@ TEST_CASE("FrameView jumps a teleported entity instead of sliding it", "[interp]
     CHECK(view.position(entity(sim, id)).x == Approx(500.0f));
 }
 
+TEST_CASE("FrameView pairs records through the history's index as a search would",
+          "[interp][view]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    const osc::u32 moving = spawn_at(sim, {0, 0, 0});
+    const osc::u32 dying = spawn_at(sim, {5, 0, 5});
+    const osc::u32 warped = spawn_at(sim, {9, 0, 9});
+    history.capture(sim);
+    entity(sim, moving).set_position({10, 0, 0});
+    entity(sim, dying).mark_destroyed();
+    entity(sim, warped).set_position({500, 0, 500});
+    entity(sim, warped).note_snap();
+    const osc::u32 fresh = spawn_at(sim, {50, 0, 50});
+    history.capture(sim);
+    REQUIRE(history.cur().previous_serial == history.prev().serial);
+
+    // The same pair, the index dropped: a search.
+    WorldSnapshot prev = history.prev();
+    WorldSnapshot cur = history.cur();
+    cur.previous.clear();
+    const FrameView indexed(&history.prev(), &history.cur(), 0.5f);
+    const FrameView searched(&prev, &cur, 0.5f);
+    for (const osc::u32 id : {moving, warped, fresh}) {
+        const auto* a = indexed.find(id);
+        const auto* b = searched.find(id);
+        REQUIRE(a != nullptr);
+        REQUIRE(b != nullptr);
+        CHECK(indexed.position(*a).x == Approx(searched.position(*b).x));
+        CHECK(indexed.position(*a).z == Approx(searched.position(*b).z));
+    }
+    CHECK(indexed.position(*indexed.find(moving)).x == Approx(5.0f));
+    CHECK(indexed.position(*indexed.find(warped)).x == Approx(500.0f));
+    CHECK(indexed.position(*indexed.find(fresh)).x == Approx(50.0f));
+}
+
+TEST_CASE("An entity counts its mesh override's changes", "[interp][snapshot]") {
+    Unit u;
+    CHECK(u.mesh_changes() == 0);
+    u.set_mesh_override("/units/ueb1101/ueb1101_mesh_build");
+    u.set_mesh_override("/units/ueb1101/ueb1101_mesh_build");
+    CHECK(u.mesh_changes() == 1);
+    u.set_mesh_override("");
+    CHECK(u.mesh_changes() == 2);
+}
+
 TEST_CASE("FrameView jumps an attachment with its teleported parent", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -552,4 +598,83 @@ TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][s
     history.events().clear(); // the renderer took them
     sim.tick();
     CHECK(history.events().deaths.empty());
+}
+
+TEST_CASE("A light reaches the renderer where its entity was and with its particle textures",
+          "[interp][snapshot][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    const osc::u32 id = spawn_at(sim, {4, 5, 6});
+
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &entity(sim, id));
+    lua_rawset(L, -3);
+    lua_setglobal(L, "ent");
+
+    REQUIRE(lua.do_string("CreateLightParticle(ent, -1, 1, 7, 8, 'glow_02', 'ramp_blue_22')\n"
+                          "CreateLightParticleIntel(ent, -1, 1, 4, 6, '', 'ramp_flare_02')\n"
+                          "CreateLightParticle(ent, -1, 1, 4, 6, 'glow_02', '')")
+                .ok());
+    entity(sim, id).set_position({40, 5, 60});
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.effects.size() == 2);
+
+    const osc::sim::EffectRecord& light = snap.effects[0];
+    CHECK(light.type == osc::sim::EffectType::LIGHT_PARTICLE);
+    CHECK(light.framed);
+    CHECK(light.frame_position.x == 4.0f);
+    CHECK(light.frame_position.z == 6.0f);
+    CHECK(light.light_size == 7.0f);
+    CHECK(light.light_lifetime == 8.0f);
+    CHECK(light.glow_texture == "/textures/particles/glow_02.dds");
+    CHECK(light.ramp_texture == "/textures/particles/ramp_blue_22.dds");
+
+    const osc::sim::EffectRecord& intel = snap.effects[1];
+    CHECK(intel.type == osc::sim::EffectType::LIGHT_PARTICLE_INTEL);
+    CHECK(intel.glow_texture == "/textures/particles/beam_white_01.dds");
+}
+
+TEST_CASE("An order given and not yet run is in its unit's orders before its tick",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20, 0, 10};
+    unit(sim, id).push_command(move, true);
+    WorldHistory history;
+    history.capture(sim);
+    const auto orders = [&] {
+        history.refresh_pending(sim);
+        std::vector<osc::f32> xs;
+        for (const auto& c : history.cur().orders_of(*history.cur().find(id))) {
+            xs.push_back(c.target_pos.x);
+        }
+        return xs;
+    };
+
+    move.target_pos = {30, 0, 10};
+    sim.schedule_command(0, {id}, move, false);
+    CHECK(orders() == std::vector<osc::f32>{20, 30});
+    CHECK(history.cur().commands_of(*history.cur().find(id)).size() == 1);
+
+    move.target_pos = {40, 0, 10};
+    sim.schedule_command(0, {id}, move, true);
+    CHECK(orders() == std::vector<osc::f32>{40});
+
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    sim.schedule_command(0, {id}, stop, true);
+    CHECK(orders().empty());
+    CHECK(unit(sim, id).command_queue().size() == 1);
+
+    sim.set_playback(true);
+    sim.schedule_command(0, {id}, move, false);
+    CHECK(orders() == std::vector<osc::f32>{20});
 }

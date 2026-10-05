@@ -200,7 +200,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     enum8(w, e.viz_neutrals_);
     save_shape(w, e.collision_shape_);
     save_shape(w, e.default_collision_shape_);
-    w.str(e.mesh_override_);
+    w.str(e.mesh_override_); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
     w.b(e.unselectable_);
     w.b(e.is_wreckage_);
     w.u32v(e.parent_entity_id_);
@@ -322,8 +322,9 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.launch_wait);
     enum8(w, c.dock_phase);
     w.i32v(c.dock_wait);
-    w.b(c.patrol_refuel);
+    w.b(c.from_patrol);
     w.i32v(c.patrol_scan);
+    save_ids(w, c.patrol_claimed);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -354,8 +355,9 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.launch_wait = r.i32v();
     c.dock_phase = enum8<DockPhase>(r);
     c.dock_wait = r.i32v();
-    c.patrol_refuel = r.b();
+    c.from_patrol = r.b();
     c.patrol_scan = r.i32v();
+    c.patrol_claimed = load_ids(r);
 }
 
 // ------------------------------------------------------------- Navigator
@@ -440,6 +442,13 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.f32v(wp.projectile_lifetime_multiplier);
     enum8(w, wp.ballistic_arc);
     w.b(wp.lead_target);
+    w.f32v(wp.muzzle_velocity_reduce_distance);
+    w.b(wp.projectile_physics.has_value());
+    if (wp.projectile_physics) {
+        w.b(wp.projectile_physics->track_target);
+        w.b(wp.projectile_physics->use_gravity);
+        w.f32v(wp.projectile_physics->max_speed);
+    }
     w.b(wp.fire_on_death);
     w.b(wp.dummy);
     w.b(wp.manual_fire);
@@ -500,6 +509,15 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.projectile_lifetime_multiplier = r.f32v();
     wp.ballistic_arc = enum8<Weapon::Arc>(r);
     wp.lead_target = r.b();
+    wp.muzzle_velocity_reduce_distance = r.f32v();
+    wp.projectile_physics.reset();
+    if (r.b()) {
+        Weapon::ProjectilePhysics physics;
+        physics.track_target = r.b();
+        physics.use_gravity = r.b();
+        physics.max_speed = r.f32v();
+        wp.projectile_physics = physics;
+    }
     wp.fire_on_death = r.b();
     wp.dummy = r.b();
     wp.manual_fire = r.b();
@@ -824,6 +842,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.build_rate_);
     w.f32v(u.cap_cost_);
     w.f32v(u.max_build_distance_);
+    w.f32v(u.guard_scan_radius_);
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.naval_draft_);
@@ -1110,6 +1129,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.build_rate_ = r.f32v();
     u.cap_cost_ = r.f32v();
     u.max_build_distance_ = r.f32v();
+    u.guard_scan_radius_ = r.f32v();
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.naval_draft_ = r.f32v();
@@ -1491,6 +1511,8 @@ void StateIO::load(StateReader& r, Projectile& p) {
 void StateIO::save(StateWriter& w, const Prop& p) {
     save(w, static_cast<const Entity&>(p));
     w.tag("PROP");
+    // untargetable, reclaimable_category, reclaim_mass_max, reclaim_energy_max:
+    // its blueprint's (read_prop_blueprint)
     w.f32v(p.sink_rate);
     w.size(p.pose.size());
     for (const auto& m : p.pose)

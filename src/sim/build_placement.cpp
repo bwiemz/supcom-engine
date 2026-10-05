@@ -2,6 +2,7 @@
 #include "core/dmath.hpp"
 
 #include "map/pathfinding_grid.hpp"
+#include "map/terrain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -107,8 +108,9 @@ bool StructureSite::touches(const StructureSite& o) const {
     return false;
 }
 
-StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules)
-    : sim_(sim), army_(army), lookup_(std::move(rules)) {}
+StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules,
+                                       bool scheduled)
+    : sim_(sim), army_(army), lookup_(std::move(rules)), scheduled_(scheduled) {}
 
 const std::vector<StructureSite>& StructurePlacement::reserved() const {
     if (reserved_) return *reserved_;
@@ -119,21 +121,20 @@ const std::vector<StructureSite>& StructurePlacement::reserved() const {
                 StructureSite::of(rules(cmd.blueprint_id), cmd.target_pos.x, cmd.target_pos.z));
         }
     };
+    const auto pending =
+        scheduled_ ? sim_.queues_with_pending() : std::map<u32, SimState::QueueWithPending>();
     sim_.entity_registry().for_each_unit([&](const Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != army_) return;
+        if (const auto it = pending.find(e.entity_id()); it != pending.end()) {
+            for (const auto& cmd : it->second.orders) {
+                reserve(cmd);
+            }
+            return;
+        }
         for (const auto& cmd : static_cast<const Unit&>(e).command_queue()) {
             reserve(cmd);
         }
     });
-    // Orders given but not yet in a queue (they reach it next tick)
-    for (const auto& scheduled : sim_.command_scheduler().pending()) {
-        const Entity* first = scheduled.unit_ids.empty()
-                                  ? nullptr
-                                  : sim_.entity_registry().find(scheduled.unit_ids.front());
-        if (first && first->army() == army_) {
-            reserve(scheduled.command);
-        }
-    }
     return sites;
 }
 
@@ -236,6 +237,16 @@ bool StructurePlacement::on_deposit(const PlacementRules& r, f32 x, f32 z) const
         }
     }
     return false;
+}
+
+// Moho: a footprint that can sit on the seabed occupies OC_SEABED, which
+// BuildOnLayerCaps' LAYER_Seabed gives.
+f32 structure_elevation(const SimState& sim, const PlacementRules& rules, f32 x, f32 z) {
+    const auto* terrain = sim.terrain();
+    if (!terrain) {
+        return 0.0f;
+    }
+    return rules.on_seabed ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
 }
 
 } // namespace osc::sim

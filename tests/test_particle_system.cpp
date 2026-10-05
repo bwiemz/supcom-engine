@@ -11,6 +11,7 @@
 #include "renderer/effect_blueprint_file.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/particle_system.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "sim/emitter_params.hpp"
 #include "sim/ieffect.hpp"
@@ -319,4 +320,106 @@ TEST_CASE("Effects are made at the fidelities their blueprints allow, as Moho's 
     CHECK_FALSE(ps.unmade(4));
     CHECK(count(4) == 2);
     fs::remove_all(root);
+}
+
+namespace {
+
+osc::sim::EffectRecord light(osc::u32 id, osc::sim::EffectType type, osc::sim::Vector3 at) {
+    osc::sim::EffectRecord fx;
+    fx.id = id;
+    fx.type = type;
+    fx.framed = true;
+    fx.frame_position = at;
+    fx.light_size = 5;
+    fx.light_lifetime = 4;
+    fx.glow_texture = "/textures/particles/glow_02.dds";
+    fx.ramp_texture = "/textures/particles/ramp_blue_22.dds";
+    return fx;
+}
+
+} // namespace
+
+TEST_CASE("A light is one flat TLight particle where it was made and ramped over its lifetime",
+          "[renderer][emitter]") {
+    osc::lua::LuaState lua;
+    osc::renderer::EmitterBlueprintCache cache;
+    osc::renderer::Camera camera;
+    osc::renderer::ParticleSystem ps;
+
+    std::vector<osc::sim::WorldSnapshot> ticks(5);
+    for (osc::u32 t = 0; t < ticks.size(); ++t) {
+        ticks[t].tick = t + 1;
+        ticks[t].effects = {light(7, osc::sim::EffectType::LIGHT_PARTICLE,
+                                  {10.0f + static_cast<osc::f32>(t), 20, 30})};
+    }
+    const auto frame = [&](size_t t) {
+        const osc::sim::WorldSnapshot& prev = ticks[t == 0 ? 0 : t - 1];
+        ps.update(osc::sim::FrameView(&prev, &ticks[t], 0.5f), camera, nullptr, cache, lua.raw(),
+                  nullptr);
+    };
+
+    frame(0);
+    REQUIRE(ps.drawn().size() == 1);
+    CHECK(ps.draws_effect(7));
+    const auto& d = ps.drawn().front();
+    CHECK(d.effect_id == 7);
+    CHECK(d.center.x == 10.0f);
+    CHECK(d.center.y == 20.0f);
+    CHECK(d.center.z == 30.0f);
+    CHECK(d.axis_x.x == 5.0f);
+    CHECK(d.axis_x.y == 0.0f);
+    CHECK(d.axis_x.z == 0.0f);
+    CHECK(d.axis_y.x == 0.0f);
+    CHECK(d.axis_y.y == 0.0f);
+    CHECK(d.axis_y.z == 5.0f);
+    CHECK(d.lifetime == 4.0f);
+    CHECK(d.blendmode == osc::renderer::kBlendAdd);
+    CHECK(ps.instances().front().ramp[0] == 0.125f);
+    REQUIRE(ps.groups().size() == 1);
+    CHECK(ps.groups().front().light);
+    CHECK(ps.groups().front().texture == "/textures/particles/glow_02.dds");
+    CHECK(ps.groups().front().ramp == "/textures/particles/ramp_blue_22.dds");
+
+    frame(1);
+    frame(2);
+    frame(3);
+    REQUIRE(ps.drawn().size() == 1);
+    CHECK(ps.drawn().front().center.x == 10.0f);
+    CHECK(ps.instances().front().ramp[0] == 0.875f);
+
+    frame(4);
+    CHECK(ps.drawn().empty());
+    CHECK(ps.draws_effect(7));
+}
+
+TEST_CASE("A LightParticleIntel is made only where the player's army sees it",
+          "[renderer][emitter]") {
+    osc::lua::LuaState lua;
+    osc::renderer::EmitterBlueprintCache cache;
+    osc::renderer::Camera camera;
+    osc::renderer::ParticleSystem ps;
+
+    osc::sim::WorldSnapshot snap;
+    snap.tick = 1;
+    snap.sight.army = 0;
+    snap.sight.vision_cell = 10;
+    snap.sight.vision_width = snap.sight.vision_height = 10;
+    snap.sight.vision.assign(100, 0);
+    snap.sight.vision[1 * 10 + 1] = 1;
+    const osc::sim::FrameView view(&snap, &snap, 0.5f);
+    osc::renderer::ReconView recon;
+    recon.set_focus_army(0);
+    recon.update(view);
+    ps.set_recon(&recon);
+
+    using osc::sim::EffectType;
+    snap.effects = {light(1, EffectType::LIGHT_PARTICLE_INTEL, {15, 0, 15}),
+                    light(2, EffectType::LIGHT_PARTICLE_INTEL, {55, 0, 55}),
+                    light(3, EffectType::LIGHT_PARTICLE, {55, 0, 55})};
+    ps.update(view, camera, nullptr, cache, lua.raw(), nullptr);
+    CHECK(ps.draws_effect(1));
+    CHECK(ps.unmade(2));
+    CHECK_FALSE(ps.draws_effect(2));
+    CHECK(ps.draws_effect(3));
+    CHECK(ps.drawn().size() == 2);
 }

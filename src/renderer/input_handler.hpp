@@ -102,6 +102,9 @@ public:
     std::optional<BuildGhost> build_ghost(const Renderer& renderer,
                                           const sim::SimState& sim) const;
 
+    /// The structure being placed, centred at (wx, wz)
+    BuildGhost ghost_at(const sim::SimState& sim, f32 wx, f32 wz) const;
+
     /// Where this frame draws the world: clicks pick the unit the player
     /// sees under the cursor, not its position at the last tick. Without
     /// one (headless clicks) the live sim is used.

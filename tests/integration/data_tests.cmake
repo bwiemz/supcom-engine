@@ -40,13 +40,13 @@ set(OSC_DATA_TESTS_GATE
     script-order-test
     gameui-test impact-test influence-test issue-handles-test
     enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test
-    full-smoke-test
+    full-smoke-test ghost-render-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-blip-test jammer-test keyboard-test keymap-test
-    layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test lowstub-test manip-test massstub-test massstub2-test missile-test
+    layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test normal-test
     onframe-test particle-render-test path-test phase2-test phase3-test phase4-test phase5-test
-    persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test
+    patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test
     repair-test right-click-test scale-test scissor-test scrollbar-render-test selection-render-test session-command-test shadow-test
     mesh-capacity-test shield-render-test shield-test silo-test sky-test smoke-test spatial-test strata-test
@@ -63,7 +63,7 @@ set(OSC_DATA_TESTS_RETAIL_GAP
 
 # Front-end flows that must boot without --map.
 set(OSC_DATA_TESTS_NO_MAP_GATE
-    audio-data-test lan-screen-test lobby-flow-test movie-test
+    audio-data-test edit-text-test lan-screen-test lobby-flow-test movie-test
 )
 set(OSC_DATA_TESTS_NO_MAP_RETAIL_GAP
 )

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -433,6 +434,28 @@ TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][inpu
                   "and of_type('ButtonPress')[2].event.Modifiers.Middle"));
 }
 
+TEST_CASE("A press no control eats reaches each control under the mouse once", "[ui][lua][input]") {
+    InputFixture f;
+    f.run("item = box('item', GetFrame(0), 0, 0, 100, 100, 1) "
+          "label = box('label', item, 0, 0, 100, 20, 2)");
+    f.dispatch.on_cursor_pos(10, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('ButtonPress') == 'label,item'"));
+}
+
+TEST_CASE("DisableHitTest(true) lets the mouse through a control's children too",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run("button = box('button', GetFrame(0), 0, 0, 100, 100, 11) "
+          "brackets = box('brackets', GetFrame(0), 0, 0, 100, 100, 12) "
+          "corner = box('corner', brackets, 0, 0, 100, 100, 12) "
+          "brackets:DisableHitTest(true)");
+    f.dispatch.on_cursor_pos(50, 50);
+    f.deliver();
+    CHECK(f.check("whos('MouseEnter') == 'button'"));
+}
+
 namespace {
 
 /// Test-mode failure counting, on for a scope (and the tally cleared).
@@ -564,6 +587,11 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.run("IN_AddKeyMapTable({ Q = { action = 'UI_Lua hotkeys = hotkeys + 10', keyRepeat = true } "
           "})");
     f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 11"));
+
+    f.run("IN_ClearKeyMap()");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 11"));
 }
@@ -963,6 +991,29 @@ TEST_CASE("An Edit's text is edited by character, at its caret", "[ui][edit]") {
     CHECK(t.caret == 2);
 }
 
+TEST_CASE("An Edit's caret fades from alpha 62 up to 255 and back every 1.5 s as Moho's does",
+          "[ui][lua][edit]") {
+    InputFixture f;
+    f.run("e = setmetatable({}, { __index = moho.edit_methods })"
+          " InternalCreateEdit(e, GetFrame(0))");
+    auto* edit = control_of(f.lua.raw(), "e");
+    REQUIRE(edit);
+    const auto alpha_after = [&](double dt) {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, dt);
+        return edit->caret_alpha() * 255.0f;
+    };
+    using Catch::Matchers::WithinAbs;
+    CHECK_THAT(edit->caret_alpha() * 255.0f, WithinAbs(62.0, 1e-3));
+    CHECK_THAT(alpha_after(0.375), WithinAbs(158.5, 1e-3));
+    CHECK_THAT(alpha_after(0.375), WithinAbs(255.0, 1e-3));
+    CHECK_THAT(alpha_after(0.375), WithinAbs(158.5, 1e-3));
+    CHECK_THAT(alpha_after(0.25), WithinAbs(94.167, 1e-2));
+    CHECK_THAT(alpha_after(0.25), WithinAbs(62.0, 1e-3));
+
+    f.run("e:SetCaretCycle(1, '00000000', 'ffffff80')");
+    CHECK_THAT(alpha_after(0.5), WithinAbs(128.0, 1e-3));
+}
+
 TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's does",
           "[ui][lua][input][edit]") {
     InputFixture f;
@@ -992,8 +1043,39 @@ TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's 
     f.deliver();
     f.registry.set_keyboard_focus(nullptr);
     CHECK(f.check("table.concat(calls, ';') == 'char 104;changed h<;char 63;char 105;changed hi<h;"
-                  "changed i<hi;key 38 shift;enter i;esc i;changed <i'"));
+                  "changed i<hi;key 38 shift;enter i;changed <i;esc '"));
     CHECK(f.check("e:GetText() == ''"));
+}
+
+TEST_CASE("Enter and Esc clear an Edit, or on an empty one drop the focus, unless handled",
+          "[ui][lua][input][edit]") {
+    InputFixture f;
+    f.run(R"(
+        sent = {}
+        e = setmetatable({}, { __index = setmetatable({
+            OnEnterPressed = function(self, text) table.insert(sent, text) return self.keep end,
+        }, { __index = moho.edit_methods }) })
+        InternalCreateEdit(e, GetFrame(0))
+    )");
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "e"));
+    f.dispatch.on_char('h');
+    f.dispatch.on_char('i');
+    f.dispatch.on_key(GLFW_KEY_ENTER, GLFW_PRESS, 0);
+    f.dispatch.on_key(GLFW_KEY_ENTER, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("table.concat(sent, ',') == 'hi,' and e:GetText() == ''"));
+    CHECK(f.registry.keyboard_focus() == nullptr);
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "e"));
+    f.run("e.keep = true e:SetText('ok')");
+    f.dispatch.on_key(GLFW_KEY_KP_ENTER, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("e:GetText() == 'ok'"));
+    CHECK(f.registry.keyboard_focus() == control_of(f.lua.raw(), "e"));
+
+    f.run("e:SetText('')");
+    f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.registry.keyboard_focus() == nullptr);
 }
 
 TEST_CASE("A press reaches uimain's OnMouseButtonPress, a module function", "[ui][lua][input]") {

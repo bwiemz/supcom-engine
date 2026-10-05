@@ -88,7 +88,10 @@ struct StructureSite {
 /// out doesn't walk the units at all).
 class StructurePlacement {
 public:
-    StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules);
+    /// `scheduled`: orders given and not yet run count too. Never for the sim's own
+    /// queries: a replay's playback holds every order of the game from its start.
+    StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules,
+                       bool scheduled = false);
 
     /// Can `bp_id` be built centered at (x, z)? Requires the footprint inside
     /// the playable area, over cells of a layer the blueprint builds on, clear
@@ -110,8 +113,13 @@ private:
     const SimState& sim_;
     i32 army_;
     PlacementRulesLookup lookup_;
+    bool scheduled_;
     mutable std::optional<std::vector<StructureSite>> reserved_; ///< see reserved()
     mutable std::map<std::string, PlacementRules> rules_cache_;
 };
+
+/// Where a structure stands at (x, z): on the ground for one that can sit
+/// on the seabed, else on the water's surface where there is water
+f32 structure_elevation(const SimState& sim, const PlacementRules& rules, f32 x, f32 z);
 
 } // namespace osc::sim

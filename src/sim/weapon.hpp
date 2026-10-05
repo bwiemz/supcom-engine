@@ -28,7 +28,7 @@ public:
     f32 damage = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
-    f32 muzzle_velocity = 25;
+    f32 muzzle_velocity = 0;
     /// How long its shots live, overriding their projectile blueprint's
     /// Lifetime (FAF's notes on the engine): ProjectileLifetimeUsesMultiplier
     /// x MaxRadius / MuzzleVelocity, else ProjectileLifetime; 0 leaves it.
@@ -38,15 +38,23 @@ public:
     /// low or the high of the two arcs gravity allows at its muzzle velocity.
     enum class Arc : u8 { None, Low, High };
     Arc ballistic_arc = Arc::None;
-    bool lead_target = false; ///< LeadTarget: aim where a moving target will be
+    bool lead_target = true;                 ///< LeadTarget: aim where a moving target will be
+    f32 muzzle_velocity_reduce_distance = 0; // MuzzleVelocityReduceDistance
+    struct ProjectilePhysics {
+        bool track_target = false;
+        bool use_gravity = true;
+        f32 max_speed = 0;
+    };
+    std::optional<ProjectilePhysics> projectile_physics;
 
     /// The launch angle above the horizontal for a shot `dist` away and
     /// `rise` above: its arc's, at its muzzle velocity under gravity (45
     /// degrees, the furthest, when out of reach).
     f32 launch_elevation(f32 dist, f32 rise) const;
-    /// Where to aim at `target` from `from`: the middle of its collision
-    /// shape, where it will be when the shot arrives for a weapon that leads.
-    Vector3 aim_point(const Entity& target, const Vector3& from) const;
+    /// Where to aim at `target` from a muzzle at `muzzle` facing
+    /// `muzzle_forward`: Moho's CAimManipulator::Aim.
+    Vector3 aim_point(const Entity& target, const Unit& owner, const Vector3& muzzle,
+                      const Vector3& muzzle_forward) const;
     bool fire_on_death = false;
     /// DummyWeapon, or a Death weapon (a structure's explosion): never one
     /// a unit attacks with.
@@ -85,8 +93,8 @@ public:
     CategoryExpr restrict_only_allow;      // TargetRestrictOnlyAllow
     bool above_water_targets_only = false; // AboveWaterTargetsOnly
     bool above_water_fire_only = false;    // AboveWaterFireOnly
-    bool always_recheck_target = false;    // AlwaysRecheckTarget
-    u32 target_check_period = 1;           // TargetCheckInterval, in ticks
+    bool always_recheck_target = true;     // AlwaysRecheckTarget
+    u32 target_check_period = 30;          // TargetCheckInterval, in ticks
     int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
@@ -152,6 +160,8 @@ public:
     /// radius, and height within MaxHeightDiff when that is set.
     /// Priorities are not checked: an attack order can pick any such unit.
     bool can_target(const Unit& owner, const Entity& target, const SimState* sim) const;
+    /// can_target, wherever the target is.
+    bool can_pick(const Unit& owner, const Entity& target, const SimState* sim) const;
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.

@@ -129,8 +129,8 @@ layout(set = 0, binding = 23) uniform TerrainStrata {
     vec4 normalSize8;         // x: stratum 8; yz: a normal-map tile's size (M212e)
 } strata;
 
-// Shadow map (set=1)
-layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
+// Shadow map (set=1): Moho's terrain mask (binding 8, M210c)
+layout(set = 1, binding = 8) uniform sampler2D shadowMask;
 layout(set = 1, binding = 1) uniform LightUBO {
     mat4 lightViewProj;
     vec4 sunDirection;  // xyz toward the sun (the map's, M210a)
@@ -138,31 +138,16 @@ layout(set = 1, binding = 1) uniform LightUBO {
     vec4 sunAmbience;   // rgb; w: 1 for the TTerrainXP terrain shader
     vec4 shadowFill;    // rgb: ShadowFillColor
     vec4 specularColor;
+    vec4 shadow;        // x: a light camera this frame (M210c)
 } lightUbo;
 
+// terrain.fx's ComputeShadow: the blurred mask's G, bilinear, white off the
+// map: where a mesh is nearest the sun. No depth comparison, so the
+// terrain never shadows itself; lit with no light camera (M210c).
 float calcShadow(vec3 worldPos) {
+    if (lightUbo.shadow.x < 0.5) return 1.0;
     vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
-    vec3 pc2 = lc.xyz / lc.w;
-    vec2 uv = pc2.xy * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
-        return 1.0;
-    // 4x4 PCF soft shadows
-    float shadow = 0.0;
-    float ts = 1.0 / 4096.0;
-    for (int x = -2; x <= 1; x++) {
-        for (int y = -2; y <= 1; y++) {
-            vec2 off = vec2(float(x) + 0.5, float(y) + 0.5) * ts;
-            shadow += texture(shadowMap, vec3(uv + off, pc2.z));
-        }
-    }
-    shadow /= 16.0;
-    // Smooth fade at shadow map frustum edges
-    float fadeRange = 0.05;
-    float edgeFade = smoothstep(0.0, fadeRange, uv.x)
-                   * smoothstep(0.0, fadeRange, uv.y)
-                   * smoothstep(0.0, fadeRange, 1.0 - uv.x)
-                   * smoothstep(0.0, fadeRange, 1.0 - uv.y);
-    return mix(1.0, shadow, edgeFade);
+    return texture(shadowMask, lc.xy / lc.w * 0.5 + 0.5).g;
 }
 
 // A stratum normal map is an ordinary tangent-space normal in RGB, z up,
@@ -908,8 +893,8 @@ layout(push_constant) uniform PushConstants {
     float eyeX, eyeY, eyeZ;
 } upc;
 
-// Shadow map (set=0)
-layout(set = 0, binding = 0) uniform sampler2DShadow shadowMap;
+// Shadow map (set=0): Moho's, point-sampled (M210c)
+layout(set = 0, binding = 0) uniform sampler2D shadowMap;
 layout(set = 0, binding = 1) uniform LightUBO {
     mat4 lightViewProj;
     vec4 sunDirection;  // xyz toward the sun (the map's, M210a)
@@ -917,6 +902,7 @@ layout(set = 0, binding = 1) uniform LightUBO {
     vec4 sunAmbience;   // rgb; w: 1 for the TTerrainXP terrain shader
     vec4 shadowFill;    // rgb: ShadowFillColor
     vec4 specularColor;
+    vec4 shadow;        // x: a light camera this frame, y: the bias (M210c)
 } lightUbo;
 
 layout(location = 0) in vec3 fragNormal;
@@ -925,29 +911,14 @@ layout(location = 2) in vec3 fragWorldPos;
 
 layout(location = 0) out vec4 outColor;
 
+// The placeholder cubes (units without meshes, the engine's own) read
+// Moho's map as a Medium-lane mesh does: one point tap, the bias (M210c).
 float calcShadow(vec3 worldPos) {
+    if (lightUbo.shadow.x < 0.5) return 1.0;
     vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
-    vec3 pc = lc.xyz / lc.w;
-    vec2 uv = pc.xy * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
-        return 1.0;
-    // 4x4 PCF soft shadows
-    float shadow = 0.0;
-    float ts = 1.0 / 4096.0;
-    for (int x = -2; x <= 1; x++) {
-        for (int y = -2; y <= 1; y++) {
-            vec2 off = vec2(float(x) + 0.5, float(y) + 0.5) * ts;
-            shadow += texture(shadowMap, vec3(uv + off, pc.z));
-        }
-    }
-    shadow /= 16.0;
-    // Smooth fade at shadow map frustum edges
-    float fadeRange = 0.05;
-    float edgeFade = smoothstep(0.0, fadeRange, uv.x)
-                   * smoothstep(0.0, fadeRange, uv.y)
-                   * smoothstep(0.0, fadeRange, 1.0 - uv.x)
-                   * smoothstep(0.0, fadeRange, 1.0 - uv.y);
-    return mix(1.0, shadow, edgeFade);
+    vec3 p = lc.xyz / lc.w;
+    float depth = texture(shadowMap, p.xy * 0.5 + 0.5).r;
+    return p.z > depth + lightUbo.shadow.y ? 0.0 : 1.0;
 }
 
 void main() {
@@ -1388,6 +1359,10 @@ void main() {
         local += (0.05 / s) * (cos(15.0 * rdm * local.x * s) + sin(20.0 * rdm * local.z * s));
         local.y *= mix(0.69, 1.0, rdm);
     }
+    if (pc.technique == 27u) {
+        // PositionNormalOffsetVS(0.05)
+        local += inNormal * (0.05 / length(inModel[1].xyz));
+    }
     vec4 skinnedPos = bone * vec4(local, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     // At Low the undulating trees take VertexNormalVS: no sway (M211m)
@@ -1456,7 +1431,10 @@ layout(set = 2, binding = 0) uniform sampler2D texSpecTeam;
 layout(set = 3, binding = 0) uniform sampler2D texNormal;
 
 // Shadow map (set=4)
-layout(set = 4, binding = 0) uniform sampler2DShadow shadowMap;
+// Moho's shadow map (M210c): point-sampled and clamped (binding 0), and
+// bilinear with a white border (binding 7, the PCF's)
+layout(set = 4, binding = 0) uniform sampler2D shadowMap;
+layout(set = 4, binding = 7) uniform sampler2D shadowPcf;
 layout(set = 4, binding = 1) uniform LightUBO {
     mat4 lightViewProj;
     vec4 sunDirection;  // xyz toward the sun (the map's, M210a)
@@ -1464,6 +1442,7 @@ layout(set = 4, binding = 1) uniform LightUBO {
     vec4 sunAmbience;   // rgb; w: 1 for the TTerrainXP terrain shader
     vec4 shadowFill;    // rgb: ShadowFillColor
     vec4 specularColor;
+    vec4 shadow;        // x: a light camera this frame, y: the bias, z: the map's size (M210c)
 } lightUbo;
 // The map's environment cubes meshes reflect, by their technique's key
 // (M211a/b), and FA's lookup textures
@@ -1501,34 +1480,31 @@ vec3 sunDirection() {
 float calcShadow(vec3 worldPos) {
     // The reflection is drawn with no shadow bound (M213b); the Low lane and
     // shadow fidelity 0 and 1 take none either (M211m).
-    if (pc.mirrored != 0u || pc.shadowMode == 0u) return 1.0;
+    if (pc.mirrored != 0u || pc.shadowMode == 0u || lightUbo.shadow.x < 0.5) return 1.0;
+    // Moho's map's R, the depth of what is nearest the sun (the terrain's
+    // about 0: a mesh where the terrain is nearest is shadowed), by the lane
+    // and shadow fidelity (M211m, M210c): mesh.fx's ComputeShadowStandard,
+    // one point tap, shadowed past it plus the bias (the Medium lane, or High
+    // without the blur); or its ComputeShadowPCF, five bilinear taps of the
+    // depth, white outside, each lit while the point is nearer than it plus
+    // the bias and 0.001, averaged (High at shadow fidelity 3 with
+    // ren_ShadowBlur).
     vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
-    vec3 pc2 = lc.xyz / lc.w;
-    vec2 uv = pc2.xy * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
-        return 1.0;
-    // By the lane and shadow fidelity (M211m): mesh.fx's ComputeShadowStandard,
-    // one tap (the Medium lane, or High without the blur), or its
-    // ComputeShadowPCF, five taps about the point (High at shadow fidelity 3
-    // with ren_ShadowBlur).
-    float ts = 1.0 / 4096.0;
-    float shadow;
-    if (pc.shadowMode == 1u) {
-        shadow = texture(shadowMap, vec3(uv, pc2.z));
-    } else {
-        shadow = (texture(shadowMap, vec3(uv + vec2(-0.5 * ts, 0.0), pc2.z)) +
-                  texture(shadowMap, vec3(uv + vec2(0.0, -0.5 * ts), pc2.z)) +
-                  texture(shadowMap, vec3(uv + vec2(-ts, 0.0), pc2.z)) +
-                  texture(shadowMap, vec3(uv + vec2(ts, 0.0), pc2.z)) +
-                  texture(shadowMap, vec3(uv + vec2(0.0, ts), pc2.z))) / 5.0;
-    }
-    // Smooth fade at shadow map frustum edges
-    float fadeRange = 0.05;
-    float edgeFade = smoothstep(0.0, fadeRange, uv.x)
-                   * smoothstep(0.0, fadeRange, uv.y)
-                   * smoothstep(0.0, fadeRange, 1.0 - uv.x)
-                   * smoothstep(0.0, fadeRange, 1.0 - uv.y);
-    return mix(1.0, shadow, edgeFade);
+    vec3 p = lc.xyz / lc.w;
+    vec2 uv = p.xy * 0.5 + 0.5;
+    float bias = lightUbo.shadow.y;
+    if (pc.shadowMode == 1u) return p.z > texture(shadowMap, uv).r + bias ? 0.0 : 1.0;
+    float ts = 1.0 / lightUbo.shadow.z;
+    float d[5];
+    d[0] = texture(shadowPcf, uv + vec2(-0.5 * ts, 0.0)).r;
+    d[1] = texture(shadowPcf, uv + vec2(0.0, -0.5 * ts)).r;
+    d[2] = texture(shadowPcf, uv + vec2(-ts, 0.0)).r;
+    d[3] = texture(shadowPcf, uv + vec2(ts, 0.0)).r;
+    d[4] = texture(shadowPcf, uv + vec2(0.0, ts)).r;
+    float lit = 0.0;
+    for (int i = 0; i < 5; ++i)
+        if (d[i] + bias > p.z - 0.001) lit += 1.0;
+    return lit / 5.0;
 }
 
 // FA's viewDirection (mesh.fx): the point's normalised device position,
@@ -1766,6 +1742,12 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
 void main() {
     vec3 worldNormal = computeNormal(fragUV);
     vec3 S = sunDirection();
+    if (pc.technique == 27u) {
+        outColor = vec4(clamp(fragColor.rgb * computeLight(dot(S, fragVertexNormal), 1.0, 1.0, 1.0),
+                              0.0, 1.0),
+                        0.2);
+        return;
+    }
     float NdotL = dot(worldNormal, S);
     float shadow = calcShadow(fragWorldPos);
     vec3 light = computeLight(NdotL, shadow, 1.0, 1.0);
@@ -2068,9 +2050,74 @@ void main() {
 }
 )glsl";
 
-const char* shadow_frag = R"glsl(
+// The terrain in Moho's shadow map (TTerrainDepth, M210c): FA's vertex
+// shader scales the whole homogeneous position, w too, by HeightScale
+// (1/128), and its pixel shader writes the undivided z, so the terrain's R is
+// its light depth over 128 (about 0). G 1: no mesh is nearest the sun here.
+const char* shadow_terrain_frag = R"glsl(
 #version 450
-void main() {}
+layout(location = 0) out vec4 outColor;
+void main() {
+    outColor = vec4(gl_FragCoord.z / 128.0, 1.0, 0.0, 1.0);
+}
+)glsl";
+
+// A caster in Moho's shadow map (DepthPS, M210c): R its light depth, G 0.
+const char* shadow_caster_frag = R"glsl(
+#version 450
+layout(location = 0) out vec4 outColor;
+void main() {
+    outColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+}
+)glsl";
+
+// Moho's shadow blur (M210c), its passes as D3D9 runs them: a pixel samples
+// at its texel's edge (uv = i / N), so the point taps are whole texels and
+// the bilinear ones average two columns. The taps are fetched outright.
+// THorizontalBlurDepthToVariance: G at i-2..i+2, [1 4 6 4 1] / 16.
+const char* shadow_blur_h_frag = R"glsl(
+#version 450
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(location = 0) out vec4 outColor;
+float g(ivec2 p) {
+    return texelFetch(src, clamp(p, ivec2(0), textureSize(src, 0) - 1), 0).g;
+}
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    float z = (g(p + ivec2(-2, 0)) + 4.0 * g(p + ivec2(-1, 0)) + 6.0 * g(p) +
+               4.0 * g(p + ivec2(1, 0)) + g(p + ivec2(2, 0))) / 16.0;
+    outColor = vec4(z, z, 0.0, 0.0);
+}
+)glsl";
+
+// TVerticalBlurDepthToVariance: four bilinear taps of G at v + 1.5, 0.5,
+// -0.5 and -1.5 texels, {2 6 6 2} / 16: rows j+1..j-2, each the mean of
+// columns i-1 and i.
+const char* shadow_blur_v_frag = R"glsl(
+#version 450
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(location = 0) out vec4 outColor;
+float g(ivec2 p) {
+    return texelFetch(src, clamp(p, ivec2(0), textureSize(src, 0) - 1), 0).g;
+}
+float pair(ivec2 p) { return 0.5 * (g(p + ivec2(-1, 0)) + g(p)); }
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    float z = (2.0 * pair(p + ivec2(0, 1)) + 6.0 * pair(p) + 6.0 * pair(p + ivec2(0, -1)) +
+               2.0 * pair(p + ivec2(0, -2))) / 16.0;
+    outColor = vec4(z, z, 0.0, 0.0);
+}
+)glsl";
+
+// With ren_ShadowBlur off the terrain reads the map's own G: copied whole.
+const char* shadow_copy_frag = R"glsl(
+#version 450
+layout(set = 0, binding = 0) uniform sampler2D src;
+layout(location = 0) out vec4 outColor;
+void main() {
+    float z = texelFetch(src, ivec2(gl_FragCoord.xy), 0).g;
+    outColor = vec4(z, z, 0.0, 0.0);
+}
 )glsl";
 
 // Mesh shadows: FA's DepthClip and UndulatingDepthClip (DepthPS(clipTest)) cut
@@ -2094,10 +2141,14 @@ layout(set = 1, binding = 0) uniform sampler2D texAlbedo;
 layout(location = 0) in vec2 fragUV;
 layout(location = 1) flat in float fragProp;
 
+layout(location = 0) out vec4 outColor;
+
 void main() {
     bool clipped = fragProp > 0.5 || pc.technique == 9u || pc.technique == 14u ||
                    pc.technique == 15u || pc.technique == 17u;
     if (clipped && texture(texAlbedo, fragUV).a < 0.5) discard;
+    // Moho's map (M210c): R the light depth, G 0, a mesh nearest the sun.
+    outColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
 }
 )glsl";
 

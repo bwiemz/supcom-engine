@@ -21,6 +21,10 @@ public:
     /// plane's normal is tested.
     bool is_box_visible(const std::array<f32, 3>& min, const std::array<f32, 3>& max) const;
 
+    /// The planes, each (a, b, c, d) with a unit normal and the inside where
+    /// a·x + b·y + c·z + d >= 0: left, right, bottom, top, near, far.
+    std::array<std::array<f32, 4>, 6> planes() const;
+
 private:
     struct Plane {
         f32 a, b, c, d; // normal (a,b,c) + distance d; normalized

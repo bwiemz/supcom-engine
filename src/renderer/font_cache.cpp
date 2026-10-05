@@ -2,6 +2,7 @@
 #include "renderer/vk_cmd.hpp"
 
 #include "renderer/font_cache.hpp"
+#include "core/utf8.hpp"
 #include "vfs/virtual_file_system.hpp"
 
 #include <spdlog/spdlog.h>
@@ -263,18 +264,29 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
     atlas->metrics.line_height = atlas->metrics.ascent + atlas->metrics.descent +
                                   atlas->metrics.line_gap;
 
-    // Rasterize ASCII printable characters (32-126)
-    constexpr u32 FIRST_CHAR = 32;
-    constexpr u32 LAST_CHAR = 126;
-    constexpr u32 CHAR_COUNT = LAST_CHAR - FIRST_CHAR + 1;
+    std::vector<u32> codepoints;
+    for (u32 cp = 32; cp <= 126; cp++) {
+        codepoints.push_back(cp);
+    }
+    // Beyond ASCII, the letters and punctuation of FA's localizations the font has
+    constexpr std::pair<u32, u32> kExtraRanges[] = {
+        {0xA0, 0x17F}, {0x400, 0x45F}, {0x2013, 0x2026}, {0x20AC, 0x20AC}, {0x2122, 0x2122}};
+    for (const auto& [first, last] : kExtraRanges) {
+        for (u32 cp = first; cp <= last; cp++) {
+            if (stbtt_FindGlyphIndex(&font, static_cast<int>(cp)) != 0) {
+                codepoints.push_back(cp);
+            }
+        }
+    }
+    const u32 glyph_count = static_cast<u32>(codepoints.size());
 
     // Determine atlas size (pack glyphs in rows): cells as large as the
     // largest glyph, which may stand taller than the em
-    u32 cols = 16;
-    u32 rows = (CHAR_COUNT + cols - 1) / cols;
+    u32 cols = 32;
+    u32 rows = (glyph_count + cols - 1) / cols;
     u32 cell_w = static_cast<u32>(pointsize) + 2;
     u32 cell_h = static_cast<u32>(pointsize) + 2;
-    for (u32 codepoint = FIRST_CHAR; codepoint <= LAST_CHAR; codepoint++) {
+    for (u32 codepoint : codepoints) {
         int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
         stbtt_GetCodepointBitmapBox(&font, static_cast<int>(codepoint), scale, scale, &bx0, &by0,
                                     &bx1, &by1);
@@ -297,8 +309,8 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
     // Rasterize all glyphs into atlas bitmap
     std::vector<u8> bitmap(atlas->atlas_width * atlas->atlas_height, 0);
 
-    for (u32 i = 0; i < CHAR_COUNT; i++) {
-        u32 codepoint = FIRST_CHAR + i;
+    for (u32 i = 0; i < glyph_count; i++) {
+        u32 codepoint = codepoints[i];
         u32 col = i % cols;
         u32 row = i / cols;
         u32 x0 = col * cell_w + 1; // 1px padding
@@ -414,8 +426,8 @@ f32 FontCache::string_advance(const std::string& family, i32 pointsize,
     }
 
     f32 advance = 0.0f;
-    for (unsigned char c : text) {
-        auto git = atlas->glyphs.find(static_cast<u32>(c));
+    for (size_t i = 0; i < text.size();) {
+        auto git = atlas->glyphs.find(next_codepoint(text, i));
         if (git != atlas->glyphs.end()) {
             advance += git->second.x_advance;
         } else {

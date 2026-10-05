@@ -327,7 +327,7 @@ int uu_GetCommandQueue(lua_State* L) {
     lua_newtable(L);
     if (!world) return 1;
     int n = 1;
-    for (const auto& c : world->commands_of(*r)) {
+    for (const auto& c : world->orders_of(*r)) {
         lua_newtable(L);
         lua_pushstring(L, "commandType");
         lua_pushnumber(L, static_cast<int>(c.type));
@@ -483,9 +483,9 @@ int uu_CanAttackTarget(lua_State* L) {
 
 } // namespace
 
-void set_ui_world_source(lua_State* L, const sim::WorldHistory* history) {
+void set_ui_world_source(lua_State* L, sim::WorldHistory* history) {
     lua_pushstring(L, kUiWorldSourceKey);
-    lua_pushlightuserdata(L, const_cast<sim::WorldHistory*>(history));
+    lua_pushlightuserdata(L, history);
     lua_rawset(L, LUA_REGISTRYINDEX);
 }
 
@@ -495,10 +495,12 @@ const sim::WorldSnapshot* ui_world(lua_State* L) {
     // The renderer's capture of this very tick, when there is one.
     lua_pushstring(L, kUiWorldSourceKey);
     lua_rawget(L, LUA_REGISTRYINDEX);
-    const auto* history = static_cast<const sim::WorldHistory*>(lua_touserdata(L, -1));
+    auto* history = static_cast<sim::WorldHistory*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (history && history->ticks_captured() > 0 && history->cur().tick == sim->tick_count())
+    if (history && history->ticks_captured() > 0 && history->cur().tick == sim->tick_count()) {
+        history->refresh_pending(*sim);
         return &history->cur();
+    }
     UiWorld& world = ui_world_holder(L);
     const u32 generation = sim::SimState::sim_generation();
     if (!world.valid || world.generation != generation || world.tick != sim->tick_count()) {
@@ -506,6 +508,8 @@ const sim::WorldSnapshot* ui_world(lua_State* L) {
         world.generation = generation;
         world.tick = sim->tick_count();
         world.valid = true;
+    } else if (world.snapshot.pending_serial != sim->command_scheduler().submitted()) {
+        sim::capture_pending(*sim, world.snapshot);
     }
     return &world.snapshot;
 }

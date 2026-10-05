@@ -6766,6 +6766,39 @@ void test_projectile(TestContext& ctx) {
         }
     }
 
+    {
+        lua_State* L = ctx.lua_state.raw();
+        const auto first_weapon = [&](const char* bp) -> const osc::sim::Weapon* {
+            auto r = ctx.lua_state.do_string(
+                fmt::format("return tonumber(CreateUnitHPR('{}', 'ARMY_1', 300, 0, 300, 0, 0, "
+                            "0):GetEntityId())",
+                            bp));
+            if (!r) {
+                return nullptr;
+            }
+            osc::sim::Entity* e = nullptr;
+            if (lua_isnumber(L, -1)) {
+                e = ctx.sim.entity_registry().find(static_cast<osc::u32>(lua_tonumber(L, -1)));
+            }
+            lua_pop(L, 1);
+            return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e)->get_weapon(0) : nullptr;
+        };
+        const osc::sim::Weapon* gun = first_weapon("uel0201");
+        const osc::sim::Weapon* blast = first_weapon("uab1101");
+        if (gun && gun->lead_target && gun->always_recheck_target && blast &&
+            blast->target_check_period == 30) {
+            pass++;
+            spdlog::info("[PASS] Test 4b: a weapon blueprint's LeadTarget, AlwaysRecheckTarget "
+                         "and TargetCheckInterval left out are Moho's defaults");
+        } else {
+            fail++;
+            osc::test_status::fail(
+                "[FAIL] Test 4b: uel0201's gun: lead {}, recheck {}; uab1101's: check every {}",
+                gun && gun->lead_target, gun && gun->always_recheck_target,
+                blast ? blast->target_check_period : 0u);
+        }
+    }
+
     // M200a: projectiles are instances of their script classes. A UEF T1
     // tank's gun makes TDFGauss01 objects: OnCreate has run, retail's
     // PassDamageData works, and the shot leaves from the muzzle bone.
@@ -7123,9 +7156,12 @@ void test_targeting(TestContext& ctx) {
         -- Restrictions: tactical missile defence only shoots TACTICAL MISSILE.
         __osc_tmd = __osc_spawn('ueb4201', 'ARMY_1', 300, 850)
         __osc_tmd_foe = __osc_spawn('uel0201', 'ARMY_2', 312, 850)
-        -- Rechecks: a Loyalist's HeavyBolter (weapon 2) rechecks, and moves
-        -- to a better target; its Disintigrator (weapon 1) keeps its first.
+        -- Retail leaves the Disintigrator's AlwaysRecheckTarget out (true);
+        -- FAF's blueprints-weapons.lua turns it off, as here.
+        local disintegrator = __blueprints['url0303'].Weapon[1]
+        disintegrator.AlwaysRecheckTarget = false
         __osc_loyalist = __osc_spawn('url0303', 'ARMY_1', 220, 910)
+        disintegrator.AlwaysRecheckTarget = nil
         __osc_recheck_pgen = __osc_spawn('ueb1101', 'ARMY_2', 228, 910)
         -- AboveWaterTargetsOnly: nothing on the seabed.
         __osc_shore = __osc_spawn('uel0201', 'ARMY_1', 205, 730)
@@ -7976,16 +8012,16 @@ void test_arc(TestContext& ctx) {
         osc::sim::Unit target;
         target.set_position({50, 0, 0});
         target.set_velocity({2, 0, 1});
-        const auto at = w.aim_point(target, {0, 0, 0});
-        // Straight shots meet it at t = 2.78 s, at (55.56, 2.78); two
-        // refinements from t = 2.5 s come within a few hundredths.
-        check(at.x > 55.4f && at.x < 55.6f && at.z > 2.7f && at.z < 2.8f,
+        const osc::sim::Unit shooter;
+        const auto at = w.aim_point(target, shooter, {0, 0, 0}, {1, 0, 0});
+        check(at.x > 54.8f && at.x < 55.0f && at.z > 2.4f && at.z < 2.5f,
               fmt::format("Test 4: a leading weapon aims at ({:.2f}, {:.2f}), where the "
                           "target will be",
                           at.x, at.z));
         w.lead_target = false;
-        const auto still = w.aim_point(target, {0, 0, 0});
-        check(still.x == 50.0f && still.z == 0.0f, "Test 5: one that doesn't lead aims at it");
+        const auto still = w.aim_point(target, shooter, {0, 0, 0}, {1, 0, 0});
+        check(std::abs(still.x - 50.2f) < 0.001f && std::abs(still.z - 0.1f) < 0.001f,
+              "Test 5: one that doesn't lead aims at it a tick ahead");
     }
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
@@ -9006,6 +9042,17 @@ void test_formation(TestContext& ctx) {
     // On the flat plain east of the map's centre: eight Strikers and two
     // Lobos ordered in AttackFormation facing south (+Z), and the same
     // facing east (+X).
+    // ScenarioUtilities' CommanderWarpDelay warps them in on tick 31.
+    run(31);
+    lua_check("setup: no other army's commander near the groups", R"(
+        for i, brain in ArmyBrains do
+            if i ~= 1 then
+                for _, acu in brain:GetListOfUnits(categories.COMMAND, false) do
+                    acu:Destroy()
+                end
+            end
+        end
+    )");
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
@@ -10284,6 +10331,24 @@ void test_range(TestContext& ctx) {
             error('arm heading ' .. heading)
         end
         if __osc_arm_prep == 0 then error('OnPrepareArmToBuild never ran') end
+    )");
+
+    lua_check("Test 12h setup", R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveResource('MASS', 10000)
+        brain:GiveResource('ENERGY', 100000)
+        __osc_queued_acu = __osc_spawn('uel0001', 'ARMY_1', 600.5, 190.5)
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(600.5, 182.5), 'ueb2101', {})
+        IssueBuildMobile({__osc_queued_acu}, __osc_at(608.5, 190.5), 'ueb2101', {})
+    )");
+    run(300);
+    lua_check("Test 12h: the next build in the queue turns the ACU's torso to its site", R"(
+        local n = table.getn(__osc_queued_acu:GetCommandQueue())
+        if n ~= 1 or not __osc_queued_acu:IsUnitState('Building') then
+            error('not building its second; ' .. n .. ' orders')
+        end
+        local v = __osc_queued_acu:GetBoneDirection('Torso')
+        if v[1] < 0.9 then error(string.format('torso faces (%.2f, %.2f)', v[1], v[3])) end
     )");
 
     lua_check("Test 12e: an engineer guards one building a generator", R"(
@@ -11839,7 +11904,10 @@ void test_right_click(TestContext& ctx) {
     {
         float best = 1e9f;
         ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
-            if (e.destroyed() || !e.is_prop() || !e.reclaimable()) return;
+            if (e.destroyed() || !e.is_prop() || !e.reclaimable() ||
+                e.blueprint_id().find("Deposit01_prop") != std::string::npos) {
+                return;
+            }
             const float d =
                 std::hypot(e.position().x - eng->position().x, e.position().z - eng->position().z);
             if (d < best) {
@@ -12005,6 +12073,20 @@ void test_right_click(TestContext& ctx) {
               "shows the reclaim");
     } else {
         check(false, "a reclaimable prop near by");
+    }
+
+    {
+        const osc::sim::Entity* deposit = nullptr;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (!deposit && !e.destroyed() && e.is_prop() &&
+                e.blueprint_id().find("massDeposit01_prop") != std::string::npos) {
+                deposit = &e;
+            }
+        });
+        input.set_selected({eng->entity_id()});
+        check(deposit && input.right_button_order(ctx.sim, deposit->position().x,
+                                                  deposit->position().z) == CT::Move,
+              "on a mass deposit's marker, UNTARGETABLE: the engineer moves there");
     }
 
     {
@@ -13098,7 +13180,7 @@ void test_air_staging(TestContext& ctx) {
             ctx.sim.tick();
             const auto& q1 = p1->command_queue();
             if (broke_off < 0 && !q1.empty() && q1.front().type == osc::sim::CommandType::Dock &&
-                q1.front().patrol_refuel && q1.front().target_id == pad->entity_id())
+                q1.front().from_patrol && q1.front().target_id == pad->entity_id())
                 broke_off = i;
             p2_broke =
                 p2_broke || (!p2->command_queue().empty() &&
@@ -14104,12 +14186,12 @@ void test_shadow(TestContext& ctx) {
 
     int pass = 0, fail = 0;
 
-    // Test 1: Shadow map size constant. The PCF shaders in shader_utils.cpp
-    // hardcode the texel size (1.0 / 4096.0), so the two must change together.
+    // Test 1: Moho's shadow map is ren_ShadowSize, 1024 (M210c); the shaders
+    // read its size from the light UBO.
     {
-        if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 4096) {
+        if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 1024) {
             pass++;
-            spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 4096");
+            spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 1024");
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 1: SHADOW_MAP_SIZE == {}",
@@ -15408,6 +15490,7 @@ void test_bitmap(TestContext& ctx) {
     // BitmapHeight, as Moho's CMauiBitmap::SetTexture sets them, unless a
     // script sized it itself: retail's ResetLayout sizes it by them, the
     // campaign's faction icons by half of them, and a number stays put.
+    // A texture's size leaves out its one-pixel border (80x80 is 78x78).
     {
         auto result = ctx.lua_state.do_string(
             "local Bitmap = import('/lua/maui/bitmap.lua').Bitmap\n"
@@ -15426,8 +15509,8 @@ void test_bitmap(TestContext& ctx) {
             "local after = {plain.Width(), plain.Height(), half.Width(), half.Height(),\n"
             "               fixed.Width(), fixed.Height()}\n"
             "LOG('Bitmap sizes: before ' .. repr(before) .. ' after ' .. repr(after))\n"
-            "return before[1] == 80 and before[2] == 80 and before[3] == 40 and before[4] == 37\n"
-            "   and after[1] == 28 and after[2] == 24 and after[3] == 14 and after[4] == 12\n"
+            "return before[1] == 78 and before[2] == 78 and before[3] == 39 and before[4] == 37\n"
+            "   and after[1] == 26 and after[2] == 22 and after[3] == 13 and after[4] == 11\n"
             "   and after[5] == 37 and after[6] == 41\n");
         bool ok = false;
         if (result) {
@@ -16272,11 +16355,10 @@ void test_edit(TestContext& ctx) {
 
     // Test 24: Edit SetCaretCycle
     {
-        auto result = ctx.lua_state.do_string(
-            std::string(mk_edit) +
-            "e:SetCaretCycle(0.5, 0.1, 0.9)\n"
-            "e:SetDropShadow(true)\n"
-            "return true\n");
+        auto result = ctx.lua_state.do_string(std::string(mk_edit) +
+                                              "e:SetCaretCycle(0.5, '0000001a', '000000e6')\n"
+                                              "e:SetDropShadow(true)\n"
+                                              "return true\n");
         bool ok = false;
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 24 Lua error: {}", result.error().message);

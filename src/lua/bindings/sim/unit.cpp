@@ -235,10 +235,11 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Upgrading") == 0)
             result = !u->command_queue().empty() &&
                      u->command_queue().front().type == sim::CommandType::Upgrade;
-        else if (std::strcmp(state, "Patrolling") == 0)
+        else if (std::strcmp(state, "Patrolling") == 0) {
             result = !u->command_queue().empty() &&
-                     u->command_queue().front().type == sim::CommandType::Patrol;
-        else if (std::strcmp(state, "Attacking") == 0)
+                     (u->command_queue().front().type == sim::CommandType::Patrol ||
+                      u->command_queue().front().from_patrol);
+        } else if (std::strcmp(state, "Attacking") == 0)
             result = !u->command_queue().empty() &&
                      u->command_queue().front().type == sim::CommandType::Attack;
         else if (std::strcmp(state, "Capturing") == 0)

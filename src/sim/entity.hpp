@@ -267,7 +267,14 @@ public:
 
     // Mesh override (runtime mesh switching via SetMesh)
     const std::string& mesh_override() const { return mesh_override_; }
-    void set_mesh_override(const std::string& path) { mesh_override_ = path; }
+    void set_mesh_override(const std::string& path) {
+        if (path == mesh_override_) return;
+        mesh_override_ = path;
+        ++mesh_changes_;
+    }
+    /// Counts its mesh overrides' changes: the renderer remakes a mesh
+    /// instance when it moves, without comparing names every frame.
+    u32 mesh_changes() const { return mesh_changes_; }
 
     // Wreckage flag (set by SetMaxReclaimValues to visually distinguish wrecks)
     bool is_wreckage() const { return is_wreckage_; }
@@ -381,6 +388,7 @@ private:
     CollisionShape collision_shape_;
     CollisionShape default_collision_shape_;
     std::string mesh_override_;
+    u32 mesh_changes_ = 0;
     bool unselectable_ = false;
     bool is_wreckage_ = false;
     u32 parent_entity_id_ = 0;

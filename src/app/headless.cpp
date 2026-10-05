@@ -5,6 +5,7 @@
 #include "core/log.hpp"
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/unit.hpp"
@@ -12,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <string>
 
 namespace osc::app {
 
@@ -37,6 +39,24 @@ bool App::after_headless_tick() {
     }
     return true;
 }
+
+namespace {
+
+/// The armies the ended game declared victorious, "ARMY_2 and ARMY_4 win",
+/// or "a draw" when none is.
+std::string victors(const osc::sim::SimState& sim) {
+    std::string names;
+    for (size_t a = 0; a < sim.army_count(); ++a) {
+        const auto* brain = sim.army_at(a);
+        if (!brain || brain->state() != osc::sim::BrainState::Victory) continue;
+        if (!names.empty()) names += " and ";
+        names += brain->name();
+    }
+    if (names.empty()) return "a draw";
+    return names + (names.find(" and ") == std::string::npos ? " wins" : " win");
+}
+
+} // namespace
 
 void App::tick_headless() {
     const auto start = BenchRecorder::Clock::now();
@@ -88,14 +108,13 @@ int App::run_headless() {
                              total_units, total_vet, sound.active_count());
             }
 
-            // Check for game over
-            result = sim_state->player_result();
-            if (result != 0) {
-                const char* result_str = result == 1   ? "ARMY_1 WINS"
-                                         : result == 2 ? "ARMY_2 WINS"
-                                                       : "DRAW";
+            // Every army is an AI: the game ends when the game does (the
+            // victory script's EndGame, or one team left), not when army 1
+            // falls (player_result is army 1's own result).
+            if (sim_state->game_ended()) {
+                result = 1;
                 spdlog::info("=== Game Over at tick {} ({:.1f}s): {} ===", ticks_run,
-                             ticks_run * osc::sim::SimState::SECONDS_PER_TICK, result_str);
+                             ticks_run * osc::sim::SimState::SECONDS_PER_TICK, victors(*sim_state));
                 break;
             }
         }
@@ -109,10 +128,7 @@ int App::run_headless() {
         spdlog::info("  Map: {}", opt.map_path);
         spdlog::info("  Ticks: {} ({:.1f}s game time)", ticks_run,
                      ticks_run * osc::sim::SimState::SECONDS_PER_TICK);
-        spdlog::info("  Result: {}", result == 1   ? "ARMY_1 wins"
-                                     : result == 2 ? "ARMY_2 wins"
-                                     : result == 0 ? "No winner (timeout)"
-                                                   : "Draw");
+        spdlog::info("  Result: {}", result == 0 ? "No winner (timeout)" : victors(*sim_state));
         for (size_t a = 0; a < sim_state->army_count(); a++) {
             auto* brain = sim_state->army_at(a);
             if (!brain || brain->is_civilian()) continue;

@@ -71,7 +71,12 @@ struct MeshDrawGroup {
     /// Its instances are units, which the water reflects (M213b): Moho makes
     /// a unit's mesh instance reflected, and clears any other entity's.
     bool reflected = false;
+    bool ghost = false;
 };
+
+inline MeshTechnique drawn_technique(const MeshDrawGroup& group) {
+    return group.ghost ? MeshTechnique::UnitPlace : group.mesh->technique;
+}
 
 /// Renders units as real SCM meshes where available, with cube fallback.
 class UnitRenderer {
@@ -143,8 +148,7 @@ public:
     /// Room the next update() leaves for build ghosts
     void set_ghost_slots(u32 n) { ghost_slots_ = n; }
 
-    bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
-                      f32 r, f32 g, f32 b, f32 a,
+    bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
                       TextureCache* tex_cache);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
@@ -211,7 +215,7 @@ private:
     /// When each entity's mesh instance was made: FA makes one when an
     /// entity appears or changes mesh, stamped with the tick (material.x).
     struct MeshBirth {
-        std::string mesh; ///< the blueprint or override it was drawn with
+        u32 mesh_changes = 0; ///< the entity's Entity::mesh_changes when drawn
         u32 tick = 0;
         u64 frame = 0; ///< the last update that saw it
     };

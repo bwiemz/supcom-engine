@@ -678,6 +678,44 @@ bool SimState::command_queued(u32 command_id) const {
     return found;
 }
 
+std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const {
+    std::map<u32, QueueWithPending> queues;
+    for (const auto& scheduled : command_scheduler_.pending()) {
+        if (scheduled.callback || scheduled.command.factory) {
+            continue;
+        }
+        const UnitCommand& cmd = scheduled.command;
+        for (const u32 id : scheduled.unit_ids) {
+            const Entity* e = entity_registry_.find(id);
+            if (!e || e->destroyed() || !e->is_unit()) {
+                continue;
+            }
+            const auto& unit = static_cast<const Unit&>(*e);
+            auto [it, fresh] = queues.try_emplace(id);
+            QueueWithPending& queue = it->second;
+            if (fresh) {
+                queue.orders.assign(unit.command_queue().begin(), unit.command_queue().end());
+                queue.kept_from_queue = queue.orders.size();
+            }
+            if (cmd.type == CommandType::Stop) {
+                queue.orders.clear();
+                queue.kept_from_queue = 0;
+                continue;
+            }
+            if (cmd.type == CommandType::SiloBuildNuke ||
+                cmd.type == CommandType::SiloBuildTactical || !takes_command(unit, cmd)) {
+                continue;
+            }
+            if (scheduled.clear_existing) {
+                queue.orders.clear();
+                queue.kept_from_queue = 0;
+            }
+            queue.orders.push_back(cmd);
+        }
+    }
+    return queues;
+}
+
 void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                                     bool clear_existing) {
     // Moho's UI splits these three by the RALLYPOINT category
@@ -2896,11 +2934,18 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.cap_wait)));
             }
             // A refuel under way (M206r), only once it has a slot or waits.
-            if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0 || cmd.patrol_refuel) {
+            if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {
                 orders.mix(0x444f434bu); // "DOCK"
                 orders.mix(static_cast<u64>(cmd.dock_phase));
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.dock_wait)));
-                orders.mix(cmd.patrol_refuel ? 1u : 0u);
+            }
+            if (cmd.from_patrol || !cmd.patrol_claimed.empty()) {
+                orders.mix(0x5054524cu); // "PTRL"
+                orders.mix(cmd.from_patrol ? 1u : 0u);
+                orders.mix(static_cast<u64>(cmd.patrol_claimed.size()));
+                for (u32 id : cmd.patrol_claimed) {
+                    orders.mix(id);
+                }
             }
             // A carrier's launch under way (M206q), only then.
             if (cmd.launch_wait >= 0) {
