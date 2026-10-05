@@ -592,9 +592,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                      });
 }
 
-bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
-                                 f32 r, f32 g, f32 b, f32 a,
-                                 TextureCache* tex_cache) {
+bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
+                                TextureCache* tex_cache) {
     if (!mesh || !meshes_[fi_].mapped) return false;
 
     // Count total instances already used (update() left room for one more)
@@ -610,7 +609,10 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     std::memset(inst.model, 0, sizeof(inst.model));
     inst.model[0] = s;  inst.model[5] = s;  inst.model[10] = s;  inst.model[15] = 1.0f;
     inst.model[12] = x; inst.model[13] = y;  inst.model[14] = z;
-    inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+    inst.r = r;
+    inst.g = g;
+    inst.b = b;
+    inst.a = 1.0f;
     inst.color_lookup = team_color_lookup(nullptr, game_colors_);
     inst.shader_time = 0.0f;
     inst.parameter = 1.0f;
@@ -618,8 +620,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     // Find existing group for this mesh or create new one
     MeshDrawGroup* target = nullptr;
     for (auto& grp : mesh_groups_) {
-        if (grp.mesh == mesh && grp.fading == (a < 1.0f) && grp.reflected &&
-            grp.instance_offset + grp.instance_count == total) {
+        if (grp.mesh == mesh && grp.ghost && grp.instance_offset + grp.instance_count == total) {
             target = &grp;
             break;
         }
@@ -635,7 +636,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
         grp.reflected = true;
         grp.instance_offset = total;
         grp.instance_count = 1;
-        grp.fading = a < 1.0f;
+        grp.ghost = true;
         grp.bone_base_offset = 0;
         grp.bones_per_instance = 0;
 

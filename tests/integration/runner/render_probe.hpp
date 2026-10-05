@@ -78,11 +78,13 @@ public:
     /// Draw the captured world again in the scene the last shot built, as a
     /// game's next frame does: what the renderer carries from frame to
     /// frame (the player's intel) carries on. `selected`: the player's
-    /// selection.
-    void redraw(const std::unordered_set<u32>* selected = nullptr);
+    /// selection; `ghost`: a structure being placed.
+    void redraw(const std::unordered_set<u32>* selected = nullptr,
+                const renderer::BuildGhost* ghost = nullptr);
 
     /// As redraw(), capturing the whole frame.
-    ImageRGBA8 grab(const std::unordered_set<u32>* selected = nullptr);
+    ImageRGBA8 grab(const std::unordered_set<u32>* selected = nullptr,
+                    const renderer::BuildGhost* ghost = nullptr);
 
     /// The events the next frame shows (the sim's are cleared as its tick
     /// ends, before recapture() can take them; a test adds its own).

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "renderer/mesh_cache.hpp"
+#include "renderer/unit_renderer.hpp"
 
 using namespace osc::renderer;
 
@@ -185,4 +186,24 @@ TEST_CASE("The personal shields' techniques: the unit, then its shell (M211l)",
         CHECK(has_depth_stage(t));
         CHECK_FALSE(is_blended_technique(t));
     }
+}
+
+TEST_CASE("UnitPlace: a build ghost's stage, after the effects and casting no shadow",
+          "[renderer][mesh]") {
+    CHECK(is_post_effect_technique(MeshTechnique::UnitPlace));
+    CHECK_FALSE(is_post_water_technique(MeshTechnique::UnitPlace));
+    CHECK_FALSE(has_depth_stage(MeshTechnique::UnitPlace));
+    CHECK_FALSE(is_blended_technique(MeshTechnique::UnitPlace));
+    CHECK(base_technique(MeshTechnique::UnitPlace) == MeshTechnique::UnitPlace);
+}
+
+TEST_CASE("drawn_technique: a ghost group draws as UnitPlace, whatever its mesh's",
+          "[renderer][mesh]") {
+    GPUMesh mesh;
+    mesh.technique = MeshTechnique::Aeon;
+    MeshDrawGroup group;
+    group.mesh = &mesh;
+    CHECK(drawn_technique(group) == MeshTechnique::Aeon);
+    group.ghost = true;
+    CHECK(drawn_technique(group) == MeshTechnique::UnitPlace);
 }

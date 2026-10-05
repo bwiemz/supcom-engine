@@ -2416,27 +2416,26 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // Build preview ghost — a semi-transparent mesh where input places it
     if (ghost && !ghost->blueprint_id.empty()) {
-        // Green = valid, Red = invalid, semi-transparent
+        // Green = valid, Red = invalid
         f32 gr = ghost->valid ? 0.2f : 1.0f;
         f32 gg = ghost->valid ? 0.9f : 0.2f;
         f32 gb = ghost->valid ? 0.3f : 0.2f;
-        f32 ga = 0.35f;
 
         const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
         if (ghost_mesh) {
-            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z,
-                                        gr, gg, gb, ga, &texture_cache_);
+            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
+                                        &texture_cache_);
             for (const BuildGhost& site : ghost->line) {
                 unit_renderer_.inject_ghost(ghost_mesh, site.x, site.y, site.z,
                                             site.valid ? 0.2f : 1.0f, site.valid ? 0.9f : 0.2f,
-                                            site.valid ? 0.3f : 0.2f, ga, &texture_cache_);
+                                            site.valid ? 0.3f : 0.2f, &texture_cache_);
             }
         }
     }
     for (const auto& site : command_graph_renderer_.planned_sites()) {
         if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
             unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
-                                        0.2f, 0.9f, 0.3f, 0.2f, &texture_cache_);
+                                        0.2f, 0.9f, 0.3f, &texture_cache_);
         }
     }
 
@@ -2667,11 +2666,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             for (auto& group : unit_renderer_.mesh_groups()) {
                 if (!group.mesh || group.instance_count == 0) continue;
                 // Only a technique with a depth stage casts a shadow.
-                if (!has_depth_stage(group.mesh->technique)) continue;
+                if (!has_depth_stage(drawn_technique(group))) continue;
 
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
-                spc.technique = static_cast<u32>(base_technique(group.mesh->technique));
+                spc.technique = static_cast<u32>(base_technique(drawn_technique(group)));
                 vkc::push_constants(cmd_buf_[fi], shadow_mesh_layout_,
                                     VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                     sizeof(spc), &spc);
@@ -3369,8 +3368,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // Moho's buckets (M213b): a technique's render stage puts it
         // before the water or after it, or after the effects too (the
         // shields', M211k); only units are reflected.
-        const bool after_effects = is_post_effect_technique(group.mesh->technique);
-        const bool after_water = is_post_water_technique(group.mesh->technique);
+        const MeshTechnique technique = drawn_technique(group);
+        const bool after_effects = is_post_effect_technique(technique);
+        const bool after_water = is_post_water_technique(technique);
         if ((stage == MeshPass::AfterEffects) != after_effects ||
             (stage == MeshPass::BeforeWater && after_water) ||
             (stage == MeshPass::AfterWater && !after_water) ||
@@ -3426,7 +3426,6 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // sets bound stay bound). A build technique's base pass blends
         // colour only (Aeon's at alpha 1: opaque); UEF's and Cybran's
         // overlays blend alpha too, Aeon's colour only.
-        const MeshTechnique technique = group.mesh->technique;
         std::array<VkPipeline, 2> passes = {group.fading ? mesh_fade_pipeline_ : mesh_pipeline_,
                                             VK_NULL_HANDLE};
         if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
@@ -3451,6 +3450,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // leaves the depth state at D3D's default).
         else if (is_personal_shield_technique(technique))
             passes[1] = shield_pipelines_[static_cast<u32>(ShieldState::BlendDepthWrite)];
+        else if (technique == MeshTechnique::UnitPlace) {
+            passes[0] = mesh_overlay_pipeline_;
+        }
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
         for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
