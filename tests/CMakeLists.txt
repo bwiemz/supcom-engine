@@ -66,7 +66,7 @@ add_executable(osc_tests
     test_economy_event.cpp
     test_dds_decode.cpp
     test_frustum.cpp
-    test_light_view.cpp
+    test_shadow_camera.cpp
     test_camera_ground.cpp
     test_camera_basis.cpp
     test_camera_moves.cpp

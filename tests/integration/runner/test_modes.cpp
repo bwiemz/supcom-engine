@@ -145,6 +145,7 @@ constexpr Mode kModesBefore[] = {
     {"--skinning-test", test_skinning, false},
     {"--prop-material-test", test_prop_materials, false},
     {"--clipped-shadow-test", test_clipped_shadows, false},
+    {"--shadow-map-test", test_shadow_map, false},
     {"--unit-intel-test", test_unit_intel, false},
     {"--effect-intel-test", test_effect_intel, false},
     {"--strategic-icon-test", test_strategic_icons, false},
@@ -341,6 +342,7 @@ void IntegrationModes::print_usage() const {
               << "  --skinning-test    Rigid skinning and hidden bones\n"
               << "  --prop-material-test The props' own techniques\n"
               << "  --clipped-shadow-test Shadows cut by the albedo's alpha (DepthClip)\n"
+              << "  --shadow-map-test     Moho's shadow map: the terrain's mask, no self-shadowing\n"
               << "  --unit-intel-test  Units seen through the player's intel (fog of war)\n"
               << "  --effect-intel-test Effects, beams, shields and clicks through intel\n"
               << "  --strategic-icon-test FA's strategic icons\n"

@@ -192,6 +192,9 @@ void test_trail_render(TestContext& ctx) {
         return;
     }
     renderer::Renderer& r = shots.renderer();
+    // No shadows: the units carrying the trails would shade the ground the
+    // tests compare frames on as they move (Moho's map, M210c).
+    r.video_options().shadow_fidelity = 0;
     (void)shots.shoot(*ctx.sim.terrain(), a0.x + 10, a0.z - 10, 80.0f);
     for (const char* tex : {"white", "red", "ramp", "stripes"})
         (void)r.texture_cache().get_blocking(fmt::format("{}/{}.dds", kRoot, tex));
@@ -559,6 +562,8 @@ void test_trail_render(TestContext& ctx) {
         const auto old = added(with, on(g0, 10));
         const auto tail = added(with, on(g0, 6));
         const auto ahead_of = added(with, on(g0, 26.5f));
+        // (Ahead of the head nothing is added: the ground there may darken as
+        // the trees about it sway, but the additive trail only adds.)
         // Across the ribbon at 16 along: 1 out (inside its 1.5) and 2.5 (past).
         f32 ex = 0, ey = 0, ez = 0;
         r.camera().eye_position(ex, ey, ez);
@@ -578,7 +583,8 @@ void test_trail_render(TestContext& ctx) {
         const f32 outside = across(2.5f);
         t.check(head[0] > 0.3f && head[2] < 0.1f && young[0] > 0.3f && young[2] < 0.1f &&
                     std::abs(young[1]) < 0.05f && old[2] > 0.3f && old[0] < 0.1f && none(tail) &&
-                    none(ahead_of) && inside > 0.3f && std::abs(outside) < 0.05f,
+                    ahead_of[0] < 0.05f && ahead_of[2] < 0.05f && inside > 0.3f &&
+                    std::abs(outside) < 0.05f,
                 fmt::format("Test 8: added at its head r{:+.2f} b{:+.2f}; a quarter back r{:+.2f} "
                             "g{:+.2f} b{:+.2f}; 7/8 back r{:+.2f} b{:+.2f}; past its 8 ticks "
                             "{:+.2f}, ahead {:+.2f}; 1 across {:+.2f}, 2.5 across {:+.2f}",

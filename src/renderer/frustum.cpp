@@ -45,6 +45,13 @@ bool Frustum::is_sphere_visible(f32 cx, f32 cy, f32 cz, f32 radius) const {
     return true;
 }
 
+std::array<std::array<f32, 4>, 6> Frustum::planes() const {
+    std::array<std::array<f32, 4>, 6> out{};
+    for (size_t i = 0; i < out.size(); ++i)
+        out[i] = {planes_[i].a, planes_[i].b, planes_[i].c, planes_[i].d};
+    return out;
+}
+
 bool Frustum::is_box_visible(const std::array<f32, 3>& min, const std::array<f32, 3>& max) const {
     for (const auto& p : planes_) {
         const f32 x = p.a >= 0.0f ? max[0] : min[0];
