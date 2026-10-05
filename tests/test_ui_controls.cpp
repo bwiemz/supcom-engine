@@ -433,6 +433,16 @@ TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][inpu
                   "and of_type('ButtonPress')[2].event.Modifiers.Middle"));
 }
 
+TEST_CASE("A press no control eats reaches each control under the mouse once", "[ui][lua][input]") {
+    InputFixture f;
+    f.run("item = box('item', GetFrame(0), 0, 0, 100, 100, 1) "
+          "label = box('label', item, 0, 0, 100, 20, 2)");
+    f.dispatch.on_cursor_pos(10, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('ButtonPress') == 'label,item'"));
+}
+
 namespace {
 
 /// Test-mode failure counting, on for a scope (and the tally cleared).
