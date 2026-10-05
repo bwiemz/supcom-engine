@@ -12,6 +12,7 @@
 #include "options_test.hpp"
 #include "keymap_test.hpp"
 #include "movie_test.hpp"
+#include "edit_text_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -254,7 +255,7 @@ constexpr const char* kOwnModes[] = {
     "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
     "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
-    "--options-test",         "--lan-screen-test",
+    "--options-test",         "--lan-screen-test",   "--edit-text-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -411,6 +412,7 @@ void IntegrationModes::print_usage() const {
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
+              << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -505,6 +507,14 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         }
         osc::test::run_movie_test(e);
         return finish_test_run("movie-test");
+    }
+    if (has("--edit-text-test")) {
+        if (!e.map_path.empty()) {
+            spdlog::error("--edit-text-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        osc::test::run_edit_text_test(e);
+        return finish_test_run("edit-text-test");
     }
     const auto& map_path = e.map_path;
     auto& ui_lua_state = e.ui_lua_state;

@@ -1,5 +1,6 @@
 #include "renderer/ui_renderer.hpp"
 #include "renderer/vk_cmd.hpp"
+#include "core/utf8.hpp"
 #include "ui/lazyvar.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "ui/scroll.hpp"
@@ -118,10 +119,10 @@ void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
     }
 
     // Emit one quad per glyph
-    for (unsigned char c : text) {
+    for (size_t i = 0; i < text.size();) {
         if (quad_count_ >= MAX_UI_QUADS) break;
 
-        auto git = atlas->glyphs.find(static_cast<u32>(c));
+        auto git = atlas->glyphs.find(next_codepoint(text, i));
         if (git == atlas->glyphs.end()) {
             // Unknown glyph — advance by space width
             auto space = atlas->glyphs.find(32);
@@ -221,9 +222,9 @@ void UIRenderer::emit_edit_quads(ui::UIControl* ctrl, TextureCache& tex_cache,
         if (atlas) {
             // Advance cursor_x through glyphs up to caret_position
             i32 pos = ctrl->caret_position();
-            for (i32 i = 0; i < pos && i < static_cast<i32>(text.size()); i++) {
-                auto git = atlas->glyphs.find(static_cast<u32>(
-                    static_cast<unsigned char>(text[i])));
+            size_t at = 0;
+            for (i32 n = 0; n < pos && at < text.size(); n++) {
+                auto git = atlas->glyphs.find(next_codepoint(text, at));
                 if (git != atlas->glyphs.end()) {
                     caret_x += git->second.x_advance;
                 } else {
@@ -317,9 +318,9 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
             f32 baseline_y = row_y + font_line(*ctrl, *atlas).ascent;
             f32 cursor_x = left + 2.0f;
 
-            for (unsigned char c : items[i]) {
+            for (size_t at = 0; at < items[i].size();) {
                 if (quad_count_ >= MAX_UI_QUADS) break;
-                auto git = atlas->glyphs.find(static_cast<u32>(c));
+                auto git = atlas->glyphs.find(next_codepoint(items[i], at));
                 if (git == atlas->glyphs.end()) {
                     auto sp = atlas->glyphs.find(32);
                     cursor_x += sp != atlas->glyphs.end()

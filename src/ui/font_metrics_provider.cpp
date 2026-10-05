@@ -2,6 +2,7 @@
 #include "stb/stb_truetype.h"
 
 #include "ui/font_metrics_provider.hpp"
+#include "core/utf8.hpp"
 #include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
@@ -214,9 +215,9 @@ f32 FontMetricsProvider::string_advance(const std::string& family, i32 pointsize
     f32 scale = cm->scale;
 
     f32 advance = 0.0f;
-    for (unsigned char c : text) {
+    for (size_t i = 0; i < text.size();) {
         int adv_raw, lsb;
-        stbtt_GetCodepointHMetrics(info, static_cast<int>(c), &adv_raw, &lsb);
+        stbtt_GetCodepointHMetrics(info, static_cast<int>(next_codepoint(text, i)), &adv_raw, &lsb);
         // Whole pixels, each glyph's own rounded (GDI's widths)
         advance += std::floor(static_cast<f32>(adv_raw) * scale + 0.5f);
     }
