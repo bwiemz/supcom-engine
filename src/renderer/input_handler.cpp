@@ -752,50 +752,53 @@ bool InputHandler::shown(const sim::Entity& e) const {
     return !record || shows_icon(recon_->sight(*record));
 }
 
-std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
-                                                   const sim::SimState& sim) const {
+BuildGhost InputHandler::ghost_at(const sim::SimState& sim, f32 wx, f32 wz) const {
     const auto& bp = sim.build_ghost_bp();
-    if (bp.empty() || !sim.terrain()) return std::nullopt;
     const f32 size_x = sim.build_ghost_foot_x();
     const f32 size_z = sim.build_ghost_foot_z();
-
-    const auto ghost_at = [&](f32 wx, f32 wz) {
-        BuildGhost ghost;
-        ghost.blueprint_id = bp;
-        ghost.x = wx;
-        ghost.y = sim.terrain()->get_terrain_height(wx, wz);
-        ghost.z = wz;
-        sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
-        if (mode_hooks_.can_place) {
-            ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
-            // can_place has read the blueprint's rules
-            pad = sim::StructureSite::of(
-                sim.placement_rules(bp, [] { return sim::PlacementRules{}; }), wx, wz);
-        } else if (const auto* grid = sim.pathfinding_grid()) {
-            // Buildable unless the footprint covers impassable ground
-            u32 gx0, gz0, gx1, gz1;
-            grid->world_to_grid(wx - size_x * 0.5f, wz - size_z * 0.5f, gx0, gz0);
-            grid->world_to_grid(wx + size_x * 0.5f, wz + size_z * 0.5f, gx1, gz1);
-            for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz) {
-                for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx) {
-                    ghost.valid = grid->get(gx, gz) != map::CellPassability::Impassable;
-                }
+    BuildGhost ghost;
+    ghost.blueprint_id = bp;
+    ghost.x = wx;
+    ghost.y = sim.terrain() ? sim.terrain()->get_terrain_height(wx, wz) : 0.0f;
+    ghost.z = wz;
+    sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
+    if (mode_hooks_.can_place) {
+        ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
+        // can_place has read the blueprint's rules
+        const auto& rules = sim.placement_rules(bp, [] { return sim::PlacementRules{}; });
+        pad = sim::StructureSite::of(rules, wx, wz);
+        ghost.y = sim::structure_elevation(sim, rules, wx, wz);
+    } else if (const auto* grid = sim.pathfinding_grid()) {
+        // Buildable unless the footprint covers impassable ground
+        u32 gx0, gz0, gx1, gz1;
+        grid->world_to_grid(wx - size_x * 0.5f, wz - size_z * 0.5f, gx0, gz0);
+        grid->world_to_grid(wx + size_x * 0.5f, wz + size_z * 0.5f, gx1, gz1);
+        for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz) {
+            for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx) {
+                ghost.valid = grid->get(gx, gz) != map::CellPassability::Impassable;
             }
         }
-        ghost.pad_x0 = pad.x0;
-        ghost.pad_z0 = pad.z0;
-        ghost.pad_x1 = pad.x1;
-        ghost.pad_z1 = pad.z1;
-        return ghost;
-    };
+    }
+    ghost.pad_x0 = pad.x0;
+    ghost.pad_z0 = pad.z0;
+    ghost.pad_x1 = pad.x1;
+    ghost.pad_z1 = pad.z1;
+    return ghost;
+}
+
+std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
+                                                    const sim::SimState& sim) const {
+    if (sim.build_ghost_bp().empty() || !sim.terrain()) return std::nullopt;
+    const f32 size_x = sim.build_ghost_foot_x();
+    const f32 size_z = sim.build_ghost_foot_z();
 
     if (build_line_ && line_drag_build_) {
         const auto& l = *build_line_;
         const auto sites =
             sim::structure_line_sites(l[0], l[1], l[2], l[3], size_x, size_z, line_spacing_);
-        BuildGhost ghost = ghost_at(sites.front().first, sites.front().second);
+        BuildGhost ghost = ghost_at(sim, sites.front().first, sites.front().second);
         for (size_t i = 1; i < sites.size(); ++i) {
-            ghost.line.push_back(ghost_at(sites[i].first, sites[i].second));
+            ghost.line.push_back(ghost_at(sim, sites[i].first, sites[i].second));
         }
         return ghost;
     }
@@ -808,7 +811,7 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     snap_to_deposit(sim, mode_hooks_.current ? mode_hooks_.current() : CommandMode{}, wx, wz);
     // Where a build order at the cursor would place it
     sim::snap_structure_center(wx, wz, size_x, size_z);
-    return ghost_at(wx, wz);
+    return ghost_at(sim, wx, wz);
 }
 
 } // namespace osc::renderer
