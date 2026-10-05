@@ -440,6 +440,13 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.f32v(wp.projectile_lifetime_multiplier);
     enum8(w, wp.ballistic_arc);
     w.b(wp.lead_target);
+    w.f32v(wp.muzzle_velocity_reduce_distance);
+    w.b(wp.projectile_physics.has_value());
+    if (wp.projectile_physics) {
+        w.b(wp.projectile_physics->track_target);
+        w.b(wp.projectile_physics->use_gravity);
+        w.f32v(wp.projectile_physics->max_speed);
+    }
     w.b(wp.fire_on_death);
     w.b(wp.dummy);
     w.b(wp.manual_fire);
@@ -500,6 +507,15 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.projectile_lifetime_multiplier = r.f32v();
     wp.ballistic_arc = enum8<Weapon::Arc>(r);
     wp.lead_target = r.b();
+    wp.muzzle_velocity_reduce_distance = r.f32v();
+    wp.projectile_physics.reset();
+    if (r.b()) {
+        Weapon::ProjectilePhysics physics;
+        physics.track_target = r.b();
+        physics.use_gravity = r.b();
+        physics.max_speed = r.f32v();
+        wp.projectile_physics = physics;
+    }
     wp.fire_on_death = r.b();
     wp.dummy = r.b();
     wp.manual_fire = r.b();
