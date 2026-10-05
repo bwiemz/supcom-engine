@@ -55,6 +55,7 @@ enum class MeshTechnique : u32 {
     // The personal shields' (M211l): the unit, then an electric shell.
     PhaseShield = 25,            ///< the Unit technique, then PhaseShieldPS
     SeraphimPersonalShield = 26, ///< the Seraphim technique, then SeraphimPhaseShieldPS
+    UnitPlace = 27,              ///< UnitPlacePS: a build ghost, its colour lit, at alpha 0.2
 };
 
 /// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy
@@ -110,9 +111,9 @@ inline bool is_post_water_technique(MeshTechnique t) {
 
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
 /// draws: after the water and the beams, particles and trails above it
-/// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k).
+/// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k), UnitPlace.
 inline bool is_post_effect_technique(MeshTechnique t) {
-    return is_shield_technique(t);
+    return is_shield_technique(t) || t == MeshTechnique::UnitPlace;
 }
 
 /// The mesh.fx states the shields' passes draw with (M211k): blended
@@ -147,7 +148,7 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 /// slices, cast none (M211f/g); nor do shields (M211k).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
-           !is_shield_technique(t);
+           t != MeshTechnique::UnitPlace && !is_shield_technique(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`
