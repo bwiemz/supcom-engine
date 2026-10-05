@@ -63,7 +63,11 @@ const char* splat_frag();
 extern const char* shadow_vert;       // terrain shadow (lightVP * position)
 extern const char* shadow_mesh_vert;  // mesh shadow (blend-weight skinning + lightVP)
 extern const char* shadow_unit_vert;  // cube shadow (instanced + lightVP)
-extern const char* shadow_frag;       // empty (depth-only write)
+extern const char* shadow_terrain_frag; // the terrain in Moho's shadow map: (z / 128, 1) (M210c)
+extern const char* shadow_caster_frag;  // a caster: (z, 0) (M210c)
+extern const char* shadow_blur_h_frag;  // Moho's shadow blur, across (M210c)
+extern const char* shadow_blur_v_frag;  // and down
+extern const char* shadow_copy_frag;    // the map's G, with the blur off
 extern const char* shadow_mesh_frag;  // mesh shadows, cut by the albedo's alpha (M211j)
 extern const char* ui_vert;           // 2D UI quad (pixel coords → NDC)
 extern const char* ui_frag;           // 2D UI quad (texture * color)

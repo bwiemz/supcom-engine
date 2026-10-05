@@ -657,11 +657,15 @@ void test_build_shaders(TestContext& ctx) {
     // high to one side (and no fill): its shadow falls beside it. UEFBuild
     // casts as the unit (FA's Depth technique); AeonBuild casts none (its
     // technique has no depth stage); SeraphimBuild's shadow is its mesh's,
-    // scaled 0.25 + 0.75 f (SeraphimBuildDepth).
+    // scaled 0.25 + 0.75 f (SeraphimBuildDepth). On the test's ground: Moho's
+    // light camera fits the terrain in view (M210c).
     {
+        // Spread over the ground, clear of the probe at its middle.
+        constexpr std::array<std::array<f32, 2>, 5> kSpots = {
+            {{10.0f, 12.0f}, {32.0f, 12.0f}, {54.0f, 12.0f}, {10.0f, 52.0f}, {54.0f, 52.0f}}};
         // The sun's side: square to the camera's view, so that the shadow
         // isn't behind the hovering plate.
-        (void)frame(100.0f, 190.0f, light());
+        (void)frame(kSpots[0][0], kSpots[0][1], light());
         const renderer::Camera& cam = r.camera();
         f32 ex = 0, ey = 0, ez = 0;
         cam.eye_position(ex, ey, ez);
@@ -682,35 +686,43 @@ void test_build_shaders(TestContext& ctx) {
                                 {"AeonBuild", 0.5f},
                                 {"SeraphimBuild", 0.0f},
                                 {"SeraphimBuild", 1.0f}};
-        f32 x = 100.0f;
-        for (const Hover& h : hovers) {
+        for (size_t i = 0; i < std::size(hovers); ++i) {
             Build under;
             under.shader = "Unit";
             under.albedo = "albedo_white.dds";
-            stand(under, 1.0f, x, 190.0f);
+            stand(under, 1.0f, kSpots[i][0], kSpots[i][1]);
             Build hover;
-            hover.shader = h.shader;
+            hover.shader = hovers[i].shader;
             hover.albedo = "albedo_white.dds";
             hover.lookup = "falloff_lookup.dds"; // Seraphim's colour, not black
             hover.mesh = "plate_hover.scm";
-            stand(hover, h.f, x, 190.0f, 2.5f);
-            x += 20.0f;
+            stand(hover, hovers[i].f, kSpots[i][0], kSpots[i][1], 2.5f);
         }
-        std::vector<size_t> dark;
-        x = 100.0f;
-        for (size_t i = 0; i < std::size(hovers); ++i) {
+        // Counted against shadow fidelity 1, where only the terrain takes
+        // shadows (the plates' own fall on it too): what the plate beneath
+        // takes.
+        renderer::Renderer::VideoOptions& options = r.video_options();
+        const renderer::Renderer::VideoOptions options_were = options;
+        const auto count = [&](size_t i, int shadows) {
+            options.shadow_fidelity = shadows;
             map::ScmapEnvironment env;
             env.terrain_shader = "TTerrain";
             env.cubemaps.emplace_back("<default>", "/textures/environment/no_such_cube.dds");
             ground.set_lighting(sun, std::move(env));
             shots.recapture();
-            size_t n = 0;
-            for (const auto& px : shots.shoot(ground, x, 190.0f, 30.0f))
+            long n = 0;
+            for (const auto& px : shots.shoot(ground, kSpots[i][0], kSpots[i][1], 30.0f))
                 if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++n;
-            dark.push_back(n);
-            x += 20.0f;
-        }
-        t.check(dark[0] > 300 && dark[1] > dark[0] * 3 / 4 && dark[2] < 20 &&
+            return n;
+        };
+        std::vector<long> dark;
+        dark.reserve(std::size(hovers));
+        for (size_t i = 0; i < std::size(hovers); ++i) dark.push_back(count(i, 3) - count(i, 1));
+        options = options_were;
+        // (AeonBuild's plate beneath still darkens at its rims: a mesh pixel
+        // whose texel the terrain holds reads the terrain's depth, about 0,
+        // and is shadowed, as FA's are.)
+        t.check(dark[0] > 300 && dark[1] > dark[0] * 3 / 4 && dark[2] < dark[0] / 10 &&
                     dark[4] > dark[0] * 3 / 4 && dark[3] < dark[4] / 4,
                 fmt::format("Test 9: shadowed pixels under a hovering plate: a unit's {}, "
                             "UEFBuild's {}, AeonBuild's {}, SeraphimBuild's {} at 0% and {} "

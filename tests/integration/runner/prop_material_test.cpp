@@ -91,6 +91,7 @@ void test_prop_materials(TestContext& ctx) {
     std::filesystem::create_directories(dir);
     write_plate_scm(dir / "plate.scm", 4.0f);
     write_plate_scm(dir / "plate_hover.scm", 2.0f);
+    write_plate_scm(dir / "plate_wide.scm", 8.0f);
     // A wall 100 tall in its mesh, which the test scales to 5: FA's sway
     // goes by the mesh's height, in the world's units.
     write_wall_scm(dir / "wall.scm", 100.0f, 100.0f);
@@ -253,20 +254,24 @@ void test_prop_materials(TestContext& ctx) {
         const Rgb plain = middle(frame(100.0f, 130.0f, fill));
         const Rgb highlighted = middle(frame(120.0f, 130.0f, fill));
 
-        // Shadows: a hovering plate beside the sun's path, as the camera sees.
+        // Shadows: a hovering plate beside the sun's path, as the camera
+        // sees, over wide plates on the test's ground (Moho's light camera
+        // fits the terrain in view, M210c), the shadow all on them.
+        constexpr f32 kLowZ = 52.0f;
         Look lower;
         lower.shader = "NormalMappedTerrain";
-        stand(lower, 140.0f, 160.0f);
+        lower.mesh = "plate_wide.scm";
+        stand(lower, 12.0f, kLowZ);
         Look lower_unit = lower;
         lower_unit.shader = "NormalMappedAlpha";
-        stand(lower_unit, 180.0f, 160.0f);
+        stand(lower_unit, 52.0f, kLowZ);
         Look hover;
         hover.shader = "Unit";
         hover.mesh = "plate_hover.scm";
-        stand(hover, 140.0f, 160.0f, false, 2.5f);
-        stand(hover, 180.0f, 160.0f, false, 2.5f);
+        stand(hover, 12.0f, kLowZ, false, 2.5f);
+        stand(hover, 52.0f, kLowZ, false, 2.5f);
         for (int i = 0; i < 30; ++i) ctx.sim.tick();
-        (void)frame(140.0f, 160.0f, sun);
+        (void)frame(12.0f, kLowZ, sun);
         f32 ex = 0, ey = 0, ez = 0;
         r.camera().eye_position(ex, ey, ez);
         f32 dx = r.camera().target_x() - ex;
@@ -280,12 +285,12 @@ void test_prop_materials(TestContext& ctx) {
             ground.set_lighting(side, env_with("/textures/environment/no_such_cube.dds"));
             shots.recapture();
             int n = 0;
-            for (const auto& px : shots.shoot(ground, x, 160.0f, 30.0f))
+            for (const auto& px : shots.shoot(ground, x, kLowZ, 30.0f))
                 if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++n;
             return n;
         };
-        const int terrain_dark = dark(140.0f);
-        const int unit_dark = dark(180.0f);
+        const int terrain_dark = dark(12.0f);
+        const int unit_dark = dark(52.0f);
         t.check(near(plain, grey) && highlighted[1] > plain[1] + 0.1f && terrain_dark < 20 &&
                     unit_dark > 300,
                 fmt::format("Test 3: NormalMappedTerrain shows {} (the albedo, {}), where "

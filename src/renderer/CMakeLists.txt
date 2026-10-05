@@ -11,6 +11,7 @@ add_library(osc_renderer STATIC
     dds_decode.cpp
     camera.cpp
     frustum.cpp
+    shadow_camera.cpp
     shader_utils.cpp
     shield_shaders.cpp
     pipeline_builder.cpp
