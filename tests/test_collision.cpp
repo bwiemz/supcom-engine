@@ -304,6 +304,7 @@ TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
     osc::sim::Weapon w;
     w.muzzle_velocity = 100;
     const Vector3 ahead{0, 0, 1};
+    w.lead_target = false;
     CHECK(w.aim_point(*missile, owner, owner.position(), ahead).z == Approx(1.0f));
     w.lead_target = true;
     CHECK(w.aim_point(*missile, owner, owner.position(), ahead).z == Approx(4.6376f));
@@ -320,6 +321,15 @@ TEST_CASE("a leading weapon aims at its target when no shot can meet it", "[coll
     const Vector3 at = w.aim_point(*missile, owner, owner.position(), {1, 0, 0});
     CHECK(at.x == Approx(39.0f));
     CHECK(at.z == Approx(0.0f));
+}
+
+TEST_CASE("a weapon with no muzzle velocity, as a beam's, leads by nothing", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
+    Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
+    const osc::sim::Weapon w;
+    CHECK(w.aim_point(*missile, owner, owner.position(), {0, 0, 1}).z == Approx(1.0f));
 }
 
 TEST_CASE("a weapon firing tracking shots leads at their top speed", "[collision]") {
