@@ -34,6 +34,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <set>
@@ -65,6 +66,10 @@ struct Options {
     std::string load_path;
     std::string save_path; ///< --save <file>: the game, saved at --save-at's tick
     u32 save_at = 0;       ///< --save-at <tick>
+    /// --post-load-at <tick>: the game schedules a post-load after that tick
+    /// (after a save there), as a load at it would -- the save/load oracle's
+    /// like for like (docs/plans/2026-10-05-campaign-saves-design.md).
+    u32 post_load_at = 0;
     bool scripted_orders = false;
     std::string bench_report; ///< --bench <file>: the headless run's tick times (M223)
     /// --render-bench <file> (M223b): a saved game's scene rendered, its
@@ -250,6 +255,18 @@ private:
     /// and let catch_up go once the player has the game. False (logged) on
     /// the first tick that differs.
     bool check_catch_up();
+    /// A loaded game is the player's: schedule its post-load (Moho's
+    /// SyncPlayableRect and OnPostLoad), recorded in its history.
+    void post_load();
+    /// A loaded game's interface waits for the load's post-load, as Moho's
+    /// runs at load, before the world's first sync and gamemain.CreateUI
+    /// (which builds a campaign's objectives only in campaign mode). Set
+    /// while it waits: the count of post-loads run when post_load scheduled
+    /// the load's own, kPostLoadUnscheduled until then (a catch-up first
+    /// replays the post-loads of earlier loads in the game's history).
+    /// Window's finish_world_ui_after_post_load builds it.
+    std::optional<u32> world_ui_after_post_load;
+    static constexpr u32 kPostLoadUnscheduled = std::numeric_limits<u32>::max();
     /// A saved game restored from its snapshot into the sim just booted for
     /// it (M208c): its history becomes the recording, and its checksum must
     /// be the one the history holds for the saved tick. Only a snapshot this

@@ -379,6 +379,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.save_to_load = std::move(save);
         o.load_path.clear();
     }
+    o.post_load_at = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--post-load-at", "0").c_str(), nullptr, 10));
     // --save <file> --save-at <tick>: save the game after that tick.
     o.save_path = parse_string_arg(argc, argv, "--save", "");
     o.save_at = static_cast<u32>(

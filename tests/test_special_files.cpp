@@ -85,6 +85,25 @@ TEST_CASE("Special files live per profile, with our own extension", "[specialfil
     CHECK(listed.at("Other") == std::vector<std::string>{"c"});
 }
 
+TEST_CASE("A campaign's saves sit with the others, under their own extension",
+          "[specialfiles][savegame]") {
+    TempDir dir;
+    SpecialFiles files(dir.path);
+    const auto* campaign = SpecialFiles::find_type("CampaignSave");
+    const auto* skirmish = SpecialFiles::find_type("SaveGame");
+    REQUIRE(campaign);
+    REQUIRE(skirmish);
+    CHECK(files.path(*campaign, "Player", "op1") ==
+          dir.path / "savegames" / "Player" / "op1.osccampaignsave");
+    // Each type lists its own files from the shared folder.
+    touch(files.path(*campaign, "Player", "op1"));
+    touch(files.path(*skirmish, "Player", "skirmish"));
+    CHECK(files.list(*campaign).at("Player") == std::vector<std::string>{"op1"});
+    CHECK(files.list(*skirmish).at("Player") == std::vector<std::string>{"skirmish"});
+    CHECK(files.holds(*campaign, files.path(*campaign, "Player", "op1")));
+    CHECK_FALSE(files.holds(*skirmish, files.path(*campaign, "Player", "op1")));
+}
+
 TEST_CASE("The special-file globals, as retail's file picker uses them", "[specialfiles]") {
     TempDir dir;
     SpecialFiles files(dir.path);

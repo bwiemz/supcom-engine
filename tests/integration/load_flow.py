@@ -14,10 +14,13 @@ game, as the game menu's Load dialog loads it; the game returns to the lobby
 (ReturnToLobby); and the first save loads from the front end again. Each
 game starts in a fresh UI Lua state, and no Lua error may happen.
 
-Then the same flow runs on a copy of the save whose snapshot is damaged
+Then the same flow runs on a copy of the new save whose snapshot is damaged
 past its outer check (its Lua heap's own hash fails, after the sim's C++
-state was already replaced): each load must fall back to booting the game
-again and catching up from the history, and pass all the same.
+state was already replaced): each load of it must fall back to booting the
+game again and catching up from the history, and pass all the same. That
+save was made in a loaded game, so its history holds the load's post-load:
+the catch-up replays it, and the game's interface must still wait for the
+new load's own.
 
 Usage:
     load_flow.py <opensupcom> -- <game args for the first game...>
@@ -76,13 +79,19 @@ def main(argv: list[str]) -> int:
         if run_flow(exe, user_dir, must_say="restored at tick") != 0:
             return 1
 
-        # The fallback: a damaged snapshot, each load catching up instead
+        # The fallback: a damaged snapshot, each load catching up instead,
+        # through a history with a post-load in it (the save made in a
+        # loaded game)
+        again = save.with_name("again.oscsave")
+        if not again.exists():
+            print("the flow saved no again.oscsave")
+            return 1
         damaged_dir = Path(tmp) / "damaged"
         damaged = damaged_dir / "savegames" / "Player" / "flow.oscsave"
         damaged.parent.mkdir(parents=True)
         key = (user_dir / KEY_FILE).read_bytes()
         _ = (damaged_dir / KEY_FILE).write_bytes(key)
-        _ = damaged.write_bytes(damage_snapshot(save.read_bytes(), key))
+        _ = damaged.write_bytes(damage_snapshot(again.read_bytes(), key))
         return run_flow(exe, damaged_dir, must_say="not restored")
 
 

@@ -230,6 +230,9 @@ private:
     osc::u32 gpgnet_logged_tick = 0;
     /// OnFirstUpdate, once after the game's first tick (each game's).
     bool first_update_fired = false;
+    std::optional<osc::u32>& world_ui_after_post_load = app.world_ui_after_post_load;
+    /// Build the waiting interface once the post-load has run.
+    void finish_world_ui_after_post_load();
 };
 
 } // namespace osc::app

@@ -14,6 +14,11 @@ Three processes, each writing `--checksum-trace`:
      build of a commit is, or its Debug build for its Release): A's snapshot
      names C functions by their place in A's binary, so E catches up too.
 
+A load schedules the game's post-load (SimSync.SyncPlayableRect and OnPostLoad,
+as Moho does) once the game is the player's; A and B schedule the same with
+--post-load-at after their saves, so each pair compares like with like
+(docs/plans/2026-10-05-campaign-saves-design.md).
+
 A load restores the save's snapshot (M208c), whose checksum must be the one
 the save's history holds for its tick; with `--by-replay` it catches up from
 the history instead, checking every tick against it. Either exits non-zero
@@ -176,6 +181,9 @@ def main(argv: list[str]) -> int:
                 str(save_1),
                 "--save-at",
                 str(SAVE_1),
+                # As B's load follows the save with its post-load
+                "--post-load-at",
+                str(SAVE_1),
                 "--checksum-trace",
                 str(trace["a"]),
             ]
@@ -198,6 +206,9 @@ def main(argv: list[str]) -> int:
                 "--save",
                 str(save_2),
                 "--save-at",
+                str(SAVE_2),
+                # As C's load follows the save with its post-load
+                "--post-load-at",
                 str(SAVE_2),
                 "--checksum-trace",
                 str(trace["b"]),

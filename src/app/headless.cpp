@@ -37,6 +37,8 @@ bool App::after_headless_tick() {
             osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
         }
     }
+    // After the save, as a load of it would follow it.
+    if (opt.post_load_at != 0 && sim_state->tick_count() == opt.post_load_at) post_load();
     return true;
 }
 
