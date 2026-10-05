@@ -373,8 +373,13 @@ Result<void> SessionManager::start_session(LuaState& state,
         if (const auto* brain = sim.army_at(i)) armies.push_back(brain->name());
     if (armies.empty()) armies = meta.armies;
 
+    // An operation (the campaign's, the tutorial): Moho spawns nothing for
+    // it and its launch (SetupCampaignSession) names no victory condition;
+    // its scripts decide the game.
+    const bool operation = meta.type == "campaign" || meta.type == "campaign_coop";
+
     // Step 1: Populate ScenarioInfo.ArmySetup for Lua code
-    setup_army_info(L, armies);
+    setup_army_info(L, armies, operation);
     apply_game_options_to_sim(game_options_, sim);
 
     // Step 2: Call SetupSession() — loads save + script files
@@ -465,8 +470,10 @@ Result<void> SessionManager::start_session(LuaState& state,
 
     // Step 6: Ensure each non-civilian army has at least one unit (ACU).
     //         FA's OnPopulate may fail in our engine, so we create ACUs
-    //         directly via the sim C++ API if they weren't spawned.
-    for (size_t i = 0; i < army_limit; i++) {
+    //         directly via the sim C++ API if they weren't spawned. Never in
+    //         an operation: its scripts bring armies in when they mean to
+    //         (the tutorial's, after its opening camera move).
+    for (size_t i = 0; i < army_limit && !operation; i++) {
         auto* brain = sim.get_army(static_cast<i32>(i));
         if (!brain || brain->is_civilian()) continue;
         if (brain->get_unit_cost_total(sim.entity_registry()) > 0) continue;
@@ -520,7 +527,8 @@ Result<void> SessionManager::start_session(LuaState& state,
     return {};
 }
 
-void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string>& armies) {
+void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string>& armies,
+                                     bool operation) {
     // Push ScenarioInfo onto stack
     lua_getglobal(L, "ScenarioInfo");
     if (!lua_istable(L, -1)) {
@@ -549,7 +557,10 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
     set_opt_str("Share", "ShareUntilDeath");
     set_opt_str("TeamSpawn", "fixed");
     set_opt_str("TeamLock", "locked");
-    set_opt_str("Victory", "demoralization");
+    // A skirmish's default; an operation's launch names none, so retail's
+    // CheckVictory leaves it to the operation's scripts (with one, an army
+    // the scripts have not brought in yet would be defeated at once).
+    if (!operation) set_opt_str("Victory", "demoralization");
     set_opt_num("Timeouts", 3);
     set_opt_num("UnitCap", 1000);
     set_opt_num("GameSpeed", 0);         // normal
