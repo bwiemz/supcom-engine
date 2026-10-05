@@ -231,6 +231,19 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
             leg.waypoint_scale = chosen ? s->waypoint_selected_scale : s->waypoint_scale;
             path.legs.push_back(std::move(leg));
         }
+        const auto anchor =
+            std::find_if(path.legs.begin(), path.legs.end(), [](const CommandGraphPath::Leg& l) {
+                return l.order.type == sim::CommandType::Patrol ||
+                       l.order.type == sim::CommandType::Guard ||
+                       (l.order.type == sim::CommandType::Attack && l.order.target_id == 0);
+            });
+        if (anchor != path.legs.end() && anchor + 1 != path.legs.end()) {
+            const auto at = static_cast<size_t>(anchor - path.legs.begin());
+            CommandGraphPath::Leg back = *anchor;
+            back.closes = true;
+            path.chain.push_back(path.chain[at + 1]);
+            path.legs.push_back(std::move(back));
+        }
         paths.push_back(std::move(path));
     }
     return paths;
@@ -455,7 +468,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             }
             const GPUTexture* wp_tex =
                 s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
-            const bool site = wp_tex && !blueprint->empty() && per_px > 0.0f &&
+            const bool site = wp_tex && !leg.closes && !blueprint->empty() && per_px > 0.0f &&
                               !build_started(*cur, *e, index, *order);
             if (site) {
                 const auto& p = pad_of(*blueprint, L);
@@ -477,7 +490,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                     }
                 }
             }
-            if (wp_tex && per_px > 0.0f) {
+            if (wp_tex && !leg.closes && per_px > 0.0f) {
                 // Its world size, held between its least and most on screen
                 const f32 px_world = per_px * length(sub(to, eye));
                 f32 size = kWaypointSize * leg.waypoint_scale;

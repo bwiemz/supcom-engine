@@ -103,6 +103,7 @@ struct CommandGraphPath {
         std::array<f32, 4> line_color{};
         std::array<f32, 4> waypoint_color{};
         f32 waypoint_scale = 1.0f;
+        bool closes = false; ///< the leg back to the loop's first order
     };
     const sim::EntityRecord* unit = nullptr;
     bool chosen = false;
@@ -111,7 +112,9 @@ struct CommandGraphPath {
 };
 
 /// The paths of command_graph_units: a selected unit's in its style's
-/// selected colours, another's in its plain ones
+/// selected colours, another's in its plain ones. A path whose first patrol,
+/// guard or ground attack is not its last runs back to it, as Moho's
+/// AddCommandQueueToCommandGraph links the loop.
 std::vector<CommandGraphPath>
 command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,
                     i32 player_army,

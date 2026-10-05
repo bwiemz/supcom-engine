@@ -197,6 +197,43 @@ TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its 
     CHECK(paths[1].legs[0].waypoint_scale == 0.5f);
 }
 
+TEST_CASE("A patrol's path runs back to its first patrol point", "[renderer][command_graph]") {
+    using osc::sim::CommandType;
+    const auto path_of = [](const std::vector<std::pair<CommandType, osc::f32>>& orders) {
+        osc::sim::WorldSnapshot world;
+        osc::sim::EntityRecord e;
+        e.id = 1;
+        e.army = 0;
+        e.is_unit = true;
+        e.command_count = static_cast<osc::u32>(orders.size());
+        for (const auto& [type, x] : orders) {
+            osc::sim::CommandRecord c;
+            c.type = type;
+            c.target_pos = {x, 0, 0};
+            world.commands.push_back(c);
+        }
+        world.entities.push_back(e);
+        osc::renderer::CommandGraphStyle style;
+        const auto paths =
+            osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), nullptr,
+                                               0, [&](CommandType) { return &style; });
+        REQUIRE(paths.size() == 1);
+        return paths[0];
+    };
+    const auto loop =
+        path_of({{CommandType::Move, 10}, {CommandType::Patrol, 20}, {CommandType::Patrol, 30}});
+    REQUIRE(loop.legs.size() == 4);
+    CHECK(loop.legs[3].closes);
+    CHECK(loop.chain[3].x == 30.0f);
+    CHECK(loop.chain[4].x == 20.0f);
+    const auto onward =
+        path_of({{CommandType::Patrol, 20}, {CommandType::Patrol, 30}, {CommandType::Move, 40}});
+    REQUIRE(onward.legs.size() == 4);
+    CHECK(onward.chain[4].x == 20.0f);
+    CHECK(path_of({{CommandType::Move, 10}, {CommandType::Patrol, 20}}).legs.size() == 2);
+    CHECK(path_of({{CommandType::Move, 10}, {CommandType::Move, 20}}).legs.size() == 2);
+}
+
 TEST_CASE("A structure ordered and not started is a planned site", "[renderer][command_graph]") {
     osc::sim::WorldSnapshot world;
     const auto build = [](const char* bp, osc::f32 x) {
