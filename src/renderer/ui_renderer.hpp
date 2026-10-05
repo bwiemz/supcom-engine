@@ -144,6 +144,7 @@ private:
         ClipRect clip{};
         f32 depth = 0.0f;
         ui::DrawBand band = ui::DrawBand::Overlay;
+        const ui::UIControl* movie = nullptr; ///< the movie whose frame this is
     };
     std::vector<QuadEntry> quads_;
     const WorldViewPainter* minimap_painter_ = nullptr; // during update()

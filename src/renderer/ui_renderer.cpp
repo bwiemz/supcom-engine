@@ -529,6 +529,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                 movies_ && ctrl->movie_playing() ? movies_->descriptor(ctrl) : VK_NULL_HANDLE;
             if (ds) {
                 entry.texture_ds = ds;
+                entry.movie = ctrl;
                 entry.inst.color[0] = entry.inst.color[1] = entry.inst.color[2] = 1.0f;
                 entry.inst.color[3] = ctrl->alpha();
                 entry.inst.uv[0] = 0.0f;
@@ -733,6 +734,19 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
                 {q.inst.rect[0], q.inst.rect[1], q.inst.rect[2], q.inst.rect[3]},
                 q.depth, world_views_);
         });
+    }
+
+    // Which movies reached the screen: one that didn't (hidden, or under a
+    // world view) decodes nothing until it does (UIDispatch::movie_frame).
+    std::vector<const ui::UIControl*> drawn_movies;
+    for (const QuadEntry& q : quads_)
+        if (q.movie) drawn_movies.push_back(q.movie);
+    for (const auto& ptr : registry.all()) {
+        ui::UIControl* ctrl = ptr.get();
+        if (!ctrl || ctrl->destroyed() || ctrl->control_type() != ui::UIControl::ControlType::Movie)
+            continue;
+        ctrl->set_movie_on_screen(std::find(drawn_movies.begin(), drawn_movies.end(), ctrl) !=
+                                  drawn_movies.end());
     }
 
     // Emit cursor quad at mouse position (topmost depth)

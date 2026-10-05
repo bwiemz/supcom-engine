@@ -39,8 +39,9 @@ public:
     /// Stop: the clock stops (Play resumes it).
     void pause() { paused_ = true; }
     bool paused() const { return paused_; }
-    /// StartMoviePlaybackFromName (a loop): from the first frame, running.
-    void restart();
+    /// StartMoviePlaybackFromName (a loop): from the first frame, running;
+    /// decoded unless `decode` is false (a movie off screen).
+    void restart(bool decode = true);
 
     /// Run the clock on by `dt` seconds, unless paused.
     void advance(f64 dt);

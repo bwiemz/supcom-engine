@@ -899,11 +899,13 @@ void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
     }
     video::MoviePlayer* movie = ctrl->movie_player();
     if (!movie) return;
-    // Sofdec's clock runs on its own; here it moves with the frames.
+    // Sofdec's clock runs on its own; here it moves with the frames. A movie
+    // off screen decodes nothing: back on screen, update_frame catches up to
+    // the frame due, as it does for one that decodes slower than it plays.
     movie->advance(dt);
     if (movie->finished()) {
         if (ctrl->movie_looping()) {
-            movie->restart();
+            movie->restart(ctrl->movie_on_screen());
         } else {
             ctrl->set_movie_playing(false);
             ctrl->set_needs_frame_update(false);
@@ -911,7 +913,7 @@ void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
         }
         return;
     }
-    movie->update_frame();
+    if (ctrl->movie_on_screen()) movie->update_frame();
 }
 
 } // namespace osc::ui
