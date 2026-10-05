@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <functional>
 
 namespace osc::sim {
 
@@ -271,6 +272,9 @@ std::span<const CommandRecord> WorldSnapshot::orders_of(const EntityRecord& e) c
 
 void WorldSnapshot::clear() {
     tick = 0;
+    serial = 0;
+    previous.clear();
+    previous_serial = 0;
     entities.clear();
     bones.clear();
     commands.clear();
@@ -383,6 +387,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.army = e.army();
         r.blueprint_id = e.blueprint_id();
         r.mesh_override = e.mesh_override();
+        r.mesh_changes = e.mesh_changes();
         r.scale_x = e.scale_x();
         r.scale_y = e.scale_y();
         r.scale_z = e.scale_z();
@@ -505,7 +510,25 @@ std::vector<std::string> world_blueprints(const SimState& sim) {
 
 void WorldHistory::capture(const SimState& sim) {
     cur_ = 1 - cur_;
-    capture_world(sim, snaps_[cur_], sight_army_);
+    WorldSnapshot& now = snaps_[cur_];
+    capture_world(sim, now, sight_army_);
+    static u64 next_serial = 0;
+    now.serial = ++next_serial;
+    // Each entity's record in the capture before (both ascending by id).
+    const WorldSnapshot& before = snaps_[1 - cur_];
+    now.previous.assign(now.entities.size(), WorldSnapshot::kNoPrevious);
+    now.previous_serial = 0;
+    if (captured_ > 0 && before.serial != 0) {
+        size_t j = 0;
+        for (size_t i = 0; i < now.entities.size(); ++i) {
+            const EntityRecord& e = now.entities[i];
+            while (j < before.entities.size() && before.entities[j].id < e.id) ++j;
+            if (j < before.entities.size() && before.entities[j].id == e.id &&
+                before.entities[j].snap_serial == e.snap_serial)
+                now.previous[i] = static_cast<u32>(j);
+        }
+        now.previous_serial = before.serial;
+    }
     ++captured_;
     // The sim forgets its events once the tick is over: keep them until
     // the renderer shows them.
@@ -545,13 +568,26 @@ FrameView::Pair FrameView::lookup(u32 id) const {
     if (!cur_) return {};
     const EntityRecord* to = cur_->find(id);
     if (!to) return {};
-    const EntityRecord* from = prev_ ? prev_->find(id) : nullptr;
-    if (from && from->snap_serial != to->snap_serial) from = nullptr;
-    return {from, to};
+    return pair_for(*to);
 }
 
 FrameView::Pair FrameView::pair_for(const EntityRecord& e) const {
-    const EntityRecord* from = prev_ ? prev_->find(e.id) : nullptr;
+    if (!prev_) return {nullptr, &e};
+    // One of the newest tick's records, whose previous record the history
+    // has found already: no search (std::less orders any two pointers).
+    if (cur_ && prev_->serial != 0 && cur_->previous_serial == prev_->serial &&
+        cur_->previous.size() == cur_->entities.size() && !cur_->entities.empty()) {
+        const EntityRecord* first = cur_->entities.data();
+        const std::less<const EntityRecord*> before;
+        if (!before(&e, first) && before(&e, first + cur_->entities.size())) {
+            const u32 j = cur_->previous[static_cast<size_t>(&e - first)];
+            if (j == WorldSnapshot::kNoPrevious) return {nullptr, &e};
+            // (A copy edited since could have moved it: then search.)
+            if (j < prev_->entities.size() && prev_->entities[j].id == e.id)
+                return {&prev_->entities[j], &e};
+        }
+    }
+    const EntityRecord* from = prev_->find(e.id);
     if (from && from->snap_serial != e.snap_serial) from = nullptr;
     return {from, &e};
 }

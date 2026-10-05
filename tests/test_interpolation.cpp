@@ -238,6 +238,52 @@ TEST_CASE("FrameView jumps a teleported entity instead of sliding it", "[interp]
     CHECK(view.position(entity(sim, id)).x == Approx(500.0f));
 }
 
+TEST_CASE("FrameView pairs records through the history's index as a search would",
+          "[interp][view]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    const osc::u32 moving = spawn_at(sim, {0, 0, 0});
+    const osc::u32 dying = spawn_at(sim, {5, 0, 5});
+    const osc::u32 warped = spawn_at(sim, {9, 0, 9});
+    history.capture(sim);
+    entity(sim, moving).set_position({10, 0, 0});
+    entity(sim, dying).mark_destroyed();
+    entity(sim, warped).set_position({500, 0, 500});
+    entity(sim, warped).note_snap();
+    const osc::u32 fresh = spawn_at(sim, {50, 0, 50});
+    history.capture(sim);
+    REQUIRE(history.cur().previous_serial == history.prev().serial);
+
+    // The same pair, the index dropped: a search.
+    WorldSnapshot prev = history.prev();
+    WorldSnapshot cur = history.cur();
+    cur.previous.clear();
+    const FrameView indexed(&history.prev(), &history.cur(), 0.5f);
+    const FrameView searched(&prev, &cur, 0.5f);
+    for (const osc::u32 id : {moving, warped, fresh}) {
+        const auto* a = indexed.find(id);
+        const auto* b = searched.find(id);
+        REQUIRE(a != nullptr);
+        REQUIRE(b != nullptr);
+        CHECK(indexed.position(*a).x == Approx(searched.position(*b).x));
+        CHECK(indexed.position(*a).z == Approx(searched.position(*b).z));
+    }
+    CHECK(indexed.position(*indexed.find(moving)).x == Approx(5.0f));
+    CHECK(indexed.position(*indexed.find(warped)).x == Approx(500.0f));
+    CHECK(indexed.position(*indexed.find(fresh)).x == Approx(50.0f));
+}
+
+TEST_CASE("An entity counts its mesh override's changes", "[interp][snapshot]") {
+    Unit u;
+    CHECK(u.mesh_changes() == 0);
+    u.set_mesh_override("/units/ueb1101/ueb1101_mesh_build");
+    u.set_mesh_override("/units/ueb1101/ueb1101_mesh_build");
+    CHECK(u.mesh_changes() == 1);
+    u.set_mesh_override("");
+    CHECK(u.mesh_changes() == 2);
+}
+
 TEST_CASE("FrameView jumps an attachment with its teleported parent", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
