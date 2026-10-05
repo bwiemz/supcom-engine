@@ -9,6 +9,7 @@ add_library(osc_core STATIC
     front_end_data.cpp
     dmath.cpp
     color.cpp
+    utf8.cpp
     version.cpp
     sha256.cpp
 )
