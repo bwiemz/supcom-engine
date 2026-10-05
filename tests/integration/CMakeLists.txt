@@ -56,6 +56,7 @@ add_executable(osc_integration
     runner/script_order_test.cpp
     runner/unit_cap_test.cpp
     runner/unit_hooks_test.cpp
+    runner/air_attack_test.cpp
 )
 target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)
 target_link_libraries(osc_integration PRIVATE osc::warnings osc::app)

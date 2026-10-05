@@ -2,6 +2,7 @@
 #include "sim/projectile_script.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
+#include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
@@ -110,12 +111,28 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return false;
-    if (need_compute_bomb_drop) {
-        const f32 dx = at->x - owner.position().x;
-        const f32 dz = at->z - owner.position().z;
-        if (dx * dx + dz * dz > bomb_drop_threshold * bomb_drop_threshold) return false;
-    }
+    if (need_compute_bomb_drop && !bomb_ready(owner, *at, registry)) return false;
     return true;
+}
+
+bool Weapon::bomb_ready(const Unit& owner, const Vector3& at,
+                        const EntityRegistry& registry) const {
+    const AirCombatRules& air = owner.air_combat_rules();
+    if (!air.winged) return true; // Moho computes no drop for a hovering flier
+    if (!owner.has_unit_state("MakingAttackRun")) return false;
+    Vector3 aim = at;
+    if (air.predict_ahead_for_bomb_drop > 0.0f && target_entity_id != 0) {
+        const Entity* target = registry.find(target_entity_id);
+        if (target && target->is_unit() && static_cast<const Unit*>(target)->is_mobile()) {
+            const Vector3& v = static_cast<const Unit*>(target)->velocity();
+            aim.x += v.x * air.predict_ahead_for_bomb_drop;
+            aim.z += v.z * air.predict_ahead_for_bomb_drop;
+        }
+    }
+    const std::optional<Vector3> release =
+        calc_bomb_drop(owner.velocity(), owner.position(), aim, kGravity);
+    return release &&
+           bomb_release_ok(owner.position(), owner.heading(), *release, aim, bomb_drop_threshold);
 }
 
 bool Weapon::call_script(lua_State* L, const char* method, const char* arg) const {
@@ -229,7 +246,8 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
     fire_clock = fire_period();
 }
 
-bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim) const {
+bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState* sim,
+                        bool in_reach) const {
     // A weapon shoots units, or, with TargetType RULEWTT_Projectile, the
     // other side's projectiles (M206b).
     if (target.destroyed() || target.entity_id() == owner.entity_id()) return false;
@@ -262,7 +280,7 @@ bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState*
     const f32 dz = target.position().z - owner.position().z;
     const f32 dist2 = dx * dx + dz * dz;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
-    if (dist2 > reach * reach || dist2 < min_range * min_range) return false;
+    if (in_reach && (dist2 > reach * reach || dist2 < min_range * min_range)) return false;
     if (heading_arc_range < 180.0f) {
         // Only targets within the arc about the unit's facing.
         const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
@@ -289,18 +307,24 @@ int Weapon::priority_of(const Entity& target) const {
 }
 
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimState* sim) {
+    // An aircraft's weapons take its ordered target at any range: Moho's
+    // CAcquireTargetTask gives a flier the attacker's desired target out of
+    // reach too, so it is kept through the runs' loops.
+    const u32 ordered = attack_order_target(owner);
+    const bool flier = owner.layer() == "Air";
     // A target this weapon can no longer shoot is dropped at once.
     if (target_entity_id != 0) {
         const Entity* target = registry.find(target_entity_id);
-        if (!target || !can_target(owner, *target, sim)) target_entity_id = 0;
+        const bool in_reach = !(flier && target_entity_id == ordered);
+        if (!target || !can_target(owner, *target, sim, in_reach)) target_entity_id = 0;
     }
 
     // An attack order's target comes first, for every weapon that can hit
     // it, whatever the priorities say.
-    if (const u32 ordered = attack_order_target(owner); ordered != 0) {
+    if (ordered != 0) {
         if (ordered == target_entity_id) return;
         const Entity* target = registry.find(ordered);
-        if (target && can_target(owner, *target, sim)) {
+        if (target && can_target(owner, *target, sim, !flier)) {
             set_target_entity(ordered);
             return;
         }
@@ -428,14 +452,8 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
     if (!target && !has_ground_target) return false;
     const Vector3 at = target ? target->position() : ground_target;
 
-    // Bomb drop check: only fire when directly overhead
-    if (need_compute_bomb_drop) {
-        f32 dx = at.x - owner.position().x;
-        f32 dz = at.z - owner.position().z;
-        f32 horiz_dist = std::sqrt(dx * dx + dz * dz);
-        if (horiz_dist > bomb_drop_threshold)
-            return false; // Not overhead yet — don't fire
-    }
+    // A bomb only at its release point (bomb_ready).
+    if (need_compute_bomb_drop && !bomb_ready(owner, at, registry)) return false;
 
     // Resolve muzzle bone position for projectile spawn
     // From the muzzle as the turret is posed now.
@@ -522,6 +540,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
                                      spawn_pos.z + forward.z / len * reach}
                            : Vector3{spawn_pos.x, spawn_pos.y, spawn_pos.z + reach};
     }
+    const Vector3 unscattered = aim; // a bomb's (RealisticOrdinance, below)
     // Firing randomness scatters where it goes over a circle about the aim,
     // FiringRandomness x distance / 12 across: the relation FAF measured of
     // Moho's (FixedSpreadRadius). Drawn from the sim's RNG, so every
@@ -597,6 +616,26 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics = proj->apply_blueprint_physics(L);
     if (physics.lifetime) proj->lifetime = *physics.lifetime;
+    if (physics.realistic_ordinance) {
+        // A bomb (RealisticOrdinance) leaves with its launcher's speed,
+        // aimed flat from the launcher at its target -- or where a moving
+        // one will be, by the launcher's PredictAheadForBombDrop -- as
+        // Moho's Projectile does; firing randomness doesn't move it.
+        Vector3 at = unscattered;
+        const f32 ahead = owner.air_combat_rules().predict_ahead_for_bomb_drop;
+        if (ahead > 0.0f && target && target->is_unit() &&
+            static_cast<const Unit*>(target)->is_mobile())
+            at = predict_ahead(*target, ahead);
+        const Vector3& v = owner.velocity();
+        const f32 speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        const f32 ax = at.x - owner.position().x;
+        const f32 az = at.z - owner.position().z;
+        const f32 len = std::sqrt(ax * ax + az * az);
+        vel = len > 0.001f ? Vector3{ax / len * speed, 0.0f, az / len * speed}
+                           : Vector3{v.x, 0.0f, v.z};
+        proj->velocity = vel;
+        proj->target_position = at;
+    }
     // The weapon's own lifetime for its shots wins (an anti-torpedo's
     // blueprint says half a second, its weapon four).
     if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0)

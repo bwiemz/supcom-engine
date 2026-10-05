@@ -192,6 +192,7 @@ constexpr Mode kModesBefore[] = {
     {"--change-army-test", test_change_army, false},
     {"--unit-cap-test", test_unit_cap, false},
     {"--unit-hooks-test", test_unit_hooks, false},
+    {"--air-attack-run-test", test_air_attack_run, false},
     {"--air-turn-test", test_air_turn, false},
     {"--air-staging-test", test_air_staging, false},
     {"--factory-assist-test", test_factory_assist, false},

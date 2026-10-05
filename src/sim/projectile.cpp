@@ -394,6 +394,9 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
     flag("CollideSurface", collide_surface);
     if (field("UseGravity") == LUA_TBOOLEAN) found.use_gravity = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
+    found.realistic_ordinance =
+        field("RealisticOrdinance") != LUA_TNIL && lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
     if (field("Lifetime") == LUA_TNUMBER) found.lifetime = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     lua_settop(L, top);

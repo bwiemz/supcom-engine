@@ -311,6 +311,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.launched);
     w.b(c.started);
     w.b(c.approached);
+    w.b(c.engaged);
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
     w.b(c.in_band);
@@ -343,6 +344,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.launched = r.b();
     c.started = r.b();
     c.approached = r.b();
+    c.engaged = r.b();
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
     c.in_band = r.b();
@@ -1056,6 +1058,25 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(st.repair_energy);
     w.f32v(st.repair_mass);
     w.f32v(st.scan_radius);
+    const AirCombatRules& ar = u.air_combat_rules_;
+    w.b(ar.winged);
+    for (const f32 v : {ar.min_airspeed, ar.combat_turn_speed, ar.tight_turn_multiplier,
+                        ar.sustained_turn_threshold, ar.engage_distance, ar.break_off_trigger,
+                        ar.break_off_distance})
+        w.f32v(v);
+    w.b(ar.break_off_if_near_new_target);
+    for (const f32 v :
+         {ar.random_break_off_distance_mult, ar.random_min_change_combat_state_time,
+          ar.random_max_change_combat_state_time, ar.predict_ahead_for_bomb_drop,
+          ar.attack_elevation, ar.k_turn, ar.k_turn_damping, ar.k_move, ar.k_move_damping})
+        w.f32v(v);
+    const AirCombatState& ac = u.air_combat_;
+    w.u8v(ac.state);
+    w.u32v(ac.timeout_tick);
+    w.i32v(ac.sustained_turn_ticks);
+    w.f32v(ac.yaw_rate);
+    w.vec3(ac.velocity);
+    w.b(ac.flying);
     w.f32v(u.heading_);
     w.f32v(u.pitch_);
     w.f32v(u.bank_angle_);
@@ -1357,6 +1378,25 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     st.repair_energy = r.f32v();
     st.repair_mass = r.f32v();
     st.scan_radius = r.f32v();
+    AirCombatRules& ar = u.air_combat_rules_;
+    ar.winged = r.b();
+    for (f32* v : {&ar.min_airspeed, &ar.combat_turn_speed, &ar.tight_turn_multiplier,
+                   &ar.sustained_turn_threshold, &ar.engage_distance, &ar.break_off_trigger,
+                   &ar.break_off_distance})
+        *v = r.f32v();
+    ar.break_off_if_near_new_target = r.b();
+    for (f32* v :
+         {&ar.random_break_off_distance_mult, &ar.random_min_change_combat_state_time,
+          &ar.random_max_change_combat_state_time, &ar.predict_ahead_for_bomb_drop,
+          &ar.attack_elevation, &ar.k_turn, &ar.k_turn_damping, &ar.k_move, &ar.k_move_damping})
+        *v = r.f32v();
+    AirCombatState& ac = u.air_combat_;
+    ac.state = r.u8v();
+    ac.timeout_tick = r.u32v();
+    ac.sustained_turn_ticks = r.i32v();
+    ac.yaw_rate = r.f32v();
+    ac.velocity = r.vec3();
+    ac.flying = r.b();
     u.heading_ = r.f32v();
     u.pitch_ = r.f32v();
     u.bank_angle_ = r.f32v();

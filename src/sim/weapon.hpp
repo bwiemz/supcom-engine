@@ -76,7 +76,7 @@ public:
     std::string projectile_bp_id;          // ChangeProjectileBlueprint
     std::string fire_control_label;   // SetFireControl: whose OnTarget gates firing
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
-    f32 bomb_drop_threshold = 25.0f;     // BombDropThreshold (default 25)
+    f32 bomb_drop_threshold = 1.5f;      // BombDropThreshold (Moho's default)
     // Targeting: SetTargetingPriorities (compiled; a candidate must match
     // one, and earlier ones win), the blueprint's restrictions (empty: none)
     // and how often targets are looked for.
@@ -141,9 +141,15 @@ public:
 
     /// Moho's CanFire: a target within MaxRadius, the weapon enabled, its
     /// fire control on target (see fire_control), the unit free (not Busy)
-    /// and above water if it must be, a bomber over its drop zone, and a
-    /// silo weapon's missile ready (HasSiloAmmo).
+    /// and above water if it must be, a winged bomber at its release point
+    /// (bomb_ready), and a silo weapon's missile ready (HasSiloAmmo).
     bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
+
+    /// A winged aircraft's bomb (NeedToComputeBombDrop): only in a run
+    /// (MakingAttackRun), and only where a bomb dropped now, with the
+    /// aircraft's velocity, lands on `at` -- or where a moving target will
+    /// be, by its PredictAheadForBombDrop (Moho's UnitWeapon::CanFire).
+    bool bomb_ready(const Unit& owner, const Vector3& at, const EntityRegistry& registry) const;
 
     /// Whether this weapon may shoot `target` from where `owner` stands: an
     /// enemy (by alliance, when `sim` is given), targetable, on a layer the
@@ -151,7 +157,10 @@ public:
     /// cylinder, as Moho's is: horizontal distance within the min and max
     /// radius, and height within MaxHeightDiff when that is set.
     /// Priorities are not checked: an attack order can pick any such unit.
-    bool can_target(const Unit& owner, const Entity& target, const SimState* sim) const;
+    /// `in_reach` false leaves the range out: an aircraft's weapons keep its
+    /// ordered target through its runs' loops.
+    bool can_target(const Unit& owner, const Entity& target, const SimState* sim,
+                    bool in_reach = true) const;
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.

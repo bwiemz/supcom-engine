@@ -4,6 +4,7 @@
 
 #include "sim/unit.hpp"
 #include "core/dmath.hpp"
+#include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
 #include "core/test_status.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -267,6 +268,14 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     if (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile) {
         aim_builder_arms(nullptr, ctx.L);
     }
+    // An attack run ends with its order: Moho's flight resets the combat
+    // state once the aircraft has no target to attack.
+    if (air_combat_.flying || air_combat_.state != 0) {
+        const bool running = !command_queue_.empty() &&
+                             command_queue_.front().type == CommandType::Attack &&
+                             command_queue_.front().engaged;
+        if (!running) end_attack_run(*this);
+    }
     while (!command_queue_.empty()) {
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the tick ends, see EntityRegistry::collect_garbage).
@@ -338,6 +347,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
+        if (cmd.engaged) end_attack_run(*this); // the run ends with its target
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -356,6 +366,19 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     f32 dz = target->position().z - position().z;
     f32 dist2 = dx * dx + dz * dz;
     f32 range2 = best_range * best_range;
+    // A winged aircraft flies at its target and, once within a weapon's
+    // reach or its EngageDistance, makes its runs: Moho's attack task hands
+    // the target to the attacker and CalcMoveAir flies the combat tactics
+    // from then on. It never parks at range.
+    if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
+        const f32 engage = air_combat_rules_.engage_distance;
+        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
+        if (cmd.engaged) {
+            navigator_.abort_move();
+            fly_attack_run(*this, *target, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            return OrderStep::Hold;
+        }
+    }
     if (dist2 > range2) {
         // Move toward target
         if (!navigator_.is_moving() || navigator_.goal().x != target->position().x ||

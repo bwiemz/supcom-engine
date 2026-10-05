@@ -1074,8 +1074,70 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (lua_isnumber(L, -1))
                     unit->set_accel_rate(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+
+                // A winged aircraft's attack runs (Moho's defaults where
+                // a field is missing).
+                const int air = lua_gettop(L);
+                const auto number = [&](const char* key, f32 fallback) {
+                    lua_pushstring(L, key);
+                    lua_rawget(L, air);
+                    const f32 v = lua_type(L, -1) == LUA_TNUMBER
+                                      ? static_cast<f32>(lua_tonumber(L, -1))
+                                      : fallback;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                const auto flag = [&](const char* key) {
+                    lua_pushstring(L, key);
+                    lua_rawget(L, air);
+                    const bool v = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) != 0
+                                                                  : lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                sim::AirCombatRules rules;
+                rules.winged = flag("Winged");
+                rules.min_airspeed = number("MinAirspeed", 0.0f);
+                rules.combat_turn_speed = number("CombatTurnSpeed", 1.0f);
+                rules.tight_turn_multiplier = number("TightTurnMultiplier", 1.0f);
+                rules.sustained_turn_threshold = number("SustainedTurnThreshold", 10.0f);
+                rules.engage_distance = number("EngageDistance", 0.0f);
+                rules.break_off_trigger = number("BreakOffTrigger", 0.0f);
+                rules.break_off_distance = number("BreakOffDistance", 0.0f);
+                rules.break_off_if_near_new_target = flag("BreakOffIfNearNewTarget");
+                rules.random_break_off_distance_mult = number("RandomBreakOffDistanceMult", 1.5f);
+                rules.random_min_change_combat_state_time =
+                    number("RandomMinChangeCombatStateTime", 3.0f);
+                rules.random_max_change_combat_state_time =
+                    number("RandomMaxChangeCombatStateTime", 6.0f);
+                rules.predict_ahead_for_bomb_drop = number("PredictAheadForBombDrop", 0.0f);
+                rules.k_turn = number("KTurn", 3.0f);
+                rules.k_turn_damping = number("KTurnDamping", 3.0f);
+                rules.k_move = number("KMove", 1.0f);
+                rules.k_move_damping = number("KMoveDamping", 1.0f);
+                unit->set_air_combat_rules(rules);
             }
             lua_pop(L, 2); // Air table (or nil) + bp table
+
+            // Physics.AttackElevation: its height over a ground target in a
+            // run (0: its Elevation, as Moho derives it).
+            {
+                sim::AirCombatRules rules = unit->air_combat_rules();
+                store->push_lua_table(*entry, L);
+                lua_pushstring(L, "Physics");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "AttackElevation");
+                    lua_rawget(L, -2);
+                    if (lua_type(L, -1) == LUA_TNUMBER)
+                        rules.attack_elevation = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 2);
+                if (rules.attack_elevation <= 0.0f)
+                    rules.attack_elevation = unit->elevation_target();
+                unit->set_air_combat_rules(rules);
+            }
 
             // Fallbacks: if Air subtable was missing or incomplete
             if (unit->max_airspeed() <= 0 && unit->max_speed() > 0)
@@ -1084,6 +1146,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 unit->set_accel_rate(unit->max_airspeed() * 0.5f);
             if (unit->turn_rate_rad() <= 0)
                 unit->set_turn_rate_rad(1.5f); // ~86 deg/s default
+            if (unit->air_combat_rules().min_airspeed <= 0.0f) {
+                sim::AirCombatRules rules = unit->air_combat_rules();
+                rules.min_airspeed = unit->max_airspeed();
+                unit->set_air_combat_rules(rules);
+            }
         }
 
         // General.CommandCaps / ToggleCaps: the orders and toggles a unit
