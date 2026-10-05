@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace osc::sim {
 
@@ -145,9 +146,85 @@ const PlacementRules& StructurePlacement::rules(const std::string& bp_id) const 
     return it->second;
 }
 
+u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f32 z) {
+    namespace layer = placement_layer;
+    u8 caps = static_cast<u8>((r.on_land ? layer::Land : 0) | (r.on_seabed ? layer::Seabed : 0) |
+                              (r.on_sub ? layer::Sub : 0) | (r.on_water ? layer::Water : 0));
+    // The skirt (RUnitBlueprint::GetSkirtRect): from the footprint's corner
+    // cell, the skirt's offset and size if it has one, else the footprint.
+    const auto corner = [](f32 at, f32 size) {
+        return static_cast<f32>(std::lrint(at - size * 0.5f));
+    };
+    const f32 cx = corner(x, r.size_x);
+    const f32 cz = corner(z, r.size_z);
+    const f32 x0 = r.skirt_x != 0.0f ? cx + r.skirt_off_x : cx;
+    const f32 x1 = x0 + (r.skirt_x != 0.0f ? r.skirt_x : r.size_x);
+    const f32 z0 = r.skirt_z != 0.0f ? cz + r.skirt_off_z : cz;
+    const f32 z1 = z0 + (r.skirt_z != 0.0f ? r.skirt_z : r.size_z);
+
+    const map::Heightmap& field = terrain.heightmap();
+    const auto w = static_cast<i32>(field.grid_width());
+    const auto h = static_cast<i32>(field.grid_height());
+    if (std::floor(x0) < 0 || std::ceil(x1) > static_cast<f32>(w - 1) || std::floor(z0) < 0 ||
+        std::ceil(z1) > static_cast<f32>(h - 1))
+        return 0;
+    const auto sample = [&](i32 gx, i32 gz) {
+        return field.get_height_at_grid(static_cast<u32>(std::clamp(gx, 0, w - 1)),
+                                        static_cast<u32>(std::clamp(gz, 0, h - 1)));
+    };
+    const auto ix0 = static_cast<i32>(x0);
+    const auto ix1 = static_cast<i32>(x1);
+    const auto iz0 = static_cast<i32>(z0);
+    const auto iz1 = static_cast<i32>(z1);
+    f32 lo = std::numeric_limits<f32>::max();
+    f32 hi = -std::numeric_limits<f32>::max();
+    bool flat = false;
+    if (r.flatten_skirt) {
+        // OCCUPY_CheckEdgeFlatness: the ring of points just outside the
+        // skirt, against the ceiling of the last one read (the level the
+        // skirt is cut to).
+        f32 last = 0.0f;
+        for (i32 gx = ix0 - 1; gx <= ix1 + 1; ++gx) {
+            const f32 top = sample(gx, iz0 - 1);
+            last = sample(gx, iz1 + 1);
+            lo = std::min({lo, top, last});
+            hi = std::max({hi, top, last});
+        }
+        for (i32 gz = iz0; gz <= iz1; ++gz) {
+            const f32 left = sample(ix0 - 1, gz);
+            last = sample(ix1 + 1, gz);
+            lo = std::min({lo, left, last});
+            hi = std::max({hi, left, last});
+        }
+        const f32 pivot = std::ceil(last);
+        flat = r.max_ground_variation >= std::max(hi - pivot, pivot - lo);
+    } else {
+        // OCCUPY_CheckAreaFlatness: every point the skirt covers.
+        for (i32 gx = ix0; gx <= ix1; ++gx) {
+            for (i32 gz = iz0; gz <= iz1; ++gz) {
+                const f32 at = sample(gx, gz);
+                lo = std::min(lo, at);
+                hi = std::max(hi, at);
+            }
+        }
+        flat = r.max_ground_variation >= hi - lo;
+    }
+    if (!flat) caps &= static_cast<u8>(~(layer::Land | layer::Seabed));
+    const f32 water = terrain.has_water() ? terrain.water_elevation() : -10000.0f;
+    if (water > lo) caps &= static_cast<u8>(~layer::Land);
+    if (hi > water - r.min_water_depth)
+        caps &= static_cast<u8>(~(layer::Seabed | layer::Sub | layer::Water));
+    return caps;
+}
+
 bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const {
     const auto& r = rules(bp_id);
-    if (!terrain_allows(r, StructureSite::of(x, z, r.size_x, r.size_z))) return false;
+    // Moho's OCCUPY_Check, then the cells under the footprint on the layers
+    // it leaves (func_LocationIsFree's occupancy narrowing).
+    const u8 layers = sim_.terrain() ? occupy_layers(*sim_.terrain(), r, x, z)
+                                     : static_cast<u8>(r.on_land ? placement_layer::Land : 0);
+    if (layers == 0) return false;
+    if (!terrain_allows(StructureSite::of(x, z, r.size_x, r.size_z), layers)) return false;
     const StructureSite site = StructureSite::of(r, x, z);
     if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
     for (const auto& pending : reserved())
@@ -155,8 +232,8 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
     return !structure_overlaps(site);
 }
 
-bool StructurePlacement::terrain_allows(const PlacementRules& r,
-                                        const StructureSite& site) const {
+bool StructurePlacement::terrain_allows(const StructureSite& site, u8 layers) const {
+    namespace layer = placement_layer;
     const f32 x0 = site.x0, x1 = site.x1;
     const f32 z0 = site.z0, z1 = site.z1;
     if (sim_.has_playable_rect() &&
@@ -193,12 +270,16 @@ bool StructurePlacement::terrain_allows(const PlacementRules& r,
         for (i64 gx = gx0; gx <= gx1; ++gx) {
             switch (grid->get(static_cast<u32>(gx), static_cast<u32>(gz))) {
             case map::CellPassability::Passable:
-                if (!r.on_land) return false;
+                if (!(layers & layer::Land)) return false;
                 break;
-            case map::CellPassability::Water: // afloat, or on the ground under it
-                if (!r.on_water && !r.on_seabed) return false;
+            case map::CellPassability::Water: // afloat, under it, or on the ground below
+                if (!(layers & (layer::Water | layer::Sub | layer::Seabed))) return false;
                 break;
             case map::CellPassability::Impassable:
+                // Too steep to walk: for a structure, the ground's rise is
+                // occupy_layers' MaxGroundVariation test (Moho's occupancy
+                // grids hold no slope).
+                break;
             case map::CellPassability::Obstacle:
                 return false;
             }
