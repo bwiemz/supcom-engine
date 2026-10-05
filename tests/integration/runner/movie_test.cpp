@@ -251,6 +251,27 @@ void playback(MovieTest& m) {
             fmt::format("Test 14: looping, it starts over at its end instead (frame {}, then {})",
                         restarted, p->frame_shown()));
 
+    // Off screen (the UI renderer didn't draw it: retail's loading movie
+    // plays on under the world view all game), a movie runs its clock and
+    // decodes nothing; back on screen it catches up to the frame due, at
+    // most kMaxDecodes a frame.
+    {
+        c->set_movie_on_screen(false);
+        const i32 before = p->frame_shown();
+        const u64 serial = p->frame_serial();
+        m.pump(8, dt); // 0.5 s on: 15 frames due
+        const bool held = p->frame_shown() == before && p->frame_serial() == serial;
+        c->set_movie_on_screen(true);
+        m.pump(1, dt);
+        const i32 first = p->frame_shown();
+        m.pump(3, dt);
+        t.check(held && first == before + video::MoviePlayer::kMaxDecodes &&
+                    p->frame_shown() == due(*p),
+                fmt::format("Test 24: off screen it decodes nothing (frame {} held); back on, it "
+                            "catches up (frame {}, then {} of {} due)",
+                            before, first, p->frame_shown(), due(*p)));
+    }
+
     // A new movie on a playing control waits, paused, for Play (Moho's
     // LoadFile leaves the control playing; CMovie opens paused).
     m.run("mv:InternalSet('/movies/thqlogo.sfd')");

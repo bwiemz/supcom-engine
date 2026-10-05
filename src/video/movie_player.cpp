@@ -71,13 +71,13 @@ bool MoviePlayer::open(std::vector<char> file) {
     return true;
 }
 
-void MoviePlayer::restart() {
+void MoviePlayer::restart(bool decode) {
     decoder_.rewind();
     clock_ = 0;
     shown_ = -1;
     exhausted_ = false;
     paused_ = false;
-    update_frame();
+    if (decode) update_frame();
 }
 
 void MoviePlayer::advance(f64 dt) {
