@@ -159,6 +159,44 @@ TEST_CASE("Shift shows the selected units' orders and the army's build sites",
     CHECK(got == std::vector<std::pair<osc::u32, bool>>{{1, true}, {2, false}, {3, true}});
 }
 
+TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its selected colours",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    for (osc::u32 id : {1u, 2u}) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = 0;
+        e.is_unit = true;
+        e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
+        e.command_offset = static_cast<osc::u32>(world.commands.size());
+        e.command_count = 1;
+        osc::sim::CommandRecord move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = {50, 0, 50};
+        world.commands.push_back(move);
+        world.entities.push_back(e);
+    }
+    osc::renderer::CommandGraphStyle style;
+    style.line_color = {0, 1, 1, 0.2f};
+    style.line_selected_color = {0, 1, 1, 0.87f};
+    style.waypoint_color = {1, 1, 1, 0.27f};
+    style.waypoint_selected_color = {1, 1, 1, 1};
+    style.waypoint_scale = 0.5f;
+    const std::unordered_set<osc::u32> selected{1};
+    const auto paths =
+        osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), &selected, 0,
+                                           [&](osc::sim::CommandType) { return &style; });
+    REQUIRE(paths.size() == 2);
+    REQUIRE(paths[1].legs.size() == 1);
+    CHECK(paths[0].chosen);
+    CHECK(paths[0].legs[0].line_color == style.line_selected_color);
+    CHECK_FALSE(paths[1].chosen);
+    CHECK(paths[1].chain.size() == 2);
+    CHECK(paths[1].legs[0].line_color == style.line_color);
+    CHECK(paths[1].legs[0].waypoint_color == style.waypoint_color);
+    CHECK(paths[1].legs[0].waypoint_scale == 0.5f);
+}
+
 TEST_CASE("A structure ordered and not started is a planned site", "[renderer][command_graph]") {
     osc::sim::WorldSnapshot world;
     const auto build = [](const char* bp, osc::f32 x) {
