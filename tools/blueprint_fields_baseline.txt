@@ -67,7 +67,6 @@ MinAirspeed
 MinBounceCount
 MinWaterDepth
 MuzzleVelocityRandom
-MuzzleVelocityReduceDistance
 NeedPrep
 NeedToFaceTargetToBuild
 NeedUnpack

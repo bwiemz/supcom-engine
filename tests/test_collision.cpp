@@ -300,16 +300,53 @@ TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
     EntityRegistry reg;
     const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
-    // A missile 40 east, flying north at 10.
     Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
     osc::sim::Weapon w;
     w.muzzle_velocity = 100;
-    CHECK(w.aim_point(*missile, owner.position()).z == Approx(0.0f));
-    // Leading: 0.4 s to it, then refined once, a little further north.
+    const Vector3 ahead{0, 0, 1};
+    CHECK(w.aim_point(*missile, owner, owner.position(), ahead).z == Approx(1.0f));
     w.lead_target = true;
-    const Vector3 at = w.aim_point(*missile, owner.position());
-    CHECK(at.z > 4.0f);
-    CHECK(at.z < 4.2f);
+    CHECK(w.aim_point(*missile, owner, owner.position(), ahead).z == Approx(4.6376f));
+}
+
+TEST_CASE("a leading weapon aims at its target when no shot can meet it", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
+    Projectile* missile = add_shot(reg, {40, 0, 0}, {-10, 0, 0});
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 5;
+    w.lead_target = true;
+    const Vector3 at = w.aim_point(*missile, owner, owner.position(), {1, 0, 0});
+    CHECK(at.x == Approx(39.0f));
+    CHECK(at.z == Approx(0.0f));
+}
+
+TEST_CASE("a weapon firing tracking shots leads at their top speed", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
+    Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 5;
+    w.lead_target = true;
+    w.projectile_physics = osc::sim::Weapon::ProjectilePhysics{true, true, 100};
+    CHECK(w.aim_point(*missile, owner, owner.position(), {0, 0, 1}).z == Approx(4.6376f));
+}
+
+TEST_CASE("a weapon firing falling shots leads by its muzzle's level speed", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
+    const u32 target_id = add_unit(reg, {50, 0, 0}, box(1, 1, 1));
+    auto& target = static_cast<Unit&>(*reg.find(target_id));
+    target.set_velocity({0, 0, 2});
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 20;
+    w.lead_target = true;
+    w.projectile_physics = osc::sim::Weapon::ProjectilePhysics{};
+    const Vector3 raised{0.5f, std::sqrt(3.0f) * 0.5f, 0};
+    CHECK(w.aim_point(target, owner, owner.position(), raised).z == Approx(10.4143f));
 }
 
 TEST_CASE("a point's distance from a shape is negative inside it", "[collision]") {

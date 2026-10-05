@@ -135,6 +135,45 @@ static int l_c_CreateEntity(lua_State* L) {
 // ====================================================================
 
 /// Push the generic Unit class (or moho.unit_methods, or nil).
+static std::optional<sim::Weapon::ProjectilePhysics> projectile_physics(lua_State* L,
+                                                                        const std::string& id) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, id.c_str());
+        lua_rawget(L, -2);
+    }
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+    }
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return std::nullopt;
+    }
+    sim::Weapon::ProjectilePhysics physics;
+    lua_pushstring(L, "TrackTarget");
+    lua_rawget(L, -2);
+    if (lua_isboolean(L, -1)) {
+        physics.track_target = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    lua_pushstring(L, "UseGravity");
+    lua_rawget(L, -2);
+    if (lua_isboolean(L, -1)) {
+        physics.use_gravity = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    lua_pushstring(L, "MaxSpeed");
+    lua_rawget(L, -2);
+    if (lua_type(L, -1) == LUA_TNUMBER) {
+        physics.max_speed = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_settop(L, top);
+    return physics;
+}
+
 static void push_generic_unit_class(lua_State* L) {
     lua_pushstring(L, "__unit_class");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -318,6 +357,14 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1)) weapon->muzzle_velocity = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
 
+                    lua_pushstring(L, "MuzzleVelocityReduceDistance");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1)) {
+                        weapon->muzzle_velocity_reduce_distance =
+                            static_cast<f32>(lua_tonumber(L, -1));
+                    }
+                    lua_pop(L, 1);
+
                     lua_pushstring(L, "BallisticArc");
                     lua_gettable(L, we);
                     if (lua_type(L, -1) == LUA_TSTRING) {
@@ -478,6 +525,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                         std::transform(pid.begin(), pid.end(), pid.begin(),
                                        [](unsigned char c) { return std::tolower(c); });
                         weapon->projectile_bp_id = pid;
+                        weapon->projectile_physics = projectile_physics(L, pid);
                     }
                     lua_pop(L, 1);
 
