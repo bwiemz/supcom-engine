@@ -9042,6 +9042,17 @@ void test_formation(TestContext& ctx) {
     // On the flat plain east of the map's centre: eight Strikers and two
     // Lobos ordered in AttackFormation facing south (+Z), and the same
     // facing east (+X).
+    // ScenarioUtilities' CommanderWarpDelay warps them in on tick 31.
+    run(31);
+    lua_check("setup: no other army's commander near the groups", R"(
+        for i, brain in ArmyBrains do
+            if i ~= 1 then
+                for _, acu in brain:GetListOfUnits(categories.COMMAND, false) do
+                    acu:Destroy()
+                end
+            end
+        end
+    )");
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
