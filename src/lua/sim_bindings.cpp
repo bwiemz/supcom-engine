@@ -1399,7 +1399,7 @@ static int l_create_building_unit(lua_State* L) {
     f32 y = static_cast<f32>(lua_tonumber(L, 4));
     if (lua_isnil(L, 4)) {
         auto* sim = get_sim(L);
-        y = sim ? structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
+        y = sim ? sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id), x, z) : 0.0f;
     }
 
     u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/true);
@@ -1476,7 +1476,7 @@ static int l_CreateUnit2(lua_State* L) {
 
     // Rewrite stack for l_CreateUnit: bp, army, x, y, z -- y where the unit
     // stands at (x, z), as for a structure built there
-    const f32 y = structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
+    const f32 y = sim::structure_elevation(*sim, structure_rules(L, *sim, bp_id_str), x, z);
     lua_settop(L, 0);
     lua_pushstring(L, bp_id_str.c_str());
     lua_pushnumber(L, army + 1); // re-encode as 1-based; l_CreateUnit calls resolve_army

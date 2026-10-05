@@ -114,4 +114,8 @@ private:
     mutable std::map<std::string, PlacementRules> rules_cache_;
 };
 
+/// Where a structure stands at (x, z): on the ground for one that can sit
+/// on the seabed, else on the water's surface where there is water
+f32 structure_elevation(const SimState& sim, const PlacementRules& rules, f32 x, f32 z);
+
 } // namespace osc::sim
