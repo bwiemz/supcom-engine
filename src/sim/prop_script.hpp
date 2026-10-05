@@ -19,6 +19,9 @@ class SimState;
 /// runs. Leaves the object on the stack when `push`.
 void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push);
 
+/// Read what the engine keeps of the prop's blueprint (from __blueprints).
+void read_prop_blueprint(lua_State* L, Prop& prop);
+
 /// Register a new prop of blueprint `bp_id` at `position` and give it its
 /// object (left on the stack when `push`). CreateProp, CreatePropHPR,
 /// CreatePropAtBone and SplitProp all make props this way.

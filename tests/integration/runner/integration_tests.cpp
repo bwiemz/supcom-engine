@@ -11857,7 +11857,10 @@ void test_right_click(TestContext& ctx) {
     {
         float best = 1e9f;
         ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
-            if (e.destroyed() || !e.is_prop() || !e.reclaimable()) return;
+            if (e.destroyed() || !e.is_prop() || !e.reclaimable() ||
+                e.blueprint_id().find("Deposit01_prop") != std::string::npos) {
+                return;
+            }
             const float d =
                 std::hypot(e.position().x - eng->position().x, e.position().z - eng->position().z);
             if (d < best) {
@@ -12023,6 +12026,20 @@ void test_right_click(TestContext& ctx) {
               "shows the reclaim");
     } else {
         check(false, "a reclaimable prop near by");
+    }
+
+    {
+        const osc::sim::Entity* deposit = nullptr;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (!deposit && !e.destroyed() && e.is_prop() &&
+                e.blueprint_id().find("massDeposit01_prop") != std::string::npos) {
+                deposit = &e;
+            }
+        });
+        input.set_selected({eng->entity_id()});
+        check(deposit && input.right_button_order(ctx.sim, deposit->position().x,
+                                                  deposit->position().z) == CT::Move,
+              "on a mass deposit's marker, UNTARGETABLE: the engineer moves there");
     }
 
     {
