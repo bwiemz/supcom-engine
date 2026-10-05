@@ -28,7 +28,7 @@ public:
     f32 damage = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
-    f32 muzzle_velocity = 25;
+    f32 muzzle_velocity = 0;
     /// How long its shots live, overriding their projectile blueprint's
     /// Lifetime (FAF's notes on the engine): ProjectileLifetimeUsesMultiplier
     /// x MaxRadius / MuzzleVelocity, else ProjectileLifetime; 0 leaves it.
