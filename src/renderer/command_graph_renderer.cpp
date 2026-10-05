@@ -189,6 +189,52 @@ std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
     return sites;
 }
 
+std::vector<CommandGraphPath>
+command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,
+                    i32 player_army,
+                    const std::function<const CommandGraphStyle*(sim::CommandType)>& style_of) {
+    std::vector<CommandGraphPath> paths;
+    const sim::WorldSnapshot* cur = view.cur();
+    if (!cur) {
+        return paths;
+    }
+    for (const auto& [e, chosen] : command_graph_units(*cur, selected, player_army)) {
+        CommandGraphPath path;
+        path.unit = e;
+        path.chosen = chosen;
+        path.chain.push_back(view.position(*e));
+        std::vector<sim::CommandRecord> cmds(cur->orders_of(*e).begin(), cur->orders_of(*e).end());
+        const auto rally = cur->rally_of(*e);
+        cmds.insert(cmds.end(), rally.begin(), rally.end());
+        for (size_t n = 0; n < cmds.size(); ++n) {
+            const sim::CommandRecord& c = cmds[n];
+            const CommandGraphStyle* s = style_of(c.type);
+            if (!s) {
+                continue;
+            }
+            Vector3 to = c.target_pos;
+            if (c.target_id > 0) {
+                if (const sim::EntityRecord* target = view.find(c.target_id)) {
+                    to = view.position(*target);
+                } else if (to.x == 0.0f && to.y == 0.0f && to.z == 0.0f) {
+                    continue;
+                }
+            }
+            path.chain.push_back(to);
+            CommandGraphPath::Leg leg;
+            leg.order = c;
+            leg.index = n;
+            leg.style = s;
+            leg.line_color = chosen ? s->line_selected_color : s->line_color;
+            leg.waypoint_color = chosen ? s->waypoint_selected_color : s->waypoint_color;
+            leg.waypoint_scale = chosen ? s->waypoint_selected_scale : s->waypoint_scale;
+            path.legs.push_back(std::move(leg));
+        }
+        paths.push_back(std::move(path));
+    }
+    return paths;
+}
+
 std::string command_graph_key(sim::CommandType type) {
     switch (type) {
     case sim::CommandType::Move: return "UNITCOMMAND_Move";
@@ -365,46 +411,28 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     const auto vertex = [](const Vector3& p, f32 u, f32 v, const std::array<f32, 4>& c) {
         return Vertex{{p.x, p.y, p.z}, {u, v}, {c[0], c[1], c[2], c[3]}};
     };
-    for (const auto& [e, chosen] : command_graph_units(*cur, selected, player_army)) {
+    auto paths = command_graph_paths(view, selected, player_army,
+                                     [&](sim::CommandType type) { return style(type, L); });
+    std::stable_partition(paths.begin(), paths.end(),
+                          [](const CommandGraphPath& p) { return p.chosen; });
+    for (const CommandGraphPath& path : paths) {
+        const sim::EntityRecord* e = path.unit;
         const u32 uid = e->id;
-        // Its orders, then (a factory's) the rally orders what it builds
-        // takes, drawn on from where its orders end
-        std::vector<sim::CommandRecord> cmds(cur->orders_of(*e).begin(), cur->orders_of(*e).end());
-        const auto rally = cur->rally_of(*e);
-        cmds.insert(cmds.end(), rally.begin(), rally.end());
-        std::vector<Vector3> chain{view.position(*e)};
-        struct LegOrder {
-            sim::CommandType type;
-            const CommandGraphStyle* style;
-            const std::string* blueprint;
-            const sim::CommandRecord* order;
-            size_t index;
-        };
-        std::vector<LegOrder> leg_orders;
-        for (size_t n = 0; n < cmds.size(); ++n) {
-            const sim::CommandRecord& c = cmds[n];
-            const CommandGraphStyle* s = style(c.type, L);
-            if (!s) continue;
-            Vector3 to = c.target_pos;
-            if (c.target_id > 0) {
-                if (const sim::EntityRecord* target = view.find(c.target_id)) {
-                    to = view.position(*target);
-                } else if (to.x == 0.0f && to.y == 0.0f && to.z == 0.0f) {
-                    continue; // its target gone, and no place of its own
-                }
-            }
-            chain.push_back(to);
-            leg_orders.push_back({c.type, s, &c.blueprint_id, &c, n});
-        }
-        for (size_t i = 0; i < leg_orders.size(); ++i) {
-            const auto [type, s, blueprint, order, index] = leg_orders[i];
+        const auto& chain = path.chain;
+        for (size_t i = 0; i < path.legs.size(); ++i) {
+            const CommandGraphPath::Leg& leg = path.legs[i];
+            const sim::CommandType type = leg.order.type;
+            const CommandGraphStyle* s = leg.style;
+            const std::string* blueprint = &leg.order.blueprint_id;
+            const sim::CommandRecord* order = &leg.order;
+            const size_t index = leg.index;
             const Vector3& from = chain[i];
             const Vector3& to = chain[i + 1];
             if (lines.size() + waypoints.size() + kCurveSegments + 1 > MAX_QUADS) break;
             const GPUTexture* line_tex =
                 s->line_texture.empty() ? nullptr : tex_cache.get(s->line_texture);
-            if (chosen && line_tex) {
-                const auto& col = s->line_selected_color;
+            if (line_tex) {
+                const auto& col = leg.line_color;
                 const f32 shift = -s->anim_rate * time;
                 const std::vector<Vector3> points =
                     command_curve(chain, i, kCurveSegments, kLineWidth);
@@ -448,15 +476,15 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                     }
                 }
             }
-            if ((site || chosen) && wp_tex && per_px > 0.0f) {
+            if (wp_tex && per_px > 0.0f) {
                 // Its world size, held between its least and most on screen
                 const f32 px_world = per_px * length(sub(to, eye));
-                f32 size = kWaypointSize * s->waypoint_selected_scale;
+                f32 size = kWaypointSize * leg.waypoint_scale;
                 if (px_world > 0.0f)
                     size = std::clamp(size / px_world, kMinWaypointPx, kMaxWaypointPx) * px_world;
                 const Vector3 r = {size * 0.5f, 0.0f, 0.0f};
                 const Vector3 u = {0.0f, 0.0f, -size * 0.5f};
-                const auto& col = s->waypoint_selected_color;
+                const auto& col = leg.waypoint_color;
                 const Vertex a = vertex(sub(add(to, u), r), 0.0f, 0.0f, col);
                 const Vertex b = vertex(add(add(to, u), r), 1.0f, 0.0f, col);
                 const Vertex cc = vertex(add(sub(to, u), r), 1.0f, 1.0f, col);
