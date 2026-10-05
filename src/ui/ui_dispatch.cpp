@@ -378,7 +378,8 @@ bool call_edit(lua_State* L, UIControl* edit, const char* method, int nargs,
 
 } // namespace
 
-bool UIDispatch::edit_event(lua_State* L, UIControl* edit, const UIEvent& ev) {
+bool UIDispatch::edit_event(lua_State* L, UIControlRegistry& registry, UIControl* edit,
+                            const UIEvent& ev) {
     if (edit->control_type() != UIControl::ControlType::Edit || !edit->input_enabled() ||
         ev.type == UIEventType::KEY_UP) {
         return false;
@@ -405,14 +406,22 @@ bool UIDispatch::edit_event(lua_State* L, UIControl* edit, const UIEvent& ev) {
         case GLFW_KEY_END: t.end(); break;
         case GLFW_KEY_TAB: char_pressed('\t'); return true;
         case GLFW_KEY_ENTER:
-        case GLFW_KEY_KP_ENTER: call_edit(L, edit, "OnEnterPressed", 1, push_text); return true;
-        case GLFW_KEY_ESCAPE:
-            if (call_edit(L, edit, "OnEscPressed", 1, push_text)) {
+        case GLFW_KEY_KP_ENTER:
+        case GLFW_KEY_ESCAPE: {
+            const char* method = ev.key_code == GLFW_KEY_ESCAPE ? "OnEscPressed" : "OnEnterPressed";
+            if (call_edit(L, edit, method, 1, push_text) || edit->destroyed()) {
+                return true;
+            }
+            if (t.text.empty()) {
+                if (registry.keyboard_focus() == edit) {
+                    registry.set_keyboard_focus(nullptr);
+                }
                 return true;
             }
             t.text.clear();
             t.caret = 0;
             break;
+        }
         default:
             if (ev.key_code >= GLFW_KEY_SPACE && ev.key_code <= GLFW_KEY_GRAVE_ACCENT &&
                 (ev.modifiers & (GLFW_MOD_CONTROL | GLFW_MOD_ALT | GLFW_MOD_SUPER)) == 0) {
@@ -547,7 +556,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
             if (auto* focus = registry.keyboard_focus()) {
-                if (!edit_event(L, focus, ev)) {
+                if (!edit_event(L, registry, focus, ev)) {
                     fire_handle_event(L, focus, ev);
                 }
             } else if (auto* capture = registry.input_capture()) fire_handle_event(L, capture, ev);
