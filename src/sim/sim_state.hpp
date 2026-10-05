@@ -414,6 +414,12 @@ public:
     /// Whether a live unit still has the command in its queue (IsCommandDone
     /// is its negation: a command is done once no unit holds it).
     bool command_queued(u32 command_id) const;
+    struct QueueWithPending {
+        std::vector<UnitCommand> orders;
+        size_t kept_from_queue = 0;
+    };
+    /// Moho's UserCommandQueue with its pending edits applied
+    std::map<u32, QueueWithPending> queues_with_pending() const;
     /// A player's order for the units they selected, as Moho's UI issues it
     /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
     /// units among them (factories) as a factory command -- their rally

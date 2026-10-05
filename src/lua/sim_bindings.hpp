@@ -37,7 +37,7 @@ void register_category_bindings(LuaState& state);
 void push_vector_metatable(lua_State* L);
 
 /// Whether army `army` may build structure `bp_id` centred at (x, z), by
-/// StructurePlacement
+/// StructurePlacement with the orders not yet run
 bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
                          f32 x, f32 z);
 

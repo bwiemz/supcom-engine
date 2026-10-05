@@ -592,3 +592,43 @@ TEST_CASE("A light reaches the renderer where its entity was and with its partic
     CHECK(intel.type == osc::sim::EffectType::LIGHT_PARTICLE_INTEL);
     CHECK(intel.glow_texture == "/textures/particles/beam_white_01.dds");
 }
+
+TEST_CASE("An order given and not yet run is in its unit's orders before its tick",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20, 0, 10};
+    unit(sim, id).push_command(move, true);
+    WorldHistory history;
+    history.capture(sim);
+    const auto orders = [&] {
+        history.refresh_pending(sim);
+        std::vector<osc::f32> xs;
+        for (const auto& c : history.cur().orders_of(*history.cur().find(id))) {
+            xs.push_back(c.target_pos.x);
+        }
+        return xs;
+    };
+
+    move.target_pos = {30, 0, 10};
+    sim.schedule_command(0, {id}, move, false);
+    CHECK(orders() == std::vector<osc::f32>{20, 30});
+    CHECK(history.cur().commands_of(*history.cur().find(id)).size() == 1);
+
+    move.target_pos = {40, 0, 10};
+    sim.schedule_command(0, {id}, move, true);
+    CHECK(orders() == std::vector<osc::f32>{40});
+
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    sim.schedule_command(0, {id}, stop, true);
+    CHECK(orders().empty());
+    CHECK(unit(sim, id).command_queue().size() == 1);
+
+    sim.set_playback(true);
+    sim.schedule_command(0, {id}, move, false);
+    CHECK(orders() == std::vector<osc::f32>{20});
+}

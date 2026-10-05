@@ -128,6 +128,8 @@ public:
         return by_tick_.empty() ? 0u : by_tick_.begin()->first;
     }
 
+    u64 submitted() const { return next_sequence_; }
+
     size_t pending_count() const {
         size_t n = 0;
         for (const auto& [tick, cmds] : by_tick_) n += cmds.size();

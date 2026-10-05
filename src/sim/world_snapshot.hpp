@@ -29,6 +29,12 @@ struct CommandRecord {
     u32 target_id = 0;
     Vector3 target_pos;
     std::string blueprint_id; ///< what a build order builds
+    bool pending = false;
+};
+
+struct PendingQueue {
+    u32 id = 0;
+    u32 offset = 0, count = 0; ///< into WorldSnapshot::pending_commands
 };
 
 /// An intel range a unit has on (the renderer rings it when selected).
@@ -243,6 +249,9 @@ struct WorldSnapshot {
     SightMap sight;        ///< the sight army's (WorldHistory::set_sight_army)
     i32 player_result = 0; ///< SimState::player_result()
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
+    std::vector<CommandRecord> pending_commands;
+    std::vector<PendingQueue> pending_queues; ///< ascending id
+    u64 pending_serial = 0;
 
     const EntityRecord* find(u32 id) const;
     const ArmyRecord* army(i32 index) const {
@@ -259,6 +268,8 @@ struct WorldSnapshot {
     std::span<const CommandRecord> commands_of(const EntityRecord& e) const {
         return {commands.data() + e.command_offset, e.command_count};
     }
+    /// Moho's UserUnit:GetCommandQueue: the queue with the orders not yet run
+    std::span<const CommandRecord> orders_of(const EntityRecord& e) const;
     std::span<const IntelRecord> intel_of(const EntityRecord& e) const {
         return {intel.data() + e.intel_offset, e.intel_count};
     }
@@ -273,6 +284,8 @@ struct WorldSnapshot {
 /// left out. Ids are sequential and never reused within a session, so two
 /// snapshots can be matched by id.
 void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army = -1);
+
+void capture_pending(const SimState& sim, WorldSnapshot& out);
 
 /// The blueprints of everything in the world (meshes to preload).
 std::vector<std::string> world_blueprints(const SimState& sim);
@@ -328,6 +341,7 @@ public:
     /// the sim, a new army's sight is taken into the newest capture at once,
     /// not at the next tick.
     void set_sight_army(i32 army, const SimState* sim = nullptr);
+    void refresh_pending(const SimState& sim);
     i32 sight_army() const { return sight_army_; }
     /// Forget everything (a new session).
     void clear();

@@ -1198,10 +1198,11 @@ const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& si
     return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, bp_id); });
 }
 
-static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim,
-                                             i32 army) {
+static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim, i32 army,
+                                             bool scheduled = false) {
     return sim::StructurePlacement(
-        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); });
+        sim, army, [L, &sim](const std::string& bp_id) { return structure_rules(L, sim, bp_id); },
+        scheduled);
 }
 
 // Builder types whose FindPlaceToBuild answer is a deposit, not a template
@@ -1994,7 +1995,7 @@ static void create_brain_unit(lua_State* L, const sim::ArmyBrain& brain, const s
 
 bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
                          f32 x, f32 z) {
-    return placement_for(L, sim, army).can_build(bp_id, x, z);
+    return placement_for(L, sim, army, true).can_build(bp_id, x, z);
 }
 
 // brain:CreateResourceBuildingNearest(bp, x, z) -> unit or nil: the

@@ -204,6 +204,30 @@ TEST_CASE("A drawn game's UI reads the renderer's capture of the tick", "[userun
     osc::lua::set_ui_world_source(w.ui.raw(), nullptr);
 }
 
+TEST_CASE("GetCommandQueue holds the orders given and not yet run", "[userunit]") {
+    UiWorld w;
+    lua_State* L = w.ui.raw();
+    const auto queued = [&] {
+        REQUIRE(w.ui.do_string("return table.getn(units[1]:GetCommandQueue())").ok());
+        const double n = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return n;
+    };
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    CHECK(queued() == 0.0);
+    w.sim.schedule_command(0, {w.id}, move, true);
+    CHECK(queued() == 1.0);
+
+    osc::sim::WorldHistory history;
+    history.capture(w.sim);
+    osc::lua::set_ui_world_source(L, &history);
+    w.sim.schedule_command(0, {w.id}, move, false);
+    CHECK(queued() == 2.0);
+    CHECK(w.unit().command_queue().empty());
+    osc::lua::set_ui_world_source(L, nullptr);
+}
+
 TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     UiWorld w;
     auto& u = w.unit();
