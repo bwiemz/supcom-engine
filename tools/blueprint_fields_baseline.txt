@@ -36,7 +36,6 @@ GuardScanRadius
 HideLifebars
 HoverOverAttack
 IgnoreIfDisabled
-InitialAutoMode
 KLift
 KLiftDamping
 KMove
@@ -81,8 +80,6 @@ RebuildBonusIds
 RepairRate
 RotateBodyWhileMoving
 RotationalVelocity
-SacrificeEnergyMult
-SacrificeMassMult
 Scrolling
 SelectionCenterOffsetY
 SelectionMeshScaleX

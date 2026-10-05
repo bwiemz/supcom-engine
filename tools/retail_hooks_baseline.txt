@@ -8,8 +8,6 @@ method OnAttachedKilled
 method OnBeingBuiltProgress
 method OnBuildProgress
 method OnCollision
-method OnConsumptionActive
-method OnConsumptionInActive
 method OnDamageBy
 method OnDecayed
 method OnDoubleClick
@@ -21,8 +19,6 @@ method OnNukeArmed
 method OnPlayBusyStagingPlatformsVO
 method OnPlayNoStagingPlatformsVO
 method OnPostLoad
-method OnProductionActive
-method OnProductionInActive
 method OnSpecialAction
 method OnStart
 method OnStartBuilderTracking

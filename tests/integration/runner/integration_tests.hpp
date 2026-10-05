@@ -185,6 +185,7 @@ void test_right_click(TestContext& ctx);
 void test_carrier_land(TestContext& ctx);
 void test_change_army(TestContext& ctx);
 void test_unit_cap(TestContext& ctx);
+void test_unit_hooks(TestContext& ctx);
 void test_air_turn(TestContext& ctx);
 void test_air_staging(TestContext& ctx);
 void test_factory_assist(TestContext& ctx);

@@ -9177,8 +9177,12 @@ void test_missile(TestContext& ctx) {
     };
 
     lua_check("setup", R"(
+        -- A unit starts in its blueprint's InitialAutoMode (the launchers'
+        -- is on); this test orders its builds, so auto mode starts off.
         function __osc_spawn(bp, army, x, z)
-            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            local u = CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            if u then u:SetAutoMode(false) end
+            return u
         end
         function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
         for _, army in {'ARMY_1', 'ARMY_3'} do

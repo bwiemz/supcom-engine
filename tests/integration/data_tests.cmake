@@ -54,7 +54,7 @@ set(OSC_DATA_TESTS_GATE
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
     tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
-    uiboot-test uirender-test unit-cap-test unit-intel-test unitsound-test upgrade-test vet-adj-render-test
+    uiboot-test uirender-test unit-cap-test unit-hooks-test unit-intel-test unitsound-test upgrade-test vet-adj-render-test
     vet-test vfx-render-test victory-test water-reflection-test water-render-test weapon-test wreck-test
 )
 

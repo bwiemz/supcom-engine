@@ -1852,6 +1852,68 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     return OrderStep::Hold;
 }
 
+namespace {
+
+/// What a script set on unit `u`'s table as `key` (a number), or 0.
+f32 unit_lua_number(lua_State* L, const Unit& u, const char* key) {
+    if (!L || u.lua_table_ref() < 0) return 0.0f;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, u.lua_table_ref());
+    lua_pushstring(L, key);
+    lua_gettable(L, -2);
+    const f32 v = lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+    lua_pop(L, 2);
+    return v;
+}
+
+/// Moho's CostFraction: what share of `cost` a donation of `value` pays; a
+/// half when the cost is unknown (the binary's fixed step).
+f32 cost_fraction(f32 value, f32 cost) {
+    return cost > 0.0f ? value / cost : 0.5f;
+}
+
+} // namespace
+
+void Unit::donate_sacrifice(Unit& target, lua_State* L) {
+    // Moho's CUnitSacrificeTask: this unit's own build cost times its
+    // blueprint's SacrificeMassMult and SacrificeEnergyMult (both 0 by
+    // default), and whichever resource buys less decides the step.
+    const f32 mass = blueprint_economy_number(L, blueprint_id(), "BuildCostMass", 0.0f) *
+                     blueprint_economy_number(L, blueprint_id(), "SacrificeMassMult", 0.0f);
+    const f32 energy = blueprint_economy_number(L, blueprint_id(), "BuildCostEnergy", 0.0f) *
+                       blueprint_economy_number(L, blueprint_id(), "SacrificeEnergyMult", 0.0f);
+    if (target.is_enhancing()) {
+        // An enhancing unit banks it in its script's work item.
+        const f32 step =
+            std::min(cost_fraction(mass, unit_lua_number(L, target, "WorkItemBuildCostMass")),
+                     cost_fraction(energy, unit_lua_number(L, target, "WorkItemBuildCostEnergy")));
+        target.set_work_progress(std::min(1.0f, target.work_progress() + step));
+        if (L && target.lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
+            lua_pushstring(L, "WorkProgress");
+            lua_pushnumber(L, target.work_progress());
+            lua_rawset(L, -3);
+            lua_pop(L, 1);
+        }
+        return;
+    }
+    // Anything else takes it as Unit::Materialize does: construction (never
+    // less complete than its health says) and the health with it, so a
+    // finished unit is mended.
+    const f32 step = std::min(
+        cost_fraction(mass,
+                      blueprint_economy_number(L, target.blueprint_id(), "BuildCostMass", 0.0f)),
+        cost_fraction(energy,
+                      blueprint_economy_number(L, target.blueprint_id(), "BuildCostEnergy", 0.0f)));
+    if (step == 0.0f) return;
+    if (target.is_being_built()) {
+        const f32 health_ratio =
+            target.max_health() > 0.0f ? target.health() / target.max_health() : 0.0f;
+        const f32 progressed = std::clamp(target.fraction_complete() + step, 0.0f, 1.0f);
+        target.set_fraction_complete(std::max(health_ratio, progressed));
+    }
+    target.set_health(std::min(target.max_health(), target.health() + target.max_health() * step));
+}
+
 OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
@@ -1886,15 +1948,7 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Hold;
     }
     navigator_.abort_move();
-    // Transfer build progress: sacrifice unit's mass value → target build
-    if (target_unit->is_being_built()) {
-        f32 mass_value = static_cast<f32>(build_cost_mass_);
-        f32 progress_add = mass_value / static_cast<f32>(target_unit->build_cost_mass() > 0
-                                                             ? target_unit->build_cost_mass()
-                                                             : 1.0);
-        f32 new_progress = std::min(1.0f, target_unit->work_progress() + progress_add);
-        target_unit->set_work_progress(new_progress);
-    }
+    donate_sacrifice(*target_unit, L);
     // Fire OnStopSacrifice then kill self
     call_lua_method_with_entity(L, "OnStopSacrifice", target);
     set_unit_state("Sacrificing", false);

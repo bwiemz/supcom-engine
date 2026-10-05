@@ -57,6 +57,10 @@ struct UnitEconomy {
     f64 consumption_energy = 0.0;
     bool production_active = false;
     bool consumption_active = false;
+    /// The consumption flag as the unit's script last set it (Moho's
+    /// ConsumptionActive): its OnConsumptionActive/InActive fire on a change
+    /// of this, not of the drain the engine switches while building.
+    bool script_consumption_active = false;
     bool maintenance_active = false;
     f64 energy_maintenance_override = -1.0; // negative = not set
     f64 storage_mass = 0.0;
@@ -1024,6 +1028,8 @@ private:
     /// A finished factory build order's end: to the back of a repeating
     /// queue, else out of it.
     OrderStep end_factory_build_order(UnitCommand& cmd);
+    /// A sacrifice's donation to `target` (Moho's CUnitSacrificeTask).
+    void donate_sacrifice(Unit& target, lua_State* L);
     /// Whether a factory whose unit is built still holds for the roll-off,
     /// counting `wait` down (see the definition).
     bool holds_for_rolloff(i32& wait) const;
