@@ -97,6 +97,10 @@ struct UnitCommand {
     /// from where it arrives or gives up (build, repair, reclaim, capture;
     /// see sim/work_range.hpp); runtime state.
     bool approached = false;
+    /// A winged aircraft's attack: it has come within a weapon's reach or
+    /// its EngageDistance, and flies its runs now (runtime state; Moho's
+    /// desired target, set until the order ends).
+    bool engaged = false;
     /// A build's site skirt, looked up once from its blueprint (runtime
     /// state; 0 until then).
     f32 site_skirt_x = 0;

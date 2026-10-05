@@ -90,6 +90,41 @@ struct StagingRules {
     f32 scan_radius = 300.0f;  ///< AI.StagingPlatformScanRadius: how far patrols look
 };
 
+/// A winged aircraft's attack runs, from its blueprint's Air table and
+/// Physics.AttackElevation, with Moho's defaults (faf-re RUnitBlueprint.cpp;
+/// docs/plans/2026-10-05-air-attack-runs-design.md).
+struct AirCombatRules {
+    bool winged = false;
+    f32 min_airspeed = 0.0f;      ///< 0: MaxAirspeed
+    f32 combat_turn_speed = 1.0f; ///< rad/s, in a combat turn
+    f32 tight_turn_multiplier = 1.0f;
+    f32 sustained_turn_threshold = 10.0f; ///< seconds of turning that force a break-off
+    f32 engage_distance = 0.0f;
+    f32 break_off_trigger = 0.0f;
+    f32 break_off_distance = 0.0f;
+    bool break_off_if_near_new_target = false;
+    f32 random_break_off_distance_mult = 1.5f;
+    f32 random_min_change_combat_state_time = 3.0f; ///< seconds
+    f32 random_max_change_combat_state_time = 6.0f; ///< seconds
+    f32 predict_ahead_for_bomb_drop = 0.0f;         ///< seconds
+    f32 attack_elevation = 0.0f;                    ///< 0: Physics.Elevation
+    f32 k_turn = 3.0f;
+    f32 k_turn_damping = 3.0f;
+    f32 k_move = 1.0f;
+    f32 k_move_damping = 1.0f;
+};
+
+/// Its attack run under way: Moho's CUnitMotion combat state, and the
+/// combat flight's yaw rate and velocity (the airframe's lag).
+struct AirCombatState {
+    u8 state = 0;         ///< EAirCombatState: 0 None .. 7 ReturnToMap
+    u32 timeout_tick = 0; ///< until when a turn or break-off holds
+    i32 sustained_turn_ticks = 0;
+    f32 yaw_rate = 0.0f; ///< rad/s
+    Vector3 velocity{};  ///< per second, horizontal
+    bool flying = false; ///< the combat flight has the airframe
+};
+
 /// A blueprint's Economy.BuildTime, BuildCostMass and BuildCostEnergy (0
 /// where missing): what building it, or repairing it, costs.
 struct BuildEconomy {
@@ -744,6 +779,10 @@ public:
     bool air_class() const { return air_class_; }
     /// A staging platform's refuelling and repair (M206r).
     void set_staging_rules(const StagingRules& rules) { staging_rules_ = rules; }
+    const AirCombatRules& air_combat_rules() const { return air_combat_rules_; }
+    void set_air_combat_rules(const AirCombatRules& rules) { air_combat_rules_ = rules; }
+    AirCombatState& air_combat() { return air_combat_; }
+    const AirCombatState& air_combat() const { return air_combat_; }
     const StagingRules& staging_rules() const { return staging_rules_; }
     /// Transport.DockingSlots: how many aircraft the UI's Dock sends to it.
     void set_docking_slots(i32 n) { docking_slots_ = n; }
@@ -1400,6 +1439,8 @@ private:
     bool air_class_ = false;     // Transport.AirClass
     i32 docking_slots_ = 0;      // Transport.DockingSlots
     StagingRules staging_rules_; // a staging platform's service
+    AirCombatRules air_combat_rules_; // a winged aircraft's attack runs
+    AirCombatState air_combat_;       // its attack run under way
     // Air movement state
     f32 heading_ = 0;            // yaw in radians
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)

@@ -97,6 +97,9 @@ public:
     struct BlueprintPhysics {
         std::optional<bool> use_gravity; ///< Moho's default is to fall
         std::optional<f32> lifetime;
+        /// Physics.RealisticOrdinance: a bomb, which leaves with its
+        /// launcher's speed, aimed at the target (Moho's Projectile).
+        bool realistic_ordinance = false;
     };
     /// Take its blueprint's Physics: speed, acceleration, tracking, where it
     /// ends of itself, what it collides with.

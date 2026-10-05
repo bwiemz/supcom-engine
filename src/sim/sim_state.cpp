@@ -2849,6 +2849,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         // An assist build's roll-off, only while under way.
         if (u.assist_rolloff_wait() != 0)
             units.mix(0x524f4c4c00000000ull | static_cast<u32>(u.assist_rolloff_wait())); // "ROLL"
+        // A winged aircraft's attack run, only while under way.
+        if (const AirCombatState& ac = u.air_combat(); ac.flying || ac.state != 0) {
+            units.mix(0x4149524300000000ull | ac.state); // "AIRC"
+            units.mix(ac.timeout_tick);
+            units.mix(static_cast<u64>(static_cast<u32>(ac.sustained_turn_ticks)));
+            units.mix_f32(ac.yaw_rate);
+        }
         // What a carrier keeps inside (M206q), only when it keeps something.
         if (!u.stored_ids().empty()) {
             units.mix(0x53544f5200000000ull | u.stored_ids().size()); // "STOR"
