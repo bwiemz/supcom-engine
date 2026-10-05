@@ -268,10 +268,11 @@ public:
     /// Accumulate camera shake intensity (called from renderer per frame).
     void apply_shake(f32 intensity);
 
-private:
-    void decay_shake();
     /// The unit view direction, from the eye toward the focus.
     std::array<f32, 3> direction() const;
+
+private:
+    void decay_shake();
     f64 now() const { return game_clock_ ? game_time_ : system_time_; }
     void timed_move_init(f32 seconds, f32 transition);
     void setup_hermite();
@@ -387,14 +388,6 @@ std::array<f32, 16> ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near, f3
 /// Multiply two 4x4 column-major matrices: result = a * b.
 std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,
                              const std::array<f32, 16>& b);
-
-/// The shadow map's view-projection: looking down `sun_direction` (toward
-/// the sun, any length) at the ground point (target_x, target_y, target_z), an
-/// orthographic box `half` wide each way. Up is +Y, or +Z for a sun
-/// (nearly) overhead, where +Y is the view direction itself and the view
-/// would collapse to a point.
-std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_y,
-                                    f32 target_z, f32 half);
 
 } // namespace math
 

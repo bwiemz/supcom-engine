@@ -14104,12 +14104,12 @@ void test_shadow(TestContext& ctx) {
 
     int pass = 0, fail = 0;
 
-    // Test 1: Shadow map size constant. The PCF shaders in shader_utils.cpp
-    // hardcode the texel size (1.0 / 4096.0), so the two must change together.
+    // Test 1: Moho's shadow map is ren_ShadowSize, 1024 (M210c); the shaders
+    // read its size from the light UBO.
     {
-        if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 4096) {
+        if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 1024) {
             pass++;
-            spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 4096");
+            spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 1024");
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 1: SHADOW_MAP_SIZE == {}",

@@ -35,7 +35,9 @@ namespace osc::test {
 
 namespace {
 
-constexpr u32 kSize = 64;
+// Flat ground under every plate: Moho's light camera fits the terrain in
+// view, and casts nothing where there is none (M210c).
+constexpr u32 kSize = 512;
 constexpr const char* kRoot = "/osc_clipped_shadow_test";
 constexpr f32 kLift = 2.5f;
 

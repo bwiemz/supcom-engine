@@ -759,7 +759,20 @@ void test_material(TestContext& ctx) {
     // bad artifacts"). A small blue plate hovers 2.5 over a wreck, and over a
     // unit, under a sun overhead (and no fill): the camera sees under its near
     // edge, into the shadow it casts. The unit's plate is dark there; the
-    // wreck's isn't.
+    // wreck's isn't. On the test's ground, where Moho's light camera looks
+    // (it fits the terrain in view, M210c), and counted against shadow
+    // fidelity 1, where only the terrain takes shadows; Test 19 shades the
+    // same plates, and they go after it.
+    constexpr f32 kWreckX = 52.0f;
+    constexpr f32 kWreckZ = 28.0f;
+    constexpr f32 kUnitX = 18.0f;
+    constexpr f32 kUnitZ = 26.0f;
+    const auto keep = [&] {
+        const auto kept = ctx.lua_state.do_string(
+            "if rawget(_G, '__osc_t16') == nil then rawset(_G, '__osc_t16', {}) end\n"
+            "table.insert(__osc_t16, __osc_last_plate)\n");
+        if (!kept) spdlog::warn("keeping a plate: {}", kept.error().message);
+    };
     {
         Plate hover;
         hover.mesh = "plate_small.scm";
@@ -767,10 +780,15 @@ void test_material(TestContext& ctx) {
         Plate wreck;
         wreck.shader = "Wreckage";
         wreck.specteam = "crunch_low.dds";
-        make_plate("ueb3104", wreck, 100.0f, 130.0f);
-        make_plate("ueb4201", hover, 100.0f, 130.0f, false, 2.5f);
-        make_plate("ueb1104", Plate{}, 140.0f, 130.0f);
-        make_plate("ueb2303", hover, 140.0f, 130.0f, false, 2.5f);
+        make_plate("ueb3104", wreck, kWreckX, kWreckZ);
+        keep();
+        make_plate("ueb4201", hover, kWreckX, kWreckZ, false, 2.5f);
+        keep();
+        // (ueb1302: ueb1104's script leaves its plate unseen on the ground)
+        make_plate("ueb1302", Plate{}, kUnitX, kUnitZ);
+        keep();
+        make_plate("ueb2303", hover, kUnitX, kUnitZ, false, 2.5f);
+        keep();
         map::ScmapLighting sun = white_fill();
         for (f32& c : sun.shadow_fill) c = 0.0f;
         for (f32& c : sun.sun_color) c = 1.0f;
@@ -781,28 +799,39 @@ void test_material(TestContext& ctx) {
             size_t dark = 0; // the plate beneath, in shadow
             size_t blue = 0; // the plate hovering
         };
-        const auto look = [&](f32 x) {
+        renderer::Renderer::VideoOptions& options = shots.renderer().video_options();
+        const renderer::Renderer::VideoOptions options_were = options;
+        const auto look = [&](f32 x, f32 z, int shadows) {
+            options.shadow_fidelity = shadows;
             map::ScmapEnvironment env;
             env.terrain_shader = "TTerrain";
             env.cubemaps.emplace_back("<default>", kBlack);
             ground.set_lighting(sun, std::move(env));
             shots.recapture();
             Seen seen;
-            for (const auto& px : shots.shoot(ground, x, 130.0f, 30.0f)) {
+            for (const auto& px : shots.shoot(ground, x, z, 30.0f)) {
                 if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++seen.dark;
                 if (px[2] > 0.5f && px[0] < 0.1f && px[1] < 0.1f) ++seen.blue;
             }
             return seen;
         };
         camera.set_pitch(1.1f);
-        const Seen wreck_seen = look(100.0f);
-        const Seen unit_seen = look(140.0f);
+        const Seen wreck_seen = look(kWreckX, kWreckZ, 3);
+        const Seen unit_seen = look(kUnitX, kUnitZ, 3);
+        const Seen wreck_ground = look(kWreckX, kWreckZ, 1);
+        const Seen unit_ground = look(kUnitX, kUnitZ, 1);
+        options = options_were;
         camera.set_pitch(default_pitch);
-        t.check(wreck_seen.blue > 1000 && unit_seen.blue > 1000 && unit_seen.dark > 500 &&
-                    wreck_seen.dark < 50,
+        const auto more = [](size_t a, size_t b) {
+            return static_cast<long>(a) - static_cast<long>(b);
+        };
+        const long unit_dark = more(unit_seen.dark, unit_ground.dark);
+        const long wreck_dark = more(wreck_seen.dark, wreck_ground.dark);
+        t.check(wreck_seen.blue > 1000 && unit_seen.blue > 1000 && unit_dark > 500 &&
+                    wreck_dark < 50,
                 fmt::format("Test 16: under a hovering plate ({} and {} pixels), a unit's plate "
-                            "is dark on {} pixels, a wreck's on {}",
-                            unit_seen.blue, wreck_seen.blue, unit_seen.dark, wreck_seen.dark));
+                            "is dark on {} more pixels than at shadow fidelity 1, a wreck's on {}",
+                            unit_seen.blue, wreck_seen.blue, unit_dark, wreck_dark));
     }
 
     // The lanes by graphics and shadow fidelity (M211m)
@@ -894,7 +923,7 @@ void test_material(TestContext& ctx) {
             ground.set_lighting(sun, std::move(env));
             shots.recapture();
             size_t dark = 0;
-            for (const auto& px : shots.shoot(ground, 140.0f, 130.0f, 30.0f))
+            for (const auto& px : shots.shoot(ground, kUnitX, kUnitZ, 30.0f))
                 if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++dark;
             return dark;
         };
@@ -905,10 +934,19 @@ void test_material(TestContext& ctx) {
         const size_t low3 = dark_under(0, 3);
         camera.set_pitch(default_pitch);
         video = as_was;
-        t.check(high3 > 500 && medium2 > 500 && high1 < 50 && low3 < 50,
+        // (The terrain takes the hover's shadow at every level: what the
+        // plate adds is over shadow fidelity 1's.)
+        t.check(high3 > high1 + 500 && medium2 > high1 + 500 && low3 < high1 + 50,
                 fmt::format("Test 19: the plate beneath is dark on {} pixels at High and shadow "
                             "fidelity 3, {} at Medium and 2, {} at shadow fidelity 1, {} at Low",
                             high3, medium2, high1, low3));
+    }
+    {
+        const auto gone =
+            ctx.lua_state.do_string("for _, u in rawget(_G, '__osc_t16') or {} do u:Destroy() end\n"
+                                    "rawset(_G, '__osc_t16', nil)\n");
+        if (!gone) spdlog::warn("clearing Test 16's plates: {}", gone.error().message);
+        ctx.sim.tick();
     }
 
     // Test 20: the Low lane lights by the vertex's normal normalised, as

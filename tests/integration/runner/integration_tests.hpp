@@ -109,6 +109,8 @@ void test_skinning(TestContext& ctx);
 void test_prop_materials(TestContext& ctx);
 /// --clipped-shadow-test (M211j), in clipped_shadow_test.cpp.
 void test_clipped_shadows(TestContext& ctx);
+/// --shadow-map-test (M210c), in shadow_map_test.cpp.
+void test_shadow_map(TestContext& ctx);
 /// --unit-intel-test (M215a) and --effect-intel-test (M215b), in
 /// unit_intel_test.cpp.
 void test_unit_intel(TestContext& ctx);

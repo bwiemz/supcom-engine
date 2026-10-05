@@ -43,7 +43,7 @@ set(OSC_DATA_TESTS_GATE
     full-smoke-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-blip-test jammer-test keyboard-test keymap-test
-    layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test lowstub-test manip-test massstub-test massstub2-test missile-test
+    layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test normal-test
     onframe-test particle-render-test path-test phase2-test phase3-test phase4-test phase5-test
     persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test
