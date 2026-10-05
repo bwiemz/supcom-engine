@@ -17,6 +17,10 @@
 #include <utility>
 #include <vector>
 
+namespace osc::map {
+class Terrain;
+}
+
 namespace osc::sim {
 
 class SimState;
@@ -35,8 +39,34 @@ struct PlacementRules {
     bool on_land = true;   ///< Physics.BuildOnLayerCaps
     bool on_water = false;
     bool on_seabed = false; ///< it sits on the ground under water (an extractor)
+    bool on_sub = false;    ///< it floats under the surface (the Cybran HARMS)
     enum class Deposit : u8 { None, Mass, Hydrocarbon } deposit = Deposit::None;
+    /// Physics.FlattenSkirt: the ground under the skirt is levelled, so only
+    /// its edge must lie near the level it is cut to.
+    bool flatten_skirt = false;
+    /// Physics.MaxGroundVariation: how far the ground may rise or fall
+    /// across the skirt (Moho's default).
+    f32 max_ground_variation = 1.0f;
+    /// Footprint.MinWaterDepth: water this deep over the skirt, at least,
+    /// for a structure afloat, under the surface or on the seabed.
+    f32 min_water_depth = 0.0f;
 };
+
+/// The layers a structure is placed on (Moho's ELayer bits).
+namespace placement_layer {
+inline constexpr u8 Land = 1;
+inline constexpr u8 Seabed = 2;
+inline constexpr u8 Sub = 4;
+inline constexpr u8 Water = 8;
+} // namespace placement_layer
+
+/// Moho's OCCUPY_Check for a structure centred at (x, z): the layers of its
+/// BuildOnLayerCaps it may stand on there (placement_layer bits), 0 for
+/// none. Its skirt must lie on the map and be flat enough (across it, or,
+/// for a FlattenSkirt structure, along its edge, against the level the
+/// ground is cut to); land needs it all above the water, and water, sub and
+/// seabed need the water MinWaterDepth deep over its highest point.
+u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f32 z);
 
 /// Where Moho's build mode puts an extractor's cursor (x, z): the centre of
 /// the nearest deposit of its kind within `radius` cells of the cursor's
@@ -103,7 +133,8 @@ public:
     const PlacementRules& rules(const std::string& bp_id) const;
 
 private:
-    bool terrain_allows(const PlacementRules& r, const StructureSite& site) const;
+    /// `layers`: the placement_layer bits occupy_layers allows there.
+    bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool structure_overlaps(const StructureSite& site) const;
     bool on_deposit(const PlacementRules& r, f32 x, f32 z) const;
 

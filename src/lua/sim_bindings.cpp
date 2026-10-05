@@ -1064,6 +1064,16 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             }
             lua_pop(L, 2);
         }
+        // A structure that can stand only under the surface (the Cybran
+        // HARMS: BuildOnLayerCaps Sub alone) is on the Sub layer, as Moho
+        // gives it the layer its placement allows.
+        if (!unit->is_mobile()) {
+            if (auto* sim = get_sim(L)) {
+                const sim::PlacementRules& rules = structure_rules(L, *sim, unit->unit_id());
+                if (rules.on_sub && !rules.on_land && !rules.on_water && !rules.on_seabed)
+                    unit->set_layer("Sub");
+            }
+        }
 
         // Read Physics.Elevation for naval units (negative = draft below water surface)
         if (unit->is_naval()) {
