@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
@@ -961,6 +962,29 @@ TEST_CASE("An Edit's text is edited by character, at its caret", "[ui][edit]") {
     CHECK(t.text == "xa");
     t.end();
     CHECK(t.caret == 2);
+}
+
+TEST_CASE("An Edit's caret fades from alpha 62 up to 255 and back every 1.5 s as Moho's does",
+          "[ui][lua][edit]") {
+    InputFixture f;
+    f.run("e = setmetatable({}, { __index = moho.edit_methods })"
+          " InternalCreateEdit(e, GetFrame(0))");
+    auto* edit = control_of(f.lua.raw(), "e");
+    REQUIRE(edit);
+    const auto alpha_after = [&](double dt) {
+        f.dispatch.update_controls(f.lua.raw(), f.registry, dt);
+        return edit->caret_alpha() * 255.0f;
+    };
+    using Catch::Matchers::WithinAbs;
+    CHECK_THAT(edit->caret_alpha() * 255.0f, WithinAbs(62.0, 1e-3));
+    CHECK_THAT(alpha_after(0.375), WithinAbs(158.5, 1e-3));
+    CHECK_THAT(alpha_after(0.375), WithinAbs(255.0, 1e-3));
+    CHECK_THAT(alpha_after(0.375), WithinAbs(158.5, 1e-3));
+    CHECK_THAT(alpha_after(0.25), WithinAbs(94.167, 1e-2));
+    CHECK_THAT(alpha_after(0.25), WithinAbs(62.0, 1e-3));
+
+    f.run("e:SetCaretCycle(1, '00000000', 'ffffff80')");
+    CHECK_THAT(alpha_after(0.5), WithinAbs(128.0, 1e-3));
 }
 
 TEST_CASE("A focused Edit takes typed text and calls its On* methods, as Moho's does",

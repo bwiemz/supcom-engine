@@ -16272,11 +16272,10 @@ void test_edit(TestContext& ctx) {
 
     // Test 24: Edit SetCaretCycle
     {
-        auto result = ctx.lua_state.do_string(
-            std::string(mk_edit) +
-            "e:SetCaretCycle(0.5, 0.1, 0.9)\n"
-            "e:SetDropShadow(true)\n"
-            "return true\n");
+        auto result = ctx.lua_state.do_string(std::string(mk_edit) +
+                                              "e:SetCaretCycle(0.5, '0000001a', '000000e6')\n"
+                                              "e:SetDropShadow(true)\n"
+                                              "return true\n");
         bool ok = false;
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 24 Lua error: {}", result.error().message);

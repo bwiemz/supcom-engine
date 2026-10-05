@@ -794,6 +794,9 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
             lua_pop(L, 1);
         }
         lua_pop(L, 1); // control table
+        if (!ctrl->destroyed() && ctrl->control_type() == UIControl::ControlType::Edit) {
+            ctrl->advance_caret_cycle(static_cast<f32>(dt));
+        }
     }
 }
 
