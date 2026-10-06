@@ -133,6 +133,20 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
     return shooters.size() < cap;
 }
 
+/// The entities within `reach` of (x, z) a weapon may pick from, in id
+/// order. One that shoots units takes the grid of units alone, which a
+/// map's props and the projectiles in flight aren't in; one that shoots
+/// projectiles takes every entity (can_pick keeps the projectiles).
+std::vector<u32> target_candidates(const EntityRegistry& registry, bool projectiles, f32 x, f32 z,
+                                   f32 reach) {
+    if (projectiles) return registry.collect_in_radius(x, z, reach);
+    const std::vector<Entity*> units = registry.units_in_radius(x, z, reach);
+    std::vector<u32> ids;
+    ids.reserve(units.size());
+    for (const Entity* unit : units) ids.push_back(unit->entity_id());
+    return ids;
+}
+
 /// The unit an attack order at the head of the queue names, or 0.
 u32 attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
@@ -441,7 +455,8 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     int best_priority = 0;
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
-    for (const u32 id : registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
+    for (const u32 id : target_candidates(registry, targets_projectiles, owner.position().x,
+                                          owner.position().z, reach)) {
         Entity* e = registry.find(id);
         if (!e || !can_target(owner, *e, sim)) continue;
         // A missile already held by as many weapons as it wants shooting at
