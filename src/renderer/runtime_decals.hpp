@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "map/terrain.hpp"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -40,6 +41,15 @@ public:
         u32 remove_tick = 0; ///< fades once the tick passes it; 0: never
         bool live = true;    ///< still in the sim and seen (not removed)
         u32 fidelity = 1;    ///< its fidelity: 0 draws at graphics fidelity 0 too (M212h)
+        /// A splat's corners on the terrain (CWldSplat::UpdateVertices) and
+        /// its bounds, worked out the first frame it is drawn: it never
+        /// moves, nor does the terrain under it (FlattenMapRect is a no-op;
+        /// one that changed the terrain would have to clear them).
+        mutable bool placed = false;
+        mutable std::array<std::array<f32, 3>, 4> corners{};
+        mutable f32 mid_x = 0.0f;
+        mutable f32 mid_z = 0.0f;
+        mutable f32 radius = 0.0f;
     };
 
     /// A splat's fade a beat, and a decal's (CDecalManager::ProcessRemovals).

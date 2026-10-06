@@ -224,17 +224,20 @@ void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
     u32 written = 0;
     for (const RuntimeDecals::Decal& s : decals_.splats()) {
         if (graphics_fidelity == 0 && s.fidelity > 0) continue; // Low draws fidelity 0 alone
-        // CWldSplat::UpdateVertices: its corners on the terrain.
+        // CWldSplat::UpdateVertices: its corners on the terrain, once.
         constexpr std::array<std::array<f32, 2>, 4> kLocal = {{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
-        std::array<std::array<f32, 3>, 4> corners{};
-        for (size_t c = 0; c < 4; ++c) {
-            const auto xz = decal_corner(s.info, kLocal[c][0], kLocal[c][1]);
-            corners[c] = {xz[0], terrain.get_terrain_height(xz[0], xz[1]), xz[1]};
+        if (!s.placed) {
+            for (size_t c = 0; c < 4; ++c) {
+                const auto xz = decal_corner(s.info, kLocal[c][0], kLocal[c][1]);
+                s.corners[c] = {xz[0], terrain.get_terrain_height(xz[0], xz[1]), xz[1]};
+            }
+            s.mid_x = (s.corners[0][0] + s.corners[2][0]) * 0.5f;
+            s.mid_z = (s.corners[0][2] + s.corners[2][2]) * 0.5f;
+            s.radius = 0.5f * std::hypot(s.info.scale_x, s.info.scale_z);
+            s.placed = true;
         }
-        const f32 mid_x = (corners[0][0] + corners[2][0]) * 0.5f;
-        const f32 mid_z = (corners[0][2] + corners[2][2]) * 0.5f;
-        const f32 radius = 0.5f * std::hypot(s.info.scale_x, s.info.scale_z);
-        if (!frustum.is_sphere_visible(mid_x, corners[0][1], mid_z, radius + 64.0f)) continue;
+        const auto& corners = s.corners;
+        if (!frustum.is_sphere_visible(s.mid_x, corners[0][1], s.mid_z, s.radius + 64.0f)) continue;
         // The LOD metric at its first corner; past its cutoff it isn't drawn.
         const f32 distance =
             decal_lod_metric(view, eye, half_width, corners[0][0], corners[0][1], corners[0][2]);

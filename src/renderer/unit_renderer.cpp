@@ -273,6 +273,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2][2];
 
     ++frame_;
+    // The eye, for each mesh's LOD distance: the same for every entity.
+    f32 eye_x = 0;
+    f32 eye_y = 0;
+    f32 eye_z = 0;
+    if (camera) camera->eye_position(eye_x, eye_y, eye_z);
     const u32 now = view.cur() ? view.cur()->tick : 0;
     shader_time_ = std::fmod(static_cast<f32>(now) + view.alpha(), kShaderTimeWrap);
     // One entity's mesh instance (or cube): the world's, then the player's
@@ -332,11 +337,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // Compute camera distance for LOD selection
         f32 cam_dist = 0.0f;
         if (camera) {
-            f32 ex, ey, ez;
-            camera->eye_position(ex, ey, ez);
-            f32 dx = pos.x - ex;
-            f32 dy = pos.y - ey;
-            f32 dz = pos.z - ez;
+            const f32 dx = pos.x - eye_x;
+            const f32 dy = pos.y - eye_y;
+            const f32 dz = pos.z - eye_z;
             cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         }
 
