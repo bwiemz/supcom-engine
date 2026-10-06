@@ -87,6 +87,9 @@ Vector3 predict_ahead(const Entity& target, f32 seconds);
 /// ground). Sets or clears its MakingAttackRun state.
 void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::Terrain* terrain,
                     f32 dt);
+/// The same at a point on the ground: a ground attack order's runs.
+void fly_attack_run(Unit& unit, const Vector3& at, SimState& sim, const map::Terrain* terrain,
+                    f32 dt);
 
 /// The run ended: its combat state goes back to None, and the airframe to
 /// the plain flight, at the speed it had.

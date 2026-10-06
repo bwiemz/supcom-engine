@@ -495,6 +495,8 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.above_water_fire_only);
     w.b(wp.always_recheck_target);
     w.u32v(wp.target_check_period);
+    w.b(wp.cannot_attack_ground);
+    w.i32v(wp.attack_ground_tries);
     w.i32v(wp.weapon_priorities_ref);
     w.i32v(wp.blueprint_ref);
     w.i32v(wp.lua_table_ref);
@@ -504,6 +506,8 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.u32v(wp.target_entity_id);
     w.b(wp.has_ground_target);
     w.vec3(wp.ground_target);
+    w.b(wp.ground_from_order);
+    w.u32v(wp.shots_at_target);
     w.b(wp.last_order_point.has_value());
     w.vec3(wp.last_order_point.value_or(Vector3{}));
     w.b(wp.enabled);
@@ -566,6 +570,8 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.above_water_fire_only = r.b();
     wp.always_recheck_target = r.b();
     wp.target_check_period = r.u32v();
+    wp.cannot_attack_ground = r.b();
+    wp.attack_ground_tries = r.i32v();
     wp.weapon_priorities_ref = r.i32v();
     wp.blueprint_ref = r.i32v();
     wp.lua_table_ref = r.i32v();
@@ -575,6 +581,8 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.target_entity_id = r.u32v();
     wp.has_ground_target = r.b();
     wp.ground_target = r.vec3();
+    wp.ground_from_order = r.b();
+    wp.shots_at_target = r.u32v();
     const bool has_order_point = r.b();
     const Vector3 order_point = r.vec3();
     wp.last_order_point = has_order_point ? std::optional<Vector3>(order_point) : std::nullopt;

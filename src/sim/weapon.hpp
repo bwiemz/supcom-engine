@@ -10,6 +10,10 @@
 
 struct lua_State;
 
+namespace osc::map {
+class Terrain;
+}
+
 namespace osc::sim {
 
 class AimManipulator;
@@ -100,6 +104,10 @@ public:
     bool above_water_fire_only = false;    // AboveWaterFireOnly
     bool always_recheck_target = true;     // AlwaysRecheckTarget
     u32 target_check_period = 30;          // TargetCheckInterval, in ticks
+    bool cannot_attack_ground = false;     // CannotAttackGround
+    /// AttackGroundTries: shots at a ground attack's point before the order
+    /// goes to the back of the queue, when another follows (Moho's default 3)
+    i32 attack_ground_tries = 3;
     int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
@@ -113,6 +121,13 @@ public:
     /// a launch order). Only valid while target_entity_id is 0.
     bool has_ground_target = false;
     Vector3 ground_target;
+    /// The ground target is its unit's ground attack order's (Moho's
+    /// attacker's desired target): it goes when that order does. One its
+    /// script set stays until the script changes it.
+    bool ground_from_order = false;
+    /// Shots since it last changed target (Moho's mShotsAtTarget): a
+    /// ground attack gives way to the next order after AttackGroundTries.
+    u32 shots_at_target = 0;
     /// Where a manual weapon's last order sent it. Its script may fire after
     /// the order is gone (a launch cancelled once the silo is opening); the
     /// missile then goes there.
@@ -137,17 +152,41 @@ public:
     bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
 
     bool has_target() const { return target_entity_id != 0 || has_ground_target; }
-    /// Aim at a point on the ground (dropping any unit target).
+    /// Aim at a point on the ground (dropping any unit target). A new
+    /// target starts its shot count again, as Moho's SetTarget does.
     void set_target_ground(const Vector3& at) {
+        if (target_entity_id != 0 || !has_ground_target || ground_target.x != at.x ||
+            ground_target.y != at.y || ground_target.z != at.z)
+            shots_at_target = 0;
         target_entity_id = 0;
         has_ground_target = true;
         ground_target = at;
+        ground_from_order = false;
     }
     /// Aim at a unit (0: at nothing), dropping any ground target.
     void set_target_entity(u32 id) {
+        if (id != target_entity_id || has_ground_target) shots_at_target = 0;
         target_entity_id = id;
         has_ground_target = false;
+        ground_from_order = false;
     }
+    /// Moho's UnitWeapon::CanAttackTarget for a ground target: not
+    /// CannotAttackGround, and the weapon hits the layer there (Land where
+    /// the terrain is above the water, Water where it is under; neither
+    /// where they meet). Without a terrain, the ground is land.
+    bool can_attack_ground(const Vector3& at, const map::Terrain* terrain) const;
+    /// The target is within MaxRadius (it may be tracked from farther) and
+    /// outside MinRadius, horizontally.
+    bool in_firing_range(const Unit& owner, const Entity& target) const;
+    bool in_firing_range(const Unit& owner, const Vector3& at) const;
+    /// A CannotAttackGround weapon aimed at the ground (its script's
+    /// SetTargetGround) holds its fire, as Moho's fire task does.
+    bool ground_fire_barred() const {
+        return cannot_attack_ground && has_ground_target && target_entity_id == 0;
+    }
+    /// One of the weapons an attack order is carried out with: not a death,
+    /// dummy or launch-order (ManualFire) weapon.
+    bool attacks_on_order() const { return !fire_on_death && !dummy && !manual_fire; }
     /// Aim at nothing now, its script told OnLostTarget at once if it had a
     /// target (Moho's UnitWeapon::SetTarget with a cleared target).
     void drop_target(lua_State* L);
@@ -233,9 +272,6 @@ private:
     /// Hand the target to this weapon's aim controllers (or take it away),
     /// telling the script OnStartTracking/OnStopTracking(label).
     void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);
-    /// The target is within MaxRadius (it may be tracked from farther).
-    bool in_firing_range(const Unit& owner, const Entity& target) const;
-    bool in_firing_range(const Unit& owner, const Vector3& at) const;
 };
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.
