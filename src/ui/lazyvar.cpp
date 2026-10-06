@@ -22,7 +22,15 @@ f32 read_lazyvar(lua_State* L, int table_idx, const char* field) {
         lua_pop(L, 1);
         return 0.0f;
     }
-    // A LazyVar is called for its value (__call)
+    // Moho's CScriptLazyVar_float::GetValue: its value, [1], while it is
+    // clean; called (__call) only when dirty, to compute it.
+    lua_rawgeti(L, -1, 1);
+    if (!lua_isnil(L, -1)) {
+        const f32 val = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 2);
+        return val;
+    }
+    lua_pop(L, 1);
     if (lua_pcall(L, 0, 1, 0) != 0) {
         lua_pop(L, 1);
         return 0.0f;

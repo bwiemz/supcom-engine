@@ -97,10 +97,12 @@ public:
     /// else played at its point. INVALID_SOUND when it doesn't play.
     SoundHandle play_world(const WorldSound& sound, const Hearing& hears = {});
 
-    /// An entity's wanted loop this frame (Entity::ambient_sounds).
+    /// An entity's wanted loop this frame (Entity::ambient_sounds). Its
+    /// names are views of the entity's own, read within the frame (a loop
+    /// that starts keeps copies).
     struct EntityLoop {
         u64 key = 0; ///< the entity and the slot
-        std::string bank, cue, lod_cutoff;
+        std::string_view bank, cue, lod_cutoff;
         sim::Vector3 pos{};
         bool underwater = false;
         bool in_view = false; ///< in the world camera's frustum
@@ -296,6 +298,8 @@ private:
         SoundHandle handle = INVALID_SOUND;
     };
     std::map<u64, PlayingLoop> entity_loops_; ///< by EntityLoop::key
+    /// sync_entity_loops' wanted loops by key, kept between frames.
+    std::vector<std::pair<u64, const EntityLoop*>> wanted_by_key_;
     u32 dedupe_beat_ = 0xFFFFFFFF;
     std::vector<std::pair<std::string, std::string>> dedupe_; ///< this beat's one-shots
 

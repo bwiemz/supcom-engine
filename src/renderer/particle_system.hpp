@@ -193,6 +193,10 @@ private:
     std::vector<ParticleInstance> instances_;
     std::vector<Group> groups_;
     std::vector<Drawn> drawn_;
+    // The draw order's work, kept between updates.
+    std::vector<const EmitterBlueprintData*> order_blueprints_;
+    std::vector<u32> bucket_starts_;
+    std::vector<const Particle*> order_;
 };
 
 } // namespace osc::renderer
