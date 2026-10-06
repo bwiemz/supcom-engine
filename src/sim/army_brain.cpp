@@ -4,6 +4,7 @@
 #include "sim/unit.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 
 namespace osc::sim {
@@ -363,9 +364,16 @@ Platoon* ArmyBrain::create_platoon(const std::string& name) {
 }
 
 Platoon* ArmyBrain::find_platoon_by_name(const std::string& name) {
+    // Moho's GetPlatoonByName: the unique name, in any case.
+    const auto same = [&](const std::string& other) {
+        return other.size() == name.size() &&
+               std::equal(other.begin(), other.end(), name.begin(), [](char a, char b) {
+                   return std::tolower(static_cast<unsigned char>(a)) ==
+                          std::tolower(static_cast<unsigned char>(b));
+               });
+    };
     for (auto& p : platoons_) {
-        if (!p->destroyed() && p->name() == name)
-            return p.get();
+        if (!p->destroyed() && same(p->unique_name())) return p.get();
     }
     return nullptr;
 }

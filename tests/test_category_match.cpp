@@ -230,3 +230,37 @@ TEST_CASE("An interned category name tests a unit as its name does", "[category]
     CHECK(unit.has_category(osc::sim::CategoryName{"LAND"}));
     CHECK_FALSE(unit.has_category(osc::sim::CategoryName{"AIR"}));
 }
+
+TEST_CASE("ALLUNITS holds unit blueprints alone", "[category]") {
+    LuaGuard g;
+    lua_State* L = g.L;
+    const auto simple = [&](const char* name) {
+        lua_newtable(L);
+        lua_pushstring(L, "__name");
+        lua_pushstring(L, name);
+        lua_rawset(L, -3);
+    };
+    // categories.ALLUNITS - categories.STRUCTURE
+    lua_newtable(L);
+    lua_pushstring(L, "__op");
+    lua_pushstring(L, "difference");
+    lua_rawset(L, -3);
+    lua_pushstring(L, "__left");
+    simple("ALLUNITS");
+    lua_rawset(L, -3);
+    lua_pushstring(L, "__right");
+    simple("STRUCTURE");
+    lua_rawset(L, -3);
+    const osc::lua::CategoryMatcher mobile_units(L, -1);
+    simple("RECLAIMABLE");
+    const osc::lua::CategoryMatcher reclaimable(L, -1);
+
+    const std::unordered_set<std::string> tank = {"LAND", "MOBILE", "RECLAIMABLE"};
+    const std::unordered_set<std::string> tree = {"RECLAIMABLE", "OBSTRUCTSBUILDING"};
+    const std::unordered_set<std::string> shell = {"ALLPROJECTILES"};
+    CHECK(mobile_units.matches(tank));
+    CHECK_FALSE(mobile_units.matches(tree, false)); // a prop's blueprint
+    CHECK_FALSE(mobile_units.matches(shell));
+    // Its other categories still count
+    CHECK(reclaimable.matches(tree, false));
+}

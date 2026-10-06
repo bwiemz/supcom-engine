@@ -139,6 +139,8 @@ void test_ghost_render(TestContext& ctx);
 void test_feedback_render(TestContext& ctx);
 /// --hull-facing-test, in hull_facing_test.cpp.
 void test_hull_facing(TestContext& ctx);
+/// --footfall-test, in footfall_test.cpp.
+void test_footfall(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.
 void test_trail_render(TestContext& ctx);
 /// --particle-render-test (M214c), in particle_render_test.cpp.

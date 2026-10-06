@@ -705,7 +705,12 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
     }
     case ManipKind::CollisionDetector: {
         const auto& x = static_cast<const CollisionDetectorManipulator&>(m);
-        save_i32s(w, x.watched_bones_);
+        w.size(x.watched_.size());
+        for (const auto& watch : x.watched_) {
+            w.i32v(watch.bone);
+            w.b(watch.below_foot_height);
+            w.b(watch.below_surface);
+        }
         w.b(x.terrain_check_);
         break;
     }
@@ -836,7 +841,12 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
     }
     case ManipKind::CollisionDetector: {
         auto x = std::make_unique<CollisionDetectorManipulator>();
-        x->watched_bones_ = load_i32s(r);
+        x->watched_.resize(r.size(6));
+        for (auto& watch : x->watched_) {
+            watch.bone = r.i32v();
+            watch.below_foot_height = r.b();
+            watch.below_surface = r.b();
+        }
         x->terrain_check_ = r.b();
         m = std::move(x);
         break;

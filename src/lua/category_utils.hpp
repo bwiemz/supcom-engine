@@ -24,8 +24,9 @@ public:
     /// A unit's categories (sim::Unit::category_bits).
     bool matches(const sim::CategoryBits& cats) const;
     /// A set of category names (a blueprint's, see
-    /// sim::collect_blueprint_categories, or a projectile's).
-    bool matches(const std::unordered_set<std::string>& cats) const;
+    /// sim::collect_blueprint_categories, or a projectile's). ALLUNITS holds
+    /// unit blueprints alone: `unit` false for another's (a prop's).
+    bool matches(const std::unordered_set<std::string>& cats, bool unit = true) const;
 
 private:
     enum class Kind : u8 { Never, Name, AllUnits, Union, Intersection, Difference };

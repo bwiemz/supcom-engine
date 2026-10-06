@@ -840,6 +840,7 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
     // FA code assumes it always exists (e.g. GetPlatoonUniquelyNamed('ArmyPool')).
     {
         auto* pool = brain->create_platoon("ArmyPool");
+        pool->set_unique_name("ArmyPool");
         lua_newtable(L);
         int ptbl = lua_gettop(L);
 

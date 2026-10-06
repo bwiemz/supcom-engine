@@ -155,6 +155,7 @@ constexpr Mode kModesBefore[] = {
     {"--ghost-render-test", test_ghost_render, false},
     {"--feedback-render-test", test_feedback_render, false},
     {"--hull-facing-test", test_hull_facing, false},
+    {"--footfall-test", test_footfall, false},
     {"--trail-render-test", test_trail_render, false},
     {"--particle-render-test", test_particle_render, false},
     {"--water-render-test", test_water_render, false},
@@ -364,6 +365,7 @@ void IntegrationModes::print_usage() const {
               << "  --ghost-render-test A structure being placed, drawn as UnitPlace\n"
               << "  --feedback-render-test An order's mark, drawn as CommandFeedback\n"
               << "  --hull-facing-test Slaved weapons and AttackAngle turn the hull\n"
+              << "  --footfall-test    Collision detectors: walkers' footfalls, terrain checks\n"
               << "  --trail-render-test FA's trails: segments, ages, offsets, intel catch-up, blends\n"
               << "  --particle-render-test FA's particles: emission, motion, quads, water, intel\n"
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"

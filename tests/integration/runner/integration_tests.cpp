@@ -1475,9 +1475,11 @@ void test_platoon(TestContext& ctx) {
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
 
-    // A platoon whose units are all gone is destroyed, as Moho's are: its
-    // OnDestroy empties its trash, ending its AI thread (retail's AI loops
-    // run while PlatoonExists). One that never held a unit stays.
+    // Moho's CleanUpPlatoons, at the start of each army's tick: a platoon
+    // with no unique name and no unit is destroyed (one that never held a
+    // unit too), and a DisbandOnIdle one once its squads are idle, its units
+    // back in the pool. Its OnDestroy empties its trash, ending its AI
+    // thread (retail's AI loops run while PlatoonExists).
     const auto reap_check = [&](const char* what, const char* code) {
         if (auto r = ctx.lua_state.do_string(code); r) spdlog::info("[PASS] {}", what);
         else osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
@@ -1495,18 +1497,63 @@ void test_platoon(TestContext& ctx) {
             end
         end)
         __osc_never = brain:MakePlatoon('NeverManned', 'none')
+        __osc_named = brain:MakePlatoon('Label', 'none')
+        __osc_named:UniquelyNamePlatoon('KeepMe')
+        -- DisbandOnIdle: one whose unit stands idle, one whose unit moves
+        local idler = CreateUnitHPR('uel0201', 'ARMY_2', 620, GetTerrainHeight(620, 150), 150, 0, 0, 0)
+        __osc_idle = brain:MakePlatoon('', 'none')
+        brain:AssignUnitsToPlatoon(__osc_idle, {idler}, 'Attack', 'none')
+        __osc_idle:DisbandOnIdle()
+        __osc_idler = idler
+        -- (a guard order never ends by itself)
+        local guard = CreateUnitHPR('uel0201', 'ARMY_2', 630, GetTerrainHeight(630, 160), 160, 0, 0, 0)
+        __osc_busy = brain:MakePlatoon('', 'none')
+        brain:AssignUnitsToPlatoon(__osc_busy, {guard}, 'Attack', 'none')
+        IssueGuard({guard}, idler)
+        __osc_busy:DisbandOnIdle()
+        __osc_guard = guard
         __osc_tank = tank
     )");
     for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    reap_check("Platoon test: an empty platoon without a unique name is destroyed, though it never "
+               "held a unit",
+               R"(
+        if ArmyBrains[2]:PlatoonExists(__osc_never) then error('it still exists') end
+    )");
+    reap_check("Platoon test: an empty uniquely named one stays, found by that name in any case",
+               R"(
+        local brain = ArmyBrains[2]
+        if not brain:PlatoonExists(__osc_named) then error('it went') end
+        if brain:GetPlatoonUniquelyNamed('keepme') ~= __osc_named then error('not found as keepme') end
+        if brain:GetPlatoonUniquelyNamed('Label') then error('found by its MakePlatoon name') end
+    )");
+    reap_check("Platoon test: a DisbandOnIdle platoon goes once idle, its unit back in the pool",
+               R"(
+        local brain = ArmyBrains[2]
+        if brain:PlatoonExists(__osc_idle) then error('the idle one still exists') end
+        local pool = brain:GetPlatoonUniquelyNamed('ArmyPool')
+        local found = false
+        for _, u in pool:GetPlatoonUnits() do
+            if u == __osc_idler then found = true end
+        end
+        if not found then error('its unit is not in the pool') end
+        if not brain:PlatoonExists(__osc_busy) then
+            error('the one whose unit guards went too (its queue: ' .. table.getn(__osc_guard:GetCommandQueue()) .. ')')
+        end
+        -- The pool stays, whatever a script asks of it
+        pool:DisbandOnIdle()
+    )");
     reap_check("setup: its unit goes", R"(
         if __osc_doomed_ticks == 0 then error('its thread never ran') end
         __osc_tank:Destroy()
     )");
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
+    reap_check("Platoon test: the army pool outlives DisbandOnIdle", R"(
+        if not ArmyBrains[2]:GetPlatoonUniquelyNamed('ArmyPool') then error('the pool is gone') end
+    )");
     reap_check("Platoon test: an emptied platoon is destroyed and its thread ends", R"(
         local brain = ArmyBrains[2]
         if brain:PlatoonExists(__osc_doomed) then error('it still exists') end
-        if not brain:PlatoonExists(__osc_never) then error('a platoon that never held a unit went too') end
         __osc_doomed_seen = __osc_doomed_ticks
     )");
     for (int i = 0; i < 3; ++i) ctx.sim.tick();
@@ -9853,6 +9900,32 @@ void test_defence(TestContext& ctx) {
         local kept = EntityCategoryFilterDown(categories.MISSILE, {m, __osc_shell, tank})
         if table.getn(kept) ~= 1 or kept[1] ~= m then error('FilterDown kept ' .. table.getn(kept)) end
     )");
+    // Moho's category queries resolve what they're given to a blueprint
+    // (ResolveEntityCategoryCountBlueprint): a blueprint id, as retail's
+    // AIBrain.OnIntelChange passes a blip's for the campaign's intel
+    // triggers, or any entity, a prop too.
+    lua_check("Test 8b: a blueprint id or a prop answers by its blueprint", R"(
+        if not EntityCategoryContains(categories.TECH1, 'uel0201') then error("'uel0201' is not TECH1") end
+        if not EntityCategoryContains(categories.TECH1, 'UEL0201') then error("'UEL0201' is not TECH1") end
+        if EntityCategoryContains(categories.TECH2, 'uel0201') then error("'uel0201' is TECH2") end
+        if EntityCategoryContains(categories.TECH1, 'nosuchunit') then error('a missing blueprint matched') end
+        local prop
+        for _, r in GetReclaimablesInRect(Rect(0, 0, 1024, 1024)) or {} do
+            if IsProp(r) then prop = r break end
+        end
+        if not prop then error('no prop on the map') end
+        if not EntityCategoryContains(categories.RECLAIMABLE, prop) then error('the prop is not RECLAIMABLE') end
+        if EntityCategoryContains(categories.ALLUNITS, prop) then error('the prop is a unit') end
+        -- A list of both; what names no blueprint is in neither filter
+        local tank = __osc_spawn('uel0201', 'ARMY_2', 330, 800)
+        local list = {tank, prop, 'uel0201', 7}
+        local down = EntityCategoryFilterDown(categories.uel0201, list)
+        if table.getn(down) ~= 2 then error('FilterDown kept ' .. table.getn(down)) end
+        local out = EntityCategoryFilterOut(categories.uel0201, list)
+        if table.getn(out) ~= 1 or out[1] ~= prop then error('FilterOut kept ' .. table.getn(out)) end
+        local n = EntityCategoryCount(categories.TECH1, list)
+        if n ~= 2 then error('Count: ' .. n) end
+    )");
     lua_check(
         "Test 9: an enemy shell can't hit a missile; an interceptor, only the one it was sent at",
         R"(
@@ -14700,13 +14773,32 @@ void test_unitsound(TestContext& ctx) {
         auto* e = reg.find(id);
         if (e && !e->destroyed() && e->is_unit()) {
             e1 = e;
-            test_id = id;
             break;
         }
     }
     if (!e1) {
         osc::test_status::fail("[FAIL] No living unit found for unit sound test");
         return;
+    }
+    // A tank of its own beside it (the first is a commander, whose
+    // warp-in FAF's start script plays after this test destroys it)
+    {
+        const osc::sim::Vector3 at = e1->position();
+        auto made = ctx.lua_state.do_string(fmt::format(
+            "local u = CreateUnitHPR('uel0201', 'ARMY_1', {0}, GetTerrainHeight({0}, {1}), "
+            "{1}, 0, 0, 0)\n__osc_sound_unit = u and u:GetEntityId() or 0",
+            at.x + 12.0f, at.z + 12.0f));
+        lua_State* sL = ctx.lua_state.raw();
+        lua_pushstring(sL, "__osc_sound_unit");
+        lua_rawget(sL, LUA_GLOBALSINDEX);
+        const auto made_id = static_cast<osc::u32>(lua_tonumber(sL, -1));
+        lua_pop(sL, 1);
+        if (!made || made_id == 0 || !reg.find(made_id)) {
+            osc::test_status::fail("[FAIL] the unit sound test's tank wasn't made");
+            return;
+        }
+        e1 = reg.find(made_id);
+        test_id = made_id;
     }
     spdlog::info("Using entity #{} for unit sound tests", test_id);
 
@@ -14814,8 +14906,11 @@ void test_unitsound(TestContext& ctx) {
             ctx.sim, sources.ids(ctx.sim), [](const osc::sim::Entity& e) { return e.position(); },
             [](const osc::sim::Vector3&, osc::f32) { return true; }));
     };
+    // FAF's script plays one loop, in the unit's own slot (or its
+    // SoundEntity's), and stops it with no name: there are no named loops.
     auto loop_of = [&](const char* name) -> osc::audio::SoundHandle {
         auto r = lua(std::string("local c = e.AmbientSounds and e.AmbientSounds.") + name +
+                     "\nif not e.AmbientSounds then c = e.SoundEntity or e end"
                      "\n__osc_loop_entity = c and c:GetEntityId() or 0");
         if (!r) return osc::audio::INVALID_SOUND;
         lua_State* sL = ctx.lua_state.raw();
@@ -14831,26 +14926,40 @@ void test_unitsound(TestContext& ctx) {
                   "e:PlayUnitAmbientSound('OscMoveLoop')\n"
                   "e:PlayUnitAmbientSound('OscActiveLoop')\n");
     sync();
+    const bool named = static_cast<bool>(lua("if not e.AmbientSounds then error('none') end"));
     const auto move = loop_of("OscMoveLoop");
     const auto active = loop_of("OscActiveLoop");
-    if (r8 && move && active && move != active && sound->is_playing(move) &&
-        sound->is_playing(active)) {
-        pass++;
-        spdlog::info("[PASS] Test 8a: two named ambient loops play side by side");
+    if (!named) {
+        // FAF: the second replaced the first in the unit's one slot.
+        if (r8 && move && sound->is_playing(move)) {
+            pass++;
+            spdlog::info("[PASS] Test 8a: the unit's ambient loop plays (FAF's one slot)");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8a: the unit's ambient loop ({})",
+                                   r8 ? "not playing" : r8.error().message);
+        }
+        spdlog::info("[SKIP] Test 8b: FAF's StopUnitAmbientSound takes no name");
     } else {
-        fail++;
-        osc::test_status::fail("[FAIL] Test 8a: named ambient loops ({})",
-                               r8 ? "not playing" : r8.error().message);
-    }
-    lua("e:StopUnitAmbientSound('OscActiveLoop')");
-    sync();
-    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // its release runs out
-    if (!sound->is_playing(active) && sound->is_playing(move)) {
-        pass++;
-        spdlog::info("[PASS] Test 8b: stopping one loop by name leaves the other");
-    } else {
-        fail++;
-        osc::test_status::fail("[FAIL] Test 8b: StopUnitAmbientSound(name)");
+        if (r8 && move && active && move != active && sound->is_playing(move) &&
+            sound->is_playing(active)) {
+            pass++;
+            spdlog::info("[PASS] Test 8a: two named ambient loops play side by side");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8a: named ambient loops ({})",
+                                   r8 ? "not playing" : r8.error().message);
+        }
+        lua("e:StopUnitAmbientSound('OscActiveLoop')");
+        sync();
+        for (int i = 0; i < 40; ++i) ctx.sim.tick(); // its release runs out
+        if (!sound->is_playing(active) && sound->is_playing(move)) {
+            pass++;
+            spdlog::info("[PASS] Test 8b: stopping one loop by name leaves the other");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8b: StopUnitAmbientSound(name)");
+        }
     }
     {
         osc::sim::Vector3 p = e1->position();

@@ -123,9 +123,10 @@ void StateIO::save(StateWriter& w, const Platoon& p) {
     w.u32v(p.platoon_id_);
     w.i32v(p.army_index_);
     w.str(p.name_);
+    w.str(p.unique_name_);
     w.i32v(p.lua_table_ref_);
     w.b(p.destroyed_);
-    w.b(p.had_units_);
+    w.b(p.disband_on_idle_);
     w.str(p.plan_name_);
     save_ids(w, p.unit_ids_);
     save_u32_str(w, p.squad_map_);
@@ -139,9 +140,10 @@ void StateIO::load(StateReader& r, Platoon& p) {
     p.platoon_id_ = r.u32v();
     p.army_index_ = r.i32v();
     p.name_ = r.str();
+    p.unique_name_ = r.str();
     p.lua_table_ref_ = r.i32v();
     p.destroyed_ = r.b();
-    p.had_units_ = r.b();
+    p.disband_on_idle_ = r.b();
     p.plan_name_ = r.str();
     p.unit_ids_ = load_ids(r);
     p.squad_map_ = load_u32_str<std::unordered_map<u32, std::string>>(r);

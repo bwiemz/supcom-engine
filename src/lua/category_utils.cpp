@@ -93,8 +93,13 @@ bool CategoryMatcher::matches(const sim::CategoryBits& cats) const {
     return test(root_, [&](const Node& n) { return n.id && cats.test(*n.id); });
 }
 
-bool CategoryMatcher::matches(const std::unordered_set<std::string>& cats) const {
-    return test(root_, [&](const Node& n) { return cats.count(n.name) > 0; });
+bool CategoryMatcher::matches(const std::unordered_set<std::string>& cats, bool unit) const {
+    return test(root_, [&](const Node& n) {
+        // AllUnits tests that ALLPROJECTILES is absent: no other blueprint
+        // than a unit's is in it.
+        if (n.kind == Kind::AllUnits && !unit) return true;
+        return cats.count(n.name) > 0;
+    });
 }
 
 bool unit_matches_category(lua_State* L, int cat_idx,
