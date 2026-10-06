@@ -60,6 +60,7 @@ struct ReclaimSim {
         t->set_position({10.0f, 0.0f, 12.0f});
         t->set_max_health(100.0f);
         t->set_health(100.0f);
+        t->add_category("RECLAIMABLE");
         target = t.get();
         sim.entity_registry().register_entity(std::move(t));
         bind(*target, "Target", nullptr);
@@ -67,6 +68,7 @@ struct ReclaimSim {
         auto w = std::make_unique<Prop>();
         w->set_position({10.0f, 0.0f, 12.0f});
         w->reclaim_mass_max = 30.0f;
+        w->reclaimable_category = true;
         wreck = w.get();
         sim.entity_registry().register_entity(std::move(w));
         bind(*wreck, nullptr, "wreck");
