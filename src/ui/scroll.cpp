@@ -126,14 +126,15 @@ void scroll_item_list_to_bottom(UIControl& list, f32 height) {
 }
 
 void show_item_list_row(UIControl& list, f32 height, i32 row) {
-    const i32 rows = shown_rows(list, height);
-    i32 top = list.scroll_top();
-    if (row < top) {
-        top = row;
-    } else if (row >= top + rows) {
-        top = row - rows + 1;
-    }
-    list.set_scroll_top(clamped_top(list, height, top));
+    const i32 top = list.scroll_top();
+    if (row < top || row >= top + shown_rows(list, height))
+        list.set_scroll_top(clamped_top(list, height, row));
+}
+
+void scroll_item_list_pages(UIControl& list, f32 height, f32 pages) {
+    const i32 delta =
+        static_cast<i32>(std::nearbyint(static_cast<f32>(shown_rows(list, height)) * pages));
+    list.set_scroll_top(clamped_top(list, height, list.scroll_top() + delta));
 }
 
 bool item_list_needs_scrollbar(const UIControl& list, f32 height) {
