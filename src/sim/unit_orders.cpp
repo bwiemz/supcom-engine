@@ -757,12 +757,41 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Gone;
         }
 
-        economy_.reclaim_mass = max_mass * static_cast<f64>(reclaim_rate_);
-        economy_.reclaim_energy = max_energy * static_cast<f64>(reclaim_rate_);
+        const auto* started = registry.find(cmd.target_id);
+        const bool income = started && !reclaim_wears_down(*started);
+        economy_.reclaim_mass = income ? max_mass * static_cast<f64>(reclaim_rate_) : 0.0;
+        economy_.reclaim_energy = income ? max_energy * static_cast<f64>(reclaim_rate_) : 0.0;
 
         spdlog::info("Reclaim start: entity #{} reclaiming #{} "
                      "(mass={:.0f}, energy={:.0f}, time={:.1f}s)",
                      entity_id(), cmd.target_id, max_mass, max_energy, reclaim_time);
+    }
+
+    // Moho's CUnitReclaimTask: a finished unit loses health for nothing, then
+    // the task goes on to the wreck its CreateWreckageProp(0) returns.
+    auto* reclaimed = registry.find(cmd.target_id);
+    if (reclaimed && reclaim_wears_down(*reclaimed)) {
+        if (wear_down(static_cast<Unit&>(*reclaimed))) {
+            return OrderStep::Hold;
+        }
+        const u32 wreck_id = reclaim_into_wreck(cmd.target_id, registry, L);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        auto* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
+        if (!wreck) {
+            stop_reclaiming(L, &registry);
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+        const ReclaimCosts costs = reclaim_costs(L, *this, *wreck, static_cast<f64>(build_rate_));
+        const f64 reclaim_time = costs.time > 0 ? costs.time : 0.01;
+        cmd.target_id = wreck_id;
+        reclaim_target_id_ = wreck_id;
+        reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
+        economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
+        economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+        return OrderStep::Hold;
     }
 
     // Progress reclaim
