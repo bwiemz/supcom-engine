@@ -1100,6 +1100,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     // else keep default "Land"
                 }
                 lua_pop(L, 1);
+                lua_pushstring(L, "LayerChangeOffsetHeight");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_layer_change_offset(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
             }
             lua_pop(L, 2);
         }

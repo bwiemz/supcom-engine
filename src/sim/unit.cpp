@@ -552,16 +552,9 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
         hold_altitude(dt, ctx.terrain,
                       cargo_ids_.empty() ? elevation_target_ : transport_hover_height_);
 
-    // Amphibious layer transition: auto-switch Land↔Water based on terrain
-    if (is_amphibious() && !dying_ && ctx.terrain) {
-        f32 terrain_h = ctx.terrain->get_terrain_height(position().x, position().z);
-        f32 water_elev = ctx.terrain->water_elevation();
-        if (terrain_h < water_elev && layer_ == "Land") {
-            set_layer_with_callback("Water", L);
-        } else if (terrain_h >= water_elev && layer_ == "Water") {
-            set_layer_with_callback("Land", L);
-        }
-    }
+    // Over water, the layer it is on (Moho's UpdateCurrentLayer).
+    update_current_layer(ctx.terrain, L);
+    if (destroyed() || !in_registry()) return false;
 
     // Air unit separation: lightweight boids repulsion to prevent stacking
     if (is_air_unit() && !dying_ && navigator_.is_moving()) {
@@ -2149,7 +2142,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
                     cargo->air_floor(terrain, cargo->position().x, cargo->position().z);
         } else if (terrain) {
             Vector3 at = cargo->position();
-            at.y = terrain->get_surface_height(at.x, at.z);
+            at.y = cargo->ground_y(terrain, at.x, at.z);
             cargo->set_position(at);
         }
         cargo->note_snap();
@@ -2316,8 +2309,40 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     Vector3 p = position();
     p.x += osc::dmath::sin(heading) * ground_speed_ * step;
     p.z += osc::dmath::cos(heading) * ground_speed_ * step;
-    if (terrain) p.y = terrain->get_surface_height(p.x, p.z);
+    if (terrain) p.y = ground_y(terrain, p.x, p.z);
     set_position(p);
+}
+
+f32 Unit::ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
+    if (!terrain) return position().y;
+    return walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+}
+
+void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {
+    // Run from the motion task, for a surface unit that moved last tick (its
+    // velocity, per tick, over 0.001), not held still or stunned (faf-re
+    // CUnitMotion::UpdateCurrentLayer).
+    if (!terrain || dying_ || is_air_unit() || immobile_ || is_stunned()) return;
+    const Vector3& v = velocity_;
+    if ((v.x * v.x + v.y * v.y + v.z * v.z) * 0.01f <= 1e-6f) return;
+    const bool floats = is_hover() || motion_type_ == "RULEUMT_AmphibiousFloating";
+    const f32 ground = terrain->get_terrain_height(position().x, position().z);
+    // A map without water has its surface far below.
+    f32 surface = terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+    // A land footprint's water begins LayerChangeOffsetHeight from the surface.
+    if (walks_seabed() || floats) surface += layer_change_offset_;
+    if (ground <= surface) {
+        if (surface > ground && layer_ == "Land") {
+            if (walks_seabed()) set_layer_with_callback("Seabed", L);
+            else if (floats) set_layer_with_callback("Water", L);
+        }
+        return;
+    }
+    if (layer_ == "Seabed") {
+        if (walks_seabed()) set_layer_with_callback("Land", L);
+    } else if (layer_ == "Water" && (floats || motion_type_ == "RULEUMT_Water")) {
+        set_layer_with_callback("Land", L);
+    }
 }
 
 void Unit::set_vert_event(const char* event, lua_State* L) {
