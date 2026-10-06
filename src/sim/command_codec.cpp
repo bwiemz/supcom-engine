@@ -132,10 +132,15 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     for (u32 id : cb.unit_ids) w.u32v(id);
     w.u8v(cb.value ? 1 : 0);
     if (cb.value) write_arg(w, *cb.value);
+    w.u8v(cb.lua_args ? 1 : 0);
+    if (cb.lua_args) {
+        w.str(*cb.lua_args);
+    }
 }
 
 bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool with_formation,
-                  bool with_unload, bool with_factory, bool with_value, bool with_script) {
+                  bool with_unload, bool with_factory, bool with_value, bool with_script,
+                  bool with_lua_args) {
     c = ScheduledCommand{};
     c.exec_tick = r.u32v();
     c.source = r.u32v();
@@ -174,6 +179,9 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
     if (with_value && r.u8v() != 0) {
         SimCallbackArg value;
         if (read_arg(r, value)) cb.value = std::move(value);
+    }
+    if (with_lua_args && r.u8v() != 0) {
+        cb.lua_args = r.str();
     }
     if (r.ok()) c.callback = std::move(cb);
     return r.ok();

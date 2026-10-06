@@ -61,15 +61,15 @@ using SimCallbackArg = std::variant<std::string, f64, bool>;
 
 struct SimCallbackEntry {
     std::string func_name;
-    // Args: simple key→value map. Values can be string, number, or bool.
-    // This covers the vast majority of FA SimCallback usage. Ordered, so
-    // every peer builds the script's args table the same way.
+    // Args of the engine's own callbacks, and of a script's in replays
+    // before v13. Ordered, so every peer builds the args table the same way.
     std::map<std::string, SimCallbackArg> args;
-    // Args given as one value, not a table (SimCamera's OnCameraFinish is
-    // passed its camera's name); args is then empty.
+    // A script's Args given as one value, in replays v8 to v12.
     std::optional<SimCallbackArg> value;
     // Optional: selected unit entity IDs (when addUnitSelection=true)
     std::vector<u32> unit_ids;
+    // A script's Args as lua_to_bytes wrote them (Moho's SCR_ToByteStream).
+    std::optional<std::string> lua_args;
 };
 
 class SimCallbackQueue {
