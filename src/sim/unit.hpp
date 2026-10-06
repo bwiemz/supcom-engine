@@ -142,6 +142,11 @@ enum class OrderStep : u8 {
     Gone, ///< a script destroyed the unit: stop updating it
 };
 
+/// The heading that puts a target at `bearing` `attack_angle` radians off
+/// the bow from `heading`, on the side it already lies (dead ahead, the
+/// right): Moho's ApplyCommonMoveAttackAngle.
+f32 attack_angle_heading(f32 bearing, f32 heading, f32 attack_angle);
+
 class Unit : public Entity {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
@@ -171,6 +176,21 @@ public:
     /// patrol broke off) a unit chases an enemy it has reached.
     f32 guard_return_radius() const { return guard_return_radius_; }
     void set_guard_return_radius(f32 r) { guard_return_radius_ = r; }
+    /// AI.AttackAngle, degrees: a stopped unit turns its target this far
+    /// off its bow (a broadside), from its slaved weapons or its attack.
+    f32 attack_angle() const { return attack_angle_; }
+    void set_attack_angle(f32 a) { attack_angle_ = a; }
+    /// The way a parked attack asked it to face (zero: none), which it turns
+    /// to with no slaved target (Moho's SetFacing, mFormationVec).
+    const Vector3& attack_facing() const { return attack_facing_; }
+    void set_attack_facing(const Vector3& v) { attack_facing_ = v; }
+    /// It turned in place this tick (a move, to its motion events).
+    bool turned_in_place() const { return turned_in_place_; }
+    /// Turn the hull toward its weapons' work, stopped (unit_facing.cpp).
+    void face_weapons_work(f64 dt, const EntityRegistry& registry);
+    /// Turn toward the heading `want` by at most `max_step` radians, onto it
+    /// within that; false when already facing it.
+    bool rotate_yaw_toward(f32 want, f32 max_step);
     /// AI.NeedUnpack: its weapon unpacks, holding the unit still, before it
     /// fires (retail's mobile artillery). A new order packs it up, and it
     /// looks for no targets while it moves (see begin_order).
@@ -338,6 +358,9 @@ public:
         f32 rotate_threshold = 0.5f; ///< RotateOnSpotThreshold: slower than this it pivots
         f32 max_speed_reverse = 0;   ///< MaxSpeedReverse (0: it can't back up; absent: MaxSpeed)
         f32 backup_distance = 0;     ///< BackUpDistance: a goal behind it this near, it backs to
+        /// TurnFacingRate, radians per second: how fast a hover's body turns
+        /// to its work (none without one, as Moho's)
+        f32 turn_facing_rate = 0;
     };
     const Drive& drive() const { return drive_; }
     void set_drive(const Drive& d) { drive_ = d; }
@@ -1308,6 +1331,10 @@ private:
     f32 cap_cost_ = 1.0f;           // Moho's RUnitBlueprint default
     f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
     f32 guard_scan_radius_ = 25.0f;
+    f32 attack_angle_ = 0.0f;      // AI.AttackAngle, degrees
+    bool slaved_turning_ = false;  // turning to a slaved target (Moho's hysteresis)
+    Vector3 attack_facing_;        // a parked attack's facing; zero: none
+    bool turned_in_place_ = false; // this tick
     f32 guard_return_radius_ = 50.0f;
     bool need_unpack_ = false;
     std::string layer_ = "Land";

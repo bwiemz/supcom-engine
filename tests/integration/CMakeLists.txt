@@ -44,6 +44,7 @@ add_executable(osc_integration
     runner/selection_render_test.cpp
     runner/ghost_render_test.cpp
     runner/feedback_render_test.cpp
+    runner/hull_facing_test.cpp
     runner/trail_render_test.cpp
     runner/particle_render_test.cpp
     runner/water_render_test.cpp

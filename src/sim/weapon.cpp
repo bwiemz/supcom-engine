@@ -169,6 +169,9 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
     // Tracked from farther (TrackingRadius), fired at only within MaxRadius,
     // and only once the fire control is on target.
     if (!in_firing_range(owner, *at)) return false;
+    // Only within its heading arc (Moho's fire task: the solution is
+    // Available), a slaved weapon's target behind it, or a ground target.
+    if (!in_heading_arc(owner, *at)) return false;
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return false;
@@ -258,7 +261,7 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const S
 
     if (!has_target() || fire_clock > 0 || ground_fire_barred()) return;
     const std::optional<Vector3> at = target_point(registry);
-    if (!at || !in_firing_range(owner, *at)) return;
+    if (!at || !in_firing_range(owner, *at) || !in_heading_arc(owner, *at)) return;
     if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return;
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
@@ -365,16 +368,11 @@ bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState*
     const f32 dist2 = dx * dx + dz * dz;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     if (in_reach && (dist2 > reach * reach || dist2 < min_range * min_range)) return false;
-    if (heading_arc_range < 180.0f) {
-        // Only targets within the arc about the unit's facing.
-        const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
-        constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
-        f32 off = osc::dmath::atan2(dx, dz) - osc::dmath::atan2(forward.x, forward.z) -
-                  heading_arc_center * kDegToRad;
-        while (off > 3.14159265f) off -= 6.28318531f;
-        while (off < -3.14159265f) off += 6.28318531f;
-        if (std::fabs(off) > heading_arc_range * kDegToRad) return false;
-    }
+    // Only targets within the arc about the unit's facing; a mobile unit's
+    // slaved weapon may hold one outside it, which its hull turns to (Moho's
+    // FindBestEnemy keeps NoSolution candidates for it).
+    if (!(slaved_to_body && owner.is_mobile()) && !in_heading_arc(owner, target.position()))
+        return false;
     if (max_height_diff > 0 &&
         std::fabs(target.position().y - owner.position().y) > max_height_diff)
         return false;
@@ -460,6 +458,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // (candidates come in id order, so ties keep the first).
     u32 best_id = 0;
     int best_priority = 0;
+    bool best_in_arc = false;
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     for (const u32 id : registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
@@ -473,10 +472,16 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         const f32 dx = e->position().x - owner.position().x;
         const f32 dz = e->position().z - owner.position().z;
         const f32 dist2 = dx * dx + dz * dz;
+        // Within a priority, one in its heading arc beats one out of it (a
+        // slaved weapon's; Moho's FindBestEnemy penalises NoSolution).
+        const bool in_arc = in_heading_arc(owner, e->position());
+        const bool better_arc = in_arc && !best_in_arc;
         if (best_id == 0 || priority < best_priority ||
-            (priority == best_priority && dist2 < best_dist2)) {
+            (priority == best_priority &&
+             (better_arc || (in_arc == best_in_arc && dist2 < best_dist2)))) {
             best_id = id;
             best_priority = priority;
+            best_in_arc = in_arc;
             best_dist2 = dist2;
         }
     }
@@ -494,6 +499,17 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
 
 bool Weapon::in_firing_range(const Unit& owner, const Entity& target) const {
     return in_firing_range(owner, target.position());
+}
+
+bool Weapon::in_heading_arc(const Unit& owner, const Vector3& at) const {
+    if (heading_arc_range >= 180.0f) return true;
+    const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+    constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+    f32 off = osc::dmath::atan2(at.x - owner.position().x, at.z - owner.position().z) -
+              osc::dmath::atan2(forward.x, forward.z) - heading_arc_center * kDegToRad;
+    while (off > 3.14159265f) off -= 6.28318531f;
+    while (off < -3.14159265f) off += 6.28318531f;
+    return std::fabs(off) <= heading_arc_range * kDegToRad;
 }
 
 bool Weapon::can_attack_ground(const Vector3& at, const map::Terrain* terrain) const {

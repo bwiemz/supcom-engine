@@ -137,6 +137,8 @@ void test_selection_render(TestContext& ctx);
 void test_ghost_render(TestContext& ctx);
 /// --feedback-render-test, in feedback_render_test.cpp.
 void test_feedback_render(TestContext& ctx);
+/// --hull-facing-test, in hull_facing_test.cpp.
+void test_hull_facing(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.
 void test_trail_render(TestContext& ctx);
 /// --particle-render-test (M214c), in particle_render_test.cpp.

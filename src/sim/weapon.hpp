@@ -85,6 +85,11 @@ public:
     f32 tracking_radius = 1;               // TrackingRadius: acquire out to MaxRadius * this
     f32 heading_arc_center = 0;            // HeadingArcCenter (degrees from the unit's facing)
     f32 heading_arc_range = 180;           // HeadingArcRange (degrees either side)
+    /// SlavedToBody: the unit's hull turns to bring this weapon's target
+    /// into its reach (Moho's CalcMoveCommon); it may hold a target outside
+    /// its heading arc on a mobile unit, and fires once it is in it.
+    bool slaved_to_body = false;
+    f32 slaved_arc_range = 1.0f;           // SlavedToBodyArcRange (degrees; Moho's default 1)
     std::string projectile_bp_id;          // ChangeProjectileBlueprint
     std::string fire_control_label;   // SetFireControl: whose OnTarget gates firing
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
@@ -175,6 +180,9 @@ public:
     /// the terrain is above the water, Water where it is under; neither
     /// where they meet). Without a terrain, the ground is land.
     bool can_attack_ground(const Vector3& at, const map::Terrain* terrain) const;
+    /// `at` is within its HeadingArcRange about HeadingArcCenter from the
+    /// unit's facing (always, with a range of 180 or more).
+    bool in_heading_arc(const Unit& owner, const Vector3& at) const;
     /// The target is within MaxRadius (it may be tracked from farther) and
     /// outside MinRadius, horizontally.
     bool in_firing_range(const Unit& owner, const Entity& target) const;
