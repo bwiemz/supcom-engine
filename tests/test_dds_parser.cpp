@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "renderer/dds_decode.hpp"
 #include "renderer/dds_parser.hpp"
 
 #include <cstring>
@@ -92,4 +93,55 @@ TEST_CASE("An A8 DDS parses as alpha alone, one byte a texel (M210b)", "[dds]") 
     const auto rgb = parse_dds(d);
     REQUIRE(rgb);
     CHECK_FALSE(rgb->alpha_only);
+}
+
+namespace {
+
+/// A 2D DDS header in `fourcc` declaring w x h and `mips` levels, followed by
+/// `payload` zero bytes.
+std::vector<char> declared(const char* fourcc, u32 w, u32 h, u32 mips, size_t payload) {
+    std::vector<char> d(128 + payload, 0);
+    const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
+    std::memcpy(d.data(), "DDS ", 4);
+    put(4, 124);
+    put(12, h);
+    put(16, w);
+    put(28, mips);
+    put(76, 32);
+    put(80, 0x4); // FourCC
+    std::memcpy(d.data() + 84, fourcc, 4);
+    return d;
+}
+
+} // namespace
+
+TEST_CASE("A DDS declaring more than it holds is refused, however large it claims to be", "[dds]") {
+    // 65536 x 65536 DXT5 is 4 GiB of blocks: in 32 bits that wrapped to an
+    // empty level, which passed the truncation check.
+    CHECK_FALSE(parse_dds(declared("DXT5", 65536, 65536, 1, 16)));
+    // A width at the top of u32 wrapped its block count to nothing.
+    CHECK_FALSE(parse_dds(declared("DXT1", 0xFFFFFFFFu, 4, 1, 8)));
+    // Past the side limit, even with the bytes there.
+    CHECK_FALSE(parse_dds(declared("DXT1", 16388, 4, 1, 4097 * 8)));
+    // Within it but short of the first level.
+    CHECK_FALSE(parse_dds(declared("DXT1", 16384, 16384, 1, 8)));
+    // dds_to_rgba refuses rather than sizing an image from the header.
+    osc::u32 w = 0;
+    osc::u32 h = 0;
+    CHECK_FALSE(osc::renderer::dds_to_rgba(declared("DXT5", 65536, 65536, 1, 16), w, h));
+}
+
+TEST_CASE("A DDS mip count past a full chain stops at 1x1", "[dds]") {
+    // 4x4 DXT1: a full chain is 4, 2, 1, a block each. The count in the
+    // header is the file's word; reserving for it asked for ~100 GB.
+    const auto tex = parse_dds(declared("DXT1", 4, 4, 0xFFFFFFFFu, 3 * 8 + 64));
+    REQUIRE(tex);
+    CHECK(tex->mip_count == 3);
+    REQUIRE(tex->mips.size() == 3);
+    CHECK(tex->mips[2].width == 1);
+    CHECK(tex->mips[2].height == 1);
+    // A non-square texture's chain runs to its longer side: 8x2 is 8x2, 4x1, 2x1, 1x1.
+    const auto wide = parse_dds(declared("DXT1", 8, 2, 99, 4 * 16));
+    REQUIRE(wide);
+    CHECK(wide->mip_count == 4);
 }
