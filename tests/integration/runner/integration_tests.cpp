@@ -8267,7 +8267,32 @@ void test_collide(TestContext& ctx) {
         if __osc_out.type == 'Shield' then error('the shield stopped it') end
     )");
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 14: no script errors");
+    // Only what is struck is asked whether it is hit (faf-re
+    // Projectile::CheckCollision): a shot whose own OnCollisionCheck says no,
+    // as FAF's torpedo does to anything but an anti-torpedo, still hits a tank.
+    lua_check("setup: a shot that refuses everything, at an enemy tank", R"(
+        __osc_refuser_target = __osc_spawn('uel0201', 'ARMY_2', 230, 860)
+        __osc_refuser_target:SetCanTakeDamage(false)
+        __osc_refused = {}
+        local from = __osc_spawn('uel0201', 'ARMY_1', 215, 860)
+        local tp = __osc_refuser_target:GetPosition()
+        __osc_hitter_asked = false
+        local p = __osc_shoot(from, tp[1], tp[2] + 0.3, tp[3], 0.3, __osc_refused)
+        p.OnCollisionCheck = function(self, other)
+            __osc_hitter_asked = true
+            return false
+        end
+    )");
+    run(20);
+    lua_check("Test 14: it hits the tank, and was never asked itself", R"(
+        local r = __osc_refused
+        if r.type ~= 'Unit' or r.target ~= __osc_refuser_target then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
+        if __osc_hitter_asked then error('the shot was asked') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 15: no script errors");
     spdlog::info("Collide test: {}/{} passed", pass, pass + fail);
 }
 

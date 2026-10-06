@@ -316,11 +316,13 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
     if (!L) return true;
     const u32 self_id = entity_id();
     const u32 other_id = other.entity_id();
-    // Each side's OnCollisionCheck(self, other); a missing one allows it.
-    // In retail's scripts `self` is what is struck and `other` what hits
-    // it, so the struck side is asked first and a refusal ends it: a lure
-    // (a Flare entity) turns the missile away and refuses, and the missile
-    // is never asked about a blueprint-less entity.
+    // What is struck is asked, OnCollisionCheck(self, other) with `other`
+    // the projectile; the projectile itself is not (faf-re Projectile::
+    // CheckCollision calls only the collided entity's script). A missing one
+    // allows it. Retail's comment: "If we return false the thing hitting us
+    // has no idea that it came into contact with us". FAF's torpedo answers
+    // false to anything but an anti-torpedo projectile hitting it, and had
+    // been asked about every ship it ran into.
     const auto check = [&](u32 self, u32 with) {
         const Entity* a = registry.find(self);
         const Entity* b = registry.find(with);
@@ -347,7 +349,7 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
         lua_settop(L, top);
         return allowed;
     };
-    return check(other_id, self_id) && check(self_id, other_id);
+    return check(other_id, self_id);
 }
 
 Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
