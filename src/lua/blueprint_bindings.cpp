@@ -23,6 +23,37 @@ static int register_blueprint(lua_State* L, blueprints::BlueprintType type) {
     return 0;
 }
 
+/// The table bp[`section`] (made if missing), on top of the stack.
+static int push_section(lua_State* L, int bp, const char* section) {
+    lua_pushstring(L, section);
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, section);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, bp);
+    }
+    return lua_gettop(L);
+}
+
+/// Set each field of the table at `t` it leaves out to its default.
+template <size_t N>
+static void default_numbers(lua_State* L, int t,
+                            const std::pair<const char*, lua_Number> (&fields)[N]) {
+    for (const auto& [field, value] : fields) {
+        lua_pushstring(L, field);
+        lua_rawget(L, t);
+        const bool missing = lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (missing) {
+            lua_pushstring(L, field);
+            lua_pushnumber(L, value);
+            lua_rawset(L, t);
+        }
+    }
+}
+
 static int l_RegisterUnitBlueprint(lua_State* L) {
     register_blueprint(L, blueprints::BlueprintType::Unit);
 
@@ -108,6 +139,62 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
         lua_pop(L, 1);
     }
     lua_pop(L, 1); // Display
+
+    // More of RUnitBlueprint's defaults (faf-re RUnitBlueprint.cpp), which
+    // FAF's unit detail view formats unguarded as a build button is hovered
+    // (string.format on nil fails, and the button's click with it): vision
+    // and water vision 10 (a T1 tank gives no WaterVisionRadius), the other
+    // intel radii 0, a cap cost of 1, motion types none, and the drive's
+    // numbers 0 -- the reverse speed the top speed, as ComputeDerivedQuantities
+    // makes it (-1 for a unit that doesn't move).
+    static constexpr std::pair<const char*, lua_Number> kIntelDefaults[] = {
+        {"VisionRadius", 10},
+        {"WaterVisionRadius", 10},
+        {"RadarRadius", 0},
+        {"SonarRadius", 0},
+        {"OmniRadius", 0},
+        {"RadarStealthFieldRadius", 0},
+        {"SonarStealthFieldRadius", 0},
+        {"CloakFieldRadius", 0},
+    };
+    default_numbers(L, push_section(L, 1, "Intel"), kIntelDefaults);
+    lua_pop(L, 1);
+    static constexpr std::pair<const char*, lua_Number> kGeneralDefaults[] = {{"CapCost", 1}};
+    default_numbers(L, push_section(L, 1, "General"), kGeneralDefaults);
+    lua_pop(L, 1);
+    const int physics = push_section(L, 1, "Physics");
+    static constexpr std::pair<const char*, lua_Number> kPhysicsDefaults[] = {
+        {"MaxSpeed", 0},
+        {"MaxAcceleration", 0},
+        {"MaxBrake", 0},
+        {"TurnRate", 0},
+    };
+    default_numbers(L, physics, kPhysicsDefaults);
+    for (const char* field : {"MotionType", "AltMotionType"}) {
+        lua_pushstring(L, field);
+        lua_rawget(L, physics);
+        const bool missing = lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (missing) {
+            lua_pushstring(L, field);
+            lua_pushstring(L, "RULEUMT_None");
+            lua_rawset(L, physics);
+        }
+    }
+    lua_pushstring(L, "MaxSpeedReverse");
+    lua_rawget(L, physics);
+    const bool no_reverse = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (no_reverse) {
+        lua_pushstring(L, "MaxSpeed");
+        lua_rawget(L, physics);
+        const lua_Number max_speed = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "MaxSpeedReverse");
+        lua_pushnumber(L, max_speed != 0 ? max_speed : -1);
+        lua_rawset(L, physics);
+    }
+    lua_pop(L, 1); // Physics
 
     // Moho hands scripts blueprints rebuilt from its typed copies, so a
     // numeric weapon field a .bp leaves out reads as its default
