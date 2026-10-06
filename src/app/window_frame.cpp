@@ -138,7 +138,8 @@ void App::Window::update_world_sounds() {
                                                       : 1.0f;
         const osc::renderer::Frustum frustum(cam.view_proj(aspect));
         loops = gather_entity_loops(
-            *sim_state, [&view](const osc::sim::Entity& e) { return view.position(e); },
+            *sim_state, loop_sources.ids(*sim_state),
+            [&view](const osc::sim::Entity& e) { return view.position(e); },
             [&frustum](const osc::sim::Vector3& at, osc::f32 radius) {
                 return frustum.is_sphere_visible(at.x, at.y, at.z, radius);
             });

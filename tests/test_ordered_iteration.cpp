@@ -157,7 +157,9 @@ TEST_CASE("A unit's neighbours and enhancements come in a fixed order", "[determ
     CHECK(slots == std::vector<std::string>{"Back", "LCH", "RCH"});
 }
 
-TEST_CASE("units_in_radius is collect_in_radius's live units, in the same order", "[determinism]") {
+TEST_CASE("units_in_radius and units_in_rect are collect_in_radius's and collect_in_rect's live "
+          "units, in the same order",
+          "[determinism]") {
     // Units and props mixed across cells; units move between cells, one is
     // destroyed but still registered, and a unit and a prop are removed.
     const auto check_matches = [](EntityRegistry& reg) {
@@ -171,6 +173,19 @@ TEST_CASE("units_in_radius is collect_in_radius's live units, in the same order"
             std::vector<osc::u32> got;
             for (const Entity* e : reg.units_in_radius(x, z, r)) got.push_back(e->entity_id());
             INFO("query at " << x << "," << z << " r " << r);
+            CHECK(got == expected);
+        }
+        // Rects given either way round, a point-sized one and one off the map
+        for (const auto& [x0, z0, x1, z1] : std::vector<std::array<float, 4>>{
+                 {40, 60, 160, 140}, {200, 200, 0, 0}, {37, 181, 37, 181}, {-80, -80, -10, -10}}) {
+            std::vector<osc::u32> expected;
+            for (osc::u32 id : reg.collect_in_rect(x0, z0, x1, z1)) {
+                const Entity* e = reg.find(id);
+                if (e && e->is_unit() && !e->destroyed()) expected.push_back(id);
+            }
+            std::vector<osc::u32> got;
+            for (const Entity* e : reg.units_in_rect(x0, z0, x1, z1)) got.push_back(e->entity_id());
+            INFO("rect " << x0 << "," << z0 << " to " << x1 << "," << z1);
             CHECK(got == expected);
         }
     };

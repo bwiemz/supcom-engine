@@ -9,12 +9,15 @@
 #include <array>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 struct lua_State;
 
 namespace osc::sim {
+struct EffectRecord;
 class FrameView;
+struct WorldSnapshot;
 }
 
 namespace osc::renderer {
@@ -92,6 +95,12 @@ private:
     std::vector<Group> groups_;
     std::vector<Drawn> drawn_;
     std::unordered_set<u32> drawn_effects_, drawn_entities_;
+    /// Last tick's beams by effect id, sorted, to draw each between its two
+    /// ticks' ends: made once a tick (for the snapshot `before_serial_`),
+    /// not each frame.
+    std::vector<std::pair<u32, const sim::EffectRecord*>> before_;
+    u64 before_serial_ = 0;
+    const sim::WorldSnapshot* before_snapshot_ = nullptr;
     int fidelity_ = 2;
 };
 

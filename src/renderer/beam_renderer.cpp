@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <unordered_map>
 
 namespace osc::renderer {
 
@@ -223,11 +222,26 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
     const sim::WorldSnapshot* cur = view.cur();
     if (!cur || !vertex_mapped_[fi]) return;
 
-    // Last tick's beams, to draw each between its two ticks' ends.
-    std::unordered_map<u32, const sim::EffectRecord*> before;
-    if (const sim::WorldSnapshot* prev = view.prev())
-        for (const sim::EffectRecord& fx : prev->effects)
-            if (fx.beam != sim::EffectRecord::BeamReach::None) before[fx.id] = &fx;
+    // Last tick's beams, to draw each between its two ticks' ends: found
+    // again only when the last tick is another (always for a snapshot not
+    // captured, serial 0, which may be made again in place).
+    const sim::WorldSnapshot* prev = view.prev();
+    if (prev != before_snapshot_ ||
+        (prev && (prev->serial == 0 || prev->serial != before_serial_))) {
+        before_.clear();
+        if (prev)
+            for (const sim::EffectRecord& fx : prev->effects)
+                if (fx.beam != sim::EffectRecord::BeamReach::None) before_.emplace_back(fx.id, &fx);
+        std::sort(before_.begin(), before_.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        before_snapshot_ = prev;
+        before_serial_ = prev ? prev->serial : 0;
+    }
+    const auto last_tick = [this](u32 id) -> const sim::EffectRecord* {
+        const auto it = std::lower_bound(before_.begin(), before_.end(), id,
+                                         [](const auto& e, u32 v) { return e.first < v; });
+        return it != before_.end() && it->first == id ? it->second : nullptr;
+    };
 
     f32 ex = 0;
     f32 ey = 0;
@@ -255,10 +269,10 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
         Vector3 start;
         Vector3 end;
         if (!ends_of(fx, bp->length, start, end)) continue;
-        if (auto it = before.find(fx.id); it != before.end()) {
+        if (const sim::EffectRecord* was = last_tick(fx.id)) {
             Vector3 s0;
             Vector3 e0;
-            if (ends_of(*it->second, bp->length, s0, e0)) {
+            if (ends_of(*was, bp->length, s0, e0)) {
                 start = lerp(s0, start, view.alpha());
                 end = lerp(e0, end, view.alpha());
             }

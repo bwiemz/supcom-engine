@@ -273,6 +273,38 @@ std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
     return result;
 }
 
+std::vector<Entity*> EntityRegistry::units_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const {
+    std::vector<Entity*> result;
+    if (x0 > x1) std::swap(x0, x1);
+    if (z0 > z1) std::swap(z0, z1);
+    const auto within = [&](const Entity& e) {
+        const f32 ex = e.position().x;
+        const f32 ez = e.position().z;
+        return ex >= x0 && ex <= x1 && ez >= z0 && ez <= z1;
+    };
+    if (!grid_initialized_) {
+        for_each_unit([&](Entity& e) {
+            if (!e.destroyed() && within(e)) result.push_back(&e);
+        });
+        return result;
+    }
+    i32 cx_min, cz_min, cx_max, cz_max;
+    world_to_cell(x0, z0, cx_min, cz_min);
+    world_to_cell(x1, z1, cx_max, cz_max);
+    std::vector<UnitRef> found;
+    for (i32 cz = cz_min; cz <= cz_max; ++cz) {
+        for (i32 cx = cx_min; cx <= cx_max; ++cx) {
+            for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
+                if (!unit.entity->destroyed() && within(*unit.entity)) found.push_back(unit);
+        }
+    }
+    std::sort(found.begin(), found.end(),
+              [](const UnitRef& a, const UnitRef& b) { return a.id < b.id; });
+    result.reserve(found.size());
+    for (const UnitRef& unit : found) result.push_back(unit.entity);
+    return result;
+}
+
 void EntityRegistry::notify_collision_shape_changed(const Entity& entity) {
     if (collision_reach(entity.collision_shape()) > COLLIDER_REACH)
         large_colliders_.insert(entity.entity_id());
