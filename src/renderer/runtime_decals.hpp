@@ -7,7 +7,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <vector>
 
 namespace osc::sim {
@@ -77,8 +76,10 @@ private:
 
     std::vector<Decal> decals_;
     std::vector<Decal> splats_;
-    /// The effects taken (added, or dropped for an unknown type) and live.
-    std::unordered_set<u32> taken_;
+    /// The effects taken (added, or dropped for an unknown type) and live:
+    /// those the last update saw, ascending id.
+    std::vector<u32> taken_;
+    std::vector<u32> seen_; ///< this update's, while it runs
     std::optional<u32> last_tick_;
     i32 last_focus_ = -1;
     u32 generation_ = 0;

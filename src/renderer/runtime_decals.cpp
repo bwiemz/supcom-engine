@@ -53,24 +53,28 @@ void RuntimeDecals::update(const sim::WorldSnapshot& snap, i32 focus_army) {
 
     // AddDecals: what the focus army sees and this hasn't taken, in the
     // order they were made.
-    std::unordered_set<u32> seen;
+    seen_.clear();
     for (size_t i = 0; i < snap.effects.size(); ++i) {
         const sim::EffectRecord& fx = snap.effects[i];
         if (!fx.decal) continue;
         const bool sees = focus_army < 0 ||
                           (focus_army < 32 && ((fx.seen_by >> static_cast<u32>(focus_army)) & 1u));
         if (!sees) continue;
-        seen.insert(fx.id);
-        if (!taken_.contains(fx.id)) add(snap, i);
+        seen_.push_back(fx.id);
+        if (!std::binary_search(taken_.begin(), taken_.end(), fx.id)) add(snap, i);
     }
+    // Made in ascending id, as they come; sorted all the same.
+    if (!std::is_sorted(seen_.begin(), seen_.end())) std::sort(seen_.begin(), seen_.end());
+    const auto sees = [&](u32 id) { return std::binary_search(seen_.begin(), seen_.end(), id); };
     // RemoveDecals: those it no longer sees, gone from the sim or not.
     for (auto* list : {&decals_, &splats_})
         for (Decal& d : *list)
-            if (d.live && !seen.contains(d.id)) {
+            if (d.live && !sees(d.id)) {
                 d.live = false;
                 d.remove_tick = 1;
             }
-    std::erase_if(taken_, [&](u32 id) { return !seen.contains(id); });
+    // Taken, and still seen: what it sees (each one taken, or added now).
+    taken_.swap(seen_);
 
     // ProcessRemovals, this beat's.
     if (new_tick) fade(snap.tick);
@@ -81,7 +85,6 @@ void RuntimeDecals::update(const sim::WorldSnapshot& snap, i32 focus_army) {
 void RuntimeDecals::add(const sim::WorldSnapshot& snap, size_t effect) {
     const sim::EffectRecord& fx = snap.effects[effect];
     const sim::DecalSpec& spec = *fx.decal;
-    taken_.insert(fx.id);
     Decal d;
     d.id = fx.id;
     d.splat = spec.splat;
