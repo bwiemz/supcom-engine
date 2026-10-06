@@ -446,6 +446,10 @@ private:
     void create_framebuffers();
     void create_pipelines();
     void recreate_swapchain();
+    /// Wait for frame slot `fi`'s last GPU work, then take the next
+    /// swapchain image, each for at most a moment: false means skip this
+    /// frame (the slot is untouched; the next frame tries it again).
+    bool begin_frame_slot(u32 fi, u32& image_index);
     void create_shadow_resources();
     void create_shadow_pipelines();
 
