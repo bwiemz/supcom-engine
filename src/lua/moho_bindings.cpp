@@ -725,7 +725,7 @@ static int l_InternalCreateGroup(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars: Left, Top, Right, Bottom, Width, Height, Depth
@@ -807,7 +807,7 @@ static int l_InternalCreateBitmap(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars
@@ -855,7 +855,7 @@ static int l_InternalCreateText(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 layout LazyVars
@@ -911,7 +911,7 @@ static int l_InternalCreateEdit(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars
@@ -957,7 +957,7 @@ static int l_InternalCreateItemList(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars
@@ -1001,7 +1001,7 @@ static int l_InternalCreateScrollbar(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Set scroll axis (arg 3)
@@ -1063,7 +1063,7 @@ static int l_InternalCreateBorder(lua_State* L) {
 
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, 1, "Left");
@@ -1164,7 +1164,7 @@ static int l_InternalCreateMovie(lua_State* L) {
 
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, 1, "Left");
@@ -1240,7 +1240,7 @@ static int create_map_preview_control(lua_State* L, int self_idx, int parent_idx
 
     if (parent_idx > 0 && lua_istable(L, parent_idx)) {
         auto* parent = check_control(L, parent_idx);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, self_idx, "Left");
@@ -1292,7 +1292,7 @@ static int l_InternalCreateHistogram(lua_State* L) {
 
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, 1, "Left");

@@ -230,20 +230,27 @@ static bool call_on_hide(lua_State* L, ui::UIControl& ctrl, bool hidden) {
     return kept;
 }
 
-/// Moho's CMauiControl::SetHidden, which Hide and Show call too: the
-/// control's flag, then OnHide (true: its children stay as they are, as
-/// maui/grid.lua's keeps its cells), then each child the same way. (A
-/// Window keeps its border in a group beside it, which its OnHide hides with
-/// it.)
+/// Moho's CMauiControl::SetHidden, which Hide and Show call too: OnHide
+/// first -- true leaves the control and its children as they are (FAF's
+/// combo keeps a closed list hidden as its row is shown) -- else the
+/// control's flag, then each child the same way. (A Window keeps its border
+/// in a group beside it, which its OnHide hides with it. A Grid's OnHide
+/// keeps its cells as they are; it is drawn and hit-tested by each
+/// control's own flag, so they show.)
 static void set_hidden(lua_State* L, ui::UIControl& ctrl, bool hidden) {
-    ctrl.set_hidden(hidden);
     if (call_on_hide(L, ctrl, hidden)) {
         return;
     }
+    ctrl.set_hidden(hidden);
     const std::vector<ui::UIControl*> children = ctrl.children(); // a callback may change them
     for (ui::UIControl* child : children) {
         if (child && !child->destroyed()) set_hidden(L, *child, hidden);
     }
+}
+
+void attach_to_parent(lua_State* L, ui::UIControl& ctrl, ui::UIControl& parent) {
+    ctrl.set_parent(&parent);
+    set_hidden(L, ctrl, parent.hidden());
 }
 
 static int control_Show(lua_State* L) {
@@ -456,6 +463,26 @@ static int control_Enable(lua_State* L) {
     return 0;
 }
 
+/// ApplyFunction(func): func(self), then func(child) for each of its
+/// children -- not theirs, as Moho's CMauiControl::ApplyFunction (FAF's
+/// ACUButton hides its parts so in its OnHide). An error is the caller's.
+static int control_ApplyFunction(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_pushvalue(L, 2);
+    lua_pushvalue(L, 1);
+    lua_call(L, 1, 0);
+    const std::vector<ui::UIControl*> children = ctrl->children(); // func may change them
+    for (ui::UIControl* child : children) {
+        if (!child || child->destroyed() || child->lua_table_ref() < 0) continue;
+        lua_pushvalue(L, 2);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, child->lua_table_ref());
+        lua_call(L, 1, 0);
+    }
+    return 0;
+}
+
 static int control_IsDisabled(lua_State* L) {
     if (!lua_istable(L, 1)) { lua_pushboolean(L, 0); return 1; }
     lua_pushstring(L, "_isDisabled");
@@ -467,6 +494,7 @@ static int control_IsDisabled(lua_State* L) {
 
 // clang-format off
 const MethodEntry ui_control_methods[] = {
+    {"ApplyFunction",           control_ApplyFunction},
     {"Destroy",                 control_Destroy},
     {"GetParent",               control_GetParent},
     {"SetParent",               control_SetParent},

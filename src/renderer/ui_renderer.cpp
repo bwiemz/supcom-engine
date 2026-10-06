@@ -428,7 +428,15 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                                  FontCache& font_cache,
                                  u32 vp_w, u32 vp_h,
                                  const ClipRect& parent_clip) {
-    if (!ctrl || ctrl->destroyed() || ctrl->hidden()) return;
+    if (!ctrl || ctrl->destroyed()) return;
+    // Moho draws by each control's own flag: a hidden control's children
+    // still draw unless hidden themselves (SetHidden hides them with it, but
+    // an OnHide returning true keeps them as they are -- a Grid's cells).
+    if (ctrl->hidden()) {
+        for (auto* child : ctrl->children())
+            collect_control(L, child, tex_cache, font_cache, vp_w, vp_h, parent_clip);
+        return;
+    }
     if (quad_count_ >= MAX_UI_QUADS) return;
 
     // Get the control's Lua table
@@ -672,9 +680,9 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
 }
 
 void UIRenderer::collect_world_views(lua_State* L, ui::UIControl* ctrl) {
-    if (!ctrl || ctrl->destroyed() || ctrl->hidden()) return;
+    if (!ctrl || ctrl->destroyed()) return;
     auto* wv = dynamic_cast<ui::WorldView*>(ctrl);
-    if (wv && !wv->is_minimap() && ctrl->lua_table_ref() >= 0) {
+    if (wv && !ctrl->hidden() && !wv->is_minimap() && ctrl->lua_table_ref() >= 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         const int t = lua_gettop(L);
         const auto rect = ui::control_rect(

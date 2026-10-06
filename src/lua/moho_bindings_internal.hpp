@@ -43,6 +43,11 @@ namespace osc::lua {
 sim::SimState* get_sim(lua_State* L);
 sim::Entity* check_entity(lua_State* L, int idx = 1);
 ui::UIControl* check_control(lua_State* L, int idx = 1);
+/// Make `parent` a new control's parent, as Moho's CMauiControl constructor
+/// does: linked last among its children, then SetHidden(parent's flag),
+/// which runs the control's OnHide (FAF's Grid guards against this early
+/// call).
+void attach_to_parent(lua_State* L, ui::UIControl& ctrl, ui::UIControl& parent);
 ui::WorldView* check_world_view(lua_State* L, int idx = 1);
 ui::UIControlRegistry* get_ui_registry(lua_State* L);
 sim::SimCallbackQueue* get_callback_queue(lua_State* L);

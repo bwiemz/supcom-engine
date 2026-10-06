@@ -17201,7 +17201,15 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             for _, item in col do n = n + 1 end
         end
         if n < 5 then error('order grid holds ' .. n .. ' buttons') end
-        if grid:IsHidden() then error('the order grid is hidden') end
+        -- Its buttons show (its OnHide keeps them as they are, and a Grid
+        -- drawn by each control's own flag may itself stay hidden, as Moho's)
+        local shown = 0
+        for _, col in grid._items do
+            for _, item in col do
+                if not item:IsHidden() then shown = shown + 1 end
+            end
+        end
+        if shown == 0 then error('no order button is shown') end
     )");
     sim_lua(R"(
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()

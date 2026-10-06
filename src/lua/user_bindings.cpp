@@ -225,7 +225,7 @@ static int worldview_init(lua_State* L) {
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
         if (parent) {
-            wv_ptr->set_parent(parent); // set_parent already calls add_child
+            attach_to_parent(L, *wv_ptr, *parent); // set_parent calls add_child
         }
     }
 

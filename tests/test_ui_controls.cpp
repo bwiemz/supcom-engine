@@ -176,6 +176,15 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
         child = box(container, 250, 20, 300, 60, 21)
         first = box(GetFrame(0), 500, 0, 600, 100, 7)   -- a tie: the first made wins
         later = box(GetFrame(0), 550, 50, 650, 150, 7)
+        -- Each control's own flag decides: a Grid stays hidden while its
+        -- OnHide keeps its cells shown
+        grid = box(GetFrame(0), 700, 0, 800, 100, 30)
+        cell = box(grid, 710, 10, 750, 50, 31)
+        gone = box(grid, 750, 50, 790, 90, 31)
+        grid.OnHide = function(self, hidden) return not hidden end
+        grid:Hide()
+        grid:Show()
+        cell:Show()
     )");
     INFO((result.ok() ? std::string() : result.error().message));
     REQUIRE(result.ok());
@@ -201,6 +210,10 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
     // score screen has its page group over its Continue button so.
     CHECK(dispatch.hit_test(L, root, 575, 75) == control_of(L, "first"));
     CHECK(dispatch.hit_test(L, root, 625, 125) == control_of(L, "later"));
+    // A hidden control isn't hit; its shown child is, its hidden one isn't.
+    CHECK(dispatch.hit_test(L, root, 720, 20) == control_of(L, "cell"));
+    CHECK(dispatch.hit_test(L, root, 770, 70) == nullptr);
+    CHECK(dispatch.hit_test(L, root, 795, 95) == nullptr);
 }
 
 TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's", "[ui][lua]") {
@@ -223,10 +236,25 @@ TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's",
         -- A Window's border sits beside it, hidden by its OnHide
         beside = group(GetFrame(0))
         parent.OnHide = function(self, hidden) beside:SetHidden(hidden) end
-        -- An OnHide returning true keeps its children as they are
+        -- An OnHide returning true keeps its control, and its children, as
+        -- they are
         keeper = group(GetFrame(0))
         kept = group(keeper)
         keeper.OnHide = function() return true end
+        -- A control made under a hidden one starts hidden; FAF's combo keeps
+        -- its closed list so as its row is shown
+        list = group(GetFrame(0))
+        list:Hide()
+        item = group(list)
+        list.OnHide = function(self, hidden) return not hidden end
+        list:Show()
+        list_then = {list:IsHidden(), item:IsHidden()}
+        -- ApplyFunction: the control, then each child (not grandchildren)
+        applied = {}
+        tree = group(GetFrame(0))
+        leaf = group(tree)
+        group(leaf)
+        tree:ApplyFunction(function(c) table.insert(applied, c) end)
 
         parent:Hide()
         hidden_then = {parent:IsHidden(), child:IsHidden(), beside:IsHidden()}
@@ -248,7 +276,10 @@ TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's",
         assert(not shown_then[1] and not shown_then[2] and not shown_then[3],
                'Show: ' .. show(shown_then))
         assert(heard[1] == true and heard[2] == false, 'OnHide heard ' .. show(heard))
-        assert(kept_then[1] and not kept_then[2], 'kept: ' .. show(kept_then))
+        assert(not kept_then[1] and not kept_then[2], 'kept: ' .. show(kept_then))
+        assert(list_then[1] and list_then[2], 'list: ' .. show(list_then))
+        assert(table.getn(applied) == 2 and applied[1] == tree and applied[2] == leaf,
+               'ApplyFunction reached ' .. table.getn(applied))
         -- A movie takes clicks unless a script says not (a timeline's skip)
         assert(not movie:IsHitTestDisabled(), 'a movie is hit-tested')
     )");
