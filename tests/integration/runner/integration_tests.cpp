@@ -17326,6 +17326,70 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         end
     )");
 
+    // 10b1. The unit view's abilities box has its top and bottom edges
+    if (lua_ok("Test 10b1: read the abilities box", R"(
+        local c = import('/lua/ui/game/unitview.lua').controls
+        local a = c.abilities
+        __osc_abil = {a.Left(), a.Right(), c.abilityBG.TM.Top(), c.abilityBG.TM.Bottom(),
+                      c.abilityBG.BM.Top(), c.abilityBG.BM.Bottom(),
+                      GetFrame(0).Width(), GetFrame(0).Height()}
+        if a:IsHidden() then error('the abilities box is hidden') end
+    )")) {
+        std::array<int, 8> v{};
+        lua_getglobal(L, "__osc_abil");
+        for (int i = 0; i < 8; ++i) {
+            lua_rawgeti(L, -1, i + 1);
+            v[i] = static_cast<int>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        osc::renderer::Renderer r;
+        if (reg && r.init(static_cast<u32>(v[6]), static_cast<u32>(v[7]), "Game UI Test",
+                          /*offscreen=*/true)) {
+            r.init_ui_caches(&ctx.vfs);
+            int settled = 0;
+            for (int f = 0; f < 600 && settled < 3; ++f) {
+                r.render_ui_only(L, reg);
+                settled = r.texture_cache().loading() == 0 ? settled + 1 : 0;
+            }
+            ImageRGBA8 shot;
+            r.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
+            r.render_ui_only(L, reg);
+            const auto drawn = [&](int y0, int y1) {
+                int lit = 0;
+                int all = 0;
+                for (int x = v[0]; x < v[1]; ++x) {
+                    bool any = false;
+                    for (int y = y0; y < y1; ++y) {
+                        const u8* p = &shot.pixels[(static_cast<size_t>(y) * shot.width + x) * 4];
+                        any = any || (p[0] + p[1] + p[2]) > 96;
+                    }
+                    lit += any ? 1 : 0;
+                    ++all;
+                }
+                return all > 0 ? static_cast<f32>(lit) / static_cast<f32>(all) : 0.0f;
+            };
+            const f32 top = shot.pixels.empty() ? 0.0f : drawn(v[2], v[3]);
+            const f32 bottom = shot.pixels.empty() ? 0.0f : drawn(v[4], v[5]);
+            if (top > 0.95f && bottom > 0.95f) {
+                spdlog::info("[PASS] Test 10b1: the abilities box's edges are drawn across "
+                             "{:.2f} and {:.2f} of its width",
+                             top, bottom);
+            } else {
+                osc::test_status::fail("[FAIL] Test 10b1: the abilities box's top edge is drawn "
+                                       "across {:.2f} of its width, its bottom {:.2f}",
+                                       top, bottom);
+            }
+            r.shutdown();
+        } else {
+            osc::test_status::fail("[FAIL] Test 10b1: no UI registry or Vulkan device");
+        }
+    }
+
     // 10b2. The avatars' click: UISelectAndZoomTo selects the unit alone; the
     //    attack reticle's GetValidAttackingUnits keeps the armed ones (a power
     //    generator, unarmed, made for the check and gone after it).

@@ -25,6 +25,29 @@ inline ControlRect control_rect(f32 left, f32 top, f32 right, f32 bottom,
             bottom > top ? bottom - top : height};
 }
 
+/// The quad a bitmap draws over: Moho's CMauiBitmap::Draw spans Left to
+/// Right and Top to Bottom, mirrored where an edge pair is inverted.
+struct BitmapQuad {
+    ControlRect rect;
+    bool mirror_x = false;
+    bool mirror_y = false;
+};
+
+inline BitmapQuad bitmap_quad(f32 left, f32 top, f32 right, f32 bottom, f32 width, f32 height) {
+    BitmapQuad q{control_rect(left, top, right, bottom, width, height)};
+    if (right < left) {
+        q.rect.x = right;
+        q.rect.w = left - right;
+        q.mirror_x = true;
+    }
+    if (bottom < top) {
+        q.rect.y = bottom;
+        q.rect.h = top - bottom;
+        q.mirror_y = true;
+    }
+    return q;
+}
+
 /// A main (non-minimap) WorldView as the UI sees it: FA draws the 3D world
 /// into it, opaque, at its depth.
 struct WorldOccluder {
