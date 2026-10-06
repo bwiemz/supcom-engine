@@ -135,6 +135,8 @@ void test_beam_render(TestContext& ctx);
 void test_selection_render(TestContext& ctx);
 /// --ghost-render-test, in ghost_render_test.cpp.
 void test_ghost_render(TestContext& ctx);
+/// --feedback-render-test, in feedback_render_test.cpp.
+void test_feedback_render(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.
 void test_trail_render(TestContext& ctx);
 /// --particle-render-test (M214c), in particle_render_test.cpp.

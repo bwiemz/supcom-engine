@@ -40,7 +40,7 @@ set(OSC_DATA_TESTS_GATE
     script-order-test
     gameui-test impact-test influence-test issue-handles-test
     enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test
-    full-smoke-test ghost-render-test
+    feedback-render-test full-smoke-test ghost-render-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-blip-test jammer-test keyboard-test keymap-test
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test

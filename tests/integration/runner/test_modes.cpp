@@ -153,6 +153,7 @@ constexpr Mode kModesBefore[] = {
     {"--beam-render-test", test_beam_render, false},
     {"--selection-render-test", test_selection_render, false},
     {"--ghost-render-test", test_ghost_render, false},
+    {"--feedback-render-test", test_feedback_render, false},
     {"--trail-render-test", test_trail_render, false},
     {"--particle-render-test", test_particle_render, false},
     {"--water-render-test", test_water_render, false},
@@ -360,6 +361,7 @@ void IntegrationModes::print_usage() const {
               << "  --beam-render-test FA's beams: strips, colours, UV scroll, blends, LOD\n"
               << "  --selection-render-test Selection brackets, hover and the drag box\n"
               << "  --ghost-render-test A structure being placed, drawn as UnitPlace\n"
+              << "  --feedback-render-test An order's mark, drawn as CommandFeedback\n"
               << "  --trail-render-test FA's trails: segments, ages, offsets, intel catch-up, blends\n"
               << "  --particle-render-test FA's particles: emission, motion, quads, water, intel\n"
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"

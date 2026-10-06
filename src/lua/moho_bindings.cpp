@@ -2908,7 +2908,9 @@ static int l_SetActiveBuildTemplate(lua_State* /*L*/) {
     return 0;
 }
 
-/// AddCommandFeedbackBlip(blipTable) — visual feedback stub; cosmetic only.
+/// AddCommandFeedbackBlip(meshInfo, duration): an order's mark. The UI state
+/// beside a renderer has user_bindings.cpp's, which draws it; this one stands
+/// in where there is none (a headless run).
 static int l_AddCommandFeedbackBlip(lua_State* /*L*/) {
     return 0;
 }
