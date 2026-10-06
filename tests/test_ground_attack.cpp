@@ -222,6 +222,34 @@ TEST_CASE("A weapon that cannot attack the ground never takes the point", "[grou
     CHECK_FALSE(gun(*u).has_ground_target);
 }
 
+TEST_CASE("A formation's ground attack with no weapon for it ends; a plain one waits there",
+          "[ground-attack]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* plain = tank(sim, 70.0f, 40.0f);
+    Unit* formed = tank(sim, 70.0f, 90.0f);
+    Unit* alone = tank(sim, 70.0f, 110.0f);
+    for (Unit* u : {plain, formed, alone}) gun(*u).cannot_attack_ground = true;
+    UnitCommand attack = ground_attack({100.0f, 7.8f, 40.0f});
+    plain->push_command(attack, true);
+    plain->push_command(move_to({70.0f, 7.8f, 20.0f}), false);
+    attack = ground_attack({100.0f, 7.8f, 90.0f});
+    attack.formation = "AttackFormation";
+    formed->push_command(attack, true);
+    formed->push_command(move_to({70.0f, 7.8f, 70.0f}), false);
+    attack.target_pos = {100.0f, 7.8f, 110.0f};
+    alone->push_command(attack, true);
+    ticks(sim, *plain, 5);
+    // The plain attack holds its queue (Moho's attack task has no end for it).
+    REQUIRE(plain->command_queue().size() == 2);
+    CHECK(plain->command_queue().front().type == CommandType::Attack);
+    // The formation's went round behind the move; alone, it ended.
+    REQUIRE(formed->command_queue().size() == 2);
+    CHECK(formed->command_queue().front().type == CommandType::Move);
+    CHECK(alone->command_queue().empty());
+}
+
 TEST_CASE("A structure takes the point at once, and fires only within its range",
           "[ground-attack]") {
     LuaGuard g;

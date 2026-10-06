@@ -458,10 +458,20 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             break;
         }
     }
-    if (weapon && cmd.engaged && command_queue_.size() >= 2 && weapon->ground_from_order &&
-        weapon->has_ground_target && weapon->ground_target.x == at.x &&
-        weapon->ground_target.z == at.z &&
-        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries) {
+    // A formation's attack (IssueFormAttack; Moho's CreateRespectFormation)
+    // with no weapon that can hit the point ends at once (TaskTick's first
+    // test), going round like the rest when another order follows; a plain
+    // attack's unit goes to the point and stays.
+    const bool spent = weapon && cmd.engaged && weapon->ground_from_order &&
+                       weapon->has_ground_target && weapon->ground_target.x == at.x &&
+                       weapon->ground_target.z == at.z &&
+                       static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries;
+    if (!weapon && !cmd.formation.empty() && command_queue_.size() < 2) {
+        navigator_.abort_move();
+        command_queue_.pop_front();
+        return OrderStep::Next;
+    }
+    if (command_queue_.size() >= 2 && (spent || (!weapon && !cmd.formation.empty()))) {
         navigator_.abort_move();
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.begun = false;
