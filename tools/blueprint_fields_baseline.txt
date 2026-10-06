@@ -17,7 +17,6 @@ CirclingRadiusChangeMaxRatio
 CirclingRadiusChangeMinRatio
 CirclingRadiusVsAirMult
 CirclingTurnMult
-CollideEntity
 DirectionX
 DirectionY
 DirectionZ

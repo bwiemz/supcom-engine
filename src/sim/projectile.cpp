@@ -392,6 +392,10 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
     number("DetonateBelowHeight", detonate_below_height);
     // Strategic missiles rise from their silos through the ground.
     flag("CollideSurface", collide_surface);
+    // And some hit no entity (Moho's mDoCollision, from Physics.CollideEntity:
+    // FAF's UEF build beams end on dummy projectiles made inside the unit
+    // being built, which would otherwise hit it and be gone at once).
+    flag("CollideEntity", collide_entity);
     if (field("UseGravity") == LUA_TBOOLEAN) found.use_gravity = lua_toboolean(L, -1) != 0;
     lua_pop(L, 1);
     found.realistic_ordinance =
