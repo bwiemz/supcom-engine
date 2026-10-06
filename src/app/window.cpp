@@ -120,9 +120,25 @@ std::optional<int> App::Window::set_up() {
              report_command_issued(ui_lua_state.raw(), c);
          },
          [this] { cancel_command_mode(ui_lua_state.raw()); },
-         [this](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z) {
-             return sim_state &&
-                    osc::lua::can_build_structure(ui_lua_state.raw(), *sim_state, army, bp, x, z);
+         [this](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z, osc::u32 moving) {
+             return sim_state && osc::lua::can_build_structure(ui_lua_state.raw(), *sim_state, army,
+                                                               bp, x, z, moving);
+         },
+         [this] { call_command_graph(ui_lua_state.raw(), "OnCommandDragBegin", 0); },
+         [this](osc::u32 command, osc::f32 mx, osc::f32 my) {
+             lua_State* L = ui_lua_state.raw();
+             lua_newtable(L);
+             lua_pushstring(L, "Type");
+             lua_pushstring(L, "ButtonRelease");
+             lua_rawset(L, -3);
+             lua_pushstring(L, "MouseX");
+             lua_pushnumber(L, mx);
+             lua_rawset(L, -3);
+             lua_pushstring(L, "MouseY");
+             lua_pushnumber(L, my);
+             lua_rawset(L, -3);
+             lua_pushnumber(L, command);
+             call_command_graph(L, "OnCommandDragEnd", 2);
          }});
     prev_time = std::chrono::high_resolution_clock::now();
 

@@ -46,7 +46,7 @@ void set_manip_metatable(lua_State* L, int table_idx, const char* cache_key,
 /// Whether army `army` may build structure `bp_id` centred at (x, z), by
 /// StructurePlacement with the orders not yet run
 bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,
-                         f32 x, f32 z);
+                         f32 x, f32 z, u32 moving = 0);
 
 /// A structure blueprint's placement rules, as its Physics give them (the
 /// sim keeps them once read)

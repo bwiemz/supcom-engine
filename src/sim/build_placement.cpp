@@ -110,14 +110,15 @@ bool StructureSite::touches(const StructureSite& o) const {
 }
 
 StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules,
-                                       bool scheduled)
-    : sim_(sim), army_(army), lookup_(std::move(rules)), scheduled_(scheduled) {}
+                                       bool scheduled, u32 moving)
+    : sim_(sim), army_(army), lookup_(std::move(rules)), scheduled_(scheduled), moving_(moving) {}
 
 const std::vector<StructureSite>& StructurePlacement::reserved() const {
     if (reserved_) return *reserved_;
     auto& sites = reserved_.emplace();
     const auto reserve = [&](const UnitCommand& cmd) {
-        if (cmd.type == CommandType::BuildMobile && !cmd.blueprint_id.empty()) {
+        if (cmd.type == CommandType::BuildMobile && !cmd.blueprint_id.empty() &&
+            (moving_ == 0 || cmd.command_id != moving_)) {
             sites.push_back(
                 StructureSite::of(rules(cmd.blueprint_id), cmd.target_pos.x, cmd.target_pos.z));
         }

@@ -126,12 +126,24 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
         const bool graph_shown =
             !renderer.ui_keys_blocked() && (renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                                             renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT));
-        if (graph_shown && !dragging_) {
+        if (graph_shown && !dragging_ && !order_drag_) {
             hovered_command_ =
                 waypoint_under_cursor(waypoints_on_screen(command_graph_nodes(), renderer.camera(),
                                                           static_cast<f32>(renderer.width()),
                                                           static_cast<f32>(renderer.height())),
                                       mx, my);
+        }
+    }
+
+    if (order_drag_) {
+        hovered_command_ = order_drag_->command_id;
+    }
+    if (dropped_) {
+        dropped_for_ += dt;
+        const auto node = graph_node(dropped_->command_id);
+        if (!node || dropped_for_ > 1.0 || std::abs(node->position.x - dropped_from_.x) > 0.01f ||
+            std::abs(node->position.z - dropped_from_.z) > 0.01f) {
+            dropped_.reset();
         }
     }
 
@@ -152,9 +164,20 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             line_drag_build_ = mode.drag_build;
             line_spacing_ = mode.drag_spacing;
         }
+        if (mode.mode.empty() && !lmb_on_minimap_ && begin_order_drag(hovered_command_) &&
+            mode_hooks_.drag_begin) {
+            mode_hooks_.drag_begin();
+        }
     }
 
-    if (lmb && build_line_) {
+    if (lmb && order_drag_) {
+        const f32 dx = mx - drag_start_x_;
+        const f32 dy = my - drag_start_y_;
+        if ((order_drag_moved_ || dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) &&
+            cursor_world_) {
+            drag_order_to(sim, (*cursor_world_)[0], (*cursor_world_)[1]);
+        }
+    } else if (lmb && build_line_) {
         f32 wx = 0;
         f32 wz = 0;
         if (mode.drag_build && world_at(renderer, sim, mx, my, wx, wz)) {
@@ -193,7 +216,18 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
 
     if (!lmb && lmb_was_pressed_) {
         // Left button just released
-        if (build_line_) {
+        if (order_drag_) {
+            const u32 command = order_drag_->command_id;
+            f32 wx = 0;
+            f32 wz = 0;
+            if (world_at(renderer, sim, mx, my, wx, wz)) {
+                release_order_drag(sim, wx, wz);
+            }
+            order_drag_.reset();
+            if (mode_hooks_.drag_end) {
+                mode_hooks_.drag_end(command, mx, my);
+            }
+        } else if (build_line_) {
             const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                                renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
             const auto line = *build_line_;
@@ -247,8 +281,20 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     lmb_was_pressed_ = lmb;
 
     // --- Right mouse: commands (also works on minimap) ---
+    const bool shift_held = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                            renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+    const bool ctrl_held = renderer.is_key_pressed(GLFW_KEY_LEFT_CONTROL) ||
+                           renderer.is_key_pressed(GLFW_KEY_RIGHT_CONTROL);
+    if (!rmb && rmb_was_pressed_ && rmb_removes_) {
+        rmb_removes_ = false;
+        if (removes_order(hovered_command_, shift_held, ctrl_held)) {
+            remove_order(sim, hovered_command_);
+        }
+    }
     if (rmb && !rmb_was_pressed_) {
-        if (on_minimap && map_w > 0 && !selected_.empty()) {
+        if (!mode_active && removes_order(hovered_command_, shift_held, ctrl_held)) {
+            rmb_removes_ = true;
+        } else if (on_minimap && map_w > 0 && !selected_.empty()) {
             // Right-click on minimap: issue move to minimap position
             f32 wy = 0;
             if (sim.terrain())
@@ -287,6 +333,156 @@ std::vector<CommandGraphNode> InputHandler::command_graph_nodes() const {
     return renderer::command_graph_nodes(command_graph_paths(
         view_, selected_.empty() ? nullptr : &selected_, player_army_,
         [](sim::CommandType type) { return command_graph_key(type).empty() ? nullptr : &kStyle; }));
+}
+
+std::optional<CommandGraphNode> InputHandler::graph_node(u32 command_id) const {
+    if (command_id == 0) {
+        return std::nullopt;
+    }
+    for (CommandGraphNode& node : command_graph_nodes()) {
+        if (node.order.command_id == command_id) {
+            return std::move(node);
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<u32> InputHandler::own_units(sim::SimState& sim, const std::vector<u32>& ids) const {
+    std::vector<u32> own;
+    for (u32 id : ids) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        if (e && !e->destroyed() && e->army() == player_army_) {
+            own.push_back(id);
+        }
+    }
+    return own;
+}
+
+// CWldSession::ProcessCommandDrag
+OrderDrag InputHandler::order_drop(sim::SimState& sim, const CommandGraphNode& node, f32 wx, f32 wz,
+                                   bool released, u32& target) const {
+    OrderDrag drop;
+    drop.command_id = node.order.command_id;
+    drop.at = {wx, sim.terrain() ? sim.terrain()->get_surface_height(wx, wz) : 0.0f, wz};
+    target = 0;
+    if (node.order.target_id != 0) {
+        if (!released) {
+            return drop;
+        }
+        const sim::Entity* old = sim.entity_registry().find(node.order.target_id);
+        f32 best = std::numeric_limits<f32>::max();
+        sim.entity_registry().for_each([&](const sim::Entity& e) {
+            if (!old || e.destroyed() || e.is_unit() != old->is_unit() || e.army() != old->army() ||
+                (!e.is_unit() && !targetable_prop(e)) || !shown(e) ||
+                std::find(node.units.begin(), node.units.end(), e.entity_id()) !=
+                    node.units.end()) {
+                return;
+            }
+            const f32 d = std::hypot(e.position().x - wx, e.position().z - wz);
+            if (d < best || (d == best && e.entity_id() < target)) {
+                best = d;
+                target = e.entity_id();
+            }
+        });
+        drop.valid = target != 0;
+        return drop;
+    }
+    if (node.order.type == sim::CommandType::BuildMobile && mode_hooks_.can_place) {
+        const std::string& bp = node.order.blueprint_id;
+        mode_hooks_.can_place(player_army_, bp, wx, wz, drop.command_id);
+        const auto& rules = sim.placement_rules(bp, [] { return sim::PlacementRules{}; });
+        sim::snap_structure_center(drop.at.x, drop.at.z, rules.size_x, rules.size_z);
+        drop.valid = mode_hooks_.can_place(player_army_, bp, drop.at.x, drop.at.z, drop.command_id);
+    }
+    return drop;
+}
+
+bool InputHandler::begin_order_drag(u32 command_id) {
+    if (command_id == 0 || player_army_ < 0) {
+        return false;
+    }
+    order_drag_ = OrderDrag{command_id, {}, true, true};
+    order_drag_moved_ = false;
+    dropped_.reset();
+    return true;
+}
+
+void InputHandler::drag_order_to(sim::SimState& sim, f32 wx, f32 wz) {
+    if (!order_drag_) {
+        return;
+    }
+    const auto node = graph_node(order_drag_->command_id);
+    if (!node) {
+        order_drag_.reset();
+        return;
+    }
+    u32 target = 0;
+    order_drag_ = order_drop(sim, *node, wx, wz, false, target);
+    order_drag_moved_ = true;
+}
+
+std::optional<sim::SimCallbackEntry> InputHandler::release_order_drag(sim::SimState& sim, f32 wx,
+                                                                      f32 wz) {
+    if (!order_drag_) {
+        return std::nullopt;
+    }
+    const u32 command = order_drag_->command_id;
+    const bool moved = order_drag_moved_;
+    order_drag_.reset();
+    const auto node = graph_node(command);
+    if (!moved || !node) {
+        return std::nullopt;
+    }
+    u32 target = 0;
+    OrderDrag drop = order_drop(sim, *node, wx, wz, true, target);
+    if (!drop.valid) {
+        return std::nullopt;
+    }
+    sim::SimCallbackEntry cb;
+    cb.unit_ids = own_units(sim, node->units);
+    if (cb.unit_ids.empty()) {
+        return std::nullopt;
+    }
+    cb.func_name = sim::kSetCommandTargetCallback;
+    cb.args["Command"] = static_cast<f64>(command);
+    if (target != 0) {
+        cb.args["Target"] = static_cast<f64>(target);
+        drop.at = sim.entity_registry().find(target)->position();
+    } else {
+        cb.args["X"] = static_cast<f64>(drop.at.x);
+        cb.args["Y"] = static_cast<f64>(drop.at.y);
+        cb.args["Z"] = static_cast<f64>(drop.at.z);
+    }
+    sim.submit_callback(cb);
+    drop.held = false;
+    dropped_ = drop;
+    dropped_from_ = node->position;
+    dropped_for_ = 0;
+    return cb;
+}
+
+std::optional<OrderDrag> InputHandler::order_drag() const {
+    if (order_drag_ && order_drag_moved_) {
+        return order_drag_;
+    }
+    return dropped_;
+}
+
+std::optional<sim::SimCallbackEntry> InputHandler::remove_order(sim::SimState& sim,
+                                                                u32 command_id) {
+    const auto node = graph_node(command_id);
+    if (!node || player_army_ < 0) {
+        return std::nullopt;
+    }
+    sim::SimCallbackEntry cb;
+    cb.unit_ids = own_units(sim, node->units);
+    if (cb.unit_ids.empty()) {
+        return std::nullopt;
+    }
+    cb.func_name = sim::kRemoveCommandCallback;
+    cb.args["Command"] = static_cast<f64>(command_id);
+    sim.submit_callback(cb);
+    return cb;
 }
 
 bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
@@ -638,7 +834,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     if (mode.mode == "build") {
         if (mode.name.empty()) return std::nullopt;
         sim::snap_structure_center(wx, wz, mode.footprint_x, mode.footprint_z);
-        if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, wx, wz)) {
+        if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, wx, wz, 0)) {
             return std::nullopt;
         }
         // Mobile builders take the order; factories build through their queue.
@@ -790,7 +986,7 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     }
     for (const auto& [x, z] : sim::structure_line_sites(x0, z0, x1, z1, mode.footprint_x,
                                                         mode.footprint_z, mode.drag_spacing)) {
-        if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, x, z)) {
+        if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, x, z, 0)) {
             continue;
         }
         const bool clear = issued.empty() && !shift;
@@ -892,7 +1088,7 @@ BuildGhost InputHandler::ghost_at(const sim::SimState& sim, f32 wx, f32 wz) cons
     ghost.z = wz;
     sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
     if (mode_hooks_.can_place) {
-        ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz);
+        ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz, 0);
         // can_place has read the blueprint's rules
         const auto& rules = sim.placement_rules(bp, [] { return sim::PlacementRules{}; });
         pad = sim::StructureSite::of(rules, wx, wz);
