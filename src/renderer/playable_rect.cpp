@@ -18,6 +18,7 @@ void UserPlayableRect::apply(const sim::FrameView& view) {
     if (!pending_ || !view.cur()) return;
     const PlayableRect rect = *pending_;
     pending_.reset();
+    rect_ = rect;
     hidden_.clear();
     for (const sim::EntityRecord& e : view.entities()) {
         // Moho truncates the position to whole units.
@@ -29,6 +30,7 @@ void UserPlayableRect::apply(const sim::FrameView& view) {
 
 void UserPlayableRect::clear() {
     pending_.reset();
+    rect_.reset();
     hidden_.clear();
 }
 

@@ -2,9 +2,13 @@
 
 #include "renderer/vk_types.hpp"
 #include "renderer/ui_renderer.hpp" // UIInstance
+#include "renderer/playable_rect.hpp"
+#include "renderer/resource_icon_renderer.hpp"
 #include "core/types.hpp"
 
 #include <array>
+#include <optional>
+#include <span>
 #include <unordered_set>
 #include <vector>
 
@@ -37,6 +41,10 @@ MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h);
 /// through to the world); it maps to the nearest map edge.
 bool minimap_to_world(const MapArea& view, const MapArea& area, f32 mx, f32 my,
                       f32 map_w, f32 map_h, f32& out_wx, f32& out_wz);
+
+std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDeposit> deposits,
+                                                 const MapArea& area, f32 map_w, f32 map_h,
+                                                 const PlayableRect& playable);
 
 /// Renders the minimap: terrain, unit dots and the camera's view. The C++
 /// HUD shows it in the bottom-left corner (update + render); FA's game UI
@@ -78,9 +86,9 @@ public:
 
     /// Draw the minimap into the view rect (x, y, w, h): its quads are
     /// appended to `out`, for the UI renderer to draw at the view's depth.
-    void paint(const sim::FrameView& view, const Camera& camera,
-               TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
-               u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out);
+    void paint(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache, f32 x,
+               f32 y, f32 w, f32 h, u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out,
+               const std::optional<PlayableRect>& resources = std::nullopt);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
@@ -113,9 +121,9 @@ public:
 
 private:
     /// Build the map's quads into quads_ for the map drawn at area_.
-    void build(const sim::FrameView& view, const Camera& camera,
-               TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
-               bool framed);
+    void build(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache,
+               u32 viewport_w, u32 viewport_h, bool framed,
+               const std::optional<PlayableRect>& resources = std::nullopt);
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a,

@@ -37,11 +37,14 @@ public:
     /// Whether the last sync hid `id`'s mesh.
     bool hides(u32 id) const { return hidden_.count(id) != 0; }
 
+    const std::optional<PlayableRect>& rect() const { return rect_; }
+
     /// A new world: nothing hidden, nothing pending.
     void clear();
 
 private:
     std::optional<PlayableRect> pending_;
+    std::optional<PlayableRect> rect_;
     std::unordered_set<u32> hidden_;
 };
 

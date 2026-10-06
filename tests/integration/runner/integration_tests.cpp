@@ -19382,6 +19382,33 @@ void test_uiboot(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 20: WorldView stubs"); }
     }
 
+    // --- Test 21: EnableResourceRendering sets the view's flag, on by default ---
+    {
+        const int err =
+            do_lua_string(L, "local fresh = moho.UIWorldView.IsResourceRenderingEnabled(_test_wv)\n"
+                             "moho.UIWorldView.EnableResourceRendering(_test_wv, false)\n"
+                             "local off = moho.UIWorldView.IsResourceRenderingEnabled(_test_wv)\n"
+                             "moho.UIWorldView.EnableResourceRendering(_test_wv, true)\n"
+                             "local on = moho.UIWorldView.IsResourceRenderingEnabled(_test_wv)\n"
+                             "_test_resources = fresh == true and off == false and on == true\n");
+        bool ok = err == 0;
+        if (ok) {
+            lua_getglobal(L, "_test_resources");
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  Resource rendering error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 21: EnableResourceRendering sets the view's flag");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 21: EnableResourceRendering");
+        }
+    }
+
     spdlog::info("UI boot test: {}/{} passed", pass, pass + fail);
 }
 

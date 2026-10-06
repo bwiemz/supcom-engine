@@ -660,7 +660,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
     if (auto* wv = dynamic_cast<ui::WorldView*>(ctrl);
         wv && wv->is_minimap() && on_screen && minimap_painter_ && *minimap_painter_) {
         painted_.clear();
-        (*minimap_painter_)({left, top, width, height}, painted_);
+        (*minimap_painter_)(*wv, {left, top, width, height}, painted_);
         for (const auto& q : painted_) {
             if (quad_count_ >= MAX_UI_QUADS) break;
             QuadEntry e{};

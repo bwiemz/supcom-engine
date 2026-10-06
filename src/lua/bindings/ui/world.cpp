@@ -243,7 +243,13 @@ const MethodEntry ui_world_mesh_methods[] = {
 
 static int worldview_CameraReset(lua_State* /*L*/) { return 0; }
 
-static int worldview_EnableResourceRendering(lua_State* /*L*/) { return 0; }
+static int worldview_EnableResourceRendering(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) {
+        wv->set_resource_rendering(lua_toboolean(L, 2) != 0);
+    }
+    return 0;
+}
 
 /// The order the right button would give at the cursor, by its cursor name
 /// in the skin (skins.lua's cursors); nil for none
@@ -314,7 +320,8 @@ static int worldview_IsInputLocked(lua_State* L) {
 }
 
 static int worldview_IsResourceRenderingEnabled(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* wv = check_world_view(L);
+    lua_pushboolean(L, (wv && wv->resource_rendering()) ? 1 : 0);
     return 1;
 }
 

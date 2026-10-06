@@ -197,21 +197,40 @@ void MinimapRenderer::update(const sim::FrameView& view, const Camera& camera,
     }
 }
 
+std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDeposit> deposits,
+                                                 const MapArea& area, f32 map_w, f32 map_h,
+                                                 const PlayableRect& playable) {
+    std::vector<ResourceIcon> icons;
+    if (map_w <= 0.0f || map_h <= 0.0f) {
+        return icons;
+    }
+    for (const sim::ResourceDeposit& d : deposits) {
+        if (!deposit_in_rect(d, playable)) {
+            continue;
+        }
+        const auto [x, z] = deposit_centre(d);
+        icons.push_back({std::floor(area.x + x / map_w * area.w),
+                         std::floor(area.y + z / map_h * area.h), d.type});
+    }
+    return icons;
+}
+
 void MinimapRenderer::paint(const sim::FrameView& view, const Camera& camera,
-                             TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
-                             u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out) {
+                            TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h, u32 viewport_w,
+                            u32 viewport_h, std::vector<UIQuad>& out,
+                            const std::optional<PlayableRect>& resources) {
     quads_.clear();
     if (map_w_ <= 0 || map_h_ <= 0) return;
     view_ = {x, y, w, h};
     area_ = fit_map_area(x, y, w, h, map_w_, map_h_);
     if (area_.w <= 0 || area_.h <= 0) return;
-    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false);
+    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false, resources);
     out.insert(out.end(), quads_.begin(), quads_.end());
 }
 
 void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
-                             TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
-                             bool framed) {
+                            TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, bool framed,
+                            const std::optional<PlayableRect>& resources) {
     white_ds_ = tex_cache.fallback_descriptor();
     const f32 sw = static_cast<f32>(viewport_w);
     const f32 sh = static_cast<f32>(viewport_h);
@@ -225,6 +244,22 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
     // --- Terrain background texture ---
     VkDescriptorSet bg_ds = terrain_ds_ ? terrain_ds_ : white_ds_;
     emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
+
+    if (resources && view.cur()) {
+        for (const ResourceIcon& icon :
+             minimap_resource_icons(view.cur()->deposits, area_, map_w_, map_h_, *resources)) {
+            const GPUTexture* tex =
+                tex_cache.get(icon.type == sim::ResourceDeposit::Mass ? kMassIconTexture
+                                                                      : kHydrocarbonIconTexture);
+            if (!tex || tex->width == 0) {
+                continue;
+            }
+            const auto half_w = static_cast<f32>(tex->width >> 2);
+            const auto half_h = static_cast<f32>(tex->height >> 2);
+            emit_quad(icon.x - half_w, icon.y - half_h, 2.0f * half_w, 2.0f * half_h, 1.0f, 1.0f,
+                      1.0f, 1.0f, tex->descriptor_set);
+        }
+    }
 
     // --- Unit dots: the world's units, then the player's remembered
     // structures gone from it unseen (MaybeDead, darkened; M215d) ---
