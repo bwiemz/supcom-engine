@@ -674,6 +674,32 @@ TEST_CASE("Cancelling a factory's build under way destroys the unit it was build
     CHECK((gone == nullptr || gone->destroyed()));
 }
 
+TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    const osc::u32 partial = w.spawn();
+    Unit& f = w.unit(id);
+    w.unit(partial).set_is_being_built(true);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "a";
+    build.command_id = 4;
+    f.push_command(build, false);
+    build.command_id = 5;
+    f.push_command(build, false);
+    f.set_build_target_id(partial);
+
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kRemoveCommandCallback;
+    cb.args["Command"] = 4.0;
+    cb.unit_ids = {id};
+    w.sim.run_sim_callback(cb);
+    REQUIRE(f.command_queue().size() == 1);
+    CHECK(f.command_queue().front().command_id == 5);
+    CHECK(f.build_target_id() == 0);
+    CHECK(w.hooks() == "OnFailedToBuild,Destroy");
+}
+
 TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallback][drop]") {
     CallbackSim w;
     w.sim.add_army("ARMY_1", "ARMY_1");
