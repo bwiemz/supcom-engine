@@ -186,6 +186,7 @@ public:
     void set_attack_facing(const Vector3& v) { attack_facing_ = v; }
     /// It turned in place this tick (a move, to its motion events).
     bool turned_in_place() const { return turned_in_place_; }
+    bool slaved_turning() const { return slaved_turning_; }
     /// Turn the hull toward its weapons' work, stopped (unit_facing.cpp).
     void face_weapons_work(f64 dt, const EntityRegistry& registry);
     /// Turn toward the heading `want` by at most `max_step` radians, onto it
@@ -569,6 +570,7 @@ public:
     // Stats/telemetry system
     void set_stat(const std::string& key, f64 value);
     f64 get_stat(const std::string& key, f64 default_val = 0) const;
+    const std::unordered_map<std::string, f64>& stats() const { return stats_; }
     bool has_stat(const std::string& key) const;
 
     // Silo ammo system (nuke + tactical missile counters)
@@ -640,6 +642,7 @@ public:
 
     // Unit states (generic string-based state tracking)
     bool has_unit_state(const std::string& state) const { return unit_states_.count(state) > 0; }
+    const std::unordered_set<std::string>& unit_states() const { return unit_states_; }
     /// Moho's CheckAutoInitiate: an idle unit -- no orders, or only an
     /// attack whose target is gone -- may take an attack order of its
     /// weapons' own choosing.
@@ -782,6 +785,7 @@ public:
 
     // A killed aircraft's fall (see begin_dying).
     bool is_crashing() const { return crashing_; }
+    bool teleporting() const { return teleporting_; }
     bool crash_impacted() const { return crash_impacted_; }
     f32 crash_velocity_y() const { return crash_velocity_y_; }
     f32 crash_spin_rate() const { return crash_spin_rate_; }

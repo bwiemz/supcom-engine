@@ -57,6 +57,7 @@ add_executable(osc_tests
     test_ui_layout.cpp
     test_world_view.cpp
     test_ui_controls.cpp
+    test_texture_alpha.cpp
     test_key_codes.cpp
     test_movie_player.cpp
     test_console_keymap.cpp
@@ -122,6 +123,7 @@ add_executable(osc_tests
     test_effect_expiry.cpp
     test_sim_lua_gc.cpp
     test_saved_game.cpp
+    test_checksum_coverage.cpp
     test_sha256.cpp
     test_platform_secrets.cpp
     test_common_army.cpp
@@ -160,4 +162,6 @@ target_link_libraries(osc_tests PRIVATE
 target_include_directories(osc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 include(Catch)
-catch_discover_tests(osc_tests)
+# A test that SKIPs exits 4 when run alone, as ctest runs each: report it
+# skipped, not failed (not every Catch2 release sets this itself).
+catch_discover_tests(osc_tests PROPERTIES SKIP_RETURN_CODE 4)

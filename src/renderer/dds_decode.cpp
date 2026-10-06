@@ -132,7 +132,7 @@ std::vector<u8> decode_bc3_to_rgba(const u8* block_data, u32 width, u32 height) 
 
     for (u32 by = 0; by < bh; ++by) {
         for (u32 bx = 0; bx < bw; ++bx) {
-            const u8* block = block_data + (by * bw + bx) * 16;
+            const u8* block = block_data + (static_cast<size_t>(by) * bw + bx) * 16;
 
             u8 decoded[64]; // 16 pixels * 4 bytes
             decode_bc3_block(block, decoded);
@@ -145,7 +145,7 @@ std::vector<u8> decode_bc3_to_rgba(const u8* block_data, u32 width, u32 height) 
                     const u32 x = bx * 4 + px;
                     if (x >= width) break;
                     const u32 src_offset = (py * 4 + px) * 4;
-                    const u32 dst_offset = (y * width + x) * 4;
+                    const size_t dst_offset = (static_cast<size_t>(y) * width + x) * 4;
                     std::memcpy(&pixels[dst_offset], &decoded[src_offset], 4);
                 }
             }
@@ -170,8 +170,12 @@ std::optional<std::vector<u8>> dds_to_rgba(const std::vector<char>& file, u32& w
             for (size_t i = 0; i < n; i += 4) std::swap(rgba[i], rgba[i + 2]);
         return rgba;
     }
-    if (dds->format == VK_FORMAT_BC3_UNORM_BLOCK || dds->format == VK_FORMAT_BC3_SRGB_BLOCK)
+    if (dds->format == VK_FORMAT_BC3_UNORM_BLOCK || dds->format == VK_FORMAT_BC3_SRGB_BLOCK) {
+        const u64 blocks =
+            ((static_cast<u64>(width) + 3) / 4) * ((static_cast<u64>(height) + 3) / 4);
+        if (top.size < blocks * 16) return std::nullopt;
         return decode_bc3_to_rgba(bytes, width, height);
+    }
     return std::nullopt;
 }
 

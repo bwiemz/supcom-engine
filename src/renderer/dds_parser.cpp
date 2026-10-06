@@ -43,6 +43,9 @@ static constexpr size_t OFF_CAPS2 = 4 + 108;         // byte 112 (dwCaps2)
 static constexpr u32 DDSCAPS2_CUBEMAP = 0x200;
 static constexpr u32 DDSCAPS2_CUBEMAP_ALLFACES = 0xFC00;
 
+// The widest side a texture may have
+static constexpr u32 kMaxSide = 16384;
+
 // Pixel format flags
 static constexpr u32 DDPF_ALPHA = 0x2;
 static constexpr u32 DDPF_FOURCC = 0x4;
@@ -145,9 +148,18 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
         spdlog::debug("DDS: zero dimensions {}x{}", width, height);
         return std::nullopt;
     }
+    // D3D9 gives Moho no texture wider than this on any card it runs on.
+    if (width > kMaxSide || height > kMaxSide) {
+        spdlog::debug("DDS: {}x{} is past the {} limit", width, height, kMaxSide);
+        return std::nullopt;
+    }
 
-    // Treat 0 as 1 mip level
-    u32 mip_count = (mip_raw > 0) ? mip_raw : 1;
+    // Treat 0 as 1 mip level. A full chain ends at 1x1: levels past it
+    // aren't a texture's (Vulkan refuses them), and the count is the file's
+    // word, so it bounds nothing until it is clamped.
+    u32 full_chain = 1;
+    for (u32 side = std::max(width, height); side > 1; side /= 2) ++full_chain;
+    u32 mip_count = std::min(std::max(mip_raw, 1u), full_chain);
 
     // A cubemap stores its six faces one after another, each with its mips.
     const u32 caps2 = read_u32(raw, OFF_CAPS2);
@@ -172,16 +184,19 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
         u32 mh = height;
 
         for (u32 i = 0; i < mip_count; i++) {
-            u32 mip_size;
+            // In 64 bits: a 65536 x 65536 DXT5 level is 4 GiB, which u32
+            // wraps to 0 and a 0-byte level passes any truncation check.
+            u64 mip_size;
             if (compressed) {
-                u32 block_w = std::max(1u, (mw + 3) / 4);
-                u32 block_h = std::max(1u, (mh + 3) / 4);
+                const u64 block_w = (static_cast<u64>(mw) + 3) / 4;
+                const u64 block_h = (static_cast<u64>(mh) + 3) / 4;
                 mip_size = block_w * block_h * bytes_per_block;
             } else {
-                mip_size = mw * mh * bytes_per_block; // bytes_per_block = bytes per pixel
+                // bytes_per_block = bytes per pixel
+                mip_size = static_cast<u64>(mw) * mh * bytes_per_block;
             }
 
-            if (offset + mip_size > file_data.size()) {
+            if (mip_size > file_data.size() - offset) {
                 spdlog::debug("DDS: mip {} data truncated (need {} at offset {}, file={})", i,
                               mip_size, offset, file_data.size());
                 // Use whatever mips we got; a cube needs every face whole.
@@ -194,10 +209,10 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
             level.data = raw + offset;
             level.width = mw;
             level.height = mh;
-            level.size = mip_size;
+            level.size = static_cast<u32>(mip_size); // < 4 GiB: it fit the file
             tex.mips.push_back(level);
 
-            offset += mip_size;
+            offset += static_cast<size_t>(mip_size);
             mw = std::max(1u, mw / 2);
             mh = std::max(1u, mh / 2);
         }
