@@ -194,6 +194,7 @@ struct WorldInterp {
 // frames.cpp
 bool mouse_over_ui(lua_State* uiL, f64 x, f64 y);
 void cancel_command_mode(lua_State* uiL);
+void call_command_graph(lua_State* uiL, const char* name, int nargs);
 void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& ghost_from_mode);
 
 // ui_globals.cpp

@@ -4,6 +4,7 @@
 
 #include "core/types.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/entity.hpp" // Vector3
 #include "sim/unit_command.hpp"
 #include "sim/world_snapshot.hpp"
@@ -76,9 +77,22 @@ struct CommandModeHooks {
     std::function<CommandMode()> current;
     std::function<void(const IssuedCommand&)> issued;
     std::function<void()> cancel;
-    /// Whether army `army` may build structure `bp` centred at (x, z); none:
-    /// anywhere
-    std::function<bool(i32 army, const std::string& bp, f32 x, f32 z)> can_place;
+    /// Whether army `army` may build structure `bp` centred at (x, z)
+    /// (StructurePlacement's `moving`); none: anywhere
+    std::function<bool(i32 army, const std::string& bp, f32 x, f32 z, u32 moving)> can_place;
+    /// commandgraph.lua's OnCommandDragBegin() and OnCommandDragEnd(event, cmdId)
+    std::function<void()> drag_begin;
+    std::function<void(u32 command, f32 mx, f32 my)> drag_end;
+};
+
+/// A command graph waypoint dragged (Moho's UICommandDragger): where it is
+/// drawn, and whether it may be dropped there; after the drop, until the
+/// view shows the order moved
+struct OrderDrag {
+    u32 command_id = 0;
+    sim::Vector3 at;
+    bool valid = true;
+    bool held = true;
 };
 
 /// Handles player input on the world: unit selection, command dispatch and
@@ -213,6 +227,22 @@ public:
 
     std::vector<CommandGraphNode> command_graph_nodes() const;
 
+    bool begin_order_drag(u32 command_id);
+    void drag_order_to(sim::SimState& sim, f32 wx, f32 wz);
+    /// UICommandDragger::DragRelease: one __osc_SetCommandTarget for the
+    /// order, as ProcessCommandDrag resolves the drop; nothing for a drag
+    /// that never moved or a build that can't stand there
+    std::optional<sim::SimCallbackEntry> release_order_drag(sim::SimState& sim, f32 wx, f32 wz);
+    std::optional<OrderDrag> order_drag() const;
+
+    /// Whether a right button over waypoint `hovered` takes its order off
+    /// (CUIWorldView::HandleEvent: Shift+Ctrl, not an observer)
+    bool removes_order(u32 hovered, bool shift, bool ctrl) const {
+        return hovered != 0 && shift && ctrl && player_army_ >= 0;
+    }
+    /// __osc_RemoveCommand for every unit of order `command_id`
+    std::optional<sim::SimCallbackEntry> remove_order(sim::SimState& sim, u32 command_id);
+
     /// The shown unit whose box, turned with it, holds (wx, wz), or 0
     u32 unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
 
@@ -265,6 +295,16 @@ private:
     std::array<sim::Vector3, 4> drag_quad_{};
     u32 hovered_ = 0;
     u32 hovered_command_ = 0;
+    std::optional<OrderDrag> order_drag_;
+    bool order_drag_moved_ = false;
+    std::optional<OrderDrag> dropped_;
+    sim::Vector3 dropped_from_;
+    f64 dropped_for_ = 0;
+    bool rmb_removes_ = false;
+    std::optional<CommandGraphNode> graph_node(u32 command_id) const;
+    std::vector<u32> own_units(sim::SimState& sim, const std::vector<u32>& ids) const;
+    OrderDrag order_drop(sim::SimState& sim, const CommandGraphNode& node, f32 wx, f32 wz,
+                         bool released, u32& target) const;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
     std::optional<std::array<f32, 4>> build_line_;
     f32 snap_radius_ = 4.0f;

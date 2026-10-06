@@ -2,12 +2,15 @@
 
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "renderer/command_graph_renderer.hpp"
+#include "renderer/input_handler.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/world_snapshot.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -17,6 +20,8 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <string>
+#include <variant>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -358,4 +363,198 @@ TEST_CASE("A factory's rally order can be taken off", "[order_edit]") {
     w.sim->run_sim_callback(removal(8, {f.entity_id()}));
     REQUIRE(f.rally_orders().size() == 1);
     CHECK(f.rally_orders()[0].command_id == 9);
+}
+
+namespace {
+
+struct Ui {
+    osc::sim::WorldSnapshot world;
+    osc::renderer::InputHandler input;
+    std::vector<SimCallbackEntry> sent;
+
+    explicit Ui(SimState& sim) {
+        osc::sim::capture_world(sim, world);
+        input.set_frame_view(osc::sim::FrameView(&world, &world, 1.0f));
+        input.set_player_army(0);
+        sim.set_local_callback_sink([this](SimCallbackEntry cb) { sent.push_back(std::move(cb)); });
+    }
+};
+
+double number(const SimCallbackEntry& cb, const char* key) {
+    return std::get<double>(cb.args.at(key));
+}
+
+} // namespace
+
+TEST_CASE("Dragging a waypoint sends one SetCommandTarget, on release", "[order_edit][input]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(10, 20);
+    w.order({a.entity_id(), b.entity_id()}, CommandType::Move, 100, 15);
+    w.ticks(2);
+    const osc::u32 id = a.command_queue().front().command_id;
+    Ui ui(*w.sim);
+    REQUIRE(ui.input.begin_order_drag(id));
+    for (osc::f32 x : {90.0f, 70.0f, 50.0f}) {
+        ui.input.drag_order_to(*w.sim, x, 60);
+        CHECK(ui.sent.empty());
+        REQUIRE(ui.input.order_drag());
+        CHECK(ui.input.order_drag()->at.x == x);
+        CHECK(ui.input.order_drag()->held);
+    }
+    const auto sent = ui.input.release_order_drag(*w.sim, 30, 90);
+    REQUIRE(ui.sent.size() == 1);
+    CHECK(ui.sent[0].func_name == osc::sim::kSetCommandTargetCallback);
+    CHECK(number(ui.sent[0], "Command") == id);
+    CHECK(number(ui.sent[0], "X") == 30.0);
+    CHECK(number(ui.sent[0], "Z") == 90.0);
+    CHECK(ui.sent[0].unit_ids == std::vector<osc::u32>{a.entity_id(), b.entity_id()});
+    REQUIRE(ui.input.order_drag());
+    CHECK_FALSE(ui.input.order_drag()->held);
+    CHECK_FALSE(ui.input.release_order_drag(*w.sim, 30, 90));
+    CHECK(ui.sent.size() == 1);
+}
+
+TEST_CASE("A waypoint pressed and let go where it was sends nothing", "[order_edit][input]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    w.order({a.entity_id()}, CommandType::Move, 100, 15);
+    w.ticks(2);
+    Ui ui(*w.sim);
+    REQUIRE(ui.input.begin_order_drag(a.command_queue().front().command_id));
+    CHECK_FALSE(ui.input.release_order_drag(*w.sim, 100, 15));
+    CHECK(ui.sent.empty());
+    CHECK_FALSE(ui.input.begin_order_drag(0));
+    ui.input.set_player_army(-1);
+    CHECK_FALSE(ui.input.begin_order_drag(a.command_queue().front().command_id));
+}
+
+TEST_CASE("An order on a unit is dropped on the nearest unit of its target's army",
+          "[order_edit][input]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    a.add_command_cap("RULEUCC_Guard");
+    Unit& friend1 = w.walker(40, 10);
+    Unit& friend2 = w.walker(40, 60);
+    w.walker(50, 50, 1);
+    w.order({a.entity_id()}, CommandType::Guard, 40, 10, true, friend1.entity_id());
+    w.ticks(2);
+    Ui ui(*w.sim);
+    REQUIRE(ui.input.begin_order_drag(a.command_queue().front().command_id));
+    ui.input.drag_order_to(*w.sim, 50, 52);
+    CHECK(ui.input.order_drag()->at.x == 50.0f);
+    REQUIRE(ui.input.release_order_drag(*w.sim, 50, 52));
+    REQUIRE(ui.sent.size() == 1);
+    CHECK(number(ui.sent[0], "Target") == friend2.entity_id());
+    CHECK(ui.sent[0].args.count("X") == 0);
+}
+
+TEST_CASE("A build dropped where it can't stand is not sent; elsewhere it snaps",
+          "[order_edit][input]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    UnitCommand build;
+    build.type = CommandType::BuildMobile;
+    build.blueprint_id = "pgen";
+    build.target_pos = {30, 0, 30};
+    w.sim->set_human_input_active(true);
+    w.sim->route_player_command({a.entity_id()}, build, true);
+    w.sim->set_human_input_active(false);
+    w.ticks(1);
+    const osc::u32 id = a.command_queue().front().command_id;
+    Ui ui(*w.sim);
+    osc::u32 moving = 0;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.can_place = [&](osc::i32, const std::string& bp, osc::f32 x, osc::f32, osc::u32 m) {
+        osc::sim::PlacementRules r;
+        r.size_x = r.size_z = 2.0f;
+        w.sim->placement_rules(bp, [&] { return r; });
+        moving = m;
+        return x < 50.0f;
+    };
+    ui.input.set_command_mode_hooks(std::move(hooks));
+    REQUIRE(ui.input.begin_order_drag(id));
+    ui.input.drag_order_to(*w.sim, 60.4f, 30);
+    CHECK_FALSE(ui.input.order_drag()->valid);
+    CHECK_FALSE(ui.input.release_order_drag(*w.sim, 60.4f, 30));
+    CHECK(ui.sent.empty());
+
+    REQUIRE(ui.input.begin_order_drag(id));
+    ui.input.drag_order_to(*w.sim, 40.4f, 30.6f);
+    CHECK(ui.input.order_drag()->valid);
+    REQUIRE(ui.input.release_order_drag(*w.sim, 40.4f, 30.6f));
+    CHECK(moving == id);
+    REQUIRE(ui.sent.size() == 1);
+    CHECK(number(ui.sent[0], "X") == 40.0);
+    CHECK(number(ui.sent[0], "Z") == 31.0);
+}
+
+TEST_CASE("Shift+Ctrl and the right button over a waypoint take its order off",
+          "[order_edit][input]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(10, 20);
+    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    w.order(both, CommandType::Move, 60, 10);
+    w.order(both, CommandType::Move, 60, 60, false);
+    w.ticks(2);
+    const osc::u32 second = a.command_queue()[1].command_id;
+    osc::sim::WorldSnapshot world;
+    osc::sim::capture_world(*w.sim, world);
+    osc::renderer::InputHandler input;
+    input.set_frame_view(osc::sim::FrameView(&world, &world, 1.0f));
+    input.set_player_army(0);
+    CHECK(input.removes_order(second, true, true));
+    CHECK_FALSE(input.removes_order(second, true, false));
+    CHECK_FALSE(input.removes_order(second, false, true));
+    CHECK_FALSE(input.removes_order(0, true, true));
+    REQUIRE(input.remove_order(*w.sim, second));
+    w.ticks(1);
+    CHECK(a.command_queue().size() == 1);
+    CHECK(b.command_queue().size() == 1);
+    input.set_player_army(-1);
+    CHECK_FALSE(input.removes_order(a.command_queue()[0].command_id, true, true));
+    CHECK_FALSE(input.remove_order(*w.sim, a.command_queue()[0].command_id));
+}
+
+TEST_CASE("Another army's orders shown on the graph can't be moved or taken off",
+          "[order_edit][input]") {
+    World w;
+    Unit& theirs = w.walker(10, 10, 1);
+    w.order({theirs.entity_id()}, CommandType::Move, 60, 10);
+    w.ticks(2);
+    const osc::u32 id = theirs.command_queue().front().command_id;
+    Ui ui(*w.sim);
+    ui.input.set_selected({theirs.entity_id()});
+    CHECK_FALSE(ui.input.remove_order(*w.sim, id));
+    REQUIRE(ui.input.begin_order_drag(id));
+    ui.input.drag_order_to(*w.sim, 30, 30);
+    CHECK_FALSE(ui.input.release_order_drag(*w.sim, 30, 30));
+    CHECK(ui.sent.empty());
+}
+
+TEST_CASE("A dragged waypoint draws its order's legs to where it is", "[order_edit][renderer]") {
+    osc::sim::WorldSnapshot world;
+    for (osc::u32 id : {1u, 2u}) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = 0;
+        e.is_unit = true;
+        e.command_offset = static_cast<osc::u32>(world.commands.size());
+        e.command_count = 1;
+        osc::sim::CommandRecord move;
+        move.type = CommandType::Move;
+        move.command_id = 7;
+        move.target_pos = {static_cast<osc::f32>(40 + 20 * (id - 1)), 0, 50};
+        world.commands.push_back(move);
+        world.entities.push_back(e);
+    }
+    osc::renderer::CommandGraphStyle style;
+    auto paths = osc::renderer::command_graph_paths(
+        osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0, [&](CommandType) { return &style; });
+    osc::renderer::preview_paths(paths, 7, {80, 0, 20});
+    CHECK(paths[0].chain[1].x == 70.0f);
+    CHECK(paths[1].chain[1].x == 90.0f);
+    CHECK(paths[1].chain[1].z == 20.0f);
+    CHECK(osc::renderer::command_graph_nodes(paths)[0].position.x == 80.0f);
 }

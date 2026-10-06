@@ -215,6 +215,30 @@ void cancel_command_mode(lua_State* uiL) {
     osc::core::call_ui_callback(uiL, kCommandModeModule, "EndCommandMode", 1);
 }
 
+/// /lua/ui/game/commandgraph.lua's `name` with the nargs arguments on top of
+/// the stack (consumed), as UICommandDragger calls OnCommandDragBegin/End
+void call_command_graph(lua_State* uiL, const char* name, int nargs) {
+    const int base = lua_gettop(uiL) - nargs;
+    lua_pushstring(uiL, "import");
+    lua_rawget(uiL, LUA_GLOBALSINDEX);
+    if (lua_isfunction(uiL, -1)) {
+        lua_pushstring(uiL, "/lua/ui/game/commandgraph.lua");
+        if (lua_pcall(uiL, 1, 1, 0) == 0 && lua_istable(uiL, -1)) {
+            lua_pushstring(uiL, name);
+            lua_gettable(uiL, -2);
+            if (lua_isfunction(uiL, -1)) {
+                for (int i = 1; i <= nargs; ++i) {
+                    lua_pushvalue(uiL, base + i);
+                }
+                if (lua_pcall(uiL, nargs, 0, 0) != 0) {
+                    spdlog::warn("{} error: {}", name, lua_tostring(uiL, -1));
+                }
+            }
+        }
+    }
+    lua_settop(uiL, base);
+}
+
 /// Show the build ghost while FA is in build mode. The ghost is cleared
 /// only if this set it (other code may place ghosts too).
 void sync_build_ghost(osc::sim::SimState& sim, const osc::renderer::CommandMode& m,

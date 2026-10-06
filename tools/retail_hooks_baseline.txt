@@ -24,8 +24,6 @@ method OnStopBuilderTracking
 method OnSubtitle
 method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
-module /lua/ui/game/commandgraph.lua:OnCommandDragBegin
-module /lua/ui/game/commandgraph.lua:OnCommandDragEnd
 module /lua/ui/game/commandgraph.lua:OnCommandGraphShow
 module /lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus
 module /lua/ui/game/rename.lua:ShowRenameDialog

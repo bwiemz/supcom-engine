@@ -376,6 +376,23 @@ u32 waypoint_under_cursor(const std::vector<WaypointOnScreen>& waypoints, f32 mx
     return best;
 }
 
+void preview_paths(std::vector<CommandGraphPath>& paths, u32 command_id, const Vector3& at) {
+    for (const CommandGraphNode& node : command_graph_nodes(paths)) {
+        if (node.order.command_id != command_id) {
+            continue;
+        }
+        const Vector3 delta = sub(at, node.position);
+        for (CommandGraphPath& path : paths) {
+            for (size_t i = 0; i < path.legs.size(); ++i) {
+                if (path.legs[i].order.command_id == command_id) {
+                    path.chain[i + 1] = add(path.chain[i + 1], delta);
+                }
+            }
+        }
+        return;
+    }
+}
+
 std::string command_graph_key(sim::CommandType type) {
     switch (type) {
     case sim::CommandType::Move: return "UNITCOMMAND_Move";
@@ -557,6 +574,9 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                                      [&](sim::CommandType type) { return style(type, L); });
     std::stable_partition(paths.begin(), paths.end(),
                           [](const CommandGraphPath& p) { return p.chosen; });
+    if (preview_ != 0) {
+        preview_paths(paths, preview_, preview_at_);
+    }
     for (const CommandGraphPath& path : paths) {
         const sim::EntityRecord* e = path.unit;
         const u32 uid = e->id;
@@ -621,6 +641,9 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
         }
     }
     for (const CommandGraphNode& node : command_graph_nodes(paths, highlight_, hovered_unit_)) {
+        if (node.order.command_id == preview_ && preview_ != 0 && !preview_valid_) {
+            continue;
+        }
         const CommandGraphStyle* s = node.style;
         const GPUTexture* wp_tex =
             s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
