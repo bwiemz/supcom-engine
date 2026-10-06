@@ -629,6 +629,10 @@ void StateIO::save(StateWriter& w, const SimCallbackEntry& c) {
     w.b(c.value.has_value());
     if (c.value) save_arg(w, *c.value);
     save_ids(w, c.unit_ids);
+    w.b(c.lua_args.has_value());
+    if (c.lua_args) {
+        w.str(*c.lua_args);
+    }
 }
 
 void StateIO::load(StateReader& r, SimCallbackEntry& c) {
@@ -642,6 +646,10 @@ void StateIO::load(StateReader& r, SimCallbackEntry& c) {
     c.value.reset();
     if (r.b()) c.value = load_arg(r);
     c.unit_ids = load_ids(r);
+    c.lua_args.reset();
+    if (r.b()) {
+        c.lua_args = r.str();
+    }
 }
 
 void StateIO::save(StateWriter& w, const ScheduledCommand& c) {

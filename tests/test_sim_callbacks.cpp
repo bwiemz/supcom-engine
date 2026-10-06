@@ -4,6 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/lua_state.hpp"
+#include "lua/user_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lockstep_session.hpp"
@@ -12,6 +14,7 @@
 #include "sim/replay.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/state_io.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 
@@ -252,7 +255,7 @@ TEST_CASE("A SimCallback's Args may be one value, recorded and replayed", "[simc
         rec.sim.set_recording(true);
         rec.sim.tick();
         rec.sim.submit_callback(cb);
-        rec.sim.submit_callback(SimCallbackEntry{"Count", {}, 7.0, {}});
+        rec.sim.submit_callback(SimCallbackEntry{"Count", {}, 7.0, {}, {}});
         rec.sim.tick();
         REQUIRE(rec.call_count() == 2);
         CHECK(rec.field(1, "c.args") == "WorldCamera");
@@ -271,7 +274,7 @@ TEST_CASE("A SimCallback's Args may be one value, recorded and replayed", "[simc
 TEST_CASE("A callback's one value survives the codec; older replays have none",
           "[simcallback][replay]") {
     ScheduledCommand c;
-    c.callback = SimCallbackEntry{"OnCameraFinish", {}, true, {}};
+    c.callback = SimCallbackEntry{"OnCameraFinish", {}, true, {}, {}};
     std::vector<osc::u8> bytes;
     osc::sim::ByteWriter w(bytes);
     osc::sim::write_command(w, c);
@@ -288,9 +291,11 @@ TEST_CASE("A callback's one value survives the codec; older replays have none",
     std::vector<osc::u8> v7;
     osc::sim::ByteWriter w7(v7);
     osc::sim::write_command(w7, c);
+    v7.pop_back(); // v13's "no Lua args" byte
     v7.pop_back(); // v8's "no value" byte
     osc::sim::ByteReader r7(v7);
-    REQUIRE(osc::sim::read_command(r7, back, true, true, true, true, /*with_value=*/false));
+    REQUIRE(osc::sim::read_command(r7, back, true, true, true, true, /*with_value=*/false,
+                                   /*with_script=*/true, /*with_lua_args=*/false));
     CHECK_FALSE(back.callback->value);
     CHECK(r7.position() == v7.size());
 
@@ -299,7 +304,7 @@ TEST_CASE("A callback's one value survives the codec; older replays have none",
     std::vector<osc::u8> bad;
     osc::sim::ByteWriter wb(bad);
     osc::sim::write_command(wb, c);
-    bad[bad.size() - 6] = 9; // the tag, before the string's length and byte
+    bad[bad.size() - 7] = 9; // the tag, before the string's length and byte
     osc::sim::ByteReader rb(bad);
     CHECK_FALSE(osc::sim::read_command(rb, back));
 }
@@ -327,8 +332,10 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
         const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
         script_at = bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
     }
-    // The callback is the last command, its "no value" byte the file's last:
-    // v7 wrote neither, nor its (empty) Script table
+    // The callback is the last command, its "no value" and "no Lua args"
+    // bytes the file's last: v7 wrote neither, nor its (empty) Script table
+    REQUIRE(bytes.back() == 0);
+    bytes.pop_back();
     REQUIRE(bytes.back() == 0);
     bytes.pop_back();
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(script_at),
@@ -342,6 +349,63 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
     REQUIRE(back.commands[0].callback);
     CHECK(back.commands[0].callback->func_name == "ToggleThing");
     CHECK_FALSE(back.commands[0].callback->value);
+}
+
+TEST_CASE("A UI SimCallback's nested Args reach the sim, recorded, replayed and saved",
+          "[simcallback][replay]") {
+    osc::lua::LuaState ui;
+    osc::lua::register_user_bindings(ui);
+    osc::sim::SimCallbackQueue queue;
+    lua_pushstring(ui.raw(), "__osc_sim_callback_queue");
+    lua_pushlightuserdata(ui.raw(), &queue);
+    lua_rawset(ui.raw(), LUA_REGISTRYINDEX);
+    REQUIRE(ui.do_string("SimCallback({Func = 'SpawnPing', "
+                         "Args = {Owner = 1, Location = {10, 20, 30}}})")
+                .ok());
+    REQUIRE(ui.do_string("SimCallback({Func = 'ToggleSelfDestruct', "
+                         "Args = {units = {7, 9}, owner = 0}})")
+                .ok());
+    REQUIRE(ui.do_string("SimCallback({Func = 'OnControlGroupAssign', Args = {7, 9}})").ok());
+    REQUIRE(ui.do_string("SimCallback({Func = 'OnEndGameFMVFinished'})").ok());
+    const auto sent = queue.drain();
+    REQUIRE(sent.size() == 4);
+
+    const auto check = [](CallbackSim& s) {
+        REQUIRE(s.call_count() == 4);
+        CHECK(s.field(1, "c.args.Owner") == "1");
+        CHECK(s.field(1, "c.args.Location[2]") == "20");
+        CHECK(s.field(2, "c.args.units[2]") == "9");
+        CHECK(s.field(2, "c.args.owner") == "0");
+        CHECK(s.field(3, "table.getn(c.args)") == "2");
+        CHECK(s.field(3, "c.args[1]") == "7");
+        CHECK(s.field(4, "c.args") == "nil");
+    };
+    Replay replay;
+    std::vector<osc::u8> saved;
+    {
+        CallbackSim rec;
+        rec.sim.set_recording(true);
+        rec.sim.tick();
+        for (const auto& cb : sent) {
+            rec.sim.submit_callback(cb);
+        }
+        saved = osc::sim::save_sim_state(rec.sim);
+        rec.sim.tick();
+        check(rec);
+        REQUIRE(Replay::deserialize(rec.sim.recorded_replay().serialize(), replay));
+    }
+    {
+        CallbackSim play;
+        play.sim.queue_replay(replay);
+        for (int i = 0; i < 3; ++i) {
+            play.sim.tick();
+        }
+        check(play);
+    }
+    CallbackSim loaded;
+    REQUIRE(osc::sim::load_sim_state(loaded.sim, saved).empty());
+    loaded.sim.tick();
+    check(loaded);
 }
 
 TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lockstep]") {
