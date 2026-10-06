@@ -1,6 +1,4 @@
 # Callbacks retail runs that src/ doesn't name yet (tools/check_retail_hooks.py)
-method OnAnimCollision
-method OnAnimTerrainCollision
 method OnAnimationFinished
 method OnAnimationFrame
 method OnAssignedFocusEntity
