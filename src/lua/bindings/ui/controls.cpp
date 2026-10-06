@@ -439,11 +439,21 @@ static int control_GetRootFrame(lua_State* L) {
     return 1;
 }
 
+/// HitTest(x, y): whether the point is within the control's bounds, Left
+/// and Top in, Right and Bottom out (Moho's CMauiControl::HitTest; FAF finds
+/// the world view under the mouse so).
 static int control_HitTest(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl) { lua_pushboolean(L, 0); return 1; }
-    // Stub: always return false for now
-    lua_pushboolean(L, 0);
+    if (!ctrl || !lua_istable(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const f32 x = static_cast<f32>(luaL_checknumber(L, 2));
+    const f32 y = static_cast<f32>(luaL_checknumber(L, 3));
+    const bool inside = x >= ui::read_lazyvar(L, 1, "Left") &&
+                        ui::read_lazyvar(L, 1, "Right") > x && y >= ui::read_lazyvar(L, 1, "Top") &&
+                        ui::read_lazyvar(L, 1, "Bottom") > y;
+    lua_pushboolean(L, inside ? 1 : 0);
     return 1;
 }
 
@@ -635,11 +645,18 @@ static int bitmap_SetNewTexture(lua_State* L) {
     return 0;
 }
 
+/// Bitmap:InternalSetSolidColor(color): the colour in place of its textures
+/// (Moho's clears the bitmap's texture batches and frame first). FAF's
+/// construction panel clears a reused button's unit icon so; kept, the
+/// icon showed over an enhancement's button.
 static int bitmap_InternalSetSolidColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     if (lua_type(L, 2) == LUA_TSTRING) {
         u32 color = check_color(L, 2);
+        ctrl->set_texture_path("");
+        ctrl->set_textures({});
+        ctrl->set_current_frame(0);
         ctrl->set_solid_color(color);
         ctrl->set_has_solid_color(true);
     }

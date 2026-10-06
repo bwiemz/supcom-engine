@@ -7,6 +7,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/blueprint_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "sim/projectile.hpp"
 
 #include <string>
 
@@ -34,4 +35,29 @@ TEST_CASE("A projectile's omitted Physics spreads read as Moho's defaults", "[bl
     )");
     INFO((r.ok() ? std::string() : r.error().message));
     CHECK(r.ok());
+}
+
+TEST_CASE("A projectile takes its blueprint's CollideSurface and CollideEntity", "[blueprints]") {
+    // Moho's Projectile sets mCollideSurface and mDoCollision from them as
+    // it is made: FAF's UEF build beams end on dummy projectiles made inside
+    // the unit being built, which hit nothing.
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string(R"(
+        __blueprints = {
+            dummy = {Physics = {CollideEntity = false, CollideSurface = false}},
+            shell = {Physics = {MaxSpeed = 30}},
+        }
+    )")
+                .ok());
+    osc::sim::Projectile dummy;
+    dummy.set_blueprint_id("dummy");
+    (void)dummy.apply_blueprint_physics(state.raw());
+    CHECK_FALSE(dummy.collide_entity);
+    CHECK_FALSE(dummy.collide_surface);
+    osc::sim::Projectile shell;
+    shell.set_blueprint_id("shell");
+    (void)shell.apply_blueprint_physics(state.raw());
+    CHECK(shell.collide_entity);
+    CHECK(shell.collide_surface);
 }

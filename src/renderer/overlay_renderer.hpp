@@ -164,16 +164,6 @@ private:
 
     VkDescriptorSet white_ds_ = VK_NULL_HANDLE;
 
-    // Active explosion effects (from death events)
-    struct Explosion {
-        f32 x, y, z;     // world position
-        f32 scale;        // max radius
-        f32 age;          // seconds since death (0..EXPLOSION_DURATION)
-        f32 r, g, b;     // flash color
-    };
-    static constexpr f32 EXPLOSION_DURATION = 0.6f;
-    static constexpr u32 MAX_EXPLOSIONS = 64;
-    std::vector<Explosion> explosions_;
 };
 
 } // namespace osc::renderer
