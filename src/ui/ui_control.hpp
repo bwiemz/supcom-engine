@@ -133,6 +133,7 @@ public:
         textures_ = std::move(t);
         num_frames_ = static_cast<i32>(textures_.size());
     }
+    const std::string& frame_texture() const;
 
     // --- Text state ---
     const std::string& text_content() const { return text_content_; }

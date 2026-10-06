@@ -13,6 +13,8 @@
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
 #include "core/test_status.hpp"
+#include "lua/lua_state.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
@@ -244,8 +246,9 @@ namespace {
 /// its page group fills the panel at the Continue button's depth, made
 /// after it. Each control's own flag decides, as there: a hidden control's
 /// children are still walked (a Grid keeps its cells shown).
+template <typename Opaque>
 void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
-                 const std::unordered_set<UIControl*>* skip, UIControl*& best,
+                 const std::unordered_set<UIControl*>* skip, const Opaque& opaque, UIControl*& best,
                  f32& best_depth) {
     if (!ctrl || ctrl->destroyed()) return;
     if (ctrl->lua_table_ref() < 0) return;
@@ -258,8 +261,9 @@ void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
         const auto rect =
             control_rect(left, top, read_lazyvar(L, tbl, "Right"), read_lazyvar(L, tbl, "Bottom"),
                          read_lazyvar(L, tbl, "Width"), read_lazyvar(L, tbl, "Height"));
-        const bool inside = x >= rect.x && x < rect.x + rect.w &&
-                            y >= rect.y && y < rect.y + rect.h;
+        const bool inside = x >= rect.x && x < rect.x + rect.w && y >= rect.y &&
+                            y < rect.y + rect.h &&
+                            (!ctrl->alpha_hit_test() || opaque(*ctrl, x - left, y - top));
         const f32 depth = inside ? read_lazyvar(L, tbl, "Depth") : 0.0f;
         lua_pop(L, 1);
         if (inside && (!best || depth > best_depth)) {
@@ -267,8 +271,9 @@ void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
             best_depth = depth;
         }
     }
-    for (auto* child : ctrl->children())
-        collect_hit(L, child, x, y, skip, best, best_depth);
+    for (auto* child : ctrl->children()) {
+        collect_hit(L, child, x, y, skip, opaque, best, best_depth);
+    }
 }
 
 } // namespace
@@ -280,9 +285,36 @@ UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
                                 const std::unordered_set<UIControl*>* skip) {
     UIControl* best = nullptr;
     f32 best_depth = 0.0f;
-    collect_hit(L, root, static_cast<f32>(x), static_cast<f32>(y), skip, best,
-                best_depth);
+    const auto opaque = [&](const UIControl& ctrl, f32 local_x, f32 local_y) {
+        return texel_opaque(L, ctrl, local_x, local_y);
+    };
+    collect_hit(L, root, static_cast<f32>(x), static_cast<f32>(y), skip, opaque, best, best_depth);
     return best;
+}
+
+// Moho's CMauiBitmap::HitTest: the texel under the point, unscaled, inside the texture's border.
+bool UIDispatch::texel_opaque(lua_State* L, const UIControl& ctrl, f32 local_x, f32 local_y) {
+    const std::string& path = ctrl.frame_texture();
+    if (path.empty()) {
+        return !ctrl.has_solid_color() || (ctrl.solid_color() >> 24) != 0;
+    }
+    auto mask = alpha_masks_.find(path);
+    if (mask == alpha_masks_.end()) {
+        lua_getglobal(L, lua::REG_VFS);
+        const auto* files = static_cast<const vfs::VirtualFileSystem*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        if (!files) {
+            return true;
+        }
+        const auto file = files->read_file(path);
+        mask = alpha_masks_.emplace(path, file ? AlphaMask::from_dds(*file) : std::nullopt).first;
+    }
+    if (!mask->second) {
+        return true;
+    }
+    const i64 border = ctrl.texture_border();
+    return mask->second->opaque(static_cast<i64>(local_x) + border,
+                                static_cast<i64>(local_y) + border);
 }
 
 bool UIDispatch::ui_has_mouse(lua_State* L, UIControlRegistry& registry, f64 x, f64 y) {

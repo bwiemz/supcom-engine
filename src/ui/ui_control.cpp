@@ -9,6 +9,19 @@ namespace osc::ui {
 // Destructor defined here so unique_ptr<MoviePlayer> sees complete type
 UIControl::~UIControl() = default;
 
+const std::string& UIControl::frame_texture() const {
+    if (textures_.size() > 1) {
+        i32 frame = current_frame_;
+        if (pattern_index_ >= 0 && pattern_index_ < static_cast<i32>(frame_pattern_.size())) {
+            frame = frame_pattern_[pattern_index_];
+        }
+        if (frame >= 0 && frame < static_cast<i32>(textures_.size())) {
+            return textures_[frame];
+        }
+    }
+    return texture_path_;
+}
+
 void UIControl::set_movie_player(std::unique_ptr<video::MoviePlayer> m) {
     movie_player_ = std::move(m);
 }
