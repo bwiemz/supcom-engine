@@ -423,58 +423,11 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         }
     }
 
-    // --- Consume death events and spawn explosion VFX ---
-    // A death's flash stands in for its effects, which show only where the
-    // player's army sees them (M215a).
-    for (const auto& de : events.deaths) {
-        if (recon_ && !recon_->sees_at(view, de.army, de.x, de.z)) continue;
-        if (explosions_.size() < MAX_EXPLOSIONS) {
-            explosions_.push_back({de.x, de.y, de.z,
-                                   std::max(de.scale, 1.0f),
-                                   0.0f,
-                                   1.0f, 0.8f, 0.3f}); // orange flash
-        }
-    }
+    // A death draws nothing of the engine's own: its effects are the unit
+    // script's (FA's CreateDefault*Explosion emitters, through the particle
+    // system). The flash the engine drew in their stead before they worked
+    // showed as a square.
     events.deaths.clear();
-
-    // Tick and render active explosions
-    for (auto it = explosions_.begin(); it != explosions_.end();) {
-        it->age += dt;
-        if (it->age >= EXPLOSION_DURATION) {
-            it = explosions_.erase(it);
-            continue;
-        }
-
-        f32 t = it->age / EXPLOSION_DURATION; // 0→1 over lifetime
-        f32 ex_sx, ex_sy;
-        if (world_to_screen(it->x, it->y, it->z, vp_matrix, sw, sh,
-                            ex_sx, ex_sy)) {
-            // Expanding flash circle (fades out)
-            f32 radius = it->scale * (10.0f + 30.0f * t); // pixels, expanding
-            f32 alpha = (1.0f - t) * 0.9f;
-            // Bright flash core
-            emit_quad(ex_sx - radius, ex_sy - radius,
-                      radius * 2.0f, radius * 2.0f,
-                      it->r, it->g, it->b, alpha * 0.5f);
-            // Smaller bright center
-            f32 inner = radius * 0.4f * (1.0f - t);
-            emit_quad(ex_sx - inner, ex_sy - inner,
-                      inner * 2.0f, inner * 2.0f,
-                      1.0f, 1.0f, 0.9f, alpha);
-
-            // Debris particles (4 per explosion, scatter outward)
-            for (int d = 0; d < 4; d++) {
-                f32 ang = static_cast<f32>(d) * 1.5708f + it->age * 2.0f;
-                f32 dist = radius * 0.7f * t;
-                f32 px = ex_sx + std::cos(ang) * dist;
-                f32 py = ex_sy + std::sin(ang) * dist;
-                f32 ps = 3.0f * (1.0f - t);
-                emit_quad(px - ps, py - ps, ps * 2.0f, ps * 2.0f,
-                          0.6f, 0.3f, 0.1f, alpha * 0.7f); // dark debris
-            }
-        }
-        ++it;
-    }
 
     // Iterate all entities for health bars + selection circles
     for (const sim::EntityRecord& entity : view.entities()) {

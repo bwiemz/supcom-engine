@@ -330,34 +330,25 @@ void test_unit_intel(TestContext& ctx) {
                         name(sight(near_id)), name(sight(far_id))));
     r.set_fog_enabled(true);
 
-    // Test 12: a death's flash shows where the player's army sees: one at
-    // the engineer beside the ally's flashes, one at the far engineer, in
-    // the fog, doesn't. (The events are the test's: the sim clears its own
-    // as its tick ends, before recapture() takes the world.)
+    // Test 12: a death draws no flash of the engine's own, seen or not:
+    // its effects are its script's (the engine's stand-in, an orange
+    // square, is gone).
     {
         const sim::EntityRecord* shared = seen.cur().find(shared_id);
-        const sim::EntityRecord* far = seen.cur().find(far_id);
-        if (!shared || !far) {
-            t.check(false, "Test 12: the engineers are there");
+        if (!shared) {
+            t.check(false, "Test 12: the engineer is there");
         } else {
-            for (const sim::EntityRecord* e : {shared, far})
-                shots.events().deaths.push_back(
-                    {e->position.x, e->position.y, e->position.z, 1.0f, e->army});
+            shots.events().deaths.push_back(
+                {shared->position.x, shared->position.y, shared->position.z, 1.0f, shared->army});
             shots.redraw();
             f = drawn(r);
-            const auto flash_at = [&](const sim::Vector3& p) {
-                const auto at = project(p);
-                return at && std::any_of(f.overlay.begin(), f.overlay.end(), [&](const Quad& q) {
-                           return std::abs(q.x - (*at)[0]) < 1.0f &&
-                                  std::abs(q.y - (*at)[1]) < 1.0f && std::abs(q.r - 1.0f) < 0.01f &&
-                                  std::abs(q.g - 0.8f) < 0.01f && std::abs(q.b - 0.3f) < 0.01f;
-                       });
-            };
-            const bool in_sight = flash_at(shared->position);
-            const bool in_fog = flash_at(far->position);
-            t.check(in_sight && !in_fog,
-                    fmt::format("Test 12: a death flashes in sight ({}), not in the fog ({})",
-                                in_sight ? "flash" : "none", in_fog ? "flash" : "none"));
+            const auto at = project(shared->position);
+            const bool flash =
+                at && std::any_of(f.overlay.begin(), f.overlay.end(), [&](const Quad& q) {
+                    return std::abs(q.x - (*at)[0]) < 1.0f && std::abs(q.y - (*at)[1]) < 1.0f &&
+                           same_colour(q, 1.0f, 0.8f, 0.3f);
+                });
+            t.check(!flash, "Test 12: a death draws no flash of the engine's own");
         }
     }
 
