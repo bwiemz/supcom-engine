@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 extern "C" {
 #include <lua.h>
@@ -459,6 +460,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
     f32 width = read_lazyvar(L, tbl_idx, "Width");
     f32 height = read_lazyvar(L, tbl_idx, "Height");
     f32 depth = read_lazyvar(L, tbl_idx, "Depth");
+    const auto bitmap = ui::bitmap_quad(left, top, right, bottom, width, height);
 
     // Drawn over its edges (see ui::control_rect).
     {
@@ -480,6 +482,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
 
     // Only render controls with valid dimensions
     bool has_visual = false;
+    bool is_bitmap = false;
     QuadEntry entry{};
 
     if (on_screen && width > 0 && height > 0) {
@@ -512,8 +515,8 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                 if (ctrl->tiled() && bw > 0 && bh > 0) {
                     entry.inst.uv[0] = 0.0f;
                     entry.inst.uv[1] = 0.0f;
-                    entry.inst.uv[2] = width / (bw + 2.0f);
-                    entry.inst.uv[3] = height / (bh + 2.0f);
+                    entry.inst.uv[2] = bitmap.rect.w / (bw + 2.0f);
+                    entry.inst.uv[3] = bitmap.rect.h / (bh + 2.0f);
                 } else if (bw > 0 && bh > 0) {
                     // Inside the border, as Moho draws it
                     const auto inner = [](f32 uv, f32 size) {
@@ -530,6 +533,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                     entry.inst.uv[3] = ctrl->uv_v1();
                 }
                 has_visual = true;
+                is_bitmap = true;
             }
         } else if (ctrl->control_type() == ui::UIControl::ControlType::Movie) {
             // Moho's CMauiMovie::DoRender: the movie's frame over the
@@ -555,6 +559,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
             entry.inst.uv[0] = 0.0f; entry.inst.uv[1] = 0.0f;
             entry.inst.uv[2] = 1.0f; entry.inst.uv[3] = 1.0f;
             has_visual = true;
+            is_bitmap = true;
         }
 
         // Border rendering: solid color fill OR 8-piece ninepatch
@@ -616,6 +621,18 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
             entry.inst.rect[1] = top;
             entry.inst.rect[2] = width;
             entry.inst.rect[3] = height;
+            if (is_bitmap) {
+                entry.inst.rect[0] = bitmap.rect.x;
+                entry.inst.rect[1] = bitmap.rect.y;
+                entry.inst.rect[2] = bitmap.rect.w;
+                entry.inst.rect[3] = bitmap.rect.h;
+                if (bitmap.mirror_x) {
+                    std::swap(entry.inst.uv[0], entry.inst.uv[2]);
+                }
+                if (bitmap.mirror_y) {
+                    std::swap(entry.inst.uv[1], entry.inst.uv[3]);
+                }
+            }
             entry.clip = parent_clip;
             entry.depth = depth;
             quads_.push_back(entry);
