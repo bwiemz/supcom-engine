@@ -59,7 +59,9 @@ std::vector<osc::u32> setup(SimState& sim) {
     return ids;
 }
 
-Unit& unit(SimState& sim, osc::u32 id) { return static_cast<Unit&>(*sim.entity_registry().find(id)); }
+Unit& unit(SimState& sim, osc::u32 id) {
+    return static_cast<Unit&>(*sim.entity_registry().find(id));
+}
 
 } // namespace
 
@@ -76,6 +78,8 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum", "[s
         {"weapon last order point", [&] { w.last_order_point = osc::sim::Vector3{4, 0, 4}; }},
         {"weapon target check clock", [&] { w.target_check_clock = 7; }},
         {"weapon range (ChangeMaxRadius)", [&] { w.max_range = 30.0f; }},
+        {"weapon minimum range", [&] { w.min_range = 3.0f; }},
+        {"weapon damage radius", [&] { w.damage_radius = 2.0f; }},
         {"weapon rate of fire", [&] { w.rate_of_fire = 2.0f; }},
         {"weapon damage", [&] { w.damage = 55.0f; }},
         {"weapon target layers", [&] { w.fire_target_layer_caps = 0x3; }},
@@ -87,7 +91,10 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum", "[s
         {"blocked command queue", [&] { u.set_block_command_queue(true); }},
         {"can't take damage", [&] { u.set_can_take_damage(false); }},
         {"can't be killed", [&] { u.set_can_be_killed(false); }},
+        {"jostled", [&] { u.set_jostled(true); }},
         {"speed multiplier", [&] { u.set_speed_mult(0.5f); }},
+        {"acceleration multiplier", [&] { u.set_accel_mult(0.5f); }},
+        {"turn multiplier", [&] { u.set_turn_mult(0.5f); }},
         {"veterancy", [&] { u.set_vet_level(2); }},
         {"last attacker", [&] { u.set_last_attacker_id(ids[1]); }},
         {"enhancement", [&] { u.add_enhancement("Back", "Shield"); }},
@@ -139,11 +146,25 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
         w.ground_from_order = true;
         w.last_order_point = osc::sim::Vector3{4, 0, 4};
         w.max_range = 30.0f;
+        w.min_range = 2.0f;
+        w.damage_radius = 1.5f;
+        w.rate_of_fire = 2.0f;
+        w.damage = 30.0f;
+        w.fire_target_layer_caps = 0x3;
+        w.target_check_clock = 9;
         u.set_attack_facing({0, 0, 1});
         u.set_stat("KILLS", 3.0);
         u.set_unit_state("Busy", true);
+        u.set_can_take_damage(false);
+        u.set_can_be_killed(false);
+        u.set_jostled(true);
         u.set_speed_mult(0.75f);
+        u.set_accel_mult(0.5f);
+        u.set_turn_mult(0.5f);
+        u.set_heading(1.25f);
+        u.set_elevation_target(25.0f);
         u.set_vet_level(1);
+        u.set_last_attacker_id(ids[1]);
         u.add_enhancement("Back", "Shield");
         auto* p = sim.get_army(0)->create_platoon("Label");
         p->set_unique_name("KeepMe");
@@ -156,6 +177,11 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
         move.type = CommandType::Move;
         move.target_pos = {60.0f, 0.0f, 30.0f};
         u.push_command(move, true);
+        UnitCommand attack; // queued behind it, its facing clock running
+        attack.type = CommandType::Attack;
+        attack.target_id = ids[1];
+        attack.facing_clock = 5;
+        u.push_command(attack, false);
     };
     LuaGuard ga;
     SimState a(ga.L, nullptr);
@@ -181,6 +207,9 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
     // What was set came back
     const Unit& u = unit(b, ids[0]);
     CHECK(u.weapons().front()->shots_at_target == 2);
+    CHECK(u.weapons().front()->min_range == 2.0f);
+    CHECK(u.turn_mult() == 0.5f);
+    CHECK(u.last_attacker_id() == ids[1]);
     CHECK(u.get_stat("KILLS") == 3.0);
     CHECK(b.get_army(0)->find_platoon_by_name("keepme") != nullptr);
     for (int i = 0; i < 30; ++i) b.tick();
