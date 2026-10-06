@@ -1098,8 +1098,19 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) return;
 
-    if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+    run_on_reclaimed(*target, L);
+
+    // Re-validate after pcall (Lua callback may have destroyed the entity)
+    target = registry.find(target_id);
+    if (target && !target->destroyed()) {
+        target->mark_destroyed();
+        registry.unregister_entity(target_id);
+    }
+}
+
+void Unit::run_on_reclaimed(Entity& target, lua_State* L) {
+    if (target.lua_table_ref() >= 0 && lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
         int target_tbl = lua_gettop(L);
         lua_pushstring(L, "OnReclaimed");
         lua_gettable(L, target_tbl);
@@ -1115,13 +1126,62 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
         }
         lua_pop(L, 1); // target_tbl
     }
+}
 
-    // Re-validate after pcall (Lua callback may have destroyed the entity)
+bool Unit::reclaim_wears_down(const Entity& target) {
+    return target.is_unit() && !static_cast<const Unit&>(target).is_being_built();
+}
+
+bool Unit::wear_down(Unit& target) const {
+    f32 delta = target.max_health() / std::max(1.0f, 10.0f / reclaim_rate_);
+    if (target.regen_rate() > 0.0f) {
+        delta += target.regen_rate() * 0.1f;
+    }
+    if (target.health() <= delta) {
+        return false;
+    }
+    target.set_health(target.health() - delta);
+    return true;
+}
+
+u32 Unit::reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L) {
+    auto* target = registry.find(target_id);
+    if (!target || target->destroyed()) {
+        return 0;
+    }
+    const int target_ref = target->lua_table_ref();
+    run_on_reclaimed(*target, L);
+
+    u32 wreck_id = 0;
+    if (L && target_ref >= 0) {
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, target_ref);
+        const int self = lua_gettop(L);
+        lua_pushstring(L, "CreateWreckageProp");
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            lua_pushnumber(L, 0);
+            if (lua_pcall(L, 2, 1, 0) != 0) {
+                spdlog::warn("CreateWreckageProp error: {}", lua_tostring(L, -1));
+            } else if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                auto* wreck = static_cast<Entity*>(lua_touserdata(L, -1));
+                if (wreck && registry.find(wreck->entity_id()) == wreck && !wreck->destroyed()) {
+                    wreck_id = wreck->entity_id();
+                }
+            }
+        }
+        lua_settop(L, top);
+    }
+
     target = registry.find(target_id);
     if (target && !target->destroyed()) {
         target->mark_destroyed();
         registry.unregister_entity(target_id);
     }
+    return wreck_id;
 }
 
 bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
@@ -1169,6 +1229,11 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
 
     if (reclaim_rate_ <= 0)
         return false;
+
+    if (reclaim_wears_down(*target)) {
+        wear_down(static_cast<Unit&>(*target));
+        return true;
+    }
 
     if (target->fraction_complete() <= 0.0f)
         return false;

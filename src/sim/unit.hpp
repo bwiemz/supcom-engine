@@ -500,6 +500,9 @@ public:
     void stop_reclaiming(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry);
+    static bool reclaim_wears_down(const Entity& target);
+    bool wear_down(Unit& target) const;
+    u32 reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L);
 
     /// Repair helpers
     u32 repair_target_id() const { return repair_target_id_; }
@@ -1131,6 +1134,7 @@ public:
 
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
+    void run_on_reclaimed(Entity& target, lua_State* L);
     /// Move along the navigator's path, no faster than `speed_cap` if set (a
     /// formation keeping its slowest unit's pace).
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
