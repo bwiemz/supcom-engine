@@ -67,6 +67,9 @@ public:
     bool is_minimap() const { return is_minimap_; }
     void set_minimap(bool m) { is_minimap_ = m; }
 
+    bool resource_rendering() const { return resource_rendering_; }
+    void set_resource_rendering(bool on) { resource_rendering_ = on; }
+
 private:
     renderer::Camera* camera_ = nullptr;
     const map::Terrain* terrain_ = nullptr;
@@ -79,6 +82,7 @@ private:
     bool highlight_enabled_ = true;
     bool global_cam_cmds_ = false;
     bool is_minimap_ = false;
+    bool resource_rendering_ = true;
 };
 
 } // namespace osc::ui

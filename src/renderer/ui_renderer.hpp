@@ -15,6 +15,10 @@
 
 struct lua_State;
 
+namespace osc::ui {
+class WorldView;
+} // namespace osc::ui
+
 namespace osc::renderer {
 
 /// Axis-aligned clip rectangle in pixel coordinates.
@@ -47,7 +51,8 @@ struct UIQuad {
 };
 
 /// Draws a world view's content into its rect, appending quads.
-using WorldViewPainter = std::function<void(const ui::ControlRect&, std::vector<UIQuad>&)>;
+using WorldViewPainter =
+    std::function<void(const ui::WorldView&, const ui::ControlRect&, std::vector<UIQuad>&)>;
 
 /// A batch of UI quads sharing the same texture descriptor and clip rect.
 struct UIDrawGroup {

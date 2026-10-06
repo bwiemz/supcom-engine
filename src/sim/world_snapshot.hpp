@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/resource_deposit.hpp"
 #include "sim/unit_command.hpp"
 
 #include <array>
@@ -273,6 +274,7 @@ struct WorldSnapshot {
     /// army's start.
     f32 no_rush_radius = 0;
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
+    std::vector<ResourceDeposit> deposits;
     std::vector<CommandRecord> pending_commands;
     std::vector<PendingQueue> pending_queues; ///< ascending id
     u64 pending_serial = 0;

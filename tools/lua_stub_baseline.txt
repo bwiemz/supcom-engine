@@ -13,7 +13,6 @@ Destroy wlduiprovider_Destroy
 DrawCircle stub_noop
 DrawLine stub_noop
 DrawLinePop stub_noop
-EnableResourceRendering worldview_EnableResourceRendering
 EndLoggingStats l_EndLoggingStats
 FlattenMapRect stub_noop
 FlushEvents l_FlushEvents

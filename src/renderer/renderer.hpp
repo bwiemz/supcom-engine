@@ -16,6 +16,7 @@
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
+#include "renderer/resource_icon_renderer.hpp"
 #include "renderer/hud_renderer.hpp"
 #include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
@@ -271,6 +272,8 @@ public:
     bool select_boxes() const { return overlay_renderer_.select_boxes(); }
     /// The strategic icons drawn last frame (tests read them).
     const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
+    const ResourceIconRenderer& resource_icons() const { return resource_icon_renderer_; }
+    f32 resource_icon_time() const { return resource_icon_time_; }
     /// The video options (M217i): ren_Skydome, whether the sky dome draws;
     /// and those the renderer keeps but doesn't draw by yet:
     /// graphics_Fidelity, shadow_Fidelity, ren_MipSkipLevels,
@@ -678,6 +681,8 @@ private:
     MinimapRenderer minimap_renderer_;
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
+    ResourceIconRenderer resource_icon_renderer_;
+    f32 resource_icon_time_ = 0.0f;
     VideoOptions video_options_;
     bool cursor_clipped_ = false;
     HudRenderer hud_renderer_;

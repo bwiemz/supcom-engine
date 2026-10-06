@@ -10,6 +10,7 @@
 #include "sim/intel_sources.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/replay.hpp"
+#include "sim/resource_deposit.hpp"
 #include "sim/thread_manager.hpp"
 #include "sim/unit_blocking.hpp"
 
@@ -119,13 +120,6 @@ struct BlipSnapshot {
     std::string blueprint_id;
     i32 entity_army = -1; // 0-based
     bool entity_dead = false;
-};
-
-/// Resource deposit (mass/hydrocarbon point on map).
-struct ResourceDeposit {
-    f32 x = 0, y = 0, z = 0;
-    f32 size = 1.0f;
-    enum Type : u8 { Mass = 0, Hydrocarbon = 1 } type = Mass;
 };
 
 /// Lightweight context passed to Unit::update() each tick.
