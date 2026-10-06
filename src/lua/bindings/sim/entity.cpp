@@ -371,10 +371,9 @@ static int entity_GetFractionComplete(lua_State* L) {
     return 1;
 }
 
-// A unit's death, counted once: the loss for its army (Moho's Units_Killed),
-// veterancy for those that damaged it, and the kill for the army that did
-// the most. Kill counts it when the unit dies; Destroy, for a unit removed
-// without being killed.
+// A unit's death, counted once: the loss for its army (Moho's Units_Killed)
+// and the kill for the army that did the most damage. Kill counts it when the
+// unit dies; Destroy, for a unit removed without being killed.
 static void record_unit_death(lua_State* L, sim::Unit* dying_unit) {
     auto* sim_ptr = get_sim(L);
 
@@ -385,25 +384,6 @@ static void record_unit_death(lua_State* L, sim::Unit* dying_unit) {
             victim_brain->record_unit_lost(dying_unit->blueprint_id(),
                                            dying_unit->build_cost_mass(),
                                            dying_unit->build_cost_energy());
-        }
-    }
-
-    // Distribute veterancy XP to attackers
-    f32 xp_value = dying_unit->xp_value();
-    if (xp_value > 0 && !dying_unit->damage_contributions().empty()) {
-        f32 total_damage = 0;
-        for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
-            total_damage += dmg;
-        }
-        if (total_damage > 0 && sim_ptr) {
-            for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
-                auto* attacker = sim_ptr->entity_registry().find(aid);
-                if (attacker && !attacker->destroyed() && attacker->is_unit()) {
-                    f32 xp_share = xp_value * (dmg / total_damage);
-                    static_cast<sim::Unit*>(attacker)->add_xp(xp_share, L,
-                                                              sim_ptr->entity_registry());
-                }
-            }
         }
     }
 
@@ -565,6 +545,28 @@ int entity_Destroy(lua_State* L) {
     return 0;
 }
 
+// Moho's cfunc_EntityKillL (faf-re Entity.cpp): after the kill, a unit
+// instigator's KILLS stat counts an enemy not BENIGN or being built.
+// Retail's veterancy (Unit.lua CheckVeteranLevel) reads it.
+static u32 kill_credit_for(lua_State* L, const sim::Unit* victim) {
+    const auto* instigator = check_entity(L, 2);
+    static const sim::CategoryName kBenign{"BENIGN"};
+    if (!instigator || !instigator->is_unit() || instigator->army() == victim->army() ||
+        victim->is_being_built() || victim->has_category(kBenign)) {
+        return 0;
+    }
+    return instigator->entity_id();
+}
+
+static void credit_kill(lua_State* L, u32 instigator_id) {
+    auto* sim = get_sim(L);
+    auto* e = (instigator_id != 0 && sim) ? sim->entity_registry().find(instigator_id) : nullptr;
+    if (e && e->is_unit()) {
+        auto* u = static_cast<sim::Unit*>(e);
+        u->set_stat("KILLS", u->get_stat("KILLS", 0) + 1);
+    }
+}
+
 // entity:Kill([instigator, damageType, excessDamageRatio]). Moho hands the
 // death to the script's OnKilled, which plays the death sequence (death
 // weapon, animation, wreckage) and calls Destroy() when it ends. A unit is
@@ -595,20 +597,20 @@ int entity_Kill(lua_State* L) {
         lua_pushnumber(L, 0);
         lua_replace(L, 4);
     }
+    const u32 credit = e->is_unit() ? kill_credit_for(L, static_cast<sim::Unit*>(e)) : 0;
     lua_pushstring(L, "OnKilled");
     lua_gettable(L, 1);
     if (!lua_isfunction(L, -1)) {
         lua_settop(L, 1);
-        return entity_Destroy(L);
+        entity_Destroy(L);
+        credit_kill(L, credit);
+        return 0;
     }
     e->set_script_owns_death();
     if (e->is_unit()) {
         auto* u = static_cast<sim::Unit*>(e);
         record_unit_death(L, u);
-        // Recording may run scripts (veterancy): re-validate.
-        e = check_entity(L);
-        if (!e || e->destroyed()) return 0;
-        static_cast<sim::Unit*>(e)->begin_dying();
+        u->begin_dying();
     }
     // Stack: self, instigator, type, ratio, OnKilled -> call OnKilled(self, ...)
     lua_insert(L, 1);
@@ -623,9 +625,11 @@ int entity_Kill(lua_State* L) {
         spdlog::warn("{}", message);
         if (test_status::count_lua_failures()) test_status::record_failure(message);
         lua_settop(L, 1);
-        if (auto* still = check_entity(L); still && !still->destroyed())
-            return entity_Destroy(L);
+        if (auto* still = check_entity(L); still && !still->destroyed()) {
+            entity_Destroy(L);
+        }
     }
+    credit_kill(L, credit);
     return 0;
 }
 

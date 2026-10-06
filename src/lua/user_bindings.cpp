@@ -1352,7 +1352,7 @@ static int l_GetRolloverInfo(lua_State* L) {
     lua_rawset(L, -3);
     set_num("health", static_cast<lua_Number>(unit->health()));
     set_num("maxHealth", static_cast<lua_Number>(unit->max_health()));
-    set_num("kills", 0);
+    set_num("kills", static_cast<lua_Number>(unit->get_stat("KILLS", 0)));
     set_num("armyIndex", static_cast<lua_Number>(unit->army()));
     set_num("workProgress", static_cast<lua_Number>(unit->work_progress()));
     set_num("shieldRatio", static_cast<lua_Number>(unit->shield_ratio()));

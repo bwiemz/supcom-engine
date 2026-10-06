@@ -1375,46 +1375,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     lua_pushnumber(L, 0);
     lua_rawset(L, -3);
 
-    // Read Veteran thresholds from blueprint for C++ veterancy system
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id);
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            // Veteran.Level1..Level5
-            lua_pushstring(L, "Veteran");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                std::array<f32, 5> thresholds = {0, 0, 0, 0, 0};
-                const char* level_keys[] = {"Level1", "Level2", "Level3", "Level4", "Level5"};
-                for (int i = 0; i < 5; ++i) {
-                    lua_pushstring(L, level_keys[i]);
-                    lua_gettable(L, -2);
-                    if (lua_isnumber(L, -1))
-                        thresholds[static_cast<size_t>(i)] = static_cast<f32>(lua_tonumber(L, -1));
-                    lua_pop(L, 1);
-                }
-                unit_ptr->set_vet_thresholds(thresholds);
-            }
-            lua_pop(L, 1); // Veteran
-
-            // Economy.BuildCostMass -> xp_value
-            lua_pushstring(L, "Economy");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "BuildCostMass");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    unit_ptr->set_xp_value(static_cast<f32>(lua_tonumber(L, -1)));
-                lua_pop(L, 1); // BuildCostMass
-            }
-            lua_pop(L, 1); // Economy
-        }
-        lua_pop(L, 1); // bp table
-    }
-    lua_pop(L, 1); // __blueprints
-
     // Layer
     lua_pushstring(L, "Layer");
     lua_pushstring(L, unit_ptr->layer().c_str());
@@ -2380,7 +2340,7 @@ static int l_Damage(lua_State* L) {
                 instigator_id = instigator->entity_id();
             }
         }
-        // Record damage contribution for veterancy XP distribution
+        // Record damage contribution for the army credited with the kill
         if (instigator_id > 0) {
             target_unit->record_damage(instigator_id, amount);
         }

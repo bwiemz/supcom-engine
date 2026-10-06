@@ -3,3 +3,4 @@
 DevStatus  # a projectile's development note; nothing reads it
 LAYER_Orbit  # every retail blueprint sets it false; nothing builds in or moves to orbit
 Orbit  # set only by the CampaignBranch mod's all_units.bp
+Regen  # Buffs.Regen: retail's Unit.SetVeteranLevel walks bp.Buffs by key
