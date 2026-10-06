@@ -806,7 +806,8 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Next;
     }
     auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed() || !target->reclaimable()) {
+    if (!target || target->destroyed() || !target->reclaimable() ||
+        (reclaim_target_id_ != cmd.target_id && !reclaim_target_valid(*target))) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         command_queue_.pop_front();
         return OrderStep::Next;

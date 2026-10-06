@@ -5,6 +5,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/prop.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -26,6 +27,18 @@ namespace osc::sim {
 
 void Unit::add_weapon(std::unique_ptr<Weapon> w) {
     weapons_.push_back(std::move(w));
+}
+
+bool reclaim_target_valid(const Entity& target) {
+    static const CategoryName kReclaimable{"RECLAIMABLE"};
+    if (!target.reclaimable()) {
+        return false;
+    }
+    if (target.is_unit()) {
+        const auto& unit = static_cast<const Unit&>(target);
+        return unit.is_being_built() || (unit.has_category(kReclaimable) && !unit.is_air_unit());
+    }
+    return target.is_prop() && static_cast<const Prop&>(target).reclaimable_category;
 }
 
 f64 resource_fraction(const UnitEconomy& econ, f64 mass_efficiency, f64 energy_efficiency) {
