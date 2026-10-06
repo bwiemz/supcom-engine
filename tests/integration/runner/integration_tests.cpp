@@ -1540,12 +1540,17 @@ void test_platoon(TestContext& ctx) {
         if not brain:PlatoonExists(__osc_busy) then
             error('the one whose unit guards went too (its queue: ' .. table.getn(__osc_guard:GetCommandQueue()) .. ')')
         end
+        -- The pool stays, whatever a script asks of it
+        pool:DisbandOnIdle()
     )");
     reap_check("setup: its unit goes", R"(
         if __osc_doomed_ticks == 0 then error('its thread never ran') end
         __osc_tank:Destroy()
     )");
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
+    reap_check("Platoon test: the army pool outlives DisbandOnIdle", R"(
+        if not ArmyBrains[2]:GetPlatoonUniquelyNamed('ArmyPool') then error('the pool is gone') end
+    )");
     reap_check("Platoon test: an emptied platoon is destroyed and its thread ends", R"(
         local brain = ArmyBrains[2]
         if brain:PlatoonExists(__osc_doomed) then error('it still exists') end

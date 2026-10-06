@@ -205,9 +205,11 @@ void SimState::clean_up_platoons() {
             Platoon* p = army->platoon_at(i);
             if (!p || p->destroyed()) continue;
             bool disband = false;
-            if (p->disband_on_idle() && idle(*p)) {
+            // (Moho would disband even the pool so; the engine keeps it, as it
+            // does through DisbandPlatoon: new units go to it.)
+            if (p->disband_on_idle() && p != pool && idle(*p)) {
                 // Its units go to the pool's unassigned squad first.
-                if (pool && p != pool) {
+                if (pool) {
                     const std::vector<u32> ids = p->unit_ids();
                     for (const u32 id : ids) {
                         if (!alive(id)) continue;
