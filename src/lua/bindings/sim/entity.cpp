@@ -907,22 +907,35 @@ static int entity_AttachBoneTo(lua_State* L) {
     return 0;
 }
 
+// unit:AttachBoneToEntityBone(unitBone, entity, entityBone, skipInterp): a
+// manipulator on the unit (faf-re cfunc_EntityAttachBoneToEntityBoneL).
 static int entity_AttachBoneToEntityBone(lua_State* L) {
-    // self:AttachBoneToEntityBone(targetEntity, sourceBone, offsetBone, reparent)
-    auto* self = check_entity(L); if (!self) return 0;
-    auto* target = check_entity_arg(L, 2); if (!target) return 0;
-    i32 self_bone = attach_bone_index(self, L, 3);
-    // Detach target from current parent
-    if (target->parent_entity_id()) {
-        auto* sim = get_sim(L);
-        if (sim) {
-            auto* old = sim->entity_registry().find(target->parent_entity_id());
-            if (old) old->remove_child(target->entity_id());
-        }
+    const int n = lua_gettop(L);
+    if (n != 5) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "Attach a unit bone position to an entity bone position", 5, n);
     }
-    target->set_parent(self->entity_id(), self_bone);
-    self->add_child(target->entity_id(), self_bone);
-    return 0;
+    auto* self = check_entity(L);
+    if (!self || !self->is_unit()) {
+        return luaL_error(L, "Incorrect type of game object.  (Did you call with '.' instead of "
+                             "':'?)");
+    }
+    auto* unit = static_cast<sim::Unit*>(self);
+    auto* target = check_entity_arg(L, 3);
+    if (!target) {
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    }
+    auto manip = std::make_unique<sim::BoneEntityManipulator>(get_sim(L), target->entity_id(),
+                                                              attach_bone_index(target, L, 4));
+    manip->set_bone_index(resolve_bone_index(unit, L, 2));
+    auto* raw = unit->add_manipulator(std::move(manip));
+    lua_newtable(L);
+    const int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+    set_manip_metatable(L, tbl, "__osc_bone_entity_mt", "BoneEntityManipulator");
+    return 1;
 }
 
 static int entity_DetachFrom(lua_State* L) {

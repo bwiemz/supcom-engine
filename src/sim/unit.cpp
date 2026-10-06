@@ -2718,6 +2718,7 @@ void Unit::update_pose() {
     PoseLocals& locals = pose_locals_;
     locals.changed = false;
     locals.local.resize(count);
+    locals.model_space.assign(count, 0);
     for (size_t i = 0; i < count; ++i)
         locals.local[i] = {bd->bones[i].local_position, bd->bones[i].local_rotation};
     for (Manipulator* m : order) m->apply_pose(locals);
@@ -2729,7 +2730,7 @@ void Unit::update_pose() {
     pose_.resize(count);
     for (size_t i = 0; i < count; ++i) {
         const i32 parent = bd->bones[i].parent_index;
-        pose_[i] = parent < 0 || static_cast<size_t>(parent) >= i
+        pose_[i] = locals.model_space[i] || parent < 0 || static_cast<size_t>(parent) >= i
                        ? locals.local[i]
                        : pose_compose(pose_[static_cast<size_t>(parent)], locals.local[i]);
     }

@@ -3448,9 +3448,8 @@ static i32 manip_resolve_bone(const sim::Entity* e, lua_State* L, int arg) {
 /// Set a cached metatable for a manipulator Lua table.
 /// Registry key = cache_key, copies methods from moho.{moho_class_name}.
 /// Also copies inherited methods from moho.manipulator_methods.
-static void set_manip_metatable(lua_State* L, int table_idx,
-                                 const char* cache_key,
-                                 const char* moho_class_name) {
+void set_manip_metatable(lua_State* L, int table_idx, const char* cache_key,
+                         const char* moho_class_name) {
     lua_pushstring(L, cache_key);
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_istable(L, -1)) {
