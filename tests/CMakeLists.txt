@@ -24,6 +24,7 @@ add_executable(osc_tests
     test_patrol.cpp
     test_guard.cpp
     test_ground_attack.cpp
+    test_command_feedback.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_interpolation.cpp

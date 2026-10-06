@@ -1,7 +1,6 @@
 # Lua bindings that do nothing yet, "<Lua name> <C++ function>" (tools/check_lua_stubs.py)
 AITarget l_AITarget
 AddBoundedProp stub_return_nil
-AddCommandFeedbackBlip l_AddCommandFeedbackBlip
 AddManualScroller stub_noop
 AddPingPongScroller stub_noop
 AddThreadScroller stub_noop

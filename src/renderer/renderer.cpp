@@ -1327,14 +1327,17 @@ void Renderer::create_pipelines() {
         // by their alpha and write colour only; the build overlays that
         // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
         // leaves depth unwritten (M211g). The layouts match.
-        enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite };
+        // The order marks (CommandFeedback) blend colour with no depth test.
+        enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback };
         const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
-            const bool colour_only = blend == Blend::Fade || blend == Blend::FadeNoDepthWrite;
+            const bool colour_only = blend == Blend::Fade || blend == Blend::FadeNoDepthWrite ||
+                                     blend == Blend::Feedback;
             return PipelineBuilder()
                 .set_shaders(mv, mf)
                 .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                                   static_cast<u32>(attrs.size()))
-                .set_depth_test(true, blend != Blend::FadeNoDepthWrite)
+                .set_depth_test(blend != Blend::Feedback,
+                                blend != Blend::FadeNoDepthWrite && blend != Blend::Feedback)
                 .set_blend(blend != Blend::Opaque)
                 .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
                 .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
@@ -1356,6 +1359,7 @@ void Renderer::create_pipelines() {
         mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
         mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
         mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
+        mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
 
         // The shields' (M211k): their own shaders, the mesh's input, push
         // block and sets, and mesh.fx's states. Each depth-tests; only the
@@ -2088,8 +2092,55 @@ void Renderer::destroy_decal_buffers() {
     destroy(decal_indices_);
 }
 
+void Renderer::add_command_feedback_blip(FeedbackBlipSpec spec) {
+    // Made at the session's game tick, as material.x keeps it (the shader
+    // time's whole ticks, already wrapped at 36000).
+    feedback_blips_.add(std::move(spec), std::floor(unit_renderer_.shader_time()));
+}
+
+void Renderer::inject_feedback_blips(lua_State* L) {
+    if (feedback_blips_.blips().empty()) return;
+    sim::Vector3 eye;
+    camera_.eye_position(eye.x, eye.y, eye.z);
+    sim::Vector3 forward{camera_.focus_x() - eye.x, camera_.focus_y() - eye.y,
+                         camera_.focus_z() - eye.z};
+    const f32 length =
+        std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
+    if (length <= 0.0f) return;
+    forward = {forward.x / length, forward.y / length, forward.z / length};
+    for (const FeedbackBlip& blip : feedback_blips_.blips()) {
+        const FeedbackBlipSpec& spec = blip.spec;
+        // MeshName at its UniformScale, else the blueprint's LOD 0 mesh at
+        // the blueprint's; the albedo and technique are the blip's either way.
+        const MeshTechnique technique = osc::renderer::mesh_technique(spec.shader_name);
+        const GPUMesh* mesh = nullptr;
+        f32 scale = spec.uniform_scale;
+        if (!spec.mesh_name.empty()) {
+            mesh = mesh_cache_.get_file(spec.mesh_name, spec.texture_name, technique);
+        } else if (!spec.blueprint_id.empty() && L) {
+            mesh = mesh_cache_.get_file(mesh_cache_.mesh_file(spec.blueprint_id, L),
+                                        spec.texture_name, technique);
+            scale = mesh_cache_.blueprint_scale(spec.blueprint_id, L);
+        }
+        if (!mesh) continue;
+        // Its one LOD, to a metric of 1000; CommandFeedbackVS grows it with
+        // the metric so it reads the same size from afar.
+        const f32 lod = lod_metric(spec.position, eye, forward, camera_.fov());
+        if (lod > kFeedbackLodCutoff) continue;
+        MeshInstance inst{};
+        const auto model = feedback_model(spec.position, scale * feedback_distance_scale(lod));
+        std::copy(model.begin(), model.end(), inst.model);
+        inst.r = inst.g = inst.b = inst.a = 1.0f;
+        inst.shader_time = blip.created_tick;
+        // The lifetime parameter, in ticks (material.y, PARAM_LIFETIME)
+        inst.parameter = spec.duration * 10.0f;
+        unit_renderer_.inject_mesh(mesh, inst, &texture_cache_);
+    }
+}
+
 void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
+    feedback_blips_.clear();         // the old world's order marks
     minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
     recon_.clear();                  // a new world: nothing seen of it yet
     playable_rect_.clear();          // nor hidden
@@ -2699,7 +2750,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
         unit_renderer_.set_ghost_slots(
             1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
-            static_cast<u32>(command_graph_renderer_.planned_sites().size()));
+            static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
+            static_cast<u32>(feedback_blips_.blips().size()));
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
     }
@@ -2742,6 +2794,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         frame_dt_ = dt;
         wave_clock_ += static_cast<f64>(dt);
     }
+    // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
+    feedback_blips_.update(frame_dt_);
+    inject_feedback_blips(L);
 
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
@@ -3608,6 +3663,7 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // UEF's cube colour only and writes no depth.
         else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
         else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
+        else if (is_feedback_technique(technique)) passes[0] = mesh_feedback_pipeline_;
         // The shields' (M211k), by mesh.fx's states; Cybran's draws twice,
         // the second time pushed out along its normal.
         else if (is_shield_technique(technique)) {
@@ -4589,6 +4645,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_overlay_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_cube_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_cube_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_feedback_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_feedback_layout_, nullptr);
     for (u32 i = 0; i < kShieldStates; ++i) {
         vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
         vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);

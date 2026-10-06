@@ -56,7 +56,16 @@ enum class MeshTechnique : u32 {
     PhaseShield = 25,            ///< the Unit technique, then PhaseShieldPS
     SeraphimPersonalShield = 26, ///< the Seraphim technique, then SeraphimPhaseShieldPS
     UnitPlace = 27,              ///< UnitPlacePS: a build ghost, its colour lit, at alpha 0.2
+    // The UI's order marks (AddCommandFeedbackBlip): unlit, fading as they
+    // shrink to 0.7 or grow to 1.1 over their lifetime, over everything.
+    CommandFeedback = 28,  ///< CommandFeedbackVS(0.7), CommandFeedbackPS0
+    CommandFeedback2 = 29, ///< CommandFeedbackVS(1.1), CommandFeedbackPS0
 };
+
+/// The order marks' techniques, drawn by the feedback pipeline.
+inline bool is_feedback_technique(MeshTechnique t) {
+    return t == MeshTechnique::CommandFeedback || t == MeshTechnique::CommandFeedback2;
+}
 
 /// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy
 /// ShaderName's current one (TMeshGlow is NormalMappedGlow); any other
@@ -76,7 +85,8 @@ inline bool is_build_technique(MeshTechnique t) {
 /// A technique that blends: drawn after the opaque meshes (M211f-i).
 inline bool is_blended_technique(MeshTechnique t) {
     return is_build_technique(t) || t == MeshTechnique::AlphaFade ||
-           t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal;
+           t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal ||
+           is_feedback_technique(t);
 }
 
 /// A shield's technique (M211k), which the shield shaders draw.
@@ -106,7 +116,8 @@ inline MeshTechnique base_technique(MeshTechnique t) {
 /// too, but drawn later still: is_post_effect_technique.)
 inline bool is_post_water_technique(MeshTechnique t) {
     return t == MeshTechnique::AlphaFade || t == MeshTechnique::BlackenedNormalMappedAlpha ||
-           t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha;
+           t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha ||
+           is_feedback_technique(t); // STAGE_POSTWATER + STAGE_PREEFFECT
 }
 
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
@@ -148,7 +159,7 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 /// slices, cast none (M211f/g); nor do shields (M211k).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
-           t != MeshTechnique::UnitPlace && !is_shield_technique(t);
+           t != MeshTechnique::UnitPlace && !is_shield_technique(t) && !is_feedback_technique(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`
@@ -215,6 +226,16 @@ public:
 
     /// Get the full LODSet for introspection. Returns nullptr if not loaded.
     const LODSet* get_lod_set(const std::string& blueprint_id) const;
+
+    /// An SCM file drawn with `albedo` by `technique` (a UI world mesh's,
+    /// MeshName's), loaded once. Null if it can't be.
+    const GPUMesh* get_file(const std::string& scm_path, const std::string& albedo,
+                            MeshTechnique technique);
+
+    /// The SCM file a blueprint's LOD 0 draws (empty without one).
+    std::string mesh_file(const std::string& blueprint_id, lua_State* L) {
+        return resolve_mesh_path(blueprint_id, L);
+    }
 
     /// A blueprint's Display.UniformScale (1 without one), cached. A mesh
     /// set with SetMesh is a mesh blueprint, which has no scale: the

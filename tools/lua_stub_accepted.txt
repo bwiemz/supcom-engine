@@ -4,6 +4,7 @@
 # Moho's own does nothing, or there is nothing here for it to do.
 AudioSetLanguage stub_noop  # the sim state's: the sim plays no sound (the UI state's is real)
 KillThread l_KillThread  # the stand-in for states without threads; the sim's is real
+AddCommandFeedbackBlip l_AddCommandFeedbackBlip  # the stand-in for a UI state without a renderer; user_bindings.cpp's draws it
 Trace l_Trace  # Lua call tracing, a developer aid
 SetData histogram_SetData  # Moho's Histogram control draws nothing
 SetXIncrement histogram_SetXIncrement  # Moho's Histogram control draws nothing

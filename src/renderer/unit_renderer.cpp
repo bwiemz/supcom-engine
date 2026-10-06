@@ -639,33 +639,64 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r,
         grp.bone_base_offset = 0;
         grp.bones_per_instance = 0;
 
-        if (tex_cache && !mesh->texture_path.empty()) {
-            auto* tex = tex_cache->get(mesh->texture_path);
-            grp.texture_ds = tex ? tex->descriptor_set
-                                 : tex_cache->fallback_descriptor();
-        } else if (tex_cache) {
-            grp.texture_ds = tex_cache->fallback_descriptor();
-        }
-        if (tex_cache && !mesh->specteam_path.empty()) {
-            auto* spec = tex_cache->get(mesh->specteam_path);
-            grp.specteam_ds = spec ? spec->descriptor_set
-                                   : tex_cache->specteam_fallback_descriptor();
-        } else if (tex_cache) {
-            grp.specteam_ds = tex_cache->specteam_fallback_descriptor();
-        }
-        if (tex_cache && !mesh->normal_path.empty()) {
-            auto* norm = tex_cache->get(mesh->normal_path);
-            grp.normal_ds = norm ? norm->descriptor_set
-                                 : tex_cache->normal_fallback_descriptor();
-        } else if (tex_cache) {
-            grp.normal_ds = tex_cache->normal_fallback_descriptor();
-        }
-        grp.lookup_ds = named_descriptor(mesh->lookup_path, tex_cache);
-        grp.secondary_ds = named_descriptor(mesh->secondary_path, tex_cache);
+        bind_mesh_textures(grp, tex_cache);
 
         mesh_groups_.push_back(grp);
     }
 
+    return true;
+}
+
+void UnitRenderer::bind_mesh_textures(MeshDrawGroup& grp, TextureCache* tex_cache) const {
+    const GPUMesh* mesh = grp.mesh;
+    if (tex_cache && !mesh->texture_path.empty()) {
+        auto* tex = tex_cache->get(mesh->texture_path);
+        grp.texture_ds = tex ? tex->descriptor_set : tex_cache->fallback_descriptor();
+    } else if (tex_cache) {
+        grp.texture_ds = tex_cache->fallback_descriptor();
+    }
+    if (tex_cache && !mesh->specteam_path.empty()) {
+        auto* spec = tex_cache->get(mesh->specteam_path);
+        grp.specteam_ds = spec ? spec->descriptor_set : tex_cache->specteam_fallback_descriptor();
+    } else if (tex_cache) {
+        grp.specteam_ds = tex_cache->specteam_fallback_descriptor();
+    }
+    if (tex_cache && !mesh->normal_path.empty()) {
+        auto* norm = tex_cache->get(mesh->normal_path);
+        grp.normal_ds = norm ? norm->descriptor_set : tex_cache->normal_fallback_descriptor();
+    } else if (tex_cache) {
+        grp.normal_ds = tex_cache->normal_fallback_descriptor();
+    }
+    grp.lookup_ds = named_descriptor(mesh->lookup_path, tex_cache);
+    grp.secondary_ds = named_descriptor(mesh->secondary_path, tex_cache);
+}
+
+bool UnitRenderer::inject_mesh(const GPUMesh* mesh, const MeshInstance& instance,
+                               TextureCache* tex_cache) {
+    if (!mesh || !meshes_[fi_].mapped) return false;
+    u32 total = 0;
+    for (auto& g : mesh_groups_) total += g.instance_count;
+    if (total >= meshes_[fi_].capacity) return false;
+    static_cast<MeshInstance*>(meshes_[fi_].mapped)[total] = instance;
+    if (!mesh_groups_.empty()) {
+        MeshDrawGroup& last = mesh_groups_.back();
+        if (last.mesh == mesh && !last.ghost &&
+            last.instance_offset + last.instance_count == total) {
+            ++last.instance_count;
+            return true;
+        }
+    }
+    MeshDrawGroup grp;
+    grp.mesh = mesh;
+    // A UI world mesh is made reflected, as every mesh instance no entity
+    // made is (M213b); not an order mark, which tests no depth and would
+    // show through the reflected world.
+    grp.reflected = !is_feedback_technique(mesh->technique);
+    grp.fading = is_blended_technique(mesh->technique);
+    grp.instance_offset = total;
+    grp.instance_count = 1;
+    bind_mesh_textures(grp, tex_cache);
+    mesh_groups_.push_back(grp);
     return true;
 }
 

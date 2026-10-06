@@ -150,6 +150,10 @@ public:
 
     bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
                       TextureCache* tex_cache);
+    /// Inject one instance of a UI world mesh (an order's feedback blip),
+    /// its own group unless it follows one of the same mesh. Call after
+    /// update(), in the room set_ghost_slots left.
+    bool inject_mesh(const GPUMesh* mesh, const MeshInstance& instance, TextureCache* tex_cache);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
 
@@ -179,6 +183,9 @@ private:
         void* mapped = nullptr;
         u32 capacity = 0;
     };
+
+    /// A group's textures, from its mesh's files (fallbacks without them).
+    void bind_mesh_textures(MeshDrawGroup& grp, TextureCache* tex_cache) const;
 
     /// Make `buffer` hold `need` elements of `size` bytes, growing it to
     /// grown_capacity(), which drops what it held. False if it can't hold
