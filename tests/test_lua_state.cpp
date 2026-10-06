@@ -453,6 +453,7 @@ TEST_CASE("Lobby peer methods maintain single-process peer state", "[lua][ui]") 
     auto result = state.do_string(R"(
         LobbyClass = {}
         for k, v in moho.lobby_methods do LobbyClass[k] = v end
+        LobbyClass.__index = LobbyClass
         -- The single-player lobby's loopback ("None"; a "UDP" one is
         -- networked, M218a: test_net_lobby.cpp)
         lobby = InternalCreateLobby(LobbyClass, 'None', 6112, 16, 'Host')
@@ -507,6 +508,7 @@ TEST_CASE("Lobby LaunchGame preserves lobby config for skirmish launch", "[lua][
     auto result = state.do_string(R"(
         LobbyClass = {}
         for k, v in moho.lobby_methods do LobbyClass[k] = v end
+        LobbyClass.__index = LobbyClass
         -- The single-player lobby ("None"): a skirmish's launch
         lobby = InternalCreateLobby(LobbyClass, 'None', 6112, 16, 'Host')
 

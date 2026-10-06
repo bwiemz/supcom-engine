@@ -1428,15 +1428,11 @@ static int l_InternalCreateLobby(lua_State* L) {
     if (!lua_istable(L, 1))
         return luaL_error(L, "InternalCreateLobby: arg 1 must be class table");
 
-    // Create instance table
-    lua_newtable(L);
-
-    // Set class as metatable with __index
-    lua_newtable(L); // mt
-    lua_pushstring(L, "__index");
-    lua_pushvalue(L, 1); // class
-    lua_rawset(L, -3);
-    lua_setmetatable(L, -2);
+    // The instance, as Moho's CLobby (a CScriptObject) makes it: the class
+    // called, running its __init and __post_init (FAF's auto-lobby sets its
+    // GameOptions there), before it has a C object.
+    lua_pushvalue(L, 1);
+    sim::push_new_script_object(L, "Lobby");
 
     // _c_object dummy
     lua_pushstring(L, "_c_object");
