@@ -97,10 +97,12 @@ void apply_unit_defaults(lua_State* L, int bp) {
         }
     }
 
-    // Its upgrade links, which Moho's RUnitBlueprintGeneral defaults to
-    // 'none': construction.lua's OnClickHandler takes a structure whose
-    // UpgradesFrom isn't 'none' for an upgrade of the selected unit, and
-    // only units that upgrade name them (96 of retail's 568).
+    // Its upgrade links, as Moho's RUnitBlueprintGeneral defaults them
+    // (faf-re): UpgradesFrom and UpgradesFromBase 'none' -- construction.lua's
+    // OnClickHandler takes a structure whose UpgradesFrom isn't 'none' for an
+    // upgrade of the selected unit, and only units that upgrade name them (96
+    // of retail's 568) -- and UpgradesTo empty: FAF's unit detail view counts
+    // a unit upgradable whose UpgradesTo isn't '', and looks that blueprint up.
     lua_pushstring(L, "General");
     lua_rawget(L, bp);
     if (!lua_istable(L, -1)) {
@@ -112,7 +114,9 @@ void apply_unit_defaults(lua_State* L, int bp) {
         lua_rawget(L, bp);
     }
     const int general = lua_gettop(L);
-    for (const char* link : {"UpgradesFrom", "UpgradesTo", "UpgradesFromBase"}) {
+    for (const auto& [link, fallback] :
+         {std::pair{"UpgradesFrom", "none"}, std::pair{"UpgradesTo", ""},
+          std::pair{"UpgradesFromBase", "none"}}) {
         lua_pushstring(L, link);
         lua_rawget(L, general);
         const bool missing =
@@ -120,7 +124,7 @@ void apply_unit_defaults(lua_State* L, int bp) {
         lua_pop(L, 1);
         if (missing) {
             lua_pushstring(L, link);
-            lua_pushstring(L, "none");
+            lua_pushstring(L, fallback);
             lua_rawset(L, general);
         }
     }

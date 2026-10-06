@@ -43,7 +43,8 @@ TEST_CASE("A unit blueprint's omitted collision offsets read as 0", "[blueprints
     )"));
 }
 
-TEST_CASE("A unit blueprint's omitted upgrade links read as 'none'", "[blueprints]") {
+TEST_CASE("A unit blueprint's omitted upgrade links read as Moho's: from 'none', to ''",
+          "[blueprints]") {
     BlueprintWorld w;
     CHECK(w.check(R"(
         -- A T1 power generator names none; construction.lua builds a
@@ -51,7 +52,9 @@ TEST_CASE("A unit blueprint's omitted upgrade links read as 'none'", "[blueprint
         local bare = {BlueprintId = 'ueb1101', General = {Category = 'Economy'}}
         RegisterUnitBlueprint(bare)
         local g = bare.General
-        assert(g.UpgradesFrom == 'none' and g.UpgradesTo == 'none' and
+        -- (UpgradesTo is empty: FAF's unit detail view looks up a unit's
+        -- UpgradesTo unless it is '')
+        assert(g.UpgradesFrom == 'none' and g.UpgradesTo == '' and
                g.UpgradesFromBase == 'none', 'links not defaulted')
         assert(g.Category == 'Economy', 'General lost')
         -- Without a General at all
