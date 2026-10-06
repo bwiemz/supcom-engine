@@ -308,6 +308,7 @@ void WorldSnapshot::clear() {
     player_result = 0;
     no_rush_radius = 0;
     fake_blips.clear();
+    deposits.clear();
     pending_commands.clear();
     pending_queues.clear();
     pending_serial = 0;
@@ -392,6 +393,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     out.armies.clear();
     out.fake_blips.clear();
     capture_fake_blips(sim, out);
+    out.deposits.assign(sim.resource_deposits().begin(), sim.resource_deposits().end());
 
     sim.entity_registry().for_each([&](const Entity& e) {
         if (e.destroyed()) return;

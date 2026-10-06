@@ -25,6 +25,7 @@ extern "C" {
 #include "renderer/decal_math.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/intel_grid.hpp"
+#include "ui/world_view.hpp"
 
 #include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
@@ -431,6 +432,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     command_graph_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     selection_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     if (has_stencil()) range_renderer_.init(device_, allocator_, frame_.scene_pass());
+    resource_icon_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's sky (M210b)
@@ -2542,10 +2544,17 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         WorldViewPainter minimap_painter;
         if (!legacy_hud_active_) {
             painted_minimap_.clear();
-            minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
+            minimap_painter = [&](const ui::WorldView& wv, const ui::ControlRect& r,
+                                  std::vector<UIQuad>& out) {
                 const size_t first = out.size();
+                std::optional<PlayableRect> resources;
+                if (wv.resource_rendering() && terrain_) {
+                    resources = playable_rect_.rect().value_or(
+                        PlayableRect{0, 0, static_cast<i32>(terrain_->map_width()),
+                                     static_cast<i32>(terrain_->map_height())});
+                }
                 minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
-                                        window_width_, window_height_, out);
+                                        window_width_, window_height_, out, resources);
                 painted_minimap_.insert(painted_minimap_.end(),
                                         out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };
@@ -2651,6 +2660,30 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
                                     window_height_, L);
+
+    {
+        bool resources = !camera_.free();
+        if (L) {
+            lua_pushstring(L, "__osc_world_view");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            if (const auto* wv = static_cast<const ui::WorldView*>(lua_touserdata(L, -1))) {
+                resources = resources && wv->resource_rendering();
+            }
+            lua_pop(L, 1);
+        }
+        std::vector<ResourceIcon> icons;
+        if (resources && terrain_ && view.cur()) {
+            const map::Terrain& terrain = *terrain_;
+            const PlayableRect whole{0, 0, static_cast<i32>(terrain.map_width()),
+                                     static_cast<i32>(terrain.map_height())};
+            icons = renderer::resource_icons(
+                view.cur()->deposits, camera_, static_cast<f32>(window_width_),
+                static_cast<f32>(window_height_), playable_rect_.rect().value_or(whole),
+                [&](f32 x, f32 z) { return terrain.get_terrain_height(x, z); });
+        }
+        resource_icon_renderer_.update(icons, texture_cache_, fi);
+        resource_icon_time_ = static_cast<f32>(glfwGetTime());
+    }
 
     if (legacy_hud_active_) {
         // Update economy HUD
@@ -2897,6 +2930,8 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
         particle_renderer_.render_refracting(cmd_buf_[fi], window_width_, window_height_, vp.data(),
                                              fi);
     }
+    resource_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, resource_icon_time_,
+                                   fi);
 }
 
 void Renderer::record_screen_layers(u32 fi) {
@@ -3708,6 +3743,7 @@ void Renderer::shutdown() {
     command_graph_renderer_.destroy(device_, allocator_);
     selection_renderer_.destroy(device_, allocator_);
     range_renderer_.destroy(device_, allocator_);
+    resource_icon_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);

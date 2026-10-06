@@ -84,7 +84,7 @@ TYPES: list[tuple[str, str]] = [
     ("src/sim/sim_state.hpp", "SimState::EntityIntel"),
     ("src/sim/sim_state.hpp", "SimState::TempVision"),
     ("src/sim/sim_state.hpp", "BlipSnapshot"),
-    ("src/sim/sim_state.hpp", "ResourceDeposit"),
+    ("src/sim/resource_deposit.hpp", "ResourceDeposit"),
     ("src/sim/armor_definition.hpp", "ArmorDefinition"),
     ("src/sim/intel_sources.hpp", "IntelHandle"),
     ("src/sim/intel_sources.hpp", "PaintedIntel"),

@@ -119,6 +119,8 @@ void test_unit_intel(TestContext& ctx);
 void test_effect_intel(TestContext& ctx);
 /// --strategic-icon-test (M215c), in strategic_icon_test.cpp.
 void test_strategic_icons(TestContext& ctx);
+/// --resource-icon-render-test, in resource_icon_render_test.cpp.
+void test_resource_icon_render(TestContext& ctx);
 /// --counter-intel-test (M215d), in counter_intel_test.cpp.
 void test_counter_intel(TestContext& ctx);
 /// --binding-tail-test (M184's tail), in binding_tail_test.cpp.
