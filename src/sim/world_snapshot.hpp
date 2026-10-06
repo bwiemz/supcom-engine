@@ -114,7 +114,7 @@ struct EntityRecord {
     bool stunned = false;
     bool is_dying = false;
     f32 fuel_ratio = -1;
-    f32 shield_ratio = 1;
+    f32 shield_ratio = 0;
     f32 build_rate = 0;
     u32 creator_id = 0;
     f32 mass_produced = 0, energy_produced = 0;   ///< per second, when producing

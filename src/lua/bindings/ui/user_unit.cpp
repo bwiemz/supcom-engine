@@ -240,7 +240,7 @@ int uu_GetFuelRatio(lua_State* L) {
     return push_number_of(L, &sim::EntityRecord::fuel_ratio, -1.0f);
 }
 int uu_GetShieldRatio(lua_State* L) {
-    return push_number_of(L, &sim::EntityRecord::shield_ratio, 1.0f);
+    return push_number_of(L, &sim::EntityRecord::shield_ratio, 0.0f);
 }
 int uu_GetBuildRate(lua_State* L) {
     return push_number_of(L, &sim::EntityRecord::build_rate, 0.0f);

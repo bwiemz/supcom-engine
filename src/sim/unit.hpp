@@ -1362,7 +1362,9 @@ private:
     bool build_released_with_order_ = false;
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     std::unordered_set<std::string> unit_states_; // generic string-based states
-    f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
+    // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's
+    // SSTIUnitVariableData (the UI shows a shield bar above 0).
+    f32 shield_ratio_ = 0.0f;
     // Bone visibility
     std::unordered_set<i32> hidden_bones_;
     // Animated bone matrices (identity = no deformation)

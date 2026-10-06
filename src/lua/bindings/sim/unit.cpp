@@ -1346,7 +1346,7 @@ static int unit_DisableIntel(lua_State* L) {
 // Shield ratio — real implementations (UpdateShieldRatio calls SetShieldRatio)
 static int unit_GetShieldRatio(lua_State* L) {
     auto* u = check_unit(L);
-    lua_pushnumber(L, u ? u->shield_ratio() : 1.0);
+    lua_pushnumber(L, u ? u->shield_ratio() : 0.0);
     return 1;
 }
 static int unit_SetShieldRatio(lua_State* L) {
