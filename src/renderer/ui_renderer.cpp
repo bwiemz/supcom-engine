@@ -859,7 +859,7 @@ void UIRenderer::emit_cursor_quad(lua_State* L, TextureCache& tex_cache,
     auto* cursor = static_cast<ui::UIControl*>(lua_touserdata(L, -1));
     lua_pop(L, 2);
 
-    if (!cursor || !cursor->cursor_visible()) return;
+    if (!draw_cursor_ || !cursor || !cursor->cursor_visible()) return;
 
     const std::string& tex_path = cursor->cursor_texture();
     if (tex_path.empty()) return;
