@@ -1957,16 +1957,42 @@ static int l_Warp(lua_State* L) {
     return 0;
 }
 
+/// IsDestroyed(obj): Moho's rule, true unless obj holds a live C object.
+/// That may be any script object's: an entity answers by its own flag
+/// (destroyed at once, as BeenDestroyed does), a weapon by its unit's, and
+/// anything else (a manipulator, an emitter, ...) by its handle, cleared or
+/// marked _destroyed when it goes. Reading a weapon as an entity made FAF's
+/// SetWeaponEnabled skip every weapon it turned off.
 static int l_IsDestroyed(lua_State* L) {
-    if (!lua_istable(L, 1)) {
-        lua_pushboolean(L, 1);
-        return 1;
+    bool destroyed = true;
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 1);
+        const void* object = lua_touserdata(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "_c_unit"); // a weapon's unit
+        lua_rawget(L, 1);
+        const void* owner = lua_touserdata(L, -1);
+        lua_pop(L, 1);
+        const auto* sim = get_sim(L);
+        const auto& registry = sim ? &sim->entity_registry() : nullptr;
+        if (!object) {
+            destroyed = true;
+        } else if (registry && registry->holds(object)) {
+            destroyed = static_cast<const sim::Entity*>(object)->destroyed();
+        } else if (registry && registry->departed(object)) {
+            destroyed = true;
+        } else if (owner) {
+            destroyed = !registry || !registry->holds(owner) ||
+                        static_cast<const sim::Entity*>(owner)->destroyed();
+        } else {
+            lua_pushstring(L, "_destroyed");
+            lua_rawget(L, 1);
+            destroyed = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        }
     }
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, 1);
-    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    lua_pushboolean(L, !entity || entity->destroyed());
+    lua_pushboolean(L, destroyed ? 1 : 0);
     return 1;
 }
 

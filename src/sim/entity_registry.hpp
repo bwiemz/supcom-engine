@@ -42,6 +42,13 @@ public:
     /// Whether `e` is a registered entity, asked without reading it: a Lua
     /// handle's pointer may be a platoon's, a brain's, or a freed entity's.
     bool holds(const void* e) const { return live_.count(e) != 0; }
+    /// Whether `e` is an entity unregistered since the last collect_garbage
+    /// (its memory, and a script's handle to it, live to the tick's end).
+    bool departed(const void* e) const {
+        for (const auto& dead : graveyard_)
+            if (dead.get() == e) return true;
+        return false;
+    }
 
     /// Number of active entities.
     size_t count() const { return live_count_; }
