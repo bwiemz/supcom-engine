@@ -2,6 +2,9 @@
 // them as commands, inside a tick; here too (SimState::dispatch_due_commands),
 // so in multiplayer every peer runs each one on the same tick.
 
+#include "map/terrain.hpp"
+#include "sim/build_placement.hpp"
+#include "sim/collision.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -12,6 +15,8 @@ extern "C" {
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -187,6 +192,126 @@ void defeat_dropped_army(SimState& sim, const SimCallbackEntry& cb) {
     sim.defeat_army(static_cast<i32>(*army));
 }
 
+bool retargetable(CommandType type) {
+    switch (type) {
+    case CommandType::Move:
+    case CommandType::Attack:
+    case CommandType::Guard:
+    case CommandType::Patrol:
+    case CommandType::AggressiveMove:
+    case CommandType::BuildMobile:
+    case CommandType::Reclaim:
+    case CommandType::Repair:
+    case CommandType::Capture:
+    case CommandType::TransportLoad:
+    case CommandType::TransportUnload:
+    case CommandType::Nuke:
+    case CommandType::Tactical:
+    case CommandType::Overcharge:
+    case CommandType::Sacrifice:
+    case CommandType::Teleport:
+    case CommandType::Ferry:
+    case CommandType::Dock: return true;
+    default: return false;
+    }
+}
+
+std::pair<f32, f32> footprint_of(lua_State* L, std::string bp_id) {
+    std::pair<f32, f32> size{1.0f, 1.0f};
+    std::transform(bp_id.begin(), bp_id.end(), bp_id.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, bp_id.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            const auto [x, z] = blueprint_footprint(L, lua_gettop(L));
+            size = {std::max(x, 1.0f), std::max(z, 1.0f)};
+        }
+    }
+    lua_settop(L, top);
+    return size;
+}
+
+void forget_target(UnitCommand& c) {
+    c.approached = false;
+    c.engaged = false;
+    c.in_band = false;
+    c.patrol_claimed.clear();
+}
+
+/// Sim::SetCommandTarget / CUnitCommand::SetTarget: the order moves for all
+/// its units, a formation keeping its shape.
+void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* command = number_in(cb, "Command", 1, 4294967295.0);
+    if (!command) {
+        return;
+    }
+    std::vector<std::pair<Unit*, UnitCommand*>> orders;
+    for_each_unit(sim, cb, [&](Unit& u) {
+        for (UnitCommand* c : u.commands_with_id(static_cast<u32>(*command))) {
+            orders.emplace_back(&u, c);
+        }
+    });
+    if (orders.empty() || !retargetable(orders.front().second->type)) {
+        return;
+    }
+    const UnitCommand& order = *orders.front().second;
+    for (const auto& [u, c] : orders) {
+        if (c->type == CommandType::BuildMobile && u->build_target_id() != 0 &&
+            &u->command_queue().front() == c) {
+            return;
+        }
+    }
+    if (order.target_id != 0) {
+        const auto* target = number_in(cb, "Target", 1, 4294967295.0);
+        const Entity* old = sim.entity_registry().find(order.target_id);
+        const Entity* to = target ? sim.entity_registry().find(static_cast<u32>(*target)) : nullptr;
+        if (!old || old->destroyed() || !to || to->destroyed() || to->army() != old->army() ||
+            to->is_unit() != old->is_unit()) {
+            return;
+        }
+        for (const auto& [u, c] : orders) {
+            c->target_id = to->entity_id();
+            c->target_pos = to->position();
+            forget_target(*c);
+        }
+        return;
+    }
+    const auto* x = number_in(cb, "X", -1e6, 1e6);
+    const auto* z = number_in(cb, "Z", -1e6, 1e6);
+    if (!x || !z) {
+        return;
+    }
+    Vector3 point{static_cast<f32>(*x), 0.0f, static_cast<f32>(*z)};
+    if (order.type == CommandType::BuildMobile) {
+        const auto [fx, fz] = footprint_of(L, order.blueprint_id);
+        snap_structure_center(point.x, point.z, fx, fz);
+    }
+    Vector3 mean{0.0f, 0.0f, 0.0f};
+    for (const auto& [u, c] : orders) {
+        mean.x += c->target_pos.x / static_cast<f32>(orders.size());
+        mean.z += c->target_pos.z / static_cast<f32>(orders.size());
+    }
+    const bool no_rush = sim.no_rush_active();
+    for (const auto& [u, c] : orders) {
+        Vector3 to = point;
+        if (!c->formation.empty()) {
+            to.x = c->target_pos.x + point.x - mean.x;
+            to.z = c->target_pos.z + point.z - mean.z;
+        }
+        to = sim.clamp_to_playable(to, u->army());
+        if (no_rush && (c->type == CommandType::Move || c->type == CommandType::Attack)) {
+            to = sim.clamp_to_no_rush(*u, to);
+        }
+        to.y = sim.terrain() ? sim.terrain()->get_surface_height(to.x, to.z) : 0.0f;
+        c->target_pos = to;
+        forget_target(*c);
+    }
+}
+
 void push_arg(lua_State* L, const SimCallbackArg& arg) {
     std::visit(
         [&](const auto& v) {
@@ -297,6 +422,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kIncreaseBuildCountCallback) increase_build_count(*this, cb);
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
     else if (cb.func_name == kPostLoadCallback) post_load(*this, L);
+    else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

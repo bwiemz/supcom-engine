@@ -433,6 +433,20 @@ public:
         }
     }
     void clear_commands(const char* source = "?");
+    std::vector<UnitCommand*> commands_with_id(u32 id) {
+        std::vector<UnitCommand*> out;
+        for (UnitCommand& c : command_queue_) {
+            if (c.command_id == id) {
+                out.push_back(&c);
+            }
+        }
+        for (UnitCommand& c : rally_orders_) {
+            if (c.command_id == id) {
+                out.push_back(&c);
+            }
+        }
+        return out;
+    }
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
     /// orders (tick_orders), coasting, layer changes and fuel

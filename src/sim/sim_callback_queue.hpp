@@ -41,6 +41,10 @@ inline constexpr const char* kRequestPauseCallback = "__osc_RequestPause";
 /// schedules it, so it is in the game's history and replays with it.
 inline constexpr const char* kPostLoadCallback = "__osc_PostLoad";
 
+/// Func name of Moho's CMDST_SetCommandTarget: order `Command` of the units
+/// gets entity `Target`, or the point X, Y, Z (unit_ids = its units).
+inline constexpr const char* kSetCommandTargetCallback = "__osc_SetCommandTarget";
+
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";
 
