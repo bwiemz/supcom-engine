@@ -1,7 +1,11 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "ui/texture_alpha.hpp"
 
+#include <optional>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 struct GLFWwindow;
@@ -89,6 +93,7 @@ public:
         thumb_drag_ = nullptr;
         mouseover_list_ = nullptr;
         mouseover_row_ = -1;
+        alpha_masks_.clear();
     }
 
     /// Current mouse position (updated by cursor pos callback).
@@ -108,6 +113,7 @@ public:
                         const std::unordered_set<UIControl*>* skip = nullptr);
 
 private:
+    bool texel_opaque(lua_State* L, const UIControl& ctrl, f32 local_x, f32 local_y);
     /// Fire HandleEvent on a control. Returns true if event was consumed.
     bool fire_handle_event(lua_State* L, UIControl* ctrl, const UIEvent& ev);
     /// A key or character for a focused Edit taking input: Moho's CMauiEdit
@@ -149,6 +155,7 @@ private:
     f32 thumb_grab_ = 0;              ///< where along its thumb it was taken
     UIControl* mouseover_list_ = nullptr; ///< the ItemList told of a row under the mouse
     i32 mouseover_row_ = -1;              ///< that row
+    std::unordered_map<std::string, std::optional<AlphaMask>> alpha_masks_;
 };
 
 } // namespace osc::ui

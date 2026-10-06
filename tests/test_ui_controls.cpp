@@ -12,9 +12,14 @@
 #include "ui/edit_text.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "ui/world_view.hpp"
+#include "vfs/directory_mount.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <GLFW/glfw3.h>
 
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -223,6 +228,83 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
     )");
     INFO((own.ok() ? std::string() : own.error().message));
     CHECK(own.ok());
+}
+
+namespace {
+
+void write_dxt5(const std::filesystem::path& file, std::uint8_t left_alpha,
+                std::uint8_t right_alpha) {
+    std::vector<char> dds(128 + 2 * 16, 0);
+    const auto put = [&](std::size_t offset, std::uint32_t value) {
+        std::memcpy(&dds[offset], &value, 4);
+    };
+    put(0, 0x20534444);
+    put(4, 124);
+    put(12, 4);
+    put(16, 8);
+    put(76, 32);
+    put(80, 0x4);
+    put(84, 0x35545844);
+    dds[128] = static_cast<char>(left_alpha);
+    dds[129] = static_cast<char>(left_alpha);
+    dds[144] = static_cast<char>(right_alpha);
+    dds[145] = static_cast<char>(right_alpha);
+    std::ofstream(file, std::ios::binary)
+        .write(dds.data(), static_cast<std::streamsize>(dds.size()));
+}
+
+} // namespace
+
+TEST_CASE("UseAlphaHitTest hits a bitmap only where its frame's texel has alpha", "[ui][lua]") {
+    namespace fs = std::filesystem;
+    const fs::path root_dir = fs::temp_directory_path() / "osc_alpha_hit_test";
+    fs::remove_all(root_dir);
+    fs::create_directories(root_dir / "textures");
+    write_dxt5(root_dir / "textures" / "half.dds", 255, 0);
+    write_dxt5(root_dir / "textures" / "clear.dds", 0, 0);
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root_dir));
+
+    osc::lua::LuaState lua;
+    lua.set_vfs(&vfs);
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    auto result = lua.do_string(R"(
+        function place(c, l, t, r, b, depth)
+            rawset(c, 'Left', l) rawset(c, 'Top', t)
+            rawset(c, 'Right', r) rawset(c, 'Bottom', b)
+            rawset(c, 'Width', r - l) rawset(c, 'Height', b - t)
+            rawset(c, 'Depth', depth)
+        end
+        under = {}
+        setmetatable(under, { __index = moho.control_methods })
+        InternalCreateGroup(under, GetFrame(0))
+        place(under, 0, 0, 100, 100, 1)
+        button = {}
+        setmetatable(button, { __index = moho.bitmap_methods })
+        InternalCreateBitmap(button, GetFrame(0))
+        button:SetNewTexture({'/textures/half.dds', '/textures/clear.dds'})
+        place(button, 10, 10, 16, 12, 5)
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+
+    lua_State* L = lua.raw();
+    auto* root = control_of(L, "under")->parent();
+    auto* button = control_of(L, "button");
+    auto* under = control_of(L, "under");
+    osc::ui::UIDispatch dispatch;
+    CHECK(dispatch.hit_test(L, root, 14.5, 11.5) == button);
+
+    REQUIRE(lua.do_string("button:UseAlphaHitTest(true)").ok());
+    CHECK(dispatch.hit_test(L, root, 12.5, 11.5) == button);
+    CHECK(dispatch.hit_test(L, root, 13.5, 11.5) == under);
+
+    REQUIRE(lua.do_string("button:SetFrame(1)").ok());
+    CHECK(dispatch.hit_test(L, root, 12.5, 11.5) == under);
+    fs::remove_all(root_dir);
 }
 
 TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's", "[ui][lua]") {

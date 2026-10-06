@@ -8,6 +8,7 @@ add_library(osc_ui STATIC
     keymap.cpp
     lazyvar.cpp
     scroll.cpp
+    texture_alpha.cpp
     wld_ui_provider.cpp
     world_view.cpp
 )
