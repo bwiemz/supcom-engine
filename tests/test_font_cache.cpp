@@ -198,3 +198,32 @@ TEST_CASE("A font's atlas holds its accented Latin and Cyrillic letters, and tex
                Catch::Matchers::WithinAbs(2.0f * zhe->second.x_advance, 0.01));
     fs::remove_all(root);
 }
+
+TEST_CASE("A face the game's files lack is drawn as Arial", "[font]") {
+    // FAF's UI asks for Calibri, which Moho takes from Windows' fonts.
+    const fs::path ttf = find_system_ttf();
+    if (ttf.empty()) SKIP("no TrueType font installed");
+    const fs::path root = fs::temp_directory_path() / "osc_font_fallback_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "fonts");
+    fs::copy_file(ttf, root / "fonts" / "arial.ttf");
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+
+    osc::renderer::FontCache cache;
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
+               VK_NULL_HANDLE, &vfs);
+    const auto* calibri = cache.get("Calibri", 14);
+    REQUIRE(calibri);
+    const auto* arial = cache.get("Arial", 14);
+    REQUIRE(arial);
+    const auto a_calibri = calibri->glyphs.find('A');
+    const auto a_arial = arial->glyphs.find('A');
+    REQUIRE(a_calibri != calibri->glyphs.end());
+    REQUIRE(a_arial != arial->glyphs.end());
+    CHECK(a_calibri->second.x_advance == a_arial->second.x_advance);
+    // Asked again (another size too), it is found, not looked for afresh.
+    CHECK(cache.get("Calibri", 14) == calibri);
+    CHECK(cache.get("Calibri", 20) != nullptr);
+    fs::remove_all(root);
+}

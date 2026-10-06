@@ -229,13 +229,34 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
                            lower_path.begin(), ::tolower);
             data = vfs_->read_file(lower_path);
             if (!data || data->empty()) {
-                spdlog::warn("FontCache: font not found: {}", font_path);
-                return nullptr;
+                // A face the game's files lack (FAF's Calibri, which Moho
+                // takes from Windows' fonts): Arial in its place, said once,
+                // rather than no text and a fresh look on every draw.
+                const std::string fallback = resolve_font_path("Arial");
+                if (font_path == fallback) {
+                    spdlog::warn("FontCache: font not found: {}", font_path);
+                    return nullptr;
+                }
+                spdlog::warn("FontCache: font not found: {}; Arial in its place", font_path);
+                ttf_it = ttf_data_cache_.find(fallback);
+                if (ttf_it == ttf_data_cache_.end()) {
+                    data = vfs_->read_file(fallback);
+                    if (!data || data->empty()) return nullptr;
+                    ttf_data_cache_[fallback] = std::move(*data);
+                    ttf_it = ttf_data_cache_.find(fallback);
+                }
+                // Later sizes of this face find Arial's data under its path.
+                ttf_data_cache_[font_path] = ttf_it->second;
+                ttf_it = ttf_data_cache_.find(font_path);
+                data.reset();
+            } else {
+                font_path = lower_path;
             }
-            font_path = lower_path;
         }
-        ttf_data_cache_[font_path] = std::move(*data);
-        ttf_it = ttf_data_cache_.find(font_path);
+        if (data) {
+            ttf_data_cache_[font_path] = std::move(*data);
+            ttf_it = ttf_data_cache_.find(font_path);
+        }
     }
 
     const auto& ttf_data = ttf_it->second;
