@@ -14702,14 +14702,17 @@ void test_unitsound(TestContext& ctx) {
             return k;
         };
         const auto all = keys(osc::app::gather_entity_loops(ctx.sim, at, seen));
-        const auto cached = keys(osc::app::gather_entity_loops(ctx.sim, sources.ids(ctx.sim), at, seen));
+        const auto cached =
+            keys(osc::app::gather_entity_loops(ctx.sim, sources.ids(ctx.sim), at, seen));
         if (!all.empty() && all == cached) {
             pass++;
-            spdlog::info("[PASS] Test 8e: the per-tick walk finds the {} loop(s) every entity has", all.size());
+            spdlog::info("[PASS] Test 8e: the per-tick walk finds the {} loop(s) every entity has",
+                         all.size());
         } else {
             fail++;
-            osc::test_status::fail("[FAIL] Test 8e: {} loop(s) from every entity, {} from the per-tick walk",
-                                   all.size(), cached.size());
+            osc::test_status::fail(
+                "[FAIL] Test 8e: {} loop(s) from every entity, {} from the per-tick walk",
+                all.size(), cached.size());
         }
     }
     lua("e:Destroy()");

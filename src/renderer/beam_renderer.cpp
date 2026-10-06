@@ -223,9 +223,11 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
     if (!cur || !vertex_mapped_[fi]) return;
 
     // Last tick's beams, to draw each between its two ticks' ends: found
-    // again only when the last tick is another.
+    // again only when the last tick is another (always for a snapshot not
+    // captured, serial 0, which may be made again in place).
     const sim::WorldSnapshot* prev = view.prev();
-    if (prev != before_snapshot_ || (prev && prev->serial != before_serial_)) {
+    if (prev != before_snapshot_ ||
+        (prev && (prev->serial == 0 || prev->serial != before_serial_))) {
         before_.clear();
         if (prev)
             for (const sim::EffectRecord& fx : prev->effects)
