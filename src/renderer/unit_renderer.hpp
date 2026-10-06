@@ -53,6 +53,31 @@ f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors
 /// doubled until it does, but not past `limit` (so it may fall short).
 u32 grown_capacity(u32 have, u32 need, u32 limit);
 
+/// When each entity's mesh instance was made: FA makes one when an entity
+/// appears or changes mesh, stamped with the tick (material.x). Each update
+/// asks for those it draws, in ascending id as a snapshot holds them (any
+/// order works; that one is walked in step); those it didn't ask for are
+/// gone at finish().
+class MeshBirths {
+public:
+    /// The tick entity `id`'s mesh instance was made: the one it had at the
+    /// last update with these `mesh_changes`, else `now`.
+    u32 tick(u32 id, u32 mesh_changes, u32 now);
+    /// Ends the update: keeps what it asked for, one each.
+    void finish();
+    size_t size() const { return births_.size(); }
+
+private:
+    struct Birth {
+        u32 id = 0;
+        u32 mesh_changes = 0; ///< the entity's Entity::mesh_changes when drawn
+        u32 tick = 0;
+    };
+    std::vector<Birth> births_; ///< the last update's, ascending id
+    std::vector<Birth> next_;   ///< this update's, as asked
+    size_t cursor_ = 0;         ///< into births_: the first not below the last id asked
+};
+
 /// A group of instances sharing the same GPU mesh.
 struct MeshDrawGroup {
     const GPUMesh* mesh = nullptr;
@@ -212,15 +237,7 @@ private:
     const ReconView* recon_ = nullptr;
     const UserPlayableRect* playable_rect_ = nullptr;
 
-    /// When each entity's mesh instance was made: FA makes one when an
-    /// entity appears or changes mesh, stamped with the tick (material.x).
-    struct MeshBirth {
-        u32 mesh_changes = 0; ///< the entity's Entity::mesh_changes when drawn
-        u32 tick = 0;
-        u64 frame = 0; ///< the last update that saw it
-    };
-    std::unordered_map<u32, MeshBirth> births_;
-    u64 frame_ = 0;
+    MeshBirths births_;
     f32 shader_time_ = 0.0f;
     u32 ghost_slots_ = 1;
 };
