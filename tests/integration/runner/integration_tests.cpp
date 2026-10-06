@@ -14781,6 +14781,26 @@ void test_unitsound(TestContext& ctx) {
         osc::test_status::fail("[FAIL] No living unit found for unit sound test");
         return;
     }
+    // A tank of its own beside it (the first is a commander, whose
+    // warp-in FAF's start script plays after this test destroys it)
+    {
+        const osc::sim::Vector3 at = e1->position();
+        auto made = ctx.lua_state.do_string(fmt::format(
+            "local u = CreateUnitHPR('uel0201', 'ARMY_1', {0}, GetTerrainHeight({0}, {1}), "
+            "{1}, 0, 0, 0)\n__osc_sound_unit = u and u:GetEntityId() or 0",
+            at.x + 12.0f, at.z + 12.0f));
+        lua_State* sL = ctx.lua_state.raw();
+        lua_pushstring(sL, "__osc_sound_unit");
+        lua_rawget(sL, LUA_GLOBALSINDEX);
+        const auto made_id = static_cast<osc::u32>(lua_tonumber(sL, -1));
+        lua_pop(sL, 1);
+        if (!made || made_id == 0 || !reg.find(made_id)) {
+            osc::test_status::fail("[FAIL] the unit sound test's tank wasn't made");
+            return;
+        }
+        e1 = reg.find(made_id);
+        test_id = made_id;
+    }
     spdlog::info("Using entity #{} for unit sound tests", test_id);
 
     // Inject test audio entries into the unit's blueprint Audio table. The
