@@ -965,10 +965,12 @@ static int l_GetSelectedUnits(lua_State* L) {
 static int l_SelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
     auto* sim = get_sim(L);
-    if (!ih || !lua_istable(L, 1)) return 0;
+    if (!ih) {
+        return 0;
+    }
 
     std::unordered_set<u32> new_sel;
-    int n = luaL_getn(L, 1); // Lua 5.0: no lua_objlen
+    const int n = lua_istable(L, 1) ? luaL_getn(L, 1) : 0; // Lua 5.0: no lua_objlen
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
         if (lua_istable(L, -1)) {

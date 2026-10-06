@@ -8,6 +8,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
+#include "renderer/input_handler.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
@@ -366,4 +367,24 @@ TEST_CASE("A guard fighting for its guard still guards, as a UI script sees it",
     )");
     INFO((result.ok() ? std::string() : result.error().message));
     CHECK(result.ok());
+}
+
+TEST_CASE("SelectUnits(nil) and SelectUnits({}) clear the selection", "[userunit][selection]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    for (const char* deselect : {"SelectUnits(nil)", "SelectUnits({})"}) {
+        INFO(deselect);
+        REQUIRE(w.ui.do_string("SelectUnits(units)").ok());
+        REQUIRE(input.selected().size() == 1);
+        (void)input.take_selection_event();
+        REQUIRE(w.ui.do_string(deselect).ok());
+        CHECK(input.selected().empty());
+        CHECK(input.take_selection_event());
+    }
 }
