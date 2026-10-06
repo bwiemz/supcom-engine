@@ -757,7 +757,8 @@ TEST_CASE("Only the Edit with the focus has it, as it moves between them", "[ui]
     CHECK(f.registry.keyboard_focus() == nullptr);
 
     // A field clicked into takes the focus from the one that had it; one
-    // whose script takes the press does not
+    // whose script takes the press does not, but the one that had it gives
+    // it up all the same (Moho's LosingKeyboardFocus: a press elsewhere)
     f.run("nickname:AcquireFocus()");
     f.run(R"(
         function place(e, l, t, r, b)
@@ -776,7 +777,8 @@ TEST_CASE("Only the Edit with the focus has it, as it moves between them", "[ui]
     f.dispatch.on_cursor_pos(50, 40);
     f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
     f.deliver();
-    CHECK(focused() == std::vector<bool>{false, true, false});
+    CHECK(focused() == std::vector<bool>{false, false, false});
+    CHECK(f.registry.keyboard_focus() == nullptr);
 }
 
 TEST_CASE("The world has the mouse only where no UI, and no capture, holds it",
@@ -969,8 +971,12 @@ TEST_CASE("A scrollbar scrolls an ItemList, which keeps its own place", "[ui][lu
     CHECK(list->scroll_top() == 15);
     run("list:ShowItem(2)"); // above: it becomes the top row
     CHECK(list->scroll_top() == 2);
-    run("list:ShowItem(9)"); // below: it becomes the bottom row
-    CHECK(list->scroll_top() == 5);
+    run("list:ShowItem(9)"); // below: it becomes the top row too (Moho's ShowItem)
+    CHECK(list->scroll_top() == 9);
+    run("list:ShowItem(19)"); // as far as its rows allow
+    CHECK(list->scroll_top() == 15);
+    run("list:ShowItem(16)"); // in view: it stays
+    CHECK(list->scroll_top() == 15);
     // A dragged thumb's top: the nearest row, within its rows
     osc::ui::scroll_set_top(L, *bar, 7.4f);
     CHECK(list->scroll_top() == 7);
@@ -1135,13 +1141,15 @@ TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrollin
     lua_pop(L, 1);
 }
 
-TEST_CASE("A control's class OnFrame and OnLoseKeyboardFocus are called, as its own would be",
+TEST_CASE("A control's class OnFrame, OnKeyboardFocusChange and OnLoseKeyboardFocus are called, "
+          "as its own would be",
           "[ui][lua]") {
     InputFixture f;
     f.run(R"(
-        frames, lost = 0, 0
+        frames, changed, lost = 0, 0, 0
         local Class = setmetatable({
             OnFrame = function(self, dt) frames = frames + 1 end,
+            OnKeyboardFocusChange = function(self) changed = changed + 1 end,
             OnLoseKeyboardFocus = function(self) lost = lost + 1 end,
         }, { __index = moho.control_methods })
         a = setmetatable({}, { __index = Class })
@@ -1153,7 +1161,114 @@ TEST_CASE("A control's class OnFrame and OnLoseKeyboardFocus are called, as its 
     )");
     f.dispatch.update_controls(f.lua.raw(), f.registry, 0.1);
     CHECK(f.check("frames == 1"));
+    CHECK(f.check("changed == 1 and lost == 0")); // b took it: a is told
+    // With the keyboard again, a press on b: a is losing it
+    f.run("a:AcquireKeyboardFocus(false)");
+    f.dispatch.on_cursor_pos(5, 5);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, 1.0);
+    f.deliver();
     CHECK(f.check("lost == 1"));
+}
+
+TEST_CASE("Whoever had the keyboard is told as it changes, itself too; an Edit pressed away "
+          "from gives it up",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run(R"(
+        told = {}
+        function watch(c, name)
+            c.OnKeyboardFocusChange = function(self) table.insert(told, name .. ' change') end
+            c.OnLoseKeyboardFocus = function(self) table.insert(told, name .. ' lose') end
+        end
+        a = box('a', GetFrame(0), 0, 0, 10, 10, 1)
+        b = box('b', GetFrame(0), 20, 0, 30, 10, 1)
+        watch(a, 'a') watch(b, 'b')
+        a:AcquireKeyboardFocus(false)
+        a:AcquireKeyboardFocus(false) -- again: a is told all the same
+        b:AcquireKeyboardFocus(false)
+        b:AbandonKeyboardFocus()
+        a:AbandonKeyboardFocus()      -- a hasn't it: nothing
+    )");
+    CHECK(f.check("table.concat(told, ',') == 'a change,a change,b change'"));
+    CHECK(f.registry.keyboard_focus() == nullptr);
+
+    // A press on the focused control itself: nothing is lost
+    f.run("told = {} a:AcquireKeyboardFocus(false)");
+    f.dispatch.on_cursor_pos(5, 5);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, 1.0);
+    f.deliver();
+    CHECK(f.check("table.getn(told) == 0"));
+    CHECK(f.registry.keyboard_focus() == control_of(f.lua.raw(), "a"));
+
+    // An Edit with it, a press on b: the Edit gives it up (told), then loses it
+    f.run(R"(
+        told = {}
+        e = setmetatable({}, { __index = moho.edit_methods })
+        InternalCreateEdit(e, GetFrame(0))
+        watch(e, 'e')
+        e:AcquireFocus()
+        told = {}
+    )");
+    f.dispatch.on_cursor_pos(25, 5);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, 5.0);
+    f.deliver();
+    CHECK(f.check("table.concat(told, ',') == 'e change,e lose'"));
+    CHECK(f.registry.keyboard_focus() == nullptr);
+}
+
+TEST_CASE("A focused ItemList's navigation keys move its selection and call OnKeySelect, as "
+          "Moho's",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run(R"(
+        list = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(list, GetFrame(0))
+        list:SetNewFont('Arial', 14)
+        local h = list:GetRowHeight() * 3 -- three rows shown
+        rawset(list, 'Left', 0) rawset(list, 'Top', 0)
+        rawset(list, 'Right', 100) rawset(list, 'Bottom', h)
+        rawset(list, 'Width', 100) rawset(list, 'Height', h)
+        rawset(list, 'Depth', 2)
+        for i = 1, 10 do list:AddItem('row ' .. i) end
+        picked = {}
+        list.OnKeySelect = function(self, row) table.insert(picked, row .. '/' .. self:GetSelection()) end
+        moho.control_methods.AcquireKeyboardFocus(list, false)
+    )");
+    const auto key = [&](int code) {
+        f.dispatch.on_key(code, GLFW_PRESS, 0);
+        f.dispatch.on_key(code, GLFW_RELEASE, 0);
+        f.deliver();
+    };
+    const auto top = [&] { return control_of(f.lua.raw(), "list")->scroll_top(); };
+    key(GLFW_KEY_DOWN); // from none: the first
+    CHECK(f.check("picked[1] == '0/0'"));
+    key(GLFW_KEY_DOWN);
+    key(GLFW_KEY_DOWN);
+    key(GLFW_KEY_DOWN); // row 3, below the three shown: scrolled to the top
+    CHECK(f.check("picked[4] == '3/3'"));
+    CHECK(top() == 3);
+    key(GLFW_KEY_UP); // row 2, above: scrolled to the top
+    CHECK(f.check("picked[5] == '2/2'"));
+    CHECK(top() == 2);
+    key(GLFW_KEY_END);
+    CHECK(f.check("picked[6] == '9/9'"));
+    CHECK(top() == 7);
+    key(GLFW_KEY_HOME);
+    CHECK(f.check("picked[7] == '0/0'"));
+    CHECK(top() == 0);
+    key(GLFW_KEY_PAGE_DOWN); // a page down, its place in the page kept
+    CHECK(f.check("picked[8] == '3/3'"));
+    CHECK(top() == 3);
+    key(GLFW_KEY_PAGE_UP);
+    CHECK(f.check("picked[9] == '0/0'"));
+    key(GLFW_KEY_PAGE_UP); // the page didn't move: the first row
+    CHECK(f.check("picked[10] == '0/0'"));
+    key(GLFW_KEY_A); // not a navigation key
+    CHECK(f.check("table.getn(picked) == 10"));
+    // One its script's HandleEvent takes is the script's
+    f.run("list.HandleEvent = function(self, event) return true end");
+    key(GLFW_KEY_DOWN);
+    CHECK(f.check("table.getn(picked) == 10 and list:GetSelection() == 0"));
 }
 
 TEST_CASE("A focus hides the held keys only if taken with blocksKeyDown or by an Edit",

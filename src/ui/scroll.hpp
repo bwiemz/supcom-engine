@@ -52,8 +52,13 @@ void scroll_item_list(UIControl& list, f32 height, i32 lines);
 /// Its last rows in view
 void scroll_item_list_to_bottom(UIControl& list, f32 height);
 
-/// Scrolls it no further than `row` needs to be in view
+/// Moho's CMauiItemList::ShowItem: a row out of view is scrolled to the top
+/// (as far as its rows allow); one in view stays where it is
 void show_item_list_row(UIControl& list, f32 height, i32 row);
+
+/// Moho's CMauiItemList::ScrollPages: `pages` of its shown rows, rounded,
+/// kept in bounds
+void scroll_item_list_pages(UIControl& list, f32 height, f32 pages);
 
 /// Whether its rows need more than `height`
 bool item_list_needs_scrollbar(const UIControl& list, f32 height);

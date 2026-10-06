@@ -111,6 +111,11 @@ public:
     /// If \p skip is non-null, controls in that set are treated as invisible.
     UIControl* hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
                         const std::unordered_set<UIControl*>* skip = nullptr);
+    /// A focused ItemList's navigation keys its script leaves (Moho's
+    /// CMauiItemList::HandleEvent, which wx gives them as Char events):
+    /// Page Up/Down, Home, End, Up and Down move its selection, then its
+    /// script hears OnKeySelect(row). Whether the key was one.
+    bool item_list_key(lua_State* L, UIControl* list, const UIEvent& ev);
 
 private:
     bool texel_opaque(lua_State* L, const UIControl& ctrl, f32 local_x, f32 local_y);

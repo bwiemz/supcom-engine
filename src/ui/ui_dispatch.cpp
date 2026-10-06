@@ -1,4 +1,5 @@
 #include "ui/ui_dispatch.hpp"
+#include "ui/keyboard_focus.hpp"
 #include "core/cursor.hpp"
 #include "ui/ui_control.hpp"
 #include "core/game_state.hpp"
@@ -466,9 +467,7 @@ bool UIDispatch::edit_event(lua_State* L, UIControlRegistry& registry, UIControl
                 return true;
             }
             if (t.text.empty()) {
-                if (registry.keyboard_focus() == edit) {
-                    registry.set_keyboard_focus(nullptr);
-                }
+                abandon_keyboard_focus(L, registry, edit);
                 return true;
             }
             t.text.clear();
@@ -609,8 +608,9 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
             if (auto* focus = registry.keyboard_focus()) {
-                if (!edit_event(L, registry, focus, ev)) {
-                    fire_handle_event(L, focus, ev);
+                if (!edit_event(L, registry, focus, ev) && !fire_handle_event(L, focus, ev) &&
+                    !focus->destroyed()) {
+                    item_list_key(L, focus, ev);
                 }
             } else if (auto* capture = registry.input_capture()) fire_handle_event(L, capture, ev);
             else if (ev.type == UIEventType::KEY_DOWN) handle_key(L, ev);
@@ -645,6 +645,15 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
 
         if (ev.type == UIEventType::MOUSE_MOTION) {
             hover_item_list(L, target, ev);
+        }
+
+        // A press on another control than the focused one: the focused one is
+        // losing the keyboard (Moho's LosingKeyboardFocus, before the global
+        // handler below): an edit gives it up.
+        if (is_press(ev.type)) {
+            UIControl* const focused = registry.keyboard_focus();
+            if (focused && focused != target) losing_keyboard_focus(L, registry, focused);
+            if (target && target->destroyed()) target = nullptr;
         }
 
         // Call UIMain.OnMouseButtonPress for global click handlers
@@ -796,6 +805,67 @@ void UIDispatch::drag_thumb(lua_State* L, const UIEvent& ev) {
     scroll_set_top(
         L, *bar,
         dragged_top(scroll_values(L, *bar), point.track, thumb.length, point.at - thumb_grab_));
+}
+
+bool UIDispatch::item_list_key(lua_State* L, UIControl* list, const UIEvent& ev) {
+    if (list->control_type() != UIControl::ControlType::ItemList ||
+        ev.type != UIEventType::KEY_DOWN || list->lua_table_ref() < 0)
+        return false;
+    switch (ev.key_code) {
+    case GLFW_KEY_PAGE_UP:
+    case GLFW_KEY_PAGE_DOWN:
+    case GLFW_KEY_HOME:
+    case GLFW_KEY_END:
+    case GLFW_KEY_UP:
+    case GLFW_KEY_DOWN: break;
+    default: return false;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, list->lua_table_ref());
+    const f32 height = read_lazyvar(L, lua_gettop(L), "Height");
+    lua_pop(L, 1);
+    const i32 count = list->item_count();
+    const i32 last = count - 1;
+    const i32 selected = list->selection();
+    // Moho's selection helper: a row out of [0, count) selects none.
+    const auto select = [&](i32 row) { list->set_selection(row >= 0 && row < count ? row : -1); };
+    switch (ev.key_code) {
+    case GLFW_KEY_PAGE_UP: {
+        // The selection keeps its place in the page, unless the page
+        // didn't move: then the first row.
+        const i32 offset = selected - list->scroll_top();
+        const i32 before = list->scroll_top();
+        scroll_item_list_pages(*list, height, -1.0f);
+        select(before != list->scroll_top() ? list->scroll_top() + offset : 0);
+        break;
+    }
+    case GLFW_KEY_PAGE_DOWN: {
+        const i32 offset = selected - list->scroll_top();
+        const i32 before = list->scroll_top();
+        scroll_item_list_pages(*list, height, 1.0f);
+        select(before != list->scroll_top() ? std::min(list->scroll_top() + offset, last) : last);
+        break;
+    }
+    case GLFW_KEY_END:
+        scroll_item_list_to_bottom(*list, height);
+        select(last);
+        break;
+    case GLFW_KEY_HOME:
+        list->set_scroll_top(0);
+        select(0);
+        break;
+    case GLFW_KEY_UP:
+        select(std::max(selected - 1, 0));
+        show_item_list_row(*list, height, list->selection());
+        break;
+    case GLFW_KEY_DOWN:
+        select(std::min(selected + 1, last));
+        show_item_list_row(*list, height, list->selection());
+        break;
+    default: break;
+    }
+    const f64 row = list->selection();
+    run_script(L, list, "OnKeySelect", &row);
+    return true;
 }
 
 void UIDispatch::hover_item_list(lua_State* L, UIControl* target, const UIEvent& ev) {

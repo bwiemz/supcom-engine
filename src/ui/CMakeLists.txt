@@ -1,6 +1,7 @@
 add_library(osc_ui STATIC
     ui_control.cpp
     ui_dispatch.cpp
+    keyboard_focus.cpp
     key_codes.cpp
     edit_text.cpp
     console.cpp
