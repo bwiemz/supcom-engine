@@ -503,6 +503,7 @@ std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 
         out.position = cmd.target_pos;
         out.target_id = cmd.target_id;
         out.clear = !shift;
+        out.units = units;
         switch (cmd.type) {
         case sim::CommandType::Attack: out.type = "Attack"; break;
         case sim::CommandType::Capture: out.type = "Capture"; break;
@@ -687,6 +688,9 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         sim.route_player_command(attack_movers, move, !shift);
     }
     sim.set_human_input_active(false);
+    out.units = ids;
+    out.units.insert(out.units.end(), attack_movers.begin(), attack_movers.end());
+    std::sort(out.units.begin(), out.units.end());
     return out;
 }
 
@@ -737,6 +741,7 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
         out.blueprint = mode.name;
         out.position = cmd.target_pos;
         out.clear = false;
+        out.units = ids;
         issued.push_back(out);
     }
     // The last one tells commandmode.lua the line is done, ending the mode

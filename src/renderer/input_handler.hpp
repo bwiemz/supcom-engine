@@ -61,6 +61,7 @@ struct IssuedCommand {
     u32 target_id = 0;     ///< target entity, if any
     std::string blueprint; ///< build: blueprint id
     bool clear = true;     ///< replaced the units' queues (no Shift)
+    std::vector<u32> units; ///< the units it was issued to
 };
 
 /// The engine side of FA's command mode, provided by the game loop (the
