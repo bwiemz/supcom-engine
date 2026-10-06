@@ -4061,13 +4061,15 @@ static int l_GetUnitBlueprintByName(lua_State* L) {
     return 1;
 }
 
-/// The categories an entity answers to: a unit's, or a projectile's
-/// (M206b); null for anything else.
-static const std::unordered_set<std::string>* entity_categories(const sim::Entity* entity) {
-    if (!entity || entity->destroyed()) return nullptr;
-    if (entity->is_unit()) return &static_cast<const sim::Unit*>(entity)->categories();
-    if (entity->is_projectile()) return &static_cast<const sim::Projectile*>(entity)->categories();
-    return nullptr;
+/// Whether an entity answers to `category`: a unit by its categories' ids
+/// (no string hashed), a projectile by its names (M206b); nothing else does.
+static bool entity_matches(const osc::lua::CategoryMatcher& category, const sim::Entity* entity) {
+    if (!entity || entity->destroyed()) return false;
+    if (entity->is_unit())
+        return category.matches(static_cast<const sim::Unit*>(entity)->category_bits());
+    if (entity->is_projectile())
+        return category.matches(static_cast<const sim::Projectile*>(entity)->categories());
+    return false;
 }
 
 // EntityCategoryContains(category, entity) -> bool
@@ -4076,8 +4078,8 @@ static int l_EntityCategoryContains(lua_State* L) {
         lua_pushboolean(L, 0);
         return 1;
     }
-    const auto* cats = entity_categories(extract_entity(L, 2));
-    const bool match = cats && osc::lua::unit_matches_category(L, 1, *cats);
+    const sim::Entity* entity = extract_entity(L, 2);
+    const bool match = entity && entity_matches(osc::lua::CategoryMatcher(L, 1), entity);
     lua_pushboolean(L, match ? 1 : 0);
     return 1;
 }
@@ -4099,8 +4101,7 @@ static int category_filter(lua_State* L, bool keep_matches) {
         if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
         int unit_tbl = lua_gettop(L);
-        const auto* cats = entity_categories(extract_entity(L, unit_tbl));
-        const bool matches = cats && category.matches(*cats);
+        const bool matches = entity_matches(category, extract_entity(L, unit_tbl));
 
         if (matches == keep_matches) {
             lua_pushnumber(L, out_idx++);

@@ -85,6 +85,38 @@ f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors
     return (static_cast<f32>(index) + 0.5f) / static_cast<f32>(count);
 }
 
+u32 MeshBirths::tick(u32 id, u32 mesh_changes, u32 now) {
+    // Below an id passed (a ghost's, after the entities): looked for afresh.
+    if (cursor_ > 0 && births_[cursor_ - 1].id >= id)
+        cursor_ =
+            static_cast<size_t>(std::lower_bound(births_.begin(), births_.end(), id,
+                                                 [](const Birth& b, u32 v) { return b.id < v; }) -
+                                births_.begin());
+    while (cursor_ < births_.size() && births_[cursor_].id < id) ++cursor_;
+    Birth birth{id, mesh_changes, now};
+    if (cursor_ < births_.size() && births_[cursor_].id == id &&
+        births_[cursor_].mesh_changes == mesh_changes)
+        birth.tick = births_[cursor_].tick;
+    next_.push_back(birth);
+    return birth.tick;
+}
+
+void MeshBirths::finish() {
+    // Out of order or asked twice (a ghost of a live entity): the first
+    // answer stands.
+    const auto not_after = [](const Birth& a, const Birth& b) { return a.id >= b.id; };
+    if (std::adjacent_find(next_.begin(), next_.end(), not_after) != next_.end()) {
+        std::stable_sort(next_.begin(), next_.end(),
+                         [](const Birth& a, const Birth& b) { return a.id < b.id; });
+        next_.erase(std::unique(next_.begin(), next_.end(),
+                                [](const Birth& a, const Birth& b) { return a.id == b.id; }),
+                    next_.end());
+    }
+    births_.swap(next_);
+    next_.clear();
+    cursor_ = 0;
+}
+
 u32 grown_capacity(u32 have, u32 need, u32 limit) {
     u64 capacity = std::max<u32>(have, 1);
     while (capacity < need && capacity < limit) capacity *= 2;
@@ -272,7 +304,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     // units, which the water reflects (M213b).
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2][2];
 
-    ++frame_;
+    // The eye, for each mesh's LOD distance: the same for every entity.
+    f32 eye_x = 0;
+    f32 eye_y = 0;
+    f32 eye_z = 0;
+    if (camera) camera->eye_position(eye_x, eye_y, eye_z);
     const u32 now = view.cur() ? view.cur()->tick : 0;
     shader_time_ = std::fmod(static_cast<f32>(now) + view.alpha(), kShaderTimeWrap);
     // One entity's mesh instance (or cube): the world's, then the player's
@@ -288,12 +324,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view): its blueprint never changes, its
         // override's changes are counted.
-        MeshBirth& birth = births_[entity.id];
-        if (birth.frame == 0 || birth.mesh_changes != entity.mesh_changes) {
-            birth.mesh_changes = entity.mesh_changes;
-            birth.tick = now;
-        }
-        birth.frame = frame_;
+        const u32 birth = births_.tick(entity.id, entity.mesh_changes, now);
         // Strategic zoom draws none: the rest is wasted (24,000 instances
         // in M223b's strategic scene)
         if (!meshes_drawn) return;
@@ -332,11 +363,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // Compute camera distance for LOD selection
         f32 cam_dist = 0.0f;
         if (camera) {
-            f32 ex, ey, ez;
-            camera->eye_position(ex, ey, ez);
-            f32 dx = pos.x - ex;
-            f32 dy = pos.y - ey;
-            f32 dz = pos.z - ez;
+            const f32 dx = pos.x - eye_x;
+            const f32 dy = pos.y - eye_y;
+            const f32 dz = pos.z - eye_z;
             cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         }
 
@@ -390,7 +419,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
             inst.a = 1.0f;
             inst.color_lookup = team_color_lookup(
                 view.cur() ? view.cur()->army(entity.army) : nullptr, game_colors_);
-            inst.shader_time = std::fmod(static_cast<f32>(birth.tick), kShaderTimeWrap);
+            inst.shader_time = std::fmod(static_cast<f32>(birth), kShaderTimeWrap);
             // The technique's parameter, which UserEntity copies at each
             // sync: the fraction complete (a remembered structure's, when
             // it was last seen), or a shield's health (M211k).
@@ -436,8 +465,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         for (const sim::EntityRecord& ghost : recon_->ghosts()) draw(ghost);
 
     // Entities gone since the last update take their mesh instances with them.
-    for (auto it = births_.begin(); it != births_.end();)
-        it = it->second.frame == frame_ ? std::next(it) : births_.erase(it);
+    births_.finish();
 
     // The slot's buffers grow to hold the frame: its cubes, its mesh
     // instances and the build ghost's, and its groups' bones. What a buffer

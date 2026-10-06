@@ -13,6 +13,7 @@
 #include "app/render_bench.hpp"
 #include "app/ui_clicks.hpp"
 #include "app/window_mode.hpp"
+#include "app/world_sounds.hpp"
 #include "lua/factory_queue.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/renderer.hpp"
@@ -171,6 +172,8 @@ private:
     /// SimCallback queue (UI→Sim bridge, M138a)
     osc::sim::SimCallbackQueue sim_callback_queue;
     double sim_accumulator = 0.0;
+    /// The entities whose loops the frame's sound plays (update_world_sounds).
+    EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched
     double paused_beat_accumulator = 0.0;
     /// FA's command mode drives world clicks (read once per frame).
