@@ -488,20 +488,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
     if (on_screen && width > 0 && height > 0) {
         // Determine what to render
         if (!ctrl->texture_path().empty()) {
-            // Textured bitmap — select frame texture for animations
-            std::string tex_path = ctrl->texture_path();
-            if (ctrl->textures().size() > 1) {
-                i32 frame = ctrl->current_frame();
-                if (!ctrl->frame_pattern().empty()) {
-                    i32 pi = ctrl->pattern_index();
-                    i32 ps = static_cast<i32>(ctrl->frame_pattern().size());
-                    if (pi >= 0 && pi < ps)
-                        frame = ctrl->frame_pattern()[pi];
-                }
-                if (frame >= 0 && frame < static_cast<i32>(ctrl->textures().size()))
-                    tex_path = ctrl->textures()[frame];
-            }
-            const GPUTexture* tex = tex_cache.get(tex_path);
+            const GPUTexture* tex = tex_cache.get(ctrl->frame_texture());
             if (tex) {
                 entry.texture_ds = tex->descriptor_set;
                 f32 cm[4];
