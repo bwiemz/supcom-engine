@@ -29,7 +29,6 @@ KLiftDamping
 KRoll
 KRollDamping
 LAYER_Air
-LayerChangeOffsetHeight
 LayerTransitionDuration
 LiftFactor
 MaxBounceCount

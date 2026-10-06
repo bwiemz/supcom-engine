@@ -717,6 +717,22 @@ public:
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_AmphibiousFloating";
     }
     bool is_hover() const { return motion_type_ == "RULEUMT_Hover"; }
+    /// Under water it walks the seabed, on the terrain (Moho's
+    /// UpdateCurrentLayer: Amphibious and Land units). Hover and floating
+    /// units, and ships, ride the surface.
+    bool walks_seabed() const {
+        return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_Land";
+    }
+    /// The height it stands at on the ground at (x, z): the terrain, under
+    /// the water too, for one that walks the seabed; else the surface.
+    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const;
+    /// Physics.LayerChangeOffsetHeight: how far above (+) or below (-) the
+    /// water's surface the ground must lie for it to count as under water.
+    f32 layer_change_offset() const { return layer_change_offset_; }
+    void set_layer_change_offset(f32 h) { layer_change_offset_ = h; }
+    /// Moho's CUnitMotion::UpdateCurrentLayer, each tick it moves: the layer
+    /// it is on by the ground under it and the water over that.
+    void update_current_layer(const map::Terrain* terrain, lua_State* L);
     /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
     /// MotionType is RULEUMT_None).
     bool is_mobile() const { return !motion_type_.empty() && motion_type_ != "RULEUMT_None"; }
@@ -1296,6 +1312,7 @@ private:
     bool need_unpack_ = false;
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
+    f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
     f32 jam_radius_min_ = 0, jam_radius_max_ = 0; // Intel.JamRadius

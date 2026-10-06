@@ -198,7 +198,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         if (speed == 0 && --hold_ticks_ == 0) next_check_ = 0; // looks again as it goes on
         pos.x += osc::dmath::sin(heading) * speed * step;
         pos.z += osc::dmath::cos(heading) * speed * step;
-        if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+        if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
         if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
         unit.set_position(pos);
         unit.note_drive(speed, 0, max_speed, Unit::MotionTurn::Straight);
@@ -310,7 +310,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     // Drive along its heading.
     pos.x += osc::dmath::sin(heading) * speed * step;
     pos.z += osc::dmath::cos(heading) * speed * step;
-    if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+    if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
     unit.set_position(pos);
     unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));

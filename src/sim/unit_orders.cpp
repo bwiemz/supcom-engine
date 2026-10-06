@@ -1791,7 +1791,7 @@ void Unit::finish_pickup(bool completed, lua_State* L) {
 void Unit::abandon_beam_up(const map::Terrain* terrain, lua_State* L) {
     beam_up_ticks_ = 0;
     Vector3 at = position();
-    if (terrain) at.y = terrain->get_surface_height(at.x, at.z);
+    if (terrain) at.y = ground_y(terrain, at.x, at.z);
     set_position(at);
     set_orientation(euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
     note_snap();
@@ -1877,7 +1877,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             if (transport->destroyed() || !transport->in_registry() || transport->is_dying()) {
                 // The transport went while the unit rose: it comes back down.
                 Vector3 at = position();
-                if (ctx.terrain) at.y = ctx.terrain->get_surface_height(at.x, at.z);
+                if (ctx.terrain) at.y = ground_y(ctx.terrain, at.x, at.z);
                 set_position(at);
                 set_orientation(euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
                 note_snap();
