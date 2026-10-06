@@ -560,12 +560,14 @@ public:
     /// its state in id order; the total covers them all.
     struct ChecksumParts {
         u64 rng = 0;            ///< the sim's random stream
-        u64 armies = 0;         ///< the tick; each army's state, resources and rates
+        u64 armies = 0;         ///< the tick; each army's state, resources, rates, platoons
         u64 entities = 0;       ///< every entity: id, army, destroyed, pose, health, build
-        u64 units = 0;          ///< settings, layer, dying, transport, work, silo, economy
+        u64 units = 0;          ///< settings, layer, dying, transport, work, silo, economy, facing,
+                                ///< stats, states, script flags, veterancy, collision detectors
         u64 orders = 0;         ///< every unit's command queue, runtime state included
-        u64 navigation = 0;     ///< navigator goals and status, velocities
-        u64 weapons = 0;        ///< targets, ground targets, fire clocks, enabled
+        u64 navigation = 0;     ///< navigator goals and status, velocities, heading
+        u64 weapons = 0;        ///< targets, ground attacks, fire and target-check clocks,
+                                ///< enabled, script-set range/rate/damage/layers
         u64 projectiles = 0;    ///< velocity, target, lifetime, impacted
         u64 shields = 0;        ///< on or off (their health is an entity's)
         u64 economy_events = 0; ///< progress, done, cancelled
