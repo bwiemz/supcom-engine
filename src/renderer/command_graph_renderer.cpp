@@ -106,6 +106,7 @@ CommandGraphStyle fallback_style() {
     s.line_selected_color = rgba(0xdd00ffffu);
     s.waypoint_color = rgba(0x44ffffffu);
     s.waypoint_selected_color = rgba(0x88ffffffu);
+    s.waypoint_highlight_color = rgba(0xffffffffu);
     return s;
 }
 
@@ -137,6 +138,8 @@ CommandGraphStyle command_graph_style(lua_State* L, int params, const std::strin
     s.waypoint_selected_color = param_color(L, params, name, "waypoint_selected_color");
     s.waypoint_scale = param_number(L, params, name, "waypoint_scale", 1.0f);
     s.waypoint_selected_scale = param_number(L, params, name, "waypoint_selected_scale", 1.0f);
+    s.waypoint_highlight_color = param_color(L, params, name, "waypoint_highlight_color");
+    s.waypoint_highlight_scale = param_number(L, params, name, "waypoint_highlight_scale", 1.0f);
     return s;
 }
 
@@ -248,7 +251,8 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
     return paths;
 }
 
-std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths) {
+std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
+                                                  u32 highlight, u32 hovered_unit) {
     std::vector<CommandGraphNode> nodes;
     std::vector<Vector3> sums;
     std::vector<u32> counts;
@@ -301,11 +305,75 @@ std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraph
         nodes[n].position = scale(sums[n], 1.0f / static_cast<f32>(counts[n]));
         const size_t lanes = std::max<size_t>({ins[n].size(), outs[n].size(), 1});
         nodes[n].unit_scale = std::sqrt(static_cast<f32>(lanes));
-        const CommandGraphStyle& s = *nodes[n].style;
-        nodes[n].color = nodes[n].chosen ? s.waypoint_selected_color : s.waypoint_color;
-        nodes[n].scale = nodes[n].chosen ? s.waypoint_selected_scale : s.waypoint_scale;
+        CommandGraphNode& node = nodes[n];
+        node.highlighted = (highlight != 0 && node.order.command_id == highlight) ||
+                           (hovered_unit != 0 && std::find(node.units.begin(), node.units.end(),
+                                                           hovered_unit) != node.units.end());
+        const CommandGraphStyle& s = *node.style;
+        if (node.highlighted) {
+            node.color = s.waypoint_highlight_color;
+            node.scale = s.waypoint_highlight_scale;
+        } else {
+            node.color = node.chosen ? s.waypoint_selected_color : s.waypoint_color;
+            node.scale = node.chosen ? s.waypoint_selected_scale : s.waypoint_scale;
+        }
     }
     return nodes;
+}
+
+std::vector<WaypointOnScreen> waypoints_on_screen(const std::vector<CommandGraphNode>& nodes,
+                                                  const Camera& camera, f32 width, f32 height) {
+    std::vector<WaypointOnScreen> out;
+    if (width <= 0.0f || height <= 0.0f) {
+        return out;
+    }
+    const auto vp = camera.view_proj(width / height);
+    f32 ex = 0;
+    f32 ey = 0;
+    f32 ez = 0;
+    camera.eye_position(ex, ey, ez);
+    const f32 per_px = 2.0f * std::tan(camera.fov() * 0.5f) / height;
+    for (const CommandGraphNode& node : nodes) {
+        if (node.order.command_id == 0) {
+            continue;
+        }
+        const Vector3& p = node.position;
+        const f32 cx = vp[0] * p.x + vp[4] * p.y + vp[8] * p.z + vp[12];
+        const f32 cy = vp[1] * p.x + vp[5] * p.y + vp[9] * p.z + vp[13];
+        const f32 cw = vp[3] * p.x + vp[7] * p.y + vp[11] * p.z + vp[15];
+        if (cw <= 0.001f || std::abs(cx) > cw || std::abs(cy) > cw) {
+            continue;
+        }
+        const f32 px_world = per_px * length(sub(p, Vector3{ex, ey, ez}));
+        out.push_back({node.order.command_id, (cx / cw + 1.0f) * 0.5f * width,
+                       (cy / cw + 1.0f) * 0.5f * height,
+                       px_world > 0.0f
+                           ? CommandGraphRenderer::kWaypointSize * node.unit_scale / px_world
+                           : 0.0f,
+                       node.chosen});
+    }
+    return out;
+}
+
+u32 waypoint_under_cursor(const std::vector<WaypointOnScreen>& waypoints, f32 mx, f32 my) {
+    u32 best = 0;
+    f32 best_distance = 0;
+    bool best_chosen = false;
+    for (const WaypointOnScreen& w : waypoints) {
+        const f32 reach = std::clamp(w.size_px, CommandGraphRenderer::kMinWaypointPx,
+                                     CommandGraphRenderer::kMaxWaypointPx);
+        const f32 distance = std::hypot(w.x - mx, w.y - my);
+        if (distance > reach) {
+            continue;
+        }
+        if (best == 0 || (w.chosen && !best_chosen) ||
+            (w.chosen == best_chosen && distance < best_distance)) {
+            best = w.command_id;
+            best_distance = distance;
+            best_chosen = w.chosen;
+        }
+    }
+    return best;
 }
 
 std::string command_graph_key(sim::CommandType type) {
@@ -552,7 +620,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
             }
         }
     }
-    for (const CommandGraphNode& node : command_graph_nodes(paths)) {
+    for (const CommandGraphNode& node : command_graph_nodes(paths, highlight_, hovered_unit_)) {
         const CommandGraphStyle* s = node.style;
         const GPUTexture* wp_tex =
             s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);

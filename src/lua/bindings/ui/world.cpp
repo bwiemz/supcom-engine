@@ -291,7 +291,13 @@ static int worldview_GetsGlobalCameraCommands(lua_State* L) {
 }
 
 static int worldview_HasHighlightCommand(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* wv = check_world_view(L);
+    lua_pushstring(L, "__osc_input_handler");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* input = static_cast<const renderer::InputHandler*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    lua_pushboolean(L, wv && input && !wv->is_minimap() && wv->highlight_enabled() &&
+                           input->hovered_command() != 0);
     return 1;
 }
 

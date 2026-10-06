@@ -422,6 +422,7 @@ void App::Window::render(const sim::FrameView& frame_view) {
         if (bench) bench->before_frame(renderer, *sim_state);
         const auto render_start = std::chrono::steady_clock::now();
         renderer.set_selection_marks(input_handler.hovered(), input_handler.drag_box());
+        renderer.set_command_highlight(input_handler.hovered_command());
         renderer.render(frame_view, world_interp.history.events(), ghost ? &*ghost : nullptr,
                         ui_lua_state.raw(), &ui_registry, sel.empty() ? nullptr : &sel);
         if (bench)
