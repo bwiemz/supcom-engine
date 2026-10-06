@@ -5,6 +5,7 @@
 #include "ui/console.hpp"
 #include "ui/edit_text.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include "ui/key_codes.hpp"
@@ -100,9 +101,12 @@ void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods, f64 now) {
     e.type = (action == GLFW_RELEASE) ? UIEventType::BUTTON_RELEASE
                                        : UIEventType::BUTTON_PRESS;
     if (action != GLFW_RELEASE) {
-        if (now < 0.0) now = glfwGetTime();
+        // The steady clock, not GLFW's (0 when GLFW is down, as in a test)
+        if (now < 0.0)
+            now = std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch())
+                      .count();
         const bool double_click = !last_press_double_ && button == last_press_button_ &&
-                                  last_press_time_ >= 0.0 &&
+                                  last_press_time_ >= 0.0 && now >= last_press_time_ &&
                                   now - last_press_time_ <= kDoubleClickSeconds &&
                                   std::abs(mouse_x_ - last_press_x_) <= kDoubleClickPixels &&
                                   std::abs(mouse_y_ - last_press_y_) <= kDoubleClickPixels;

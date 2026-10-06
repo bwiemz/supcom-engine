@@ -72,7 +72,7 @@ public:
     /// A press of the same button within kDoubleClickSeconds and
     /// kDoubleClickPixels of the last, not itself one, is a double-click
     /// (Windows' GetDoubleClickTime and SM_CXDOUBLECLK defaults). `now` is the
-    /// time in seconds (glfwGetTime when negative).
+    /// time in seconds (the steady clock's when negative).
     void on_mouse_button(i32 button, i32 action, i32 mods, f64 now = -1.0);
     static constexpr f64 kDoubleClickSeconds = 0.5;
     static constexpr f64 kDoubleClickPixels = 2.0;

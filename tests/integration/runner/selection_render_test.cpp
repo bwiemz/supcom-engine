@@ -189,6 +189,17 @@ void test_selection_render(TestContext& ctx) {
                         similar.size(), similar.count(tank), similar.count(tank2),
                         similar.count(far_tank), similar.count(foe_tank), similar.count(own)));
 
+    // Test 10: with Shift held, the second click of a double-click doesn't
+    // toggle the tank back off: it is a double-click, not a click.
+    input.set_selected({});
+    input.left_click_at(ctx.sim, tp.x, tp.z, true);
+    input.world_click(ctx.sim, tp.x, tp.z, true, true, r.camera().view_proj(aspect));
+    const auto& shifted = input.selected();
+    t.check(shifted.size() == 2 && shifted.count(tank) == 1 && shifted.count(tank2) == 1,
+            fmt::format("Test 10: a Shift double-click keeps the tank and adds its like: {} "
+                        "selected (tank {}, second {})",
+                        shifted.size(), shifted.count(tank), shifted.count(tank2)));
+
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

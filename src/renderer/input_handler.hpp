@@ -166,6 +166,11 @@ public:
     std::optional<std::array<f32, 2>> cursor_world() const { return cursor_world_; }
 
     void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+    /// A left click on the world at (wx, wz) as the release of a click
+    /// ends it: a double-click's second selects like units in view, any
+    /// other selects (or with Shift toggles) the unit there.
+    void world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
+                     const std::array<f32, 16>& view_proj);
     /// A double-click on the player's unit at (wx, wz): every unit of its
     /// blueprint `view_proj` shows joins the selection (Moho's
     /// CWldSession::HandleDoubleClickSelection). Not on a wall.
@@ -261,8 +266,6 @@ private:
     bool rmb_on_ui_ = false;     // current right press began over the UI
     bool rmb_raw_prev_ = false;
 
-    void handle_left_click(Renderer& renderer, sim::SimState& sim,
-                           f32 mx, f32 my);
     void handle_drag_select(Renderer& renderer, sim::SimState& sim);
     void handle_right_click(Renderer& renderer, sim::SimState& sim,
                             f32 mx, f32 my);

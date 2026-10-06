@@ -214,14 +214,15 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                                       clock_ - last_click_time_ <= kDoubleClickSeconds &&
                                       std::abs(mx - last_click_x_) <= kDoubleClickPixels &&
                                       std::abs(my - last_click_y_) <= kDoubleClickPixels;
-            handle_left_click(renderer, sim, mx, my);
             f32 wx = 0;
             f32 wz = 0;
-            if (double_click && world_at(renderer, sim, mx, my, wx, wz)) {
+            if (world_at(renderer, sim, mx, my, wx, wz)) {
+                const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                                   renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
                 const f32 aspect = renderer.height() > 0 ? static_cast<f32>(renderer.width()) /
                                                                static_cast<f32>(renderer.height())
                                                          : 1.0f;
-                select_similar_in_view(sim, wx, wz, renderer.camera().view_proj(aspect));
+                world_click(sim, wx, wz, shift, double_click, renderer.camera().view_proj(aspect));
             }
             last_click_double_ = double_click;
             last_click_time_ = clock_;
@@ -309,17 +310,6 @@ void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimS
     snap_radius_ = sim::extract_snap_radius(2.0f * dist * std::tan(camera.fov() * 0.5f) / width);
 }
 
-void InputHandler::handle_left_click(Renderer& renderer,
-                                     sim::SimState& sim,
-                                     f32 mx, f32 my) {
-    f32 wx, wz;
-    if (!world_at(renderer, sim, mx, my, wx, wz)) return;
-
-    const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                       renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-    left_click_at(sim, wx, wz, shift);
-}
-
 void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
     const u32 picked = unit_under(sim, wx, wz, true);
 
@@ -336,6 +326,15 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift)
     selection_event_ = true;
     spdlog::debug("Selection: {} units (click at world {:.0f},{:.0f})",
                   selected_.size(), wx, wz);
+}
+
+void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
+                               const std::array<f32, 16>& view_proj) {
+    // A double-click's second press is no click of its own: Moho's world view
+    // gets a ButtonDClick in its place, and it only adds the clicked unit's
+    // like in view (with Shift held too: the first click's toggle stands).
+    if (double_click) select_similar_in_view(sim, wx, wz, view_proj);
+    else left_click_at(sim, wx, wz, shift);
 }
 
 void InputHandler::select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
