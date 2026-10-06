@@ -8,6 +8,8 @@ extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
 }
+#include "renderer/dds_decode.hpp"
+#include "vfs/virtual_file_system.hpp"
 #include "renderer/dds_parser.hpp"
 #include "platform/paths.hpp"
 #include "core/profiler.hpp"
@@ -94,6 +96,7 @@ void Renderer::on_scroll(f64 y_offset) {
 
 bool Renderer::init(u32 width, u32 height, const std::string& title,
                     bool offscreen) {
+    offscreen_ = offscreen;
     // GLFW
     if (!glfwInit()) {
         spdlog::error("Failed to initialize GLFW");
@@ -115,7 +118,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         glfwTerminate();
         return false;
     }
-    // The engine draws FA's cursor: the system's stays hidden over the window
+    // The system's cursor stays hidden until FA's cursor is made it
+    // (update_system_cursor); offscreen, the engine draws FA's
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     window_width_ = width;
     window_height_ = height;
@@ -2242,6 +2246,7 @@ void Renderer::destroy_terrain_strata_ubo() {
 void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintStore* store,
                            const std::vector<std::string>& preload,
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
+    vfs_ = vfs;
     emitter_bp_cache_.set_vfs(vfs);
     beam_bp_cache_.set_vfs(vfs);
     trail_bp_cache_.set_vfs(vfs);
@@ -2821,6 +2826,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             };
         }
         movie_textures_.prepare(*ui_registry, fi);
+        update_system_cursor(L);
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
                             window_width_, window_height_,
                             static_cast<f32>(ui_dispatch_.mouse_x()),
@@ -3826,6 +3832,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
             ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(frame_dt_));
         ui_dispatch_.dispatch_events(L, *ui_registry);
         movie_textures_.prepare(*ui_registry, fi);
+        update_system_cursor(L);
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_, window_width_,
                             window_height_, static_cast<f32>(ui_dispatch_.mouse_x()),
                             static_cast<f32>(ui_dispatch_.mouse_y()));
@@ -4049,6 +4056,7 @@ u32 Renderer::mesh_instance_count() const {
 }
 
 void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {
+    if (vfs) vfs_ = vfs;
     if (caches_initialized_ || !vfs) return;
     texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
                         texture_ds_layout_, texture_sampler_, vfs);
@@ -4151,11 +4159,64 @@ std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
 
 void Renderer::set_cursor_clip(bool on) {
     // Moho clips only a windowed head (ClipCursor to its rect): GLFW's
-    // captured cursor; the system's stays hidden either way
+    // captured cursor, which shows; the system's stays hidden while the
+    // engine draws FA's
     cursor_clipped_ = on && window_ && !fullscreen();
     if (window_)
         glfwSetInputMode(window_, GLFW_CURSOR,
-                         cursor_clipped_ ? GLFW_CURSOR_CAPTURED : GLFW_CURSOR_HIDDEN);
+                         cursor_clipped_      ? GLFW_CURSOR_CAPTURED
+                         : system_cursor_set_ ? GLFW_CURSOR_NORMAL
+                                              : GLFW_CURSOR_HIDDEN);
+}
+
+void Renderer::update_system_cursor(lua_State* L) {
+    // Moho's cursor is the system's: drawn by the OS, it keeps up with the
+    // mouse and the desktop's own effects (KDE's shake-to-find enlarged a
+    // hidden one, black). A capture has no OS cursor to show it.
+    if (offscreen_ || !window_ || !L) return;
+    std::string path;
+    f32 hot_x = 0;
+    f32 hot_y = 0;
+    lua_pushstring(L, "__osc_active_cursor");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        const auto* cursor = static_cast<const ui::UIControl*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        if (cursor && cursor->cursor_visible()) {
+            path = cursor->cursor_texture();
+            hot_x = cursor->cursor_hotspot_x();
+            hot_y = cursor->cursor_hotspot_y();
+        }
+    }
+    lua_pop(L, 1);
+    const std::string key =
+        path.empty() ? std::string() : fmt::format("{}|{}|{}", path, hot_x, hot_y);
+    if (key == system_cursor_key_ && (key.empty() || system_cursor_set_)) return;
+    system_cursor_key_ = key;
+    GLFWcursor* made = nullptr;
+    if (!key.empty()) {
+        if (auto it = system_cursors_.find(key); it != system_cursors_.end()) {
+            made = it->second;
+        } else if (vfs_) {
+            if (const auto file = vfs_->read_file(path)) {
+                u32 w = 0;
+                u32 h = 0;
+                if (auto rgba = dds_to_rgba(*file, w, h)) {
+                    GLFWimage image{static_cast<int>(w), static_cast<int>(h), rgba->data()};
+                    made =
+                        glfwCreateCursor(&image, static_cast<int>(hot_x), static_cast<int>(hot_y));
+                }
+            }
+            system_cursors_[key] = made; // a failure too: drawn by the engine
+        }
+    }
+    system_cursor_set_ = made != nullptr;
+    // Without one (none set, or its image not to be made), the engine draws it
+    ui_renderer_.set_draw_cursor(!system_cursor_set_);
+    if (made) glfwSetCursor(window_, made);
+    set_cursor_clip(cursor_clipped_);
 }
 
 bool Renderer::system_cursor_shown() const {
@@ -4713,6 +4774,9 @@ void Renderer::shutdown() {
     vkDestroyInstance(instance_, nullptr);
 
     // GLFW
+    for (auto& [key, cursor] : system_cursors_)
+        if (cursor) glfwDestroyCursor(cursor);
+    system_cursors_.clear();
     glfwDestroyWindow(window_);
     glfwTerminate();
 

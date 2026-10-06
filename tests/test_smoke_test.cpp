@@ -838,6 +838,35 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     CHECK(spd < 10.5f);
 }
 
+TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track falls",
+          "[m160][projectile]") {
+    // Moho's projectile motion integrates gravity only for a shot without
+    // TrackTarget: FAF's torpedoes say UseGravity, and sank to the seabed.
+    osc::sim::EntityRegistry registry;
+    auto target = std::make_unique<osc::sim::Unit>();
+    target->set_position({0, 0, 50});
+    const osc::u32 tid = registry.register_entity(std::move(target));
+    osc::sim::Projectile torpedo;
+    torpedo.set_position({0, 0, 0});
+    torpedo.velocity = {0, 0, 10};
+    torpedo.tracking = true;
+    torpedo.turn_rate = 165.0f;
+    torpedo.max_speed = 15.0f;
+    torpedo.lifetime = 10.0f;
+    torpedo.ballistic_accel = -osc::sim::Projectile::GRAVITY;
+    torpedo.target_entity_id = tid;
+    osc::sim::Projectile shell = torpedo;
+    shell.tracking = false;
+    shell.target_entity_id = 0;
+    for (int i = 0; i < 10; ++i) {
+        torpedo.update(0.1, registry, nullptr, nullptr);
+        shell.update(0.1, registry, nullptr, nullptr);
+    }
+    CHECK(std::abs(torpedo.position().y) < 0.01f);
+    CHECK(torpedo.position().z > 5.0f);
+    CHECK(shell.position().y < -1.0f); // a second's fall
+}
+
 TEST_CASE("Unit veterancy fields and record_damage", "[m162]") {
     osc::sim::Unit u;
     CHECK(u.vet_level() == 0);

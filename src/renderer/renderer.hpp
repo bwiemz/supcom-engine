@@ -57,6 +57,7 @@
 #include <vector>
 
 struct GLFWwindow;
+struct GLFWcursor;
 struct lua_State;
 
 namespace osc::vfs {
@@ -596,6 +597,15 @@ private:
     CommandFeedbackBlips feedback_blips_;
     /// This frame's marks, into the unit renderer's instances.
     void inject_feedback_blips(lua_State* L);
+    /// FA's cursor as the window's own (Moho's hardware cursor): made from
+    /// the UI cursor's image and hotspot, one per pair, while the window is
+    /// the player's. An offscreen capture draws it with the UI instead.
+    void update_system_cursor(lua_State* L);
+    std::unordered_map<std::string, GLFWcursor*> system_cursors_;
+    std::string system_cursor_key_; ///< the one set now ("" none)
+    bool system_cursor_set_ = false;
+    bool offscreen_ = false;
+    vfs::VirtualFileSystem* vfs_ = nullptr; ///< where the cursor's images are read
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
     FogRenderer fog_renderer_;

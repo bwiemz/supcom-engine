@@ -60,6 +60,8 @@ struct UIDrawGroup {
 /// Walks the UI control tree, builds textured 2D quads, and renders them.
 class UIRenderer {
 public:
+    /// Whether it draws the cursor (not while the window shows it as its own).
+    void set_draw_cursor(bool on) { draw_cursor_ = on; }
     void init(VkDevice device, VmaAllocator allocator);
 
     /// Walk all controls, read LazyVar positions from Lua, build quad list.
@@ -146,6 +148,7 @@ private:
         ui::DrawBand band = ui::DrawBand::Overlay;
         const ui::UIControl* movie = nullptr; ///< the movie whose frame this is
     };
+    bool draw_cursor_ = true;
     std::vector<QuadEntry> quads_;
     const WorldViewPainter* minimap_painter_ = nullptr; // during update()
     const MovieTextures* movies_ = nullptr;
