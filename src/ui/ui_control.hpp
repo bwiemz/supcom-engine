@@ -60,8 +60,6 @@ public:
     // --- Keyboard focus ---
     bool has_keyboard_focus() const { return has_keyboard_focus_; }
     void set_keyboard_focus(bool f) { has_keyboard_focus_ = f; }
-    bool blocks_key_down() const { return blocks_key_down_; }
-    void set_blocks_key_down(bool b) { blocks_key_down_ = b; }
 
     // --- Destroyed flag ---
     bool destroyed() const { return destroyed_; }
@@ -329,7 +327,6 @@ private:
     i32 render_pass_ = 0;
     bool needs_frame_update_ = false;
     bool has_keyboard_focus_ = false;
-    bool blocks_key_down_ = false;
     bool destroyed_ = false;
     ControlType control_type_ = ControlType::Generic;
 
@@ -461,12 +458,15 @@ public:
 
     /// The control that currently has keyboard focus.
     UIControl* keyboard_focus() const { return keyboard_focus_; }
+    /// Moho's MAUI_KeyIsDown answers false while this holds
+    bool key_down_blocked() const { return keyboard_focus_ && focus_blocks_key_down_; }
     /// Gives `c` (or none) the focus: the control it leaves no longer has it
-    void set_keyboard_focus(UIControl* c) {
+    void set_keyboard_focus(UIControl* c, bool blocks_key_down = true) {
         if (keyboard_focus_ && keyboard_focus_ != c) {
             keyboard_focus_->set_keyboard_focus(false);
         }
         keyboard_focus_ = c;
+        focus_blocks_key_down_ = blocks_key_down;
         if (c) {
             c->set_keyboard_focus(true);
         }
@@ -487,6 +487,7 @@ private:
     std::vector<std::unique_ptr<UIControl>> controls_;
     u32 next_id_ = 1;
     UIControl* keyboard_focus_ = nullptr;
+    bool focus_blocks_key_down_ = true;
     std::vector<UIControl*> input_capture_;
     /// Drop the destroyed controls' entries (Moho's are weak links).
     void compact_input_capture();
