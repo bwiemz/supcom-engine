@@ -3708,7 +3708,9 @@ static int l_CreateCollisionDetector(lua_State* L) {
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
 
+    // Made disabled, as Moho's: retail's units enable theirs as they move.
     auto manip = std::make_unique<sim::CollisionDetectorManipulator>();
+    manip->set_enabled(false);
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);

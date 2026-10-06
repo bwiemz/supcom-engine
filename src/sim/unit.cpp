@@ -2856,6 +2856,86 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
                         [](const auto& m) { return m->is_destroyed(); }),
         manipulators_.end());
     update_pose();
+    check_collision_detectors(L);
+}
+
+void Unit::check_collision_detectors(lua_State* L) {
+    const BoneData* bd = bone_data();
+    if (!L || !bd || lua_table_ref() < 0) return;
+    struct Crossing {
+        const char* callback;
+        i32 bone;
+        Vector3 at;
+    };
+    std::vector<Crossing> crossings;
+    const map::Terrain* terrain = nullptr;
+    for (const auto& m : manipulators_) {
+        auto* detector = dynamic_cast<CollisionDetectorManipulator*>(m.get());
+        if (!detector || detector->is_destroyed() || !detector->enabled()) continue;
+        for (auto& watch : detector->watched()) {
+            if (watch.bone < 0 || static_cast<size_t>(watch.bone) >= bd->bones.size()) continue;
+            const Vector3 at = bone_world_position(watch.bone);
+            if (!detector->terrain_check()) {
+                // The bone in the unit's own frame (Moho rotates its offset
+                // by the unit's inverse turn): its x tells the scripts the
+                // side, left of the unit when positive.
+                const Vector3 local =
+                    quat_rotate(quat_conjugate(orientation()),
+                                {at.x - position().x, at.y - position().y, at.z - position().z});
+                if (local.y >= CollisionDetectorManipulator::kFootHeight) {
+                    watch.below_foot_height = false;
+                } else if (!watch.below_foot_height) {
+                    watch.below_foot_height = true;
+                    crossings.push_back({"OnAnimCollision", watch.bone, local});
+                }
+                continue;
+            }
+            if (!terrain) {
+                lua_pushstring(L, "osc_sim_state");
+                lua_rawget(L, LUA_REGISTRYINDEX);
+                const auto* sim = static_cast<const SimState*>(lua_touserdata(L, -1));
+                lua_pop(L, 1);
+                terrain = sim ? sim->terrain() : nullptr;
+                if (!terrain) break;
+            }
+            // The surface: the terrain, or the water above it.
+            f32 surface = terrain->get_terrain_height(at.x, at.z);
+            if (terrain->has_water()) surface = std::max(surface, terrain->water_elevation());
+            if (!watch.below_surface) {
+                if (at.y < surface) {
+                    watch.below_surface = true;
+                    crossings.push_back({"OnAnimTerrainCollision", watch.bone, at});
+                }
+            } else if (surface <= at.y) {
+                watch.below_surface = false;
+                crossings.push_back({"OnNotAnimTerrainCollision", watch.bone, at});
+            }
+        }
+    }
+    // The scripts after the walk: they may make or destroy manipulators.
+    for (const Crossing& c : crossings) {
+        if (lua_table_ref() < 0) return;
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        const int self = lua_gettop(L);
+        lua_pushstring(L, c.callback);
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            lua_pushstring(L, bd->bones[static_cast<size_t>(c.bone)].name.c_str());
+            lua_pushnumber(L, c.at.x);
+            lua_pushnumber(L, c.at.y);
+            lua_pushnumber(L, c.at.z);
+            if (lua_pcall(L, 5, 0, 0) != 0) {
+                const char* err = lua_tostring(L, -1);
+                const std::string message =
+                    std::string(c.callback) + " error: " + (err ? err : "(unknown)");
+                spdlog::warn("{}", message);
+                if (test_status::count_lua_failures()) test_status::record_failure(message);
+            }
+        }
+        lua_settop(L, top);
+    }
 }
 
 void Unit::update_pose() {

@@ -39,7 +39,8 @@ constexpr u32 kVersion = 19; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 16: units' LayerChangeOffsetHeight;
                              // 17: hull facing (SlavedToBody, AttackAngle);
                              // 18: no engine veterancy XP;
-                             // 19: platoons' unique names and DisbandOnIdle
+                             // 19: platoons' unique names and DisbandOnIdle,
+                             //     collision detectors' bone states
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

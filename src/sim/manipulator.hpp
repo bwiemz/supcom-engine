@@ -300,23 +300,44 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// CollisionDetectorManipulator — tracks bone positions for collision events
+// CollisionDetectorManipulator — Moho's CCollisionManipulator (0x637C90)
 // ---------------------------------------------------------------------------
+/// Watches bones as the unit's pose moves them, and tells the unit's script
+/// (Unit::check_collision_detectors). It is made disabled: retail's units
+/// enable theirs while they move. Without a terrain check a watched bone
+/// collides once it drops below kFootHeight in the unit's own frame
+/// (OnAnimCollision, once until it rises again: a walker's footfall); with
+/// one, once it drops below the surface, the water's if higher
+/// (OnAnimTerrainCollision), and again as it comes back above
+/// (OnNotAnimTerrainCollision).
 class CollisionDetectorManipulator : public Manipulator {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    void tick(f32 /*dt*/) override {} // collision checks deferred
+    /// The height in the unit's frame a bone collides below.
+    static constexpr f32 kFootHeight = 0.1f;
+
+    struct Watch {
+        i32 bone = -1;
+        bool below_foot_height = false; ///< told OnAnimCollision
+        bool below_surface = false;     ///< told OnAnimTerrainCollision
+    };
+
+    void tick(f32 /*dt*/) override {}
     bool is_at_goal() const override { return true; }
 
-    void watch_bone(i32 bone_idx) { watched_bones_.push_back(bone_idx); }
-    const std::vector<i32>& watched_bones() const { return watched_bones_; }
-    /// Whether the watched bones are to be tested against the terrain too
-    /// (EnableTerrainCheck; the CZAR's crash sets it).
+    /// WatchBone: a bone the unit hasn't is not watched.
+    void watch_bone(i32 bone_idx) {
+        if (bone_idx >= 0) watched_.push_back({bone_idx});
+    }
+    std::vector<Watch>& watched() { return watched_; }
+    const std::vector<Watch>& watched() const { return watched_; }
+    /// EnableTerrainCheck: test the watched bones against the surface
+    /// instead (FAF's crashing aircraft).
     void set_terrain_check(bool on) { terrain_check_ = on; }
     bool terrain_check() const { return terrain_check_; }
 
 private:
-    std::vector<i32> watched_bones_;
+    std::vector<Watch> watched_;
     bool terrain_check_ = false;
 };
 
