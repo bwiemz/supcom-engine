@@ -134,6 +134,22 @@ TEST_CASE("placement: pending build orders reserve their site for the army",
     CHECK(theirs.can_build("pgen", 30.0f, 30.0f));
 }
 
+TEST_CASE("placement: a build order being moved doesn't block its own new site", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    auto* engineer = spawn(sim, 0, 10.0f, 10.0f);
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::BuildMobile;
+    cmd.target_pos = {30.0f, 0.0f, 30.0f};
+    cmd.blueprint_id = "factory";
+    cmd.command_id = 6;
+    engineer->push_command(cmd, false);
+    CHECK_FALSE(StructurePlacement(sim, 0, rules_for).can_build("factory", 32.0f, 30.0f));
+    CHECK(StructurePlacement(sim, 0, rules_for, false, 6).can_build("factory", 32.0f, 30.0f));
+    CHECK_FALSE(StructurePlacement(sim, 0, rules_for, false, 7).can_build("factory", 32.0f, 30.0f));
+}
+
 TEST_CASE("placement: extractors need a free deposit", "[placement]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -273,7 +289,7 @@ TEST_CASE("placement: a ghost stands where its structure would", "[placement]") 
     make_coast_world(sim);
     osc::renderer::InputHandler input;
     osc::renderer::CommandModeHooks hooks;
-    hooks.can_place = [&sim](osc::i32, const std::string& bp, osc::f32, osc::f32) {
+    hooks.can_place = [&sim](osc::i32, const std::string& bp, osc::f32, osc::f32, osc::u32) {
         sim.placement_rules(bp, [&bp] { return rules_for(bp); });
         return true;
     };

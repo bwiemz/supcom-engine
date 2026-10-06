@@ -120,8 +120,9 @@ class StructurePlacement {
 public:
     /// `scheduled`: orders given and not yet run count too. Never for the sim's own
     /// queries: a replay's playback holds every order of the game from its start.
+    /// `moving`: an order being moved, whose own site doesn't count.
     StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules,
-                       bool scheduled = false);
+                       bool scheduled = false, u32 moving = 0);
 
     /// Can `bp_id` be built centered at (x, z)? Requires the footprint inside
     /// the playable area, over cells of a layer the blueprint builds on, clear
@@ -145,6 +146,7 @@ private:
     i32 army_;
     PlacementRulesLookup lookup_;
     bool scheduled_;
+    u32 moving_;
     mutable std::optional<std::vector<StructureSite>> reserved_; ///< see reserved()
     mutable std::map<std::string, PlacementRules> rules_cache_;
 };

@@ -1163,9 +1163,14 @@ void IntegrationModes::headless(Engine& e) {
             }
         };
         headless_input.set_command_mode_hooks(
-            {{}, {}, {}, [&](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z) {
+            {{},
+             {},
+             {},
+             [&](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z, osc::u32) {
                  return osc::lua::can_build_structure(uL, *sim_state, army, bp, x, z);
-             }});
+             },
+             {},
+             {}});
         // A world click as the input handler makes it under FA's command mode.
         auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
             const auto mode = read_command_mode(uL);

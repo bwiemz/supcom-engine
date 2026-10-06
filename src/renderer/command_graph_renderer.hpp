@@ -142,6 +142,9 @@ struct CommandGraphNode {
 std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
                                                   u32 highlight = 0, u32 hovered_unit = 0);
 
+/// The paths with order `command_id`'s targets moved so its node is at `at`
+void preview_paths(std::vector<CommandGraphPath>& paths, u32 command_id, const sim::Vector3& at);
+
 struct WaypointOnScreen {
     u32 command_id = 0;
     f32 x = 0, y = 0;
@@ -183,6 +186,12 @@ public:
     void set_highlight(u32 command_id, u32 hovered_unit) {
         highlight_ = command_id;
         hovered_unit_ = hovered_unit;
+    }
+    /// Order `command_id`'s waypoint drawn at `at` (0: none), hidden if not `valid`
+    void set_preview(u32 command_id, const sim::Vector3& at, bool valid) {
+        preview_ = command_id;
+        preview_at_ = at;
+        preview_valid_ = valid;
     }
 
     /// A leg drawn this frame (tests read them)
@@ -226,6 +235,9 @@ private:
     bool styles_read_ = false;
     u32 highlight_ = 0;
     u32 hovered_unit_ = 0;
+    u32 preview_ = 0;
+    sim::Vector3 preview_at_;
+    bool preview_valid_ = true;
 };
 
 } // namespace osc::renderer
