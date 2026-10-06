@@ -10,7 +10,14 @@ namespace osc::sim {
 void Platoon::add_unit(u32 entity_id) {
     if (!has_unit(entity_id))
         unit_ids_.push_back(entity_id);
-    had_units_ = true;
+}
+
+bool Platoon::is_army_pool() const {
+    return unique_name_.size() == 8 &&
+           std::equal(unique_name_.begin(), unique_name_.end(), "ArmyPool", [](char a, char b) {
+               return std::tolower(static_cast<unsigned char>(a)) ==
+                      std::tolower(static_cast<unsigned char>(b));
+           });
 }
 
 void Platoon::remove_unit(u32 entity_id) {

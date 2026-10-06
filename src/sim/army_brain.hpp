@@ -196,6 +196,8 @@ public:
 
     // --- Platoons ---
     Platoon* create_platoon(const std::string& name);
+    /// The live platoon whose unique name (UniquelyNamePlatoon's) is `name`,
+    /// in any case, as Moho's GetPlatoonByName.
     Platoon* find_platoon_by_name(const std::string& name);
     void destroy_platoon(Platoon* p);
     size_t platoon_count() const { return platoons_.size(); }

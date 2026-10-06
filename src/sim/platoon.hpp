@@ -21,8 +21,20 @@ public:
     i32 army_index() const { return army_index_; }
     void set_army_index(i32 a) { army_index_ = a; }
 
+    /// MakePlatoon's name (Moho's mName): a label alone.
     const std::string& name() const { return name_; }
     void set_name(const std::string& n) { name_ = n; }
+    /// UniquelyNamePlatoon's name (Moho's mUniqueName), which
+    /// GetPlatoonUniquelyNamed finds: the army pool's is "ArmyPool". A
+    /// platoon without one is destroyed once it holds no unit.
+    const std::string& unique_name() const { return unique_name_; }
+    void set_unique_name(const std::string& n) { unique_name_ = n; }
+    bool is_army_pool() const;
+
+    /// DisbandOnIdle: destroyed once its squads are idle, its units back
+    /// in the pool (Moho's CleanUpPlatoons).
+    bool disband_on_idle() const { return disband_on_idle_; }
+    void set_disband_on_idle() { disband_on_idle_ = true; }
 
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
@@ -35,8 +47,6 @@ public:
     void remove_unit(u32 entity_id);
     bool has_unit(u32 entity_id) const;
     const std::vector<u32>& unit_ids() const { return unit_ids_; }
-    /// It has held a unit: once they are all gone, Moho destroys it.
-    bool had_units() const { return had_units_; }
 
     // Compute centroid position of all living units
     Vector3 get_position(const EntityRegistry& registry) const;
@@ -75,9 +85,10 @@ private:
     u32 platoon_id_ = 0;
     i32 army_index_ = -1;
     std::string name_;
+    std::string unique_name_;
     int lua_table_ref_ = -2; // LUA_NOREF
     bool destroyed_ = false;
-    bool had_units_ = false;
+    bool disband_on_idle_ = false;
     std::string plan_name_;
     std::vector<u32> unit_ids_;
     std::unordered_map<u32, std::string> squad_map_;

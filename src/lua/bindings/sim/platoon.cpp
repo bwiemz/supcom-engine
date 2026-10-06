@@ -279,8 +279,14 @@ static int platoon_GetBrain(lua_State* L) {
 
 static int platoon_UniquelyNamePlatoon(lua_State* L) {
     auto* platoon = check_platoon(L);
-    if (platoon && lua_isstring(L, 2))
-        platoon->set_name(lua_tostring(L, 2));
+    if (platoon && lua_isstring(L, 2)) platoon->set_unique_name(lua_tostring(L, 2));
+    return 0;
+}
+
+// platoon:DisbandOnIdle(): the army destroys it once its squads are idle,
+// its units back in the pool (Moho's CleanUpPlatoons).
+static int platoon_DisbandOnIdle(lua_State* L) {
+    if (auto* platoon = check_platoon(L)) platoon->set_disband_on_idle();
     return 0;
 }
 
@@ -1291,6 +1297,7 @@ const MethodEntry platoon_methods[] = {
     {"GetSquadUnits",               platoon_GetSquadUnits},
     {"GetBrain",                    platoon_GetBrain},
     {"UniquelyNamePlatoon",         platoon_UniquelyNamePlatoon},
+    {"DisbandOnIdle",               platoon_DisbandOnIdle},
     {"GetPlatoonPosition",          platoon_GetPlatoonPosition},
     {"ForkThread",                  platoon_ForkThread},
     {"SetAIPlan",                   platoon_SetAIPlan},

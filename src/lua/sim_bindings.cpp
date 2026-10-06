@@ -3708,7 +3708,9 @@ static int l_CreateCollisionDetector(lua_State* L) {
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
 
+    // Made disabled, as Moho's: retail's units enable theirs as they move.
     auto manip = std::make_unique<sim::CollisionDetectorManipulator>();
+    manip->set_enabled(false);
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);
@@ -3976,6 +3978,41 @@ static int l_ArmyIsOutOfGame(lua_State* L) {
     return 1;
 }
 
+/// Whether the blueprint named `id` (of any kind: a unit's, a prop's, a
+/// projectile's) answers to `category`; nullopt for no such blueprint.
+static std::optional<bool> blueprint_matches(lua_State* L, const std::string& id,
+                                             const osc::lua::CategoryMatcher& category) {
+    auto* sim = get_sim(L);
+    auto* store = sim ? sim->blueprint_store() : nullptr;
+    const auto* entry = store ? store->find(id) : nullptr;
+    if (!entry) return std::nullopt;
+    std::unordered_set<std::string> cats;
+    store->push_lua_table(*entry, L);
+    sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+    lua_pop(L, 1);
+    return category.matches(cats, entry->type == blueprints::BlueprintType::Unit);
+}
+
+/// What Moho's category queries test (ResolveEntityCategoryCountBlueprint):
+/// the value at `idx` as a blueprint id, or an entity by its blueprint -- a
+/// unit by its categories' ids (no string hashed), a projectile by its names
+/// (M206b), any other (a prop) by its blueprint's. nullopt for a value that
+/// names no blueprint (a script's bare Entity, a number). An entity
+/// destroyed this tick still answers, as Moho's does until the tick's end.
+static std::optional<bool> category_test(lua_State* L, int idx,
+                                         const osc::lua::CategoryMatcher& category) {
+    if (lua_type(L, idx) == LUA_TSTRING)
+        return blueprint_matches(L, lua_tostring(L, idx), category);
+    const sim::Entity* entity = extract_entity(L, idx);
+    if (!entity) return std::nullopt;
+    if (entity->is_unit())
+        return category.matches(static_cast<const sim::Unit*>(entity)->category_bits());
+    if (entity->is_projectile())
+        return category.matches(static_cast<const sim::Projectile*>(entity)->categories());
+    if (entity->blueprint_id().empty()) return std::nullopt;
+    return blueprint_matches(L, entity->blueprint_id(), category);
+}
+
 // EntityCategoryCount(category, units_table) -> number
 static int l_EntityCategoryCount(lua_State* L) {
     if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
@@ -3987,16 +4024,7 @@ static int l_EntityCategoryCount(lua_State* L) {
     for (int i = 1; ; i++) {
         lua_rawgeti(L, 2, i);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
-
-        int unit_tbl = lua_gettop(L);
-        auto* entity = extract_entity(L, unit_tbl);
-        if (entity && entity->is_unit() && !entity->destroyed()) {
-            auto* unit = static_cast<sim::Unit*>(entity);
-            if (category.matches(unit->category_bits())) {
-                count++;
-            }
-        }
+        if (category_test(L, lua_gettop(L), category).value_or(false)) count++;
         lua_pop(L, 1);
     }
     lua_pushnumber(L, count);
@@ -4020,32 +4048,18 @@ static int l_GetUnitBlueprintByName(lua_State* L) {
     return 1;
 }
 
-/// Whether an entity answers to `category`: a unit by its categories' ids
-/// (no string hashed), a projectile by its names (M206b); nothing else does.
-static bool entity_matches(const osc::lua::CategoryMatcher& category, const sim::Entity* entity) {
-    if (!entity || entity->destroyed()) return false;
-    if (entity->is_unit())
-        return category.matches(static_cast<const sim::Unit*>(entity)->category_bits());
-    if (entity->is_projectile())
-        return category.matches(static_cast<const sim::Projectile*>(entity)->categories());
-    return false;
-}
-
-// EntityCategoryContains(category, entity) -> bool
+// EntityCategoryContains(category, entity or blueprint id) -> bool
 static int l_EntityCategoryContains(lua_State* L) {
-    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    const sim::Entity* entity = extract_entity(L, 2);
-    const bool match = entity && entity_matches(osc::lua::CategoryMatcher(L, 1), entity);
+    const bool match =
+        lua_istable(L, 1) && category_test(L, 2, osc::lua::CategoryMatcher(L, 1)).value_or(false);
     lua_pushboolean(L, match ? 1 : 0);
     return 1;
 }
 
-// Helper: iterate a 1-based Lua array of unit tables, filter by category match.
-// If keep_matches is true, keep units that match (FilterDown);
-// if false, keep units that don't match (FilterOut).
+// Helper: iterate a 1-based Lua array of entities or blueprint ids, filter by
+// category match. If keep_matches is true, keep those that match
+// (FilterDown); if false, those that don't (FilterOut). As Moho's, an entry
+// that names no blueprint is in neither.
 static int category_filter(lua_State* L, bool keep_matches) {
     lua_newtable(L);
     int result = lua_gettop(L);
@@ -4057,17 +4071,15 @@ static int category_filter(lua_State* L, bool keep_matches) {
     for (int i = 1; ; i++) {
         lua_rawgeti(L, 2, i);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
-        int unit_tbl = lua_gettop(L);
-        const bool matches = entity_matches(category, extract_entity(L, unit_tbl));
-
-        if (matches == keep_matches) {
+        const int item = lua_gettop(L);
+        const std::optional<bool> matches = category_test(L, item, category);
+        if (matches && *matches == keep_matches) {
             lua_pushnumber(L, out_idx++);
-            lua_pushvalue(L, unit_tbl);
+            lua_pushvalue(L, item);
             lua_rawset(L, result);
         }
-        lua_pop(L, 1); // pop unit table
+        lua_pop(L, 1); // pop the item
     }
     return 1;
 }

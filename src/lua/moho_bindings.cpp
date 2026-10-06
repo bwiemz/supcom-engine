@@ -439,8 +439,7 @@ static int coldet_WatchBone(lua_State* L) {
 }
 
 // detector:EnableTerrainCheck(bool): test the watched bones against the
-// terrain as well. The detector records it; its collision tests are not
-// modelled yet.
+// surface (OnAnimTerrainCollision) instead of the unit's own frame.
 static int coldet_EnableTerrainCheck(lua_State* L) {
     auto* m = check_manip_base(L);
     if (!m) return 0;
