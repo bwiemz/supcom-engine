@@ -366,8 +366,7 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
         }
     }
 
-    ctrl->set_blocks_key_down(blocks);
-    reg->set_keyboard_focus(ctrl);
+    reg->set_keyboard_focus(ctrl, blocks);
     return 0;
 }
 

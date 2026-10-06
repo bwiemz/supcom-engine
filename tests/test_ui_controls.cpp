@@ -1074,6 +1074,26 @@ TEST_CASE("A control's class OnFrame and OnLoseKeyboardFocus are called, as its 
     CHECK(f.check("lost == 1"));
 }
 
+TEST_CASE("A focus hides the held keys only if taken with blocksKeyDown or by an Edit",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run(R"(
+        a = box('a', GetFrame(0), 0, 0, 10, 10, 1)
+        e = setmetatable({}, { __index = moho.edit_methods })
+        InternalCreateEdit(e, GetFrame(0))
+    )");
+    CHECK_FALSE(f.registry.key_down_blocked());
+    f.run("a:AcquireKeyboardFocus(false)");
+    CHECK(f.registry.keyboard_focus() == control_of(f.lua.raw(), "a"));
+    CHECK_FALSE(f.registry.key_down_blocked());
+    f.run("a:AcquireKeyboardFocus(true)");
+    CHECK(f.registry.key_down_blocked());
+    f.run("a:AbandonKeyboardFocus()");
+    CHECK_FALSE(f.registry.key_down_blocked());
+    f.run("e:AcquireFocus()");
+    CHECK(f.registry.key_down_blocked());
+}
+
 TEST_CASE("An Edit's text is edited by character, at its caret", "[ui][edit]") {
     osc::ui::EditText t;
     CHECK(t.insert('a', 0));

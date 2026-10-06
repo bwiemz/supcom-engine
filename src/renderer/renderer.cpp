@@ -2742,10 +2742,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     playable_rect_.apply(view);
 
     // Before the meshes: its planned sites are ghosts among them
-    command_graph_renderer_.update(
-        view, camera_, selected_ids, player_army_, texture_cache_, L,
-        unit_renderer_.shader_time() / 10.0f, window_height_,
-        is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT), fi);
+    command_graph_renderer_.update(view, camera_, selected_ids, player_army_, texture_cache_, L,
+                                   unit_renderer_.shader_time() / 10.0f, window_height_,
+                                   !ui_keys_blocked_ && (is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                                                         is_key_pressed(GLFW_KEY_RIGHT_SHIFT)),
+                                   fi);
 
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {

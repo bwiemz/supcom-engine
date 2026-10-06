@@ -310,10 +310,11 @@ void App::Window::update_ui(double dt) {
         first_update_fired = true;
     }
 
-    // The world view's camera (M217f): its keys only while no control
-    // has the keyboard, its mouse only off the UI's controls; it
+    // The world view's camera (M217f): its keys unless the focused control
+    // blocks them, its mouse only off the UI's controls; it
     // keeps to the sim's playable rect.
-    renderer.camera().set_keys_enabled(ui_registry.keyboard_focus() == nullptr);
+    renderer.camera().set_keys_enabled(!ui_registry.key_down_blocked());
+    renderer.set_ui_keys_blocked(ui_registry.key_down_blocked());
     {
         osc::f64 mx = 0, my = 0;
         renderer.mouse_position(mx, my);

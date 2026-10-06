@@ -234,8 +234,7 @@ public:
     /// way (Moho negates its scrub deltas, UI_SetInvertMidMouseScrub).
     void set_invert_middle(bool on) { invert_middle_ = on; }
     bool invert_middle() const { return invert_middle_; }
-    /// When false, the keys don't pan or spin: a UI control has the keyboard
-    /// (Moho's MAUI_KeyIsDown is false while one has focus).
+    /// When false, the keys don't pan or spin (Moho's MAUI_KeyIsDown is false).
     void set_keys_enabled(bool enabled) { keys_enabled_ = enabled; }
     /// When false, the mouse's drags aren't the world view's: it is over a UI
     /// control.
