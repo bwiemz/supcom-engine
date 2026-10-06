@@ -14856,8 +14856,11 @@ void test_unitsound(TestContext& ctx) {
             ctx.sim, sources.ids(ctx.sim), [](const osc::sim::Entity& e) { return e.position(); },
             [](const osc::sim::Vector3&, osc::f32) { return true; }));
     };
+    // FAF's script plays one loop, in the unit's own slot (or its
+    // SoundEntity's), and stops it with no name: there are no named loops.
     auto loop_of = [&](const char* name) -> osc::audio::SoundHandle {
         auto r = lua(std::string("local c = e.AmbientSounds and e.AmbientSounds.") + name +
+                     "\nif not e.AmbientSounds then c = e.SoundEntity or e end"
                      "\n__osc_loop_entity = c and c:GetEntityId() or 0");
         if (!r) return osc::audio::INVALID_SOUND;
         lua_State* sL = ctx.lua_state.raw();
@@ -14873,26 +14876,40 @@ void test_unitsound(TestContext& ctx) {
                   "e:PlayUnitAmbientSound('OscMoveLoop')\n"
                   "e:PlayUnitAmbientSound('OscActiveLoop')\n");
     sync();
+    const bool named = static_cast<bool>(lua("if not e.AmbientSounds then error('none') end"));
     const auto move = loop_of("OscMoveLoop");
     const auto active = loop_of("OscActiveLoop");
-    if (r8 && move && active && move != active && sound->is_playing(move) &&
-        sound->is_playing(active)) {
-        pass++;
-        spdlog::info("[PASS] Test 8a: two named ambient loops play side by side");
+    if (!named) {
+        // FAF: the second replaced the first in the unit's one slot.
+        if (r8 && move && sound->is_playing(move)) {
+            pass++;
+            spdlog::info("[PASS] Test 8a: the unit's ambient loop plays (FAF's one slot)");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8a: the unit's ambient loop ({})",
+                                   r8 ? "not playing" : r8.error().message);
+        }
+        spdlog::info("[SKIP] Test 8b: FAF's StopUnitAmbientSound takes no name");
     } else {
-        fail++;
-        osc::test_status::fail("[FAIL] Test 8a: named ambient loops ({})",
-                               r8 ? "not playing" : r8.error().message);
-    }
-    lua("e:StopUnitAmbientSound('OscActiveLoop')");
-    sync();
-    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // its release runs out
-    if (!sound->is_playing(active) && sound->is_playing(move)) {
-        pass++;
-        spdlog::info("[PASS] Test 8b: stopping one loop by name leaves the other");
-    } else {
-        fail++;
-        osc::test_status::fail("[FAIL] Test 8b: StopUnitAmbientSound(name)");
+        if (r8 && move && active && move != active && sound->is_playing(move) &&
+            sound->is_playing(active)) {
+            pass++;
+            spdlog::info("[PASS] Test 8a: two named ambient loops play side by side");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8a: named ambient loops ({})",
+                                   r8 ? "not playing" : r8.error().message);
+        }
+        lua("e:StopUnitAmbientSound('OscActiveLoop')");
+        sync();
+        for (int i = 0; i < 40; ++i) ctx.sim.tick(); // its release runs out
+        if (!sound->is_playing(active) && sound->is_playing(move)) {
+            pass++;
+            spdlog::info("[PASS] Test 8b: stopping one loop by name leaves the other");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8b: StopUnitAmbientSound(name)");
+        }
     }
     {
         osc::sim::Vector3 p = e1->position();
