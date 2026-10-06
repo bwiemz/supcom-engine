@@ -629,6 +629,46 @@ TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
     REQUIRE(weapon_ptr->target_entity_id == 0);
 }
 
+TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack order", "[weapon]") {
+    osc::sim::EntityRegistry registry;
+
+    auto owner = std::make_unique<osc::sim::Unit>();
+    owner->set_army(0);
+    owner->set_position({0.0f, 0.0f, 0.0f});
+    auto weapon = std::make_unique<osc::sim::Weapon>();
+    weapon->max_range = 100.0f;
+    weapon->damage = 10.0f;
+    weapon->target_check_period = 1;
+    weapon->fire_clock = 100;
+    auto* weapon_ptr = weapon.get();
+    owner->add_weapon(std::move(weapon));
+    auto* owner_ptr =
+        static_cast<osc::sim::Unit*>(registry.find(registry.register_entity(std::move(owner))));
+
+    auto wall = std::make_unique<osc::sim::Unit>();
+    wall->set_army(1);
+    wall->set_position({10.0f, 0.0f, 0.0f});
+    wall->add_category("BENIGN");
+    const auto wall_id = registry.register_entity(std::move(wall));
+
+    weapon_ptr->update(*owner_ptr, registry, nullptr);
+    CHECK(weapon_ptr->target_entity_id == 0);
+
+    auto tank = std::make_unique<osc::sim::Unit>();
+    tank->set_army(1);
+    tank->set_position({30.0f, 0.0f, 0.0f});
+    const auto tank_id = registry.register_entity(std::move(tank));
+    weapon_ptr->update(*owner_ptr, registry, nullptr);
+    CHECK(weapon_ptr->target_entity_id == tank_id);
+
+    osc::sim::UnitCommand attack{};
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = wall_id;
+    owner_ptr->push_command(attack, true);
+    weapon_ptr->update(*owner_ptr, registry, nullptr);
+    CHECK(weapon_ptr->target_entity_id == wall_id);
+}
+
 TEST_CASE("Air unit fuel consumption", "[m158]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");

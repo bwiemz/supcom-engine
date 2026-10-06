@@ -441,9 +441,13 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     int best_priority = 0;
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
+    static const CategoryName kBenign{"BENIGN"};
     for (const u32 id : registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
         Entity* e = registry.find(id);
         if (!e || !can_target(owner, *e, sim)) continue;
+        if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
+            continue;
+        }
         // A missile already held by as many weapons as it wants shooting at
         // it (a nuke's DesiredShooterCap is 1) is left to them.
         if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;
