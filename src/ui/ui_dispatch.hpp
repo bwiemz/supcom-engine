@@ -21,9 +21,17 @@ enum class UIEventType : u8 {
     BUTTON_RELEASE = 4,
     MOUSE_WHEEL = 5,
     CHAR = 6,
-    MOUSE_ENTER = 7,   // synthetic: hover entered a control
-    MOUSE_EXIT = 8,    // synthetic: hover left a control
+    MOUSE_ENTER = 7, // synthetic: hover entered a control
+    MOUSE_EXIT = 8,  // synthetic: hover left a control
+    /// A press that makes a double-click, in its place (wx's ButtonDClick,
+    /// which Moho raises as MET_ButtonDClick; Windows sends it so).
+    BUTTON_DCLICK = 9,
 };
+
+/// A press or a double-click's press.
+inline bool is_press(UIEventType t) {
+    return t == UIEventType::BUTTON_PRESS || t == UIEventType::BUTTON_DCLICK;
+}
 
 /// Buffered UI event from GLFW callbacks.
 struct UIEvent {
@@ -61,7 +69,13 @@ public:
 
     // GLFW callback receivers (public so static callbacks can access)
     void on_key(i32 key, i32 action, i32 mods);
-    void on_mouse_button(i32 button, i32 action, i32 mods);
+    /// A press of the same button within kDoubleClickSeconds and
+    /// kDoubleClickPixels of the last, not itself one, is a double-click
+    /// (Windows' GetDoubleClickTime and SM_CXDOUBLECLK defaults). `now` is the
+    /// time in seconds (glfwGetTime when negative).
+    void on_mouse_button(i32 button, i32 action, i32 mods, f64 now = -1.0);
+    static constexpr f64 kDoubleClickSeconds = 0.5;
+    static constexpr f64 kDoubleClickPixels = 2.0;
     void on_cursor_pos(f64 x, f64 y);
     void on_scroll(f64 y_offset);
     void on_char(u32 codepoint);
@@ -124,6 +138,12 @@ private:
     f64 mouse_x_ = 0;
     f64 mouse_y_ = 0;
     u8 buttons_down_ = 0; ///< kMouseLeft... held now
+    /// The last press, which the next may make a double-click
+    f64 last_press_time_ = -1.0;
+    f64 last_press_x_ = 0;
+    f64 last_press_y_ = 0;
+    i32 last_press_button_ = -1;
+    bool last_press_double_ = false;
     UIControl* hover_control_ = nullptr;
     UIControl* thumb_drag_ = nullptr; ///< the scrollbar whose thumb is dragged
     f32 thumb_grab_ = 0;              ///< where along its thumb it was taken

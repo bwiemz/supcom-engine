@@ -10,7 +10,6 @@ method OnBuildProgress
 method OnCollision
 method OnDamageBy
 method OnDecayed
-method OnDoubleClick
 method OnFailedToBeBuilt
 method OnIconsVisible
 method OnKeySelect

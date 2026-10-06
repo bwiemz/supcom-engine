@@ -5,6 +5,7 @@
 #include "ui/console.hpp"
 #include "ui/edit_text.hpp"
 
+#include <cmath>
 #include <functional>
 #include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
@@ -84,7 +85,7 @@ void UIDispatch::on_key(i32 key, i32 action, i32 mods) {
     pending_events_.push_back(e);
 }
 
-void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods) {
+void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods, f64 now) {
     u8 bit = 0;
     switch (button) {
     case GLFW_MOUSE_BUTTON_LEFT: bit = kMouseLeft; break;
@@ -98,6 +99,20 @@ void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods) {
     UIEvent e;
     e.type = (action == GLFW_RELEASE) ? UIEventType::BUTTON_RELEASE
                                        : UIEventType::BUTTON_PRESS;
+    if (action != GLFW_RELEASE) {
+        if (now < 0.0) now = glfwGetTime();
+        const bool double_click = !last_press_double_ && button == last_press_button_ &&
+                                  last_press_time_ >= 0.0 &&
+                                  now - last_press_time_ <= kDoubleClickSeconds &&
+                                  std::abs(mouse_x_ - last_press_x_) <= kDoubleClickPixels &&
+                                  std::abs(mouse_y_ - last_press_y_) <= kDoubleClickPixels;
+        if (double_click) e.type = UIEventType::BUTTON_DCLICK;
+        last_press_double_ = double_click;
+        last_press_time_ = now;
+        last_press_x_ = mouse_x_;
+        last_press_y_ = mouse_y_;
+        last_press_button_ = button;
+    }
     e.key_code = button;
     e.mouse_x = mouse_x_;
     e.mouse_y = mouse_y_;
@@ -145,7 +160,7 @@ static bool is_key_event(const UIEvent& ev) {
 /// code, a button's wx number, a character's code, else 0.
 static i32 moho_event_key_code(const UIEvent& ev) {
     if (is_key_event(ev)) return moho_key_code(ev.key_code);
-    if (ev.type == UIEventType::BUTTON_PRESS || ev.type == UIEventType::BUTTON_RELEASE)
+    if (is_press(ev.type) || ev.type == UIEventType::BUTTON_RELEASE)
         return moho_mouse_button(ev.key_code);
     if (ev.type == UIEventType::CHAR) return static_cast<i32>(ev.char_code);
     return 0;
@@ -169,6 +184,7 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
     case UIEventType::CHAR:           type_str = "Char"; break;
     case UIEventType::MOUSE_ENTER:    type_str = "MouseEnter"; break;
     case UIEventType::MOUSE_EXIT:     type_str = "MouseExit"; break;
+    case UIEventType::BUTTON_DCLICK: type_str = "ButtonDClick"; break;
     }
     lua_pushstring(L, "Type");
     lua_pushstring(L, type_str);
@@ -597,10 +613,11 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
 
         // Call UIMain.OnMouseButtonPress for global click handlers
         // (e.g. Combo close-on-outside-click via AddOnMouseClickedFunc)
-        if (ev.type == UIEventType::BUTTON_PRESS) {
+        if (is_press(ev.type)) {
             lua_newtable(L);
             lua_pushstring(L, "Type");
-            lua_pushstring(L, "ButtonPress");
+            lua_pushstring(L,
+                           ev.type == UIEventType::BUTTON_PRESS ? "ButtonPress" : "ButtonDClick");
             lua_rawset(L, -3);
             lua_pushstring(L, "x");
             lua_pushnumber(L, ev.mouse_x);
@@ -614,9 +631,9 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         // An Edit takes the focus on a left press its script leaves, the
         // press going no further (Moho's CMauiEdit): retail's edit.lua asks
         // for none, a field clicked into is the one typed into.
-        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
-            target && !target->destroyed() &&
-            target->control_type() == UIControl::ControlType::Edit && target->input_enabled()) {
+        if (is_press(ev.type) && ev.key_code == GLFW_MOUSE_BUTTON_LEFT && target &&
+            !target->destroyed() && target->control_type() == UIControl::ControlType::Edit &&
+            target->input_enabled()) {
             if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
                 run_script(L, target, "AcquireFocus");
             }
@@ -624,9 +641,8 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         }
 
         // A scrollbar takes a left press its script leaves
-        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
-            target && !target->destroyed() &&
-            target->control_type() == UIControl::ControlType::Scrollbar) {
+        if (is_press(ev.type) && ev.key_code == GLFW_MOUSE_BUTTON_LEFT && target &&
+            !target->destroyed() && target->control_type() == UIControl::ControlType::Scrollbar) {
             if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
                 press_scrollbar(L, target, ev);
             }
@@ -634,17 +650,18 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         }
 
         // An ItemList takes a left press on a row its script leaves: its
-        // OnClick(row, event), the press going no further (Moho's
-        // CMauiItemList). A Combo's list picks its item so, the Combo under
-        // it not toggling its list back.
-        if (ev.type == UIEventType::BUTTON_PRESS && ev.key_code == GLFW_MOUSE_BUTTON_LEFT &&
-            target && !target->destroyed() &&
-            target->control_type() == UIControl::ControlType::ItemList) {
+        // OnClick(row, event), or OnDoubleClick for a double-click's, the
+        // press going no further (Moho's CMauiItemList). A Combo's list
+        // picks its item so, the Combo under it not toggling its list back.
+        if (is_press(ev.type) && ev.key_code == GLFW_MOUSE_BUTTON_LEFT && target &&
+            !target->destroyed() && target->control_type() == UIControl::ControlType::ItemList) {
             const i32 row = item_list_row(L, *target, ev);
             if (row >= 0) {
                 if (!fire_handle_event(L, target, ev) && !target->destroyed()) {
                     const f64 at = row;
-                    run_script(L, target, "OnClick", &at, &ev);
+                    run_script(L, target,
+                               ev.type == UIEventType::BUTTON_PRESS ? "OnClick" : "OnDoubleClick",
+                               &at, &ev);
                 }
                 continue;
             }
@@ -673,9 +690,7 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             }
 
             // For clicks: retry with the non-consuming leaf skipped
-            if (!consumed &&
-                (ev.type == UIEventType::BUTTON_PRESS ||
-                 ev.type == UIEventType::BUTTON_RELEASE)) {
+            if (!consumed && (is_press(ev.type) || ev.type == UIEventType::BUTTON_RELEASE)) {
                 skip_set.insert(target);
                 target =
                     hit_root ? hit_test(L, hit_root, ev.mouse_x, ev.mouse_y, &skip_set) : nullptr;

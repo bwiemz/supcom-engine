@@ -82,6 +82,11 @@ struct CommandModeHooks {
 /// included).
 class InputHandler {
 public:
+    /// A double-click's second click comes this soon after the first, and
+    /// this near on screen (Windows' GetDoubleClickTime and SM_CXDOUBLECLK).
+    static constexpr f64 kDoubleClickSeconds = 0.5;
+    static constexpr f32 kDoubleClickPixels = 2.0f;
+
     /// Set which army the player controls (0-based).
     void set_player_army(i32 army) { player_army_ = army; }
     i32 player_army() const { return player_army_; }
@@ -161,6 +166,11 @@ public:
     std::optional<std::array<f32, 2>> cursor_world() const { return cursor_world_; }
 
     void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+    /// A double-click on the player's unit at (wx, wz): every unit of its
+    /// blueprint `view_proj` shows joins the selection (Moho's
+    /// CWldSession::HandleDoubleClickSelection). Not on a wall.
+    void select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
+                                const std::array<f32, 16>& view_proj);
 
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {
@@ -221,6 +231,14 @@ private:
 
     // Left mouse state (selection)
     bool lmb_was_pressed_ = false;
+    /// The input's clock (the frames' time) and its last world click, which
+    /// a second within kDoubleClickSeconds and kDoubleClickPixels makes a
+    /// double-click (Windows' defaults, which wx gave Moho).
+    f64 clock_ = 0.0;
+    f64 last_click_time_ = -1.0;
+    f32 last_click_x_ = 0.0f;
+    f32 last_click_y_ = 0.0f;
+    bool last_click_double_ = false;
     bool lmb_on_ui_ = false;     // current left press began over the UI
     bool lmb_raw_prev_ = false;  // left button last frame, whoever owned it
     bool lmb_on_minimap_ = false; // current left press began on the minimap
