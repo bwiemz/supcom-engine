@@ -2790,6 +2790,18 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // And its trails, which likewise leave their dots to them (M214b)
     trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
                            fi);
+    // And its particles, likewise; a new tick's emission, then this frame's quads (M214c)
+    {
+        PROFILE_ZONE("Render::particle_update");
+        // The waves in view emit on the system clock (M213c)
+        if (view.cur()) {
+            waves_emitted_.clear();
+            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
+            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
+        }
+        particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
+        particle_renderer_.update(particle_system_, texture_cache_, fi);
+    }
 
     selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
                                drag_box_, texture_cache_, L, fi);
@@ -2808,19 +2820,6 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     water_renderer_.update(camera_, vp, unit_renderer_.shader_time(), fi);
     // The sky: its time is the tick and the interpolant, unwrapped (M210b)
     sky_renderer_.update(camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
-
-    // FA's particles: a new tick's emission, then this frame's quads (M214c)
-    {
-        PROFILE_ZONE("Render::particle_update");
-        // The waves in view emit on the system clock (M213c)
-        if (view.cur()) {
-            waves_emitted_.clear();
-            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
-            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
-        }
-        particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
-        particle_renderer_.update(particle_system_, texture_cache_, fi);
-    }
 
     // Scripts' decals and splats: this tick's, as the player's army sees
     // them (M212c)
