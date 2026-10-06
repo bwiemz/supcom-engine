@@ -206,6 +206,13 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.is_dying = u.is_dying();
     r.fuel_ratio = u.fuel_ratio();
     r.shield_ratio = u.shield_ratio();
+    r.life_bar_size = u.life_bar().size;
+    r.life_bar_height = u.life_bar().height;
+    r.life_bar_offset = u.life_bar().offset;
+    r.life_bar_render = u.life_bar().render;
+    r.hide_lifebars = u.life_bar().hide;
+    r.being_upgraded = u.has_unit_state("BeingUpgraded");
+    r.attached = u.is_loaded();
     r.build_rate = u.build_rate();
     r.creator_id = u.creator_id();
     const auto& econ = u.economy();

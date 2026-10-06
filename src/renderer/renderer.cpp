@@ -31,6 +31,7 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <thread>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -2619,30 +2620,17 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Select current frame's sync objects
     u32 fi = frame_index_;
 
-    // Wait for this frame's previous GPU work to complete
+    // This slot's last GPU work done, and a swapchain image (or the frame
+    // is skipped: don't reset the fence, there's no submission)
+    u32 image_index = 0;
     {
         PROFILE_ZONE("Render::gpu_wait");
         const auto wait_start = std::chrono::steady_clock::now();
-        vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
+        const bool ready = begin_frame_slot(fi, image_index);
         last_gpu_wait_ms_ =
             std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - wait_start)
                 .count();
-    }
-    // The GPU's figures for the frame that last used this slot (M223b)
-    gpu_queries_.collect(device_, fi);
-
-    // A resized window or a vsync change: a new swapchain first (M217h)
-    if (swapchain_stale_) recreate_swapchain();
-
-    // Acquire swapchain image
-    u32 image_index = 0;
-    VkResult acq_result = vkAcquireNextImageKHR(
-        device_, swapchain_, UINT64_MAX, present_semaphore_[fi],
-        VK_NULL_HANDLE, &image_index);
-
-    if (acq_result == VK_ERROR_OUT_OF_DATE_KHR) {
-        recreate_swapchain();
-        return;  // don't reset fence — no submission this frame
+        if (!ready) return;
     }
 
     vkResetFences(device_, 1, &render_fence_[fi]);
@@ -2810,6 +2798,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     {
         PROFILE_ZONE("Render::overlay_update");
         const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
+        overlay_renderer_.set_hovered(hovered_);
         overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
                                  window_width_, window_height_, game_result, frame_dt_, &frustum,
                                  ghost);
@@ -3752,18 +3741,8 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     // (debug removed)
     minimap_renderer_.begin_frame(); // no world, so no minimap this frame
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
-    vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
-    gpu_queries_.collect(device_, fi);
-
-    if (swapchain_stale_) recreate_swapchain(); // M217h
     u32 image_index = 0;
-    VkResult acq_result = vkAcquireNextImageKHR(
-        device_, swapchain_, UINT64_MAX, present_semaphore_[fi],
-        VK_NULL_HANDLE, &image_index);
-    if (acq_result == VK_ERROR_OUT_OF_DATE_KHR) {
-        recreate_swapchain();
-        return;
-    }
+    if (!begin_frame_slot(fi, image_index)) return;
     vkResetFences(device_, 1, &render_fence_[fi]);
 
     // Set frame index on UI renderer for correct double-buffering
@@ -4432,14 +4411,44 @@ void Renderer::deliver_scene_capture() {
     callback(std::move(image));
 }
 
+bool Renderer::begin_frame_slot(u32 fi, u32& image_index) {
+    // Never an endless wait: a window the compositor isn't showing (alt-tabbed
+    // away on NVIDIA's Wayland driver, where FIFO presentation waits on the
+    // compositor) can get no image back, nor its last frame's semaphore
+    // signalled, for as long as it stays hidden. Waiting forever froze the
+    // game's loop with it -- its input, its sim and a network game's
+    // lockstep. A frame that can't start is skipped instead.
+    constexpr u64 kWaitNs = 100'000'000; // 0.1 s
+    if (vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, kWaitNs) != VK_SUCCESS) {
+        return false;
+    }
+    // The GPU's figures for the frame that last used this slot (M223b)
+    gpu_queries_.collect(device_, fi);
+
+    // A resized window or a vsync change: a new swapchain first (M217h)
+    if (swapchain_stale_) recreate_swapchain();
+    if (swapchain_stale_) return false; // minimized: no surface to draw to
+
+    const VkResult acquired = vkAcquireNextImageKHR(
+        device_, swapchain_, kWaitNs, present_semaphore_[fi], VK_NULL_HANDLE, &image_index);
+    if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreate_swapchain();
+        return false;
+    }
+    return acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR;
+}
+
 void Renderer::recreate_swapchain() {
     swapchain_stale_ = false;
-    // Handle minimize
+    // A minimized window (a zero-sized framebuffer, on X11) has nothing to
+    // draw to: keep the old swapchain and try again on a later frame,
+    // without waiting here -- the game runs on while minimized.
     int w = 0, h = 0;
     glfwGetFramebufferSize(window_, &w, &h);
-    while (w == 0 || h == 0) {
-        glfwGetFramebufferSize(window_, &w, &h);
-        glfwWaitEvents();
+    if (w == 0 || h == 0) {
+        swapchain_stale_ = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        return;
     }
 
     vkDeviceWaitIdle(device_);

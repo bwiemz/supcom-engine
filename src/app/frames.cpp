@@ -202,6 +202,10 @@ void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c
     lua_rawseti(uiL, -2, 3);
     lua_rawset(uiL, -3); // Target.Position
     lua_rawset(uiL, -3); // command.Target
+    // The units it went to: FAF's commandmode watches a lone unit's queue.
+    lua_pushstring(uiL, "Units");
+    osc::lua::push_units_for_ui(uiL, c.units);
+    lua_rawset(uiL, -3);
     osc::core::call_ui_callback(uiL, kCommandModeModule, "OnCommandIssued", 1);
 }
 

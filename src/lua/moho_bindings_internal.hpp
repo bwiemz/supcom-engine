@@ -43,6 +43,11 @@ namespace osc::lua {
 sim::SimState* get_sim(lua_State* L);
 sim::Entity* check_entity(lua_State* L, int idx = 1);
 ui::UIControl* check_control(lua_State* L, int idx = 1);
+/// Make `parent` a new control's parent, as Moho's CMauiControl constructor
+/// does: linked last among its children, then SetHidden(parent's flag),
+/// which runs the control's OnHide (FAF's Grid guards against this early
+/// call).
+void attach_to_parent(lua_State* L, ui::UIControl& ctrl, ui::UIControl& parent);
 ui::WorldView* check_world_view(lua_State* L, int idx = 1);
 ui::UIControlRegistry* get_ui_registry(lua_State* L);
 sim::SimCallbackQueue* get_callback_queue(lua_State* L);
@@ -90,6 +95,10 @@ void push_user_unit(lua_State* L, u32 id, i32 army);
 /// The world as the UI sees it: the sim's current tick, captured the first
 /// time the UI asks after each tick (lua/bindings/ui/user_unit.cpp).
 const sim::WorldSnapshot* ui_world(lua_State* L);
+/// IsDestroyed(obj) in the UI state: Moho's rule -- true unless obj holds a
+/// live C object (a _c_object that isn't null, or a unit the UI's tick still
+/// shows). FAF's UI asks it of nil controls.
+int ui_is_destroyed(lua_State* L);
 f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
 void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
                          std::string lod_cutoff);

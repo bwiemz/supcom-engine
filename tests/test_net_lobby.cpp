@@ -51,6 +51,8 @@ const char* kTestComm = R"(
         ConnectionFailed = function(self, reason) self.failed = reason end,
         LaunchFailed = function(self, reason) self.launch_failed = reason end,
     }
+    -- As a class is: its objects find their methods through it
+    TestComm.__index = TestComm
     setmetatable(TestComm, {__index = moho.lobby_methods})
     function NewLobby(name) return InternalCreateLobby(TestComm, 'UDP', 0, 8, name, nil, nil) end
     function Has(list, value)
@@ -219,6 +221,7 @@ TEST_CASE("The single-player lobby's launch tells its script, as a network lobby
         local comm = setmetatable({GameLaunched = function(self)
             table.insert(calls, 'launched')
         end}, {__index = TestComm})
+        comm.__index = comm
         local sp = InternalCreateLobby(comm, 'None', 0, 8, 'Solo', nil, nil)
         sp:LaunchGame({tag = 'session'})
         assert(calls[1] == 'session' and calls[2] == 'launched',
@@ -851,6 +854,7 @@ TEST_CASE("A joiner is established with the host after what it sent on joining (
                 table.insert(self.log, 'established:' .. uid)
             end,
         }
+        Order.__index = Order
         setmetatable(Order, {__index = moho.lobby_methods})
         host = InternalCreateLobby(Order, 'UDP', 0, 8, 'Host', '10', nil)
         host:HostGame()

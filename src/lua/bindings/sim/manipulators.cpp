@@ -117,6 +117,11 @@ void aim_projectile(lua_State* L, sim::SimState* sim, sim::Projectile& p, const 
 
 static int manip_Destroy(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
+    // Its handle reads as gone at once (IsDestroyed), not only once the
+    // unit's update detaches it at the end of the tick.
+    lua_pushstring(L, "_destroyed");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, 1);
     lua_pushstring(L, "_c_object");
     lua_rawget(L, 1);
     auto* m = lua_isuserdata(L, -1)

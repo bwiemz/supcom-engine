@@ -802,6 +802,7 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
             auto launch_result = ui_lua_state.do_string(R"(
                 local LobbyClass = {}
                 for k, v in moho.lobby_methods do LobbyClass[k] = v end
+                LobbyClass.__index = LobbyClass
                 local lobby = InternalCreateLobby(LobbyClass, 'UDP', 6112, 16, 'Full Smoke Host')
                 local scenario = rawget(_G, '__osc_full_smoke_map_path')
                 local ai = rawget(_G, '__osc_full_smoke_ai_personality') or 'adaptive'

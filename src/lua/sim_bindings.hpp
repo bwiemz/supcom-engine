@@ -19,6 +19,10 @@ class LuaState;
 /// ForkThread, categories, and many stubs). Must be called before the sim
 /// Lua environment boots.
 void register_sim_bindings(LuaState& state, sim::SimState& sim);
+/// Moho's Core functions both Lua states have (FAF's engine/Core.lua): the
+/// vector math and the alliance queries. The UI's scripts use them too
+/// (FAF's utilities.lua, imported by its orders and key actions, needs VDist3).
+void register_core_bindings(LuaState& state);
 
 /// Register CreatePrefetchSet (a loading hint; the prefetcher is a no-op)
 /// on a state that has no sim bindings, e.g. the UI state for userInit.lua.

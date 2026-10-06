@@ -151,3 +151,32 @@ TEST_CASE("A weapon without a Label reads as the empty string", "[blueprints]") 
         instances[bp.Weapon[1].Label] = true -- a key, as FAF's unit makes it
     )"));
 }
+
+TEST_CASE("A unit blueprint's omitted intel, cap cost and drive read as Moho's defaults",
+          "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        -- A T1 tank gives no WaterVisionRadius, a power generator no Physics
+        -- speeds: FAF's unit detail view formats all of them as a build
+        -- button is hovered
+        local tank = {BlueprintId = 'tank', Intel = {VisionRadius = 20},
+                      Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 3}}
+        RegisterUnitBlueprint(tank)
+        assert(tank.Intel.VisionRadius == 20 and tank.Intel.WaterVisionRadius == 10, 'vision')
+        assert(tank.Intel.RadarRadius == 0 and tank.Intel.OmniRadius == 0, 'other intel')
+        assert(tank.General.CapCost == 1, 'cap cost')
+        local p = tank.Physics
+        assert(p.MotionType == 'RULEUMT_Land' and p.AltMotionType == 'RULEUMT_None', 'motion')
+        assert(p.MaxSpeedReverse == 3, 'reverse speed is the top speed')
+        assert(p.MaxAcceleration == 0 and p.MaxBrake == 0 and p.TurnRate == 0, 'drive')
+        local pgen = {BlueprintId = 'pgen'}
+        RegisterUnitBlueprint(pgen)
+        assert(pgen.Intel.VisionRadius == 10, 'default vision')
+        assert(pgen.Physics.MotionType == 'RULEUMT_None', 'no motion')
+        assert(pgen.Physics.MaxSpeed == 0 and pgen.Physics.MaxSpeedReverse == -1, 'immobile')
+        local own = {BlueprintId = 'own', General = {CapCost = 2},
+                     Physics = {MaxSpeed = 4, MaxSpeedReverse = 1}}
+        RegisterUnitBlueprint(own)
+        assert(own.General.CapCost == 2 and own.Physics.MaxSpeedReverse == 1, 'own lost')
+    )"));
+}

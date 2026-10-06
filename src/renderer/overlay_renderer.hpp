@@ -15,6 +15,8 @@
 namespace osc::sim {
 class FrameView;
 struct WorldEvents;
+struct EntityRecord;
+struct Vector3;
 }
 
 namespace osc::renderer {
@@ -111,6 +113,8 @@ public:
     /// beams show only while it is in sight, a death's flash only where the
     /// player's army sees (null: everything seen; M215a).
     void set_recon(const ReconView* recon) { recon_ = recon; }
+    /// The unit under the cursor: another army's shows its lifebars then.
+    void set_hovered(u32 id) { hovered_ = id; }
 
     /// FA's beams: a beam they draw needs no placeholder here (M214a).
     void set_beams(const BeamRenderer* beams) { beams_ = beams; }
@@ -127,6 +131,7 @@ private:
     bool unit_bars_ = true;
     bool select_boxes_ = true;
     const ReconView* recon_ = nullptr;
+    u32 hovered_ = 0;
     const BeamRenderer* beams_ = nullptr;
     const TrailRenderer* trails_ = nullptr;
     const ParticleSystem* particles_ = nullptr;
@@ -137,6 +142,12 @@ private:
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a);
+    /// A quad from (left, top) to (right, bottom) in an 0xAARRGGBB colour.
+    void emit_argb(f32 left, f32 top, f32 right, f32 bottom, u32 argb);
+    /// A unit's lifebar stack, as Moho's DrawUnitLifebars (faf-re), if it
+    /// gets one; `sim_time` in ticks.
+    void emit_lifebars(const sim::EntityRecord& e, const sim::Vector3& pos, const Camera& camera,
+                       const std::array<f32, 16>& vp, f32 sw, f32 sh, f64 sim_time);
     /// A line, as line_runs lays it
     void emit_line(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick, f32 r, f32 g, f32 b, f32 a);
     /// A placement outline's width, pixels

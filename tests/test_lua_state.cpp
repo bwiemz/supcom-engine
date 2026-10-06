@@ -453,6 +453,7 @@ TEST_CASE("Lobby peer methods maintain single-process peer state", "[lua][ui]") 
     auto result = state.do_string(R"(
         LobbyClass = {}
         for k, v in moho.lobby_methods do LobbyClass[k] = v end
+        LobbyClass.__index = LobbyClass
         -- The single-player lobby's loopback ("None"; a "UDP" one is
         -- networked, M218a: test_net_lobby.cpp)
         lobby = InternalCreateLobby(LobbyClass, 'None', 6112, 16, 'Host')
@@ -507,6 +508,7 @@ TEST_CASE("Lobby LaunchGame preserves lobby config for skirmish launch", "[lua][
     auto result = state.do_string(R"(
         LobbyClass = {}
         for k, v in moho.lobby_methods do LobbyClass[k] = v end
+        LobbyClass.__index = LobbyClass
         -- The single-player lobby ("None"): a skirmish's launch
         lobby = InternalCreateLobby(LobbyClass, 'None', 6112, 16, 'Host')
 
@@ -747,9 +749,14 @@ TEST_CASE("Fresh front-end boot clears stale chat history", "[lua][ui]") {
     CHECK(global_string(L, "boot_first_text").empty());
 }
 
-TEST_CASE("Moho Lua: indexing nil, a boolean or a function gives nil; setting on a boolean is "
-          "dropped; numbers still error",
+TEST_CASE("Moho Lua: a value that is no table reads and takes fields through its type's "
+          "metatable",
           "[lua][luaplus]") {
+    // faf-re's luaT_gettmbyobj hands back the per-type metatable itself for
+    // any value that is no table or userdata, and luaV_getnotable/settable
+    // index it: reading a field of nil, a boolean, a number or a function
+    // reads that metatable (nil unless a script put the field there), and
+    // setting one stores it there unless config.lua's lock forbids it.
     LuaState state;
     // Retail's and FAF's Unit.lua mark a dead unit's UnitData entry false;
     // SimSync's NoteFocusArmyChanged then reads data.OwnerArmy of it.
@@ -767,7 +774,14 @@ TEST_CASE("Moho Lua: indexing nil, a boolean or a function gives nil; setting on
     )");
     INFO((ok ? std::string() : ok.error().message));
     CHECK(ok);
-    CHECK_FALSE(state.do_string("local n = 5; return n.field"));
+    // A number's field is nil: FAF's LazyVar.Destroy reads `val.Destroy` of
+    // the value it held, a number for most of a control's layout.
+    auto number_field = state.do_string(R"(
+        local val = 5
+        if val.Destroy ~= nil then error('number index') end
+    )");
+    INFO((number_field ? std::string() : number_field.error().message));
+    CHECK(number_field);
     // A function's field is nil too: retail's ScenarioFramework.PlayDialogue
     // reads v.vid of every field of a dialogue's table, its Callback among
     // them, before it forks that callback.
@@ -779,14 +793,29 @@ TEST_CASE("Moho Lua: indexing nil, a boolean or a function gives nil; setting on
     )");
     INFO((function_field ? std::string() : function_field.error().message));
     CHECK(function_field);
-    // A field set on a boolean is dropped: retail's diplomacy.lua opens with
-    // `local parent = false; parent.Items = {}`.
+    // An unlocked type takes a field set on any of its values, and all of
+    // them read it: retail's config.lua leaves booleans unlocked, and its
+    // diplomacy.lua opens with `local parent = false; parent.Items = {}`.
     auto boolean_set = state.do_string(R"(
         local parent = false
         parent.Items = {}
-        if parent ~= false or parent.Items ~= nil then error('set on a boolean') end
+        local other = true
+        if type(other.Items) ~= 'table' or other.Items ~= parent.Items then
+            error('Items on the boolean type')
+        end
     )");
     INFO((boolean_set ? std::string() : boolean_set.error().message));
     CHECK(boolean_set);
-    CHECK_FALSE(state.do_string("local n = 5; n.field = 1"));
+    // config.lua's lock (its metacleanup): the type's metatable gets a
+    // metatable whose __newindex errors, with config.lua's own message.
+    auto locked = state.do_string(R"(
+        setmetatable(getmetatable(0), { __newindex = function(_, key)
+            error('Attempt to set attribute ' .. key .. ' on number', 2)
+        end })
+        local n = 5
+        n.field = 1
+    )");
+    REQUIRE_FALSE(locked);
+    CHECK(locked.error().message.find("Attempt to set attribute field on number") !=
+          std::string::npos);
 }

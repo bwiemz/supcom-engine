@@ -240,7 +240,7 @@ int uu_GetFuelRatio(lua_State* L) {
     return push_number_of(L, &sim::EntityRecord::fuel_ratio, -1.0f);
 }
 int uu_GetShieldRatio(lua_State* L) {
-    return push_number_of(L, &sim::EntityRecord::shield_ratio, 1.0f);
+    return push_number_of(L, &sim::EntityRecord::shield_ratio, 0.0f);
 }
 int uu_GetBuildRate(lua_State* L) {
     return push_number_of(L, &sim::EntityRecord::build_rate, 0.0f);
@@ -515,6 +515,26 @@ const sim::WorldSnapshot* ui_world(lua_State* L) {
         sim::capture_pending(*sim, world.snapshot);
     }
     return &world.snapshot;
+}
+
+int ui_is_destroyed(lua_State* L) {
+    bool destroyed = true;
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_c_entity_id");
+        lua_rawget(L, 1);
+        const bool unit = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (unit) {
+            destroyed = record(L) == nullptr;
+        } else {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, 1);
+            destroyed = lua_touserdata(L, -1) == nullptr;
+            lua_pop(L, 1);
+        }
+    }
+    lua_pushboolean(L, destroyed ? 1 : 0);
+    return 1;
 }
 
 // Moho's UserUnit methods (all of them; UserEntity adds none).

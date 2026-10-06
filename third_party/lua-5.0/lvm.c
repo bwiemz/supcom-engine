@@ -145,22 +145,32 @@ static const TObject *luaV_index (lua_State *L, const TObject *t,
   else return luaV_gettable(L, tm, key, loop);
 }
 
+/*
+** Moho's (LuaPlus's) rule for a value that is no table: with no __index tag
+** method, the value's own metatable stands in -- the per-type one for nil,
+** booleans, numbers, strings, functions and threads, a userdata's own -- and
+** is indexed in turn (faf-re luaT_gettmbyobj returns the per-type metatable
+** itself; luaV_getnotable then indexes it). So `(5).x` reads the number
+** metatable's x, nil unless a script put one there, and never errors. FAF's
+** LazyVar.Destroy reads `val.Destroy` of a number value; retail's
+** ScenarioFramework.PlayDialogue reads v.vid of a function; Unit.lua's
+** UnitData marks a dead unit `false`.
+*/
+static Table *luaV_ownmetatable (lua_State *L, const TObject *t) {
+  if (ttisuserdata(t)) return uvalue(t)->uv.metatable;
+  if (ttistable(t)) return hvalue(t)->metatable;
+  return G(L)->mt[ttype(t)];
+}
+
 static const TObject *luaV_getnotable (lua_State *L, const TObject *t,
                                        TObject *key, int loop) {
-  /* LuaPlus: indexing nil returns nil instead of error */
-  if (ttisnil(t))
-    return &luaO_nilobject;
   const TObject *tm = luaT_gettmbyobj(L, t, TM_INDEX);
   if (ttisnil(tm)) {
-    /* Moho: so does indexing a boolean. Retail's and FAF's Unit.lua mark a
-       dead unit's UnitData entry `false`, and SimSync's
-       NoteFocusArmyChanged reads data.OwnerArmy of every entry. And
-       indexing a function: retail's ScenarioFramework.PlayDialogue reads
-       v.vid of every field of a dialogue's table, its Callback among them,
-       so every campaign dialogue with a callback relies on it. */
-    if (ttisboolean(t) || ttisfunction(t))
-      return &luaO_nilobject;
-    luaG_typeerror(L, t, "index");
+    Table *mt = luaV_ownmetatable(L, t);
+    TObject h;
+    if (mt == NULL) return &luaO_nilobject;
+    sethvalue(&h, mt);
+    return luaV_gettable(L, &h, key, loop);
   }
   if (ttisfunction(tm)) {
     callTMres(L, tm, t, key);
@@ -194,6 +204,7 @@ const TObject *luaV_gettable (lua_State *L, const TObject *t, TObject *key,
 */
 void luaV_settable (lua_State *L, const TObject *t, TObject *key, StkId val) {
   const TObject *tm;
+  TObject mtobj;  /* a value's per-type metatable, stood in for it */
   int loop = 0;
   do {
     if (ttistable(t)) {  /* `t' is a table? */
@@ -207,13 +218,18 @@ void luaV_settable (lua_State *L, const TObject *t, TObject *key, StkId val) {
       /* else will try the tag method */
     }
     else if (ttisnil(tm = luaT_gettmbyobj(L, t, TM_NEWINDEX))) {
-      /* Moho: a field set on a boolean is dropped. Retail's
-         /lua/ui/game/diplomacy.lua opens with `local parent = false;
-         parent.Items = {}`, and its UserSync imports it for
-         Sync.SetAlliedVictory, which retail's OnPostLoad sends after every
-         load. */
-      if (ttisboolean(t)) return;
-      luaG_typeerror(L, t, "index");
+      /* Moho: with no __newindex, a value that is no table (nor userdata)
+         takes the field into its per-type metatable -- "the LuaPlus bit
+         where you can add attributes to nil, booleans, numbers, and
+         strings", which config.lua locks by giving those metatables a
+         __newindex that errors. Retail's leaves booleans unlocked, and its
+         diplomacy.lua opens with `local parent = false; parent.Items = {}`:
+         every boolean then reads that Items. */
+      Table *mt = ttisuserdata(t) ? NULL : luaV_ownmetatable(L, t);
+      if (mt == NULL) luaG_typeerror(L, t, "index");
+      sethvalue(&mtobj, mt);
+      t = &mtobj;
+      continue;
     }
     if (ttisfunction(tm)) {
       callTM(L, tm, t, key, val);

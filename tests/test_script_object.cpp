@@ -166,3 +166,40 @@ TEST_CASE("push_new_script_object makes an object as Moho does", "[scriptobject]
         CHECK_FALSE(lua_getmetatable(L, -1));
     }
 }
+
+TEST_CASE("IsDestroyed reads each kind of script object, as Moho's", "[scriptobject]") {
+    ScriptWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.check("u = CreateUnit('test_plain', 1, 0, 0, 0)"));
+    // A weapon's table (its _c_object a Weapon*, its unit in _c_unit) and
+    // another object's (a manipulator, an emitter): neither is an entity.
+    static int weapon_stand_in = 0;
+    static int other_stand_in = 0;
+    for (const auto& [name, object] :
+         {std::pair{"weapon", &weapon_stand_in}, std::pair{"other", &other_stand_in}}) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, object);
+        lua_rawset(L, -3);
+        if (object == &weapon_stand_in) {
+            lua_pushstring(L, "_c_unit");
+            lua_getglobal(L, "u");
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            lua_remove(L, -2);
+            lua_rawset(L, -3);
+        }
+        lua_setglobal(L, name);
+    }
+    CHECK(w.check(R"(
+        assert(IsDestroyed(nil) and IsDestroyed(1) and IsDestroyed({}), 'no C object')
+        assert(not IsDestroyed(u), 'a live unit')
+        assert(not IsDestroyed(weapon), 'a live unit\'s weapon')
+        assert(not IsDestroyed(other), 'a live object')
+        other._destroyed = true
+        assert(IsDestroyed(other), 'an object marked destroyed')
+        ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u)
+        assert(IsDestroyed(u), 'a destroyed unit')
+        assert(IsDestroyed(weapon), 'a destroyed unit\'s weapon')
+    )"));
+}

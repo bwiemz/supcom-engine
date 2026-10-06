@@ -62,6 +62,10 @@ void test_prop_materials(TestContext& ctx) {
         return;
     }
     renderer::Renderer& r = shots.renderer();
+    // The test units' lifebars (Moho draws a friendly unit's when zoomed in)
+    // would darken the pixels Test 3 counts as shadow: off, as
+    // ui_RenderUnitBars turns them off.
+    r.set_unit_bars(false);
     using renderer::MeshTechnique;
 
     // The test's ground: flat, at a structure's height, in the map's corner.

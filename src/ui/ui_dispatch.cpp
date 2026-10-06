@@ -235,21 +235,22 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
 
 namespace {
 
-/// Walk the visible tree under `ctrl`, keeping the deepest hit-testable
+/// Walk the tree under `ctrl`, keeping the deepest shown, hit-testable
 /// control whose rect contains (x, y). Parents are visited before their
 /// children and siblings in the order they were made, and only a deeper
 /// control replaces the one kept, so the first one wins a tie, as in
 /// Moho's CMauiControl::GetTopmostControl (a depth-first walk, children
 /// appended as they are made, `>`). Retail's score screen relies on it:
 /// its page group fills the panel at the Continue button's depth, made
-/// after it.
+/// after it. Each control's own flag decides, as there: a hidden control's
+/// children are still walked (a Grid keeps its cells shown).
 void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
                  const std::unordered_set<UIControl*>* skip, UIControl*& best,
                  f32& best_depth) {
-    if (!ctrl || ctrl->hidden() || ctrl->destroyed()) return;
+    if (!ctrl || ctrl->destroyed()) return;
     if (ctrl->lua_table_ref() < 0) return;
 
-    if (!ctrl->hit_test_disabled() && !(skip && skip->count(ctrl))) {
+    if (!ctrl->hidden() && !ctrl->hit_test_disabled() && !(skip && skip->count(ctrl))) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         const int tbl = lua_gettop(L);
         const f32 left = read_lazyvar(L, tbl, "Left");

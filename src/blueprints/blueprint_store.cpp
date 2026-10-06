@@ -183,6 +183,31 @@ void apply_unit_defaults(lua_State* L, int bp) {
         lua_rawset(L, bp);
     }
 
+    // And a build list, if an empty one (Moho's RUnitBlueprintEconomy keeps
+    // BuildableCategory as a list): FAF's enhancementqueue.lua loops over
+    // bp.Economy.BuildableCategory for every selected unit that isn't a
+    // commander, and units that build nothing (a T1 tank) leave it out.
+    lua_pushstring(L, "Economy");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Economy");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Economy");
+        lua_rawget(L, bp);
+    }
+    lua_pushstring(L, "BuildableCategory");
+    lua_rawget(L, -2);
+    const bool builds = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (!builds) {
+        lua_pushstring(L, "BuildableCategory");
+        lua_newtable(L);
+        lua_rawset(L, -3);
+    }
+    lua_pop(L, 1);
+
     // A footprint the .bp leaves unsized, whole or per axis, takes the unit's
     // own size, rounded up and at least 1, as Moho's does (its decompiled
     // REntityBlueprint::OnInitBlueprint; FAF's loader rounds to nearest,

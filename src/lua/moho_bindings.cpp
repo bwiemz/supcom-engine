@@ -725,7 +725,7 @@ static int l_InternalCreateGroup(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars: Left, Top, Right, Bottom, Width, Height, Depth
@@ -807,7 +807,7 @@ static int l_InternalCreateBitmap(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars
@@ -855,7 +855,7 @@ static int l_InternalCreateText(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 layout LazyVars
@@ -911,7 +911,7 @@ static int l_InternalCreateEdit(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars
@@ -957,7 +957,7 @@ static int l_InternalCreateItemList(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Create 7 LazyVars
@@ -1001,7 +1001,7 @@ static int l_InternalCreateScrollbar(lua_State* L) {
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     // Set scroll axis (arg 3)
@@ -1063,7 +1063,7 @@ static int l_InternalCreateBorder(lua_State* L) {
 
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, 1, "Left");
@@ -1164,7 +1164,7 @@ static int l_InternalCreateMovie(lua_State* L) {
 
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, 1, "Left");
@@ -1240,7 +1240,7 @@ static int create_map_preview_control(lua_State* L, int self_idx, int parent_idx
 
     if (parent_idx > 0 && lua_istable(L, parent_idx)) {
         auto* parent = check_control(L, parent_idx);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, self_idx, "Left");
@@ -1292,7 +1292,7 @@ static int l_InternalCreateHistogram(lua_State* L) {
 
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
-        if (parent) ctrl->set_parent(parent);
+        if (parent) attach_to_parent(L, *ctrl, *parent);
     }
 
     create_lazyvar(L, 1, "Left");
@@ -1428,15 +1428,11 @@ static int l_InternalCreateLobby(lua_State* L) {
     if (!lua_istable(L, 1))
         return luaL_error(L, "InternalCreateLobby: arg 1 must be class table");
 
-    // Create instance table
-    lua_newtable(L);
-
-    // Set class as metatable with __index
-    lua_newtable(L); // mt
-    lua_pushstring(L, "__index");
-    lua_pushvalue(L, 1); // class
-    lua_rawset(L, -3);
-    lua_setmetatable(L, -2);
+    // The instance, as Moho's CLobby (a CScriptObject) makes it: the class
+    // called, running its __init and __post_init (FAF's auto-lobby sets its
+    // GameOptions there), before it has a C object.
+    lua_pushvalue(L, 1);
+    sim::push_new_script_object(L, "Lobby");
 
     // _c_object dummy
     lua_pushstring(L, "_c_object");
@@ -3536,6 +3532,34 @@ static int l_GetSystemTimeSeconds(lua_State* L) {
     return 1;
 }
 
+/// Moho's clock text: `seconds` as HH:MM:SS, the hours wrapping at 24, with a
+/// leading '-' when negative.
+static void push_clock_text(lua_State* L, double seconds) {
+    const auto total = static_cast<long long>(seconds);
+    const unsigned long long abs_s = total < 0 ? static_cast<unsigned long long>(-(total + 1)) + 1
+                                               : static_cast<unsigned long long>(total);
+    char text[24];
+    std::snprintf(text, sizeof(text), total < 0 ? "-%02d:%02d:%02d" : "%02d:%02d:%02d",
+                  static_cast<int>((abs_s / 3600) % 24), static_cast<int>((abs_s / 60) % 60),
+                  static_cast<int>(abs_s % 60));
+    lua_pushstring(L, text);
+}
+
+/// FormatTime(seconds) → "HH:MM:SS" (FAF's logger and replay UI).
+static int l_FormatTime(lua_State* L) {
+    push_clock_text(L, luaL_checknumber(L, 1));
+    return 1;
+}
+
+/// GetSystemTime() → GetSystemTimeSeconds() as "HH:MM:SS".
+static int l_GetSystemTime(lua_State* L) {
+    l_GetSystemTimeSeconds(L);
+    const double seconds = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    push_clock_text(L, seconds);
+    return 1;
+}
+
 // ====================================================================
 // SessionGetScenarioInfo (M145c2)
 // ====================================================================
@@ -4666,6 +4690,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetSimRate", l_GetSimRate);
     state.register_function("CurrentTime", l_CurrentTime);
     state.register_function("GetSystemTimeSeconds", l_GetSystemTimeSeconds);
+    state.register_function("GetSystemTime", l_GetSystemTime);
+    state.register_function("FormatTime", l_FormatTime);
 
     // Scenario info (M145c2)
     state.register_function("SessionGetScenarioInfo", l_ui_SessionGetScenarioInfo);
@@ -4702,18 +4728,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     state.register_function("GetCommandLineArg", l_GetCommandLineArg);
 
-    // MATH_Lerp(t, t0, t1, v0, v1) → v0 + (v1-v0) * (t-t0) / (t1-t0)
-    state.register_function("MATH_Lerp", [](lua_State* L) -> int {
-        double t  = luaL_checknumber(L, 1);
-        double t0 = luaL_checknumber(L, 2);
-        double t1 = luaL_checknumber(L, 3);
-        double v0 = luaL_checknumber(L, 4);
-        double v1 = luaL_checknumber(L, 5);
-        double denom = t1 - t0;
-        double result = (denom != 0.0) ? v0 + (v1 - v0) * (t - t0) / denom : v0;
-        lua_pushnumber(L, result);
-        return 1;
-    });
+    // MATH_Lerp is a core function: register_core_bindings (sim_bindings.cpp)
 
     // Map preview stub (M148d)
     state.register_function("MapPreview", l_MapPreview);

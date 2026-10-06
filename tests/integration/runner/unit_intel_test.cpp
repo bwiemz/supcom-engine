@@ -88,7 +88,8 @@ void test_unit_intel(TestContext& ctx) {
         "local s = __osc_intel_radar\n"
         "s:DisableIntel('Vision') s:DisableIntel('Omni')\n"
         "s:InitIntel(1, 'Radar', 90) s:DisableIntel('Radar')\n"
-        // Damaged, the engineers show health bars where they're seen.
+        // Damaged, as a player would see them (another army's lifebar shows
+        // only while hovered: the test hovers the near one).
         "for _, u in {__osc_intel_near, __osc_intel_far} do\n"
         "  u:SetHealth(u, u:GetMaxHealth() * 0.5)\n"
         "end\n");
@@ -115,6 +116,9 @@ void test_unit_intel(TestContext& ctx) {
     renderer::Renderer& r = shots.renderer();
     r.set_fog_enabled(true);
     r.set_player_army(0);
+    // The cursor over the near engineer: Moho draws another army's lifebar
+    // only for the unit hovered, and only while its health is seen.
+    r.set_selection_marks(near_id, std::nullopt);
 
     // The world `ticks` on (scrying, if the sight is on, each tick), drawn
     // as the game's next frame draws it.
@@ -153,10 +157,16 @@ void test_unit_intel(TestContext& ctx) {
                 return &q;
         return nullptr;
     };
-    // Whether unit `id` has a health bar (its 40 x 4 back, 20 above it).
+    // Whether unit `id` has a lifebar: Moho's black backdrop, wider than
+    // high, centred across it and hanging just below it.
     const auto has_bar = [&](const Frame& frame, u32 id) {
         const auto at = on_screen(id);
-        return at && quad_at(frame.overlay, (*at)[0], (*at)[1] - 18.0f, 40.0f, 4.0f);
+        if (!at) return false;
+        for (const Quad& q : frame.overlay)
+            if (same_colour(q, 0.0f, 0.0f, 0.0f) && q.w > q.h && std::abs(q.x - (*at)[0]) < 2.0f &&
+                std::abs(q.y - (*at)[1]) < 40.0f)
+                return true;
+        return false;
     };
     // The minimap's dot for unit `id`, or null.
     const auto dot_of = [&](const Frame& frame, u32 id) -> const Quad* {

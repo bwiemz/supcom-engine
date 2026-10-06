@@ -930,6 +930,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(d.rotate_threshold);
     w.f32v(d.max_speed_reverse);
     w.f32v(d.backup_distance);
+    const Unit::LifeBar& bar = u.life_bar_;
+    w.f32v(bar.size);
+    w.f32v(bar.height);
+    w.f32v(bar.offset);
+    w.b(bar.render);
+    w.b(bar.hide);
     w.f32v(u.ground_speed_);
     w.f32v(u.target_speed_);
     w.f32v(u.top_speed_);
@@ -1246,6 +1252,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     d.rotate_threshold = r.f32v();
     d.max_speed_reverse = r.f32v();
     d.backup_distance = r.f32v();
+    Unit::LifeBar& bar = u.life_bar_;
+    bar.size = r.f32v();
+    bar.height = r.f32v();
+    bar.offset = r.f32v();
+    bar.render = r.b();
+    bar.hide = r.b();
     u.ground_speed_ = r.f32v();
     u.target_speed_ = r.f32v();
     u.top_speed_ = r.f32v();

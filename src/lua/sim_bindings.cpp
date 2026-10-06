@@ -1041,6 +1041,38 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             lua_pop(L, 2); // pop Intel (or nil) + bp table
         }
 
+        // Its lifebar, as the strategic view draws it
+        {
+            store->push_lua_table(*entry, L);
+            const int bp = lua_gettop(L);
+            sim::Unit::LifeBar bar;
+            const auto number = [&](const char* key) {
+                lua_pushstring(L, key);
+                lua_rawget(L, bp);
+                const f32 v =
+                    lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            bar.size = number("LifeBarSize");
+            bar.height = number("LifeBarHeight");
+            bar.offset = number("LifeBarOffset");
+            lua_pushstring(L, "LifeBarRender");
+            lua_rawget(L, bp);
+            bar.render = lua_isnil(L, -1) || lua_toboolean(L, -1);
+            lua_pop(L, 1);
+            lua_pushstring(L, "Display");
+            lua_rawget(L, bp);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "HideLifebars");
+                lua_rawget(L, -2);
+                bar.hide = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2); // Display, bp
+            unit->set_life_bar(bar);
+        }
+
         // Physics.MotionType → layer override (for pathfinding)
         {
             store->push_lua_table(*entry, L);
@@ -1957,16 +1989,42 @@ static int l_Warp(lua_State* L) {
     return 0;
 }
 
+/// IsDestroyed(obj): Moho's rule, true unless obj holds a live C object.
+/// That may be any script object's: an entity answers by its own flag
+/// (destroyed at once, as BeenDestroyed does), a weapon by its unit's, and
+/// anything else (a manipulator, an emitter, ...) by its handle, cleared or
+/// marked _destroyed when it goes. Reading a weapon as an entity made FAF's
+/// SetWeaponEnabled skip every weapon it turned off.
 static int l_IsDestroyed(lua_State* L) {
-    if (!lua_istable(L, 1)) {
-        lua_pushboolean(L, 1);
-        return 1;
+    bool destroyed = true;
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 1);
+        const void* object = lua_touserdata(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "_c_unit"); // a weapon's unit
+        lua_rawget(L, 1);
+        const void* owner = lua_touserdata(L, -1);
+        lua_pop(L, 1);
+        const auto* sim = get_sim(L);
+        const auto& registry = sim ? &sim->entity_registry() : nullptr;
+        if (!object) {
+            destroyed = true;
+        } else if (registry && registry->holds(object)) {
+            destroyed = static_cast<const sim::Entity*>(object)->destroyed();
+        } else if (registry && registry->departed(object)) {
+            destroyed = true;
+        } else if (owner) {
+            destroyed = !registry || !registry->holds(owner) ||
+                        static_cast<const sim::Entity*>(owner)->destroyed();
+        } else {
+            lua_pushstring(L, "_destroyed");
+            lua_rawget(L, 1);
+            destroyed = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        }
     }
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, 1);
-    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    lua_pushboolean(L, !entity || entity->destroyed());
+    lua_pushboolean(L, destroyed ? 1 : 0);
     return 1;
 }
 
@@ -4472,11 +4530,29 @@ static int l_MATH_IRound(lua_State* L) {
     return 1;
 }
 
+/// MATH_Lerp(s, a, b) or MATH_Lerp(s, sMin, sMax, a, b): a at s = 0 (or
+/// sMin), b at 1 (or sMax), in floats -- Moho's cfunc_MATH_lerpL, in both
+/// states. Four arguments give nil, as there; FAF's SimPing and UI pulse
+/// effects use the five.
 static int l_MATH_Lerp(lua_State* L) {
-    f64 s = lua_tonumber(L, 1);
-    f64 a = lua_tonumber(L, 2);
-    f64 b = lua_tonumber(L, 3);
-    lua_pushnumber(L, a + (b - a) * s);
+    const int n = lua_gettop(L);
+    if (n < 3 || n > 5)
+        return luaL_error(L, "MATH_Lerp: expected between 3 and 5 args, but got %d", n);
+    if (n == 3) {
+        const auto b = static_cast<f32>(luaL_checknumber(L, 3));
+        const auto a = static_cast<f32>(luaL_checknumber(L, 2));
+        const auto s = static_cast<f32>(luaL_checknumber(L, 1));
+        lua_pushnumber(L, a + (b - a) * s);
+    } else if (n == 5) {
+        const auto b = static_cast<f32>(lua_tonumber(L, 5));
+        const auto a = static_cast<f32>(lua_tonumber(L, 4));
+        const auto s = static_cast<f32>(lua_tonumber(L, 1));
+        const auto s_min = static_cast<f32>(lua_tonumber(L, 2));
+        const auto s_max = static_cast<f32>(lua_tonumber(L, 3));
+        lua_pushnumber(L, a + (b - a) * ((s - s_min) / (s_max - s_min)));
+    } else {
+        lua_pushnil(L);
+    }
     return 1;
 }
 
@@ -6115,6 +6191,29 @@ static int l_IssueFerry(lua_State* L) {
 // Registration
 // ====================================================================
 
+void register_core_bindings(LuaState& state) {
+    state.register_function("EulerToQuaternion", l_EulerToQuaternion);
+    state.register_function("OrientFromDir", l_OrientFromDir);
+    state.register_function("Vector", l_Vector);
+    state.register_function("Vector2", l_Vector2);
+    state.register_function("VDist3", l_VDist3);
+    state.register_function("VDist3Sq", l_VDist3Sq);
+    state.register_function("VDist2", l_VDist2);
+    state.register_function("VDist2Sq", l_VDist2Sq);
+    state.register_function("VAdd", l_VAdd);
+    state.register_function("VDiff", l_VDiff);
+    state.register_function("VMult", l_VMult);
+    state.register_function("VDot", l_VDot);
+    state.register_function("VPerpDot", l_VPerpDot);
+    state.register_function("MATH_IRound", l_MATH_IRound);
+    state.register_function("MATH_Lerp", l_MATH_Lerp);
+    // The game's alliances (the UI's state reads the sim it shows, as the
+    // sim's own does: both hold it under osc_sim_state)
+    state.register_function("IsAlly", l_IsAlly);
+    state.register_function("IsEnemy", l_IsEnemy);
+    state.register_function("IsNeutral", l_IsNeutral);
+}
+
 void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     lua_State* L = state.raw();
 
@@ -6238,22 +6337,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
                             l_EntityCategoryGetUnitList);
     state.register_function("EntityCategoryCount", l_EntityCategoryCount);
 
-    // Math / vector
-    state.register_function("EulerToQuaternion", l_EulerToQuaternion);
-    state.register_function("OrientFromDir", l_OrientFromDir);
-    state.register_function("Vector", l_Vector);
-    state.register_function("Vector2", l_Vector2);
-    state.register_function("VDist3", l_VDist3);
-    state.register_function("VDist3Sq", l_VDist3Sq);
-    state.register_function("VDist2", l_VDist2);
-    state.register_function("VDist2Sq", l_VDist2Sq);
-    state.register_function("VAdd", l_VAdd);
-    state.register_function("VDiff", l_VDiff);
-    state.register_function("VMult", l_VMult);
-    state.register_function("VDot", l_VDot);
-    state.register_function("VPerpDot", l_VPerpDot);
-    state.register_function("MATH_IRound", l_MATH_IRound);
-    state.register_function("MATH_Lerp", l_MATH_Lerp);
+    // Math / vector, and the alliance queries: Moho's Core functions
+    register_core_bindings(state);
     state.register_function("Random", l_Random);
     {
         // math.random/randomseed on the session's stream (see above).
@@ -6335,9 +6420,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetAllianceOneWay", l_SetAllianceOneWay);
     state.register_function("GenerateArmyStart", l_GenerateArmyStart);
     state.register_function("SetIgnorePlayableRect", l_SetIgnorePlayableRect);
-    state.register_function("IsAlly", l_IsAlly);
-    state.register_function("IsEnemy", l_IsEnemy);
-    state.register_function("IsNeutral", l_IsNeutral);
     state.register_function("SetCommandSource", stub_noop);
     // ArmyInitializePrebuiltUnits(army): the army's brain spawns the lobby's
     // prebuilt units (Moho runs its OnSpawnPreBuiltUnits).

@@ -1,6 +1,5 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 AimsStraightOnDisable
-AltMotionType
 AttackAngle
 AutoLandTime
 BankFactor
@@ -24,7 +23,6 @@ DirectionY
 DirectionZ
 EffectiveRadius
 GroundCollisionOffset
-HideLifebars
 HoverOverAttack
 IgnoreIfDisabled
 KLift
@@ -34,10 +32,6 @@ KRollDamping
 LAYER_Air
 LayerChangeOffsetHeight
 LayerTransitionDuration
-LifeBarHeight
-LifeBarOffset
-LifeBarRender
-LifeBarSize
 LiftFactor
 MaxBounceCount
 MaxSlope

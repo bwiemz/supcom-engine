@@ -17201,7 +17201,15 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             for _, item in col do n = n + 1 end
         end
         if n < 5 then error('order grid holds ' .. n .. ' buttons') end
-        if grid:IsHidden() then error('the order grid is hidden') end
+        -- Its buttons show (its OnHide keeps them as they are, and a Grid
+        -- drawn by each control's own flag may itself stay hidden, as Moho's)
+        local shown = 0
+        for _, col in grid._items do
+            for _, item in col do
+                if not item:IsHidden() then shown = shown + 1 end
+            end
+        end
+        if shown == 0 then error('no order button is shown') end
     )");
     sim_lua(R"(
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
@@ -17304,16 +17312,19 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     sim_lua("__osc_ui_mex:Destroy()");
     play(2);
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
-    // for auto mode, and after a tick the sim's unit has it.
+    // to flip auto mode, and after a tick the sim's unit has it. (Retail's
+    // commanders start without it; FAF's set AI.InitialAutoMode.)
     lua_ok("Test 10h: ProcessInfo requests auto mode", R"(
         local acu = GetSelectedUnits()[1]
-        if acu:IsAutoMode() then error('auto mode already on') end
-        acu:ProcessInfo('SetAutoMode', 'true')
+        __osc_test_auto_was = acu:IsAutoMode()
+        acu:ProcessInfo('SetAutoMode', __osc_test_auto_was and 'false' or 'true')
     )");
     play(1);
     lua_ok("Test 10i: the sim applied it", R"(
-        if not GetSelectedUnits()[1]:IsAutoMode() then error('auto mode not applied') end
-        GetSelectedUnits()[1]:ProcessInfo('SetAutoMode', 'false')
+        if GetSelectedUnits()[1]:IsAutoMode() == __osc_test_auto_was then
+            error('auto mode not applied')
+        end
+        GetSelectedUnits()[1]:ProcessInfo('SetAutoMode', __osc_test_auto_was and 'true' or 'false')
         -- FAF's construction panel pauses a factory this way
         __osc_test_acu_id = tonumber(GetSelectedUnits()[1]:GetEntityId())
         GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'true')
@@ -17758,7 +17769,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {name = 'RULEUCC_Reclaim'})
     )");
     // Reclaim takes whatever reclaimable thing is under the click: the map's
-    // trees and rocks are props, not units.
+    // trees and rocks are props, not units. (Not an untargetable one, such
+    // as the deposit markers FAF's maps make: a click passes through it.)
     {
         lua_getglobal(L, "__osc_test_acu_id");
         const auto acu_id = static_cast<u32>(lua_tonumber(L, -1));
@@ -17769,7 +17781,9 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         f32 best = 1e30f;
         if (acu) {
             reg.for_each([&](const osc::sim::Entity& e) {
-                if (!e.is_prop() || e.destroyed() || !e.reclaimable()) return;
+                if (!e.is_prop() || e.destroyed() || !e.reclaimable() ||
+                    static_cast<const osc::sim::Prop&>(e).untargetable)
+                    return;
                 const f32 dx = e.position().x - acu->position().x;
                 const f32 dz = e.position().z - acu->position().z;
                 if (dx * dx + dz * dz < best) {
@@ -17783,14 +17797,25 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         } else if (!click(prop->position().x + 0.3f, prop->position().z, false)) {
             osc::test_status::fail("[FAIL] Test 11f: the reclaim click on a prop issued nothing");
         } else {
+            // A prop that takes no time (FAF's smallest) is reclaimed within
+            // the tick, its order done; the entity may be freed by then.
+            const u32 prop_id = prop->entity_id();
             play(1);
             const auto& q = static_cast<const osc::sim::Unit*>(acu)->command_queue();
             const auto* target = q.empty() ? nullptr : reg.find(q.front().target_id);
+            const auto* left = reg.find(prop_id);
             if (!q.empty() && q.front().type == osc::sim::CommandType::Reclaim && target &&
                 target->is_prop())
                 spdlog::info("[PASS] Test 11f: a reclaim click on a prop orders its reclaim");
+            else if (q.empty() && (!left || left->destroyed()))
+                spdlog::info("[PASS] Test 11f: a reclaim click on a prop reclaimed it at once");
             else
-                osc::test_status::fail("[FAIL] Test 11f: the commander has no reclaim order on a prop");
+                osc::test_status::fail(
+                    "[FAIL] Test 11f: the commander has no reclaim order on a prop (queue {}, head "
+                    "type {}, target #{} {}, prop #{})",
+                    q.size(), q.empty() ? -1 : static_cast<int>(q.front().type),
+                    q.empty() ? 0u : q.front().target_id,
+                    target ? (target->is_prop() ? "a prop" : "not a prop") : "gone", prop_id);
         }
     }
     play(1);

@@ -72,6 +72,18 @@ LuaState::LuaState() {
     lua_newtable(L_);
     lua_setmetatable(L_, -2);
     lua_pop(L_, 1);
+
+    // Functions' and light userdata's too: Moho gives every type one (faf-re
+    // lua_open seeds _defaultmetatypes for each), which the VM indexes for a
+    // value that is no table (see lvm.c, luaV_getnotable).
+    lua_pushcfunction(L_, [](lua_State*) -> int { return 0; });
+    lua_newtable(L_);
+    lua_setmetatable(L_, -2);
+    lua_pop(L_, 1);
+    lua_pushlightuserdata(L_, nullptr);
+    lua_newtable(L_);
+    lua_setmetatable(L_, -2);
+    lua_pop(L_, 1);
 }
 
 LuaState::~LuaState() {
