@@ -4728,18 +4728,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     state.register_function("GetCommandLineArg", l_GetCommandLineArg);
 
-    // MATH_Lerp(t, t0, t1, v0, v1) → v0 + (v1-v0) * (t-t0) / (t1-t0)
-    state.register_function("MATH_Lerp", [](lua_State* L) -> int {
-        double t  = luaL_checknumber(L, 1);
-        double t0 = luaL_checknumber(L, 2);
-        double t1 = luaL_checknumber(L, 3);
-        double v0 = luaL_checknumber(L, 4);
-        double v1 = luaL_checknumber(L, 5);
-        double denom = t1 - t0;
-        double result = (denom != 0.0) ? v0 + (v1 - v0) * (t - t0) / denom : v0;
-        lua_pushnumber(L, result);
-        return 1;
-    });
+    // MATH_Lerp is a core function: register_core_bindings (sim_bindings.cpp)
 
     // Map preview stub (M148d)
     state.register_function("MapPreview", l_MapPreview);

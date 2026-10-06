@@ -133,3 +133,24 @@ TEST_CASE("Vectors and quaternions share the one metatable FAF extends", "[quate
         assert(v.x == 4 and v.y == 5 and v.z == 6, 'named components')
     )"));
 }
+
+TEST_CASE("MATH_Lerp takes Moho's two forms, in either state", "[quaternion]") {
+    SimLua s;
+    // The UI state has the core functions too (register_core_bindings).
+    osc::lua::LuaState ui;
+    osc::lua::register_core_bindings(ui);
+    const char* code = R"(
+        local function near(a, b) return math.abs(a - b) < 1e-5 end
+        assert(near(MATH_Lerp(0.25, 10, 20), 12.5), 'three: ' .. MATH_Lerp(0.25, 10, 20))
+        -- s from [sMin, sMax] onto [a, b]: FAF's SimPing pulse
+        assert(near(MATH_Lerp(0, -0.5, 0.5, 0.3, 0.5), 0.4), 'five')
+        assert(near(MATH_Lerp(0.5, 0, 1, 10, 20), 15), 'five: ' .. MATH_Lerp(0.5, 0, 1, 10, 20))
+        assert(MATH_Lerp(1, 2, 3, 4) == nil, 'four gives nil')
+        assert(not pcall(MATH_Lerp, 1, 2), 'two is an error')
+        assert(not pcall(MATH_Lerp, 1, 2, 'x'), 'three are numbers')
+    )";
+    CHECK(s.check(code));
+    auto r = ui.do_string(code);
+    INFO((r.ok() ? std::string() : r.error().message));
+    CHECK(r.ok());
+}

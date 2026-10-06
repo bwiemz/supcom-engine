@@ -4472,11 +4472,29 @@ static int l_MATH_IRound(lua_State* L) {
     return 1;
 }
 
+/// MATH_Lerp(s, a, b) or MATH_Lerp(s, sMin, sMax, a, b): a at s = 0 (or
+/// sMin), b at 1 (or sMax), in floats -- Moho's cfunc_MATH_lerpL, in both
+/// states. Four arguments give nil, as there; FAF's SimPing and UI pulse
+/// effects use the five.
 static int l_MATH_Lerp(lua_State* L) {
-    f64 s = lua_tonumber(L, 1);
-    f64 a = lua_tonumber(L, 2);
-    f64 b = lua_tonumber(L, 3);
-    lua_pushnumber(L, a + (b - a) * s);
+    const int n = lua_gettop(L);
+    if (n < 3 || n > 5)
+        return luaL_error(L, "MATH_Lerp: expected between 3 and 5 args, but got %d", n);
+    if (n == 3) {
+        const auto b = static_cast<f32>(luaL_checknumber(L, 3));
+        const auto a = static_cast<f32>(luaL_checknumber(L, 2));
+        const auto s = static_cast<f32>(luaL_checknumber(L, 1));
+        lua_pushnumber(L, a + (b - a) * s);
+    } else if (n == 5) {
+        const auto b = static_cast<f32>(lua_tonumber(L, 5));
+        const auto a = static_cast<f32>(lua_tonumber(L, 4));
+        const auto s = static_cast<f32>(lua_tonumber(L, 1));
+        const auto s_min = static_cast<f32>(lua_tonumber(L, 2));
+        const auto s_max = static_cast<f32>(lua_tonumber(L, 3));
+        lua_pushnumber(L, a + (b - a) * ((s - s_min) / (s_max - s_min)));
+    } else {
+        lua_pushnil(L);
+    }
     return 1;
 }
 
