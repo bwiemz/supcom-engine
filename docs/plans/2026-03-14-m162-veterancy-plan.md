@@ -1,5 +1,7 @@
 # M162 Veterancy XP & Level Progression — Implementation Plan
 
+*Superseded (2026-10-06): Moho has no XP or veteran levels of its own; retail's Lua levels units by the KILLS stat the engine counts on a kill (fix/veterancy-kills). The XP model below was removed.*
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Full FA veterancy — units earn XP from kills, level up (0-5), gain stat bonuses (regen, max health, damage multiplier).

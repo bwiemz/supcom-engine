@@ -1078,10 +1078,6 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.size_z_);
     w.f32v(u.average_density_);
     w.u8v(u.vet_level_);
-    w.f32v(u.vet_xp_);
-    for (f32 t : u.vet_thresholds_) w.f32v(t);
-    w.f32v(u.damage_multiplier_);
-    w.f32v(u.xp_value_);
     w.size(u.damage_contributions_.size());
     for (const auto& [id, dmg] : u.damage_contributions_) {
         w.u32v(id);
@@ -1412,10 +1408,6 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.size_z_ = r.f32v();
     u.average_density_ = r.f32v();
     u.vet_level_ = r.u8v();
-    u.vet_xp_ = r.f32v();
-    for (f32& t : u.vet_thresholds_) t = r.f32v();
-    u.damage_multiplier_ = r.f32v();
-    u.xp_value_ = r.f32v();
     u.damage_contributions_.resize(r.size(8));
     for (auto& [id, dmg] : u.damage_contributions_) {
         id = r.u32v();
