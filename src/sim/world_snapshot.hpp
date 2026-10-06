@@ -115,6 +115,12 @@ struct EntityRecord {
     bool is_dying = false;
     f32 fuel_ratio = -1;
     f32 shield_ratio = 0;
+    // Its lifebar (Unit::LifeBar), and what keeps it off
+    f32 life_bar_size = 0, life_bar_height = 0, life_bar_offset = 0;
+    bool life_bar_render = true;
+    bool hide_lifebars = false;
+    bool being_upgraded = false; ///< unit state BeingUpgraded
+    bool attached = false;       ///< on a transport (Moho's IsBusy)
     f32 build_rate = 0;
     u32 creator_id = 0;
     f32 mass_produced = 0, energy_produced = 0;   ///< per second, when producing

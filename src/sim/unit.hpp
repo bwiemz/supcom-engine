@@ -620,6 +620,18 @@ public:
     }
 
     // Shield ratio (health bar, set by shield's UpdateShieldRatio)
+    /// Its blueprint's lifebar (REntityBlueprint's LifeBarSize, LifeBarHeight
+    /// and LifeBarOffset in world units, 0 for the console's default;
+    /// LifeBarRender; Display.HideLifebars).
+    struct LifeBar {
+        f32 size = 0.0f;
+        f32 height = 0.0f;
+        f32 offset = 0.0f;
+        bool render = true;
+        bool hide = false;
+    };
+    const LifeBar& life_bar() const { return life_bar_; }
+    void set_life_bar(const LifeBar& bar) { life_bar_ = bar; }
     f32 shield_ratio() const { return shield_ratio_; }
     void set_shield_ratio(f32 r) { shield_ratio_ = r; }
 
@@ -1365,6 +1377,7 @@ private:
     // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's
     // SSTIUnitVariableData (the UI shows a shield bar above 0).
     f32 shield_ratio_ = 0.0f;
+    LifeBar life_bar_;
     // Bone visibility
     std::unordered_set<i32> hidden_bones_;
     // Animated bone matrices (identity = no deformation)

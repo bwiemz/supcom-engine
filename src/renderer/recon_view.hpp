@@ -41,6 +41,12 @@ public:
     /// what the last saw.
     void set_focus_army(i32 army);
     i32 focus_army() const { return focus_; }
+    /// Whether `army` is the player's or an ally's (every army is, to an
+    /// observer), as of the last update.
+    bool friendly(i32 army) const {
+        return focus_ < 0 || army == focus_ ||
+               (army >= 0 && army < 32 && (allies_ >> army & 1u) != 0);
+    }
 
     /// Bring the sights up to the view's newest tick (a tick seen already is
     /// skipped). `flushes`, the FlushIntelInRects since the last update:

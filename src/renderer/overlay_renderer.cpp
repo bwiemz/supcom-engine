@@ -208,6 +208,145 @@ void OverlayRenderer::emit_outline(const std::array<f32, 4>& xs, const std::arra
     }
 }
 
+namespace {
+
+/// Moho's lifebar console defaults (faf-re CWldSession.cpp): ui_LifebarWidth,
+/// ui_lifebarHeight and ui_LifebarOffset in world units, ui_LifebarLOD the
+/// zoom bars show below, and the ui_LifeBar*/ui_*BarColor colours.
+constexpr f32 kLifebarWidth = 1.5f;
+constexpr f32 kLifebarHeight = 0.125f;
+constexpr f32 kLifebarOffset = 0.1f;
+constexpr f32 kLifebarLod = 200.0f;
+constexpr f32 kLifebarRowGap = 2.0f;
+constexpr f32 kLifebarMinFill = 2.0f;
+constexpr u32 kLifebarBackdrop = 0xFF000000u;
+constexpr u32 kLifeBarGood = 0xFF00FF00u;
+constexpr u32 kLifeBarMed = 0xFFFFFF00u;
+constexpr u32 kLifeBarBad = 0xFFFF0000u;
+constexpr f32 kLifeBarGoodCutoff = 0.75f;
+constexpr f32 kLifeBarBadCutoff = 0.25f;
+constexpr u32 kFuelBar = 0xFFF4EC4Du;
+constexpr u32 kFuelWarning = 0xFFFF0000u;
+constexpr u32 kShieldBar = 0xFF00C3F7u;
+constexpr u32 kProgressBar = 0xFFFF9900u;
+constexpr f32 kFuelEmptyBlinkRate = 0.1f;
+
+} // namespace
+
+void OverlayRenderer::emit_argb(f32 left, f32 top, f32 right, f32 bottom, u32 argb) {
+    emit_quad(left, top, right - left, bottom - top, static_cast<f32>((argb >> 16) & 0xFF) / 255.0f,
+              static_cast<f32>((argb >> 8) & 0xFF) / 255.0f, static_cast<f32>(argb & 0xFF) / 255.0f,
+              static_cast<f32>((argb >> 24) & 0xFF) / 255.0f);
+}
+
+void OverlayRenderer::emit_lifebars(const sim::EntityRecord& e, const sim::Vector3& pos,
+                                    const Camera& camera, const std::array<f32, 16>& vp, f32 sw,
+                                    f32 sh, f64 sim_time) {
+    // Who gets bars (CWldSession::RenderStrategicIcons): zoomed in closer
+    // than ui_LifebarLOD, not dead, its blueprint's LifeBarRender; the
+    // player's and allies' units, another's only while hovered (its health
+    // known: the caller drew only seen ones); none for a unit being upgraded
+    // (the upgrade's own progress shows), one on a transport, or one whose
+    // Display.HideLifebars.
+    if (!unit_bars_ || camera.zoom() >= kLifebarLod || e.is_dying || !e.life_bar_render) return;
+    const bool friendly = !recon_ || recon_->friendly(e.army);
+    if (!friendly && e.id != hovered_) return;
+    if (e.being_upgraded || e.attached || e.hide_lifebars) return;
+
+    // Its size in world units at its own depth, so bars shrink as the
+    // camera pulls back; the stack hangs below the unit along the camera's
+    // up axis by its blueprint's LifeBarOffset (DrawUnitLifebars).
+    const auto view = camera.view();
+    const f32 right[3] = {view[0], view[4], view[8]};
+    const f32 up[3] = {view[1], view[5], view[9]};
+    f32 cx = 0, cy = 0, rx = 0, ry = 0;
+    if (!world_to_screen(pos.x, pos.y, pos.z, vp, sw, sh, cx, cy) ||
+        !world_to_screen(pos.x + right[0], pos.y + right[1], pos.z + right[2], vp, sw, sh, rx,
+                         ry)) {
+        return;
+    }
+    const f32 px_per_unit = std::hypot(rx - cx, ry - cy);
+    const f32 bar_w = px_per_unit * (e.life_bar_size > 0 ? e.life_bar_size : kLifebarWidth);
+    const f32 bar_h = px_per_unit * (e.life_bar_height > 0 ? e.life_bar_height : kLifebarHeight);
+    const f32 drop = e.life_bar_offset + kLifebarOffset;
+    f32 ax = 0, ay = 0;
+    if (!world_to_screen(pos.x - up[0] * drop, pos.y - up[1] * drop, pos.z - up[2] * drop, vp, sw,
+                         sh, ax, ay)) {
+        return;
+    }
+    ax = std::floor(ax);
+    ay = std::floor(ay);
+    const f32 left = ax - bar_w * 0.5f;
+    const f32 right_edge = left + bar_w;
+    const f32 top = ay - bar_h * 0.5f;
+
+    f32 health = e.max_health > 0 ? e.health / e.max_health : 1.0f;
+    if (!(health < 1.0f)) health = 1.0f;
+    if (health < 0.0f) health = 0.0f;
+    const u32 health_color = health > kLifeBarGoodCutoff  ? kLifeBarGood
+                             : health > kLifeBarBadCutoff ? kLifeBarMed
+                                                          : kLifeBarBad;
+
+    // Rows two and three: a shield's, then fuel (or, with no fuel at all,
+    // work progress); without a shield, one row of whichever of fuel and
+    // work progress is further along. Empty fuel blinks in the warning
+    // colour, full.
+    constexpr f32 kNoFuel = -1.0f;
+    const bool blink = std::fmod(sim_time * kFuelEmptyBlinkRate, 1.0) > 0.5;
+    f32 second = 0, third = 0;
+    u32 second_color = 0, third_color = 0;
+    if (e.is_unit) {
+        if (e.shield_ratio > 0) {
+            second_color = kShieldBar;
+            second = e.shield_ratio;
+            if (!(e.fuel_ratio > kNoFuel)) {
+                third_color = kProgressBar;
+                third = e.work_progress;
+            } else {
+                third_color = kFuelBar;
+                third = e.fuel_ratio;
+                if (!(e.fuel_ratio > 0.0f) && blink) {
+                    third_color = kFuelWarning;
+                    third = 1.0f;
+                }
+            }
+        } else {
+            if (e.fuel_ratio > e.work_progress) {
+                second_color = kFuelBar;
+                second = e.fuel_ratio;
+            } else {
+                second_color = kProgressBar;
+                second = e.work_progress;
+            }
+            if (e.fuel_ratio > kNoFuel && !(e.fuel_ratio > 0.0f) && blink) {
+                second_color = kFuelWarning;
+                second = 1.0f;
+            }
+        }
+        second = std::clamp(second, 0.0f, 1.0f);
+        third = std::clamp(third, 0.0f, 1.0f);
+    }
+
+    const f32 second_top = top + bar_h + kLifebarRowGap;
+    const f32 third_top = second_top + bar_h + kLifebarRowGap;
+    emit_argb(left, top, right_edge, top + bar_h, kLifebarBackdrop);
+    if (second > 0) {
+        emit_argb(left, second_top, right_edge, second_top + bar_h, kLifebarBackdrop);
+        if (third > 0) emit_argb(left, third_top, right_edge, third_top + bar_h, kLifebarBackdrop);
+    }
+    // The fills, inset a pixel
+    const f32 track = bar_w - 1.0f;
+    const f32 fill_h = std::max(kLifebarMinFill, (bar_h - kLifebarRowGap) + 1.0f);
+    emit_argb(left + 1.0f, top + 1.0f, left + health * track, top + fill_h, health_color);
+    if (second > 0) {
+        emit_argb(left + 1.0f, second_top + 1.0f, left + second * track, second_top + fill_h,
+                  second_color);
+        if (third > 0)
+            emit_argb(left + 1.0f, third_top + 1.0f, left + third * track, third_top + fill_h,
+                      third_color);
+    }
+}
+
 void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& events,
                              const Camera& camera, const std::array<f32, 16>& vp_matrix,
                              const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
@@ -355,59 +494,11 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy))
             continue;
 
-        // --- Health bar ---
-        // Only show if damaged or selected
-        f32 hp_frac = (entity.max_health > 0)
-                          ? entity.health / entity.max_health
-                          : 1.0f;
-        if (unit_bars_ && (hp_frac < 0.999f || is_selected)) {
-            constexpr f32 BAR_W = 40.0f;
-            constexpr f32 BAR_H = 4.0f;
-            constexpr f32 BAR_Y_OFFSET = 20.0f; // pixels above unit center
-
-            f32 bar_x = sx - BAR_W * 0.5f;
-            f32 bar_y = sy - BAR_Y_OFFSET;
-
-            // Background (dark)
-            emit_quad(bar_x, bar_y, BAR_W, BAR_H, 0.1f, 0.1f, 0.1f, 0.7f);
-
-            // Fill (green → yellow → red based on health)
-            f32 fill_w = BAR_W * std::clamp(hp_frac, 0.0f, 1.0f);
-            f32 hr = (hp_frac < 0.5f) ? 1.0f : 1.0f - (hp_frac - 0.5f) * 2.0f;
-            f32 hg = (hp_frac < 0.5f) ? hp_frac * 2.0f : 1.0f;
-            if (fill_w > 0.5f)
-                emit_quad(bar_x, bar_y, fill_w, BAR_H, hr, hg, 0.0f, 0.9f);
-        }
-
-        // --- Build progress indicator (for units being built OR actively building) ---
+        // --- Lifebars (Moho's lifebar pass) ---
+        emit_lifebars(entity, pos, camera, vp_matrix, sw, sh,
+                      static_cast<f64>(snap.tick) + static_cast<f64>(view.alpha()));
         const sim::EntityRecord* unit = &entity;
-        if (unit_bars_ && unit->is_being_built && entity.fraction_complete < 0.999f) {
-            // Unit under construction: blue progress bar below health bar
-            constexpr f32 BP_W = 40.0f;
-            constexpr f32 BP_H = 3.0f;
-            constexpr f32 BP_Y_OFFSET = 14.0f; // pixels above center (below health bar)
-            f32 bp_x = sx - BP_W * 0.5f;
-            f32 bp_y = sy - BP_Y_OFFSET;
-            f32 bp_frac = std::clamp(entity.fraction_complete, 0.0f, 1.0f);
-
-            emit_quad(bp_x, bp_y, BP_W, BP_H, 0.1f, 0.1f, 0.15f, 0.7f);
-            f32 bp_fill = BP_W * bp_frac;
-            if (bp_fill > 0.5f)
-                emit_quad(bp_x, bp_y, bp_fill, BP_H, 0.3f, 0.6f, 1.0f, 0.9f);
-        } else if (unit_bars_ && unit->is_building() && cam_dist < 400.0f) {
-            // Builder actively constructing: small yellow indicator below health bar
-            constexpr f32 BI_W = 30.0f;
-            constexpr f32 BI_H = 3.0f;
-            constexpr f32 BI_Y_OFFSET = 14.0f;
-            f32 bi_x = sx - BI_W * 0.5f;
-            f32 bi_y = sy - BI_Y_OFFSET;
-            f32 wp = std::clamp(unit->work_progress, 0.0f, 1.0f);
-
-            emit_quad(bi_x, bi_y, BI_W, BI_H, 0.1f, 0.1f, 0.05f, 0.6f);
-            f32 bi_fill = BI_W * wp;
-            if (bi_fill > 0.5f)
-                emit_quad(bi_x, bi_y, bi_fill, BI_H, 1.0f, 0.85f, 0.2f, 0.8f);
-        }
+        f32 hp_frac = (entity.max_health > 0) ? entity.health / entity.max_health : 1.0f;
 
         // --- Veterancy indicators (gold chevrons above health bar) ---
         if (unit_bars_ && unit->vet_level > 0 && cam_dist < 400.0f &&

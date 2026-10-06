@@ -1041,6 +1041,38 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             lua_pop(L, 2); // pop Intel (or nil) + bp table
         }
 
+        // Its lifebar, as the strategic view draws it
+        {
+            store->push_lua_table(*entry, L);
+            const int bp = lua_gettop(L);
+            sim::Unit::LifeBar bar;
+            const auto number = [&](const char* key) {
+                lua_pushstring(L, key);
+                lua_rawget(L, bp);
+                const f32 v =
+                    lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            bar.size = number("LifeBarSize");
+            bar.height = number("LifeBarHeight");
+            bar.offset = number("LifeBarOffset");
+            lua_pushstring(L, "LifeBarRender");
+            lua_rawget(L, bp);
+            bar.render = lua_isnil(L, -1) || lua_toboolean(L, -1);
+            lua_pop(L, 1);
+            lua_pushstring(L, "Display");
+            lua_rawget(L, bp);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "HideLifebars");
+                lua_rawget(L, -2);
+                bar.hide = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2); // Display, bp
+            unit->set_life_bar(bar);
+        }
+
         // Physics.MotionType → layer override (for pathfinding)
         {
             store->push_lua_table(*entry, L);

@@ -2798,6 +2798,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     {
         PROFILE_ZONE("Render::overlay_update");
         const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
+        overlay_renderer_.set_hovered(hovered_);
         overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
                                  window_width_, window_height_, game_result, frame_dt_, &frustum,
                                  ghost);
