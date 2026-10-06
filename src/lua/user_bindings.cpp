@@ -1277,6 +1277,9 @@ static int l_IsKeyDown(lua_State* L) {
         keys.push_back(static_cast<int>(luaL_checknumber(L, 1)));
     }
     auto* r = get_renderer(L);
+    if (auto* reg = get_ui_registry(L); reg && reg->key_down_blocked()) {
+        r = nullptr;
+    }
     bool down = false;
     for (int key : keys) {
         down = down || (r && r->is_key_pressed(key));

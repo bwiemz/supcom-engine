@@ -629,7 +629,7 @@ void Camera::update(GLFWwindow* window, f64 dt) {
         frame(dt);
         return;
     }
-    // Moho's MAUI_KeyIsDown: no key while a control has the keyboard
+    // Moho's MAUI_KeyIsDown: no key while the focused control blocks them
     const auto key = [&](int k) { return keys_enabled_ && glfwGetKey(window, k) == GLFW_PRESS; };
     CameraInput in;
     in.up = key(GLFW_KEY_UP);

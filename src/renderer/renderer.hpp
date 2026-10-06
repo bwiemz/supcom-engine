@@ -161,6 +161,7 @@ public:
 
     /// Check if a GLFW key is currently pressed.
     bool is_key_pressed(int glfw_key) const;
+    void set_ui_keys_blocked(bool blocked) { ui_keys_blocked_ = blocked; }
 
     /// The FA technique (mesh.fx) that draws a blueprint's mesh (M211b).
     MeshTechnique mesh_technique(const std::string& blueprint_id, lua_State* L);
@@ -759,6 +760,7 @@ private:
     const map::Terrain* terrain_ = nullptr;
     BeamRenderer beam_renderer_;
     CommandGraphRenderer command_graph_renderer_;
+    bool ui_keys_blocked_ = false;
     SelectionRenderer selection_renderer_;
     u32 hovered_ = 0;
     std::optional<std::array<sim::Vector3, 4>> drag_box_;
