@@ -1,6 +1,5 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 AimsStraightOnDisable
-AttackAngle
 AutoLandTime
 BankFactor
 BankForward
@@ -48,7 +47,6 @@ RaisedPlatforms
 ReTargetOnMiss
 RebuildBonusIds
 RepairRate
-RotateBodyWhileMoving
 RotationalVelocity
 Scrolling
 SelectionCenterOffsetY
@@ -60,8 +58,6 @@ ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette
 SinkLower
-SlavedToBody
-SlavedToBodyArcRange
 SpawnRandomRotation
 StandUpright
 StartTurnDistance
@@ -70,7 +66,6 @@ StopOnPrimaryWeaponBusy
 StraddleWater
 StrategicIconSize
 TargetBones
-TurnFacingRate
 UseFiringSolutionInsteadOfAimBone
 UseOOBTestZoom
 WobbleFactor

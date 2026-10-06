@@ -105,6 +105,9 @@ struct UnitCommand {
     /// its EngageDistance, and flies its runs now (runtime state; Moho's
     /// desired target, set until the order ends).
     bool engaged = false;
+    /// A parked attack's ticks until it next asks its unit to face its target
+    /// AttackAngle off (Moho's attack task returns 10). Runtime state.
+    i32 facing_clock = 0;
     /// A build's site skirt, looked up once from its blueprint (runtime
     /// state; 0 until then).
     f32 site_skirt_x = 0;

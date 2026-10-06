@@ -435,6 +435,19 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         nav_update(dt, ctx.terrain);
     } else {
         navigator_.abort_move();
+        // Parked, every 9 ticks it asks to face its target AttackAngle off
+        // the bow (Moho's attack task, Complete: SetFacing, return 10).
+        if (attack_angle_ > 0.0f) {
+            if (cmd.facing_clock <= 0) {
+                constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+                const f32 heading = attack_angle_heading(
+                    osc::dmath::atan2(dx, dz), quat_yaw(orientation()), attack_angle_ * kDegToRad);
+                attack_facing_ = {osc::dmath::sin(heading), 0.0f, osc::dmath::cos(heading)};
+                cmd.facing_clock = 8;
+            } else {
+                --cmd.facing_clock;
+            }
+        }
     }
     return OrderStep::Hold; // Stay on this command
 }

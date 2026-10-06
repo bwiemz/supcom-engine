@@ -539,6 +539,8 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
+    // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
+    face_weapons_work(dt, ctx.registry);
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
 
     // A sub dives or surfaces, moving or not (M206o).
@@ -2213,7 +2215,11 @@ void Unit::update_motion_horz(lua_State* L) {
         // From its speed: at rest, braking to a halt, at full speed, or on
         // the way up to it.
         const f32 speed = std::abs(ground_speed_);
-        if (speed <= 1e-3f) next = MotionHorz::Stopped;
+        // A turn in place is a move (Moho's ProcessCommonMotionState): it
+        // starts as Cruise, goes on as Stopping, and ends Stopped.
+        if (speed <= 1e-3f && turned_in_place_)
+            next = motion_horz_ == MotionHorz::Stopped ? MotionHorz::Cruise : MotionHorz::Stopping;
+        else if (speed <= 1e-3f) next = MotionHorz::Stopped;
         else if (target_speed_ <= 1e-3f) next = MotionHorz::Stopping;
         else if (speed >= 0.99f * top_speed_) next = MotionHorz::TopSpeed;
         else next = MotionHorz::Cruise;
@@ -2305,10 +2311,20 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
         drive_.max_brake > 0 ? drive_.max_brake * accel_mult_ * step : std::abs(ground_speed_);
     ground_speed_ = ground_speed_ > 0 ? std::max(0.0f, ground_speed_ - brake)
                                       : std::min(0.0f, ground_speed_ + brake);
-    const f32 heading = quat_yaw(orientation());
+    // Along the way it was going (last tick's velocity), as Moho brakes the
+    // velocity vector: its hull may turn under it now, to its weapons' work
+    // (face_weapons_work), and braking along the hull curved the stop.
     Vector3 p = position();
-    p.x += osc::dmath::sin(heading) * ground_speed_ * step;
-    p.z += osc::dmath::cos(heading) * ground_speed_ * step;
+    const f32 travel = std::sqrt(velocity_.x * velocity_.x + velocity_.z * velocity_.z);
+    if (travel > 1e-4f) {
+        const f32 along = std::abs(ground_speed_) * step / travel;
+        p.x += velocity_.x * along;
+        p.z += velocity_.z * along;
+    } else {
+        const f32 heading = quat_yaw(orientation());
+        p.x += osc::dmath::sin(heading) * ground_speed_ * step;
+        p.z += osc::dmath::cos(heading) * ground_speed_ * step;
+    }
     if (terrain) p.y = ground_y(terrain, p.x, p.z);
     set_position(p);
 }
