@@ -481,4 +481,24 @@ void AimManipulator::apply_pose(PoseLocals& pose) {
     if (pitch_bone_ >= 0) pose.rotate(pitch_bone_, quat_axis_angle('x', -pitch_));
 }
 
+// ---------------------------------------------------------------------------
+// BoneEntityManipulator
+// ---------------------------------------------------------------------------
+
+void BoneEntityManipulator::apply_pose(PoseLocals& pose) {
+    const Entity* target = sim_ ? sim_->entity_registry().find(target_id_) : nullptr;
+    if (!owner_ || !target || target->destroyed()) {
+        pose.set_model(bone_index_, {{0.0f, -10000.0f, 0.0f}, Quaternion{}});
+        return;
+    }
+    const BonePose world =
+        target->is_unit() ? static_cast<const Unit*>(target)->bone_world_transform(target_bone_)
+                          : BonePose{target->position(), target->orientation()};
+    const BonePose model = pose_relative({owner_->position(), owner_->orientation()}, world);
+    const BoneData* bd = owner_->bone_data();
+    const f32 s = bd && bd->model_scale > 0.0f ? bd->model_scale : 1.0f;
+    pose.set_model(bone_index_, {{model.position.x / s, model.position.y / s, model.position.z / s},
+                                 model.rotation});
+}
+
 } // namespace osc::sim
