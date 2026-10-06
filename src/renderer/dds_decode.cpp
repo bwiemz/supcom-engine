@@ -1,4 +1,7 @@
 #include "renderer/dds_decode.hpp"
+#include "renderer/dds_parser.hpp"
+
+#include <utility>
 
 #include <cstring>
 
@@ -150,6 +153,26 @@ std::vector<u8> decode_bc3_to_rgba(const u8* block_data, u32 width, u32 height) 
     }
 
     return pixels;
+}
+
+std::optional<std::vector<u8>> dds_to_rgba(const std::vector<char>& file, u32& width, u32& height) {
+    const auto dds = parse_dds(file);
+    if (!dds || dds->mips.empty()) return std::nullopt;
+    const DDSMipLevel& top = dds->mips.front();
+    width = top.width;
+    height = top.height;
+    const auto* bytes = reinterpret_cast<const u8*>(top.data);
+    const size_t n = static_cast<size_t>(width) * height * 4;
+    if (dds->format == VK_FORMAT_B8G8R8A8_UNORM || dds->format == VK_FORMAT_R8G8B8A8_UNORM) {
+        if (top.size < n) return std::nullopt;
+        std::vector<u8> rgba(bytes, bytes + n);
+        if (dds->format == VK_FORMAT_B8G8R8A8_UNORM)
+            for (size_t i = 0; i < n; i += 4) std::swap(rgba[i], rgba[i + 2]);
+        return rgba;
+    }
+    if (dds->format == VK_FORMAT_BC3_UNORM_BLOCK || dds->format == VK_FORMAT_BC3_SRGB_BLOCK)
+        return decode_bc3_to_rgba(bytes, width, height);
+    return std::nullopt;
 }
 
 } // namespace osc::renderer

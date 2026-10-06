@@ -162,3 +162,39 @@ TEST_CASE("zero_dds_channels leaves compressed files alone", "[dds]") {
     CHECK_FALSE(osc::renderer::zero_dds_channels(f, all));
     CHECK(f == before);
 }
+
+TEST_CASE("dds_to_rgba: an uncompressed cursor's pixels, red and blue in RGBA order",
+          "[dds_decode]") {
+    // FA's cursors are 32 x 32 A8R8G8B8 (bytes B, G, R, A); here 2 x 2.
+    std::vector<char> d(128 + 2 * 2 * 4, 0);
+    const auto put = [&](size_t offset, osc::u32 v) { std::memcpy(d.data() + offset, &v, 4); };
+    std::memcpy(d.data(), "DDS ", 4);
+    put(4, 124);
+    put(12, 2); // height
+    put(16, 2); // width
+    put(76, 32);
+    put(80, 0x40 | 0x1); // DDPF_RGB | DDPF_ALPHAPIXELS
+    put(88, 32);
+    put(92, 0x00FF0000);
+    put(96, 0x0000FF00);
+    put(100, 0x000000FF);
+    put(104, 0xFF000000);
+    const unsigned char texels[16] = {10, 20, 30, 40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13};
+    std::memcpy(d.data() + 128, texels, sizeof(texels));
+    osc::u32 w = 0;
+    osc::u32 h = 0;
+    const auto rgba = osc::renderer::dds_to_rgba(d, w, h);
+    REQUIRE(rgba);
+    CHECK(w == 2);
+    CHECK(h == 2);
+    REQUIRE(rgba->size() == 16);
+    CHECK((*rgba)[0] == 30); // R
+    CHECK((*rgba)[1] == 20); // G
+    CHECK((*rgba)[2] == 10); // B
+    CHECK((*rgba)[3] == 40); // A
+    CHECK((*rgba)[4] == 3);
+    CHECK((*rgba)[6] == 1);
+    // A truncated file gives nothing rather than reading past it.
+    d.resize(128 + 4);
+    CHECK_FALSE(osc::renderer::dds_to_rgba(d, w, h));
+}
