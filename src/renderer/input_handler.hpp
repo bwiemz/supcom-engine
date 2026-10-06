@@ -3,6 +3,7 @@
 #include <functional>
 
 #include "core/types.hpp"
+#include "renderer/command_graph_renderer.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/entity.hpp" // Vector3
 #include "sim/unit_command.hpp"
@@ -188,6 +189,12 @@ public:
     /// The unit under the cursor, of any army (0: none)
     u32 hovered() const { return hovered_; }
 
+    /// The order whose command graph waypoint is under the cursor, while
+    /// Shift shows the graph (0: none)
+    u32 hovered_command() const { return hovered_command_; }
+
+    std::vector<CommandGraphNode> command_graph_nodes() const;
+
     /// The shown unit whose box, turned with it, holds (wx, wz), or 0
     u32 unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
 
@@ -231,6 +238,7 @@ private:
     f32 drag_world_x1_ = 0, drag_world_z1_ = 0;
     std::array<sim::Vector3, 4> drag_quad_{};
     u32 hovered_ = 0;
+    u32 hovered_command_ = 0;
     static constexpr f32 DRAG_THRESHOLD = 5.0f; // pixels before drag starts
     std::optional<std::array<f32, 4>> build_line_;
     f32 snap_radius_ = 4.0f;

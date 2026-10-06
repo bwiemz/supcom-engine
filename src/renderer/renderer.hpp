@@ -210,6 +210,7 @@ public:
     const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
+    void set_command_highlight(u32 command_id) { highlight_command_ = command_id; }
     void set_selection_marks(u32 hovered, std::optional<std::array<sim::Vector3, 4>> drag) {
         hovered_ = hovered;
         drag_box_ = drag;
@@ -761,6 +762,7 @@ private:
     CommandGraphRenderer command_graph_renderer_;
     SelectionRenderer selection_renderer_;
     u32 hovered_ = 0;
+    u32 highlight_command_ = 0;
     std::optional<std::array<sim::Vector3, 4>> drag_box_;
     BeamBlueprintCache beam_bp_cache_;
     TrailRenderer trail_renderer_;

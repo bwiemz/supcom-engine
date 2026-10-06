@@ -110,6 +110,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     const bool mode_active = mode.mode == "build" || mode.mode == "order";
     cursor_world_.reset();
     hovered_ = 0;
+    hovered_command_ = 0;
     if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
         f32 wx = 0;
         f32 wz = 0;
@@ -118,6 +119,15 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             if (!dragging_) {
                 hovered_ = unit_under(sim, wx, wz);
             }
+        }
+        const bool graph_shown = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                                 renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+        if (graph_shown && !dragging_) {
+            hovered_command_ =
+                waypoint_under_cursor(waypoints_on_screen(command_graph_nodes(), renderer.camera(),
+                                                          static_cast<f32>(renderer.width()),
+                                                          static_cast<f32>(renderer.height())),
+                                      mx, my);
         }
     }
 
@@ -247,6 +257,13 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
         }
     }
     rmb_was_pressed_ = rmb;
+}
+
+std::vector<CommandGraphNode> InputHandler::command_graph_nodes() const {
+    static const CommandGraphStyle kStyle;
+    return renderer::command_graph_nodes(command_graph_paths(
+        view_, selected_.empty() ? nullptr : &selected_, player_army_,
+        [](sim::CommandType type) { return command_graph_key(type).empty() ? nullptr : &kStyle; }));
 }
 
 bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
