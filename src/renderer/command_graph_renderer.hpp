@@ -44,6 +44,8 @@ struct CommandGraphStyle {
     std::array<f32, 4> waypoint_selected_color{};
     f32 waypoint_scale = 1.0f;
     f32 waypoint_selected_scale = 1.0f;
+    std::array<f32, 4> waypoint_highlight_color{};
+    f32 waypoint_highlight_scale = 1.0f;
 };
 
 /// The entry `name` of the CommandGraphParams table at stack index
@@ -127,14 +129,32 @@ struct CommandGraphNode {
     f32 unit_scale = 1.0f;
     std::vector<u32> units;
     bool chosen = false;
+    bool highlighted = false;
     std::array<f32, 4> color{};
     f32 scale = 1.0f;
 };
 
 /// The paths' orders, a node each: at the mean of its units' targets, as
 /// big as the square root of its busier side's distinct legs
-/// (RecomputeDrawNodeOrientation, ui_CommandGraphMaxNodeUnits = 1)
-std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths);
+/// (RecomputeDrawNodeOrientation, ui_CommandGraphMaxNodeUnits = 1).
+/// Highlighted: order `highlight`'s, or one of `hovered_unit`'s
+/// (ResolveDrawNodeHighlightState).
+std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
+                                                  u32 highlight = 0, u32 hovered_unit = 0);
+
+struct WaypointOnScreen {
+    u32 command_id = 0;
+    f32 x = 0, y = 0;
+    f32 size_px = 0;
+    bool chosen = false;
+};
+
+std::vector<WaypointOnScreen> waypoints_on_screen(const std::vector<CommandGraphNode>& nodes,
+                                                  const Camera& camera, f32 width, f32 height);
+
+/// The order whose waypoint is under (mx, my), as Moho's
+/// ResolveCursorHighlightCommandId picks it; 0 for none
+u32 waypoint_under_cursor(const std::vector<WaypointOnScreen>& waypoints, f32 mx, f32 my);
 
 /// Draws the army's units' order lines and waypoints as Moho's
 /// UICommandGraph does, while Shift is held: each leg a textured strip on
@@ -159,6 +179,11 @@ public:
                 u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
+
+    void set_highlight(u32 command_id, u32 hovered_unit) {
+        highlight_ = command_id;
+        hovered_unit_ = hovered_unit;
+    }
 
     /// A leg drawn this frame (tests read them)
     struct Leg {
@@ -199,6 +224,8 @@ private:
     std::unordered_map<std::string, CommandGraphStyle> styles_;
     std::unordered_map<std::string, std::array<f32, 6>> pads_;
     bool styles_read_ = false;
+    u32 highlight_ = 0;
+    u32 hovered_unit_ = 0;
 };
 
 } // namespace osc::renderer

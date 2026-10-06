@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
@@ -33,6 +34,8 @@ TEST_CASE("An order's style is its own, then its inherit_from's, then default's"
                 orderline_color = '3300ffff',
                 orderline_selected_color = 'dd00ffff',
                 waypoint_selected_color = '88ffffff',
+                waypoint_highlight_color = 'ffffffff',
+                waypoint_highlight_scale = 1.5,
             },
             default_AttackColors = {
                 orderline_color = '33ff0000',
@@ -70,6 +73,8 @@ TEST_CASE("An order's style is its own, then its inherit_from's, then default's"
     CHECK(tactical.line_selected_color[1] == Catch::Approx(0.0f));
     CHECK(tactical.line_texture == "/orderline_generic.dds");
     CHECK(tactical.waypoint_selected_color[3] == Catch::Approx(0x88 / 255.0f));
+    CHECK(tactical.waypoint_highlight_color[3] == Catch::Approx(1.0f));
+    CHECK(tactical.waypoint_highlight_scale == Catch::Approx(1.5f));
 
     const auto patrol = command_graph_style(L, params, "UNITCOMMAND_Patrol");
     CHECK(patrol.line_texture == "/orderline_arrow02.dds");
@@ -403,4 +408,77 @@ TEST_CASE("The snapshot names an order by the sim's id, one for the units given 
         CHECK(world.commands[0].command_id == world.commands[1].command_id);
     }
     lua_close(L);
+}
+
+TEST_CASE("The waypoint under the cursor is the nearest within its size, a selected one first",
+          "[renderer][command_graph]") {
+    using osc::renderer::waypoint_under_cursor;
+    using W = osc::renderer::WaypointOnScreen;
+    CHECK(waypoint_under_cursor({W{1, 100, 100, 3, false}}, 105, 100) == 1);
+    CHECK(waypoint_under_cursor({W{1, 100, 100, 3, false}}, 120, 100) == 0);
+    CHECK(waypoint_under_cursor({W{1, 100, 100, 30, false}}, 120, 100) == 1);
+    CHECK(waypoint_under_cursor({W{1, 100, 100, 300, false}}, 250, 100) == 0);
+    CHECK(waypoint_under_cursor({W{1, 100, 100, 3, false}, W{2, 104, 100, 3, false}}, 103, 100) ==
+          2);
+    CHECK(waypoint_under_cursor({W{1, 100, 100, 3, true}, W{2, 104, 100, 3, false}}, 103, 100) ==
+          1);
+    CHECK(waypoint_under_cursor({W{2, 104, 100, 3, false}, W{1, 100, 100, 3, true}}, 103, 100) ==
+          1);
+    CHECK(waypoint_under_cursor({}, 100, 100) == 0);
+}
+
+TEST_CASE("A waypoint is where the camera shows its node; an unnumbered one is not picked",
+          "[renderer][command_graph]") {
+    osc::renderer::Camera cam;
+    cam.set_viewport(1024.0f, 768.0f);
+    cam.init(256.0f, 256.0f);
+    osc::renderer::CommandGraphNode node;
+    node.order.command_id = 4;
+    node.position = {128, 0, 128};
+    osc::renderer::CommandGraphNode off = node;
+    off.order.command_id = 5;
+    off.position = {-5000, 0, 128};
+    osc::renderer::CommandGraphNode pending = node;
+    pending.order.command_id = 0;
+    const auto shown = osc::renderer::waypoints_on_screen({node, off, pending}, cam, 1024, 768);
+    REQUIRE(shown.size() == 1);
+    CHECK(shown[0].command_id == 4);
+    CHECK(shown[0].x == Catch::Approx(512.0f).margin(2.0f));
+    CHECK(shown[0].y == Catch::Approx(384.0f).margin(2.0f));
+    CHECK(osc::renderer::waypoint_under_cursor(shown, 514, 386) == 4);
+}
+
+TEST_CASE("The order under the cursor, and a hovered unit's, are drawn highlighted",
+          "[renderer][command_graph]") {
+    osc::sim::WorldSnapshot world;
+    for (osc::u32 id : {1u, 2u}) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = 0;
+        e.is_unit = true;
+        e.command_offset = static_cast<osc::u32>(world.commands.size());
+        e.command_count = 1;
+        osc::sim::CommandRecord move;
+        move.type = osc::sim::CommandType::Move;
+        move.command_id = 10 + id;
+        world.commands.push_back(move);
+        world.entities.push_back(e);
+    }
+    osc::renderer::CommandGraphStyle style;
+    style.waypoint_color = {1, 1, 1, 0.25f};
+    style.waypoint_highlight_color = {1, 1, 1, 1};
+    style.waypoint_highlight_scale = 2.0f;
+    const auto paths =
+        osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0,
+                                           [&](osc::sim::CommandType) { return &style; });
+    auto nodes = osc::renderer::command_graph_nodes(paths, 12, 0);
+    REQUIRE(nodes.size() == 2);
+    CHECK_FALSE(nodes[0].highlighted);
+    CHECK(nodes[0].color == style.waypoint_color);
+    CHECK(nodes[1].highlighted);
+    CHECK(nodes[1].color == style.waypoint_highlight_color);
+    CHECK(nodes[1].scale == 2.0f);
+    nodes = osc::renderer::command_graph_nodes(paths, 0, 1);
+    CHECK(nodes[0].highlighted);
+    CHECK_FALSE(nodes[1].highlighted);
 }
