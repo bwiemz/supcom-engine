@@ -19,6 +19,7 @@
 #include "sim/unit_command.hpp"
 
 extern "C" {
+#include <cmath>
 #include <lua.h>
 }
 
@@ -432,7 +433,7 @@ TEST_CASE("placement: a structure's skirt must be flat within MaxGroundVariation
 TEST_CASE("placement: a FlattenSkirt structure needs only its skirt's edge near its level",
           "[placement]") {
     // OCCUPY_CheckEdgeFlatness: the ring just outside the skirt, against the
-    // ceiling of the last point read, the level the ground is cut to.
+    // ceiling of its lowest point, the level the ground is cut to.
     LuaGuard g;
     SimState sim(g.L, nullptr);
     std::vector<osc::u16> heights((kMapSize + 1) * (kMapSize + 1), 1024); // 8.0
@@ -450,6 +451,26 @@ TEST_CASE("placement: a FlattenSkirt structure needs only its skirt's edge near 
     const osc::map::Terrain& t = *sim.terrain();
     CHECK(osc::sim::occupy_layers(t, rules("plain"), 20.0f, 20.0f) == 0);
     CHECK(osc::sim::occupy_layers(t, rules("flattened"), 20.0f, 20.0f) ==
+          osc::sim::placement_layer::Land);
+}
+
+TEST_CASE("placement: a FlattenSkirt structure goes on a gentle slope", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    std::vector<osc::u16> heights((kMapSize + 1) * (kMapSize + 1));
+    for (osc::u32 z = 0; z <= kMapSize; ++z) {
+        for (osc::u32 x = 0; x <= kMapSize; ++x) {
+            const float h = 20.25f + 0.06f * (static_cast<float>(x) - 20.0f) -
+                            0.06f * (static_cast<float>(z) - 20.0f);
+            heights[z * (kMapSize + 1) + x] = static_cast<osc::u16>(std::lround(h * 128.0f));
+        }
+    }
+    osc::map::Heightmap hm(kMapSize, kMapSize, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    PlacementRules r;
+    r.size_x = r.size_z = 4.0f;
+    r.flatten_skirt = true;
+    CHECK(osc::sim::occupy_layers(*sim.terrain(), r, 20.0f, 20.0f) ==
           osc::sim::placement_layer::Land);
 }
 

@@ -181,22 +181,20 @@ u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f3
     bool flat = false;
     if (r.flatten_skirt) {
         // OCCUPY_CheckEdgeFlatness: the ring of points just outside the
-        // skirt, against the ceiling of the last one read (the level the
-        // skirt is cut to).
-        f32 last = 0.0f;
+        // skirt, against the ceiling of its lowest (SupremeCommander.exe 0x5650B9).
         for (i32 gx = ix0 - 1; gx <= ix1 + 1; ++gx) {
             const f32 top = sample(gx, iz0 - 1);
-            last = sample(gx, iz1 + 1);
-            lo = std::min({lo, top, last});
-            hi = std::max({hi, top, last});
+            const f32 bottom = sample(gx, iz1 + 1);
+            lo = std::min({lo, top, bottom});
+            hi = std::max({hi, top, bottom});
         }
         for (i32 gz = iz0; gz <= iz1; ++gz) {
             const f32 left = sample(ix0 - 1, gz);
-            last = sample(ix1 + 1, gz);
-            lo = std::min({lo, left, last});
-            hi = std::max({hi, left, last});
+            const f32 right = sample(ix1 + 1, gz);
+            lo = std::min({lo, left, right});
+            hi = std::max({hi, left, right});
         }
-        const f32 pivot = std::ceil(last);
+        const f32 pivot = std::ceil(lo);
         flat = r.max_ground_variation >= std::max(hi - pivot, pivot - lo);
     } else {
         // OCCUPY_CheckAreaFlatness: every point the skirt covers.
