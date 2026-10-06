@@ -142,6 +142,32 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     if (cancel) cancel_factory_build(registry, L);
 }
 
+void Unit::remove_command(u32 id, EntityRegistry& registry, lua_State* L) {
+    const auto it = std::find_if(command_queue_.begin(), command_queue_.end(),
+                                 [&](const UnitCommand& c) { return c.command_id == id; });
+    if (it == command_queue_.end()) {
+        rally_orders_.erase(
+            std::remove_if(rally_orders_.begin(), rally_orders_.end(),
+                           [&](const UnitCommand& c) { return c.command_id == id; }),
+            rally_orders_.end());
+        return;
+    }
+    if (it != command_queue_.begin()) {
+        command_queue_.erase(it);
+        return;
+    }
+    const bool factory_build = building_factory_order();
+    const bool enhancing = it->type == CommandType::Enhance && is_enhancing();
+    command_queue_.pop_front();
+    navigator_.abort_move();
+    if (factory_build) {
+        cancel_factory_build(registry, L);
+    }
+    if (enhancing && !destroyed()) {
+        cancel_enhance(L);
+    }
+}
+
 void Unit::increase_build_count(int index, int count) {
     if (index < 1 || count < 1) return;
     // The group's last order, as factory_queue() groups them.

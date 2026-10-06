@@ -312,6 +312,16 @@ void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb)
     }
 }
 
+void remove_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* command = number_in(cb, "Command", 1, 4294967295.0);
+    if (!command) {
+        return;
+    }
+    for_each_unit(sim, cb, [&](Unit& u) {
+        u.remove_command(static_cast<u32>(*command), sim.entity_registry(), L);
+    });
+}
+
 void push_arg(lua_State* L, const SimCallbackArg& arg) {
     std::visit(
         [&](const auto& v) {
@@ -423,6 +433,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
     else if (cb.func_name == kPostLoadCallback) post_load(*this, L);
     else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
+    else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

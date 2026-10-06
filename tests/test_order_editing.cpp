@@ -282,3 +282,80 @@ TEST_CASE("An order with no place, or of no unit named, is left alone", "[order_
     w.sim->run_sim_callback(retarget(4, {a.entity_id()}, 30, 30));
     CHECK(b.command_queue().front().target_pos.x == 50.0f);
 }
+
+namespace {
+
+SimCallbackEntry removal(osc::u32 command, std::vector<osc::u32> units) {
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kRemoveCommandCallback;
+    cb.args["Command"] = static_cast<double>(command);
+    cb.unit_ids = std::move(units);
+    return cb;
+}
+
+std::vector<osc::u32> ids_of(const Unit& u) {
+    std::vector<osc::u32> ids;
+    for (const UnitCommand& c : u.command_queue()) {
+        ids.push_back(c.command_id);
+    }
+    return ids;
+}
+
+} // namespace
+
+TEST_CASE("Taking an order off a queue leaves the orders either side", "[order_edit]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(10, 20);
+    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    w.order(both, CommandType::Move, 60, 10);
+    w.order(both, CommandType::Move, 60, 60, false);
+    w.order(both, CommandType::Move, 10, 60, false);
+    w.ticks(2);
+    const auto before = ids_of(a);
+    REQUIRE(before.size() == 3);
+    w.sim->submit_callback(removal(before[1], both));
+    w.ticks(1);
+    CHECK(ids_of(a) == std::vector<osc::u32>{before[0], before[2]});
+    CHECK(ids_of(b) == std::vector<osc::u32>{before[0], before[2]});
+}
+
+TEST_CASE("Taking off the order under way sends the unit on to the next", "[order_edit]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    w.order({a.entity_id()}, CommandType::Move, 100, 10);
+    w.order({a.entity_id()}, CommandType::Move, 10, 60, false);
+    w.ticks(10);
+    const auto before = ids_of(a);
+    REQUIRE(before.size() == 2);
+    w.sim->submit_callback(removal(before[0], {a.entity_id()}));
+    w.ticks(300);
+    CHECK(distance(a, 10, 60) < 3.0f);
+    CHECK(a.position().x < 40.0f);
+}
+
+TEST_CASE("Another army's player can't take an order off", "[order_edit]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    w.order({a.entity_id()}, CommandType::Move, 100, 10);
+    w.ticks(2);
+    const auto before = ids_of(a);
+    w.sim->set_source_army(1, 1);
+    w.sim->schedule_callback(1, removal(before[0], {a.entity_id()}));
+    w.ticks(2);
+    CHECK(ids_of(a) == before);
+}
+
+TEST_CASE("A factory's rally order can be taken off", "[order_edit]") {
+    World w;
+    Unit& f = w.walker(10, 10);
+    UnitCommand rally;
+    rally.type = CommandType::Move;
+    rally.command_id = 8;
+    f.add_rally_order(rally);
+    rally.command_id = 9;
+    f.add_rally_order(rally);
+    w.sim->run_sim_callback(removal(8, {f.entity_id()}));
+    REQUIRE(f.rally_orders().size() == 1);
+    CHECK(f.rally_orders()[0].command_id == 9);
+}

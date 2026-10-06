@@ -45,6 +45,10 @@ inline constexpr const char* kPostLoadCallback = "__osc_PostLoad";
 /// gets entity `Target`, or the point X, Y, Z (unit_ids = its units).
 inline constexpr const char* kSetCommandTargetCallback = "__osc_SetCommandTarget";
 
+/// Func name of Moho's CMDST_RemoveCommandFromQueue: order `Command` off
+/// each named unit's queue (unit_ids).
+inline constexpr const char* kRemoveCommandCallback = "__osc_RemoveCommand";
+
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";
 
