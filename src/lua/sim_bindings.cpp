@@ -368,6 +368,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 // Two retail blueprints spell it BackupDistance.
                 drive.backup_distance = number("BackUpDistance", number("BackupDistance", 0));
                 drive.rotate_threshold = number("RotateOnSpotThreshold", 0.5f);
+                drive.turn_facing_rate = number("TurnFacingRate", 0) * kDegToRad;
                 lua_pushstring(L, "RotateOnSpot");
                 lua_rawget(L, physics);
                 drive.rotate_on_spot = lua_toboolean(L, -1) != 0;
@@ -520,7 +521,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                           std::pair{"AboveWaterFireOnly", &weapon->above_water_fire_only},
                           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
                           std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},
-                          std::pair{"CannotAttackGround", &weapon->cannot_attack_ground}}) {
+                          std::pair{"CannotAttackGround", &weapon->cannot_attack_ground},
+                          std::pair{"SlavedToBody", &weapon->slaved_to_body}}) {
                         lua_pushstring(L, field);
                         lua_gettable(L, we);
                         if (lua_isboolean(L, -1)) {
@@ -543,6 +545,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     lua_pop(L, 1);
                     for (auto [field, value] :
                          {std::pair{"FiringTolerance", &weapon->firing_tolerance},
+                          std::pair{"SlavedToBodyArcRange", &weapon->slaved_arc_range},
                           std::pair{"TrackingRadius", &weapon->tracking_radius},
                           std::pair{"HeadingArcCenter", &weapon->heading_arc_center},
                           std::pair{"HeadingArcRange", &weapon->heading_arc_range}}) {
@@ -918,6 +921,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                         number("GuardScanRadius", unit->guard_scan_radius()));
                     unit->set_guard_return_radius(
                         number("GuardReturnRadius", unit->guard_return_radius()));
+                    unit->set_attack_angle(number("AttackAngle", 0.0f));
                     lua_pushstring(L, "NeedUnpack");
                     lua_rawget(L, -2);
                     unit->set_need_unpack(lua_toboolean(L, -1) != 0);

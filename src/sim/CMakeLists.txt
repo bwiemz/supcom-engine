@@ -22,6 +22,7 @@ add_library(osc_sim STATIC
     unit_script_task.cpp
     lua_bytes.cpp
     unit_orders.cpp
+    unit_facing.cpp
     unit_patrol.cpp
     unit_staging.cpp
     unit_storage.cpp

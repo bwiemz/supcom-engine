@@ -539,6 +539,8 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
+    // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
+    face_weapons_work(dt, ctx.registry);
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
 
     // A sub dives or surfaces, moving or not (M206o).
@@ -2213,7 +2215,11 @@ void Unit::update_motion_horz(lua_State* L) {
         // From its speed: at rest, braking to a halt, at full speed, or on
         // the way up to it.
         const f32 speed = std::abs(ground_speed_);
-        if (speed <= 1e-3f) next = MotionHorz::Stopped;
+        // A turn in place is a move (Moho's ProcessCommonMotionState): it
+        // starts as Cruise, goes on as Stopping, and ends Stopped.
+        if (speed <= 1e-3f && turned_in_place_)
+            next = motion_horz_ == MotionHorz::Stopped ? MotionHorz::Cruise : MotionHorz::Stopping;
+        else if (speed <= 1e-3f) next = MotionHorz::Stopped;
         else if (target_speed_ <= 1e-3f) next = MotionHorz::Stopping;
         else if (speed >= 0.99f * top_speed_) next = MotionHorz::TopSpeed;
         else next = MotionHorz::Cruise;

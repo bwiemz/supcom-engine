@@ -312,6 +312,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.started);
     w.b(c.approached);
     w.b(c.engaged);
+    w.i32v(c.facing_clock);
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
     w.b(c.in_band);
@@ -352,6 +353,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.started = r.b();
     c.approached = r.b();
     c.engaged = r.b();
+    c.facing_clock = r.i32v();
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
     c.in_band = r.b();
@@ -481,6 +483,8 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.f32v(wp.tracking_radius);
     w.f32v(wp.heading_arc_center);
     w.f32v(wp.heading_arc_range);
+    w.b(wp.slaved_to_body);
+    w.f32v(wp.slaved_arc_range);
     w.str(wp.projectile_bp_id);
     w.str(wp.fire_control_label);
     w.b(wp.need_compute_bomb_drop);
@@ -556,6 +560,8 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.tracking_radius = r.f32v();
     wp.heading_arc_center = r.f32v();
     wp.heading_arc_range = r.f32v();
+    wp.slaved_to_body = r.b();
+    wp.slaved_arc_range = r.f32v();
     wp.projectile_bp_id = r.str();
     wp.fire_control_label = r.str();
     wp.need_compute_bomb_drop = r.b();
@@ -873,6 +879,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.guard_scan_radius_);
     w.b(u.need_unpack_);
     w.f32v(u.guard_return_radius_);
+    w.f32v(u.attack_angle_);
+    w.b(u.slaved_turning_);
+    w.vec3(u.attack_facing_);
+    w.b(u.turned_in_place_);
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
@@ -939,6 +949,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(d.rotate_threshold);
     w.f32v(d.max_speed_reverse);
     w.f32v(d.backup_distance);
+    w.f32v(d.turn_facing_rate);
     const Unit::LifeBar& bar = u.life_bar_;
     w.f32v(bar.size);
     w.f32v(bar.height);
@@ -1191,6 +1202,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.guard_scan_radius_ = r.f32v();
     u.need_unpack_ = r.b();
     u.guard_return_radius_ = r.f32v();
+    u.attack_angle_ = r.f32v();
+    u.slaved_turning_ = r.b();
+    u.attack_facing_ = r.vec3();
+    u.turned_in_place_ = r.b();
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
@@ -1262,6 +1277,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     d.rotate_threshold = r.f32v();
     d.max_speed_reverse = r.f32v();
     d.backup_distance = r.f32v();
+    d.turn_facing_rate = r.f32v();
     Unit::LifeBar& bar = u.life_bar_;
     bar.size = r.f32v();
     bar.height = r.f32v();
