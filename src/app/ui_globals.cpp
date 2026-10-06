@@ -11,6 +11,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <utility>
 #include <vector>
 
 namespace osc::app {
@@ -34,9 +35,9 @@ static int l_SessionIsReplay(lua_State* L) {
     return 1;
 }
 
-/// The game's options, the sim's ScenarioInfo.Options (a lobby's
-/// GameOptions, as Moho's are), copied into `L`; an empty table without.
-static void push_session_options(lua_State* L, const osc::sim::SimState& sim) {
+/// Push the sim's ScenarioInfo[`key`] (a lobby's GameOptions for Options, as
+/// Moho's are), copied into `L`; false, pushing nothing, without one.
+static bool push_sim_scenario_field(lua_State* L, const osc::sim::SimState& sim, const char* key) {
     lua_State* S = sim.lua_state();
     std::vector<osc::u8> bytes;
     if (S) {
@@ -44,34 +45,66 @@ static void push_session_options(lua_State* L, const osc::sim::SimState& sim) {
         lua_pushstring(S, "ScenarioInfo"); // raw: the sim's globals are strict
         lua_rawget(S, LUA_GLOBALSINDEX);
         if (lua_istable(S, -1)) {
-            lua_pushstring(S, "Options");
+            lua_pushstring(S, key);
             lua_rawget(S, -2);
-            if (lua_istable(S, -1)) bytes = osc::lua::encode_lobby_value(S, -1);
+            if (!lua_isnil(S, -1)) bytes = osc::lua::encode_lobby_value(S, -1);
         }
         lua_settop(S, top);
     }
-    if (bytes.empty() || !osc::lua::push_lobby_value(L, bytes) || !lua_istable(L, -1)) {
-        if (!bytes.empty()) lua_pop(L, 1);
-        lua_newtable(L);
-    }
+    if (bytes.empty()) return false;
+    if (osc::lua::push_lobby_value(L, bytes)) return true;
+    lua_pop(L, 1); // the nil a malformed copy pushes
+    return false;
 }
 
+/// Registry keys of the UI state's ScenarioInfo and the game it is for.
+constexpr const char* kScenarioInfoKey = "__osc_session_scenario_info";
+constexpr const char* kScenarioInfoGenKey = "__osc_session_scenario_info_gen";
+
+/// SessionGetScenarioInfo() for the UI: the session's ScenarioInfo, one
+/// table for the game as Moho's is -- FAF's UserSync writes the playable
+/// area into it, which its score board reads from the table it took at load.
 static int l_SessionGetScenarioInfo(lua_State* L) {
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
 
+    if (!sim || !sim->terrain()) {
+        lua_newtable(L);
+        return 1;
+    }
+    const auto generation = static_cast<lua_Number>(osc::sim::SimState::sim_generation());
+    lua_pushstring(L, kScenarioInfoGenKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool current = lua_isnumber(L, -1) && lua_tonumber(L, -1) == generation;
+    lua_pop(L, 1);
+    if (current) {
+        lua_pushstring(L, kScenarioInfoKey);
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (lua_istable(L, -1)) return 1;
+        lua_pop(L, 1);
+    }
+
     lua_newtable(L);
-    if (!sim || !sim->terrain()) return 1;
 
-    lua_pushstring(L, "name");
-    lua_pushstring(L, "Skirmish");
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "map");
-    lua_pushstring(L, "");
-    lua_rawset(L, -3);
+    // The scenario file's own fields, where the sim has them.
+    for (const auto& [key, fallback] : {std::pair{"name", "Skirmish"}, std::pair{"map", ""}}) {
+        lua_pushstring(L, key);
+        bool text = push_sim_scenario_field(L, *sim, key);
+        if (text && lua_type(L, -1) != LUA_TSTRING) {
+            lua_pop(L, 1);
+            text = false;
+        }
+        if (!text) lua_pushstring(L, fallback);
+        lua_rawset(L, -3);
+    }
+    for (const char* key : {"description", "type", "preview", "save", "script", "norushradius",
+                            "starts", "map_version"}) {
+        lua_pushstring(L, key);
+        if (push_sim_scenario_field(L, *sim, key)) lua_rawset(L, -3);
+        else lua_pop(L, 1);
+    }
 
     // {width, height}, as a scenario file gives it (retail indexes size[1],
     // size[2]: the world border, the map's km in the lobby's info).
@@ -93,9 +126,20 @@ static int l_SessionGetScenarioInfo(lua_State* L) {
 
     // Its options: retail's tabs reads Options.Timeouts in a network game
     lua_pushstring(L, "Options");
-    push_session_options(L, *sim);
+    bool options = push_sim_scenario_field(L, *sim, "Options");
+    if (options && !lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        options = false;
+    }
+    if (!options) lua_newtable(L);
     lua_rawset(L, -3);
 
+    lua_pushstring(L, kScenarioInfoKey);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, kScenarioInfoGenKey);
+    lua_pushnumber(L, generation);
+    lua_rawset(L, LUA_REGISTRYINDEX);
     return 1;
 }
 

@@ -352,6 +352,7 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
 
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
     osc::lua::register_user_bindings(ui_lua_state);
+    osc::lua::register_core_bindings(ui_lua_state);
 
     // Set root frame size to window dimensions (1600x900) so LazyVar layout
     // resolves correctly. Must happen BEFORE CreateUI() so FillParent etc. work.

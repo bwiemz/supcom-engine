@@ -517,6 +517,26 @@ const sim::WorldSnapshot* ui_world(lua_State* L) {
     return &world.snapshot;
 }
 
+int ui_is_destroyed(lua_State* L) {
+    bool destroyed = true;
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_c_entity_id");
+        lua_rawget(L, 1);
+        const bool unit = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (unit) {
+            destroyed = record(L) == nullptr;
+        } else {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, 1);
+            destroyed = lua_touserdata(L, -1) == nullptr;
+            lua_pop(L, 1);
+        }
+    }
+    lua_pushboolean(L, destroyed ? 1 : 0);
+    return 1;
+}
+
 // Moho's UserUnit methods (all of them; UserEntity adds none).
 // clang-format off
 const MethodEntry user_unit_methods[] = {

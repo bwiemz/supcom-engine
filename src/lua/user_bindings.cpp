@@ -3,6 +3,7 @@
 // and the UI's own orders (M191). They live apart from the Lua library, which
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
+#include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
 
 #include "lua/lua_state.hpp"
@@ -450,6 +451,13 @@ static int camera_Reset(lua_State* L) {
 /// camera:MoveTo(position, orientationHPR, zoom, seconds) and
 /// camera:SnapTo(position, orientationHPR, zoom): TargetManual, heading and
 /// pitch from the orientation, over the seconds (SnapTo's none)
+/// SetInvertMidMouseButton(flag): the middle button drags the ground the
+/// other way (FAF's options menu; Moho's UI_SetInvertMidMouseScrub).
+static int l_SetInvertMidMouseButton(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().set_invert_middle(lua_toboolean(L, 1) != 0);
+    return 0;
+}
+
 static int camera_MoveTo(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r) return 0;
@@ -1419,6 +1427,23 @@ void update_world_view_cursor(lua_State* L) {
 void register_user_bindings(LuaState& state) {
     lua_State* L = state.raw();
     // Globals of the UI state.
+    state.register_function("SetInvertMidMouseButton", l_SetInvertMidMouseButton);
+    state.register_function("IsDestroyed", ui_is_destroyed);
+    // FAF's engine/Library.lua: the engine's statistics tree, which it fills
+    // each frame (FAF's performance and logger modules read it; it is
+    // empty here), and the folder the executable is in.
+    lua_pushstring(L, "__EngineStats");
+    lua_newtable(L);
+    lua_pushstring(L, "Name");
+    lua_pushstring(L, "Root");
+    lua_rawset(L, -3);
+    lua_pushstring(L, "Children");
+    lua_newtable(L);
+    lua_rawset(L, -3);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "LaunchDir");
+    lua_pushstring(L, platform::executable_path().parent_path().string().c_str());
+    lua_rawset(L, LUA_GLOBALSINDEX);
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
     state.register_function("UnProject", l_UnProject);

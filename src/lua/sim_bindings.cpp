@@ -6115,6 +6115,29 @@ static int l_IssueFerry(lua_State* L) {
 // Registration
 // ====================================================================
 
+void register_core_bindings(LuaState& state) {
+    state.register_function("EulerToQuaternion", l_EulerToQuaternion);
+    state.register_function("OrientFromDir", l_OrientFromDir);
+    state.register_function("Vector", l_Vector);
+    state.register_function("Vector2", l_Vector2);
+    state.register_function("VDist3", l_VDist3);
+    state.register_function("VDist3Sq", l_VDist3Sq);
+    state.register_function("VDist2", l_VDist2);
+    state.register_function("VDist2Sq", l_VDist2Sq);
+    state.register_function("VAdd", l_VAdd);
+    state.register_function("VDiff", l_VDiff);
+    state.register_function("VMult", l_VMult);
+    state.register_function("VDot", l_VDot);
+    state.register_function("VPerpDot", l_VPerpDot);
+    state.register_function("MATH_IRound", l_MATH_IRound);
+    state.register_function("MATH_Lerp", l_MATH_Lerp);
+    // The game's alliances (the UI's state reads the sim it shows, as the
+    // sim's own does: both hold it under osc_sim_state)
+    state.register_function("IsAlly", l_IsAlly);
+    state.register_function("IsEnemy", l_IsEnemy);
+    state.register_function("IsNeutral", l_IsNeutral);
+}
+
 void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     lua_State* L = state.raw();
 
@@ -6238,22 +6261,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
                             l_EntityCategoryGetUnitList);
     state.register_function("EntityCategoryCount", l_EntityCategoryCount);
 
-    // Math / vector
-    state.register_function("EulerToQuaternion", l_EulerToQuaternion);
-    state.register_function("OrientFromDir", l_OrientFromDir);
-    state.register_function("Vector", l_Vector);
-    state.register_function("Vector2", l_Vector2);
-    state.register_function("VDist3", l_VDist3);
-    state.register_function("VDist3Sq", l_VDist3Sq);
-    state.register_function("VDist2", l_VDist2);
-    state.register_function("VDist2Sq", l_VDist2Sq);
-    state.register_function("VAdd", l_VAdd);
-    state.register_function("VDiff", l_VDiff);
-    state.register_function("VMult", l_VMult);
-    state.register_function("VDot", l_VDot);
-    state.register_function("VPerpDot", l_VPerpDot);
-    state.register_function("MATH_IRound", l_MATH_IRound);
-    state.register_function("MATH_Lerp", l_MATH_Lerp);
+    // Math / vector, and the alliance queries: Moho's Core functions
+    register_core_bindings(state);
     state.register_function("Random", l_Random);
     {
         // math.random/randomseed on the session's stream (see above).
@@ -6335,9 +6344,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetAllianceOneWay", l_SetAllianceOneWay);
     state.register_function("GenerateArmyStart", l_GenerateArmyStart);
     state.register_function("SetIgnorePlayableRect", l_SetIgnorePlayableRect);
-    state.register_function("IsAlly", l_IsAlly);
-    state.register_function("IsEnemy", l_IsEnemy);
-    state.register_function("IsNeutral", l_IsNeutral);
     state.register_function("SetCommandSource", stub_noop);
     // ArmyInitializePrebuiltUnits(army): the army's brain spawns the lobby's
     // prebuilt units (Moho runs its OnSpawnPreBuiltUnits).

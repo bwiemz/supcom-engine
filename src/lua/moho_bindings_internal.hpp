@@ -90,6 +90,10 @@ void push_user_unit(lua_State* L, u32 id, i32 army);
 /// The world as the UI sees it: the sim's current tick, captured the first
 /// time the UI asks after each tick (lua/bindings/ui/user_unit.cpp).
 const sim::WorldSnapshot* ui_world(lua_State* L);
+/// IsDestroyed(obj) in the UI state: Moho's rule -- true unless obj holds a
+/// live C object (a _c_object that isn't null, or a unit the UI's tick still
+/// shows). FAF's UI asks it of nil controls.
+int ui_is_destroyed(lua_State* L);
 f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
 void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
                          std::string lod_cutoff);

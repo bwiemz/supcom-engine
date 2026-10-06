@@ -230,6 +230,10 @@ public:
     void set_edge_scroll(bool on) { edge_scroll_ = on; }
     bool arrow_scroll() const { return arrow_scroll_; }
     void set_arrow_scroll(bool on) { arrow_scroll_ = on; }
+    /// SetInvertMidMouseButton: the middle button drags the ground the other
+    /// way (Moho negates its scrub deltas, UI_SetInvertMidMouseScrub).
+    void set_invert_middle(bool on) { invert_middle_ = on; }
+    bool invert_middle() const { return invert_middle_; }
     /// When false, the keys don't pan or spin: a UI control has the keyboard
     /// (Moho's MAUI_KeyIsDown is false while one has focus).
     void set_keys_enabled(bool enabled) { keys_enabled_ = enabled; }
@@ -309,6 +313,7 @@ private:
     f32 keyboard_rotate_accelerate_ = kKeyboardRotateAccelerate;
     bool edge_scroll_ = true;
     bool arrow_scroll_ = true;
+    bool invert_middle_ = false;
 
     // CameraImpl's lanes
     std::array<f32, 3> target_{512.0f, 0.0f, 512.0f}; ///< mTargetLocation

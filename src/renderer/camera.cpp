@@ -725,7 +725,7 @@ void Camera::apply(const CameraInput& in, f64 dt) {
     // The middle button drags the ground (CameraDragger), from over the
     // world; letting go turns a rotated view back
     if (in.middle && (dragging_ || mouse_enabled_)) {
-        if (dragging_) pan(dx, dy);
+        if (dragging_) pan(invert_middle_ ? -dx : dx, invert_middle_ ? -dy : dy);
         dragging_ = true;
     } else if (dragging_) {
         dragging_ = false;
