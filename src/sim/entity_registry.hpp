@@ -86,6 +86,11 @@ public:
     /// in ascending id order.
     std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
 
+    /// The live units within an axis-aligned rectangle, in ascending id
+    /// order: collect_in_rect's units, from the grid of units alone (as
+    /// units_in_radius, whose pointers' lifetime they share).
+    std::vector<Entity*> units_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
+
     /// Shapes reaching this far from their entity are found by the grid;
     /// larger ones (shields, experimentals) are kept on their own list.
     static constexpr f32 COLLIDER_REACH = 8.0f;

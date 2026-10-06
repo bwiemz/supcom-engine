@@ -34,11 +34,19 @@ struct PatrolBox {
                std::fabs(p.y - center.y) <= 100.0f;
     }
 
+    /// Every entity in the box's bounds, in id order.
     std::vector<u32> collect(const EntityRegistry& registry) const {
         const f32 reach_x = std::fabs(along_z) * half_width + std::fabs(along_x) * half_length;
         const f32 reach_z = std::fabs(along_x) * half_width + std::fabs(along_z) * half_length;
         return registry.collect_in_rect(center.x - reach_x, center.z - reach_z, center.x + reach_x,
                                         center.z + reach_z);
+    }
+    /// The live units in its bounds, in id order (from the grid of units).
+    std::vector<Entity*> units(const EntityRegistry& registry) const {
+        const f32 reach_x = std::fabs(along_z) * half_width + std::fabs(along_x) * half_length;
+        const f32 reach_z = std::fabs(along_x) * half_width + std::fabs(along_z) * half_length;
+        return registry.units_in_rect(center.x - reach_x, center.z - reach_z, center.x + reach_x,
+                                      center.z + reach_z);
     }
 };
 
@@ -185,12 +193,8 @@ Entity* Unit::best_enemy(const std::vector<Entity*>& candidates, f32 range, SimC
 Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
     const PatrolBox box = patrol_box(*this, cmd);
     std::vector<Entity*> candidates;
-    for (const u32 id : box.collect(ctx.registry)) {
-        Entity* e = ctx.registry.find(id);
-        if (e && !e->destroyed() && e->is_unit() && box.contains(e->position())) {
-            candidates.push_back(e);
-        }
-    }
+    for (Entity* e : box.units(ctx.registry))
+        if (box.contains(e->position())) candidates.push_back(e);
     return best_enemy(candidates, guard_scan_radius(), ctx);
 }
 
