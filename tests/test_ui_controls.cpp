@@ -214,6 +214,15 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
     CHECK(dispatch.hit_test(L, root, 720, 20) == control_of(L, "cell"));
     CHECK(dispatch.hit_test(L, root, 770, 70) == nullptr);
     CHECK(dispatch.hit_test(L, root, 795, 95) == nullptr);
+    // A control's own HitTest: its bounds, left and top in, right and bottom
+    // out (Moho's CMauiControl::HitTest), hidden or hit-test disabled alike
+    auto own = lua.do_string(R"(
+        assert(back:HitTest(0, 0) and back:HitTest(99, 99), 'inside')
+        assert(not back:HitTest(100, 50) and not back:HitTest(50, 100), 'right, bottom out')
+        assert(container:HitTest(250, 50), 'a disabled control still answers')
+    )");
+    INFO((own.ok() ? std::string() : own.error().message));
+    CHECK(own.ok());
 }
 
 TEST_CASE("Hiding a control hides its children, each told by OnHide, as Moho's", "[ui][lua]") {
