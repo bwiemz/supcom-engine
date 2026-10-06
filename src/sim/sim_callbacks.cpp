@@ -5,6 +5,7 @@
 #include "map/terrain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/collision.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -309,7 +310,11 @@ void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!lua_isfunction(L, -1)) return;
 
     lua_pushstring(L, cb.func_name.c_str());
-    if (cb.value) {
+    if (cb.lua_args) {
+        if (!push_lua_bytes(L, *cb.lua_args)) {
+            lua_pushnil(L);
+        }
+    } else if (cb.value) {
         push_arg(L, *cb.value);
     } else {
         lua_newtable(L);

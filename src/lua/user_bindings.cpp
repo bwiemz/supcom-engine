@@ -20,6 +20,7 @@
 #include "renderer/terrain_preview.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/category_expr.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
@@ -1251,37 +1252,14 @@ static int l_SimCallback(lua_State* L) {
         return 0;
     }
 
-    // Read Args field (table of key→value)
     lua_pushstring(L, "Args");
     lua_rawget(L, 1);
-    if (lua_istable(L, -1)) {
-        int args_tbl = lua_gettop(L);
-        lua_pushnil(L); // first key
-        while (lua_next(L, args_tbl) != 0) {
-            // key at -2, value at -1
-            if (lua_type(L, -2) == LUA_TSTRING) {
-                const char* key = lua_tostring(L, -2);
-                std::string key_str(key);
-                int vtype = lua_type(L, -1);
-                if (vtype == LUA_TSTRING) {
-                    entry.args[key_str] = std::string(lua_tostring(L, -1));
-                } else if (vtype == LUA_TNUMBER) {
-                    entry.args[key_str] = static_cast<f64>(lua_tonumber(L, -1));
-                } else if (vtype == LUA_TBOOLEAN) {
-                    entry.args[key_str] = lua_toboolean(L, -1) != 0;
-                }
-                // Other types (tables, functions, etc.) are silently skipped
-            }
-            lua_pop(L, 1); // pop value, keep key for next iteration
-        }
-    } else if (lua_type(L, -1) == LUA_TSTRING) {
-        entry.value = std::string(lua_tostring(L, -1));
-    } else if (lua_type(L, -1) == LUA_TNUMBER) {
-        entry.value = static_cast<f64>(lua_tonumber(L, -1));
-    } else if (lua_type(L, -1) == LUA_TBOOLEAN) {
-        entry.value = lua_toboolean(L, -1) != 0;
+    entry.lua_args = sim::lua_to_bytes(L, -1);
+    lua_pop(L, 1);
+    if (!entry.lua_args) {
+        spdlog::warn("SimCallback: '{}' Args can't be carried", entry.func_name);
+        return 0;
     }
-    lua_pop(L, 1); // pop Args (a table, a value, or nil)
 
     // Check addUnitSelection (arg 2)
     if (lua_toboolean(L, 2)) {
