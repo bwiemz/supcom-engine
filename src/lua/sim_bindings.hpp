@@ -40,6 +40,9 @@ void register_category_bindings(LuaState& state);
 /// carries it: retail reads positions as both pos[1] and pos.x.
 void push_vector_metatable(lua_State* L);
 
+void set_manip_metatable(lua_State* L, int table_idx, const char* cache_key,
+                         const char* moho_class_name);
+
 /// Whether army `army` may build structure `bp_id` centred at (x, z), by
 /// StructurePlacement with the orders not yet run
 bool can_build_structure(lua_State* L, const sim::SimState& sim, int army, const std::string& bp_id,

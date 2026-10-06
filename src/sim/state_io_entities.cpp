@@ -156,6 +156,7 @@ enum class ManipKind : u8 {
     FootPlant,
     Storage,
     Thrust,
+    BoneEntity,
 };
 
 } // namespace
@@ -612,6 +613,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
     else if (dynamic_cast<const FootPlantManipulator*>(&m)) kind = ManipKind::FootPlant;
     else if (dynamic_cast<const StorageManipulator*>(&m)) kind = ManipKind::Storage;
     else if (dynamic_cast<const ThrustManipulator*>(&m)) kind = ManipKind::Thrust;
+    else if (dynamic_cast<const BoneEntityManipulator*>(&m)) kind = ManipKind::BoneEntity;
     enum8(w, kind);
     // Waitable, then Manipulator (owner_: the unit loading it)
     w.i32v(m.waiting_thread_ref_);
@@ -725,6 +727,12 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         break;
     }
     case ManipKind::Thrust: break;
+    case ManipKind::BoneEntity: {
+        const auto& x = static_cast<const BoneEntityManipulator&>(m); // sim_: the loading sim
+        w.u32v(x.target_id_);
+        w.i32v(x.target_bone_);
+        break;
+    }
     }
 }
 
@@ -853,6 +861,12 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         break;
     }
     case ManipKind::Thrust: m = std::make_unique<ThrustManipulator>(); break;
+    case ManipKind::BoneEntity: {
+        const u32 target = r.u32v();
+        const i32 target_bone = r.i32v();
+        m = std::make_unique<BoneEntityManipulator>(&sim, target, target_bone);
+        break;
+    }
     default: r.fail("a manipulator of an unknown kind"); return nullptr;
     }
     m->waiting_thread_ref_ = waiting_ref;

@@ -103,6 +103,9 @@ inline void mat4_multiply(f32* c, const f32* a, const f32* b) {
 /// move them along their own axes.
 struct PoseLocals {
     std::vector<BonePose> local;
+    /// Bones whose entry in `local` is in model space, not relative to the
+    /// parent bone.
+    std::vector<u8> model_space;
     bool changed = false;
 
     bool valid(i32 bone) const { return bone >= 0 && static_cast<size_t>(bone) < local.size(); }
@@ -110,6 +113,14 @@ struct PoseLocals {
         if (!valid(bone)) return;
         local[static_cast<size_t>(bone)] = p;
         changed = true;
+    }
+    void set_model(i32 bone, const BonePose& p) {
+        if (!valid(bone)) {
+            return;
+        }
+        model_space.resize(local.size(), 0);
+        model_space[static_cast<size_t>(bone)] = 1;
+        set(bone, p);
     }
     void rotate(i32 bone, const Quaternion& q) {
         // A turret or rotator at rest leaves its bone alone, so a unit whose

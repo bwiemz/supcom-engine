@@ -373,6 +373,26 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// BoneEntityManipulator — holds a unit's bone on another entity's bone
+// ---------------------------------------------------------------------------
+class BoneEntityManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
+public:
+    BoneEntityManipulator(SimState* sim, u32 target_id, i32 target_bone)
+        : sim_(sim), target_id_(target_id), target_bone_(target_bone) {}
+
+    void tick(f32 /*dt*/) override {}
+    bool is_at_goal() const override { return true; }
+    /// With the target gone the bone is parked below the map, as Moho's is.
+    void apply_pose(PoseLocals& pose) override;
+
+private:
+    SimState* sim_;
+    u32 target_id_;
+    i32 target_bone_;
+};
+
+// ---------------------------------------------------------------------------
 // ThrustManipulator — air unit thrust visual controller
 // ---------------------------------------------------------------------------
 class ThrustManipulator : public Manipulator {

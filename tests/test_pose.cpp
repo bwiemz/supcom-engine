@@ -2,12 +2,18 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sca_parser.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+
+extern "C" {
+#include <lua.h>
+}
 
 #include <cmath>
 #include <memory>
@@ -50,6 +56,14 @@ SCAData root_slide() {
     sca.frames.push_back({0.0f, {{{0, 0, 0}, identity}}});
     sca.frames.push_back({1.0f, {{{1, 0, 0}, identity}}});
     return sca;
+}
+
+void set_lua_handle(lua_State* L, const char* name, Entity& e) {
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &e);
+    lua_rawset(L, -3);
+    lua_setglobal(L, name);
 }
 
 } // namespace
@@ -266,4 +280,56 @@ TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its p
         CHECK_THAT(aim.pitch(), WithinAbs(55.0 * 0.0174533, 1e-3));
         CHECK_THAT(aim.heading(), WithinAbs(0.5235988, 2.0 * 0.0174533));
     }
+}
+
+TEST_CASE("AttachBoneToEntityBone pins the unit's bone to the entity", "[pose][lua]") {
+    // sim/Unit.lua's debris: self:AttachBoneToEntityBone(partBone, boneProj, -1, false)
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    lua::register_sim_bindings(lua, sim);
+    lua::register_moho_bindings(lua, sim);
+    BoneData bd = make_two_bones();
+    bd.model_scale = 0.5f;
+    auto owned = std::make_unique<Unit>();
+    owned->set_bone_data(&bd);
+    owned->init_animated_bones();
+    owned->set_position({10, 0, 20});
+    owned->set_orientation({0, 0.7071068f, 0, 0.7071068f});
+    Unit& unit = *owned;
+    sim.entity_registry().register_entity(std::move(owned));
+    auto target_owned = std::make_unique<Entity>();
+    target_owned->set_position({12, 3, 25});
+    Entity& target = *target_owned;
+    sim.entity_registry().register_entity(std::move(target_owned));
+    lua_State* L = lua.raw();
+    set_lua_handle(L, "u", unit);
+    set_lua_handle(L, "proj", target);
+
+    REQUIRE(lua.do_string("manip = moho.entity_methods.AttachBoneToEntityBone(u, 'child', proj, "
+                          "-1, false)")
+                .ok());
+    REQUIRE(lua.do_string("assert(manip.Destroy)").ok());
+    CHECK(target.parent_entity_id() == 0);
+
+    unit.tick_manipulators(0.1f, L);
+    Vector3 at = unit.bone_world_position(1);
+    CHECK_THAT(at.x, WithinAbs(12.0, 1e-4));
+    CHECK_THAT(at.y, WithinAbs(3.0, 1e-4));
+    CHECK_THAT(at.z, WithinAbs(25.0, 1e-4));
+
+    target.set_position({15, 8, 30});
+    target.set_orientation({0.3826834f, 0, 0, 0.9238795f});
+    unit.tick_manipulators(0.1f, L);
+    at = unit.bone_world_position(1);
+    CHECK_THAT(at.x, WithinAbs(15.0, 1e-4));
+    CHECK_THAT(at.y, WithinAbs(8.0, 1e-4));
+    CHECK_THAT(at.z, WithinAbs(30.0, 1e-4));
+    const Quaternion turned = unit.bone_world_rotation(1);
+    CHECK_THAT(turned.x, WithinAbs(0.3826834, 1e-4));
+    CHECK_THAT(turned.w, WithinAbs(0.9238795, 1e-4));
+    CHECK_THAT(unit.bone_world_position(0).x, WithinAbs(10.0, 1e-4));
+
+    target.mark_destroyed();
+    unit.tick_manipulators(0.1f, L);
+    CHECK(unit.bone_world_position(1).y < -1000.0f);
 }
