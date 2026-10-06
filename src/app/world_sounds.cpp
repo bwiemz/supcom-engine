@@ -61,12 +61,14 @@ gather_entity_loops(const sim::SimState& sim, const std::vector<u32>& ids,
 }
 
 const std::vector<u32>& EntityLoopSources::ids(const sim::SimState& sim) {
-    if (&sim == sim_ && sim.tick_count() == tick_) return ids_;
+    if (&sim == sim_ && sim::SimState::sim_generation() == generation_ && sim.tick_count() == tick_)
+        return ids_;
     ids_.clear();
     sim.entity_registry().for_each([&](const sim::Entity& e) {
         if (wants_loops(e)) ids_.push_back(e.entity_id());
     });
     sim_ = &sim;
+    generation_ = sim::SimState::sim_generation();
     tick_ = sim.tick_count();
     return ids_;
 }

@@ -38,7 +38,9 @@ gather_entity_loops(const sim::SimState& sim, const std::vector<u32>& ids,
 
 /// The entities that want loops, ascending id. Every entity (props
 /// included) is walked again only once the sim has ticked since, not each
-/// frame: scripts set loops, and they run in a tick.
+/// frame: scripts set loops, and they run in a tick. Another SimState
+/// (a reload, which may reuse the last one's address) is walked afresh;
+/// a save restored into it moves its tick.
 class EntityLoopSources {
 public:
     const std::vector<u32>& ids(const sim::SimState& sim);
@@ -46,6 +48,7 @@ public:
 private:
     std::vector<u32> ids_;
     const sim::SimState* sim_ = nullptr;
+    u32 generation_ = 0; ///< SimState::sim_generation() when walked
     u32 tick_ = 0;
 };
 
