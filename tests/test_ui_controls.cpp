@@ -616,7 +616,7 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.run("handled = {}");
     f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
     f.dispatch.on_cursor_pos(50, 50);
-    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, 10.0);
     f.deliver();
     CHECK(f.check("hotkeys == 1 and whos('ButtonPress') == 'other'"));
 
@@ -939,9 +939,9 @@ TEST_CASE("An ItemList takes a press on a row and tells of the row under the mou
     CHECK(f.check("table.concat(clicks, ',') == '5:ButtonPress'"));
     CHECK(f.check("whos('ButtonPress') == 'list'"));
 
-    // One its script takes is the script's
+    // One its script takes is the script's (a second later: not a double-click)
     f.run("handled = {} clicks = {} list.eats = true");
-    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, 10.0);
     f.deliver();
     CHECK(f.check("table.getn(clicks) == 0 and whos('ButtonPress') == 'list'"));
 
@@ -952,6 +952,71 @@ TEST_CASE("An ItemList takes a press on a row and tells of the row under the mou
     f.deliver();
     CHECK(f.check("table.concat(over, ',') == '5,-1'"));
     CHECK(f.check("table.getn(clicks) == 0 and whos('ButtonPress') == 'combo'"));
+}
+
+TEST_CASE("A second press soon after and close by is a ButtonDClick; an ItemList's row hears "
+          "OnDoubleClick",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run(R"(
+        target = box('target', GetFrame(0), 0, 0, 100, 100, 1)
+        target.eats = true
+    )");
+    const auto press = [&](double now) {
+        f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, now);
+        f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0, now);
+    };
+    f.dispatch.on_cursor_pos(10, 10);
+    press(1.0);
+    press(1.3); // 0.3 s on, same spot: a double-click
+    press(1.6); // the click after one is single (Windows' rule)
+    press(1.9); // and this one a double-click again
+    f.dispatch.on_cursor_pos(13, 10);
+    press(2.0); // 3 pixels off: single
+    press(3.0); // 1 s on: single
+    f.deliver();
+    f.run(R"(
+        kinds = {}
+        for _, h in ipairs(handled) do
+            if h.event.Type == 'ButtonPress' or h.event.Type == 'ButtonDClick' then
+                table.insert(kinds, h.event.Type == 'ButtonPress' and 'P' or 'D')
+            end
+        end
+    )");
+    CHECK(f.check("table.concat(kinds) == 'PDPDPP'"));
+    CHECK(f.check("of_type('ButtonDClick')[1].event.KeyCode == 1 "
+                  "and of_type('ButtonDClick')[1].event.Modifiers.Left"));
+
+    // A different button never makes one.
+    f.run("handled = {}");
+    f.dispatch.on_cursor_pos(10, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0, 10.0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0, 10.1);
+    f.deliver();
+    CHECK(f.check("table.getn(of_type('ButtonDClick')) == 0"));
+
+    // An ItemList: OnClick for the first, OnDoubleClick for the second.
+    f.run(R"(
+        target:Destroy()
+        list = setmetatable({}, { __index = moho.item_list_methods })
+        InternalCreateItemList(list, GetFrame(0))
+        list:SetNewFont('Arial', 14)
+        rawset(list, 'Left', 0) rawset(list, 'Top', 0)
+        rawset(list, 'Right', 100) rawset(list, 'Bottom', 90)
+        rawset(list, 'Width', 100) rawset(list, 'Height', 90)
+        rawset(list, 'Depth', 2)
+        for i = 1, 5 do list:AddItem('row ' .. i) end
+        calls = {}
+        list.OnClick = function(self, row, event) table.insert(calls, 'click ' .. row) end
+        list.OnDoubleClick = function(self, row, event)
+            table.insert(calls, 'double ' .. row .. ' ' .. event.Type)
+        end
+    )");
+    f.dispatch.on_cursor_pos(50, 25);
+    press(20.0);
+    press(20.2);
+    f.deliver();
+    CHECK(f.check("table.concat(calls, ',') == 'click 1,double 1 ButtonDClick'"));
 }
 
 TEST_CASE("A scrollbar asks a scrollable made in Lua for its values and scrolling",

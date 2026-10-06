@@ -65,8 +65,9 @@ std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int
     return kept;
 }
 
-void InputHandler::update(Renderer& renderer, sim::SimState& sim,
-                          f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
+void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
+                          const std::function<bool()>& mouse_over_ui) {
+    clock_ += dt;
     f64 mx_d, my_d;
     renderer.mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
@@ -207,7 +208,26 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
                     mode_hooks_.issued(*issued);
             }
         } else if (!on_minimap) {
-            handle_left_click(renderer, sim, mx, my);
+            // A second click soon after and close by is a double-click, not a
+            // third (Windows' rule: the click after a double-click is single).
+            const bool double_click = !last_click_double_ && last_click_time_ >= 0.0 &&
+                                      clock_ - last_click_time_ <= kDoubleClickSeconds &&
+                                      std::abs(mx - last_click_x_) <= kDoubleClickPixels &&
+                                      std::abs(my - last_click_y_) <= kDoubleClickPixels;
+            f32 wx = 0;
+            f32 wz = 0;
+            if (world_at(renderer, sim, mx, my, wx, wz)) {
+                const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                                   renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+                const f32 aspect = renderer.height() > 0 ? static_cast<f32>(renderer.width()) /
+                                                               static_cast<f32>(renderer.height())
+                                                         : 1.0f;
+                world_click(sim, wx, wz, shift, double_click, renderer.camera().view_proj(aspect));
+            }
+            last_click_double_ = double_click;
+            last_click_time_ = clock_;
+            last_click_x_ = mx;
+            last_click_y_ = my;
         }
     }
 
@@ -290,17 +310,6 @@ void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimS
     snap_radius_ = sim::extract_snap_radius(2.0f * dist * std::tan(camera.fov() * 0.5f) / width);
 }
 
-void InputHandler::handle_left_click(Renderer& renderer,
-                                     sim::SimState& sim,
-                                     f32 mx, f32 my) {
-    f32 wx, wz;
-    if (!world_at(renderer, sim, mx, my, wx, wz)) return;
-
-    const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                       renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-    left_click_at(sim, wx, wz, shift);
-}
-
 void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
     const u32 picked = unit_under(sim, wx, wz, true);
 
@@ -317,6 +326,43 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift)
     selection_event_ = true;
     spdlog::debug("Selection: {} units (click at world {:.0f},{:.0f})",
                   selected_.size(), wx, wz);
+}
+
+void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
+                               const std::array<f32, 16>& view_proj) {
+    // A double-click's second press is no click of its own: Moho's world view
+    // gets a ButtonDClick in its place, and it only adds the clicked unit's
+    // like in view (with Shift held too: the first click's toggle stands).
+    if (double_click) select_similar_in_view(sim, wx, wz, view_proj);
+    else left_click_at(sim, wx, wz, shift);
+}
+
+void InputHandler::select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
+                                          const std::array<f32, 16>& view_proj) {
+    const u32 picked = unit_under(sim, wx, wz, true);
+    const sim::Entity* hovered = picked ? sim.entity_registry().find(picked) : nullptr;
+    if (!hovered || !hovered->is_unit() || hovered->army() != player_army_) return;
+    const auto& unit = static_cast<const sim::Unit&>(*hovered);
+    if (unit.has_category("WALL")) return;
+    const std::string& blueprint = unit.blueprint_id();
+    const auto in_view = [&](const sim::Vector3& p) {
+        // Column-major: clip = view_proj * (p, 1); in the frustum with
+        // |x|, |y| <= w and 0 <= z <= w (Vulkan's depth).
+        const auto& m = view_proj;
+        const f32 x = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
+        const f32 y = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
+        const f32 z = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
+        const f32 w = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+        return w > 0.0f && std::abs(x) <= w && std::abs(y) <= w && z >= 0.0f && z <= w;
+    };
+    sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
+        if (e.entity_id() == picked || e.army() != player_army_ || !selectable(e)) return;
+        const auto& other = static_cast<const sim::Unit&>(e);
+        if (other.blueprint_id() != blueprint || other.has_unit_state("BeingUpgraded")) return;
+        if (!in_view(view_.position(e))) return;
+        selected_.insert(e.entity_id());
+    });
+    selection_event_ = true;
 }
 
 void InputHandler::handle_drag_select(Renderer& renderer,

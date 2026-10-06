@@ -19,6 +19,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 #include <cmath>
 #include <string>
 #include <unordered_set>
@@ -163,6 +165,40 @@ void test_selection_render(TestContext& ctx) {
                         "the cursor ({}): {} selected, factory {}, builder {}",
                         under == factory ? "the factory" : "not the factory", now.size(),
                         now.count(factory), now.count(builder)));
+
+    // Test 9: a double-click on a tank adds every tank of the player's in
+    // view (Moho's HandleDoubleClickSelection): not the enemy's, nor one off
+    // the screen, nor the engineer.
+    const u32 tank2 = spawn_unit(ctx, "__osc_sel_t2", "uel0201", "ARMY_1", {sx + 6, sz + 8});
+    const u32 far_tank = spawn_unit(ctx, "__osc_sel_t3", "uel0201", "ARMY_1", {sx + 300, sz + 300});
+    const u32 foe_tank = spawn_unit(ctx, "__osc_sel_t4", "uel0201", "ARMY_2", {sx - 6, sz + 8});
+    seen.capture(ctx.sim);
+    seen.capture(ctx.sim);
+    input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
+    const auto* te = ctx.sim.entity_registry().find(tank);
+    const sim::Vector3 tp = te ? te->position() : sim::Vector3{sx, 0, sz + 8};
+    input.left_click_at(ctx.sim, tp.x, tp.z, false);
+    const f32 aspect = static_cast<f32>(r.width()) / static_cast<f32>(std::max(r.height(), 1u));
+    input.select_similar_in_view(ctx.sim, tp.x, tp.z, r.camera().view_proj(aspect));
+    const auto& similar = input.selected();
+    t.check(similar.size() == 2 && similar.count(tank) == 1 && similar.count(tank2) == 1 &&
+                similar.count(far_tank) == 0 && similar.count(foe_tank) == 0 &&
+                similar.count(own) == 0,
+            fmt::format("Test 9: a double-click selects the tanks in view: {} selected (tank {}, "
+                        "second {}, far {}, enemy {}, engineer {})",
+                        similar.size(), similar.count(tank), similar.count(tank2),
+                        similar.count(far_tank), similar.count(foe_tank), similar.count(own)));
+
+    // Test 10: with Shift held, the second click of a double-click doesn't
+    // toggle the tank back off: it is a double-click, not a click.
+    input.set_selected({});
+    input.left_click_at(ctx.sim, tp.x, tp.z, true);
+    input.world_click(ctx.sim, tp.x, tp.z, true, true, r.camera().view_proj(aspect));
+    const auto& shifted = input.selected();
+    t.check(shifted.size() == 2 && shifted.count(tank) == 1 && shifted.count(tank2) == 1,
+            fmt::format("Test 10: a Shift double-click keeps the tank and adds its like: {} "
+                        "selected (tank {}, second {})",
+                        shifted.size(), shifted.count(tank), shifted.count(tank2)));
 
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }
