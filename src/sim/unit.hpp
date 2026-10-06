@@ -1577,4 +1577,8 @@ private:
     // Build queue (factory production queue)
 };
 
+/// Whether a reclaim may start on `target` (Moho's Sim.cpp UNITCOMMAND_Reclaim
+/// check and CUnitReclaimTask).
+bool reclaim_target_valid(const Entity& target);
+
 } // namespace osc::sim

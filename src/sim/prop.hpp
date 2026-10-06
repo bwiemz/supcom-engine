@@ -13,7 +13,7 @@ public:
 
     /// Its blueprint is UNTARGETABLE (a deposit's marker): no click picks it.
     bool untargetable = false;
-    /// Its blueprint is RECLAIMABLE: a patrol may reclaim it.
+    /// Its blueprint is RECLAIMABLE: a Reclaim order may take it.
     bool reclaimable_category = false;
     /// Its blueprint's Economy.ReclaimMassMax and ReclaimEnergyMax.
     f32 reclaim_mass_max = 0;
