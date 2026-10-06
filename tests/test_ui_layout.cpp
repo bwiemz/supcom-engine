@@ -29,6 +29,29 @@ TEST_CASE("A control's rect comes from its MAUI edges", "[ui][layout]") {
     }
 }
 
+TEST_CASE("A bitmap draws from Left to Right, mirrored when they are inverted", "[ui][layout]") {
+    using osc::ui::bitmap_quad;
+    const auto strip = bitmap_quad(464, 630, 366, 648, 6, 18);
+    CHECK(strip.rect.x == 366);
+    CHECK(strip.rect.w == 98);
+    CHECK(strip.rect.y == 630);
+    CHECK(strip.rect.h == 18);
+    CHECK(strip.mirror_x);
+    CHECK_FALSE(strip.mirror_y);
+
+    const auto flipped = bitmap_quad(10, 80, 50, 20, 6, 18);
+    CHECK(flipped.rect.y == 20);
+    CHECK(flipped.rect.h == 60);
+    CHECK(flipped.mirror_y);
+    CHECK_FALSE(flipped.mirror_x);
+
+    const auto plain = bitmap_quad(0, 0, 1600, 900, 1280, 1024);
+    CHECK(plain.rect.w == 1600);
+    CHECK(plain.rect.h == 900);
+    CHECK_FALSE(plain.mirror_x);
+    CHECK_FALSE(plain.mirror_y);
+}
+
 TEST_CASE("UI below a main world view is hidden where it covers it", "[ui][layout]") {
     using osc::ui::ControlRect;
     using osc::ui::WorldOccluder;
