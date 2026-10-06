@@ -7235,12 +7235,75 @@ void test_targeting(TestContext& ctx) {
         if __osc_target(__osc_tank) ~= __osc_foe then error('the order was ignored') end
     )");
 
+    // A ground attack (IssueAttack at a position, Moho's AITARGET_Ground):
+    // the tank comes within its gun's 18 and fires at the point, for as
+    // long as nothing follows the order.
+    lua_check("Test 13: a ground attack order is taken", R"(
+        local x, z = 220, 970
+        local gx, gz = 260, 970
+        if GetTerrainHeight(gx, gz) < GetSurfaceHeight(gx, gz) then error('the point is under water') end
+        local tank = __osc_spawn('uel0201', 'ARMY_1', x, z)
+        local w = tank:GetWeapon(1)
+        w.__osc_ground_shots = 0
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            self.__osc_ground_shots = self.__osc_ground_shots + 1
+            return fire(self, muzzle)
+        end
+        IssueAttack({tank}, {gx, GetTerrainHeight(gx, gz), gz})
+        __osc_ground_tank, __osc_ground_weapon = tank, w
+        __osc_ground_tank_id = tank:GetEntityId()
+        __osc_ground_point = {gx, gz}
+    )");
+    ticks(200);
+    lua_check("Test 14: the tank comes within range and fires at the point, the order kept", R"(
+        local p = __osc_ground_tank:GetPosition()
+        local d = math.sqrt((p[1] - __osc_ground_point[1])^2 + (p[3] - __osc_ground_point[2])^2)
+        if d > 18 then error('still ' .. d .. ' from the point') end
+        if d < 10 then error('it walked onto the point (' .. d .. ')') end
+        if __osc_ground_weapon.__osc_ground_shots < 3 then
+            error(__osc_ground_weapon.__osc_ground_shots .. ' shots')
+        end
+        if table.getn(__osc_ground_tank:GetCommandQueue()) ~= 1 then error('the order ended') end
+        -- An order after it: the attack, its shots spent, goes round behind it.
+        IssueMove({__osc_ground_tank}, {220, GetTerrainHeight(220, 990), 990})
+    )");
+    {
+        const osc::sim::Unit* tank = unit_of("__osc_ground_tank_id");
+        const bool aims = tank && !tank->weapons().empty() &&
+                          tank->weapons().front()->has_ground_target &&
+                          tank->weapons().front()->ground_target.x == 260.0f;
+        if (aims) {
+            pass++;
+            spdlog::info("[PASS] Test 15: its gun aims at the point");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 15: its gun isn't aimed at the point");
+        }
+    }
+    ticks(2);
+    {
+        const osc::sim::Unit* tank = unit_of("__osc_ground_tank_id");
+        const auto* queue = tank ? &tank->command_queue() : nullptr;
+        const bool cycled = queue && queue->size() == 2 &&
+                            queue->front().type == osc::sim::CommandType::Move &&
+                            queue->back().type == osc::sim::CommandType::Attack;
+        if (cycled) {
+            pass++;
+            spdlog::info("[PASS] Test 16: the ground attack went to the back of the queue");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16: the queue is not [Move, Attack] ({} orders)",
+                                   queue ? queue->size() : 0);
+        }
+    }
+
     if (osc::test_status::failure_count() - fail == failures_before) {
         pass++;
-        spdlog::info("[PASS] Test 13: no script errors");
+        spdlog::info("[PASS] Test 17: no script errors");
     } else {
         fail++;
-        osc::test_status::fail("[FAIL] Test 13: script errors while targeting");
+        osc::test_status::fail("[FAIL] Test 17: script errors while targeting");
     }
     spdlog::info("Targeting test: {}/{} passed", pass, pass + fail);
 }

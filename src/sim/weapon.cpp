@@ -2,6 +2,7 @@
 #include "sim/projectile_script.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
+#include "map/terrain.hpp"
 #include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
@@ -255,14 +256,17 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const S
         return;
     }
 
-    if (!has_target() || fire_clock > 0) return;
+    if (!has_target() || fire_clock > 0 || ground_fire_barred()) return;
     const std::optional<Vector3> at = target_point(registry);
     if (!at || !in_firing_range(owner, *at)) return;
     if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return;
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return;
-    if (try_fire(owner, registry, L, sim)) fire_clock = fire_period();
+    if (try_fire(owner, registry, L, sim)) {
+        fire_clock = fire_period();
+        ++shots_at_target;
+    }
 }
 
 void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry) {
@@ -314,10 +318,11 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
     // The fire clock: when it is ready and the weapon can fire, the script
     // gets OnFire (its state machine decides what that means) and the clock
     // restarts.
-    if (fire_clock > 0 || !can_fire(owner, registry)) return;
+    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry)) return;
     if (!call_script(L, "CanWeaponFire") || !still_firing()) return;
     call_script(L, "OnFire");
     fire_clock = fire_period();
+    ++shots_at_target;
 }
 
 bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* sim) const {
@@ -394,11 +399,27 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     if (owner.need_unpack() && (head == CommandType::Move || head == CommandType::TransportLoad ||
                                 head == CommandType::WaitForFerry))
         return;
+    const bool flier = owner.layer() == "Air";
+    // A ground attack order, once its unit is in reach (Moho's attack task
+    // has set the attacker's desired target): each weapon that can hit the
+    // ground there takes the point within its own range, or at any range on
+    // an aircraft (CAcquireTargetTask), and keeps it while the order lasts.
+    const UnitCommand* order = queue.empty() ? nullptr : &queue.front();
+    if (order && order->type == CommandType::Attack && order->target_id == 0 && order->engaged &&
+        attacks_on_order() &&
+        can_attack_ground(order->target_pos, sim ? sim->terrain() : nullptr) &&
+        (flier || in_firing_range(owner, order->target_pos))) {
+        set_target_ground(order->target_pos);
+        ground_from_order = true;
+        return;
+    }
+    // The order gone, or the point out of this weapon's reach: it looks for
+    // targets again.
+    if (ground_from_order) set_target_entity(0);
     // An aircraft's weapons take its ordered target at any range: Moho's
     // CAcquireTargetTask gives a flier the attacker's desired target out of
     // reach too, so it is kept through the runs' loops.
     const u32 ordered = attack_order_target(owner);
-    const bool flier = owner.layer() == "Air";
     // A target this weapon can no longer shoot is dropped at once.
     if (target_entity_id != 0) {
         const Entity* target = registry.find(target_entity_id);
@@ -473,6 +494,20 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
 
 bool Weapon::in_firing_range(const Unit& owner, const Entity& target) const {
     return in_firing_range(owner, target.position());
+}
+
+bool Weapon::can_attack_ground(const Vector3& at, const map::Terrain* terrain) const {
+    if (cannot_attack_ground) return false;
+    u8 layer = layer_to_bit("Land");
+    if (terrain) {
+        // Moho's water elevation on a map without water is -10000.
+        const f32 ground = terrain->get_terrain_height(at.x, at.z);
+        const f32 water = terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+        if (ground > water) layer = layer_to_bit("Land");
+        else if (water > ground) layer = layer_to_bit("Water");
+        else return false;
+    }
+    return (fire_target_layer_caps & layer) != 0;
 }
 
 bool Weapon::in_firing_range(const Unit& owner, const Vector3& at) const {

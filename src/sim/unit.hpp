@@ -1124,6 +1124,8 @@ private:
     OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// Close to the best weapon's range of the target, and stay on it.
     OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// An Attack with no target unit: at a point on the ground.
+    OrderStep order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// Reach the site, start the structure, build it.
     OrderStep order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory's build, or an upgrade: started where the unit stands.
