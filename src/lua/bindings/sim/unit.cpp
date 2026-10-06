@@ -1985,26 +1985,6 @@ static int unit_SetVeterancyLevel(lua_State* L) {
     return 0;
 }
 
-// unit:AddXP(amount)
-static int unit_AddXP(lua_State* L) {
-    auto* u = check_unit(L);
-    if (!u) return 0;
-    f32 amount = static_cast<f32>(lua_tonumber(L, 2));
-    auto* sim = get_sim(L);
-    if (sim) {
-        u->add_xp(amount, L, sim->entity_registry());
-    }
-    return 0;
-}
-
-// unit:GetXPValue()
-static int unit_GetXPValue(lua_State* L) {
-    auto* u = check_unit(L);
-    if (!u) return 0;
-    lua_pushnumber(L, u->xp_value());
-    return 1;
-}
-
 // --- Cloak / Stealth / AutoMode / DeathWeapon bindings ---
 
 // EnableCloak/EnableStealth/EnableSonarStealth are not Moho methods (the
@@ -2499,8 +2479,6 @@ const MethodEntry unit_methods[] = {
     {"SetStrategicUnderlay",         unit_SetStrategicUnderlay},
     {"GetVeterancyLevel",           unit_GetVeterancyLevel},
     {"SetVeterancyLevel",           unit_SetVeterancyLevel},
-    {"AddXP",                       unit_AddXP},
-    {"GetXPValue",                  unit_GetXPValue},
     {"EnableCloak",                 unit_EnableCloak},
     {"DisableCloak",                unit_DisableCloak},
     {"IsUnitCloaked",               unit_IsUnitCloaked},
