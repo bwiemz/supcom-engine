@@ -346,3 +346,39 @@ TEST_CASE("attack_angle_heading: Moho's side rule", "[hull-facing]") {
         std::abs(wrap_deg(deg(osc::sim::attack_angle_heading(-170 * kDeg, 170 * kDeg, 60 * kDeg))) -
                  130.0f) < 1e-3f);
 }
+
+TEST_CASE("A unit that stops to fire brakes straight on while its hull turns", "[hull-facing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    // Slow to brake (5 a second, at 5 a second: a second's coast), it turns
+    // 90 a second to a slaved target abeam as it stops for its attack.
+    Unit* u = hull(sim, 20.0f, 64.0f);
+    Unit::Drive drive = u->drive();
+    drive.max_brake = 5.0f;
+    u->set_drive(drive);
+    gun(*u).slaved_to_body = true;
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {120.0f, 7.8f, 64.0f}; // along +X
+    u->push_command(move, true);
+    for (int t = 0; t < 40; ++t) sim.tick();
+    REQUIRE(u->ground_speed() > 4.0f);
+    const f32 z = u->position().z;
+    Unit* foe = dummy(sim, 0, 0);
+    foe->set_position({u->position().x, 7.8f, u->position().z + 30.0f}); // abeam, in range 40
+    gun(*u).set_target_entity(foe->entity_id());
+    UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = foe->entity_id();
+    attack.target_pos = foe->position();
+    u->push_command(attack, true);
+    for (int t = 0; t < 15; ++t) sim.tick();
+    CHECK(u->ground_speed() == 0.0f);
+    CHECK(std::abs(u->position().z - z) < 0.05f); // on its line
+    // ...and has turned to the target, behind it now as it coasted on
+    const f32 bearing = osc::dmath::atan2(foe->position().x - u->position().x,
+                                          foe->position().z - u->position().z) /
+                        kDeg;
+    CHECK(std::abs(wrap_deg(heading_deg(*u) - bearing)) < 1.0f);
+}

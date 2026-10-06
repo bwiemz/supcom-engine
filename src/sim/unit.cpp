@@ -2311,10 +2311,20 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
         drive_.max_brake > 0 ? drive_.max_brake * accel_mult_ * step : std::abs(ground_speed_);
     ground_speed_ = ground_speed_ > 0 ? std::max(0.0f, ground_speed_ - brake)
                                       : std::min(0.0f, ground_speed_ + brake);
-    const f32 heading = quat_yaw(orientation());
+    // Along the way it was going (last tick's velocity), as Moho brakes the
+    // velocity vector: its hull may turn under it now, to its weapons' work
+    // (face_weapons_work), and braking along the hull curved the stop.
     Vector3 p = position();
-    p.x += osc::dmath::sin(heading) * ground_speed_ * step;
-    p.z += osc::dmath::cos(heading) * ground_speed_ * step;
+    const f32 travel = std::sqrt(velocity_.x * velocity_.x + velocity_.z * velocity_.z);
+    if (travel > 1e-4f) {
+        const f32 along = std::abs(ground_speed_) * step / travel;
+        p.x += velocity_.x * along;
+        p.z += velocity_.z * along;
+    } else {
+        const f32 heading = quat_yaw(orientation());
+        p.x += osc::dmath::sin(heading) * ground_speed_ * step;
+        p.z += osc::dmath::cos(heading) * ground_speed_ * step;
+    }
     if (terrain) p.y = ground_y(terrain, p.x, p.z);
     set_position(p);
 }
