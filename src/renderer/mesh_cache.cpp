@@ -43,6 +43,27 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
     return get_lod(blueprint_id, 0.0f, L);
 }
 
+const GPUMesh* MeshCache::get_file(const std::string& scm_path, const std::string& albedo,
+                                   MeshTechnique technique) {
+    if (device_ == VK_NULL_HANDLE || scm_path.empty()) return nullptr;
+    // Kept beside the blueprints' meshes, under a key no blueprint id has.
+    const std::string key =
+        "file:" + scm_path + "|" + albedo + "|" + std::to_string(static_cast<u32>(technique));
+    if (auto it = lod_cache_.find(key); it != lod_cache_.end())
+        return it->second.lods.empty() ? nullptr : &it->second.lods.front().mesh;
+    if (failed_.count(key)) return nullptr;
+    GPUMesh mesh = upload_scm_mesh(scm_path);
+    if (mesh.index_count == 0) {
+        failed_.insert(key);
+        return nullptr;
+    }
+    mesh.texture_path = albedo;
+    mesh.technique = technique;
+    LODSet set;
+    set.lods.push_back({std::move(mesh), 0.0f});
+    return &lod_cache_.emplace(key, std::move(set)).first->second.lods.front().mesh;
+}
+
 const GPUMesh* MeshCache::get_lod(const std::string& blueprint_id,
                                    f32 camera_distance, lua_State* L) {
     if (device_ == VK_NULL_HANDLE) return nullptr;
@@ -197,6 +218,8 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "CybranShieldImpact") return MeshTechnique::CybranShieldImpact;
     if (shader_name == "PhaseShield") return MeshTechnique::PhaseShield;
     if (shader_name == "SeraphimPersonalShield") return MeshTechnique::SeraphimPersonalShield;
+    if (shader_name == "CommandFeedback") return MeshTechnique::CommandFeedback;
+    if (shader_name == "CommandFeedback2") return MeshTechnique::CommandFeedback2;
     return MeshTechnique::Unit;
 }
 

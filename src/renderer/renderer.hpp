@@ -34,6 +34,7 @@
 #include "renderer/shadow_camera.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
+#include "renderer/command_feedback.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
@@ -139,6 +140,12 @@ public:
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during the loading screen and front end, when there is no world.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
+
+    /// An order's feedback blip from the UI (AddCommandFeedbackBlip), made
+    /// at the newest game tick and shown for its duration.
+    void add_command_feedback_blip(FeedbackBlipSpec spec);
+    /// The order marks now showing.
+    const CommandFeedbackBlips& feedback_blips() const { return feedback_blips_; }
 
     /// Initialize texture/font caches without a full scene build.
     /// Used for UI-only rendering when no map is loaded.
@@ -513,6 +520,9 @@ private:
     /// UEFBuildCube: blended, colour only, depth tested but not written (M211g).
     VkPipeline mesh_cube_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_cube_layout_ = VK_NULL_HANDLE;
+    /// The order marks' (CommandFeedback): blended colour, no depth test.
+    VkPipeline mesh_feedback_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_feedback_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -582,6 +592,10 @@ private:
     // Sub-renderers
     TerrainMesh terrain_mesh_;
     UnitRenderer unit_renderer_;
+    /// The UI's order marks now showing (AddCommandFeedbackBlip).
+    CommandFeedbackBlips feedback_blips_;
+    /// This frame's marks, into the unit renderer's instances.
+    void inject_feedback_blips(lua_State* L);
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
     FogRenderer fog_renderer_;

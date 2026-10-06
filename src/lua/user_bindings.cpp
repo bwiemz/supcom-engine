@@ -451,6 +451,49 @@ static int camera_Reset(lua_State* L) {
 /// camera:MoveTo(position, orientationHPR, zoom, seconds) and
 /// camera:SnapTo(position, orientationHPR, zoom): TargetManual, heading and
 /// pitch from the orientation, over the seconds (SnapTo's none)
+/// AddCommandFeedbackBlip(meshInfo, duration): an order's mark in the world
+/// for `duration` seconds (faf-re cfunc_AddCommandFeedbackBlipL), as FA's
+/// commandmode.lua puts one where each order goes: {Position, MeshName or
+/// BlueprintID, TextureName, ShaderName, UniformScale}.
+static int l_AddCommandFeedbackBlip(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r || !lua_istable(L, 1)) return 0;
+    const auto string_field = [L](const char* name) {
+        lua_pushstring(L, name);
+        lua_gettable(L, 1);
+        std::string value = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        return value;
+    };
+    renderer::FeedbackBlipSpec spec;
+    spec.mesh_name = string_field("MeshName");
+    spec.blueprint_id = string_field("BlueprintID");
+    spec.texture_name = string_field("TextureName");
+    spec.shader_name = string_field("ShaderName");
+    // Read unguarded, as Moho's is: none is 0.
+    lua_pushstring(L, "UniformScale");
+    lua_gettable(L, 1);
+    spec.uniform_scale = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    lua_pushstring(L, "Position");
+    lua_gettable(L, 1);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    std::array<f32, 3> xyz{};
+    for (int i = 0; i < 3; ++i) {
+        lua_rawgeti(L, -1, i + 1);
+        xyz[static_cast<size_t>(i)] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    spec.position = {xyz[0], xyz[1], xyz[2]};
+    spec.duration = static_cast<f32>(lua_tonumber(L, 2));
+    r->add_command_feedback_blip(std::move(spec));
+    return 0;
+}
+
 /// SetInvertMidMouseButton(flag): the middle button drags the ground the
 /// other way (FAF's options menu; Moho's UI_SetInvertMidMouseScrub).
 static int l_SetInvertMidMouseButton(lua_State* L) {
@@ -1428,6 +1471,7 @@ void register_user_bindings(LuaState& state) {
     lua_State* L = state.raw();
     // Globals of the UI state.
     state.register_function("SetInvertMidMouseButton", l_SetInvertMidMouseButton);
+    state.register_function("AddCommandFeedbackBlip", l_AddCommandFeedbackBlip);
     state.register_function("IsDestroyed", ui_is_destroyed);
     // FAF's engine/Library.lua: the engine's statistics tree, which it fills
     // each frame (FAF's performance and logger modules read it; it is
