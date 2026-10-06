@@ -917,11 +917,23 @@ SoundHandle SoundManager::play_world(const WorldSound& sound, const Hearing& hea
 
 void SoundManager::sync_entity_loops(const std::vector<EntityLoop>& wanted, const Hearing& hears) {
     if (!registry_ || !world_enabled_) return;
-    // The one kept for a key: its first entry.
-    std::map<u64, const EntityLoop*> by_key;
-    for (const auto& w : wanted) by_key.emplace(w.key, &w);
+    // The one kept for a key: its first entry. By key, in a vector kept
+    // between frames (a late game wants thousands).
+    auto& by_key = wanted_by_key_;
+    by_key.clear();
+    for (const auto& w : wanted) by_key.emplace_back(w.key, &w);
+    std::stable_sort(by_key.begin(), by_key.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    by_key.erase(std::unique(by_key.begin(), by_key.end(),
+                             [](const auto& a, const auto& b) { return a.first == b.first; }),
+                 by_key.end());
+    const auto wanted_for = [&](u64 key) {
+        const auto at = std::lower_bound(by_key.begin(), by_key.end(), key,
+                                         [](const auto& e, u64 k) { return e.first < k; });
+        return at != by_key.end() && at->first == key ? at : by_key.end();
+    };
     for (auto it = entity_loops_.begin(); it != entity_loops_.end();) {
-        const auto want = by_key.find(it->first);
+        const auto want = wanted_for(it->first);
         const bool same = want != by_key.end() && iequals(want->second->bank, it->second.bank) &&
                           want->second->cue == it->second.cue;
         if (!same) {
@@ -955,8 +967,11 @@ void SoundManager::sync_entity_loops(const std::vector<EntityLoop>& wanted, cons
     for (const auto& [key, w] : by_key) {
         if (!w->in_view || entity_loops_.count(key) != 0) continue;
         if (filter(w->lod_cutoff, w->pos, w->underwater, hears) != Filter::Pass) continue;
-        const SoundHandle h = play(w->bank, w->cue, &w->pos);
-        if (h != INVALID_SOUND) entity_loops_.emplace(key, PlayingLoop{w->bank, w->cue, h});
+        std::string bank(w->bank);
+        std::string cue(w->cue);
+        const SoundHandle h = play(bank, cue, &w->pos);
+        if (h != INVALID_SOUND)
+            entity_loops_.emplace(key, PlayingLoop{std::move(bank), std::move(cue), h});
     }
 }
 
