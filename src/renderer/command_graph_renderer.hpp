@@ -101,8 +101,6 @@ struct CommandGraphPath {
         size_t index = 0; ///< in the unit's orders, then its rally orders
         const CommandGraphStyle* style = nullptr;
         std::array<f32, 4> line_color{};
-        std::array<f32, 4> waypoint_color{};
-        f32 waypoint_scale = 1.0f;
         bool closes = false; ///< the leg back to the loop's first order
     };
     const sim::EntityRecord* unit = nullptr;
@@ -119,6 +117,24 @@ std::vector<CommandGraphPath>
 command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,
                     i32 player_army,
                     const std::function<const CommandGraphStyle*(sim::CommandType)>& style_of);
+
+/// One waypoint for an order, shared by the units given it together (Moho's
+/// UICommandGraphDrawNode)
+struct CommandGraphNode {
+    sim::CommandRecord order;
+    const CommandGraphStyle* style = nullptr;
+    sim::Vector3 position;
+    f32 unit_scale = 1.0f;
+    std::vector<u32> units;
+    bool chosen = false;
+    std::array<f32, 4> color{};
+    f32 scale = 1.0f;
+};
+
+/// The paths' orders, a node each: at the mean of its units' targets, as
+/// big as the square root of its busier side's distinct legs
+/// (RecomputeDrawNodeOrientation, ui_CommandGraphMaxNodeUnits = 1)
+std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths);
 
 /// Draws the army's units' order lines and waypoints as Moho's
 /// UICommandGraph does, while Shift is held: each leg a textured strip on

@@ -31,6 +31,7 @@ struct CommandRecord {
     std::string blueprint_id; ///< what a build order builds
     bool pending = false;
     bool from_guard = false; ///< a fight its Guard (behind it) broke off for
+    u32 command_id = 0;      ///< the sim's; 0 pending
 };
 
 struct PendingQueue {
