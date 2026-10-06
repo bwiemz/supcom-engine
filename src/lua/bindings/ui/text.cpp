@@ -4,6 +4,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "ui/keyboard_focus.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -459,9 +460,7 @@ static int edit_GetStringAdvance(lua_State* L) {
 static int edit_AcquireFocus(lua_State* L) {
     auto* ctrl = check_control(L);
     auto* reg = get_ui_registry(L);
-    if (ctrl && reg) {
-        reg->set_keyboard_focus(ctrl);
-    }
+    if (ctrl && reg) ui::set_keyboard_focus(L, *reg, ctrl, true);
     return 0;
 }
 
@@ -469,11 +468,7 @@ static int edit_AcquireFocus(lua_State* L) {
 static int edit_AbandonFocus(lua_State* L) {
     auto* ctrl = check_control(L);
     auto* reg = get_ui_registry(L);
-    if (ctrl && reg) {
-        if (reg->keyboard_focus() == ctrl) {
-            reg->set_keyboard_focus(nullptr);
-        }
-    }
+    if (ctrl && reg) ui::abandon_keyboard_focus(L, *reg, ctrl);
     return 0;
 }
 

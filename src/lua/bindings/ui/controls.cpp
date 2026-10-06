@@ -5,6 +5,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "ui/keyboard_focus.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -348,25 +349,9 @@ static int control_AcquireKeyboardFocus(lua_State* L) {
     auto* reg = get_ui_registry(L);
     if (!ctrl || !reg) return 0;
 
-    bool blocks = lua_toboolean(L, 2) != 0;
-    auto* prev = reg->keyboard_focus();
-    if (prev && prev != ctrl) {
-        // Call OnLoseKeyboardFocus on previous
-        if (prev->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, prev->lua_table_ref());
-            lua_pushstring(L, "OnLoseKeyboardFocus");
-            lua_gettable(L, -2);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, -2);
-                lua_pcall(L, 1, 0, 0);
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1);
-        }
-    }
-
-    reg->set_keyboard_focus(ctrl, blocks);
+    // The control that had it hears OnKeyboardFocusChange (Moho's
+    // MAUI_SetKeyboardFocus); OnLoseKeyboardFocus is a press elsewhere's.
+    ui::set_keyboard_focus(L, *reg, ctrl, lua_toboolean(L, 2) != 0);
     return 0;
 }
 
@@ -375,9 +360,7 @@ static int control_AbandonKeyboardFocus(lua_State* L) {
     auto* reg = get_ui_registry(L);
     if (!ctrl || !reg) return 0;
 
-    if (reg->keyboard_focus() == ctrl) {
-        reg->set_keyboard_focus(nullptr);
-    }
+    ui::abandon_keyboard_focus(L, *reg, ctrl);
     return 0;
 }
 
