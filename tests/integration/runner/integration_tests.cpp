@@ -9895,6 +9895,32 @@ void test_defence(TestContext& ctx) {
         local kept = EntityCategoryFilterDown(categories.MISSILE, {m, __osc_shell, tank})
         if table.getn(kept) ~= 1 or kept[1] ~= m then error('FilterDown kept ' .. table.getn(kept)) end
     )");
+    // Moho's category queries resolve what they're given to a blueprint
+    // (ResolveEntityCategoryCountBlueprint): a blueprint id, as retail's
+    // AIBrain.OnIntelChange passes a blip's for the campaign's intel
+    // triggers, or any entity, a prop too.
+    lua_check("Test 8b: a blueprint id or a prop answers by its blueprint", R"(
+        if not EntityCategoryContains(categories.TECH1, 'uel0201') then error("'uel0201' is not TECH1") end
+        if not EntityCategoryContains(categories.TECH1, 'UEL0201') then error("'UEL0201' is not TECH1") end
+        if EntityCategoryContains(categories.TECH2, 'uel0201') then error("'uel0201' is TECH2") end
+        if EntityCategoryContains(categories.TECH1, 'nosuchunit') then error('a missing blueprint matched') end
+        local prop
+        for _, r in GetReclaimablesInRect(Rect(0, 0, 1024, 1024)) or {} do
+            if IsProp(r) then prop = r break end
+        end
+        if not prop then error('no prop on the map') end
+        if not EntityCategoryContains(categories.RECLAIMABLE, prop) then error('the prop is not RECLAIMABLE') end
+        if EntityCategoryContains(categories.ALLUNITS, prop) then error('the prop is a unit') end
+        -- A list of both; what names no blueprint is in neither filter
+        local tank = __osc_spawn('uel0201', 'ARMY_2', 330, 800)
+        local list = {tank, prop, 'uel0201', 7}
+        local down = EntityCategoryFilterDown(categories.uel0201, list)
+        if table.getn(down) ~= 2 then error('FilterDown kept ' .. table.getn(down)) end
+        local out = EntityCategoryFilterOut(categories.uel0201, list)
+        if table.getn(out) ~= 1 or out[1] ~= prop then error('FilterOut kept ' .. table.getn(out)) end
+        local n = EntityCategoryCount(categories.TECH1, list)
+        if n ~= 2 then error('Count: ' .. n) end
+    )");
     lua_check(
         "Test 9: an enemy shell can't hit a missile; an interceptor, only the one it was sent at",
         R"(
