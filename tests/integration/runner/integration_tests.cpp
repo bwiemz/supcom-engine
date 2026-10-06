@@ -10355,6 +10355,38 @@ void test_range(TestContext& ctx) {
         if v[1] < 0.9 then error(string.format('torso faces (%.2f, %.2f)', v[1], v[3])) end
     )");
 
+    lua_check("Test 12i setup", R"(
+        __osc_reclaim_acu = __osc_spawn('uel0001', 'ARMY_1', 620.5, 210.5)
+        local p = __osc_reclaim_acu:GetPosition()
+        local wreck = CreatePropHPR('/props/DefaultWreckage/DefaultWreckage_prop.bp', p[1] + 5,
+                                    GetTerrainHeight(p[1] + 5, p[3]), p[3], 0, 0, 0)
+        wreck:SetMaxReclaimValues(2, 2, 1000, 0)
+        wreck:SetReclaimValues(2, 2, 1000, 0)
+        IssueReclaim({__osc_reclaim_acu}, wreck)
+        __osc_repair_acu = __osc_spawn('uel0001', 'ARMY_1', 640.5, 225.5)
+        local hurt = __osc_spawn('ueb0101', 'ARMY_1', 648.5, 225.5)
+        hurt:SetHealth(hurt, hurt:GetMaxHealth() * 0.1)
+        IssueRepair({__osc_repair_acu}, hurt)
+        __osc_capture_acu = __osc_spawn('uel0001', 'ARMY_1', 640.5, 285.5)
+        __osc_capture_acu:SetFireState(1)
+        local prize = __osc_spawn('ueb0101', 'ARMY_2', 648.5, 285.5)
+        IssueCapture({__osc_capture_acu}, prize)
+    )");
+    run(20);
+    for (const char* state : {"Reclaiming", "Repairing", "Capturing"}) {
+        lua_check(fmt::format("Test 12i: {} turns the ACU's torso to its target, east of it", state)
+                      .c_str(),
+                  fmt::format(R"(
+            local u = ({{Reclaiming = __osc_reclaim_acu, Repairing = __osc_repair_acu,
+                        Capturing = __osc_capture_acu}})['{0}']
+            if not u:IsUnitState('{0}') then error('not {0}') end
+            local v = u:GetBoneDirection('Torso')
+            if v[1] < 0.9 then error(string.format('torso faces (%.2f, %.2f)', v[1], v[3])) end
+        )",
+                              state)
+                      .c_str());
+    }
+
     lua_check("Test 12e: an engineer guards one building a generator", R"(
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveResource('MASS', 10000)

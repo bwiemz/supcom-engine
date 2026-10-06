@@ -1077,8 +1077,13 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 
 void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
     reclaim_target_id_ = target_id;
+    auto* target = registry.find(target_id);
+    if (target) {
+        const Vector3 at = target->position();
+        aim_builder_arms(&at, L);
+    }
     if (L) {
-        call_lua_method_with_entity(L, "OnStartReclaim", registry.find(target_id));
+        call_lua_method_with_entity(L, "OnStartReclaim", target);
     }
 }
 
@@ -1242,6 +1247,11 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                  "(BuildTime={:.0f} BuildRate={:.1f})",
                  entity_id(), cmd.target_id, repair_build_time_, build_rate_);
 
+    {
+        const Vector3 at = target->position();
+        aim_builder_arms(&at, L);
+    }
+
     // Call builder:OnStartBuild(target, "Repair")
     // FA Lua detects order=="Repair" and routes to OnStartRepair internally
     if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
@@ -1403,6 +1413,11 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
                  "(BuildTime={:.0f} BuildRate={:.1f} captureTime={:.1f}s energy={:.0f})",
                  entity_id(), cmd.target_id, build_time, build_rate_,
                  capture_time_, capture_energy_cost_);
+
+    {
+        const Vector3 at = target->position();
+        aim_builder_arms(&at, L);
+    }
 
     // Call self:OnStartCapture(target)
     if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {

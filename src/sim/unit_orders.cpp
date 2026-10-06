@@ -265,7 +265,8 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
-    if (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile) {
+    if (!is_reclaiming() && !is_repairing() && !is_capturing() &&
+        (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile)) {
         aim_builder_arms(nullptr, ctx.L);
     }
     // An attack run ends with its order: Moho's flight resets the combat
