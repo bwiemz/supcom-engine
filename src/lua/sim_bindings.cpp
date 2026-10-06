@@ -519,7 +519,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                          {std::pair{"AboveWaterTargetsOnly", &weapon->above_water_targets_only},
                           std::pair{"AboveWaterFireOnly", &weapon->above_water_fire_only},
                           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
-                          std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target}}) {
+                          std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},
+                          std::pair{"CannotAttackGround", &weapon->cannot_attack_ground}}) {
                         lua_pushstring(L, field);
                         lua_gettable(L, we);
                         if (lua_isboolean(L, -1)) {
@@ -534,6 +535,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                         weapon->target_check_period =
                             static_cast<u32>(std::clamp(ticks, 1.0, 1.0e4));
                     }
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "AttackGroundTries");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1))
+                        weapon->attack_ground_tries = static_cast<i32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
                     for (auto [field, value] :
                          {std::pair{"FiringTolerance", &weapon->firing_tolerance},
@@ -5320,19 +5326,22 @@ static int l_IssueToUnitMoveOffFactory(lua_State* L) {
     return 0;
 }
 
-// IssueAttack(units_table, target_entity)
+// IssueAttack(units_table, target): a unit, or a position (a ground attack,
+// as Moho's command target takes either; retail's AI attacks positions).
 static int l_IssueAttack(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
 
-    // Extract target entity from arg 2
-    auto* target = extract_entity(L, 2);
-    if (!target || target->destroyed()) return 0;
-
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Attack;
-    cmd.target_id = target->entity_id();
-    cmd.target_pos = target->position();
+    if (lua_istable(L, 2) && !is_object_handle(L, 2)) {
+        cmd.target_pos = extract_position(L, 2);
+    } else {
+        auto* target = extract_entity(L, 2);
+        if (!target || target->destroyed()) return 0;
+        cmd.target_id = target->entity_id();
+        cmd.target_pos = target->position();
+    }
     return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 

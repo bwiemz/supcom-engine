@@ -370,10 +370,7 @@ OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     // Attack: move toward target if out of weapon range, else stop
-    if (cmd.target_id == 0) {
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
+    if (cmd.target_id == 0) return order_attack_ground(cmd, dt, ctx);
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
         if (cmd.engaged) end_attack_run(*this); // the run ends with its target
@@ -440,6 +437,95 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         navigator_.abort_move();
     }
     return OrderStep::Hold; // Stay on this command
+}
+
+OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // Moho's CUnitAttackTargetTask on a ground target (faf-re). The first
+    // weapon that can hit the ground there (CAiAttackerImpl::GetTargetWeapon;
+    // here the first enabled one) brings its unit within its range, and the
+    // attacker's desired target is the point from then on (cmd.engaged:
+    // Weapon::update_targeting hands it to every weapon that can hit it).
+    // The order never ends by itself. Only when another order follows, and
+    // that weapon has fired AttackGroundTries shots at the point, does it go
+    // to the back of the queue: Moho's command dispatch sends a ground attack
+    // round as it does a patrol.
+    const Vector3 at = cmd.target_pos;
+    const Weapon* weapon = nullptr;
+    for (const auto& w : weapons_) {
+        if (w->enabled && w->max_range > 0 && w->attacks_on_order() &&
+            w->can_attack_ground(at, ctx.terrain)) {
+            weapon = w.get();
+            break;
+        }
+    }
+    if (weapon && cmd.engaged && command_queue_.size() >= 2 && weapon->ground_from_order &&
+        weapon->has_ground_target && weapon->ground_target.x == at.x &&
+        weapon->ground_target.z == at.z &&
+        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries) {
+        navigator_.abort_move();
+        auto finished = std::move(cmd); // cmd is the element pop_front destroys
+        finished.begun = false;
+        finished.engaged = false;
+        command_queue_.pop_front();
+        command_queue_.push_back(std::move(finished));
+        return OrderStep::Hold; // the next order starts next tick
+    }
+
+    const f32 dx = at.x - position().x;
+    const f32 dz = at.z - position().z;
+    const f32 dist2 = dx * dx + dz * dz;
+    // A winged aircraft flies at the point and, within its weapon's reach or
+    // its EngageDistance, makes its runs over it. With no weapon that can
+    // hit it, the order ends there (the attacker can't attack it).
+    if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
+        const f32 engage = air_combat_rules_.engage_distance;
+        const bool reached =
+            (weapon && weapon->in_firing_range(*this, at)) || dist2 < engage * engage;
+        if (!cmd.engaged && reached) {
+            if (!weapon) {
+                command_queue_.pop_front();
+                return OrderStep::Next;
+            }
+            cmd.engaged = true;
+        }
+        if (cmd.engaged) {
+            navigator_.abort_move();
+            fly_attack_run(*this, at, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            return OrderStep::Hold;
+        }
+    }
+    // A structure's attacker takes the point at once; its weapons fire when
+    // it is in their range.
+    if (!is_mobile()) {
+        cmd.engaged = true;
+        return OrderStep::Hold;
+    }
+    if (weapon && weapon->in_firing_range(*this, at)) {
+        navigator_.abort_move();
+        cmd.engaged = true;
+        return OrderStep::Hold;
+    }
+    // Out of range it goes toward the point; inside its weapon's minimum
+    // range it backs off GuardScanRadius from the point (the task's
+    // Starting state). With no weapon that can hit the point it goes there
+    // and stays.
+    Vector3 goal = at;
+    if (weapon && dist2 < weapon->min_range * weapon->min_range && dist2 > 0) {
+        const f32 dist = std::sqrt(dist2);
+        goal = {at.x - dx / dist * guard_scan_radius_, at.y, at.z - dz / dist * guard_scan_radius_};
+    }
+    const f32 gx = goal.x - position().x;
+    const f32 gz = goal.z - position().z;
+    if (!weapon && gx * gx + gz * gz <= 1.0f) {
+        navigator_.abort_move();
+        return OrderStep::Hold;
+    }
+    if (!navigator_.is_moving() || navigator_.goal().x != goal.x || navigator_.goal().z != goal.z) {
+        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+    }
+    nav_update(dt, ctx.terrain);
+    return OrderStep::Hold;
 }
 
 OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {

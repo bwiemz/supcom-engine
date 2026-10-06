@@ -141,8 +141,12 @@ Vector3 predict_ahead(const Entity& target, f32 seconds) {
     return at;
 }
 
-void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::Terrain* terrain,
-                    f32 dt) {
+namespace {
+
+/// fly_attack_run at `at`: `target`'s position, or a ground attack's point
+/// (no target).
+void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
+             const map::Terrain* terrain, f32 dt) {
     using M = AirCombatMode;
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
@@ -156,11 +160,12 @@ void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::
                        osc::dmath::cos(heading) * unit.current_airspeed()};
     }
 
-    const Unit* target_unit = target.is_unit() ? static_cast<const Unit*>(&target) : nullptr;
+    const Unit* target_unit =
+        target && target->is_unit() ? static_cast<const Unit*>(target) : nullptr;
     AirTacticsInput in;
     in.position = pos;
     in.heading = heading;
-    in.target = target.position();
+    in.target = at;
     in.target_in_air = target_unit && target_unit->layer() == "Air";
     if (target_unit) {
         const Vector3& v = target_unit->velocity();
@@ -193,7 +198,7 @@ void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::
             const f32 ahead = r.predict_ahead_for_bomb_drop > 0.0f && !in.target_in_air
                                   ? r.predict_ahead_for_bomb_drop
                                   : 1.0f;
-            aim = predict_ahead(target, ahead);
+            aim = predict_ahead(*target_unit, ahead);
         }
         if (mode == M::NormalTurn && in.target_in_air && !in.target_moved)
             steer.speed = std::max(r.min_airspeed, dist);
@@ -284,6 +289,18 @@ void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::
     unit.set_current_airspeed(
         std::sqrt(st.velocity.x * st.velocity.x + st.velocity.z * st.velocity.z));
     unit.set_unit_state("MakingAttackRun", steer.making_attack_run);
+}
+
+} // namespace
+
+void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::Terrain* terrain,
+                    f32 dt) {
+    fly_run(unit, &target, target.position(), sim, terrain, dt);
+}
+
+void fly_attack_run(Unit& unit, const Vector3& at, SimState& sim, const map::Terrain* terrain,
+                    f32 dt) {
+    fly_run(unit, nullptr, at, sim, terrain, dt);
 }
 
 void end_attack_run(Unit& unit) {

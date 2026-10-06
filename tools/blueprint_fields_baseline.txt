@@ -8,7 +8,6 @@ BankingSlope
 BounceVelDamp
 CameraFollowTimeout
 CameraFollowsProjectile
-CannotAttackGround
 CatchUpAcc
 CirclingDirChange
 CirclingElevationChangeRatio
