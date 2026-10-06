@@ -128,6 +128,11 @@ struct EmitterBlueprintData {
     const EmitterCurve& curve(EmitterCurveId id) const { return curves[id]; }
     /// Its texture has frames or strips to pick from (TRampAnimate*).
     bool animated() const { return frame_count > 1.0f || strip_count > 1.0f; }
+
+    /// The particle systems' draw ordering: the ordering it was last counted
+    /// in (a stamp unique to each), and its bucket then.
+    mutable u64 draw_update = 0;
+    mutable u32 draw_bucket = 0;
 };
 
 /// Emitter blueprints by VFS path, read as the beam and trail caches read

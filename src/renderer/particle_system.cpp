@@ -39,6 +39,22 @@ Vector3 normalized(const Vector3& a) {
     return len > 1e-6f ? scale(a, 1.0f / len) : Vector3{};
 }
 
+/// Draw order: under the water first, then by SortOrder, textures and blend
+/// (Moho's buckets); the refracting ones apart, after them all (Moho's
+/// refracting buckets, whatever their SortOrder; M214d).
+bool draws_before(const EmitterBlueprintData& x, const EmitterBlueprintData& y) {
+    const bool x_refracts = x.blendmode == kBlendRefract;
+    if (x_refracts != (y.blendmode == kBlendRefract)) return !x_refracts;
+    if (!x_refracts && (x.sort_order < 0) != (y.sort_order < 0)) return x.sort_order < 0;
+    if (x.sort_order != y.sort_order) return x.sort_order < y.sort_order;
+    if (x.texture != y.texture) return x.texture < y.texture;
+    if (x.ramp_texture != y.ramp_texture) return x.ramp_texture < y.ramp_texture;
+    if (x.light != y.light) {
+        return y.light;
+    }
+    return x.blendmode < y.blendmode;
+}
+
 /// Normalized lerp along the shorter arc (Moho's QuatLERP between ticks).
 Quaternion nlerp(const Quaternion& a, const Quaternion& b, f32 t) {
     const f32 dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
@@ -466,28 +482,40 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
         return p.lifetime <= 0.0f || now >= p.born + static_cast<f64>(p.lifetime);
     });
 
-    // Draw order: under the water first, then by SortOrder, textures and
-    // blend (Moho's buckets), each bucket in the order it emitted; the
-    // refracting ones apart, after them all (Moho's refracting buckets,
-    // whatever their SortOrder; M214d).
-    std::vector<const Particle*> order;
-    order.reserve(particles_.size());
+    // Draw order (draws_before), each bucket in the order it emitted: what
+    // a stable sort of the particles gives, in linear time. The order is
+    // their blueprints', so the few blueprints are sorted; those equal fall
+    // in one bucket, and each particle goes into its bucket in turn.
+    const auto drawable = [](const Particle& p) {
+        return p.bp->blendmode >= 0 && p.bp->blendmode <= kBlendRefract;
+    };
+    // A stamp no other ordering has had (another system may share these
+    // blueprints).
+    static u64 ordering = 0;
+    const u64 stamp = ++ordering;
+    order_blueprints_.clear();
+    for (const Particle& p : particles_) {
+        if (!drawable(p) || p.bp->draw_update == stamp) continue;
+        p.bp->draw_update = stamp;
+        order_blueprints_.push_back(p.bp);
+    }
+    std::sort(order_blueprints_.begin(), order_blueprints_.end(),
+              [](const EmitterBlueprintData* a, const EmitterBlueprintData* b) {
+                  return draws_before(*a, *b);
+              });
+    bucket_starts_.assign(order_blueprints_.size() + 1, 0);
+    u32 bucket = 0;
+    for (size_t i = 0; i < order_blueprints_.size(); ++i) {
+        if (i > 0 && draws_before(*order_blueprints_[i - 1], *order_blueprints_[i])) ++bucket;
+        order_blueprints_[i]->draw_bucket = bucket;
+    }
     for (const Particle& p : particles_)
-        if (p.bp->blendmode >= 0 && p.bp->blendmode <= kBlendRefract) order.push_back(&p);
-    std::stable_sort(order.begin(), order.end(), [](const Particle* a, const Particle* b) {
-        const EmitterBlueprintData& x = *a->bp;
-        const EmitterBlueprintData& y = *b->bp;
-        const bool x_refracts = x.blendmode == kBlendRefract;
-        if (x_refracts != (y.blendmode == kBlendRefract)) return !x_refracts;
-        if (!x_refracts && (x.sort_order < 0) != (y.sort_order < 0)) return x.sort_order < 0;
-        if (x.sort_order != y.sort_order) return x.sort_order < y.sort_order;
-        if (x.texture != y.texture) return x.texture < y.texture;
-        if (x.ramp_texture != y.ramp_texture) return x.ramp_texture < y.ramp_texture;
-        if (x.light != y.light) {
-            return y.light;
-        }
-        return x.blendmode < y.blendmode;
-    });
+        if (drawable(p)) ++bucket_starts_[p.bp->draw_bucket + 1];
+    for (size_t b = 1; b < bucket_starts_.size(); ++b) bucket_starts_[b] += bucket_starts_[b - 1];
+    order_.resize(bucket_starts_.back());
+    for (const Particle& p : particles_)
+        if (drawable(p)) order_[bucket_starts_[p.bp->draw_bucket]++] = &p;
+    const std::vector<const Particle*>& order = order_;
 
     instances_.reserve(order.size());
     for (const Particle* pp : order) {

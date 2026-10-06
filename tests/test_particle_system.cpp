@@ -423,3 +423,72 @@ TEST_CASE("A LightParticleIntel is made only where the player's army sees it",
     CHECK(ps.draws_effect(3));
     CHECK(ps.drawn().size() == 2);
 }
+
+TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, blend; refracting "
+          "last -- each bucket in the order it emitted",
+          "[renderer][emitter]") {
+    const fs::path root = fs::temp_directory_path() / "osc_particle_order_test";
+    fs::remove_all(root);
+    const fs::path dir = root / "effects" / "Emitters";
+    fs::create_directories(dir);
+    const auto emitter_bp = [&](const char* name, const char* fields) {
+        std::ofstream(dir / (std::string(name) + "_emit.bp"))
+            << "EmitterBlueprint {\n    Lifetime = -1,\n    Repeattime = 10,\n"
+            << "    InterpolateEmission = false,\n    EmitIfVisible = false,\n"
+            << "    SnapToWaterline = false,\n"
+            << "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+            << "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n"
+            << fields << "}\n";
+    };
+    emitter_bp("under", "    Texture = 'z.dds', SortOrder = -1,\n");
+    emitter_bp("tex_a", "    Texture = 'a.dds',\n");
+    emitter_bp("tex_b", "    Texture = 'b.dds',\n");
+    emitter_bp("same1", "    Texture = 'm.dds',\n"); // these two draw alike:
+    emitter_bp("same2", "    Texture = 'm.dds',\n"); // one bucket
+    emitter_bp("later", "    Texture = 'a.dds', SortOrder = 2,\n");
+    emitter_bp("refract", "    Texture = 'a.dds', Blendmode = 5, SortOrder = -5,\n");
+
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+    osc::lua::LuaState lua;
+    osc::renderer::EmitterBlueprintCache cache;
+    cache.set_vfs(&vfs);
+    osc::renderer::Camera camera;
+    osc::renderer::ParticleSystem ps;
+    const auto emitter = [](osc::u32 id, const char* name) {
+        osc::sim::EffectRecord fx;
+        fx.id = id;
+        fx.type = osc::sim::EffectType::EMITTER_AT_ENTITY;
+        fx.blueprint_path = std::string("/effects/emitters/") + name + "_emit.bp";
+        fx.framed = true;
+        fx.frame_position = {10, 20, 30};
+        return fx;
+    };
+    // Emitted each tick in this order, which is no bucket's
+    std::vector<osc::sim::WorldSnapshot> ticks(4);
+    for (osc::u32 t = 0; t < ticks.size(); ++t) {
+        ticks[t].tick = t + 1;
+        ticks[t].effects = {emitter(7, "refract"), emitter(6, "later"), emitter(4, "same1"),
+                            emitter(3, "tex_b"),   emitter(5, "same2"), emitter(2, "tex_a"),
+                            emitter(1, "under")};
+    }
+    for (size_t t = 0; t < ticks.size(); ++t)
+        ps.update(osc::sim::FrameView(&ticks[t == 0 ? 0 : t - 1], &ticks[t], 1.0f), camera, nullptr,
+                  cache, lua.raw(), nullptr);
+
+    std::vector<osc::u32> ids;
+    for (const auto& d : ps.drawn()) ids.push_back(d.effect_id);
+    REQUIRE(ids.size() >= 14);
+    // The buckets' order: under the water, then SortOrder 0's by texture
+    // (a, b, m), SortOrder 2, and the refracting one last.
+    std::vector<osc::u32> runs;
+    for (const osc::u32 id : ids)
+        if (runs.empty() || runs.back() != (id == 5 ? 4u : id)) runs.push_back(id == 5 ? 4u : id);
+    CHECK(runs == std::vector<osc::u32>{1, 2, 3, 4, 6, 7});
+    // The bucket of two alike: in the order emitted, 4 then 5 each tick
+    std::vector<osc::u32> alike;
+    for (const osc::u32 id : ids)
+        if (id == 4 || id == 5) alike.push_back(id);
+    REQUIRE(alike.size() >= 4);
+    for (size_t i = 0; i < alike.size(); ++i) CHECK(alike[i] == (i % 2 == 0 ? 4u : 5u));
+}
