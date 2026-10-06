@@ -1475,9 +1475,11 @@ void test_platoon(TestContext& ctx) {
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
 
-    // A platoon whose units are all gone is destroyed, as Moho's are: its
-    // OnDestroy empties its trash, ending its AI thread (retail's AI loops
-    // run while PlatoonExists). One that never held a unit stays.
+    // Moho's CleanUpPlatoons, at the start of each army's tick: a platoon
+    // with no unique name and no unit is destroyed (one that never held a
+    // unit too), and a DisbandOnIdle one once its squads are idle, its units
+    // back in the pool. Its OnDestroy empties its trash, ending its AI
+    // thread (retail's AI loops run while PlatoonExists).
     const auto reap_check = [&](const char* what, const char* code) {
         if (auto r = ctx.lua_state.do_string(code); r) spdlog::info("[PASS] {}", what);
         else osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
@@ -1495,9 +1497,50 @@ void test_platoon(TestContext& ctx) {
             end
         end)
         __osc_never = brain:MakePlatoon('NeverManned', 'none')
+        __osc_named = brain:MakePlatoon('Label', 'none')
+        __osc_named:UniquelyNamePlatoon('KeepMe')
+        -- DisbandOnIdle: one whose unit stands idle, one whose unit moves
+        local idler = CreateUnitHPR('uel0201', 'ARMY_2', 620, GetTerrainHeight(620, 150), 150, 0, 0, 0)
+        __osc_idle = brain:MakePlatoon('', 'none')
+        brain:AssignUnitsToPlatoon(__osc_idle, {idler}, 'Attack', 'none')
+        __osc_idle:DisbandOnIdle()
+        __osc_idler = idler
+        -- (a guard order never ends by itself)
+        local guard = CreateUnitHPR('uel0201', 'ARMY_2', 630, GetTerrainHeight(630, 160), 160, 0, 0, 0)
+        __osc_busy = brain:MakePlatoon('', 'none')
+        brain:AssignUnitsToPlatoon(__osc_busy, {guard}, 'Attack', 'none')
+        IssueGuard({guard}, idler)
+        __osc_busy:DisbandOnIdle()
+        __osc_guard = guard
         __osc_tank = tank
     )");
     for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    reap_check("Platoon test: an empty platoon without a unique name is destroyed, though it never "
+               "held a unit",
+               R"(
+        if ArmyBrains[2]:PlatoonExists(__osc_never) then error('it still exists') end
+    )");
+    reap_check("Platoon test: an empty uniquely named one stays, found by that name in any case",
+               R"(
+        local brain = ArmyBrains[2]
+        if not brain:PlatoonExists(__osc_named) then error('it went') end
+        if brain:GetPlatoonUniquelyNamed('keepme') ~= __osc_named then error('not found as keepme') end
+        if brain:GetPlatoonUniquelyNamed('Label') then error('found by its MakePlatoon name') end
+    )");
+    reap_check("Platoon test: a DisbandOnIdle platoon goes once idle, its unit back in the pool",
+               R"(
+        local brain = ArmyBrains[2]
+        if brain:PlatoonExists(__osc_idle) then error('the idle one still exists') end
+        local pool = brain:GetPlatoonUniquelyNamed('ArmyPool')
+        local found = false
+        for _, u in pool:GetPlatoonUnits() do
+            if u == __osc_idler then found = true end
+        end
+        if not found then error('its unit is not in the pool') end
+        if not brain:PlatoonExists(__osc_busy) then
+            error('the one whose unit guards went too (its queue: ' .. table.getn(__osc_guard:GetCommandQueue()) .. ')')
+        end
+    )");
     reap_check("setup: its unit goes", R"(
         if __osc_doomed_ticks == 0 then error('its thread never ran') end
         __osc_tank:Destroy()
@@ -1506,7 +1549,6 @@ void test_platoon(TestContext& ctx) {
     reap_check("Platoon test: an emptied platoon is destroyed and its thread ends", R"(
         local brain = ArmyBrains[2]
         if brain:PlatoonExists(__osc_doomed) then error('it still exists') end
-        if not brain:PlatoonExists(__osc_never) then error('a platoon that never held a unit went too') end
         __osc_doomed_seen = __osc_doomed_ticks
     )");
     for (int i = 0; i < 3; ++i) ctx.sim.tick();

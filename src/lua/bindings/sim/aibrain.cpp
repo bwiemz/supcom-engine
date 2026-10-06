@@ -1877,7 +1877,7 @@ static int brain_PlatoonExists(lua_State* L) {
 // PlatoonHandle is the pool; FAF later added a script guard for the same.)
 static int brain_DisbandPlatoon(lua_State* L) {
     auto* platoon = check_platoon(L, 2);
-    if (!platoon || platoon->name() == "ArmyPool") return 0;
+    if (!platoon || platoon->is_army_pool()) return 0;
 
     auto* sim = get_sim(L);
 

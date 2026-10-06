@@ -176,20 +176,64 @@ SimState::~SimState() {
     }
 }
 
-void SimState::reap_empty_platoons() {
+void SimState::clean_up_platoons() {
     if (!L_) return;
+    // A unit leaves its platoon only as it is freed (Moho's ~Unit): a dying
+    // one still counts; one destroyed last tick is gone by now.
+    const auto alive = [this](u32 id) {
+        const Entity* e = entity_registry_.find(id);
+        return e && !e->destroyed();
+    };
+    // Moho's AssignedSquadsAreIdle: no unit in an assigned squad (Attack,
+    // Artillery, Guard, Support or Scout), alive and not dying, has an
+    // order at the head of its queue.
+    const auto idle = [&](const Platoon& p) {
+        for (const u32 id : p.unit_ids()) {
+            const int squad = Platoon::squad_class(p.get_unit_squad(id));
+            if (squad < 1 || !alive(id)) continue;
+            const Entity* e = entity_registry_.find(id);
+            if (!e->is_unit()) continue;
+            const auto& unit = static_cast<const Unit&>(*e);
+            if (!unit.is_dying() && !unit.command_queue().empty()) return false;
+        }
+        return true;
+    };
     for (const auto& army : armies_) {
-        // In creation order; OnDestroy may make platoons, which come after.
+        Platoon* pool = army->find_platoon_by_name("ArmyPool");
+        std::vector<Platoon*> doomed;
         for (size_t i = 0; i < army->platoon_count(); ++i) {
             Platoon* p = army->platoon_at(i);
-            if (!p || p->destroyed() || !p->had_units() || p->name() == "ArmyPool") continue;
-            const bool manned =
-                std::any_of(p->unit_ids().begin(), p->unit_ids().end(), [this](u32 id) {
-                    const Entity* e = entity_registry_.find(id);
-                    return e && !e->destroyed();
-                });
-            if (manned) continue;
+            if (!p || p->destroyed()) continue;
+            bool disband = false;
+            if (p->disband_on_idle() && idle(*p)) {
+                // Its units go to the pool's unassigned squad first.
+                if (pool && p != pool) {
+                    const std::vector<u32> ids = p->unit_ids();
+                    for (const u32 id : ids) {
+                        if (!alive(id)) continue;
+                        p->remove_unit(id);
+                        pool->add_unit(id);
+                        pool->set_unit_squad(id, "Unassigned");
+                        Entity* e = entity_registry_.find(id);
+                        if (e->lua_table_ref() < 0 || pool->lua_table_ref() < 0) continue;
+                        lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+                        lua_pushstring(L_, "PlatoonHandle");
+                        lua_rawgeti(L_, LUA_REGISTRYINDEX, pool->lua_table_ref());
+                        lua_rawset(L_, -3);
+                        lua_pop(L_, 1);
+                    }
+                }
+                disband = true;
+            }
+            if (!disband && p->unique_name().empty() &&
+                std::none_of(p->unit_ids().begin(), p->unit_ids().end(), alive))
+                disband = true;
+            if (!disband) continue;
+            // Out of the army's platoons first, then each one's OnDestroy.
             army->destroy_platoon(p);
+            doomed.push_back(p);
+        }
+        for (Platoon* p : doomed) {
             const int ref = p->lua_table_ref();
             if (ref < 0) continue;
             p->set_lua_table_ref(-2); // LUA_NOREF
@@ -1049,6 +1093,9 @@ void SimState::tick() {
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
+    // Each army's tick begins by destroying its spent platoons, before any
+    // script runs (Moho's CArmyImpl::OnTick).
+    clean_up_platoons();
     update_influence_maps();
 
     if (pathfinder_) {
@@ -1141,8 +1188,6 @@ void SimState::tick() {
 
     // "No Rush": pin units that strayed beyond their confinement radius.
     enforce_no_rush();
-
-    reap_empty_platoons();
 
     update_visibility();
     update_decal_sight();

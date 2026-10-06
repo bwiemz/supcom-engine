@@ -856,10 +856,12 @@ private:
     /// factory's build, an enhancement).
     void stop_unit(Unit& unit);
     void enforce_no_rush();
-    /// A platoon whose units are all gone is destroyed, as Moho does: its
-    /// script's OnDestroy empties its trash, ending its AI thread. (The
-    /// army's pool, and platoons that never held a unit, stay.)
-    void reap_empty_platoons();
+    /// Moho's CArmyImpl::CleanUpPlatoons, each army's at the start of the
+    /// tick: a platoon without a unique name that holds no unit, and a
+    /// DisbandOnIdle one whose squads are idle (its units go back to the
+    /// pool first), are destroyed. Its script's OnDestroy empties its
+    /// trash, ending its AI thread.
+    void clean_up_platoons();
     void update_victory();
     /// Dispose of a just-defeated army's units per the active share condition.
     void dispose_defeated_army(i32 army);
