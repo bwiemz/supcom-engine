@@ -14698,6 +14698,7 @@ void test_unitsound(TestContext& ctx) {
         const auto seen = [](const osc::sim::Vector3&, osc::f32) { return true; };
         const auto keys = [](const std::vector<osc::audio::SoundManager::EntityLoop>& loops) {
             std::vector<osc::u64> k;
+            k.reserve(loops.size());
             for (const auto& l : loops) k.push_back(l.key);
             return k;
         };
