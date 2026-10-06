@@ -14632,9 +14632,11 @@ void test_unitsound(TestContext& ctx) {
         return;
     }
     sound->set_global_variable("CameraDistance", 100.0f); // near enough to start loops
+    // As the window does: the loops' entities found again once a tick.
+    osc::app::EntityLoopSources sources;
     const auto sync = [&] {
         sound->sync_entity_loops(osc::app::gather_entity_loops(
-            ctx.sim, [](const osc::sim::Entity& e) { return e.position(); },
+            ctx.sim, sources.ids(ctx.sim), [](const osc::sim::Entity& e) { return e.position(); },
             [](const osc::sim::Vector3&, osc::f32) { return true; }));
     };
     auto loop_of = [&](const char* name) -> osc::audio::SoundHandle {
@@ -14689,6 +14691,25 @@ void test_unitsound(TestContext& ctx) {
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 8c: the loop stayed at x={} (unit at {})", heard.x, p.x);
+        }
+        // Test 8e: once the sim has ticked, the frame's walk of the loops'
+        // entities finds what a walk of every entity does
+        const auto at = [](const osc::sim::Entity& e) { return e.position(); };
+        const auto seen = [](const osc::sim::Vector3&, osc::f32) { return true; };
+        const auto keys = [](const std::vector<osc::audio::SoundManager::EntityLoop>& loops) {
+            std::vector<osc::u64> k;
+            for (const auto& l : loops) k.push_back(l.key);
+            return k;
+        };
+        const auto all = keys(osc::app::gather_entity_loops(ctx.sim, at, seen));
+        const auto cached = keys(osc::app::gather_entity_loops(ctx.sim, sources.ids(ctx.sim), at, seen));
+        if (!all.empty() && all == cached) {
+            pass++;
+            spdlog::info("[PASS] Test 8e: the per-tick walk finds the {} loop(s) every entity has", all.size());
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8e: {} loop(s) from every entity, {} from the per-tick walk",
+                                   all.size(), cached.size());
         }
     }
     lua("e:Destroy()");

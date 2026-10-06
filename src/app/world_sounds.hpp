@@ -30,4 +30,23 @@ gather_entity_loops(const sim::SimState& sim,
                     const std::function<sim::Vector3(const sim::Entity&)>& where,
                     const std::function<bool(const sim::Vector3&, f32 radius)>& in_view);
 
+/// The same, of the entities `ids` names alone (EntityLoopSources').
+std::vector<audio::SoundManager::EntityLoop>
+gather_entity_loops(const sim::SimState& sim, const std::vector<u32>& ids,
+                    const std::function<sim::Vector3(const sim::Entity&)>& where,
+                    const std::function<bool(const sim::Vector3&, f32 radius)>& in_view);
+
+/// The entities that want loops, ascending id. Every entity (props
+/// included) is walked again only once the sim has ticked since, not each
+/// frame: scripts set loops, and they run in a tick.
+class EntityLoopSources {
+public:
+    const std::vector<u32>& ids(const sim::SimState& sim);
+
+private:
+    std::vector<u32> ids_;
+    const sim::SimState* sim_ = nullptr;
+    u32 tick_ = 0;
+};
+
 } // namespace osc::app
