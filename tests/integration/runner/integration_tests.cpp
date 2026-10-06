@@ -11178,6 +11178,61 @@ void test_naval_depth(TestContext& ctx) {
         __osc_drop:Destroy()
     )");
 
+    // Into the sea from its shore (Moho's UpdateCurrentLayer): a UEF ACU,
+    // amphibious, walks the seabed, on the bed; an Aeon Aurora, hover,
+    // rides the surface on the Water layer.
+    lua_check("setup: an ACU and a hover tank on the shore", R"(
+        -- Water over 4 deep with land within 40 east of it.
+        local function wet(x, z) return GetSurfaceHeight(x, z) - GetTerrainHeight(x, z) end
+        local z, deep, shore
+        for tz = 100, 950, 10 do
+            for tx = 20, 960, 4 do
+                if wet(tx, tz) > 4 then
+                    for d = 4, 40, 2 do
+                        if wet(tx + d, tz) <= 0 and wet(tx + d + 6, tz) <= 0 then
+                            z, deep, shore = tz, tx, tx + d
+                            break
+                        end
+                    end
+                end
+                if z then break end
+            end
+            if z then break end
+        end
+        if not z then error('no deep water by a shore') end
+        __osc_wade = {deep - 4, z}
+        local lx = shore + 6
+        __osc_ashore = {lx, z}
+        __osc_acu = CreateUnitHPR('uel0001', 'ARMY_1', lx, GetTerrainHeight(lx, z), z, 0, 0, 0)
+        __osc_aurora = CreateUnitHPR('ual0201', 'ARMY_1', lx, GetTerrainHeight(lx, z + 12), z + 12, 0, 0, 0)
+        IssueMove({__osc_acu}, {deep - 4, GetTerrainHeight(deep - 4, z), z})
+        IssueMove({__osc_aurora}, {deep - 4, GetSurfaceHeight(deep - 4, z + 12), z + 12})
+    )");
+    run(400);
+    lua_check("Test 7: the ACU walks the seabed, on the bed", R"(
+        if __osc_acu:GetCurrentLayer() ~= 'Seabed' then error('it is on ' .. __osc_acu:GetCurrentLayer()) end
+        local p = __osc_acu:GetPosition()
+        local bed, top = GetTerrainHeight(p[1], p[3]), GetSurfaceHeight(p[1], p[3])
+        if top - bed < 2 then error('only ' .. (top - bed) .. ' deep at ' .. p[1]) end
+        if math.abs(p[2] - bed) > 0.05 then error('at ' .. p[2] .. ', the bed is ' .. bed) end
+    )");
+    lua_check("Test 8: the hover tank rides the water", R"(
+        if __osc_aurora:GetCurrentLayer() ~= 'Water' then error('it is on ' .. __osc_aurora:GetCurrentLayer()) end
+        local p = __osc_aurora:GetPosition()
+        local top = GetSurfaceHeight(p[1], p[3])
+        if math.abs(p[2] - top) > 0.05 then error('at ' .. p[2] .. ', the surface is ' .. top) end
+        local x, z = __osc_ashore[1], __osc_ashore[2]
+        IssueMove({__osc_acu}, {x, GetTerrainHeight(x, z), z})
+    )");
+    run(400);
+    lua_check("Test 9: back ashore, the ACU is on land", R"(
+        local p = __osc_acu:GetPosition()
+        if GetTerrainHeight(p[1], p[3]) < GetSurfaceHeight(p[1], p[3]) then
+            error('still in the water at ' .. p[1])
+        end
+        if __osc_acu:GetCurrentLayer() ~= 'Land' then error('it is on ' .. __osc_acu:GetCurrentLayer()) end
+    )");
+
     spdlog::info("Naval depth test: {} passed, {} failed", pass, fail);
 }
 

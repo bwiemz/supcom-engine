@@ -875,6 +875,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.guard_return_radius_);
     w.str(u.layer_);
     w.str(u.motion_type_);
+    w.f32v(u.layer_change_offset_);
     w.f32v(u.naval_draft_);
     w.u32v(u.jammer_blips_);
     w.f32v(u.jam_radius_min_);
@@ -1192,6 +1193,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.guard_return_radius_ = r.f32v();
     u.layer_ = r.str();
     u.motion_type_ = r.str();
+    u.layer_change_offset_ = r.f32v();
     u.naval_draft_ = r.f32v();
     u.jammer_blips_ = r.u32v();
     u.jam_radius_min_ = r.f32v();

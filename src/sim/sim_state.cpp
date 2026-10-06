@@ -1618,7 +1618,7 @@ void SimState::separate_ground_units() {
                 continue;
         }
         // On the surface as it drives; a submarine keeps its depth.
-        if (terrain_ && !bodies[i].sub) p.y = terrain_->get_surface_height(p.x, p.z);
+        if (terrain_ && !bodies[i].sub) p.y = u.ground_y(terrain_.get(), p.x, p.z);
         u.set_position(clamp_to_playable(p, u.army()));
         u.set_jostled(true);
     }
