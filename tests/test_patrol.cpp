@@ -19,6 +19,7 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -594,4 +595,83 @@ TEST_CASE("An Attack on bare ground attack-moves a mobile unit on ReturnFire, an
     for (const auto& c : holding->command_queue()) {
         CHECK(c.type != CommandType::AggressiveMove);
     }
+}
+
+TEST_CASE("Reclaim takes only what Moho lets it reclaim", "[reclaim]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    const auto takes = [&](const osc::sim::Entity& target) {
+        osc::sim::UnitCommand reclaim;
+        reclaim.type = CommandType::Reclaim;
+        reclaim.target_id = target.entity_id();
+        return sim.route_command({eng->entity_id()}, reclaim, true) != 0;
+    };
+    Unit* acu = still(sim, 1, 20.0f, 10.0f);
+    CHECK_FALSE(takes(*acu));
+    Unit* tank = still(sim, 1, 20.0f, 20.0f);
+    tank->add_category("RECLAIMABLE");
+    CHECK(takes(*tank));
+    tank->set_reclaimable(false);
+    CHECK_FALSE(takes(*tank));
+    Unit* plane = still(sim, 1, 20.0f, 30.0f);
+    plane->add_category("RECLAIMABLE");
+    plane->set_layer("Air");
+    CHECK_FALSE(takes(*plane));
+    Unit* frame = still(sim, 1, 20.0f, 40.0f);
+    frame->set_is_being_built(true);
+    CHECK(takes(*frame));
+    CHECK_FALSE(takes(*rock(sim, 30.0f, 10.0f, 5.0f, 0.0f, false)));
+    CHECK(takes(*rock(sim, 30.0f, 20.0f, 5.0f, 0.0f)));
+}
+
+TEST_CASE("A queued Reclaim of what is not RECLAIMABLE is dropped", "[reclaim]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->set_build_rate(10.0f);
+    eng->set_max_build_distance(5.0f);
+    Prop* bridge = rock(sim, 12.0f, 10.0f, 5.0f, 0.0f, false);
+    lua_newtable(g.L);
+    lua_pushstring(g.L, "MaxMassReclaim");
+    lua_pushnumber(g.L, 500);
+    lua_rawset(g.L, -3);
+    bridge->set_lua_table_ref(luaL_ref(g.L, LUA_REGISTRYINDEX));
+    osc::sim::UnitCommand reclaim;
+    reclaim.type = CommandType::Reclaim;
+    reclaim.target_id = bridge->entity_id();
+    eng->push_command(reclaim, true);
+    sim.tick();
+    CHECK(eng->command_queue().empty());
+    CHECK_FALSE(eng->is_reclaiming());
+    CHECK(bridge->fraction_complete() == 1.0f);
+}
+
+TEST_CASE("The reclaim cursor and right-click pass over what is not RECLAIMABLE", "[reclaim]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->add_command_cap("RULEUCC_Reclaim");
+    eng->add_command_cap("RULEUCC_Move");
+    rock(sim, 40.0f, 10.0f, 5.0f, 0.0f, false);
+    still(sim, 1, 40.0f, 40.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eng->entity_id()});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Reclaim";
+    CHECK_FALSE(input.click_in_command_mode(sim, mode, 40.0f, 10.0f, false));
+    CHECK_FALSE(input.click_in_command_mode(sim, mode, 40.0f, 40.0f, false));
+    const auto orders = input.right_click_orders(sim, 40.0f, 10.0f);
+    REQUIRE(orders.size() == 1);
+    CHECK(orders.front().first.type == CommandType::Move);
+    rock(sim, 60.0f, 10.0f, 5.0f, 0.0f);
+    CHECK(input.click_in_command_mode(sim, mode, 60.0f, 10.0f, false));
 }

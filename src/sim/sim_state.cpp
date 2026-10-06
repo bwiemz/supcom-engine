@@ -644,6 +644,11 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
+    if (command.type == CommandType::Reclaim) {
+        const Entity* target =
+            command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+        return !target || reclaim_target_valid(*target);
+    }
     if (command.type != CommandType::Guard) return true;
     // A pod, or a unit a carrier holds, guards nothing; nor does a unit
     // without the order.

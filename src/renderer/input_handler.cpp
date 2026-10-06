@@ -460,7 +460,7 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
             const sim::Entity* e = live(id);
             if (!e) continue;
             const bool ally = e->is_unit() && allied(e->army());
-            const bool wreck = targetable_prop(*e) && e->reclaimable();
+            const bool wreck = targetable_prop(*e) && sim::reclaim_target_valid(*e);
             if (!ally && !wreck) continue;
             const sim::Vector3 pos = view_.position(*e);
             const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
@@ -839,8 +839,10 @@ u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
     for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
         auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !shown(*e)) continue;
-        if (reclaim ? !((e->is_unit() || targetable_prop(*e)) && e->reclaimable()) : !e->is_unit())
+        if (reclaim ? !((e->is_unit() || targetable_prop(*e)) && sim::reclaim_target_valid(*e))
+                    : !e->is_unit()) {
             continue;
+        }
         const sim::Vector3 pos = view_.position(*e);
         const f32 dx = pos.x - wx;
         const f32 dz = pos.z - wz;
