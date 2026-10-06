@@ -18,6 +18,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <set>
 
 namespace osc::renderer {
 
@@ -227,8 +228,6 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
             leg.index = n;
             leg.style = s;
             leg.line_color = chosen ? s->line_selected_color : s->line_color;
-            leg.waypoint_color = chosen ? s->waypoint_selected_color : s->waypoint_color;
-            leg.waypoint_scale = chosen ? s->waypoint_selected_scale : s->waypoint_scale;
             path.legs.push_back(std::move(leg));
         }
         const auto anchor =
@@ -247,6 +246,66 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
         paths.push_back(std::move(path));
     }
     return paths;
+}
+
+std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths) {
+    std::vector<CommandGraphNode> nodes;
+    std::vector<Vector3> sums;
+    std::vector<u32> counts;
+    std::vector<std::set<u64>> ins;
+    std::vector<std::set<u64>> outs;
+    std::unordered_map<u64, size_t> index;
+    u64 unnumbered = 0;
+    for (const CommandGraphPath& path : paths) {
+        std::vector<u64> keys = {(u64{2} << 32) | path.unit->id};
+        std::unordered_map<size_t, u64> key_of_leg;
+        for (size_t i = 0; i < path.legs.size(); ++i) {
+            const CommandGraphPath::Leg& leg = path.legs[i];
+            if (leg.closes) {
+                keys.push_back(key_of_leg[leg.index]);
+                continue;
+            }
+            const u64 key =
+                leg.order.command_id != 0 ? leg.order.command_id : (u64{1} << 32) | ++unnumbered;
+            keys.push_back(key);
+            key_of_leg[leg.index] = key;
+            const auto [it, fresh] = index.emplace(key, nodes.size());
+            if (fresh) {
+                CommandGraphNode node;
+                node.order = leg.order;
+                node.style = leg.style;
+                nodes.push_back(std::move(node));
+                sums.push_back({0, 0, 0});
+                counts.push_back(0);
+                ins.emplace_back();
+                outs.emplace_back();
+            }
+            const size_t n = it->second;
+            sums[n] = add(sums[n], path.chain[i + 1]);
+            ++counts[n];
+            if (nodes[n].units.empty() || nodes[n].units.back() != path.unit->id) {
+                nodes[n].units.push_back(path.unit->id);
+            }
+            nodes[n].chosen = nodes[n].chosen || path.chosen;
+        }
+        for (size_t k = 0; k + 1 < keys.size(); ++k) {
+            if (const auto to = index.find(keys[k + 1]); to != index.end()) {
+                ins[to->second].insert(keys[k]);
+            }
+            if (const auto from = index.find(keys[k]); from != index.end()) {
+                outs[from->second].insert(keys[k + 1]);
+            }
+        }
+    }
+    for (size_t n = 0; n < nodes.size(); ++n) {
+        nodes[n].position = scale(sums[n], 1.0f / static_cast<f32>(counts[n]));
+        const size_t lanes = std::max<size_t>({ins[n].size(), outs[n].size(), 1});
+        nodes[n].unit_scale = std::sqrt(static_cast<f32>(lanes));
+        const CommandGraphStyle& s = *nodes[n].style;
+        nodes[n].color = nodes[n].chosen ? s.waypoint_selected_color : s.waypoint_color;
+        nodes[n].scale = nodes[n].chosen ? s.waypoint_selected_scale : s.waypoint_scale;
+    }
+    return nodes;
 }
 
 std::string command_graph_key(sim::CommandType type) {
@@ -491,22 +550,30 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
                     }
                 }
             }
-            if (wp_tex && !leg.closes && per_px > 0.0f) {
-                // Its world size, held between its least and most on screen
-                const f32 px_world = per_px * length(sub(to, eye));
-                f32 size = kWaypointSize * leg.waypoint_scale;
-                if (px_world > 0.0f)
-                    size = std::clamp(size / px_world, kMinWaypointPx, kMaxWaypointPx) * px_world;
-                const Vector3 r = {size * 0.5f, 0.0f, 0.0f};
-                const Vector3 u = {0.0f, 0.0f, -size * 0.5f};
-                const auto& col = leg.waypoint_color;
-                const Vertex a = vertex(sub(add(to, u), r), 0.0f, 0.0f, col);
-                const Vertex b = vertex(add(add(to, u), r), 1.0f, 0.0f, col);
-                const Vertex cc = vertex(add(sub(to, u), r), 1.0f, 1.0f, col);
-                const Vertex d = vertex(sub(sub(to, u), r), 0.0f, 1.0f, col);
-                waypoints.push_back({wp_tex->descriptor_set, {a, b, cc, a, cc, d}});
-            }
         }
+    }
+    for (const CommandGraphNode& node : command_graph_nodes(paths)) {
+        const CommandGraphStyle* s = node.style;
+        const GPUTexture* wp_tex =
+            s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
+        if (!wp_tex || per_px <= 0.0f || lines.size() + waypoints.size() + 1 > MAX_QUADS) {
+            continue;
+        }
+        const Vector3& to = node.position;
+        // Its world size, held between its least and most on screen
+        const f32 px_world = per_px * length(sub(to, eye));
+        f32 size = kWaypointSize * node.unit_scale * node.scale;
+        if (px_world > 0.0f) {
+            size = std::clamp(size / px_world, kMinWaypointPx, kMaxWaypointPx) * px_world;
+        }
+        const Vector3 r = {size * 0.5f, 0.0f, 0.0f};
+        const Vector3 u = {0.0f, 0.0f, -size * 0.5f};
+        const auto& col = node.color;
+        const Vertex a = vertex(sub(add(to, u), r), 0.0f, 0.0f, col);
+        const Vertex b = vertex(add(add(to, u), r), 1.0f, 0.0f, col);
+        const Vertex cc = vertex(add(sub(to, u), r), 1.0f, 1.0f, col);
+        const Vertex d = vertex(sub(sub(to, u), r), 0.0f, 1.0f, col);
+        waypoints.push_back({wp_tex->descriptor_set, {a, b, cc, a, cc, d}});
     }
 
     const auto by_texture = [](const Quad& x, const Quad& y) { return x.ds < y.ds; };

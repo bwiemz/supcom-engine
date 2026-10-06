@@ -3,6 +3,9 @@
 
 #include "lua/lua_state.hpp"
 #include "renderer/command_graph_renderer.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
 
 extern "C" {
@@ -11,6 +14,8 @@ extern "C" {
 
 #include <array>
 #include <cmath>
+#include <memory>
+#include <vector>
 
 using osc::renderer::command_graph_key;
 using osc::renderer::command_graph_style;
@@ -193,8 +198,58 @@ TEST_CASE("Shift draws every unit of the army's orders, a selected one's in its 
     CHECK_FALSE(paths[1].chosen);
     CHECK(paths[1].chain.size() == 2);
     CHECK(paths[1].legs[0].line_color == style.line_color);
-    CHECK(paths[1].legs[0].waypoint_color == style.waypoint_color);
-    CHECK(paths[1].legs[0].waypoint_scale == 0.5f);
+    const auto nodes = osc::renderer::command_graph_nodes(paths);
+    REQUIRE(nodes.size() == 2);
+    CHECK(nodes[0].color == style.waypoint_selected_color);
+    CHECK(nodes[1].color == style.waypoint_color);
+    CHECK(nodes[1].scale == 0.5f);
+}
+
+TEST_CASE("Units given one order share its waypoint, at the mean of their targets",
+          "[renderer][command_graph]") {
+    using osc::sim::CommandType;
+    osc::sim::WorldSnapshot world;
+    const auto order = [](CommandType type, osc::u32 id, osc::f32 x) {
+        osc::sim::CommandRecord c;
+        c.type = type;
+        c.command_id = id;
+        c.target_pos = {x, 0, 50};
+        return c;
+    };
+    const auto add = [&](osc::u32 id, const std::vector<osc::sim::CommandRecord>& orders) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = 0;
+        e.is_unit = true;
+        e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
+        e.command_offset = static_cast<osc::u32>(world.commands.size());
+        e.command_count = static_cast<osc::u32>(orders.size());
+        world.commands.insert(world.commands.end(), orders.begin(), orders.end());
+        world.entities.push_back(e);
+    };
+    add(1, {order(CommandType::Move, 7, 40), order(CommandType::Patrol, 9, 80)});
+    add(2, {order(CommandType::Move, 7, 60), order(CommandType::Patrol, 9, 90)});
+    add(3, {order(CommandType::Move, 8, 20)});
+    add(4, {order(CommandType::Move, 0, 20)});
+    add(5, {order(CommandType::Move, 0, 20)});
+    osc::renderer::CommandGraphStyle style;
+    const std::unordered_set<osc::u32> selected{2};
+    const auto nodes = osc::renderer::command_graph_nodes(
+        osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), &selected, 0,
+                                           [&](CommandType) { return &style; }));
+    REQUIRE(nodes.size() == 5);
+    CHECK(nodes[0].order.command_id == 7);
+    CHECK(nodes[0].units == std::vector<osc::u32>{1, 2});
+    CHECK(nodes[0].position.x == Catch::Approx(50.0f));
+    CHECK(nodes[0].unit_scale == Catch::Approx(std::sqrt(2.0f)));
+    CHECK(nodes[0].chosen);
+    CHECK(nodes[1].order.command_id == 9);
+    CHECK(nodes[1].position.x == Catch::Approx(85.0f));
+    CHECK(nodes[1].unit_scale == Catch::Approx(1.0f));
+    CHECK(nodes[2].units == std::vector<osc::u32>{3});
+    CHECK_FALSE(nodes[2].chosen);
+    CHECK(nodes[3].units == std::vector<osc::u32>{4});
+    CHECK(nodes[4].units == std::vector<osc::u32>{5});
 }
 
 TEST_CASE("A patrol's path runs back to its first patrol point", "[renderer][command_graph]") {
@@ -316,4 +371,36 @@ TEST_CASE("A structure standing on its site is started for every builder ordered
     CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).empty());
     world.entities[0].position = {30, 0, 20};
     CHECK(osc::renderer::planned_build_sites(world, nullptr, 0).size() == 1);
+}
+
+TEST_CASE("The snapshot names an order by the sim's id, one for the units given it together",
+          "[renderer][command_graph]") {
+    lua_State* L = lua_open();
+    {
+        osc::sim::SimState sim(L, nullptr);
+        std::vector<osc::u32> ids;
+        for (int i = 0; i < 2; ++i) {
+            auto u = std::make_unique<osc::sim::Unit>();
+            u->set_army(0);
+            u->set_max_speed(5.0f);
+            ids.push_back(sim.entity_registry().register_entity(std::move(u)));
+        }
+        osc::sim::UnitCommand move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = {100, 0, 100};
+        sim.set_human_input_active(true);
+        sim.route_player_command(ids, move, true);
+        sim.set_human_input_active(false);
+        osc::sim::WorldSnapshot world;
+        osc::sim::capture_world(sim, world);
+        REQUIRE(world.pending_commands.size() == 2);
+        CHECK(world.pending_commands[0].command_id == 0);
+
+        sim.tick();
+        osc::sim::capture_world(sim, world);
+        REQUIRE(world.commands.size() == 2);
+        CHECK(world.commands[0].command_id != 0);
+        CHECK(world.commands[0].command_id == world.commands[1].command_id);
+    }
+    lua_close(L);
 }
