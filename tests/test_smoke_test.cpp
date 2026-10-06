@@ -885,6 +885,7 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     osc::sim::EntityRegistry registry;
     auto target = std::make_unique<osc::sim::Unit>();
     target->set_position({0, 0, 50});
+    target->set_size_y(0.0f); // its centre, the point aimed at, level with the shot
     const osc::u32 tid = registry.register_entity(std::move(target));
     osc::sim::Projectile torpedo;
     torpedo.set_position({0, 0, 0});

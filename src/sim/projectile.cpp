@@ -90,12 +90,15 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         }
     }
 
-    // A tracking shot follows its target (the middle of it), and flies on to
-    // where it last was once it is gone; with no target, to its ground target.
+    // A tracking shot follows its target (a unit's target point, anything
+    // else's middle), and flies on to where it last was once it is gone;
+    // with no target, to its ground target.
     if (target_entity_id > 0) {
         auto* target = registry.find(target_entity_id);
         if (target && !target->destroyed()) {
-            target_position = collision_centre(*target);
+            target_position = target->is_unit()
+                                  ? static_cast<const Unit*>(target)->target_point(target_point)
+                                  : collision_centre(*target);
             has_target_position = true;
         } else {
             // Its target is gone: the script decides (a homing missile's

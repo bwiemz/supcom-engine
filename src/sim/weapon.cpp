@@ -106,6 +106,13 @@ bool is_underwater(const std::string& layer) {
     return layer == "Sub" || layer == "Seabed";
 }
 
+/// The water's surface, as Moho's target points compare to it: -10000 on a
+/// map without water (or with no terrain).
+f32 water_surface(const SimState* sim) {
+    const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
+    return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+}
+
 /// The categories a target answers to: a unit's or a projectile's.
 const std::unordered_set<std::string>& target_categories(const Entity& target) {
     static const std::unordered_set<std::string> kNone;
@@ -206,13 +213,18 @@ bool Weapon::bomb_ready(const Unit& owner, const Vector3& at,
     const AirCombatRules& air = owner.air_combat_rules();
     if (!air.winged) return true; // Moho computes no drop for a hovering flier
     if (!owner.has_unit_state("MakingAttackRun")) return false;
+    // At a unit, its target point; where a moving one will be, for a bomber
+    // that predicts ahead (Moho's CanFire).
     Vector3 aim = at;
-    if (air.predict_ahead_for_bomb_drop > 0.0f && target_entity_id != 0) {
-        const Entity* target = registry.find(target_entity_id);
-        if (target && target->is_unit() && static_cast<const Unit*>(target)->is_mobile()) {
-            const Vector3& v = static_cast<const Unit*>(target)->velocity();
+    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    if (target && target->is_unit()) {
+        const auto& unit = static_cast<const Unit&>(*target);
+        if (air.predict_ahead_for_bomb_drop > 0.0f && unit.is_mobile()) {
+            const Vector3& v = unit.velocity();
             aim.x += v.x * air.predict_ahead_for_bomb_drop;
             aim.z += v.z * air.predict_ahead_for_bomb_drop;
+        } else {
+            aim = unit.target_point(current_aim_spot());
         }
     }
     const std::optional<Vector3> release =
@@ -265,6 +277,7 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const S
         if (owner.fire_state() == 1) return;
         update_targeting(owner, registry, sim);
     }
+    if (aim_spot_target != target_entity_id) pick_aim_spot(registry, sim);
     update_aim(owner, registry, L);
     if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
 
@@ -300,6 +313,20 @@ void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry
         set_target_entity(target && !target->destroyed() ? order->target_id : 0);
     }
     if (const std::optional<Vector3> at = target_point(registry)) last_order_point = at;
+}
+
+void Weapon::pick_aim_spot(EntityRegistry& registry, const SimState* sim) {
+    aim_spot_target = target_entity_id;
+    aim_spot = -1;
+    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    if (!target || !target->is_unit()) return;
+    const auto& unit = static_cast<const Unit&>(*target);
+    if (above_water_targets_only || below_water_targets_only) {
+        unit.pick_target_point_by_water(&registry.sim_random(), water_surface(sim),
+                                        above_water_targets_only, aim_spot);
+        return;
+    }
+    aim_spot = unit.pick_target_point(registry.sim_random());
 }
 
 void Weapon::drop_target(lua_State* L) {
@@ -356,7 +383,16 @@ bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* s
         if (fire_target_layer_caps != 0xFF &&
             !(layer_to_bit(unit.layer()) & fire_target_layer_caps))
             return false;
-        if (above_water_targets_only && is_underwater(unit.layer())) return false;
+        // A unit on the seabed only where a target point of it is on the
+        // weapon's side of the surface: a tall walker in the shallows is in
+        // reach of guns above the water (Moho's CanAttackTarget). Other
+        // layers are the layer caps' alone.
+        if (unit.layer() == "Seabed" && (above_water_targets_only || below_water_targets_only)) {
+            i32 unused = -1;
+            if (!unit.pick_target_point_by_water(nullptr, water_surface(sim),
+                                                 above_water_targets_only, unused))
+                return false;
+        }
     } else {
         // A projectile in flight is on the Air layer, or Water below the
         // surface.
@@ -670,7 +706,11 @@ Vector3 Weapon::aim_point(const Entity& target, const Unit& owner, const Vector3
     } else if (target.is_projectile()) {
         v = static_cast<const Projectile&>(target).velocity;
     }
-    const Vector3 centre = collision_centre(target);
+    // On a unit, its target point (Moho's GetTargetPosGun); a projectile's
+    // middle.
+    const Vector3 centre = target.is_unit()
+                               ? static_cast<const Unit&>(target).target_point(current_aim_spot())
+                               : collision_centre(target);
     const Vector3 at{centre.x + v.x * kTick, centre.y + v.y * kTick, centre.z + v.z * kTick};
     if (!lead_target) {
         return at;
@@ -773,6 +813,8 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->set_army(owner.army());
     proj->velocity = vel;
     proj->target_entity_id = (need_compute_bomb_drop || !target) ? 0 : target->entity_id();
+    // It homes on the point its weapon aimed at (Moho copies the target in).
+    proj->target_point = proj->target_entity_id != 0 ? current_aim_spot() : -1;
     proj->target_position = aim;
     proj->has_target_position = true;
     proj->launcher_id = owner.entity_id();

@@ -63,6 +63,7 @@ const BoneData* BoneCache::get(const std::string& blueprint_id,
 
     auto ptr = std::make_unique<BoneData>(std::move(*bone_data));
     ptr->model_scale = resolve_uniform_scale(blueprint_id, L);
+    ptr->target_bones = resolve_target_bones(blueprint_id, L, *ptr);
     auto* raw = ptr.get();
     cache_[blueprint_id] = std::move(ptr);
     return raw;
@@ -87,6 +88,34 @@ f32 BoneCache::resolve_uniform_scale(const std::string& bp_id, lua_State* L) {
     }
     lua_settop(L, top);
     return scale;
+}
+
+std::vector<i32> BoneCache::resolve_target_bones(const std::string& bp_id, lua_State* L,
+                                                 const BoneData& bones) {
+    std::vector<i32> resolved;
+    if (!store_ || !L) return resolved;
+    auto* entry = store_->find(bp_id);
+    if (!entry) return resolved;
+    const int top = lua_gettop(L);
+    store_->push_lua_table(*entry, L);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "AI");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "TargetBones");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                for (int i = 1;; ++i) {
+                    lua_rawgeti(L, -1, i);
+                    if (lua_type(L, -1) != LUA_TSTRING) break;
+                    resolved.push_back(bones.find_bone(lua_tostring(L, -1)));
+                    lua_pop(L, 1);
+                }
+            }
+        }
+    }
+    lua_settop(L, top);
+    return resolved;
 }
 
 std::string BoneCache::resolve_mesh_path(const std::string& bp_id,
