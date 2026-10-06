@@ -527,6 +527,9 @@ public:
         return no_rush_seconds_ > 0.0f &&
                static_cast<f32>(game_time_) < no_rush_seconds_;
     }
+    /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
+    /// active. Returns the (possibly clamped) position.
+    Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
 
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
@@ -857,9 +860,6 @@ private:
     /// script's OnDestroy empties its trash, ending its AI thread. (The
     /// army's pool, and platoons that never held a unit, stay.)
     void reap_empty_platoons();
-    /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
-    /// active. Returns the (possibly clamped) position.
-    Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
     void update_victory();
     /// Dispose of a just-defeated army's units per the active share condition.
     void dispose_defeated_army(i32 army);

@@ -36,6 +36,7 @@ add_executable(osc_tests
     test_dmath.cpp
     test_cross_platform.cpp
     test_sim_callbacks.cpp
+    test_order_editing.cpp
     test_user_unit.cpp
     test_transport_unload.cpp
     test_special_files.cpp
