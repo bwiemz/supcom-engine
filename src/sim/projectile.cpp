@@ -61,9 +61,13 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     }
     if (impacted) return;
 
-    // Apply ballistic acceleration (gravity)
-    if (ballistic_accel != 0) {
-        velocity.y += ballistic_accel * static_cast<f32>(dt);
+    // Gravity, for a shot that doesn't track: Moho integrates a TrackTarget
+    // projectile's steering in its place, whatever its UseGravity (faf-re
+    // Projectile's motion: the ballistic step runs only `if (!mTrackTarget)`).
+    // FAF's torpedoes say UseGravity and sank to the seabed under their sub.
+    const f32 gravity = tracking ? 0.0f : ballistic_accel;
+    if (gravity != 0) {
+        velocity.y += gravity * static_cast<f32>(dt);
     }
 
     // Apply linear acceleration capped at max_speed
@@ -156,7 +160,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     auto pos = from;
     const auto step_dt = static_cast<f32>(dt);
     pos.x += velocity.x * step_dt;
-    pos.y += velocity.y * step_dt - 0.5f * ballistic_accel * step_dt * step_dt;
+    pos.y += velocity.y * step_dt - 0.5f * gravity * step_dt * step_dt;
     pos.z += velocity.z * step_dt;
 
     // A torpedo in the water stays just under its surface; one above it
