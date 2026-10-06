@@ -3,6 +3,7 @@
 #include "sim/blueprint_categories.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/decal.hpp"
+#include "sim/manipulator.hpp"
 #include "sim/platoon.hpp"
 #include "sim/formation.hpp"
 #include "sim/build_info.hpp"
@@ -31,6 +32,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <string_view>
 #include <unordered_map>
 #include <bit>
 #include <ostream>
@@ -2832,7 +2834,7 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         f.mix_f32(v.y);
         f.mix_f32(v.z);
     };
-    const auto mix_str = [](Fnv& f, const std::string& str) {
+    const auto mix_str = [](Fnv& f, std::string_view str) {
         f.mix(static_cast<u64>(str.size()));
         for (const char ch : str) f.mix(static_cast<u8>(ch));
     };
@@ -2848,6 +2850,18 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             armies.mix_f32(static_cast<f32>(res->income));
             armies.mix_f32(static_cast<f32>(res->requested));
         }
+        // Its platoons (their unique names, DisbandOnIdle and units decide
+        // which the next tick's cleanup destroys, and so which AI threads
+        // run on).
+        for (size_t i = 0; i < a->platoon_count(); ++i) {
+            const Platoon* p = a->platoon_at(i);
+            if (!p || p->destroyed()) continue;
+            armies.mix(p->platoon_id());
+            mix_str(armies, p->unique_name());
+            armies.mix(p->disband_on_idle() ? 1u : 0u);
+            armies.mix(static_cast<u64>(p->unit_ids().size()));
+            for (const u32 id : p->unit_ids()) armies.mix(id);
+        }
         // Its influence map's entries (M207b), as Moho mixes their strengths.
         if (const InfluenceMap* map = a->influence_map()) {
             armies.mix(static_cast<u64>(map->entry_count()));
@@ -2861,6 +2875,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
 
     // The registry walks in id order.
     Fnv entities, units, orders, navigation, weapons, projectiles, shields;
+    // A unit's statistics and states by name, sorted (reused unit to unit).
+    std::vector<std::pair<std::string_view, f64>> sorted_stats;
+    std::vector<std::string_view> sorted_names;
     entity_registry_.for_each([&](const Entity& e) {
         entities.mix(e.entity_id());
         entities.mix(static_cast<u64>(static_cast<u32>(e.army())));
@@ -2932,6 +2949,67 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         // A stun, only while it lasts.
         if (u.stun_ticks() > 0)
             units.mix(0x5354554e00000000ull | static_cast<u32>(u.stun_ticks())); // "STUN"
+        // The hull's facing work (CalcMoveCommon), only while set: a slaved
+        // turn's hysteresis, a parked attack's facing, a turn in place.
+        if (u.slaved_turning() || u.turned_in_place() || u.attack_facing().x != 0 ||
+            u.attack_facing().y != 0 || u.attack_facing().z != 0) {
+            units.mix(0x4641434500000000ull | (u.slaved_turning() ? 1u : 0u) | // "FACE"
+                      (u.turned_in_place() ? 2u : 0u));
+            mix_vec(units, u.attack_facing());
+        }
+        // Its statistics (KILLS and the rest its scripts keep), by name.
+        if (!u.stats().empty()) {
+            sorted_stats.assign(u.stats().begin(), u.stats().end());
+            std::sort(sorted_stats.begin(), sorted_stats.end());
+            units.mix(0x5354415400000000ull | sorted_stats.size()); // "STAT"
+            for (const auto& [name, value] : sorted_stats) {
+                mix_str(units, name);
+                units.mix(std::bit_cast<u64>(value));
+            }
+        }
+        // Its named states (Moving, Busy...), by name.
+        if (!u.unit_states().empty()) {
+            sorted_names.assign(u.unit_states().begin(), u.unit_states().end());
+            std::sort(sorted_names.begin(), sorted_names.end());
+            units.mix(0x5553544100000000ull | sorted_names.size()); // "USTA"
+            for (const auto name : sorted_names) mix_str(units, name);
+        }
+        // Flags its scripts set, only those off their defaults.
+        const u64 flags = (u.busy() ? 1u : 0u) | (u.block_command_queue() ? 2u : 0u) |
+                          (u.can_take_damage() ? 0u : 4u) | (u.can_be_killed() ? 0u : 8u) |
+                          (u.is_crashing() ? 16u : 0u) | (u.teleporting() ? 32u : 0u) |
+                          (u.jostled() ? 64u : 0u);
+        if (flags != 0) units.mix(0x464c414700000000ull | flags); // "FLAG"
+        // Speed, acceleration and turn multipliers, only off 1.
+        if (u.speed_mult() != 1.0f || u.accel_mult() != 1.0f || u.turn_mult() != 1.0f) {
+            units.mix(0x4d554c5400000000ull); // "MULT"
+            units.mix_f32(u.speed_mult());
+            units.mix_f32(u.accel_mult());
+            units.mix_f32(u.turn_mult());
+        }
+        // Its veterancy and last attacker, only once set; its enhancements.
+        if (u.vet_level() != 0 || u.last_attacker_id() != 0) {
+            units.mix(0x5645544c00000000ull | u.vet_level()); // "VETL"
+            units.mix(u.last_attacker_id());
+        }
+        if (!u.enhancements().empty()) {
+            units.mix(0x454e484300000000ull | u.enhancements().size()); // "ENHC"
+            for (const auto& [slot, name] : u.enhancements()) {
+                mix_str(units, slot);
+                mix_str(units, name);
+            }
+        }
+        // Its collision detectors' bones: each contact told once (OnAnimCollision).
+        for (const auto& m : u.manipulators()) {
+            const auto* detector = dynamic_cast<const CollisionDetectorManipulator*>(m.get());
+            if (!detector || detector->is_destroyed()) continue;
+            units.mix(0x434f4c4400000000ull | (detector->enabled() ? 1u : 0u) | // "COLD"
+                      (detector->terrain_check() ? 2u : 0u));
+            for (const auto& watch : detector->watched()) {
+                units.mix(static_cast<u64>(static_cast<u32>(watch.bone)) << 2 |
+                          (watch.below_foot_height ? 1u : 0u) | (watch.below_surface ? 2u : 0u));
+            }
+        }
         mix_str(units, u.layer());
         // A sub's depth and dive (M206o), only when under or on its way, so
         // other units hash as before.
@@ -3031,6 +3109,12 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(cmd.launch_queue.size()));
                 for (u32 id : cmd.launch_queue) orders.mix(id);
             }
+            // An attack's facing clock (its SetFacing every 9 ticks), only while
+            // it runs.
+            if (cmd.facing_clock != 0) {
+                orders.mix(0x46434c4bu); // "FCLK"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.facing_clock)));
+            }
             // A specific unload's cargo; only when set, so other orders hash
             // as before it existed.
             if (!cmd.unload_ids.empty()) {
@@ -3064,6 +3148,8 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         navigation.mix(static_cast<u64>(u.navigator().status()));
         mix_vec(navigation, u.navigator().goal());
         mix_vec(navigation, u.velocity());
+        navigation.mix_f32(u.heading());
+        navigation.mix_f32(u.elevation_target());
 
         weapons.mix(e.entity_id());
         for (const auto& w : u.weapons()) {
@@ -3071,6 +3157,24 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             weapons.mix((w->has_ground_target ? 1u : 0u) | (w->enabled ? 2u : 0u));
             if (w->has_ground_target) mix_vec(weapons, w->ground_target);
             weapons.mix(w->fire_clock);
+            // When it next looks for a target.
+            weapons.mix(w->target_check_clock);
+            // A ground attack's order and shots (AttackGroundTries), only
+            // while it has them.
+            if (w->ground_from_order || w->shots_at_target != 0 || w->last_order_point) {
+                weapons.mix(0x47524e44u | (w->ground_from_order ? 1ull << 32 : 0u) | // "GRND"
+                            (w->last_order_point ? 2ull << 32 : 0u));
+                weapons.mix(w->shots_at_target);
+                if (w->last_order_point) mix_vec(weapons, *w->last_order_point);
+            }
+            // What its scripts may change (ChangeMaxRadius, ChangeRateOfFire,
+            // ChangeDamage, SetFireTargetLayerCaps...).
+            weapons.mix_f32(w->max_range);
+            weapons.mix_f32(w->min_range);
+            weapons.mix_f32(w->rate_of_fire);
+            weapons.mix_f32(w->damage);
+            weapons.mix_f32(w->damage_radius);
+            weapons.mix(w->fire_target_layer_caps);
         }
     });
     parts.entities = entities.h;
