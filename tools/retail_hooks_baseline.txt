@@ -12,8 +12,6 @@ method OnDamageBy
 method OnDecayed
 method OnFailedToBeBuilt
 method OnIconsVisible
-method OnKeySelect
-method OnKeyboardFocusChange
 method OnNukeArmed
 method OnPlayBusyStagingPlatformsVO
 method OnPlayNoStagingPlatformsVO
