@@ -1,0 +1,45 @@
+# The form for a new discussion in Ideas (the category's slug is ideas).
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An idea for the engine or its tools. OpenSupCom runs Forged Alliance as Moho does, so
+        say whether the idea brings the engine closer to Moho or adds something beyond it.
+        Where the project is heading is in the [roadmap](https://github.com/bwiemz/supcom-engine/blob/main/docs/ROADMAP.md).
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: Who it helps, and what they can't do without it.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Closer to Moho (FA or FAF does it, the engine doesn't yet)
+        - Beyond Moho (a new capability)
+        - Tooling or development
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: moho
+    attributes:
+      label: How FA or FAF does it
+      description: >-
+        If the game already does this, how it behaves there: the retail or FAF Lua that
+        uses it, FAF's engine annotations, or a replay that shows it.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Helping
+      options:
+        - label: I'd like to help build this.

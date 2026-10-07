@@ -1,0 +1,12 @@
+# The new-issue page: a blank issue, or one of these Discussions categories.
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/bwiemz/supcom-engine/discussions/categories/q-a
+    about: Help with building, running or playing OpenSupCom.
+  - name: Suggest an idea
+    url: https://github.com/bwiemz/supcom-engine/discussions/categories/ideas
+    about: An idea for the engine or its tools, to talk over before it becomes an issue.
+  - name: Report how a map or mod runs
+    url: https://github.com/bwiemz/supcom-engine/discussions/categories/compatibility-reports
+    about: How a map, mod, campaign operation or replay runs, whether it works or not.

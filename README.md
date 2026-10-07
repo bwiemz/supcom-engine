@@ -487,6 +487,13 @@ tests/         # Catch2 unit tests
 tools/         # Formatting check and clang-tidy ratchet (see CONTRIBUTING.md)
 ```
 
+## Questions and Discussion
+
+[Discussions](https://github.com/bwiemz/supcom-engine/discussions) is the place
+for questions (Q&A), ideas to talk over before they become issues (Ideas), and
+reports of how a map, mod, campaign operation or replay runs (Compatibility
+reports). Issues are for bugs and planned work.
+
 ## Reporting Bugs
 
 A player's game logs to `~/.local/state/opensupcom/logs/` (`%LOCALAPPDATA%`

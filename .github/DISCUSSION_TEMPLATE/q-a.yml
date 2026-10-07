@@ -1,0 +1,49 @@
+# The form for a new discussion in Q&A (the category's slug is q-a).
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask anything about building, running or playing OpenSupCom. A bug you can reproduce is
+        better as an [issue](https://github.com/bwiemz/supcom-engine/issues/new).
+
+        Don't attach Forged Alliance's game files or screenshots of its art: they are
+        proprietary (see [provenance and compatibility](https://github.com/bwiemz/supcom-engine/blob/main/docs/provenance-and-compatibility.md)).
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to do, what you did, and what happened.
+    validations:
+      required: true
+  - type: dropdown
+    id: data
+    attributes:
+      label: Game data
+      options:
+        - Retail FA (Steam)
+        - Retail FA (GOG)
+        - FAForever
+        - Not about running the game
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: OpenSupCom version
+      description: A release, or the commit you built (`git rev-parse --short HEAD`).
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - Steam Deck
+        - Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        `opensupcom --collect-logs` writes a zip of the logs, crash reports and system
+        details (your `Game.prefs` is left out). Drag it here.

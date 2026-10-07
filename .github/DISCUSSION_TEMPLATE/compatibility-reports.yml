@@ -1,0 +1,70 @@
+# The form for a new discussion in Compatibility reports (the category's slug is
+# compatibility-reports). The category is made in the repository's Discussions settings.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        How a map, mod, campaign operation or replay runs on OpenSupCom. A report that
+        something works is as useful as one that it doesn't. A crash or a wrong behaviour you
+        can reproduce can go straight to an [issue](https://github.com/bwiemz/supcom-engine/issues/new).
+
+        Don't attach Forged Alliance's game files or screenshots of its art: they are
+        proprietary.
+  - type: input
+    id: what
+    attributes:
+      label: What you ran
+      placeholder: "A four-AI skirmish on SCMP_009; a mod from FAF's vault; the third UEF operation"
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Plays as in FA
+        - Plays, with differences from FA
+        - Script errors or a desync
+        - Crashes or won't start
+    validations:
+      required: true
+  - type: dropdown
+    id: data
+    attributes:
+      label: Game data
+      options:
+        - Retail FA (Steam)
+        - Retail FA (GOG)
+        - FAForever
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: OpenSupCom version
+      description: A release, or the commit you built (`git rev-parse --short HEAD`).
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - Linux
+        - Steam Deck
+        - Other
+  - type: textarea
+    id: details
+    attributes:
+      label: What differed from FA
+      description: >-
+        What you saw, and what FA does instead. The game's log names any script error.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and replay
+      description: >-
+        `opensupcom --collect-logs` writes a zip of the logs, crash reports and system
+        details. An interactive game leaves `LastGame.oscreplay` in your profile's replays
+        folder. Drag them here.
