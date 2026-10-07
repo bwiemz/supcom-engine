@@ -1396,6 +1396,47 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
     unit_ptr->navigator().set_sim_state(sim);
 
+    // An immobile unit claims its ground as it is made, finished or not
+    // (Moho's ExecuteOccupyGround): its Physics.OccupyRects (a quantum
+    // gateway's sides: centre offset and half size, x then z), else its
+    // footprint. Ferry beacons and in-place upgrades stand on ground
+    // another unit holds.
+    if (!unit_ptr->is_mobile() && !unit_ptr->has_category("FERRYBEACON") &&
+        !unit_ptr->has_category("UPGRADE")) {
+        sim::GroundOccupant ground;
+        ground.caps = unit_ptr->footprint().caps;
+        const sim::Vector3 at = unit_ptr->position();
+        const auto edge = [](f32 v) { return static_cast<i32>(std::floor(v + 0.5f)); };
+        const int top = lua_gettop(L);
+        store->push_lua_table(*entry, L);
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "OccupyRects");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                const int rects = lua_gettop(L);
+                for (int i = 1;; i += 4) {
+                    f32 v[4];
+                    bool whole = true;
+                    for (int k = 0; k < 4; ++k) {
+                        lua_rawgeti(L, rects, i + k);
+                        whole = whole && lua_isnumber(L, -1);
+                        v[k] = static_cast<f32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    }
+                    if (!whole) break;
+                    ground.rects.push_back({edge(at.x + v[0] - v[2]), edge(at.z + v[1] - v[3]),
+                                            edge(at.x + v[0] + v[2]), edge(at.z + v[1] + v[3])});
+                }
+            }
+        }
+        lua_settop(L, top);
+        if (ground.rects.empty())
+            ground.rects.push_back(sim::footprint_rect(unit_ptr->footprint(), at.x, at.z));
+        sim->occupy_ground(id, std::move(ground));
+    }
+
     // Set weapon owner back-pointers now that entity ID is assigned
     for (i32 wi = 0; wi < unit_ptr->weapon_count(); ++wi) {
         auto* w = unit_ptr->get_weapon(wi);

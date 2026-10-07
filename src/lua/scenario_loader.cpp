@@ -86,6 +86,40 @@ std::vector<std::string> extract_armies(lua_State* L, int scenario_idx) {
     return armies;
 }
 
+/// /lua/TerrainTypes.lua's Blocking flags by TypeCode (Moho's
+/// STIMap::LoadTerrainTypes): retail's Dirt09 and Lava01. None without FA's
+/// scripts.
+std::array<bool, 256> blocking_terrain_types(lua_State* L) {
+    std::array<bool, 256> blocking{};
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "/lua/terraintypes.lua");
+        if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+            lua_pushstring(L, "TerrainTypes");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                const int list = lua_gettop(L);
+                for (int i = 1;; ++i) {
+                    lua_rawgeti(L, list, i);
+                    if (!lua_istable(L, -1)) break;
+                    lua_pushstring(L, "TypeCode");
+                    lua_rawget(L, -2);
+                    lua_pushstring(L, "Blocking");
+                    lua_rawget(L, -3);
+                    const lua_Number code = lua_isnumber(L, -2) ? lua_tonumber(L, -2) : -1;
+                    if (code >= 0 && code < 256 && lua_toboolean(L, -1))
+                        blocking[static_cast<size_t>(code)] = true;
+                    lua_settop(L, list);
+                }
+            }
+        }
+    }
+    lua_settop(L, top);
+    return blocking;
+}
+
 } // namespace
 
 Result<ScenarioMetadata> ScenarioLoader::load_scenario(
@@ -224,6 +258,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     auto terrain = std::make_unique<map::Terrain>(
         std::move(heightmap), water_elev, scmap.has_water);
     terrain->set_terrain_types(std::move(scmap.terrain_types));
+    terrain->set_blocking_types(blocking_terrain_types(L));
     terrain->set_lighting(scmap.lighting, std::move(scmap.environment));
     terrain->set_water(scmap.water, std::move(scmap.water_masks), scmap.water_abyss_elevation);
     terrain->set_waves(std::move(scmap.waves));

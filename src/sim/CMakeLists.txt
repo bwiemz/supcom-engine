@@ -30,6 +30,7 @@ add_library(osc_sim STATIC
     projectile.cpp
     shield.cpp
     navigator.cpp
+    occupancy.cpp
     air_combat.cpp
     steering.cpp
     entity_registry.cpp

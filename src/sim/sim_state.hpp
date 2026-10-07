@@ -8,6 +8,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/intel_sources.hpp"
+#include "sim/occupancy.hpp"
 #include "sim/replay.hpp"
 #include "sim/thread_manager.hpp"
 
@@ -173,6 +174,22 @@ public:
     /// long as the unit exists (released automatically when it is removed
     /// from the registry). No-op for non-structures and repeat calls.
     void occupy_footprint(Unit& unit);
+
+    /// The occupation grid (roadmap item 4b, Moho's COGrid): the cells
+    /// structures and props stand on, one map cell each.
+    const OccupancyGrid& occupancy() const { return occupancy_; }
+    size_t ground_occupant_count() const { return ground_occupants_.size(); }
+    /// Entity `id` stands on `occupant`'s rects (Moho's ExecuteOccupyGround,
+    /// a prop's reclaim-area claim), in place of any claim it had.
+    void occupy_ground(u32 id, GroundOccupant occupant);
+    /// Its claim goes (Moho's ReleaseOccupyGround): its cells clear, but for
+    /// those another occupant also stands on. Moho's grid, bits alone,
+    /// clears those too; this keeps them, so a load can rebuild the grid
+    /// from its occupants.
+    void release_ground(u32 id);
+    /// The caps footprint `fp` has centred at (wx, wz): Moho's
+    /// SFootprint::FitsAt (OCCUPY_FootprintFits). None without a map.
+    u8 footprint_fits_at(const blueprints::Footprint& fp, f32 wx, f32 wz) const;
 
     /// Run the entity's script OnDestroy, once (see
     /// Entity::script_destroy_notified). Both removal paths call it before
@@ -937,6 +954,8 @@ private:
     /// never iterated, so the unordered order cannot leak into the sim).
     struct Footprint { f32 x, z, size_x, size_z; };
     std::unordered_map<u32, Footprint> occupied_footprints_;
+    OccupancyGrid occupancy_;
+    std::unordered_map<u32, GroundOccupant> ground_occupants_;
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;
