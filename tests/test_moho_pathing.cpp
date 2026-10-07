@@ -26,6 +26,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -257,10 +258,11 @@ TEST_CASE("With Moho pathing a game saved with searches waiting and one in fligh
         INFO("tick " << t);
         REQUIRE(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
     }
-    // And they got somewhere.
-    int arrived = 0;
-    for (Unit* u : tanks) arrived += u->command_queue().empty() ? 1 : 0;
-    CHECK(arrived >= 12); // half: the rest still through the gap
+    // And every one got through the gap. (Counting the moves that ended
+    // would count one given up short of it.)
+    int through = 0;
+    for (Unit* u : tanks) through += u->position().x > 62.0f ? 1 : 0;
+    CHECK(through == 24);
 }
 
 TEST_CASE("With Moho pathing a destination the unit won't fit moves to the nearest place it "
@@ -376,5 +378,198 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
             nav.set_goal({{100, 100, 104, 104}, {}}, moving->position().x, moving->position().z);
         });
         check("its path dropped", [&] { nav.reset(); });
+    }
+}
+
+// Roadmap P1: the cases a default-on switch must survive. Each runs on the
+// flat map with walls of occupied ground, and checks no unit ever stands
+// where its footprint doesn't fit.
+
+namespace {
+
+/// Ticks until none of `units` has orders left (or `limit`); whether every
+/// footprint always fitted where it stood.
+bool run_all(World& w, const std::vector<Unit*>& units, int limit, int& ticks) {
+    bool fitted = true;
+    const auto busy = [&] {
+        for (const Unit* u : units)
+            if (!u->command_queue().empty()) return true;
+        return false;
+    };
+    for (ticks = 0; ticks < limit && busy(); ++ticks) {
+        w.sim.tick();
+        for (const Unit* u : units)
+            if (w.sim.footprint_fits_at(u->footprint(), u->position().x, u->position().z) == 0)
+                fitted = false;
+    }
+    return fitted;
+}
+
+/// The closest two of `units` stand.
+f32 closest_pair(const std::vector<Unit*>& units) {
+    f32 best = 1e9f;
+    for (size_t i = 0; i < units.size(); ++i)
+        for (size_t j = i + 1; j < units.size(); ++j) {
+            const f32 dx = units[i]->position().x - units[j]->position().x;
+            const f32 dz = units[i]->position().z - units[j]->position().z;
+            best = std::min(best, std::sqrt(dx * dx + dz * dz));
+        }
+    return best;
+}
+
+/// Spot `i` of a grid `per_row` wide from (x0, z0), `step_x` and `step_z` apart.
+osc::sim::Vector3 grid_spot(int i, int per_row, f32 x0, f32 z0, f32 step_x, f32 step_z) {
+    const int col = i % per_row;
+    const int row = i / per_row;
+    return {x0 + static_cast<f32>(col) * step_x, 10.0f, z0 + static_cast<f32>(row) * step_z};
+}
+
+/// A wall of occupied ground down x = 60..62, open at z = [gap0, gap1).
+void wall_with_gap(World& w, i32 gap0, i32 gap1) {
+    osc::sim::GroundOccupant wall;
+    wall.caps = oc::kLand;
+    wall.rects = {{60, 0, 62, gap0}, {60, gap1, 62, static_cast<i32>(kMap)}};
+    w.sim.occupy_ground(9999, wall);
+}
+
+} // namespace
+
+TEST_CASE("With Moho pathing a gap two cells wide lets a 1x1 tank through and not a 3x3 one, "
+          "which gives up on the near side",
+          "[moho_pathing][scenarios]") {
+    World w(true);
+    wall_with_gap(w, 70, 72);
+    Unit& small = *w.make("tank", 30.5f, 70.5f);
+    Unit& big = *w.make("bigtank", 30.5f, 40.5f);
+    World::move(small, 100.5f, 70.5f);
+    World::move(big, 100.5f, 70.5f);
+    int ticks = 0;
+    CHECK(run_all(w, {&small, &big}, 1500, ticks));
+    INFO("ticks " << ticks);
+    CHECK(small.command_queue().empty());
+    CHECK(small.position().x > 99.0f);
+    CHECK(big.command_queue().empty());
+    CHECK(big.position().x < 60.0f); // never through
+    CHECK(big.position().x > 50.0f); // but as near as it fits
+    // Given up: no search of its still waiting or in flight.
+    const auto& queue = w.sim.get_army(0)->path_queue();
+    CHECK(queue.pending().empty());
+    CHECK(queue.search().traveler() == nullptr);
+}
+
+TEST_CASE("With Moho pathing a goal walled in all round ends the move outside, beside it, "
+          "without searching on",
+          "[moho_pathing][scenarios]") {
+    World w(true);
+    osc::sim::GroundOccupant box;
+    box.caps = oc::kLand;
+    box.rects = {{90, 90, 110, 92}, {90, 108, 110, 110}, {90, 92, 92, 108}, {108, 92, 110, 108}};
+    w.sim.occupy_ground(9999, box);
+    Unit& tank = *w.make("tank", 30.5f, 30.5f);
+    World::move(tank, 100.5f, 100.5f);
+    int ticks = 0;
+    CHECK(w.run(tank, 1500, ticks));
+    INFO("ticks " << ticks);
+    CHECK(tank.command_queue().empty());
+    const f32 dx = tank.position().x - 100.5f;
+    const f32 dz = tank.position().z - 100.5f;
+    CHECK(std::sqrt(dx * dx + dz * dz) < 16.0f); // at the box's wall
+    const bool inside = tank.position().x > 90.0f && tank.position().x < 110.0f &&
+                        tank.position().z > 90.0f && tank.position().z < 110.0f;
+    CHECK_FALSE(inside);
+    const auto& queue = w.sim.get_army(0)->path_queue();
+    CHECK(queue.pending().empty());
+    CHECK(queue.search().traveler() == nullptr);
+    // And nothing more asked for it: a tick on, the army's queue stays idle.
+    for (int t = 0; t < 30; ++t) w.sim.tick();
+    CHECK(queue.pending().empty());
+    CHECK(queue.search().traveler() == nullptr);
+}
+
+TEST_CASE("With Moho pathing a crowd of twenty goes through one gap to twenty places beyond "
+          "it, and every one arrives",
+          "[moho_pathing][scenarios]") {
+    World w(true);
+    wall_with_gap(w, 70, 76);
+    std::vector<Unit*> tanks;
+    tanks.reserve(20);
+    for (int i = 0; i < 20; ++i) {
+        const osc::sim::Vector3 at = grid_spot(i, 5, 30.5f, 60.5f, 3.0f, 6.0f);
+        tanks.push_back(w.make("tank", at.x, at.z));
+    }
+    for (int i = 0; i < 20; ++i) {
+        const osc::sim::Vector3 to = grid_spot(i, 5, 90.5f, 60.5f, 3.0f, 6.0f);
+        World::move(*tanks[static_cast<size_t>(i)], to.x, to.z);
+    }
+    int ticks = 0;
+    CHECK(run_all(w, tanks, 3000, ticks));
+    INFO("ticks " << ticks);
+    int arrived = 0;
+    for (const Unit* u : tanks) arrived += u->command_queue().empty() && u->position().x > 85.0f;
+    CHECK(arrived == 20);
+    CHECK(closest_pair(tanks) > 1.0f); // none stacked on another
+}
+
+TEST_CASE("With Moho pathing a formation of nine goes through the gap to its slots, and a game "
+          "saved on the way goes on as the original",
+          "[moho_pathing][scenarios]") {
+    // Nine slots of one formation order (UnitCommand::formed, one command
+    // id: one formation layer), three apart.
+    const auto scene = [](World& w) {
+        wall_with_gap(w, 70, 76);
+        std::vector<Unit*> tanks;
+        tanks.reserve(9);
+        for (int i = 0; i < 9; ++i) {
+            const osc::sim::Vector3 at = grid_spot(i, 3, 30.5f, 64.5f, 3.0f, 3.0f);
+            tanks.push_back(w.make("tank", at.x, at.z));
+        }
+        return tanks;
+    };
+    const auto slot = [](size_t i) {
+        return grid_spot(static_cast<int>(i), 3, 95.5f, 70.5f, 3.0f, 3.0f);
+    };
+    World a(true);
+    const std::vector<Unit*> tanks = scene(a);
+    a.sim.set_recording(true);
+    a.sim.tick();
+    for (size_t i = 0; i < tanks.size(); ++i) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = osc::sim::CommandType::Move;
+        cmd.target_pos = slot(i);
+        cmd.command_id = 77;
+        cmd.formation = "AttackFormation";
+        cmd.formed = true;
+        cmd.speed_cap = 4.0f;
+        tanks[i]->push_command(cmd, true);
+    }
+    for (int t = 0; t < 40; ++t) a.sim.tick();
+    const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "formation");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    World b(true);
+    scene(b);
+    const std::string err = osc::sim::load_snapshot(b.sim, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    CHECK(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
+    bool fitted = true;
+    for (int t = 0; t < 600; ++t) {
+        a.sim.tick();
+        b.sim.tick();
+        INFO("tick " << t);
+        REQUIRE(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
+        for (const Unit* u : tanks)
+            if (a.sim.footprint_fits_at(u->footprint(), u->position().x, u->position().z) == 0)
+                fitted = false;
+    }
+    CHECK(fitted);
+    for (size_t i = 0; i < tanks.size(); ++i) {
+        INFO("slot " << i);
+        CHECK(tanks[i]->command_queue().empty());
+        const auto at = osc::sim::footprint_rect(tanks[i]->footprint(), tanks[i]->position().x,
+                                                 tanks[i]->position().z);
+        const auto want = osc::sim::footprint_rect(tanks[i]->footprint(), slot(i).x, slot(i).z);
+        CHECK(at.x0 == want.x0);
+        CHECK(at.z0 == want.z0);
     }
 }
