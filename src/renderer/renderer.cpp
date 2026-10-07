@@ -407,7 +407,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Pipelines (scene pipelines built against scene_render_pass_)
     create_pipelines();
 
-    // Shadow depth-only pipelines (need shadow_render_pass_ + bone_ds_layout_)
+    // Shadow depth-only pipelines (need shadow_map_'s pass + bone_ds_layout_)
     create_shadow_pipelines();
 
     // Bloom post-processing pipelines (fullscreen triangle passes)
@@ -650,191 +650,8 @@ void Renderer::create_framebuffers() {
 }
 
 void Renderer::create_shadow_resources() {
-    // Moho's shadow map (M210c): a colour map, R the caster's depth along
-    // the light and G 0 where a mesh is the surface nearest the sun; its
-    // depth buffer; and the blur's two targets (B the terrain's mask). FA's
-    // map is G16R16 (A8R8G8B8 at shadow fidelity 1, where nothing reads R).
-    constexpr VkFormat kMapFormat = VK_FORMAT_R16G16_UNORM;
-    const auto make_image = [&](AllocatedImage& img, VkFormat format, VkImageUsageFlags usage,
-                                VkImageAspectFlags aspect) {
-        VkImageCreateInfo img_ci{};
-        img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.format = format;
-        img_ci.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1};
-        img_ci.mipLevels = 1;
-        img_ci.arrayLayers = 1;
-        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        img_ci.usage = usage;
-        VmaAllocationCreateInfo alloc_ci{};
-        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-        VK_CHECK(
-            vmaCreateImage(allocator_, &img_ci, &alloc_ci, &img.image, &img.allocation, nullptr));
-        VkImageViewCreateInfo view_ci{};
-        view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_ci.image = img.image;
-        view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_ci.format = format;
-        view_ci.subresourceRange.aspectMask = aspect;
-        view_ci.subresourceRange.levelCount = 1;
-        view_ci.subresourceRange.layerCount = 1;
-        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
-    };
-    const VkImageUsageFlags colour_usage =
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    make_image(shadow_image_, kMapFormat, colour_usage, VK_IMAGE_ASPECT_COLOR_BIT);
-    make_image(shadow_blur_a_, kMapFormat, colour_usage, VK_IMAGE_ASPECT_COLOR_BIT);
-    make_image(shadow_blur_b_, kMapFormat, colour_usage, VK_IMAGE_ASPECT_COLOR_BIT);
-    make_image(shadow_depth_, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-               VK_IMAGE_ASPECT_DEPTH_BIT);
-
-    // The map's pass: colour and depth, both cleared (to 1: lit, and far).
-    // The map is shared by every frame in flight:
-    //   [0] incoming: the last frame's reads (and depth writes) finish
-    //       before this frame overwrites it;
-    //   [1] outgoing: its writes are visible to the blur and the scene.
-    {
-        VkAttachmentDescription colour_att{};
-        colour_att.format = kMapFormat;
-        colour_att.samples = VK_SAMPLE_COUNT_1_BIT;
-        colour_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        colour_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        colour_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        colour_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        colour_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colour_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        VkAttachmentDescription depth_att = colour_att;
-        depth_att.format = VK_FORMAT_D32_SFLOAT;
-        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth_att.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        const std::array<VkAttachmentDescription, 2> attachments = {colour_att, depth_att};
-
-        VkAttachmentReference colour_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-        VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-        VkSubpassDescription subpass{};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &colour_ref;
-        subpass.pDepthStencilAttachment = &depth_ref;
-
-        std::array<VkSubpassDependency, 2> deps{};
-        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-        deps[0].dstSubpass = 0;
-        deps[0].srcStageMask =
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        deps[1].srcSubpass = 0;
-        deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        VkRenderPassCreateInfo rp_ci{};
-        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rp_ci.attachmentCount = static_cast<u32>(attachments.size());
-        rp_ci.pAttachments = attachments.data();
-        rp_ci.subpassCount = 1;
-        rp_ci.pSubpasses = &subpass;
-        rp_ci.dependencyCount = static_cast<u32>(deps.size());
-        rp_ci.pDependencies = deps.data();
-        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_));
-    }
-
-    // The blur's passes: colour alone, cleared to 1. Each reads the target
-    // the pass before wrote (that pass's outgoing dependency), and writes
-    // one the last frame's scene may still be reading.
-    {
-        VkAttachmentDescription colour_att{};
-        colour_att.format = kMapFormat;
-        colour_att.samples = VK_SAMPLE_COUNT_1_BIT;
-        colour_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        colour_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        colour_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        colour_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        colour_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colour_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        VkAttachmentReference colour_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-        VkSubpassDescription subpass{};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &colour_ref;
-
-        std::array<VkSubpassDependency, 2> deps{};
-        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-        deps[0].dstSubpass = 0;
-        deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        deps[0].srcAccessMask = 0; // WAR: an execution dependency suffices
-        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        deps[1].srcSubpass = 0;
-        deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        VkRenderPassCreateInfo rp_ci{};
-        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rp_ci.attachmentCount = 1;
-        rp_ci.pAttachments = &colour_att;
-        rp_ci.subpassCount = 1;
-        rp_ci.pSubpasses = &subpass;
-        rp_ci.dependencyCount = static_cast<u32>(deps.size());
-        rp_ci.pDependencies = deps.data();
-        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_blur_pass_));
-    }
-
-    // Framebuffers: the map with its depth; the blur's targets.
-    {
-        const auto make_fb = [&](VkFramebuffer& fb, VkRenderPass pass,
-                                 std::initializer_list<VkImageView> views) {
-            const std::vector<VkImageView> list(views);
-            VkFramebufferCreateInfo fb_ci{};
-            fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            fb_ci.renderPass = pass;
-            fb_ci.attachmentCount = static_cast<u32>(list.size());
-            fb_ci.pAttachments = list.data();
-            fb_ci.width = SHADOW_MAP_SIZE;
-            fb_ci.height = SHADOW_MAP_SIZE;
-            fb_ci.layers = 1;
-            VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &fb));
-        };
-        make_fb(shadow_framebuffer_, shadow_render_pass_, {shadow_image_.view, shadow_depth_.view});
-        make_fb(shadow_blur_a_fb_, shadow_blur_pass_, {shadow_blur_a_.view});
-        make_fb(shadow_blur_b_fb_, shadow_blur_pass_, {shadow_blur_b_.view});
-    }
-
-    // Samplers: point and clamped (the meshes' one tap, FA's shadowSampler,
-    // and the blur's point taps); bilinear with a white border (the PCF's
-    // taps, FA's shadowPCFSampler, and the terrain's mask, ShadowSampler).
-    {
-        VkSamplerCreateInfo ci{};
-        ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        ci.magFilter = VK_FILTER_NEAREST;
-        ci.minFilter = VK_FILTER_NEAREST;
-        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        ci.maxLod = 0.0f;
-        VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_));
-        ci.magFilter = VK_FILTER_LINEAR;
-        ci.minFilter = VK_FILTER_LINEAR;
-        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        ci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-        VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_linear_sampler_));
-    }
+    // Moho's shadow map (M210c): its targets, passes and blur.
+    shadow_map_.create(device_, allocator_, SHADOW_MAP_SIZE, texture_ds_layout_);
 
     // --- Light UBO (LightUboData, persistently mapped, per-frame for FIF safety) ---
     static_assert(sizeof(LightUboData) == 160, "LightUBO is std140: a mat4 and six vec4s");
@@ -908,13 +725,13 @@ void Renderer::create_shadow_resources() {
             VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &shadow_ds_[i]));
 
             VkDescriptorImageInfo img_info{};
-            img_info.sampler = shadow_sampler_;
-            img_info.imageView = shadow_image_.view;
+            img_info.sampler = shadow_map_.point_sampler();
+            img_info.imageView = shadow_map_.map_view();
             img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             VkDescriptorImageInfo pcf_info = img_info;
-            pcf_info.sampler = shadow_linear_sampler_;
+            pcf_info.sampler = shadow_map_.linear_sampler();
             VkDescriptorImageInfo mask_info = pcf_info;
-            mask_info.imageView = shadow_blur_b_.view;
+            mask_info.imageView = shadow_map_.mask_view();
 
             VkDescriptorBufferInfo buf_info{};
             buf_info.buffer = light_ubo_[i].buffer;
@@ -947,46 +764,7 @@ void Renderer::create_shadow_resources() {
         }
     }
 
-    // The blur's sources: the map (point taps), then target A (bilinear).
-    {
-        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
-        VkDescriptorPoolCreateInfo pool_ci{};
-        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets = 2;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes = &size;
-        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &shadow_blur_ds_pool_));
-        const std::array<VkDescriptorSetLayout, 2> layouts = {texture_ds_layout_,
-                                                              texture_ds_layout_};
-        VkDescriptorSetAllocateInfo alloc_info{};
-        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        alloc_info.descriptorPool = shadow_blur_ds_pool_;
-        alloc_info.descriptorSetCount = static_cast<u32>(layouts.size());
-        alloc_info.pSetLayouts = layouts.data();
-        std::array<VkDescriptorSet, 2> sets{};
-        VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, sets.data()));
-        shadow_blur_h_ds_ = sets[0];
-        shadow_blur_v_ds_ = sets[1];
-        const VkDescriptorImageInfo map_info{shadow_sampler_, shadow_image_.view,
-                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        const VkDescriptorImageInfo a_info{shadow_linear_sampler_, shadow_blur_a_.view,
-                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        std::array<VkWriteDescriptorSet, 2> writes{};
-        for (size_t i = 0; i < writes.size(); ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = sets[i];
-            writes[i].dstBinding = 0;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        }
-        writes[0].pImageInfo = &map_info;
-        writes[1].pImageInfo = &a_info;
-        vkc::update_descriptor_sets(device_, static_cast<u32>(writes.size()), writes.data(), 0,
-                                    nullptr);
-    }
-
-    spdlog::info("Shadow resources created ({}x{} map, its depth and the blur's targets)",
-                 SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    spdlog::info("Shadow resources created (the map, the light UBO, the lit shaders' sets)");
 }
 
 void Renderer::upload_lighting() {
@@ -1016,7 +794,7 @@ void Renderer::upload_lighting() {
 }
 
 void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) {
-    if (!shadow_render_pass_ || !shadow_framebuffer_ || !light_ubo_mapped_[fi]) return;
+    if (!shadow_map_.ready() || !light_ubo_mapped_[fi]) return;
     PROFILE_ZONE("Render::shadow_pass");
 
     // Moho's light camera (Shadow::PrepareLightCamera, M210c): none at
@@ -1042,33 +820,9 @@ void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) 
                                       static_cast<f32>(SHADOW_MAP_SIZE), 0.0f};
     std::memcpy(ubo + offsetof(LightUboData, shadow), state.data(), sizeof(state));
 
-    // Every pass clears its target to 1 (lit, and far) and draws inside a
-    // one-pixel border, which keeps the clear: a lookup off the volume
-    // reads lit (Shadow::RenderShadowMap's viewport).
-    constexpr u32 n = SHADOW_MAP_SIZE;
-    const VkViewport inset{1.0f, 1.0f, static_cast<f32>(n - 2), static_cast<f32>(n - 2),
-                           0.0f, 1.0f};
-    const VkRect2D inset_rect{{1, 1}, {n - 2, n - 2}};
-    const auto begin = [&](VkRenderPass pass, VkFramebuffer fb, u32 clear_count,
-                           const VkClearValue* clears) {
-        VkRenderPassBeginInfo rp{};
-        rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rp.renderPass = pass;
-        rp.framebuffer = fb;
-        rp.renderArea.extent = {n, n};
-        rp.clearValueCount = clear_count;
-        rp.pClearValues = clears;
-        vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &inset);
-        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &inset_rect);
-    };
-
     // The map: the terrain (R its depth over 128, G 1), then the meshes
     // and the placeholder cubes (R their depth, G 0).
-    std::array<VkClearValue, 2> clears{};
-    clears[0].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
-    clears[1].depthStencil = {1.0f, 0};
-    begin(shadow_render_pass_, shadow_framebuffer_, static_cast<u32>(clears.size()), clears.data());
+    shadow_map_.begin_map(cmd_buf_[fi]);
     if (light) {
         // Shadow terrain
         if (terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
@@ -1160,24 +914,8 @@ void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) 
     }
     vkCmdEndRenderPass(cmd_buf_[fi]);
 
-    // The terrain's mask, B: Moho's blur, once (across into A, down into
-    // B), or with ren_ShadowBlur off a copy of the map's G.
-    const auto pass = [&](VkFramebuffer fb, VkPipeline pipeline, VkDescriptorSet source) {
-        begin(shadow_blur_pass_, fb, 1, clears.data());
-        if (pipeline && source && shadow_blur_layout_) {
-            vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      shadow_blur_layout_, 0, 1, &source, 0, nullptr);
-            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
-        }
-        vkCmdEndRenderPass(cmd_buf_[fi]);
-    };
-    if (video_options_.shadow_blur) {
-        pass(shadow_blur_a_fb_, shadow_blur_h_pipeline_, shadow_blur_h_ds_);
-        pass(shadow_blur_b_fb_, shadow_blur_v_pipeline_, shadow_blur_v_ds_);
-    } else {
-        pass(shadow_blur_b_fb_, shadow_copy_pipeline_, shadow_blur_h_ds_);
-    }
+    // The terrain's mask, B: Moho's blur, or a copy of the map's G.
+    shadow_map_.record_mask(cmd_buf_[fi], video_options_.shadow_blur);
 }
 
 void Renderer::create_pipelines() {
@@ -1550,11 +1288,7 @@ void Renderer::create_shadow_pipelines() {
     auto stf = compile_glsl(device_, shaders::shadow_terrain_frag, "shadow_terrain.frag", false);
     auto scf = compile_glsl(device_, shaders::shadow_caster_frag, "shadow_caster.frag", false);
     auto smf = compile_glsl(device_, shaders::shadow_mesh_frag, "shadow_mesh.frag", false);
-    auto qv = compile_glsl(device_, shaders::bloom_bright_vert, "shadow_quad.vert", true);
-    auto bhf = compile_glsl(device_, shaders::shadow_blur_h_frag, "shadow_blur_h.frag", false);
-    auto bvf = compile_glsl(device_, shaders::shadow_blur_v_frag, "shadow_blur_v.frag", false);
-    auto bcf = compile_glsl(device_, shaders::shadow_copy_frag, "shadow_copy.frag", false);
-    const std::array<VkShaderModule, 10> modules = {sv, smv, suv, stf, scf, smf, qv, bhf, bvf, bcf};
+    const std::array<VkShaderModule, 6> modules = {sv, smv, suv, stf, scf, smf};
     const auto destroy_modules = [&] {
         for (VkShaderModule m : modules)
             if (m) vkDestroyShaderModule(device_, m, nullptr);
@@ -1587,7 +1321,7 @@ void Renderer::create_shadow_pipelines() {
                 .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
                 .set_color_write_mask(kRG)
-                .build(device_, shadow_render_pass_, &shadow_terrain_layout_);
+                .build(device_, shadow_map_.map_pass(), &shadow_terrain_layout_);
     }
 
     // --- Shadow mesh pipeline (depth-only, blend-weight skinning) ---
@@ -1628,7 +1362,7 @@ void Renderer::create_shadow_pipelines() {
                 .set_descriptor_set_layout(bone_ds_layout_)    // set=0: bone SSBO
                 .add_descriptor_set_layout(texture_ds_layout_) // set=1: albedo (M211j)
                 .set_color_write_mask(kRG)
-                .build(device_, shadow_render_pass_, &shadow_mesh_layout_);
+                .build(device_, shadow_map_.map_pass(), &shadow_mesh_layout_);
     }
 
     // --- Shadow unit cube pipeline (depth-only, instanced) ---
@@ -1657,28 +1391,7 @@ void Renderer::create_shadow_pipelines() {
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
                 .set_color_write_mask(kRG)
-                .build(device_, shadow_render_pass_, &shadow_unit_layout_);
-    }
-
-    // The blur's passes and the copy (M210c): a screen triangle over the
-    // target, reading the pass before's from set 0.
-    {
-        const auto blur = [&](VkShaderModule frag, VkPipelineLayout* layout) {
-            return PipelineBuilder()
-                .set_shaders(qv, frag)
-                .set_depth_test(false, false)
-                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_color_write_mask(kRG)
-                .set_descriptor_set_layout(texture_ds_layout_)
-                .build(device_, shadow_blur_pass_, layout);
-        };
-        shadow_blur_h_pipeline_ = blur(bhf, &shadow_blur_layout_);
-        VkPipelineLayout same = VK_NULL_HANDLE;
-        shadow_blur_v_pipeline_ = blur(bvf, &same);
-        if (same) vkDestroyPipelineLayout(device_, same, nullptr);
-        same = VK_NULL_HANDLE;
-        shadow_copy_pipeline_ = blur(bcf, &same);
-        if (same) vkDestroyPipelineLayout(device_, same, nullptr);
+                .build(device_, shadow_map_.map_pass(), &shadow_unit_layout_);
     }
 
     destroy_modules();
@@ -4694,22 +4407,7 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, shadow_mesh_layout_, nullptr);
     vkDestroyPipeline(device_, shadow_unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, shadow_unit_layout_, nullptr);
-    vkDestroyPipeline(device_, shadow_blur_h_pipeline_, nullptr);
-    vkDestroyPipeline(device_, shadow_blur_v_pipeline_, nullptr);
-    vkDestroyPipeline(device_, shadow_copy_pipeline_, nullptr);
-    vkDestroyPipelineLayout(device_, shadow_blur_layout_, nullptr);
-    if (shadow_blur_ds_pool_) vkDestroyDescriptorPool(device_, shadow_blur_ds_pool_, nullptr);
-    vkDestroyFramebuffer(device_, shadow_framebuffer_, nullptr);
-    vkDestroyFramebuffer(device_, shadow_blur_a_fb_, nullptr);
-    vkDestroyFramebuffer(device_, shadow_blur_b_fb_, nullptr);
-    vkDestroyRenderPass(device_, shadow_render_pass_, nullptr);
-    vkDestroyRenderPass(device_, shadow_blur_pass_, nullptr);
-    if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
-    if (shadow_linear_sampler_) vkDestroySampler(device_, shadow_linear_sampler_, nullptr);
-    for (AllocatedImage* img : {&shadow_image_, &shadow_depth_, &shadow_blur_a_, &shadow_blur_b_}) {
-        if (img->view) vkDestroyImageView(device_, img->view, nullptr);
-        if (img->image) vmaDestroyImage(allocator_, img->image, img->allocation);
-    }
+    shadow_map_.destroy();
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         if (light_ubo_[i].buffer)
             vmaDestroyBuffer(allocator_, light_ubo_[i].buffer, light_ubo_[i].allocation);
