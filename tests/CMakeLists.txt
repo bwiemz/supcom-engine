@@ -122,6 +122,7 @@ add_executable(osc_tests
     test_veterancy_kills.cpp
     test_quaternions.cpp
     test_category_match.cpp
+    test_parse_category.cpp
     test_effect_expiry.cpp
     test_sim_lua_gc.cpp
     test_saved_game.cpp
