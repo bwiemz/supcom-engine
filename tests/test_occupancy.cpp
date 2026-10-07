@@ -276,7 +276,7 @@ TEST_CASE("An immobile unit claims its ground as it is made, and frees it as it 
     CHECK(grid.ground_at(40, 10));
     CHECK_FALSE(grid.ground_at(41, 10));
     // A quantum gateway's two sides, not its 7 x 7 footprint: centre +- 2.5,
-    // half sizes 1 and 3 -- cells 37-38 and 42-43 across, 7-12 deep.
+    // half sizes 1 and 3 -- cells 37-38 and 42-43 across, 27-32 deep.
     REQUIRE(w.state.do_string("gate = CreateUnit('gate', 1, 40, 10, 30)").ok());
     CHECK(grid.ground_at(37, 27));
     CHECK(grid.ground_at(43, 32));
