@@ -30,6 +30,10 @@ struct BoneData {
     /// model position times this (a Striker's muzzle is 5.65 model units
     /// ahead, 0.4 in the world).
     f32 model_scale = 1.0f;
+    /// The blueprint's AI.TargetBones, each resolved here (-1: the mesh has
+    /// no such bone): the points on a unit of this kind that weapons aim
+    /// at (Moho's target points, Unit::GetTargetPoint).
+    std::vector<i32> target_bones;
 
     /// Look up bone index by name (case-insensitive). Returns -1 if not found.
     i32 find_bone(const std::string& name) const;

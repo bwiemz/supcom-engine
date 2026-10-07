@@ -2896,6 +2896,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             projectiles.mix(e.entity_id());
             mix_vec(projectiles, p.velocity);
             projectiles.mix(p.target_entity_id);
+            // The target point it homes on, unless the centre.
+            if (p.target_point != -1)
+                projectiles.mix(0x5450543a00000000ull | static_cast<u32>(p.target_point)); // "TPT:"
             mix_vec(projectiles, p.target_position);
             projectiles.mix_f32(p.lifetime);
             projectiles.mix((p.impacted ? 1u : 0u) | (p.tracking ? 2u : 0u));
@@ -3175,6 +3178,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             weapons.mix_f32(w->damage);
             weapons.mix_f32(w->damage_radius);
             weapons.mix(w->fire_target_layer_caps);
+            // Its aim spot, unless it is the centre of its target now: off
+            // that, where it shoots, and whether it draws a new one.
+            if (w->aim_spot != -1 || w->aim_spot_target != w->target_entity_id) {
+                weapons.mix(0x41494d5300000000ull); // "AIMS"
+                weapons.mix(static_cast<u32>(w->aim_spot));
+                weapons.mix(w->aim_spot_target);
+            }
         }
     });
     parts.entities = entities.h;

@@ -65,7 +65,6 @@ StayUpright
 StopOnPrimaryWeaponBusy
 StraddleWater
 StrategicIconSize
-TargetBones
 UseFiringSolutionInsteadOfAimBone
 UseOOBTestZoom
 WobbleFactor

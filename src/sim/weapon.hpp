@@ -105,6 +105,7 @@ public:
     CategoryExpr restrict_disallow;        // TargetRestrictDisallow
     CategoryExpr restrict_only_allow;      // TargetRestrictOnlyAllow
     bool above_water_targets_only = false; // AboveWaterTargetsOnly
+    bool below_water_targets_only = false; // BelowWaterTargetsOnly
     bool yaw_only_on_target = false;       // YawOnlyOnTarget: its aim controllers ignore the pitch
     bool above_water_fire_only = false;    // AboveWaterFireOnly
     bool always_recheck_target = true;     // AlwaysRecheckTarget
@@ -122,6 +123,11 @@ public:
 
     // Runtime state
     u32 target_entity_id = 0;   // 0 = no target
+    /// Which of its target unit's target points it aims at (Moho's
+    /// CAiTarget::targetPoint; -1: the unit's centre), and the target it
+    /// was picked for: see current_aim_spot and pick_aim_spot.
+    i32 aim_spot = -1;
+    u32 aim_spot_target = 0;
     /// A point on the ground it is aimed at instead of a unit (SetTargetGround,
     /// a launch order). Only valid while target_entity_id is 0.
     bool has_ground_target = false;
@@ -157,6 +163,15 @@ public:
     bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
 
     bool has_target() const { return target_entity_id != 0 || has_ground_target; }
+    /// The target point it aims at on its target now: -1 (the centre) for
+    /// a target it hasn't picked one on yet.
+    i32 current_aim_spot() const { return aim_spot_target == target_entity_id ? aim_spot : -1; }
+    /// Pick where on its target to aim (Moho's PickNewTargetAimSpot, which
+    /// SetTarget calls on every change of target): one of the target's
+    /// target points at random, of those above the water for an
+    /// AboveWaterTargetsOnly weapon or below it for a BelowWaterTargetsOnly
+    /// one; -1, drawing nothing, with none. Draws from the sim's stream.
+    void pick_aim_spot(EntityRegistry& registry, const SimState* sim);
     /// Aim at a point on the ground (dropping any unit target). A new
     /// target starts its shot count again, as Moho's SetTarget does.
     void set_target_ground(const Vector3& at) {

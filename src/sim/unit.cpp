@@ -3,6 +3,7 @@
 #include "core/test_status.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
@@ -3028,6 +3029,45 @@ BonePose Unit::bone_world_transform(i32 bone) const {
     if (bd && bd->is_valid(bone)) return {bone_world_position(bone), bone_world_rotation(bone)};
     const Vector3 up = quat_rotate(orientation(), Vector3{0.0f, size_y_ * 0.5f, 0.0f});
     return {{position().x + up.x, position().y + up.y, position().z + up.z}, orientation()};
+}
+
+i32 Unit::target_point_count() const {
+    const BoneData* bd = bone_data();
+    return bd ? static_cast<i32>(bd->target_bones.size()) : 0;
+}
+
+Vector3 Unit::target_point(i32 index) const {
+    const BoneData* bd = bone_data();
+    i32 bone = -1;
+    if (index >= 0 && bd && !bd->target_bones.empty()) {
+        const auto last = static_cast<i32>(bd->target_bones.size()) - 1;
+        bone = bd->target_bones[static_cast<size_t>(std::min(index, last))];
+    }
+    return bone_world_transform(bone).position;
+}
+
+i32 Unit::pick_target_point(SimRandom& rng) const {
+    const i32 count = target_point_count();
+    if (count == 0) return -1;
+    return static_cast<i32>(rng.next_int(0, count - 1));
+}
+
+bool Unit::pick_target_point_by_water(SimRandom* rng, f32 water, bool above, i32& out) const {
+    out = -1;
+    const i32 count = target_point_count();
+    if (count == 0) return above ? position().y > water : position().y <= water;
+    // Moho's test is strict both ways: a point at the surface is neither.
+    std::vector<i32> candidates;
+    for (i32 i = 0; i < count; ++i) {
+        const f32 y = target_point(i).y;
+        if (above ? y > water : y < water) candidates.push_back(i);
+    }
+    if (candidates.empty()) return false;
+    if (rng) {
+        const auto last = static_cast<i64>(candidates.size()) - 1;
+        out = candidates[static_cast<size_t>(rng->next_int(0, last))];
+    }
+    return true;
 }
 
 Vector3 Unit::bone_world_point(i32 bone, const Vector3& local) const {
