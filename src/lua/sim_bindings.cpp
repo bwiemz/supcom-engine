@@ -170,6 +170,10 @@ static std::optional<sim::Weapon::ProjectilePhysics> projectile_physics(lua_Stat
     if (lua_type(L, -1) == LUA_TNUMBER) {
         physics.max_speed = static_cast<f32>(lua_tonumber(L, -1));
     }
+    lua_pop(L, 1);
+    lua_pushstring(L, "StraightDownOrdinance");
+    lua_rawget(L, -2);
+    if (lua_isboolean(L, -1)) physics.straight_down = lua_toboolean(L, -1) != 0;
     lua_settop(L, top);
     return physics;
 }
@@ -438,6 +442,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                             static_cast<f32>(lua_tonumber(L, -1));
                     }
                     lua_pop(L, 1);
+                    lua_pushstring(L, "MuzzleVelocityRandom");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1))
+                        weapon->muzzle_velocity_random = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
 
                     lua_pushstring(L, "BallisticArc");
                     lua_gettable(L, we);
@@ -519,6 +528,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     for (auto [field, flag] :
                          {std::pair{"AboveWaterTargetsOnly", &weapon->above_water_targets_only},
                           std::pair{"BelowWaterTargetsOnly", &weapon->below_water_targets_only},
+                          std::pair{"UseFiringSolutionInsteadOfAimBone",
+                                    &weapon->use_firing_solution},
                           std::pair{"AboveWaterFireOnly", &weapon->above_water_fire_only},
                           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
                           std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},

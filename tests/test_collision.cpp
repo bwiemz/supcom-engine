@@ -9,6 +9,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
@@ -235,25 +236,107 @@ TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
     CHECK(in->position().z == Approx(100.0f + std::sqrt(100.0f - 1.0f)).margin(1e-3));
 }
 
-TEST_CASE("firing randomness scatters over a circle that grows with range", "[collision]") {
+TEST_CASE("a shot leaves along its muzzle unless its weapon fires along its solution",
+          "[collision]") {
+    // Moho's CreateProjectile: the launch is the muzzle bone's facing as the
+    // aim controller posed it; UseFiringSolutionInsteadOfAimBone uses the aim.
     EntityRegistry reg;
     const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
     osc::sim::Weapon w;
     w.muzzle_velocity = 30;
     w.max_range = 24;
-    w.firing_randomness = 1.2f;
-    // With no target it fires along its facing (+z) to its reach: a circle
-    // of radius 1.2 x 24 / 12 = 2.4 about (0, 0, 24).
-    f32 widest = 0;
-    for (int i = 0; i < 200; ++i) {
+    // No target: its solution is along its facing (+z); its muzzle faces +x.
+    const Vector3 muzzle{1, 0, 0};
+    const Projectile* along = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false, muzzle);
+    REQUIRE(along);
+    CHECK(along->velocity.x == Approx(30.0f));
+    CHECK(along->velocity.z == Approx(0.0f).margin(1e-4));
+    w.use_firing_solution = true;
+    const Projectile* solved = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false, muzzle);
+    REQUIRE(solved);
+    CHECK(solved->velocity.x == Approx(0.0f).margin(1e-4));
+    CHECK(solved->velocity.z == Approx(30.0f));
+    // StraightDownOrdinance: down, whatever the muzzle.
+    w.use_firing_solution = false;
+    w.projectile_physics = osc::sim::Weapon::ProjectilePhysics{};
+    w.projectile_physics->straight_down = true;
+    const Projectile* down = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false, muzzle);
+    REQUIRE(down);
+    CHECK(down->velocity.y == Approx(-30.0f));
+    CHECK(down->velocity.x == Approx(0.0f).margin(1e-4));
+}
+
+TEST_CASE("firing randomness turns a shot by a normal heading and pitch, in degrees",
+          "[collision]") {
+    // Moho's CreateProjectile: heading and pitch each N(0, FiringRandomness)
+    // degrees; FAF's circle of r x distance / 12 is what it looks like.
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 30;
+    w.max_range = 24;
+    w.firing_randomness = 2.0f;
+    constexpr int kShots = 4000;
+    double sum_h = 0;
+    double sum_h2 = 0;
+    double sum_p2 = 0;
+    for (int i = 0; i < kShots; ++i) {
         const Projectile* p = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
         REQUIRE(p);
-        const f32 off = std::hypot(p->target_position.x, p->target_position.z - 24.0f);
-        CHECK(off <= 2.4f + 1e-3f);
-        widest = std::max(widest, off);
+        const Vector3& v = p->velocity;
+        CHECK(std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z) == Approx(30.0f).epsilon(1e-4));
+        const double heading = std::atan2(v.x, v.z) * 57.29578;
+        const double pitch = std::asin(v.y / 30.0) * 57.29578;
+        sum_h += heading;
+        sum_h2 += heading * heading;
+        sum_p2 += pitch * pitch;
     }
-    CHECK(widest > 2.0f); // it fills the circle
+    const double mean = sum_h / kShots;
+    CHECK(std::abs(mean) < 0.15);
+    CHECK(std::sqrt(sum_h2 / kShots - mean * mean) == Approx(2.0).epsilon(0.08));
+    CHECK(std::sqrt(sum_p2 / kShots) == Approx(2.0).epsilon(0.08));
+}
+
+TEST_CASE("a shot's speed is MuzzleVelocity, randomised and slowed close in", "[collision]") {
+    // Moho's GetMuzzleVelocity: plus N(0, MuzzleVelocityRandom), then times
+    // sqrt(distance / MuzzleVelocityReduceDistance) within that distance.
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 30;
+    w.max_range = 24;
+    w.muzzle_velocity_random = 3;
+    double sum = 0;
+    double sum2 = 0;
+    constexpr int kShots = 4000;
+    for (int i = 0; i < kShots; ++i) {
+        const Projectile* p = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
+        REQUIRE(p);
+        const Vector3& v = p->velocity;
+        const double speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        sum += speed;
+        sum2 += speed * speed;
+    }
+    const double mean = sum / kShots;
+    CHECK(mean == Approx(30.0).epsilon(0.01));
+    CHECK(std::sqrt(sum2 / kShots - mean * mean) == Approx(3.0).epsilon(0.08));
+
+    // 10 away within a ReduceDistance of 40: half the speed, and the
+    // barrel's arc is the slowed shell's.
+    w.muzzle_velocity_random = 0;
+    w.max_range = 10;
+    w.muzzle_velocity_reduce_distance = 40;
+    const Projectile* close = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
+    REQUIRE(close);
+    CHECK(close->velocity.z == Approx(15.0f));
+    CHECK(w.muzzle_speed_at(10.0f, nullptr) == Approx(15.0f));
+    w.ballistic_arc = osc::sim::Weapon::Arc::Low;
+    const f32 elevation = w.launch_elevation(10.0f, 0.0f);
+    // Level ground: sin(2 theta) = g d / v^2 at v = 15.
+    CHECK(std::sin(2.0f * elevation) == Approx(Projectile::GRAVITY * 10.0f / 225.0f).epsilon(1e-3));
 }
 
 TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision]") {
@@ -371,4 +454,37 @@ TEST_CASE("a point's distance from a shape is negative inside it", "[collision]"
           Approx(5.0f)); // past a corner: 3-4-5
     CHECK(osc::sim::shape_distance(b, {0, 0, 0}, level, {0, 1.5f, 0}) == Approx(-0.5f));
     CHECK(osc::sim::shape_distance(CollisionShape{}, {0, 0, 0}, level, {0, 0, 0}) > 1e30f);
+}
+
+TEST_CASE("a projectile's blueprint ranges spread each one made", "[collision]") {
+    // Moho's Projectile: TurnRate, MaxSpeed, Acceleration and Lifetime each
+    // base +- their *Range, uniformly.
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {['/p'] = {Physics = {MaxSpeed = 10, MaxSpeedRange = 2,"
+                          " TurnRate = 90, Acceleration = 4, Lifetime = 5, LifetimeRange = 1}}}")
+                .ok());
+    osc::sim::SimRandom rng(9);
+    f32 low = 1e9f;
+    f32 high = -1e9f;
+    for (int i = 0; i < 400; ++i) {
+        Projectile p;
+        p.set_blueprint_id("/p");
+        const auto found = p.apply_blueprint_physics(lua.raw(), &rng);
+        CHECK(p.max_speed >= 8.0f);
+        CHECK(p.max_speed <= 12.0f);
+        CHECK(p.turn_rate == 90.0f); // no range: as it is
+        CHECK(p.acceleration == 4.0f);
+        REQUIRE(found.lifetime);
+        CHECK(*found.lifetime >= 4.0f);
+        CHECK(*found.lifetime <= 6.0f);
+        low = std::min(low, p.max_speed);
+        high = std::max(high, p.max_speed);
+    }
+    CHECK(low < 8.2f);
+    CHECK(high > 11.8f);
+    // Without the stream (a query, not a projectile made), the blueprint's own.
+    Projectile plain;
+    plain.set_blueprint_id("/p");
+    plain.apply_blueprint_physics(lua.raw());
+    CHECK(plain.max_speed == 10.0f);
 }
