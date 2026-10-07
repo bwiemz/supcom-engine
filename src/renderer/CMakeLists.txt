@@ -15,6 +15,7 @@ add_library(osc_renderer STATIC
     shadow_map.cpp
     shadow_casters.cpp
     bloom_renderer.cpp
+    frame_targets.cpp
     shader_utils.cpp
     shield_shaders.cpp
     pipeline_builder.cpp
