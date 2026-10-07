@@ -114,14 +114,38 @@ bool PathNavigator::can_occupy(Cell from, Cell to) const {
     return footprint_fits(footprint_, *world_.terrain, *world_.grid, to.x, to.z, caps) != 0;
 }
 
-bool PathNavigator::can_transition(Cell /*from*/, Cell /*to*/) const {
-    // Moho's PathTransitionBlocked asks only about mobile units (4c-3).
-    return world_.grid != nullptr;
+bool PathNavigator::can_transition(Cell from, Cell to) const {
+    if (!world_.grid) return false;
+    // Moho's CanPathCellTransition, which asks only about mobile units
+    // (PathTransitionBlocked; the extended probe minds them all): on the
+    // spot, whether one stands there; across, whether one stands between
+    // the two cells' centres.
+    if (!world_.blockers) return true;
+    const i32 mode = extended_probe_ ? 2 : 1;
+    if (from == to) return !world_.blockers->unit_blocked(world_.owner, from, mode);
+    const f32 hx = static_cast<f32>(footprint_.size_x) * 0.5f;
+    const f32 hz = static_cast<f32>(footprint_.size_z) * 0.5f;
+    const WorldPoint a{static_cast<f32>(from.x) + hx, 0.0f, static_cast<f32>(from.z) + hz};
+    const WorldPoint b{static_cast<f32>(to.x) + hx, 0.0f, static_cast<f32>(to.z) + hz};
+    return !world_.blockers->swept_blocked(world_.owner, a, b, mode);
 }
 
 bool PathNavigator::can_reach_from_current(Cell to) const {
-    // Moho sweeps the unit's box toward `to` against mobile units (4c-3),
-    // then asks the transition.
+    // Moho's CanReachCellFromCurrent: no mobile unit across the way from
+    // where the unit stands to the cell's centre (on the ground there: the
+    // seabed for a footprint that takes it or on a dry map, else the
+    // water's surface), then the cell's own transition.
+    if (world_.blockers && world_.terrain) {
+        const map::Terrain& t = *world_.terrain;
+        const f32 x = static_cast<f32>(to.x) + static_cast<f32>(footprint_.size_x) * 0.5f;
+        const f32 z = static_cast<f32>(to.z) + static_cast<f32>(footprint_.size_z) * 0.5f;
+        const f32 ground = t.get_terrain_height(x, z);
+        const bool seabed = (footprint_.caps & blueprints::occupancy::kSeabed) != 0;
+        const f32 y = seabed || !t.has_water() ? ground : std::max(t.water_elevation(), ground);
+        if (world_.blockers->swept_blocked(world_.owner, {unit_.x, unit_.y, unit_.z}, {x, y, z},
+                                           extended_probe_ ? 2 : 1))
+            return false;
+    }
     return can_transition(to, to);
 }
 
@@ -319,6 +343,7 @@ void PathNavigator::update(const NavUnit& unit, const PathWorld& world, PathQueu
     else no_progress_ticks_ = 0;
     if (repath_threshold_ < cell_distance(current_, target_) || repath_requested_ ||
         no_progress_ticks_ > 30) {
+        const Cell aimed = target_; // as it was before the advance
         if (try_advance_target_point()) {
             repath_threshold_ = cell_distance(current_, target_) * 0.5f;
             repath_requested_ = false;
@@ -337,8 +362,19 @@ void PathNavigator::update(const NavUnit& unit, const PathWorld& world, PathQueu
             request_continuation(3);
             return;
         }
-        // (Moho waits 10 ticks here when a unit stands on its last cell:
-        // 4c-3's mobile units.)
+        // Making for its last cell with a unit standing there, it waits 10
+        // ticks rather than ask each tick. FAF's exe reads the target cell
+        // here (0x005AEB48, mTargetPos before TryAdvanceTargetPoint; faf-re's
+        // text has the unit's own cell, which never gets this far), and
+        // passes it as a world point, as is.
+        if (!path_.empty() && aimed == path_.back() && !unit.waiting_for_transport &&
+            world_.blockers &&
+            world_.blockers->unit_blocked_at(world_.owner,
+                                             static_cast<f32>(static_cast<u16>(aimed.x)),
+                                             static_cast<f32>(static_cast<u16>(aimed.z)), 1)) {
+            retry_delay_ = 10;
+            return;
+        }
         request_continuation(2);
     }
 }
