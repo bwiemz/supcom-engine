@@ -265,6 +265,16 @@ void register_option_commands(ui::Console& console) {
     };
     camera_bool("ui_ScreenEdgeScrollView", &Camera::edge_scroll, &Camera::set_edge_scroll);
     camera_bool("ui_ArrowKeysScrollView", &Camera::arrow_scroll, &Camera::set_arrow_scroll);
+    // cam_Free: "Allow the camera to remain rotated" (off, as Moho starts)
+    ui::add_bool_var(
+        console, "cam_Free",
+        [](lua_State* L) {
+            Renderer* r = renderer_of(L);
+            return r && r->camera().free();
+        },
+        [](lua_State* L, bool v) {
+            if (Renderer* r = renderer_of(L)) r->camera().set_free(v);
+        });
 
     ui::add_bool_var(
         console, "ui_AlwaysRenderStrategicIcons",

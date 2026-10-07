@@ -22,7 +22,6 @@ method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
 module /lua/ui/game/commandgraph.lua:OnCommandGraphShow
 module /lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus
-module /lua/ui/game/rename.lua:ShowRenameDialog
 module /lua/ui/game/tracking.lua:OnTrackUnit
 module /lua/ui/uimain.lua:OnApplicationResize
 module /lua/ui/uimain.lua:ShowDesyncDialog

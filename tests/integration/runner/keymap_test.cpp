@@ -270,6 +270,59 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
                         "stops them (idle: {})",
                         by_key, move_mode, stopped));
 
+    // UI_ExpandCurrentSelection: one engineer selected, every own engineer of
+    // its blueprint; the tank and the enemy's engineer stay out
+    run(R"(
+        ConExecute('UI_SelectByCategory ENGINEER TECH1')
+        SelectUnits({GetSelectedUnits()[1]})
+    )");
+    const std::string one_engineer = text("selection_text()");
+    run("ConExecute('UI_ExpandCurrentSelection')");
+    const std::string expanded = text("selection_text()");
+    t.check(one_engineer == "uel0105" && expanded == "uel0105,uel0105",
+            fmt::format("Test 7: UI_ExpandCurrentSelection takes every own unit of a blueprint "
+                        "selected ({} -> {})",
+                        one_engineer, expanded));
+
+    // RenameUnit and UI_ShowRenameDialog: one unit only. The dialog is
+    // retail's rename.lua's, shown with the unit's name.
+    run(R"(
+        SelectUnits({GetSelectedUnits()[1]})
+        ConExecute('RenameUnit  Bob   the Builder ')
+    )");
+    play(1);
+    const std::string named = text("GetSelectedUnits()[1]:GetCustomName() or '<none>'");
+    run(R"(
+        ConExecute('UI_SelectByCategory ENGINEER TECH1')
+        ConExecute('RenameUnit Nobody')
+    )");
+    play(1);
+    const std::string kept_names = text(R"((function()
+        local names = {}
+        for _, u in GetSelectedUnits() do table.insert(names, u:GetCustomName() or '-') end
+        table.sort(names)
+        return table.concat(names, ',')
+    end)())");
+    run(R"(
+        local rename = import('/lua/ui/game/rename.lua')
+        __session_shown = {}
+        __session_show = rename.ShowRenameDialog
+        rename.ShowRenameDialog = function(name) table.insert(__session_shown, name) end
+        ConExecute('UI_ShowRenameDialog')
+        for _, u in GetSelectedUnits() do
+            if u:GetCustomName() == 'Bob the Builder' then SelectUnits({u}) end
+        end
+        ConExecute('UI_ShowRenameDialog')
+        rename.ShowRenameDialog = __session_show
+    )");
+    const std::string shown = text("table.concat(__session_shown, ';')");
+    t.check(named == "Bob the Builder" && kept_names == "-,Bob the Builder" &&
+                shown == "Bob the Builder",
+            fmt::format("Test 8: RenameUnit names the one unit selected, its words joined and "
+                        "trimmed ({}), and not two ({}); UI_ShowRenameDialog shows retail's "
+                        "dialog for one only ({})",
+                        named, kept_names, shown));
+
     spdlog::info("Session command test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
