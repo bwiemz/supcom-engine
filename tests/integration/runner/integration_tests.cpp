@@ -17628,6 +17628,61 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
            select_unselectable.c_str());
     sim_lua("__osc_ui_bot:Destroy() __osc_ui_fac:Destroy()");
     play(2);
+
+    // Test 10b4: retail's CreateBuildTemplate (its key, build_templates.lua)
+    // makes a template of the selected structures: the one made first is the
+    // origin, the other where it stands from it (Moho's
+    // GenerateBuildTemplates), and Set/GetActiveBuildTemplate round-trip it.
+    {
+        const auto* commander = ctx.sim.entity_registry().find(acu);
+        const f32 ax = commander ? commander->position().x : 100.0f;
+        const f32 az = commander ? commander->position().z : 100.0f;
+        sim_lua(fmt::format("__osc_tpl_a = CreateUnitHPR('ueb1101', 'ARMY_1', {}, 0, {}, 0, 0, 0)",
+                            ax + 20, az)
+                    .c_str());
+        play(1);
+        sim_lua(fmt::format("__osc_tpl_b = CreateUnitHPR('ueb1101', 'ARMY_1', {}, 0, {}, 0, 0, 0)",
+                            ax + 30, az + 6)
+                    .c_str());
+        play(2);
+        u32 first = 0, second = 0;
+        ctx.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+            if (e.destroyed() || !e.is_unit() || e.blueprint_id() != "ueb1101") return;
+            if (std::abs(e.position().x - (ax + 20)) < 0.01f) first = e.entity_id();
+            if (std::abs(e.position().x - (ax + 30)) < 0.01f) second = e.entity_id();
+        });
+        const std::string make_template = fmt::format(R"(
+            local acu = GetSelectedUnits()[1]
+            local bt = import('/lua/ui/game/build_templates.lua')
+            -- the later one first: the order is the build order
+            SelectUnits({{{{EntityId = {}}}, {{EntityId = {}}}}})
+            bt.CreateBuildTemplate()
+            SelectUnits({{acu}})
+            local all = bt.GetTemplates()
+            local t = all[table.getn(all)].templateData
+            if table.getn(t) ~= 4 then error(table.getn(t) .. ' members') end
+            local a, b = t[3], t[4]
+            if a[1] ~= 'ueb1101' or a[3] ~= 0 or a[4] ~= 0 then
+                error('origin ' .. tostring(a[1]) .. ' ' .. a[3] .. ',' .. a[4])
+            end
+            if b[3] ~= 10 or b[4] ~= 6 then error('second at ' .. b[3] .. ',' .. b[4]) end
+            if not (a[2] < b[2]) then error('order ' .. a[2] .. ', ' .. b[2]) end
+            if t[1] <= 0 or t[2] <= 0 then error('spans ' .. t[1] .. ',' .. t[2]) end
+            if table.getn(GetActiveBuildTemplate()) ~= 0 then error('still active') end
+            SetActiveBuildTemplate(t)
+            local back = GetActiveBuildTemplate()
+            if back[1] ~= t[1] or back[4][3] ~= 10 or back[4][1] ~= 'ueb1101' then
+                error('round trip')
+            end
+            ClearBuildTemplates()
+            if table.getn(GetActiveBuildTemplate()) ~= 0 then error('not cleared') end
+        )",
+                                                      second, first);
+        lua_ok("Test 10b4: retail's CreateBuildTemplate makes a template of the selection",
+               make_template.c_str());
+        sim_lua("__osc_tpl_a:Destroy() __osc_tpl_b:Destroy()");
+        play(2);
+    }
     lua_ok("Test 10d: the orders panel has the commander's orders", R"(
         local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
         local n = 0

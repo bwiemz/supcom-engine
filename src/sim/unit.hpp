@@ -320,6 +320,9 @@ public:
 
     // Script bits (9 toggles, bits 0-8)
     u16 script_bits() const { return script_bits_; }
+    /// The tick it was made: a build template's order (Moho's mCreationTick)
+    u32 creation_tick() const { return creation_tick_; }
+    void set_creation_tick(u32 tick) { creation_tick_ = tick; }
     bool get_script_bit(i32 bit) const {
         return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
     }
@@ -1441,6 +1444,7 @@ private:
     bool block_command_queue_ = false;
     i32 fire_state_ = 0;         // 0=ReturnFire, 1=HoldFire, 2=HoldGround
     u16 script_bits_ = 0;        // 9 toggle bits (0-8)
+    u32 creation_tick_ = 0;      // the tick it was made (Moho's mCreationTick)
     std::unordered_set<std::string> toggle_caps_; // RULEUTC_* toggle capabilities
     f32 surface_threat_ = 0;
     f32 air_threat_ = 0;

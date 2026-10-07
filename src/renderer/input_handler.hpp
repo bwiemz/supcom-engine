@@ -3,6 +3,7 @@
 #include <functional>
 
 #include "core/types.hpp"
+#include "renderer/build_template.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/entity.hpp" // Vector3
@@ -137,6 +138,10 @@ public:
 
     /// Currently selected unit IDs.
     const std::unordered_set<u32>& selected() const { return selected_; }
+    /// The session's active build template (Moho's CWldSession one), empty
+    /// when none: GenerateBuildTemplateFromSelection, Set/Get and
+    /// ClearBuildTemplates keep it.
+    BuildTemplate& build_template() { return build_template_; }
 
     /// The structure being placed (the sim's build ghost), at the snapped
     /// spot under the cursor with whether it can be built there, or
@@ -306,6 +311,7 @@ private:
     /// Whether the player's intel shows `e` (anything, without a view).
     bool shown(const sim::Entity& e) const;
     std::unordered_set<u32> selected_;
+    BuildTemplate build_template_;
     bool selection_event_ = false;
 
     // Left mouse state (selection)
