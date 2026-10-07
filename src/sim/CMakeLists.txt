@@ -41,6 +41,7 @@ add_library(osc_sim STATIC
     prepare_move.cpp
     air_combat.cpp
     steering.cpp
+    unit_blocking.cpp
     entity_registry.cpp
     thread_manager.cpp
     transport_slots.cpp

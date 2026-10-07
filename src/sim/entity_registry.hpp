@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
@@ -99,6 +100,19 @@ public:
     /// shape that could meet the segment from (x0, z0) to (x1, z1).
     void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<u32>& out) const;
 
+    /// Whether `visit` says yes to a live unit with a collision shape that
+    /// could reach the rectangle [x0, x1] x [z0, z1] (within COLLIDER_REACH
+    /// of it, or a large shape's own reach), stopping at the first yes. The
+    /// units come in no fixed order and may come twice: only for a
+    /// question whose answer depends on neither (is any unit in the way?).
+    template <typename F> bool any_unit_collider(f32 x0, f32 z0, f32 x1, f32 z1, F&& visit) const {
+        using Visit = std::remove_reference_t<F>;
+        return any_unit_collider_impl(
+            x0, z0, x1, z1,
+            [](const Entity& e, void* ctx) { return (*static_cast<Visit*>(ctx))(e); },
+            const_cast<void*>(static_cast<const void*>(&visit)));
+    }
+
     /// Called by Entity::set_collision_shape.
     void notify_collision_shape_changed(const Entity& entity);
 
@@ -181,6 +195,8 @@ private:
     /// Entities whose shape reaches beyond COLLIDER_REACH, in id order.
     std::set<u32> large_colliders_;
 
+    bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1, bool (*visit)(const Entity&, void*),
+                                void* ctx) const;
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;
     void grid_insert(Entity& entity, i32 cx, i32 cz);

@@ -122,9 +122,9 @@ bool PathFinder::can_traverse(Cell c) const {
         if (footprint_fits(footprint_, *world_.terrain, *world_.grid, c.x, c.z, caps) == 0)
             return false;
     }
-    // A first search never minds mobile units.
-    if (type_ == SearchType::None || !unit_blocked) return true;
-    return !unit_blocked(c, type_ == SearchType::Leader ? 2 : 1);
+    // A first search never minds mobile units; a leader's minds them all.
+    if (type_ == SearchType::None || !world_.blockers) return true;
+    return !world_.blockers->unit_blocked(world_.owner, c, type_ == SearchType::Leader ? 2 : 1);
 }
 
 bool PathFinder::in_bounds(Cell /*from*/, Cell to, f32& /*cost*/) const {

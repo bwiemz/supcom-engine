@@ -1176,6 +1176,10 @@ void SimState::tick() {
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
+    // Where each unit stands as the tick begins, and whether it moved over
+    // the last one: Moho commits entities' moves at the end of each beat,
+    // and its path code asks whether a unit's committed position changed.
+    entity_registry_.for_each_unit([](Entity& e) { static_cast<Unit&>(e).note_tick_position(); });
     // Moho's UpdatePaths: the clusters' background rebuild, before the
     // armies tick (Sim::AdvanceBeat).
     if (path_tables_) {

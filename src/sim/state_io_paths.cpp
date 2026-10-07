@@ -98,6 +98,8 @@ void save_world(StateWriter& w, const path::PathWorld& world) {
     save_rect(w, world.playable);
     w.b(world.use_whole_map);
     w.i32v(world.pathcap);
+    w.b(world.blockers != nullptr);
+    w.u32v(world.owner);
 }
 
 path::PathWorld load_world(StateReader& r, const SimState& sim) {
@@ -107,6 +109,9 @@ path::PathWorld load_world(StateReader& r, const SimState& sim) {
     world.playable = load_rect(r);
     world.use_whole_map = r.b();
     world.pathcap = r.i32v();
+    // The mobile units are the sim's, asked for the unit it was saved for.
+    world.blockers = r.b() ? &sim.unit_blockers() : nullptr;
+    world.owner = r.u32v();
     return world;
 }
 
@@ -130,7 +135,7 @@ path::PathFinder* StateIO::traveler_of(SimState& sim, u32 id) {
 // ------------------------------------------------------------- PathFinder
 
 void StateIO::save(StateWriter& w, const path::PathFinder& f) {
-    // queue_: the army queue's load sets it; unit_blocked: a hook (4c-3)
+    // queue_: the army queue's load sets it
     save_world(w, f.world_);
     save_footprint(w, f.footprint_);
     w.i32v(f.class_);
@@ -180,11 +185,13 @@ void StateIO::save(StateWriter& w, const path::PathNavigator& n) {
     w.b(n.on_water_);
     save_world(w, n.world_);
     w.f32v(n.unit_.x);
+    w.f32v(n.unit_.y);
     w.f32v(n.unit_.z);
     w.b(n.unit_.moved);
     w.b(n.unit_.immobile);
     w.b(n.unit_.attacking);
     w.u32v(n.unit_.layer);
+    w.b(n.unit_.waiting_for_transport);
     w.u8v(static_cast<u8>(n.state_));
     save_goal(w, n.goal_);
     save_cells(w, n.path_);
@@ -214,11 +221,13 @@ void StateIO::load(StateReader& r, path::PathNavigator& n, SimState& sim, i32 ar
     ArmyBrain* a = sim.get_army(army);
     n.queue_ = a ? &a->path_queue() : nullptr;
     n.unit_.x = r.f32v();
+    n.unit_.y = r.f32v();
     n.unit_.z = r.f32v();
     n.unit_.moved = r.b();
     n.unit_.immobile = r.b();
     n.unit_.attacking = r.b();
     n.unit_.layer = r.u32v();
+    n.unit_.waiting_for_transport = r.b();
     n.state_ = static_cast<path::PathNavigator::State>(r.u8v());
     n.goal_ = load_goal(r);
     n.path_ = load_cells(r);

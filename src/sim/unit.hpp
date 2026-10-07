@@ -836,6 +836,19 @@ public:
 
     // Misc flags
     u32 creator_id() const { return creator_id_; }
+    /// Whether it moved over the last tick: its position as this tick began
+    /// against the last's (Moho's committed transform against the one
+    /// before). A new unit hasn't.
+    bool moved_last_tick() const { return moved_last_tick_; }
+    /// Note where it stands as a tick begins (SimState::tick).
+    void note_tick_position() {
+        const Vector3& p = position();
+        moved_last_tick_ =
+            tick_position_set_ &&
+            (p.x != tick_position_.x || p.y != tick_position_.y || p.z != tick_position_.z);
+        tick_position_ = p;
+        tick_position_set_ = true;
+    }
     void set_creator_id(u32 id) { creator_id_ = id; }
     bool auto_overcharge() const { return auto_overcharge_; }
     void set_auto_overcharge(bool b) { auto_overcharge_ = b; }
@@ -1712,6 +1725,9 @@ private:
     f32 crash_spin_rate_ = 0;
     // Misc flags
     u32 creator_id_ = 0;
+    Vector3 tick_position_{};        // where it stood as this tick began
+    bool tick_position_set_ = false; // (none before its first tick)
+    bool moved_last_tick_ = false;
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

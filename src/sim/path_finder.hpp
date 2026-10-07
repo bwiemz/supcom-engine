@@ -12,7 +12,6 @@
 #include "sim/path_search.hpp"
 
 #include <deque>
-#include <functional>
 #include <vector>
 
 namespace osc::map {
@@ -32,12 +31,40 @@ struct NavGoal {
 };
 
 /// What a search sees of the world.
+/// A point in the world (x, height, z).
+struct WorldPoint {
+    f32 x = 0;
+    f32 y = 0;
+    f32 z = 0;
+};
+
+/// Mobile units in a unit's way (4c-3), answered by the sim: Moho's
+/// COGrid::UnitIsBlocked and SweptPathBlockedByUnit. `mode` 1 plans (units
+/// that moved last tick don't count, and of the rest only those that
+/// outrank the unit); 2 is a leader's search or the extended probe's
+/// (every unit the unit doesn't ignore).
+class MobileBlockers {
+public:
+    virtual ~MobileBlockers() = default;
+    /// One stands where `unit`'s footprint would at `cell` (its corner).
+    virtual bool unit_blocked(u32 unit, Cell cell, i32 mode) const = 0;
+    /// The same at the cell a footprint centred at (x, z) takes (Moho's
+    /// UnitIsBlockedAt).
+    virtual bool unit_blocked_at(u32 unit, f32 x, f32 z, i32 mode) const = 0;
+    /// One stands across the straight way from `from` to `to`.
+    virtual bool swept_blocked(u32 unit, const WorldPoint& from, const WorldPoint& to,
+                               i32 mode) const = 0;
+};
+
 struct PathWorld {
     const map::Terrain* terrain = nullptr;
     const OccupancyGrid* grid = nullptr;
     OccupancyRect playable; ///< Moho's mPlayableRect
     bool use_whole_map = false;
     i32 pathcap = 0;
+    /// The mobile units in the way, and the unit whose way it is (its id).
+    const MobileBlockers* blockers = nullptr;
+    u32 owner = 0;
 };
 
 /// Who hears a finder's answer (Moho's Listener<const SNavPath&>).
@@ -72,10 +99,6 @@ public:
     /// out); a repath remembers the 16 x 16 round the unit, searched cell by
     /// cell.
     void prepare(const PathWorld& world, SearchType type, Cell anchor, f32 x, f32 z);
-
-    /// Mobile units in the way, for repaths (4c-3): (cell, mode 1 or 2 for
-    /// a leader). None yet.
-    std::function<bool(Cell, i32)> unit_blocked;
 
     // Traveler
     i32 footprint_class() const override { return class_; }

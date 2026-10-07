@@ -255,15 +255,21 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
     // CAiNavigatorLand::Execute: the path navigator first.
     const bool moved = pos.x != last_pos_.x || pos.y != last_pos_.y || pos.z != last_pos_.z;
     last_pos_ = pos;
-    const path::NavUnit nav{pos.x,
-                            pos.z,
-                            moved,
-                            unit.immobile(),
-                            unit.has_unit_state("Attacking"),
-                            layer_token(unit.layer())};
+    path::NavUnit nav;
+    nav.x = pos.x;
+    nav.y = pos.y;
+    nav.z = pos.z;
+    nav.moved = moved;
+    nav.immobile = unit.immobile();
+    nav.attacking = unit.has_unit_state("Attacking");
+    nav.layer = layer_token(unit.layer());
+    nav.waiting_for_transport = !unit.command_queue().empty() &&
+                                unit.command_queue().front().type == CommandType::TransportLoad;
     const OccupancyRect playable = sim_->move_bounds(unit.army(), false);
-    const path::PathWorld world{map, &sim_->occupancy(), playable, army->use_whole_map(),
-                                default_pathcap(std::max(map->map_width(), map->map_height()))};
+    path::PathWorld world{map, &sim_->occupancy(), playable, army->use_whole_map(),
+                          default_pathcap(std::max(map->map_width(), map->map_height()))};
+    world.blockers = &sim_->unit_blockers();
+    world.owner = unit.entity_id();
     moho_.update(nav, world, army->path_queue());
     const State st = moho_.state();
     if (st == State::Idle || st == State::Failed) {

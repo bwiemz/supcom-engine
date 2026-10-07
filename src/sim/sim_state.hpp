@@ -11,6 +11,7 @@
 #include "sim/occupancy.hpp"
 #include "sim/replay.hpp"
 #include "sim/thread_manager.hpp"
+#include "sim/unit_blocking.hpp"
 
 #include <array>
 #include <functional>
@@ -192,6 +193,8 @@ public:
     /// rebuilt kBackgroundBudget a tick. Null without a map or classes.
     PathTables* path_tables() { return path_tables_.get(); }
     const PathTables* path_tables() const { return path_tables_.get(); }
+    /// The mobile units in a unit's way, as the path code asks (4c-3).
+    const UnitBlockers& unit_blockers() const { return unit_blockers_; }
     size_t ground_occupant_count() const { return ground_occupants_.size(); }
     /// Entity `id` stands on `occupant`'s rects (Moho's ExecuteOccupyGround,
     /// a prop's reclaim-area claim), in place of any claim it had.
@@ -986,6 +989,7 @@ private:
     /// One cluster map a footprint class over terrain_ and occupancy_
     /// (roadmap item 4c), made with the pathfinding grid.
     std::unique_ptr<PathTables> path_tables_;
+    UnitBlockers unit_blockers_{*this};
     bool moho_pathing_ = false;
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).

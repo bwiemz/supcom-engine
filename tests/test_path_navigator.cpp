@@ -39,6 +39,24 @@ namespace {
 
 constexpr u32 kMap = 128;
 
+/// Mobile units as a test says: each question answered by its flag.
+struct FakeBlockers final : path::MobileBlockers {
+    bool cell = false;
+    bool at = false;
+    bool swept = false;
+    mutable int at_asked = 0;
+    bool unit_blocked(u32 /*unit*/, Cell /*cell*/, i32 /*mode*/) const override { return cell; }
+    bool unit_blocked_at(u32 /*unit*/, f32 /*x*/, f32 /*z*/, i32 /*mode*/) const override {
+        ++at_asked;
+        return at;
+    }
+    /// (Only a long way: the unit's own cell stays clear.)
+    bool swept_blocked(u32 /*unit*/, const path::WorldPoint& from, const path::WorldPoint& to,
+                       i32 /*mode*/) const override {
+        return swept && std::hypot(to.x - from.x, to.z - from.z) > 2.0f;
+    }
+};
+
 std::unique_ptr<osc::map::Terrain> flat_terrain(u32 size) {
     std::vector<osc::u16> heights(static_cast<size_t>(size + 1) * (size + 1), 1280);
     osc::map::Heightmap hm(size, size, 1.0f / 128.0f, std::move(heights));
@@ -86,13 +104,17 @@ struct Walk {
     bool bumped = false;
     int ticks = 0;
     bool moved = false;
+    const path::MobileBlockers* blockers = nullptr;
 
     PathWorld world() const {
-        return {terrain.get(),
-                &grid,
-                {0, 0, static_cast<i32>(kMap), static_cast<i32>(kMap)},
-                false,
-                100000};
+        PathWorld w{terrain.get(),
+                    &grid,
+                    {0, 0, static_cast<i32>(kMap), static_cast<i32>(kMap)},
+                    false,
+                    100000};
+        w.blockers = blockers;
+        w.owner = 1;
+        return w;
     }
     void start(i32 c, f32 sx, f32 sz, Cell goal) {
         tables = std::make_unique<PathTables>(classes, *terrain, grid);
@@ -109,7 +131,12 @@ struct Walk {
         queue.work(*tables, budget);
         const f32 px = x;
         const f32 pz = z;
-        nav.update(NavUnit{x, z, moved, false, false, layer}, world(), queue);
+        NavUnit unit;
+        unit.x = x;
+        unit.z = z;
+        unit.moved = moved;
+        unit.layer = layer;
+        nav.update(unit, world(), queue);
         if (nav.state() == State::Idle || nav.state() == State::Failed) return false;
         if (!frozen) {
             const f32 dx = nav.target_x() - x;
@@ -251,4 +278,48 @@ TEST_CASE("A new layer asks for the way on; the answer goes in front of what is 
     CHECK(w.nav.path().size() + 2 >= left);
     w.run();
     CHECK(w.nav.current() == Cell{100, 10});
+}
+
+TEST_CASE("Strayed from its last cell with a unit standing there, a navigator waits 10 ticks "
+          "before it asks the way again",
+          "[path_navigator]") {
+    // Each run: walk to a cell short of the goal and stop; a refused move
+    // there (a repath asked, the way still clear) sets its repath distance
+    // to half the way left. Then pushed off further than that, the way
+    // swept blocked, it can't go on: count the ticks until it asks again
+    // (Continuing), with a unit on the goal or without.
+    const auto ticks_to_ask = [](bool unit_on_goal, int& at_asked) {
+        FakeBlockers fake;
+        Walk w;
+        w.blockers = &fake;
+        w.start(0, 10.5f, 20.5f, {20, 20});
+        while (w.ticks < 400 && w.x < 18.5f) w.step();
+        w.frozen = true;
+        w.x = 18.5f;
+        w.step();
+        REQUIRE(w.nav.state() == State::HasPath);
+        REQUIRE(w.nav.target() == Cell{20, 20});
+        w.nav.request_repath();
+        w.step();
+        REQUIRE(w.nav.state() == State::HasPath);
+        w.z += 6.0f;
+        fake.swept = true;
+        fake.at = unit_on_goal;
+        int waited = 0;
+        while (waited < 40 && w.nav.state() == State::HasPath) {
+            w.step();
+            ++waited;
+        }
+        at_asked = fake.at_asked;
+        return waited;
+    };
+    int asked_blocked = 0;
+    int asked_free = 0;
+    const int blocked = ticks_to_ask(true, asked_blocked);
+    const int free = ticks_to_ask(false, asked_free);
+    INFO("blocked " << blocked << " free " << free);
+    CHECK(asked_blocked >= 1);
+    CHECK(asked_free >= 1);
+    CHECK(free == 1);
+    CHECK(blocked == free + 10);
 }

@@ -359,6 +359,10 @@ bool outranks(const Unit& a, const Unit& b) {
     if (a.immobile() || a.has_unit_state("Upgrading")) return true;
     if (b.immobile() || b.has_unit_state("Upgrading")) return false;
     if (a.is_naval() != b.is_naval()) return a.is_naval();
+    // One that paths through structures goes first.
+    const bool a_ignores = (a.footprint().flags & blueprints::kFootprintIgnoreStructures) != 0;
+    const bool b_ignores = (b.footprint().flags & blueprints::kFootprintIgnoreStructures) != 0;
+    if (a_ignores != b_ignores) return a_ignores;
     const bool a_grounded_flier = can_fly(a) && !a.is_air_unit();
     const bool b_grounded_flier = can_fly(b) && !b.is_air_unit();
     if (a_grounded_flier) return true;
