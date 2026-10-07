@@ -4,7 +4,8 @@
 // ARMY_2's. The selected one has retail's player brackets, sized from its
 // blueprint's SelectionSize; the one under the cursor has the highlighted
 // ones, an enemy's the enemy's; the drag box is drawn; the overlay draws no
-// ring; ren_SelectBoxes off draws none.
+// ring; ren_SelectBoxes off draws none. An aircraft is picked, and boxed,
+// where it is drawn at its height.
 
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
@@ -199,6 +200,66 @@ void test_selection_render(TestContext& ctx) {
             fmt::format("Test 10: a Shift double-click keeps the tank and adds its like: {} "
                         "selected (tank {}, second {})",
                         shifted.size(), shifted.count(tank), shifted.count(tank2)));
+
+    // Tests 11-12: an aircraft is picked where it is drawn, at its height:
+    // the cursor's ray meets its box short of the ground, and a drag box
+    // holds it by where it is on the screen. By the ground under the cursor
+    // (as picking had gone) it is missed.
+    const u32 air = spawn_unit(ctx, "__osc_sel_air", "uea0101", "ARMY_1", {sx + 4, sz - 10});
+    for (int i = 0; i < 60; ++i) ctx.sim.tick(); // up to its height
+    seen.capture(ctx.sim);
+    seen.capture(ctx.sim);
+    input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
+    const sim::EntityRecord* air_rec = seen.cur().find(air);
+    const sim::Vector3 ap = air_rec ? air_rec->position : sim::Vector3{};
+    const f32 ground = ctx.sim.terrain()->get_surface_height(ap.x, ap.z);
+    sim::Vector3 eye{};
+    r.camera().eye_position(eye.x, eye.y, eye.z);
+    sim::Vector3 dir{ap.x - eye.x, ap.y + 0.3f - eye.y, ap.z - eye.z};
+    const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    dir = {dir.x / len, dir.y / len, dir.z / len};
+    // Where that ray meets the ground beyond the aircraft
+    f32 gx = ap.x;
+    f32 gz = ap.z;
+    for (int step = 0; step < 1600; ++step) {
+        const f32 s = len + 0.25f * static_cast<f32>(step);
+        gx = eye.x + dir.x * s;
+        gz = eye.z + dir.z * s;
+        if (eye.y + dir.y * s <= ctx.sim.terrain()->get_surface_height(gx, gz)) break;
+    }
+    renderer::InputHandler by_ground; // no cursor ray: straight down at (gx, gz)
+    by_ground.set_player_army(0);
+    by_ground.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
+    const u32 old_pick = by_ground.unit_under(ctx.sim, gx, gz);
+    input.set_cursor_ray({eye, dir}, gx, gz);
+    const u32 ray_pick = input.unit_under(ctx.sim, gx, gz);
+    t.check(ap.y - ground > 5.0f && ray_pick == air && old_pick != air,
+            fmt::format("Test 11: an aircraft {:.1f} up is picked where it is drawn: by the ray "
+                        "{}, by the ground under the cursor {}",
+                        ap.y - ground, ray_pick == air ? "it" : std::to_string(ray_pick),
+                        old_pick == air ? "it" : std::to_string(old_pick)));
+
+    const auto vp = r.camera().view_proj(aspect);
+    const f32 sw = static_cast<f32>(r.width());
+    const f32 sh = static_cast<f32>(r.height());
+    const auto drawn_at = renderer::screen_point(vp, ap, sw, sh);
+    const auto under_at = renderer::screen_point(vp, {ap.x, ground, ap.z}, sw, sh);
+    bool boxed_air = false;
+    bool boxed_ground = true;
+    if (drawn_at && under_at) {
+        input.set_selected({});
+        input.select_in_box(ctx.sim, vp, sw, sh, (*drawn_at)[0] - 6, (*drawn_at)[1] - 6,
+                            (*drawn_at)[0] + 6, (*drawn_at)[1] + 6, true);
+        boxed_air = input.selected().count(air) == 1;
+        input.set_selected({});
+        input.select_in_box(ctx.sim, vp, sw, sh, (*under_at)[0] - 6, (*under_at)[1] - 6,
+                            (*under_at)[0] + 6, (*under_at)[1] + 6, true);
+        boxed_ground = input.selected().count(air) == 1;
+    }
+    t.check(boxed_air && !boxed_ground,
+            fmt::format("Test 12: a drag box holds the aircraft where it is drawn ({}), not "
+                        "where the ground under it is ({})",
+                        boxed_air, boxed_ground));
 
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }
