@@ -4236,68 +4236,136 @@ static void push_simple_category(lua_State* L, const char* name) {
     lua_setmetatable(L, -2);
 }
 
-// ParseEntityCategory(str) -> category table
-// Handles single word ("COMMAND") and space-separated intersection ("TECH1 LAND MOBILE")
+/// A category that matches nothing (a parse that named no known word)
+static void push_empty_category(lua_State* L) {
+    lua_newtable(L);
+    lua_pushstring(L, "osc_category_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_setmetatable(L, -2);
+}
+
+/// The two categories on top of the stack combined by `op`, in their place
+static void combine_categories(lua_State* L, const char* op) {
+    lua_newtable(L);
+    lua_pushstring(L, "__op");
+    lua_pushstring(L, op);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "__left");
+    lua_pushvalue(L, -4);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "__right");
+    lua_pushvalue(L, -3);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "osc_category_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_setmetatable(L, -2);
+    lua_replace(L, -3); // the node where the left one was
+    lua_pop(L, 1);      // and the right one gone
+}
+
+/// Push the words ParseEntityCategory knows: Moho's category lookup table,
+/// which also fills `categories` -- every unit's, projectile's and prop's
+/// blueprint categories and id, ALLUNITS and ALLPROJECTILES. Built once a
+/// state, once its blueprints are in.
+static void push_category_words(lua_State* L) {
+    lua_pushstring(L, "__osc_category_words");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) return;
+    lua_pop(L, 1);
+    lua_newtable(L);
+    const int words = lua_gettop(L);
+    const auto add = [&](const std::string& word) {
+        lua_pushstring(L, word.c_str());
+        lua_pushboolean(L, 1);
+        lua_rawset(L, words);
+    };
+    add("ALLUNITS");
+    add("ALLPROJECTILES");
+    auto* store = osc::lua::LuaState::get_blueprint_store(L);
+    if (!store || store->total_count() == 0) return; // not kept: blueprints to come
+    for (const auto type : {blueprints::BlueprintType::Unit, blueprints::BlueprintType::Projectile,
+                            blueprints::BlueprintType::Prop}) {
+        for (const auto* entry : store->get_all(type)) {
+            store->push_lua_table(*entry, L);
+            std::unordered_set<std::string> cats;
+            sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+            lua_pop(L, 1);
+            for (const auto& cat : cats) add(cat);
+        }
+    }
+    lua_pushstring(L, "__osc_category_words");
+    lua_pushvalue(L, words);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+// ParseEntityCategory(str) -> category, as Moho parses one (faf-re
+// EntityCategoryLookupResolver.cpp): commas separate clauses, each the
+// intersection of its space-separated words, and the category is the union
+// of the clauses. A word no blueprint has is left out of its clause, and a
+// clause with none adds nothing. Parsed strings are kept while their
+// categories are in use (AI conditions parse theirs each time they're asked).
 static int l_ParseEntityCategory(lua_State* L) {
     const char* raw = lua_tostring(L, 1);
     if (!raw) {
-        lua_newtable(L);
+        push_empty_category(L);
         return 1;
     }
-
     const std::string input(raw);
 
-    // Split by spaces
-    std::vector<std::string> words;
-    std::string word;
-    for (char c : input) {
-        if (c == ' ') {
-            if (!word.empty()) { words.push_back(word); word.clear(); }
-        } else {
-            word += c;
-        }
-    }
-    if (!word.empty()) words.push_back(word);
-
-    if (words.empty()) {
+    lua_pushstring(L, "__osc_parsed_categories");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
         lua_newtable(L);
-        return 1;
-    }
-
-    if (words.size() == 1) {
-        push_simple_category(L, words[0].c_str());
-        return 1;
-    }
-
-    // Multiple words: build intersection chain
-    // Start with last word, chain backwards
-    push_simple_category(L, words.back().c_str());
-    for (int i = static_cast<int>(words.size()) - 2; i >= 0; i--) {
-        // Stack top is the right operand (accumulated so far)
-        int right = lua_gettop(L);
-        push_simple_category(L, words[i].c_str());
-        int left = lua_gettop(L);
-
-        // Build intersection node
-        lua_newtable(L);
-        lua_pushstring(L, "__op");
-        lua_pushstring(L, "intersection");
+        lua_newtable(L); // weak values: a category no one holds is let go
+        lua_pushstring(L, "__mode");
+        lua_pushstring(L, "v");
         lua_rawset(L, -3);
-        lua_pushstring(L, "__left");
-        lua_pushvalue(L, left);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "__right");
-        lua_pushvalue(L, right);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "osc_category_mt");
-        lua_rawget(L, LUA_REGISTRYINDEX);
         lua_setmetatable(L, -2);
-
-        // Remove left and right from stack, keep only the new node.
-        // Must remove highest index first to avoid index shift.
-        lua_remove(L, left);
-        lua_remove(L, right);
+        lua_pushstring(L, "__osc_parsed_categories");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
     }
+    const int cache = lua_gettop(L);
+    lua_pushstring(L, raw);
+    lua_rawget(L, cache);
+    if (lua_istable(L, -1)) return 1;
+    lua_pop(L, 1);
+
+    push_category_words(L);
+    const int words = lua_gettop(L);
+    bool any = false; // a clause folded into the result (on the stack)
+    size_t clause_start = 0;
+    while (clause_start <= input.size()) {
+        const size_t clause_end = std::min(input.find(',', clause_start), input.size());
+        bool clause_any = false;
+        size_t term_start = clause_start;
+        while (term_start < clause_end) {
+            const size_t space = input.find(' ', term_start);
+            const size_t term_end = std::min(space, clause_end);
+            const std::string term = input.substr(term_start, term_end - term_start);
+            term_start = term_end + 1;
+            if (term.empty()) continue;
+            lua_pushstring(L, term.c_str());
+            lua_rawget(L, words);
+            const bool known = !lua_isnil(L, -1);
+            lua_pop(L, 1);
+            if (!known) continue;
+            push_simple_category(L, term.c_str());
+            if (clause_any) combine_categories(L, "intersection");
+            clause_any = true;
+        }
+        if (clause_any) {
+            if (any) combine_categories(L, "union");
+            any = true;
+        }
+        clause_start = clause_end + 1;
+    }
+    if (!any) push_empty_category(L);
+
+    lua_pushstring(L, raw);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, cache);
     return 1;
 }
 
