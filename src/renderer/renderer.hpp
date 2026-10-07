@@ -33,6 +33,7 @@
 #include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/shadow_camera.hpp"
 #include "renderer/shadow_map.hpp"
+#include "renderer/shadow_casters.hpp"
 #include "renderer/bloom_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
@@ -474,7 +475,6 @@ private:
     /// frame (the slot is untouched; the next frame tries it again).
     bool begin_frame_slot(u32 fi, u32& image_index);
     void create_shadow_resources();
-    void create_shadow_pipelines();
 
     // GLFW
     GLFWwindow* window_ = nullptr;
@@ -726,12 +726,8 @@ private:
     /// Record the shadow map, its blur and the light UBO's shadow state.
     void record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj);
 
-    VkPipeline shadow_terrain_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout shadow_terrain_layout_ = VK_NULL_HANDLE;
-    VkPipeline shadow_mesh_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout shadow_mesh_layout_ = VK_NULL_HANDLE;
-    VkPipeline shadow_unit_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout shadow_unit_layout_ = VK_NULL_HANDLE;
+    /// What draws into the map: the terrain, meshes and cubes.
+    ShadowCasters shadow_casters_;
 
     VkDescriptorSetLayout shadow_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool shadow_ds_pool_ = VK_NULL_HANDLE;
