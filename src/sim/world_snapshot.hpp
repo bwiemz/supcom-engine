@@ -39,10 +39,18 @@ struct PendingQueue {
     u32 offset = 0, count = 0; ///< into WorldSnapshot::pending_commands
 };
 
-/// An intel range a unit has on (the renderer rings it when selected).
+/// An intel range a unit has, on or off (the renderer rings it).
 struct IntelRecord {
     std::string type; ///< "Radar", "Sonar", "Omni", "Vision", ...
     f32 radius = 0;
+    bool enabled = true;
+};
+
+/// A weapon's reach now, by its index in the unit's blueprint (Moho's
+/// UnitWeaponInfo, which the range rings read).
+struct WeaponRangeRecord {
+    u32 index = 0;
+    f32 min_radius = 0, max_radius = 0;
 };
 
 /// One entity at the end of a tick: its pose, and everything the renderer
@@ -106,6 +114,8 @@ struct EntityRecord {
     u32 rally_offset = 0, rally_count = 0;       ///< a factory's rally orders, likewise
     u32 intel_offset = 0, intel_count = 0;       ///< into WorldSnapshot::intel
     u32 adjacent_offset = 0, adjacent_count = 0; ///< into WorldSnapshot::adjacent
+    u32 weapon_range_offset = 0, weapon_range_count = 0; ///< into WorldSnapshot::weapon_ranges
+    u16 script_bits = 0; ///< its toggles' script bits (Unit::script_bits)
 
     // What the UI's unit objects read (UserUnit, M191 step 3)
     bool auto_mode = false;
@@ -198,6 +208,7 @@ struct ArmyRecord {
     ResourceRecord mass, energy;
     f64 mass_efficiency = 1, energy_efficiency = 1;
     u32 allies = 0; ///< bit j: allied with army j (its intel shares; M215a)
+    f32 start_x = 0, start_z = 0; ///< its start position (the no-rush zone's centre)
 };
 
 /// A jammer's fake blip an army senses and doesn't know fake (M215e): the
@@ -252,11 +263,15 @@ struct WorldSnapshot {
     std::vector<BoneMatrix> bones;      ///< pooled animated poses
     std::vector<CommandRecord> commands;
     std::vector<IntelRecord> intel;
+    std::vector<WeaponRangeRecord> weapon_ranges;
     std::vector<u32> adjacent;
     std::vector<EffectRecord> effects;  ///< live effects, in creation order
     std::vector<ArmyRecord> armies;
     SightMap sight;        ///< the sight army's (WorldHistory::set_sight_army)
     i32 player_result = 0; ///< SimState::player_result()
+    /// The no-rush zone's radius while its timer runs (0: none), about each
+    /// army's start.
+    f32 no_rush_radius = 0;
     std::vector<FakeBlipRecord> fake_blips; ///< in jammer, army, fake order
     std::vector<CommandRecord> pending_commands;
     std::vector<PendingQueue> pending_queues; ///< ascending id
@@ -291,6 +306,9 @@ struct WorldSnapshot {
     std::span<const CommandRecord> orders_of(const EntityRecord& e) const;
     std::span<const IntelRecord> intel_of(const EntityRecord& e) const {
         return {intel.data() + e.intel_offset, e.intel_count};
+    }
+    std::span<const WeaponRangeRecord> weapon_ranges_of(const EntityRecord& e) const {
+        return {weapon_ranges.data() + e.weapon_range_offset, e.weapon_range_count};
     }
     std::span<const u32> adjacent_of(const EntityRecord& e) const {
         return {adjacent.data() + e.adjacent_offset, e.adjacent_count};

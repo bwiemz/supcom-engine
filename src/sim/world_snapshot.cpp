@@ -9,6 +9,7 @@
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -253,11 +254,19 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     }
     r.rally_count = static_cast<u32>(out.commands.size()) - r.rally_offset;
 
-    // Only what can be drawn: a ring needs the intel on and a radius.
+    // Only what can be drawn: a ring needs a radius. Moho's rings show an
+    // intel off as well as on (its toggle hides them; UserUnit::GetIntelRanges).
     r.intel_offset = static_cast<u32>(out.intel.size());
     for (const auto& [type, state] : u.intel_states())
-        if (state.enabled && state.radius >= 1.0f) out.intel.push_back({type, state.radius});
+        if (state.radius >= 1.0f) out.intel.push_back({type, state.radius, state.enabled});
     r.intel_count = static_cast<u32>(out.intel.size()) - r.intel_offset;
+
+    r.weapon_range_offset = static_cast<u32>(out.weapon_ranges.size());
+    for (const auto& w : u.weapons())
+        out.weapon_ranges.push_back(
+            {static_cast<u32>(std::max(w->weapon_index, 0)), w->min_range, w->max_range});
+    r.weapon_range_count = static_cast<u32>(out.weapon_ranges.size()) - r.weapon_range_offset;
+    r.script_bits = u.script_bits();
 
     r.adjacent_offset = static_cast<u32>(out.adjacent.size());
     out.adjacent.insert(out.adjacent.end(), u.adjacent_unit_ids().begin(),
@@ -291,11 +300,13 @@ void WorldSnapshot::clear() {
     bones.clear();
     commands.clear();
     intel.clear();
+    weapon_ranges.clear();
     adjacent.clear();
     effects.clear();
     armies.clear();
     sight.clear();
     player_result = 0;
+    no_rush_radius = 0;
     fake_blips.clear();
     pending_commands.clear();
     pending_queues.clear();
@@ -375,6 +386,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     out.bones.clear();
     out.commands.clear();
     out.intel.clear();
+    out.weapon_ranges.clear();
     out.adjacent.clear();
     out.effects.clear();
     out.armies.clear();
@@ -485,10 +497,13 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         a.energy_efficiency = brain->energy_efficiency();
         for (i32 j = 0; j < static_cast<i32>(sim.army_count()) && j < 32; ++j)
             if (j != static_cast<i32>(i) && brain->is_ally(j)) a.allies |= 1u << j;
+        a.start_x = brain->start_position().x;
+        a.start_z = brain->start_position().z;
     }
 
     capture_sight(sim, sight_army, out.sight);
     out.player_result = sim.player_result();
+    out.no_rush_radius = sim.no_rush_active() ? sim.no_rush_radius() : 0.0f;
     capture_pending(sim, out);
 }
 

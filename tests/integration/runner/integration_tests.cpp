@@ -17185,6 +17185,49 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else osc::test_status::fail("[FAIL] Test 3: game UI has {} controls (expected >= 100)", n);
     }
 
+    // 3b. Retail's range overlays reach the renderer's profiles: its
+    //     RangeOverlayParams through SetOverlayFilter, as multifunction's
+    //     Create registers them, and the active ones through SetOverlayFilters
+    {
+        lua_pushstring(L, "__osc_range_overlays");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* overlays = static_cast<osc::renderer::RangeOverlays*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const bool ran = lua_ok("Test 3b: retail's overlays registered", R"(
+            local filters = import('/lua/ui/game/rangeoverlayparams.lua').RangeOverlayParams
+            for overlay, info in filters do
+                SetOverlayFilter(overlay, info.Categories, info.NormalColor, info.SelectColor,
+                    info.RolloverColor, info.Inner[1], info.Inner[2], info.Outer[1], info.Outer[2])
+            end
+            SetOverlayFilters({'Radar', 'AntiAir'})
+        )");
+        static const osc::renderer::RangeOverlays kNone;
+        const auto& profiles = (overlays ? *overlays : kNone).profiles();
+        const auto profile = [&](const char* name) -> const osc::renderer::RangeProfile* {
+            const auto it = profiles.find(name);
+            return it != profiles.end() ? &it->second : nullptr;
+        };
+        const auto* direct = profile("DirectFire");
+        const auto* radar = profile("Radar");
+        const auto* all_intel = profile("AllIntel");
+        bool known = profiles.size() == 12;
+        for (const auto& [name, p] : profiles)
+            known = known && osc::renderer::range_extractor(name).has_value();
+        const bool ok = ran && overlays && known && direct && radar && all_intel &&
+                        std::abs(direct->normal[1] - 0x2c * 0.0039209998f) < 1e-4f &&
+                        std::abs(direct->selected[3] - 8 * 0.0039209998f) < 1e-4f &&
+                        direct->outer.near == 0.04f && direct->outer.far == 4.0f &&
+                        direct->categories.matches({"LAND"}) &&
+                        radar->categories.matches({"OVERLAYRADAR"}) &&
+                        !radar->categories.matches({"LAND"}) &&
+                        !all_intel->categories.matches({"OVERLAYRADAR"}) &&
+                        overlays->visible().size() == 2 && overlays->visible()[0]->name == "Radar";
+        if (ok) spdlog::info("[PASS] Test 3b: 12 profiles with retail's colours and categories");
+        else
+            osc::test_status::fail("[FAIL] Test 3b: {} profiles, {} visible", profiles.size(),
+                                   overlays ? overlays->visible().size() : 0);
+    }
+
     // 4. Frames run the UI: CreateUI's control-cluster OnFrame fires
     //    OnFirstUpdate once and switches itself off. (Moho updates hidden
     //    controls too: the cluster is hidden under the loading fade, and

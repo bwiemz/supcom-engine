@@ -18,7 +18,6 @@ CirclingTurnMult
 DirectionX
 DirectionY
 DirectionZ
-EffectiveRadius
 GroundCollisionOffset
 HoverOverAttack
 IgnoreIfDisabled

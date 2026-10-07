@@ -13,6 +13,7 @@
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
 #include "renderer/input_handler.hpp"
+#include "renderer/range_overlays.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/terrain_preview.hpp"
@@ -898,6 +899,55 @@ static int l_RenderOverlayEconomy(lua_State* L) {
     return 0;
 }
 
+/// The range overlays FA's UI sets up: the window's renderer's (a test's
+/// own), or none.
+static renderer::RangeOverlays* get_range_overlays(lua_State* L) {
+    lua_pushstring(L, "__osc_range_overlays");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* overlays = static_cast<renderer::RangeOverlays*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return overlays;
+}
+
+/// SetOverlayFilter(name, categories, normalColor, selectColor, rolloverColor,
+/// inner0, inner1, outer0, outer1): one range overlay, kept by its name, which
+/// picks what it rings (Moho's cfunc_SetOverlayFilterL). The colours are
+/// AARRGGBB, the alpha their glow; each pair is a line's thickness zoomed in
+/// and zoomed out.
+static int l_SetOverlayFilter(lua_State* L) {
+    if (lua_gettop(L) != 9)
+        return luaL_error(L, "SetOverlayFilter()\n  expected 9 args, but got %d", lua_gettop(L));
+    auto* overlays = get_range_overlays(L);
+    if (!overlays) return 0;
+    renderer::RangeProfile profile;
+    profile.name = luaL_checkstring(L, 1);
+    const auto number = [L](int i) { return static_cast<f32>(luaL_checknumber(L, i)); };
+    profile.inner = {number(6), number(7)};
+    profile.outer = {number(8), number(9)};
+    profile.categories = sim::compile_category(L, 2);
+    profile.rollover = renderer::range_color(check_color(L, 5));
+    profile.selected = renderer::range_color(check_color(L, 4));
+    profile.normal = renderer::range_color(check_color(L, 3));
+    overlays->set_profile(std::move(profile));
+    return 0;
+}
+
+/// SetOverlayFilters(names): the session's active range overlays, by name
+/// (multifunction.lua's), drawn for every unit in view.
+static int l_SetOverlayFilters(lua_State* L) {
+    std::vector<std::string> names;
+    if (lua_istable(L, 1)) {
+        const int count = luaL_getn(L, 1);
+        for (int i = 1; i <= count; ++i) {
+            lua_rawgeti(L, 1, i);
+            if (lua_type(L, -1) == LUA_TSTRING) names.emplace_back(lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    if (auto* overlays = get_range_overlays(L)) overlays->set_filters(std::move(names));
+    return 0;
+}
+
 // --- GetCamera global (M136a) ---
 // FA calls GetCamera(cameraName) and gets back a camera object with methods.
 static int l_GetCamera(lua_State* L) {
@@ -1499,6 +1549,8 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
     state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
+    state.register_function("SetOverlayFilter", l_SetOverlayFilter);
+    state.register_function("SetOverlayFilters", l_SetOverlayFilters);
     set_ui_wait_hook(L, ui_wait_camera); // WaitFor(camera) (M217g)
     state.register_function("GetSelectedUnits", l_GetSelectedUnits);
     state.register_function("SelectUnits", l_SelectUnits);

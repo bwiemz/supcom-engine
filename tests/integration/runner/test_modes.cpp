@@ -153,6 +153,7 @@ constexpr Mode kModesBefore[] = {
     {"--beam-render-test", test_beam_render, false},
     {"--selection-render-test", test_selection_render, false},
     {"--ghost-render-test", test_ghost_render, false},
+    {"--range-render-test", test_range_render, false},
     {"--feedback-render-test", test_feedback_render, false},
     {"--hull-facing-test", test_hull_facing, false},
     {"--footfall-test", test_footfall, false},
@@ -363,6 +364,7 @@ void IntegrationModes::print_usage() const {
               << "  --beam-render-test FA's beams: strips, colours, UV scroll, blends, LOD\n"
               << "  --selection-render-test Selection brackets, hover and the drag box\n"
               << "  --ghost-render-test A structure being placed, drawn as UnitPlace\n"
+              << "  --range-render-test FA's range overlays (RangeRenderer's rings)\n"
               << "  --feedback-render-test An order's mark, drawn as CommandFeedback\n"
               << "  --hull-facing-test Slaved weapons and AttackAngle turn the hull\n"
               << "  --footfall-test    Collision detectors: walkers' footfalls, terrain checks\n"
@@ -1149,6 +1151,10 @@ void IntegrationModes::headless(Engine& e) {
         lua_pushstring(uL, "__osc_factory_queue");
         lua_pushlightuserdata(uL, &test_factory_queue);
         lua_rawset(uL, LUA_REGISTRYINDEX);
+        osc::renderer::RangeOverlays test_overlays; // SetOverlayFilter's
+        lua_pushstring(uL, "__osc_range_overlays");
+        lua_pushlightuserdata(uL, &test_overlays);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
         osc::u32 frames = 0;
         auto pump = [&](int n) {
             for (int i = 0; i < n; ++i) {
@@ -1217,6 +1223,9 @@ void IntegrationModes::headless(Engine& e) {
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
         lua_pushstring(uL, "__osc_factory_queue");
+        lua_pushnil(uL);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+        lua_pushstring(uL, "__osc_range_overlays");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }

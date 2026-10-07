@@ -37,7 +37,6 @@ SetFractionHealthParameter worldmesh_SetFractionHealthParameter
 SetGreaterOf brain_SetGreaterOf
 SetLifetimeParameter worldmesh_SetLifetimeParameter
 SetMesh worldmesh_SetMesh
-SetOverlayFilter l_SetOverlayFilter
 SetScale worldmesh_SetScale
 SetStance worldmesh_SetStance
 SetTargetHead frame_SetTargetHead

@@ -206,6 +206,8 @@ public:
     f32 min_zoom() const { return kNearZoom; }
     /// GetMaxZoom: the playable rect's extent times the multiplier.
     f32 max_zoom() const;
+    /// The playable rect: x0, z0, x1, z1.
+    const std::array<f32, 4>& playable_rect() const { return rect_; }
     f32 viewport_width() const { return viewport_w_; }
     f32 viewport_height() const { return viewport_h_; }
 

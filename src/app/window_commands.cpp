@@ -226,6 +226,7 @@ void register_window_commands(ui::Console& console, core::Preferences& prefs, bo
 
 void register_option_commands(ui::Console& console) {
     using renderer::Camera;
+    using renderer::RangeOverlays;
     using renderer::Renderer;
     // A float on the camera
     const auto camera_float = [&console](const char* name, f32 fallback, f32 (Camera::*get)() const,
@@ -319,6 +320,37 @@ void register_option_commands(ui::Console& console) {
         [](lua_State* L, bool v) {
             if (Renderer* r = renderer_of(L)) r->video_options().skydome = v;
         });
+    // The range overlays' (Moho's RangeRenderer convars; retail's UI sets
+    // the first three from the player's prefs)
+    const auto range_bool = [&console](const char* name, bool RangeOverlays::Settings::* field) {
+        ui::add_bool_var(
+            console, name,
+            [field](lua_State* L) {
+                Renderer* r = renderer_of(L);
+                return r ? r->range_overlays().settings().*field : RangeOverlays::Settings{}.*field;
+            },
+            [field](lua_State* L, bool v) {
+                if (Renderer* r = renderer_of(L)) r->range_overlays().settings().*field = v;
+            });
+    };
+    range_bool("range_RenderSelected", &RangeOverlays::Settings::render_selected);
+    range_bool("range_RenderHighlighted", &RangeOverlays::Settings::render_highlighted);
+    range_bool("range_RenderBuild", &RangeOverlays::Settings::render_build);
+    range_bool("range_Fill", &RangeOverlays::Settings::fill);
+    range_bool("ren_Ranges", &RangeOverlays::Settings::enabled);
+    const auto range_float = [&console](const char* name, f32 RangeOverlays::Settings::* field) {
+        ui::add_float_var(
+            console, name,
+            [field](lua_State* L) {
+                Renderer* r = renderer_of(L);
+                return r ? r->range_overlays().settings().*field : RangeOverlays::Settings{}.*field;
+            },
+            [field](lua_State* L, f32 v) {
+                if (Renderer* r = renderer_of(L)) r->range_overlays().settings().*field = v;
+            });
+    };
+    range_float("range_InnerThicknessCoeff", &RangeOverlays::Settings::inner_thickness_coeff);
+    range_float("range_OuterThicknessCoeff", &RangeOverlays::Settings::outer_thickness_coeff);
     // The ints the renderer keeps
     const auto video_int = [&console](const char* name, int Renderer::VideoOptions::* field) {
         ui::add_int_var(

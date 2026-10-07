@@ -9,10 +9,12 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
 
 extern "C" {
@@ -473,7 +475,7 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     u.add_adjacent(target);
     u.add_intel("Radar", 40);
     u.enable_intel("Radar");
-    u.add_intel("Sonar", 30); // off: nothing to ring
+    u.add_intel("Sonar", 30); // off: ringed all the same
     u.add_intel("Omni", 0.5f);
     u.enable_intel("Omni"); // too small to ring
     osc::sim::UnitCommand move{};
@@ -484,6 +486,15 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     attack.type = osc::sim::CommandType::Attack;
     attack.target_id = target;
     u.push_command(attack, false);
+    // Its second blueprint weapon, its reach changed (ChangeMaxRadius)
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->weapon_index = 1;
+    gun->min_range = 3;
+    gun->max_range = 26;
+    u.add_weapon(std::move(gun));
+    u.set_script_bit(3, true);
+    sim.army_at(0)->set_start_position({100, 0, 200});
+    sim.set_no_rush(300, 60);
 
     WorldSnapshot snap;
     osc::sim::capture_world(sim, snap);
@@ -511,14 +522,31 @@ TEST_CASE("capture_world records what the renderer draws a unit with", "[interp]
     CHECK(cmds[0].target_pos.x == 9.0f);
     CHECK(cmds[1].target_id == target);
 
+    // Radar on and sonar off: both ringable; omni's too small.
     const auto intel = snap.intel_of(*r);
-    REQUIRE(intel.size() == 1);
-    CHECK(intel[0].type == "Radar");
-    CHECK(intel[0].radius == 40.0f);
+    REQUIRE(intel.size() == 2);
+    const auto& radar = intel[0].type == "Radar" ? intel[0] : intel[1];
+    const auto& sonar = intel[0].type == "Radar" ? intel[1] : intel[0];
+    CHECK(radar.type == "Radar");
+    CHECK(radar.radius == 40.0f);
+    CHECK(radar.enabled);
+    CHECK(sonar.type == "Sonar");
+    CHECK(sonar.radius == 30.0f);
+    CHECK_FALSE(sonar.enabled);
 
     const auto adj = snap.adjacent_of(*r);
     REQUIRE(adj.size() == 1);
     CHECK(adj[0] == target);
+
+    const auto reach = snap.weapon_ranges_of(*r);
+    REQUIRE(reach.size() == 1);
+    CHECK(reach[0].index == 1);
+    CHECK(reach[0].min_radius == 3.0f);
+    CHECK(reach[0].max_radius == 26.0f);
+    CHECK(r->script_bits == 8);
+    CHECK(snap.armies[0].start_x == 100.0f);
+    CHECK(snap.armies[0].start_z == 200.0f);
+    CHECK(snap.no_rush_radius == 60.0f);
 
     REQUIRE(snap.armies.size() == 2);
     CHECK(snap.armies[0].valid);

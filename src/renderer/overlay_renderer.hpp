@@ -41,13 +41,6 @@ inline const std::unordered_set<std::string> kAllIntelRingTypes{"Radar", "Sonar"
 std::vector<std::array<f32, 4>> line_runs(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick,
                                           u32 max_runs = 256);
 
-/// Intel types to show rings for, given FA's active range-overlay filters:
-/// the RangeOverlayParams names multifunction.lua passes to
-/// SetOverlayFilters ("Radar", "Sonar", "Omni", or "AllIntel" for all
-/// three). Military and counter-intel filters have no ring here.
-std::unordered_set<std::string> intel_ring_types_for_filters(
-    const std::vector<std::string>& filters);
-
 /// A convex quad on screen (corners in order) as rows `row` high, each
 /// {x, y, w, h}
 std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
