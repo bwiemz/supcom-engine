@@ -108,6 +108,8 @@ std::optional<int> App::boot_engine() {
             g_rng_trace_to = static_cast<osc::u32>(std::stoul(range.substr(dash + 1)));
         }
     }
+    g_moho_pathing = parse_flag(argc, argv, "--moho-pathing");
+    if (g_moho_pathing) spdlog::info("Moho pathing on (--moho-pathing)");
     sound.set_sim_clocked(opt.headless);
     return std::nullopt;
 }
@@ -142,6 +144,7 @@ std::optional<int> App::boot_game() {
         sim_state->set_checksum_trace(g_checksum_trace);
         sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
         sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
+        sim_state->set_moho_pathing(g_moho_pathing);
         spdlog::info("Game seed {:#018x}", game_setup.seed);
 
         attach_sound(*sim_lua_state, *sim_state, &sound);

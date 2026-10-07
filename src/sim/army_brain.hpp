@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/entity.hpp"
 #include "sim/influence_map.hpp"
+#include "sim/path_search.hpp"
 #include "sim/platoon.hpp"
 
 #include <memory>
@@ -73,6 +74,10 @@ public:
     /// playable area (SetIgnorePlayableRect; Moho's CArmyImpl::UseWholeMap):
     /// a campaign's reinforcements come in from off the playable area.
     bool use_whole_map() const { return use_whole_map_; }
+    /// Its units' path searches (Moho's CArmyImpl PathQueue, roadmap item
+    /// 4c), served kArmyPathBudget a tick.
+    path::PathQueue& path_queue() { return path_queue_; }
+    const path::PathQueue& path_queue() const { return path_queue_; }
     void set_use_whole_map(bool on) { use_whole_map_ = on; }
 
     bool is_human() const { return is_human_; }
@@ -312,6 +317,7 @@ private:
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;
     std::vector<StatTrigger> stat_triggers_;
+    path::PathQueue path_queue_;
 };
 
 } // namespace osc::sim

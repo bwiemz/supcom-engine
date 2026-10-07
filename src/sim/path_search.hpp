@@ -15,7 +15,8 @@
 
 namespace osc::sim {
 class PathTables;
-}
+struct StateIO;
+} // namespace osc::sim
 
 namespace osc::sim::path {
 
@@ -32,6 +33,7 @@ struct Cell {
 
 /// Moho's IPathTraveler: what a search asks of whoever it searches for.
 class Traveler {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     Traveler() = default;
     Traveler(const Traveler&) = delete;
@@ -67,6 +69,7 @@ private:
 /// Moho's AStarOpenHeap: a binary min-heap of handles, ties broken as
 /// Moho's are (an equal priority rises past its parent).
 class OpenHeap {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     struct Entry {
         f32 priority = 0;
@@ -99,6 +102,7 @@ private:
 
 /// One search, as Moho's PathQueue::ImplBase runs it over AStarSearch.
 class PathSearch {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     enum class Step { Continue, GoalReached, BudgetExhausted, PathCapExceeded };
     enum class State : u8 { Unvisited, Open, Closed };
@@ -152,6 +156,7 @@ private:
 /// Moho's PathQueue: one army's searches, first come first served, one in
 /// flight, from the budget it is given each tick.
 class PathQueue {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     PathQueue() = default;
     PathQueue(const PathQueue&) = delete;

@@ -517,7 +517,7 @@ TEST_CASE("Dirtying the cells a claim changed leaves no cluster stale, for big c
 }
 
 TEST_CASE("The sim keeps a map a class: one budget a tick in class order, dirtied as ground "
-          "is claimed, made again on a load",
+          "is claimed, and loaded as saved (its dirty bits, its clean clusters built again)",
           "[path_clusters]") {
     LuaGuard g;
     osc::blueprints::BlueprintStore store(g.L);
@@ -566,12 +566,12 @@ TEST_CASE("The sim keeps a map a class: one budget a tick in class order, dirtie
     REQUIRE(south >= 0);
     CHECK(c->edge(static_cast<u32>(east), static_cast<u32>(south)) == 2);
     CHECK(small.cluster(1, 4, 4)->nodes.size() == 4);
-    sim.release_ground(9);
-    CHECK(big.dirty(1, 4, 4));
-
-    // Saved and restored, the maps start over, every cluster dirty.
+    // Saved with some clusters dirty: restored, the same are dirty and the
+    // rest built again as they were.
     sim.set_recording(true);
     sim.tick();
+    sim.release_ground(9);
+    CHECK(big.dirty(1, 4, 4));
     const osc::sim::SavedGame save = osc::sim::save_game(sim, "clusters");
     REQUIRE_FALSE(save.snapshot.empty());
     LuaGuard g2;
@@ -587,5 +587,18 @@ TEST_CASE("The sim keeps a map a class: one budget a tick in class order, dirtie
     INFO(err);
     REQUIRE(err.empty());
     REQUIRE(restored.path_tables());
-    CHECK(restored.path_tables()->map(0).dirty(2, 0, 0));
+    for (size_t m = 0; m < 2; ++m) {
+        const ClusterMap& before = sim.path_tables()->map(m);
+        const ClusterMap& after = restored.path_tables()->map(m);
+        CHECK(after.done() == before.done());
+        for (u32 level = 1; level <= osc::sim::path::kClusterLevels; ++level)
+            for (i32 cz = 0; cz < before.clusters_z(level); ++cz)
+                for (i32 cx = 0; cx < before.clusters_x(level); ++cx) {
+                    REQUIRE(after.dirty(level, cx, cz) == before.dirty(level, cx, cz));
+                    if (before.dirty(level, cx, cz)) continue;
+                    REQUIRE(after.cluster(level, cx, cz));
+                    CHECK(
+                        after.cluster(level, cx, cz)->same_content(*before.cluster(level, cx, cz)));
+                }
+    }
 }

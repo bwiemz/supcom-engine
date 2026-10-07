@@ -233,7 +233,7 @@ void StateIO::load(StateReader& r, InfluenceMap& m) {
 
 // ------------------------------------------------------------- ArmyBrain
 
-void StateIO::save(StateWriter& w, const ArmyBrain& a) {
+void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.tag("ARMY");
     w.i32v(a.index_);
     w.str(a.name_);
@@ -311,9 +311,10 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a) {
     w.size(a.platoons_.size());
     for (const auto& p : a.platoons_) save(w, *p);
     w.u32v(a.next_platoon_id_);
+    save(w, a.path_queue_, sim);
 }
 
-void StateIO::load(StateReader& r, ArmyBrain& a, const SimState& sim) {
+void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     r.tag("ARMY");
     if (r.i32v() != a.index_) return r.fail("armies in another order");
     a.name_ = r.str();
@@ -393,6 +394,7 @@ void StateIO::load(StateReader& r, ArmyBrain& a, const SimState& sim) {
         a.platoons_.push_back(std::move(p));
     }
     a.next_platoon_id_ = r.u32v();
+    load(r, a.path_queue_, sim);
 }
 
 // ------------------------------------------------------------- Effects

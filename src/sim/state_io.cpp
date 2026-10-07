@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 25; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 26; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -49,7 +49,9 @@ constexpr u32 kVersion = 25; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 23: the occupation grid's occupants;
                              // 24: projectiles' flight (LeadTarget, zig-zag state,
                              //     the lost-target aim latch);
-                             // 25: units' creation ticks (build templates' order)
+                             // 25: units' creation ticks (build templates' order);
+                             // 26: Moho pathing (the switch, navigators' path state,
+                             //     army path queues, path maps' dirty bits)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -295,7 +297,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     save(w, sim.effect_registry_);
     save(w, sim.economy_events_);
     w.size(sim.armies_.size());
-    for (const auto& a : sim.armies_) save(w, *a);
+    for (const auto& a : sim.armies_) save(w, *a, sim);
     w.u32v(sim.tick_count_);
     // game_time_: tick_count_'s
     // post_loads_run_: the host's count of post-loads, not game state
@@ -378,6 +380,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     });
     w.size(sim.blip_objects_.size());
     for (u32 id : sim.blip_objects_) w.u32v(id);
+    w.b(sim.moho_pathing_);
+    save_path_maps(w, sim);
 }
 
 void StateIO::load(StateReader& r, SimState& sim) {
@@ -583,6 +587,8 @@ void StateIO::load(StateReader& r, SimState& sim) {
     // painted intel all loaded by now)
     sim.intel_grids_.reset();
     sim.build_intel_grids();
+    sim.moho_pathing_ = r.b();
+    load_path_maps(r, sim);
 }
 
 // ------------------------------------------------------------- Snapshot
