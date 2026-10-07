@@ -229,11 +229,14 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
         prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest);
         const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
         const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
-        const State st = moho_.state();
-        const bool same = moho_active_ && moho_.goal().outer.x0 == at.x0 &&
-                          moho_.goal().outer.z0 == at.z0 &&
-                          (st == State::Thinking || st == State::Searching ||
-                           st == State::Continuing || st == State::HasPath);
+        // The move it is on, asked again (an order re-asserts its goal while
+        // it waits for a path): it carries on, whatever its path navigator
+        // says. One its army's queue failed as the tick began is heard below
+        // and ends, as Moho's move task ends on the navigator's Failed; taken
+        // for a new goal, it would search again, round and round. A move
+        // that ended has cleared moho_active_.
+        const bool same =
+            moho_active_ && moho_.goal().outer.x0 == at.x0 && moho_.goal().outer.z0 == at.z0;
         if (!same) {
             moho_.set_unit(fp, cls, unit.layer() == "Water");
             moho_.set_goal(goal, pos.x, pos.z);
@@ -335,6 +338,12 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     const Vector3 from = pos;
     f32 heading = quat_yaw(unit.orientation());
     f32 speed = unit.ground_speed();
+    // Moho's CUnitMotion refuses a move onto ground the unit won't fit (it
+    // did where it was).
+    const auto refused = [&](const Vector3& to) {
+        return moho_active_ && sim_ && sim_->footprint_fits_at(unit.footprint(), to.x, to.z) == 0 &&
+               sim_->footprint_fits_at(unit.footprint(), from.x, from.z) != 0;
+    };
 
     // Held still (a weapon unpacking, a teleport): it keeps its orders.
     if (unit.immobile()) {
@@ -353,6 +362,10 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         pos.z += osc::dmath::cos(heading) * speed * step;
         if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
         if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+        if (refused(pos)) {
+            unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+            return true;
+        }
         unit.set_position(pos);
         unit.note_drive(speed, 0, max_speed, Unit::MotionTurn::Straight);
         return true;
@@ -470,11 +483,17 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     pos.z += osc::dmath::cos(heading) * speed * step;
     if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
-    // Moho's CUnitMotion refuses a move onto ground the unit won't fit (it
-    // did where it was): it stays put, turned, and its steering then asks
-    // for the way afresh.
-    if (moho_active_ && sim_ && sim_->footprint_fits_at(unit.footprint(), pos.x, pos.z) == 0 &&
-        sim_->footprint_fits_at(unit.footprint(), from.x, from.z) != 0) {
+    // Refused (as above): it stays put, turned, and its steering then asks
+    // for the way afresh. A sidestep (M203c) that led there is given up --
+    // the steering picks its side by the units alone, and a point onto ground
+    // the unit won't fit would hold it against it till it gave up the move.
+    if (refused(pos)) {
+        if (sidestep_ && waypoint_index_ == sidestep_index_ &&
+            waypoint_index_ + 1 < waypoints_.size()) {
+            waypoints_.erase(waypoints_.begin() + static_cast<std::ptrdiff_t>(waypoint_index_));
+            sidestep_ = false;
+            next_check_ = 0;
+        }
         moho_.request_repath();
         unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
         unit.note_drive(0, 0, top, turning);
