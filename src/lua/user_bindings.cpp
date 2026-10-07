@@ -3,6 +3,7 @@
 // and the UI's own orders (M191). They live apart from the Lua library, which
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
+#include "core/localization.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
 
@@ -1795,12 +1796,171 @@ void issue_command(lua_State* L, const std::vector<std::string>& args) {
     }
 }
 
+/// A console line in the player's language (Moho's Loc and CON_Printf)
+void print_loc(lua_State* L, const char* token) {
+    lua_pushstring(L, "__osc_loc_cache");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* loc = static_cast<core::Localization*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    spdlog::info("{}", loc ? loc->lookup(token) : std::string(token));
+}
+
+/// The selection's units still there, by id
+std::vector<sim::Unit*> selected_units(sim::SimState& sim, const renderer::InputHandler& ih) {
+    std::vector<u32> ids(ih.selected().begin(), ih.selected().end());
+    std::sort(ids.begin(), ids.end());
+    std::vector<sim::Unit*> units;
+    for (const u32 id : ids) {
+        auto* e = sim.entity_registry().find(id);
+        if (e && e->is_unit() && !e->destroyed()) units.push_back(static_cast<sim::Unit*>(e));
+    }
+    return units;
+}
+
+/// UI_ExpandCurrentSelection: every unit the player may select whose
+/// blueprint one in the selection has, walls and units being upgraded
+/// left out (Moho's ExpandCurrentSelection).
+void expand_current_selection(lua_State* L, const std::vector<std::string>&) {
+    auto* sim = get_sim(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !ih) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    std::unordered_set<std::string> blueprints;
+    for (const sim::Unit* u : selected_units(*sim, *ih)) blueprints.insert(u->blueprint_id());
+    std::unordered_set<u32> expanded = ih->selected();
+    static const sim::CategoryName kWall{"WALL"};
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
+        const auto& u = static_cast<const sim::Unit&>(e);
+        if (!renderer::selectable(u) || u.army() != ih->player_army()) return;
+        if (u.has_category(kWall) || blueprints.count(u.blueprint_id()) == 0) return;
+        if (u.has_unit_state("BeingUpgraded")) return;
+        expanded.insert(u.entity_id());
+    });
+    ih->set_selected(expanded);
+}
+
+/// UI_ShowRenameDialog: retail's rename dialog for the one unit selected
+void show_rename_dialog(lua_State* L, const std::vector<std::string>&) {
+    auto* sim = get_sim(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !ih) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    // The selection's live units: Moho's selection lets its dead go
+    const auto units = selected_units(*sim, *ih);
+    if (units.empty()) {
+        print_loc(L, "<LOC Engine0024>You must have a unit selected to rename.");
+        return;
+    }
+    if (units.size() > 1) {
+        print_loc(L, "<LOC Engine0025>You may only name one unit at a time, please limit your "
+                     "selection to one unit.");
+        return;
+    }
+    const int top = lua_gettop(L);
+    lua_getglobal(L, "import");
+    lua_pushstring(L, "/lua/ui/game/rename.lua");
+    if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+        lua_pushstring(L, "ShowRenameDialog");
+        lua_gettable(L, -2);
+        lua_pushstring(L, units.front()->custom_name().c_str());
+        if (lua_pcall(L, 1, 0, 0) != 0)
+            spdlog::warn("UI_ShowRenameDialog: {}", lua_tostring(L, -1) ? lua_tostring(L, -1) : "");
+    } else {
+        spdlog::warn("UI_ShowRenameDialog: {}", lua_tostring(L, -1) ? lua_tostring(L, -1) : "");
+    }
+    lua_settop(L, top);
+}
+
+/// RenameUnit [name ...]: name the one unit selected (its words joined by
+/// single spaces, trimmed), or with no name say what it is called
+void rename_unit(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !ih) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    const auto units = selected_units(*sim, *ih);
+    if (units.empty()) {
+        print_loc(L, "<LOC Engine0021>You must have a unit selected to name it.");
+        return;
+    }
+    if (units.size() > 1) {
+        print_loc(L, "<LOC Engine0022>Naming a unit requires you only have one unit selected.");
+        return;
+    }
+    sim::Unit* unit = units.front();
+    if (args.size() == 1) {
+        if (unit->custom_name().empty()) print_loc(L, "<LOC Engine0023>Unit has no custom name");
+        else spdlog::info("Unit name: {}", unit->custom_name());
+        return;
+    }
+    std::string name;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (!name.empty()) name += ' ';
+        name += args[i];
+    }
+    const size_t first = name.find_first_not_of(" \t\r\n");
+    const size_t last = name.find_last_not_of(" \t\r\n");
+    name = first == std::string::npos ? std::string() : name.substr(first, last - first + 1);
+    // Through the session as a unit's SetCustomName goes (Moho's
+    // ProcessInfoPair "CustomName")
+    const int top = lua_gettop(L);
+    push_unit_for_ui(L, unit);
+    lua_pushstring(L, "SetCustomName");
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);
+        lua_pushstring(L, name.c_str());
+        if (lua_pcall(L, 2, 0, 0) != 0)
+            spdlog::warn("RenameUnit: {}", lua_tostring(L, -1) ? lua_tostring(L, -1) : "");
+    }
+    lua_settop(L, top);
+}
+
+/// UI_TrackUnit <camera> [camera ...]: each named camera follows the
+/// selection, or lets go if it has none or already follows the first of it.
+/// The engine's one camera is the WorldCamera (the minimap and a second
+/// head have none, so they are passed over, as Moho passes over a camera it
+/// can't find).
+void track_unit(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !ih) {
+        print_loc(L, "<LOC _No_session>");
+        return;
+    }
+    auto* r = get_renderer(L);
+    if (!r) return;
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (!iequal(args[i], "WorldCamera")) continue;
+        renderer::Camera& camera = r->camera();
+        const auto units = selected_units(*sim, *ih);
+        if (units.empty() || units.front()->entity_id() == camera.target_entity()) {
+            camera.target_nothing();
+            continue;
+        }
+        std::vector<u32> ids;
+        ids.reserve(units.size());
+        for (const sim::Unit* u : units) ids.push_back(u->entity_id());
+        camera.target_entities(std::move(ids), true, camera.zoom(), 0.0f);
+    }
+}
+
 } // namespace
 
 void register_session_console_commands(ui::Console& console) {
     console.add("StartCommandMode", start_command_mode);
     console.add("UI_SelectByCategory", select_by_category);
     console.add("IssueCommand", issue_command);
+    console.add("UI_ExpandCurrentSelection", expand_current_selection);
+    console.add("UI_ShowRenameDialog", show_rename_dialog);
+    console.add("RenameUnit", rename_unit);
+    console.add("UI_TrackUnit", track_unit);
 }
 
 } // namespace osc::lua
