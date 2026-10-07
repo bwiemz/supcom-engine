@@ -85,8 +85,14 @@ Mobile units are never in the clusters; only repaths test them, at level 0.
   answer whenever equal windows share a payload, and only a cache miss
   otherwise: a cluster's content is a function of its children's, so a miss
   costs a build, never a different result.
-- **Convars.** The engine has no sim convars; the budget is a constant
+- **Convars.** The engine has no sim convars; the budgets are constants
   (and a setter, for tests).
+- **PrepareMove's cell.** Moho's Unit::PrepareMove tests the truncated
+  cell under a destination; the goal is then the rounded one (ToCellPos).
+  For Moho's destinations, cell centres, they agree. The engine's order
+  handlers also give cell edges (an approach point at z = 672.0), where
+  they don't, and a goal tested free but blocked sent builders round and
+  round beside their structures. The port tests the rounded cell.
 
 ## Plan
 
@@ -123,7 +129,10 @@ Mobile units are never in the clusters; only repaths test them, at level 0.
   - a new goal forgets the layer it pathed on, so the first step with a
     path asks once for the way on (one tick waiting);
   - a unit held still 30 ticks stops where it is, as arrived.
-- **4c-2c: units use it**, behind a sim switch that is off by default:
+- **4c-2c: units use it** (the switch on, the pinned 4-AI early game: 7502
+  of 7560 searches reach their goal, the AIs build 634 units to 599 with
+  it off, in 8.2 s of sim to 7.1 s), behind a sim switch that is off by
+  default:
   the army queues served each tick, the navigator driving the unit at its
   target (top speed through targets outside the goal; a move into a cell
   it won't fit refused, and a refresh asked), and the saved state that

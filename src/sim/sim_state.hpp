@@ -171,6 +171,11 @@ public:
     /// The footprint classes' path clusters, made again for the map and
     /// the ground's claims, every cluster dirty (a new map, a load).
     void reset_path_tables();
+    /// Ground units path as Moho's do (roadmap item 4c-2c): their army's
+    /// queue searches the footprint classes' cluster maps, and they follow
+    /// the cells as CAiPathNavigator does. Off by default for now.
+    bool moho_pathing() const { return moho_pathing_; }
+    void set_moho_pathing(bool on) { moho_pathing_ = on; }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -975,6 +980,7 @@ private:
     /// One cluster map a footprint class over terrain_ and occupancy_
     /// (roadmap item 4c), made with the pathfinding grid.
     std::unique_ptr<PathTables> path_tables_;
+    bool moho_pathing_ = false;
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;

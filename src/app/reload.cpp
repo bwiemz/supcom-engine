@@ -149,6 +149,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     sim_state->set_checksum_trace(g_checksum_trace);
     sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
     sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
+    sim_state->set_moho_pathing(g_moho_pathing);
     spdlog::info("Game seed {:#018x}", seed);
 
     // 7. Audio (the application's engine, kept in the UI state), bone

@@ -71,6 +71,11 @@ std::ofstream* g_rng_trace = nullptr;
 osc::u32 g_rng_trace_from = 0;
 osc::u32 g_rng_trace_to = 0xFFFFFFFFu;
 
+/// --moho-pathing: ground units path as Moho's do (roadmap item 4c-2c; see
+/// SimState::moho_pathing). A development switch, off by default: a replay
+/// doesn't record it, so play one back with the switch it was made with.
+bool g_moho_pathing = false;
+
 /// --record <file>: each game records (SimState::set_recording), and the
 /// run writes the last one's replay here as it ends. Empty: no recording.
 std::string g_record_path;

@@ -1,5 +1,7 @@
 #include "sim/navigator.hpp"
 #include "core/dmath.hpp"
+#include "sim/army_brain.hpp"
+#include "sim/path_tables.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "map/pathfinder.hpp"
@@ -7,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <spdlog/spdlog.h>
 
 namespace osc::sim {
@@ -15,6 +18,26 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
                           const Vector3& current_pos,
                           const std::string& layer,
                           f32 draft, bool amphibious) {
+    // Moho pathing: the goal is taken up at the unit's next update, where its
+    // footprint is to hand (Moho's SetGoal only sets it thinking). Asked again
+    // for the goal it already has, it carries on.
+    if (sim_ && sim_->moho_pathing() && sim_->path_tables() && layer != "Air") {
+        const bool same = moho_active_ && pos.x == goal_.x && pos.z == goal_.z;
+        goal_ = pos;
+        moho_pending_ = true;
+        moho_layer_ = layer;
+        moho_draft_ = draft;
+        moho_amphibious_ = amphibious;
+        if (!same) status_ = Status::WaitingForPath;
+        return;
+    }
+    reset_moho();
+    set_goal_grid(pos, pathfinder, current_pos, layer, draft, amphibious);
+}
+
+void Navigator::set_goal_grid(const Vector3& pos, const map::Pathfinder* pathfinder,
+                              const Vector3& current_pos, const std::string& layer, f32 draft,
+                              bool amphibious) {
     goal_ = pos;
     reset_steering();
     waypoints_.clear();
@@ -73,6 +96,7 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
 }
 
 void Navigator::set_goal(const Vector3& pos) {
+    reset_moho();
     goal_ = pos;
     reset_steering();
     waypoints_.clear();
@@ -84,6 +108,7 @@ void Navigator::set_goal(const Vector3& pos) {
 }
 
 void Navigator::abort_move() {
+    reset_moho();
     status_ = Status::Idle;
     waypoints_.clear();
     waypoint_index_ = 0;
@@ -143,7 +168,200 @@ void Navigator::hold(int ticks, u32 for_id) {
 
 bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
     if (unit.is_air_unit()) return slide(unit, max_speed, dt, terrain);
+    if (moho_pending_ || moho_active_) return update_moho(unit, max_speed, dt, terrain);
     return drive(unit, max_speed, dt, terrain);
+}
+
+void Navigator::reset_moho() {
+    moho_.reset();
+    moho_pending_ = false;
+    moho_active_ = false;
+    through_target_ = false;
+    moho_waypoint_cell_ = {-32768, -32768};
+}
+
+namespace {
+
+/// Moho's ELayer bits, the navigator's layer token (a ground unit's layers:
+/// it never paths in orbit).
+u32 layer_token(const std::string& layer) {
+    if (layer == "Land") return 0x01;
+    if (layer == "Seabed") return 0x02;
+    if (layer == "Sub") return 0x04;
+    if (layer == "Water") return 0x08;
+    if (layer == "Air") return 0x10;
+    return 0;
+}
+
+/// Moho's default pathcap by the map's larger side (CArmyImpl
+/// ResolveDefaultPathCapacity).
+i32 default_pathcap(u32 extent) {
+    if (extent < 512) return 500;
+    if (extent < 1024) return 1000;
+    if (extent < 2048) return 2000;
+    if (extent < 4096) return 10000;
+    return 20000;
+}
+
+/// Moho's Unit::PrepareMove (0x0062B780): a destination the unit's
+/// footprint won't fit moves to the nearest place it will (to the unit),
+/// looked for in rings twice its larger side apart, 900 places at most, each
+/// inside `bounds` by its larger side. False if none.
+bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid& grid,
+                  const OccupancyRect& bounds, Vector3& dest) {
+    const blueprints::Footprint& fp = unit.footprint();
+    const i32 side = std::max<i32>(std::max(fp.size_x, fp.size_z), 1);
+    const f32 hx = static_cast<f32>(fp.size_x) * 0.5f;
+    const f32 hz = static_cast<f32>(fp.size_z) * 0.5f;
+    const auto valid = [&](i32 x, i32 z, f32 wx, f32 wz) {
+        const auto border = static_cast<f32>(side);
+        if (wx - border < static_cast<f32>(bounds.x0) ||
+            wz - border < static_cast<f32>(bounds.z0) ||
+            wx + border > static_cast<f32>(bounds.x1) || wz + border > static_cast<f32>(bounds.z1))
+            return false;
+        u8 caps = map_caps(fp, map, x, z);
+        if (unit.layer() == "Water") caps = static_cast<u8>(caps & ~blueprints::occupancy::kSub);
+        return footprint_fits(fp, map, grid, x, z, caps) != 0;
+    };
+    // The cell the goal will be (ToCellPos, rounded). Moho truncates here,
+    // the same cell for its destinations, which are cell centres; the
+    // engine's order handlers also give cell edges, where only the rounded
+    // one is the goal's.
+    const OccupancyRect start = footprint_rect(fp, dest.x, dest.z);
+    const i32 sx = start.x0;
+    const i32 sz = start.z0;
+    if (valid(sx, sz, dest.x, dest.z)) return true;
+    const i32 step = side * 2;
+    std::vector<Vector3> found;
+    int looked = 0;
+    for (i32 ring = 1;; ++ring) {
+        for (i32 rx = -ring; rx <= ring; ++rx) {
+            const i32 rz_step = rx == -ring || rx == ring ? 1 : 2 * ring;
+            for (i32 rz = -ring; rz <= ring; rz += rz_step) {
+                ++looked;
+                const i32 x = static_cast<i16>(sx + rx * step);
+                const i32 z = static_cast<i16>(sz + rz * step);
+                const f32 wx = static_cast<f32>(x) + hx;
+                const f32 wz = static_cast<f32>(z) + hz;
+                if (valid(x, z, wx, wz)) found.push_back({wx, dest.y, wz});
+            }
+        }
+        if (!found.empty()) break;
+        if (looked >= 900) return false;
+    }
+    const Vector3 at = unit.position();
+    f32 best = std::numeric_limits<f32>::infinity();
+    for (const Vector3& p : found) {
+        const f32 dx = p.x - at.x;
+        const f32 dz = p.z - at.z;
+        if (const f32 d = dx * dx + dz * dz; d < best) {
+            best = d;
+            dest.x = p.x;
+            dest.z = p.z;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
+    using State = path::PathNavigator::State;
+    PathTables* tables = sim_ ? sim_->path_tables() : nullptr;
+    ArmyBrain* army = sim_ ? sim_->get_army(unit.army()) : nullptr;
+    const map::Terrain* map = sim_ ? sim_->terrain() : nullptr;
+    const Vector3 pos = unit.position();
+    if (moho_pending_) {
+        moho_pending_ = false;
+        const i32 cls = unit.footprint_class();
+        if (!tables || !army || !map || cls < 0 || static_cast<size_t>(cls) >= tables->size()) {
+            // No class to path as: the grid pathfinder, as before.
+            reset_moho();
+            set_goal_grid(goal_, sim_ ? sim_->pathfinder() : nullptr, pos, moho_layer_, moho_draft_,
+                          moho_amphibious_);
+            return drive(unit, max_speed, dt, terrain);
+        }
+        // Moho's move goal: the cell the footprint would stand on there, the
+        // destination first moved to a place it fits (Unit::PrepareMove).
+        const blueprints::Footprint& fp = unit.footprint();
+        Vector3 dest = goal_;
+        prepare_move(unit, *map, sim_->occupancy(), moho_bounds(unit), dest);
+        const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
+        const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
+        const State st = moho_.state();
+        const bool same = moho_active_ && moho_.goal().outer.x0 == at.x0 &&
+                          moho_.goal().outer.z0 == at.z0 &&
+                          (st == State::Thinking || st == State::Searching ||
+                           st == State::Continuing || st == State::HasPath);
+        if (!same) {
+            moho_.set_unit(fp, cls, unit.layer() == "Water");
+            moho_.set_goal(goal, pos.x, pos.z);
+            reset_steering();
+            waypoints_.clear();
+            waypoint_index_ = 0;
+            best_dist_ = 1e30f;
+            stalled_ = 0;
+            moho_waypoint_cell_ = {-32768, -32768};
+            if (!moho_active_) last_pos_ = pos;
+        }
+        moho_active_ = true;
+    }
+    if (!tables || !army || !map) {
+        reset_moho();
+        arrive();
+        return false;
+    }
+    // CAiNavigatorLand::Execute: the path navigator first.
+    const bool moved = pos.x != last_pos_.x || pos.y != last_pos_.y || pos.z != last_pos_.z;
+    last_pos_ = pos;
+    const path::NavUnit nav{pos.x,
+                            pos.z,
+                            moved,
+                            unit.immobile(),
+                            unit.has_unit_state("Attacking"),
+                            layer_token(unit.layer())};
+    const OccupancyRect playable = moho_bounds(unit, false);
+    const path::PathWorld world{map, &sim_->occupancy(), playable, army->use_whole_map(),
+                                default_pathcap(std::max(map->map_width(), map->map_height()))};
+    moho_.update(nav, world, army->path_queue());
+    const State st = moho_.state();
+    if (st == State::Idle || st == State::Failed) {
+        // There (or as near as it gets), or given up: it stops.
+        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+        reset_moho();
+        arrive();
+        return false;
+    }
+    // Then the steering, at the target: a new target replaces its waypoint
+    // (and any sidestep); one outside the goal it drives through.
+    const path::Cell target = moho_.target();
+    if (target != moho_waypoint_cell_ || waypoints_.empty()) {
+        waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
+        waypoint_index_ = 0;
+        sidestep_ = false;
+        moho_waypoint_cell_ = target;
+        through_target_ = !moho_.cell_in_goal(target);
+    }
+    // While it waits for a path its target is its own cell: it settles
+    // there, as Moho's steering does.
+    status_ = Status::Moving;
+    drive(unit, max_speed, dt, terrain);
+    if (status_ != Status::Idle)
+        status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
+    return true;
+}
+
+OccupancyRect Navigator::moho_bounds(const Unit& unit, bool whole_map_if_allowed) const {
+    const map::Terrain* map = sim_ ? sim_->terrain() : nullptr;
+    const OccupancyRect whole{0, 0, map ? static_cast<i32>(map->map_width()) : 0,
+                              map ? static_cast<i32>(map->map_height()) : 0};
+    if (!sim_ || !sim_->has_playable_rect()) return whole;
+    if (whole_map_if_allowed) {
+        const ArmyBrain* army = sim_->get_army(unit.army());
+        if (army && army->use_whole_map()) return whole;
+    }
+    return {static_cast<i32>(sim_->playable_x0()), static_cast<i32>(sim_->playable_z0()),
+            static_cast<i32>(sim_->playable_x1()), static_cast<i32>(sim_->playable_z1())};
 }
 
 void Navigator::arrive() {
@@ -180,6 +398,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     if (d.max_accel <= 0) d.max_accel = max_speed;
     if (d.turn_rate <= 0) d.turn_rate = kPi * 0.5f;
     Vector3 pos = unit.position();
+    const Vector3 from = pos;
     f32 heading = quat_yaw(unit.orientation());
     f32 speed = unit.ground_speed();
 
@@ -227,7 +446,10 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         sidestep_ = false;
         next_check_ = 0;
     }
-    const bool final = waypoint_index_ + 1 == waypoints_.size();
+    // Following a Moho path, a target outside the goal is driven through, and
+    // its navigator, not the drive, says when it is there.
+    const bool through = moho_active_ && through_target_;
+    const bool final = waypoint_index_ + 1 == waypoints_.size() && !through;
     const Vector3& wp = waypoints_[waypoint_index_];
     const f32 dx = wp.x - pos.x;
     const f32 dz = wp.z - pos.z;
@@ -252,8 +474,8 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
             ++stalled_;
         }
     }
-    const bool crowded =
-        final && stalled_ >= CROWD_TICKS && dist <= 2.0f + 3.0f * unit.separation_radius();
+    const bool crowded = !moho_active_ && final && stalled_ >= CROWD_TICKS &&
+                         dist <= 2.0f + 3.0f * unit.separation_radius();
 
     // There: within reach, and slow enough to stop in a tick (or the goal
     // has fallen behind it).
@@ -261,6 +483,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
                     (std::abs(speed) <= brake * step + 1e-3f || std::abs(err) > REVERSE_ANGLE ||
                      dist <= 0.05f))) {
         unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+        if (moho_active_) return true; // holds there till its navigator says
         arrive();
         return false;
     }
@@ -295,8 +518,9 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         target = std::min(target, omega * dist / (2.0f * side));
     // Braking to stop on its goal, a tick ahead so it doesn't overrun.
     const f32 stop_at =
-        brake > 0 ? std::sqrt(2.0f * brake * std::max(to_goal - std::abs(speed) * step, 0.0f))
-                  : target;
+        brake > 0 && !through
+            ? std::sqrt(2.0f * brake * std::max(to_goal - std::abs(speed) * step, 0.0f))
+            : target;
     const bool stopping = stop_at < target;
     target = std::min(target, stop_at);
 
@@ -312,6 +536,16 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     pos.z += osc::dmath::cos(heading) * speed * step;
     if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+    // Moho's CUnitMotion refuses a move onto ground the unit won't fit (it
+    // did where it was): it stays put, turned, and its steering then asks
+    // for the way afresh.
+    if (moho_active_ && sim_ && sim_->footprint_fits_at(unit.footprint(), pos.x, pos.z) == 0 &&
+        sim_->footprint_fits_at(unit.footprint(), from.x, from.z) != 0) {
+        moho_.request_repath();
+        unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+        unit.note_drive(0, 0, top, turning);
+        return true;
+    }
     unit.set_position(pos);
     unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
     unit.note_drive(speed, stopping ? 0.0f : target, top, turning);

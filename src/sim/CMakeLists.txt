@@ -57,6 +57,7 @@ add_library(osc_sim STATIC
     state_io.cpp
     state_io_entities.cpp
     state_io_world.cpp
+    state_io_paths.cpp
     work_range.cpp
     decal.cpp
     world_snapshot.cpp

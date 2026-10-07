@@ -401,9 +401,20 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.vec3(n.failed_goal_);
     w.vec3(n.failed_from_);
     w.i32v(n.suppressed_requests_);
+    // Moho pathing (roadmap item 4c-2c)
+    save(w, n.moho_);
+    w.b(n.moho_pending_);
+    w.b(n.moho_active_);
+    w.b(n.through_target_);
+    w.i32v(n.moho_waypoint_cell_.x);
+    w.i32v(n.moho_waypoint_cell_.z);
+    w.vec3(n.last_pos_);
+    w.str(n.moho_layer_);
+    w.f32v(n.moho_draft_);
+    w.b(n.moho_amphibious_);
 }
 
-void StateIO::load(StateReader& r, Navigator& n) {
+void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.goal_ = r.vec3();
     n.status_ = enum8<Navigator::Status>(r);
     n.speed_through_goal_ = r.b();
@@ -424,6 +435,16 @@ void StateIO::load(StateReader& r, Navigator& n) {
     n.failed_goal_ = r.vec3();
     n.failed_from_ = r.vec3();
     n.suppressed_requests_ = r.i32v();
+    load(r, n.moho_, sim, army);
+    n.moho_pending_ = r.b();
+    n.moho_active_ = r.b();
+    n.through_target_ = r.b();
+    n.moho_waypoint_cell_.x = r.i32v();
+    n.moho_waypoint_cell_.z = r.i32v();
+    n.last_pos_ = r.vec3();
+    n.moho_layer_ = r.str();
+    n.moho_draft_ = r.f32v();
+    n.moho_amphibious_ = r.b();
 }
 
 // ------------------------------------------------------ Category rules
@@ -1270,7 +1291,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.is_being_built_ = r.b();
     u.max_speed_ = r.f32v();
     u.health_band_ = r.f32v();
-    load(r, u.navigator_);
+    load(r, u.navigator_, sim, u.army());
     u.navigator_.set_sim_state(&sim);
     UnitEconomy& ec = u.economy_;
     ec.production_mass = r.f64v();

@@ -48,6 +48,14 @@ struct UnitCommand;
 struct ScheduledCommand;
 struct SimCallbackEntry;
 class CommandScheduler;
+namespace path {
+class PathFinder;
+class PathListener;
+class PathNavigator;
+class PathQueue;
+class PathSearch;
+class Traveler;
+} // namespace path
 
 /// Little-endian where it matters to no one: a snapshot is read by the
 /// build that wrote it (floats as their bits, sizes as u32).
@@ -184,7 +192,22 @@ struct StateIO {
     static void save(StateWriter& w, const Shield& s);
     static void load(StateReader& r, Shield& s);
     static void save(StateWriter& w, const Navigator& n);
-    static void load(StateReader& r, Navigator& n);
+    static void load(StateReader& r, Navigator& n, SimState& sim, i32 army);
+    // Moho pathing (state_io_paths.cpp)
+    static void save(StateWriter& w, const path::PathFinder& f);
+    static void load(StateReader& r, path::PathFinder& f, const SimState& sim,
+                     path::PathListener* owner);
+    static void save(StateWriter& w, const path::PathNavigator& n);
+    static void load(StateReader& r, path::PathNavigator& n, SimState& sim, i32 army);
+    static void save(StateWriter& w, const path::PathSearch& s);
+    static void load(StateReader& r, path::PathSearch& s);
+    static void save(StateWriter& w, const path::PathQueue& q, const SimState& sim);
+    static void load(StateReader& r, path::PathQueue& q, SimState& sim);
+    static void save_path_maps(StateWriter& w, const SimState& sim);
+    /// The unit whose navigator's finder `t` is (0: none), and back.
+    static u32 traveler_id(const SimState& sim, const path::Traveler* t);
+    static path::PathFinder* traveler_of(SimState& sim, u32 id);
+    static void load_path_maps(StateReader& r, SimState& sim);
     static void save(StateWriter& w, const Weapon& wp);
     static void load(StateReader& r, Weapon& wp);
     static void save(StateWriter& w, const UnitCommand& c);
@@ -197,8 +220,8 @@ struct StateIO {
                                                          SimState& sim);
 
     // state_io_world.cpp
-    static void save(StateWriter& w, const ArmyBrain& a);
-    static void load(StateReader& r, ArmyBrain& a, const SimState& sim);
+    static void save(StateWriter& w, const ArmyBrain& a, const SimState& sim);
+    static void load(StateReader& r, ArmyBrain& a, SimState& sim);
     static void save(StateWriter& w, const Platoon& p);
     static void load(StateReader& r, Platoon& p);
     static void save(StateWriter& w, const InfluenceMap& m);

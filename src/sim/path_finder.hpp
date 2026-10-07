@@ -48,6 +48,7 @@ public:
 };
 
 class PathFinder final : public Traveler {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     /// Hear the next answer, once (Moho's AddListener; the listener
     /// unlinks as it hears).

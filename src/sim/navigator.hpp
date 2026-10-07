@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3
+#include "sim/path_navigator.hpp"
 
 #include <string>
 #include <vector>
@@ -56,7 +57,12 @@ public:
     bool speed_through_goal() const { return speed_through_goal_; }
     void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
 
-    void set_sim_state(const SimState* sim) { sim_ = sim; }
+    void set_sim_state(SimState* sim) { sim_ = sim; }
+
+    /// Following, or about to follow, a path as Moho's units do (roadmap
+    /// item 4c-2c; SimState::moho_pathing).
+    bool moho_active() const { return moho_active_ || moho_pending_; }
+    const path::PathNavigator& moho_path() const { return moho_; }
 
     // Steering (M203c; Moho's CAiSteeringImpl, see steering.hpp).
     /// A meeting the unit expects on the path ahead (Moho's
@@ -124,8 +130,21 @@ private:
     void arrive();
     /// No meeting expected, nothing under way: a new path's steering.
     void reset_steering();
+    /// A ground unit's move as Moho's CAiNavigatorLand::Execute runs it: its
+    /// path navigator updated, then the drive at its target cell.
+    bool update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
+    /// Drop the Moho path, if any.
+    void reset_moho();
+    /// The playable area (the whole map without one, or for an army that may
+    /// go anywhere when `whole_map_if_allowed`).
+    OccupancyRect moho_bounds(const Unit& unit, bool whole_map_if_allowed = true) const;
+    /// The goal by the grid pathfinder (set_goal's own way, and Moho
+    /// pathing's for a unit with no footprint class).
+    void set_goal_grid(const Vector3& pos, const map::Pathfinder* pathfinder,
+                       const Vector3& current_pos, const std::string& layer, f32 draft,
+                       bool amphibious);
 
-    const SimState* sim_ = nullptr;
+    SimState* sim_ = nullptr;
     Vector3 goal_;
     Status status_ = Status::Idle;
     bool speed_through_goal_ = false;
@@ -144,6 +163,22 @@ private:
     u32 held_for_ = 0;          ///< the unit it stops for
     /// A sidestep point is reached, not passed near.
     static constexpr f32 SIDESTEP_TOLERANCE = 0.25f;
+
+    // Moho pathing (roadmap item 4c-2c).
+    path::PathNavigator moho_;
+    bool moho_pending_ = false; ///< a goal set, taken up at the next update
+    bool moho_active_ = false;  ///< following moho_
+    /// Its target is outside the goal: driven through at speed, not stopped
+    /// on (Moho's IAiSteering::UseTopSpeed).
+    bool through_target_ = false;
+    /// The target cell its waypoint was last set from.
+    path::Cell moho_waypoint_cell_{-32768, -32768};
+    Vector3 last_pos_{}; ///< where it was last update (Moho's last transform)
+    // What a goal was set with, for the grid pathfinder should the unit
+    // have no footprint class.
+    std::string moho_layer_;
+    f32 moho_draft_ = 0;
+    bool moho_amphibious_ = false;
 
     // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
     bool has_failed_request_ = false;

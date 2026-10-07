@@ -468,6 +468,27 @@ bool ClusterMap::work_on_cluster(i32 cx, i32 cz, u32 level, i32& budget) {
     return true;
 }
 
+void ClusterMap::rebuild_clean() {
+    for (u32 level = 1; level <= kClusterLevels; ++level) {
+        for (i32 cz = 0; cz < clusters_z(level); ++cz) {
+            for (i32 cx = 0; cx < clusters_x(level); ++cx) {
+                if (dirty_[level].test(cx, cz)) continue;
+                if (level == 1) {
+                    levels_[1][index(1, cx, cz)] = cache_.fetch(
+                        source_.window(cx << kClusterShift[1], cz << kClusterShift[1]));
+                    continue;
+                }
+                std::array<ClusterRef, 16> children;
+                for (i32 z = 0; z < 4; ++z)
+                    for (i32 x = 0; x < 4; ++x)
+                        children[grid_index(x, z, 4)] =
+                            levels_[level - 1][index(level - 1, cx * 4 + x, cz * 4 + z)];
+                levels_[level][index(level, cx, cz)] = cache_.fetch(children, level - 1);
+            }
+        }
+    }
+}
+
 void ClusterMap::background_work(i32& budget) {
     const bool unlimited = budget == INT_MAX;
     while (!done_ && budget > 0) {

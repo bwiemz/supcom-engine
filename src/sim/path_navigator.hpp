@@ -29,6 +29,7 @@ struct NavUnit {
 };
 
 class PathNavigator final : public PathListener {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     /// Moho's EAiPathNavigatorState, in its order (Execute compares it).
     enum class State : u8 {
