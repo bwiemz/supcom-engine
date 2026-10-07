@@ -141,7 +141,7 @@ struct AirCombatState {
     Vector3 velocity{};  ///< per second, horizontal
     bool flying = false; ///< the combat flight has the airframe
     /// Circling (a hovering aircraft's), drawn again at each timeout: the
-    /// way round (Moho's -90 degree turn of the tangent when set), its
+    /// way round (Moho's -90 degree yaw of the tangent when set, +90 not), its
     /// height off AttackElevation, and its radius's ratio.
     bool circle_reverse = false;
     f32 circle_elevation = 0.0f;
