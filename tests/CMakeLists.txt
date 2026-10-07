@@ -64,7 +64,7 @@ add_executable(osc_tests
     test_key_codes.cpp
     test_movie_player.cpp
     test_console_keymap.cpp
-    test_overlay_filters.cpp
+    test_range_overlays.cpp
     test_selection_geometry.cpp
     test_command_graph.cpp
     test_utf8_substring.cpp

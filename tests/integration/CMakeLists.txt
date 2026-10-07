@@ -43,6 +43,7 @@ add_executable(osc_integration
     runner/beam_render_test.cpp
     runner/selection_render_test.cpp
     runner/ghost_render_test.cpp
+    runner/range_render_test.cpp
     runner/feedback_render_test.cpp
     runner/hull_facing_test.cpp
     runner/footfall_test.cpp

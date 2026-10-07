@@ -229,6 +229,7 @@ void App::Window::publish_window_objects() {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     };
     publish("__osc_renderer", &renderer);
+    publish("__osc_range_overlays", &renderer.range_overlays());
     publish("__osc_input_handler", &input_handler);
     publish("__osc_factory_queue", &factory_queue);
     publish("__osc_sim_callback_queue", &sim_callback_queue);

@@ -1153,6 +1153,8 @@ BuildGhost InputHandler::ghost_at(const sim::SimState& sim, f32 wx, f32 wz) cons
     ghost.x = wx;
     ghost.y = sim.terrain() ? sim.terrain()->get_terrain_height(wx, wz) : 0.0f;
     ghost.z = wz;
+    ghost.cursor_x = wx;
+    ghost.cursor_z = wz;
     sim::StructureSite pad = sim::StructureSite::of(wx, wz, size_x, size_z);
     if (mode_hooks_.can_place) {
         ghost.valid = mode_hooks_.can_place(player_army_, bp, wx, wz, 0);
@@ -1184,6 +1186,12 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     const f32 size_x = sim.build_ghost_foot_x();
     const f32 size_z = sim.build_ghost_foot_z();
 
+    // The cursor on the ground, where the range overlays are drawn
+    f64 mx = 0, my = 0;
+    renderer.mouse_position(mx, my);
+    f32 wx = 0, wz = 0;
+    const bool on_ground =
+        world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz);
     if (build_line_ && line_drag_build_) {
         const auto& l = *build_line_;
         const auto sites =
@@ -1192,18 +1200,20 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
         for (size_t i = 1; i < sites.size(); ++i) {
             ghost.line.push_back(ghost_at(sim, sites[i].first, sites[i].second));
         }
+        ghost.cursor_x = on_ground ? wx : ghost.x;
+        ghost.cursor_z = on_ground ? wz : ghost.z;
         return ghost;
     }
-    f64 mx = 0, my = 0;
-    renderer.mouse_position(mx, my);
-    f32 wx = 0, wz = 0;
-    if (!world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz)) {
-        return std::nullopt;
-    }
+    if (!on_ground) return std::nullopt;
+    const f32 cursor_x = wx;
+    const f32 cursor_z = wz;
     snap_to_deposit(sim, mode_hooks_.current ? mode_hooks_.current() : CommandMode{}, wx, wz);
     // Where a build order at the cursor would place it
     sim::snap_structure_center(wx, wz, size_x, size_z);
-    return ghost_at(sim, wx, wz);
+    BuildGhost ghost = ghost_at(sim, wx, wz);
+    ghost.cursor_x = cursor_x;
+    ghost.cursor_z = cursor_z;
+    return ghost;
 }
 
 } // namespace osc::renderer

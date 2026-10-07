@@ -135,6 +135,8 @@ void test_beam_render(TestContext& ctx);
 void test_selection_render(TestContext& ctx);
 /// --ghost-render-test, in ghost_render_test.cpp.
 void test_ghost_render(TestContext& ctx);
+/// --range-render-test, in range_render_test.cpp.
+void test_range_render(TestContext& ctx);
 /// --feedback-render-test, in feedback_render_test.cpp.
 void test_feedback_render(TestContext& ctx);
 /// --hull-facing-test, in hull_facing_test.cpp.

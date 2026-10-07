@@ -276,7 +276,17 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Swapchain
     if (!create_swapchain(width, height)) return false;
 
-    // Depth image
+    // Depth image, with a stencil for the range overlays' volumes (FA's
+    // D24S8): the first of these the device can attach
+    for (const VkFormat f : {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}) {
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(physical_device_, f, &props);
+        if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            depth_format_ = f;
+            break;
+        }
+    }
+    if (!has_stencil()) spdlog::warn("No depth-stencil format: range overlays won't draw");
     create_depth_image();
 
     // Render pass & framebuffers
@@ -420,6 +430,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     command_graph_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     selection_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    if (has_stencil()) range_renderer_.init(device_, allocator_, scene_render_pass_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's sky (M210b)
@@ -539,6 +550,7 @@ void Renderer::create_depth_image() {
     view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     view_ci.format = depth_format_;
     view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (has_stencil()) view_ci.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
     view_ci.subresourceRange.levelCount = 1;
     view_ci.subresourceRange.layerCount = 1;
     VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &depth_image_.view));
@@ -1736,12 +1748,14 @@ void Renderer::create_bloom_resources() {
         color_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         color_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
+        // The stencil is cleared with the depth: the range overlays count
+        // in it, and leave it clear (before the water, in the first pass)
         VkAttachmentDescription depth_att{};
         depth_att.format = depth_format_;
         depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
         depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         depth_att.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -1810,6 +1824,7 @@ void Renderer::create_bloom_resources() {
             second[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             second[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             second[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            second[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
             second[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             rp_ci.pAttachments = second.data();
             VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_second_pass_));
@@ -2145,6 +2160,7 @@ void Renderer::inject_feedback_blips(lua_State* L) {
 void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
     feedback_blips_.clear();         // the old world's order marks
+    range_blueprints_.clear();       // read again from the next UI state
     minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
     recon_.clear();                  // a new world: nothing seen of it yet
     playable_rect_.clear();          // nor hidden
@@ -2259,6 +2275,15 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // The ground the camera's focus sits on: a copy, as the sim's terrain
     // is replaced on a reload.
     ground_ = terrain->heightmap();
+    // The range overlays' volumes span the map's heights
+    {
+        const map::Heightmap& h = terrain->heightmap();
+        f32 lowest = h.max_height();
+        for (u32 gz = 0; gz < h.grid_height(); ++gz)
+            for (u32 gx = 0; gx < h.grid_width(); ++gx)
+                lowest = std::min(lowest, h.get_height_at_grid(gx, gz));
+        range_renderer_.set_heights(lowest, h.max_height());
+    }
     camera_.set_ground(&*ground_, terrain->has_water(), terrain->water_elevation());
     // The light camera fits the terrain in view (M210c).
     height_bounds_ = std::make_unique<HeightBounds>(*ground_);
@@ -2649,27 +2674,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         }
         legacy_hud_active_ = legacy_hud_ || !world_ui;
 
-        // Intel range rings: all with the C++ HUD; with FA's UI, only the
-        // intel types its range-overlay filters enable (SetOverlayFilters).
-        std::unordered_set<std::string> rings;
-        if (legacy_hud_active_) {
-            rings = kAllIntelRingTypes;
-        } else if (L) {
-            std::vector<std::string> filters;
-            lua_pushstring(L, core::kOverlayFiltersKey);
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            if (lua_istable(L, -1)) {
-                const int n = luaL_getn(L, lua_gettop(L));
-                for (int i = 1; i <= n; ++i) {
-                    lua_rawgeti(L, -1, i);
-                    if (lua_type(L, -1) == LUA_TSTRING) filters.emplace_back(lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1);
-            rings = intel_ring_types_for_filters(filters);
-        }
-        overlay_renderer_.set_intel_ring_types(std::move(rings));
+        // The C++ HUD's intel rings; FA's UI draws its range overlays
+        overlay_renderer_.set_intel_ring_types(
+            legacy_hud_active_ ? kAllIntelRingTypes : std::unordered_set<std::string>{});
     }
 
     PROFILE_ZONE("Render::frame");
@@ -2869,6 +2876,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
                                drag_box_, texture_cache_, L, fi);
+
+    // FA's range overlays (Moho's RangeRenderer), for the focus army
+    {
+        PROFILE_ZONE("Render::range_update");
+        const RangeScene scene = collect_range_scene(
+            range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
+            ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
+            ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
+        const auto& rect = camera_.playable_rect();
+        const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
+        range_renderer_.update(range_batches(range_overlays_, scene), range_overlays_.settings(),
+                               span, camera_.zoom() / camera_.max_zoom(), fi);
+    }
 
     // Update game overlays (health bars, selection circles, game over)
     {
@@ -3168,6 +3188,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                     shadow_ds_[fi], fidelity() == 0);
     }
     record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
+
+    // 2b. The range overlays, on the terrain before the meshes
+    // (WRenViewport::Render's RangeRenderer::Render)
+    range_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
 
     // 3. The meshes (real SCM models with GPU skinning): on a map with water,
     // those Moho draws before it (M213b)
@@ -4633,6 +4657,7 @@ void Renderer::shutdown() {
     beam_renderer_.destroy(device_, allocator_);
     command_graph_renderer_.destroy(device_, allocator_);
     selection_renderer_.destroy(device_, allocator_);
+    range_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
