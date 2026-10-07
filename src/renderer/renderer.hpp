@@ -32,6 +32,7 @@
 #include "renderer/decal_math.hpp"
 #include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/shadow_camera.hpp"
+#include "renderer/shadow_map.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_feedback.hpp"
@@ -712,27 +713,9 @@ private:
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
 
-    // Shadow mapping (Moho's, M210c): a colour map (R the caster's light
-    // depth, G 0 under a mesh), its depth buffer, and the blur's two
-    // targets; B is the terrain's mask (the blur's, or a copy of G).
-    AllocatedImage shadow_image_{};
-    AllocatedImage shadow_depth_{};
-    AllocatedImage shadow_blur_a_{};
-    AllocatedImage shadow_blur_b_{};
-    VkSampler shadow_sampler_ = VK_NULL_HANDLE;        ///< point, clamped (one tap)
-    VkSampler shadow_linear_sampler_ = VK_NULL_HANDLE; ///< bilinear, white outside
-    VkRenderPass shadow_render_pass_ = VK_NULL_HANDLE;
-    VkRenderPass shadow_blur_pass_ = VK_NULL_HANDLE;
-    VkFramebuffer shadow_framebuffer_ = VK_NULL_HANDLE;
-    VkFramebuffer shadow_blur_a_fb_ = VK_NULL_HANDLE;
-    VkFramebuffer shadow_blur_b_fb_ = VK_NULL_HANDLE;
-    VkPipeline shadow_blur_h_pipeline_ = VK_NULL_HANDLE;
-    VkPipeline shadow_blur_v_pipeline_ = VK_NULL_HANDLE;
-    VkPipeline shadow_copy_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout shadow_blur_layout_ = VK_NULL_HANDLE;
-    VkDescriptorPool shadow_blur_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet shadow_blur_h_ds_ = VK_NULL_HANDLE; ///< the map, point
-    VkDescriptorSet shadow_blur_v_ds_ = VK_NULL_HANDLE; ///< target A, bilinear
+    // Shadow mapping (Moho's, M210c): the map, its depth and the blur's
+    // targets (shadow_map.hpp); B of the second is the terrain's mask.
+    ShadowMap shadow_map_;
     /// The heightfield's min/max pyramid the light camera fits to (built
     /// with the scene's terrain).
     std::unique_ptr<HeightBounds> height_bounds_;
