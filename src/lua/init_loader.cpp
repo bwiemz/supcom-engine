@@ -225,6 +225,8 @@ Result<void> InitLoader::load_blueprints(
         "/lua/system/utils.lua",
         "/lua/system/class.lua",
         "/lua/system/import.lua",
+        // The footprint classes, before the blueprints (RuleInit.lua's order).
+        "/lua/footprints.lua",
         "/lua/system/Blueprints.lua",
     };
 

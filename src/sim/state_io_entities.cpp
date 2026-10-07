@@ -910,6 +910,17 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
+    for (const blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
+        w.u8v(fp->size_x);
+        w.u8v(fp->size_z);
+        w.u8v(fp->caps);
+        w.u8v(fp->flags);
+        w.f32v(fp->max_slope);
+        w.f32v(fp->min_water_depth);
+        w.f32v(fp->max_water_depth);
+    }
+    w.i32v(u.footprints_.main_class);
+    w.i32v(u.footprints_.alt_class);
     w.f32v(u.naval_draft_);
     w.u32v(u.jammer_blips_);
     w.f32v(u.jam_radius_min_);
@@ -1229,6 +1240,17 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
+    for (blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
+        fp->size_x = r.u8v();
+        fp->size_z = r.u8v();
+        fp->caps = r.u8v();
+        fp->flags = r.u8v();
+        fp->max_slope = r.f32v();
+        fp->min_water_depth = r.f32v();
+        fp->max_water_depth = r.f32v();
+    }
+    u.footprints_.main_class = r.i32v();
+    u.footprints_.alt_class = r.i32v();
     u.naval_draft_ = r.f32v();
     u.jammer_blips_ = r.u32v();
     u.jam_radius_min_ = r.f32v();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "blueprints/footprint.hpp"
 #include "core/types.hpp"
 
 #include <optional>
@@ -86,13 +87,23 @@ public:
 
     /// Re-bind to a new Lua state after sim reload, or to none (null) once
     /// the old one is closed and no other is made yet.
-    /// Clears all lua_ref values (old state is dead — do NOT unref).
-    /// Caller must re-run load_blueprints() afterward to repopulate refs.
+    /// Clears all lua_ref values (old state is dead — do NOT unref), and the
+    /// footprint classes. Caller must re-run load_blueprints() afterward to
+    /// repopulate them.
     void rebind(lua_State* new_L);
+
+    /// The footprint classes /lua/footprints.lua specs (SpecFootprints), in
+    /// spec order; each one's index is its place.
+    const std::vector<NamedFootprint>& footprint_classes() const { return footprint_classes_; }
+    void add_footprint_class(NamedFootprint fp) {
+        fp.index = static_cast<i32>(footprint_classes_.size());
+        footprint_classes_.push_back(std::move(fp));
+    }
 
 private:
     lua_State* L_;
     std::unordered_map<std::string, BlueprintEntry> blueprints_;
+    std::vector<NamedFootprint> footprint_classes_;
 };
 
 } // namespace osc::blueprints

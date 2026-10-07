@@ -1123,6 +1123,53 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             }
         }
 
+        // Its footprints, as Moho resolves them (RUnitBlueprintPhysics::
+        // ComputeDerivedQuantities): its own Footprint, then for a mobile
+        // unit the class of /lua/footprints.lua nearest it.
+        if (auto* sim = get_sim(L)) {
+            store->push_lua_table(*entry, L);
+            const int bp = lua_gettop(L);
+            const auto number = [&](int t, const char* key) {
+                lua_pushstring(L, key);
+                lua_rawget(L, t);
+                const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            const auto cells = [](f32 size) {
+                return static_cast<u8>(std::clamp(std::lround(size), 0L, 255L));
+            };
+            blueprints::Footprint own;
+            own.size_x = cells(unit->footprint_size_x());
+            own.size_z = cells(unit->footprint_size_z());
+            lua_pushstring(L, "Footprint");
+            lua_rawget(L, bp);
+            if (lua_istable(L, -1)) {
+                const int fp = lua_gettop(L);
+                own.max_slope = number(fp, "MaxSlope");
+                own.min_water_depth = number(fp, "MinWaterDepth");
+                own.max_water_depth = number(fp, "MaxWaterDepth");
+            }
+            lua_pop(L, 1);
+            std::string alt_motion;
+            lua_pushstring(L, "Physics");
+            lua_rawget(L, bp);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "AltMotionType");
+                lua_rawget(L, -2);
+                if (lua_isstring(L, -1)) alt_motion = lua_tostring(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_settop(L, bp - 1);
+            const sim::PlacementRules& rules = structure_rules(L, *sim, unit->unit_id());
+            namespace oc = blueprints::occupancy;
+            const u8 build_caps = (rules.on_land ? oc::kLand : 0) |
+                                  (rules.on_seabed ? oc::kSeabed : 0) |
+                                  (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
+            unit->set_footprints(blueprints::resolve_unit_footprints(
+                store->footprint_classes(), own, unit->motion_type(), alt_motion, build_caps));
+        }
+
         // Read Physics.Elevation for naval units (negative = draft below water surface)
         if (unit->is_naval()) {
             store->push_lua_table(*entry, L);
