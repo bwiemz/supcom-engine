@@ -45,19 +45,6 @@ std::vector<std::array<f32, 4>> line_runs(f32 x0, f32 y0, f32 x1, f32 y1, f32 th
     return runs;
 }
 
-std::unordered_set<std::string> intel_ring_types_for_filters(
-    const std::vector<std::string>& filters) {
-    std::unordered_set<std::string> types;
-    for (const auto& f : filters) {
-        if (f == "AllIntel") {
-            types.insert({"Radar", "Sonar", "Omni"});
-        } else if (f == "Radar" || f == "Sonar" || f == "Omni") {
-            types.insert(f);
-        }
-    }
-    return types;
-}
-
 void OverlayRenderer::init(VkDevice device, VmaAllocator allocator) {
     VkBufferCreateInfo buf_info{};
     buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -532,9 +519,9 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             auto pos = view.position(*e);
 
             for (const auto& intel : snap.intel_of(*e)) {
-                // Captured only when on with a radius of at least 1.
+                // Captured with a radius of at least 1; ringed when on.
                 const std::string& type = intel.type;
-                if (!intel_ring_types_.count(type)) continue;
+                if (!intel.enabled || !intel_ring_types_.count(type)) continue;
 
                 // Color by intel type
                 f32 cr = 0, cg = 0, cb = 0, ca = 0.35f;

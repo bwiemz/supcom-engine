@@ -36,6 +36,7 @@
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_feedback.hpp"
 #include "renderer/command_graph_renderer.hpp"
+#include "renderer/range_renderer.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "renderer/trail_renderer.hpp"
@@ -85,6 +86,7 @@ namespace osc::renderer {
 struct BuildGhost {
     std::string blueprint_id;
     f32 x = 0, y = 0, z = 0;
+    f32 cursor_x = 0, cursor_z = 0; ///< the cursor on the ground (the range overlays' centre)
     f32 pad_x0 = 0, pad_z0 = 0, pad_x1 = 0, pad_z1 = 0; ///< its skirt
     bool valid = true;
     std::vector<BuildGhost> line; ///< a build drag's other sites
@@ -218,6 +220,10 @@ public:
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     const CommandGraphRenderer& command_graph_renderer() const { return command_graph_renderer_; }
     const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
+    /// FA's range overlays: the profiles and filters its UI sets and the
+    /// range convars (Moho's viewport keeps them), and what they drew.
+    RangeOverlays& range_overlays() { return range_overlays_; }
+    const RangeRenderer& range_renderer() const { return range_renderer_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
     void set_command_highlight(u32 command_id) { highlight_command_ = command_id; }
@@ -491,7 +497,8 @@ private:
 
     // Depth
     AllocatedImage depth_image_{};
-    VkFormat depth_format_ = VK_FORMAT_D32_SFLOAT;
+    VkFormat depth_format_ = VK_FORMAT_D32_SFLOAT; ///< with a stencil, where the device has one
+    bool has_stencil() const { return depth_format_ != VK_FORMAT_D32_SFLOAT; }
 
     // Render pass & framebuffers
     VkRenderPass render_pass_ = VK_NULL_HANDLE;
@@ -792,6 +799,9 @@ private:
     CommandGraphRenderer command_graph_renderer_;
     bool ui_keys_blocked_ = false;
     SelectionRenderer selection_renderer_;
+    RangeOverlays range_overlays_;
+    RangeRenderer range_renderer_;
+    RangeBlueprints range_blueprints_;
     u32 hovered_ = 0;
     u32 highlight_command_ = 0;
     bool command_drag_held_ = false;
