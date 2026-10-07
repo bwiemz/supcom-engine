@@ -1,8 +1,10 @@
 #include "sim/sim_state.hpp"
+#include "blueprints/blueprint_store.hpp"
 #include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/decal.hpp"
+#include "sim/path_tables.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/platoon.hpp"
 #include "sim/formation.hpp"
@@ -71,7 +73,11 @@ void SimState::occupy_footprint(Unit& unit) {
 
 void SimState::occupy_ground(u32 id, GroundOccupant occupant) {
     release_ground(id);
-    for (const OccupancyRect& r : occupant.rects) occupancy_.fill(occupant.caps, r, true);
+    for (const OccupancyRect& r : occupant.rects) {
+        occupancy_.fill(occupant.caps, r, true);
+        // Moho's ExecuteOccupy dirties the clusters even for no caps.
+        if (path_tables_) path_tables_->dirty(r);
+    }
     ground_occupants_[id] = std::move(occupant);
 }
 
@@ -80,7 +86,10 @@ void SimState::release_ground(u32 id) {
     if (it == ground_occupants_.end()) return;
     const GroundOccupant gone = std::move(it->second);
     ground_occupants_.erase(it);
-    for (const OccupancyRect& r : gone.rects) occupancy_.fill(gone.caps, r, false);
+    for (const OccupancyRect& r : gone.rects) {
+        occupancy_.fill(gone.caps, r, false);
+        if (path_tables_) path_tables_->dirty(r);
+    }
     // What still stands on any of those cells claims them again.
     const auto overlaps = [](const OccupancyRect& a, const OccupancyRect& b) {
         return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
@@ -484,6 +493,7 @@ bool SimState::is_valid_teleport_destination(
 }
 
 void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
+    path_tables_.reset(); // they read the old map (build_pathfinding_grid makes new)
     terrain_ = std::move(terrain);
     // One cell of the occupation grid a map cell, empty (the map's
     // structures and props claim theirs as they are made).
@@ -516,6 +526,14 @@ void SimState::build_pathfinding_grid() {
                  pathfinding_grid_->grid_width(),
                  pathfinding_grid_->grid_height(),
                  pathfinding_grid_->cell_size());
+    reset_path_tables();
+}
+
+void SimState::reset_path_tables() {
+    path_tables_.reset();
+    if (!terrain_ || !blueprint_store_ || blueprint_store_->footprint_classes().empty()) return;
+    path_tables_ =
+        std::make_unique<PathTables>(blueprint_store_->footprint_classes(), *terrain_, occupancy_);
 }
 
 ArmyBrain& SimState::add_army(const std::string& name,
@@ -1144,6 +1162,12 @@ void SimState::tick() {
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
+    // Moho's UpdatePaths: the clusters' background rebuild, before the
+    // armies tick (Sim::AdvanceBeat).
+    if (path_tables_) {
+        PROFILE_ZONE("Sim::path_clusters");
+        path_tables_->update_background(path::kBackgroundBudget);
+    }
     // Each army's tick begins by destroying its spent platoons, before any
     // script runs (Moho's CArmyImpl::OnTick).
     clean_up_platoons();

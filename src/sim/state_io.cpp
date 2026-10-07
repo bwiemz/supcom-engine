@@ -441,6 +441,11 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
         sim.occupy_ground(id, std::move(g));
     }
+    // path_tables_ is derived (roadmap item 4c): made again over the loaded
+    // grid, every cluster dirty. No search reads them yet; when one does,
+    // each map's dirty bits and scan cursor are game state (see
+    // docs/plans/2026-10-07-per-class-pathing-design.md, 4c-2).
+    sim.reset_path_tables();
     if (sim.pathfinding_grid_)
         sim.pathfinder_ = std::make_unique<map::Pathfinder>(*sim.pathfinding_grid_);
     sim.stored_to_destroy_.clear();
