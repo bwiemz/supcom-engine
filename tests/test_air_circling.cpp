@@ -233,9 +233,10 @@ TEST_CASE("circling_steer: a step round the circle, at its height over the terra
     in.height = 10.0f;
 
     const auto out = osc::sim::circling_steer(in, slope.get());
-    // On the circle, and a step to one side of the aircraft's bearing.
+    // On the circle, and a step to one side of the aircraft's bearing: by
+    // default Moho's +90 degree yaw of the way to the centre, (0, 1) to (1, 0).
     CHECK(std::abs(std::hypot(out.aim.x - 50.0f, out.aim.z - 60.0f) - 15.0f) < 1e-3f);
-    CHECK(out.aim.x < 50.0f);
+    CHECK(out.aim.x > 50.0f);
     // Nose at the centre.
     CHECK(std::abs(wrap(out.facing - 0.0f)) < 1e-5f);
     // Height: 10 over the terrain at the aim's nearest whole x.
@@ -245,9 +246,9 @@ TEST_CASE("circling_steer: a step round the circle, at its height over the terra
                                 out.velocity.z * out.velocity.z);
     CHECK(std::abs(speed - 12.0f) < 1e-3f);
 
-    // The other way round, the other side.
+    // The other way round (the -90 degree yaw), the other side.
     in.reverse = true;
-    CHECK(osc::sim::circling_steer(in, slope.get()).aim.x > 50.0f);
+    CHECK(osc::sim::circling_steer(in, slope.get()).aim.x < 50.0f);
 
     // No MinAirspeed: the circle's nearest point, no step round.
     in.min_airspeed = 0.0f;

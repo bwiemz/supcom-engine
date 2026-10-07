@@ -352,9 +352,12 @@ CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrai
     const f32 tlen = std::sqrt(tx * tx + tz * tz);
     tx /= tlen;
     tz /= tlen;
-    // A quarter turn of it, one way or the other: the way round.
-    const f32 gx = in.reverse ? tz : -tz;
-    const f32 gz = in.reverse ? -tx : tx;
+    // A quarter turn of it, the way round. FAF's exe turns it by Moho's
+    // +90 degree yaw (the quaternion at 0x010B6178, cos and sin of +pi/4, made
+    // by 0x00BD7390), or the -90 one (0x010B6158) when the draw says so,
+    // through its row-major QuatToMatrix: (x, z) goes to (z, -x).
+    const f32 gx = in.reverse ? -tz : tz;
+    const f32 gz = in.reverse ? tx : -tx;
     // A MinAirspeed's step that way, put out on the circle.
     f32 ox = gx * in.min_airspeed + in.position.x - in.center.x;
     f32 oz = gz * in.min_airspeed + in.position.z - in.center.z;
