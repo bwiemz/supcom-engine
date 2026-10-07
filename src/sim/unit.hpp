@@ -1,5 +1,6 @@
 #pragma once
 
+#include "blueprints/footprint.hpp"
 #include "sim/category_set.hpp"
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
@@ -750,6 +751,16 @@ public:
     // Motion type (from blueprint Physics.MotionType)
     const std::string& motion_type() const { return motion_type_; }
     void set_motion_type(const std::string& mt) { motion_type_ = mt; }
+    /// Its footprints as Moho resolves them from its blueprint (roadmap item
+    /// 4): a mobile unit's is the footprint class nearest its size for its
+    /// motion type's caps, a structure's its own with the layers it may be
+    /// built on. The alt one is for its AltMotionType.
+    const blueprints::Footprint& footprint() const { return footprints_.main; }
+    const blueprints::Footprint& alt_footprint() const { return footprints_.alt; }
+    /// The footprint class it paths as (-1: none, as a structure or a flier).
+    i32 footprint_class() const { return footprints_.main_class; }
+    i32 alt_footprint_class() const { return footprints_.alt_class; }
+    void set_footprints(const blueprints::UnitFootprints& f) { footprints_ = f; }
     f32 naval_draft() const { return naval_draft_; }
     void set_naval_draft(f32 d) { naval_draft_ = d; }
     bool is_amphibious() const {
@@ -1380,6 +1391,7 @@ private:
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
+    blueprints::UnitFootprints footprints_;
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
     f32 jam_radius_min_ = 0, jam_radius_max_ = 0; // Intel.JamRadius

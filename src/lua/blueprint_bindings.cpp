@@ -281,9 +281,43 @@ static int l_RegisterTrailEmitterBlueprint(lua_State* L) {
     return register_blueprint(L, blueprints::BlueprintType::TrailEmitter);
 }
 
+// SpecFootprints{ {Name=, SizeX=, SizeZ=, Caps=, MaxWaterDepth=,
+// MinWaterDepth=, MaxSlope=, Flags=}, ... }: the footprint classes, in order
+// (Moho's cfunc_SpecFootprintsL). /lua/footprints.lua calls it once.
 static int l_SpecFootprints(lua_State* L) {
-    // Store footprints — for now just log and ignore
-    spdlog::debug("SpecFootprints called");
+    luaL_checktype(L, 1, LUA_TTABLE);
+    auto* store = LuaState::get_blueprint_store(L);
+    if (!store) return luaL_error(L, "BlueprintStore not initialized");
+    const auto number = [&](int t, const char* key) {
+        lua_pushstring(L, key);
+        lua_rawget(L, t);
+        const lua_Number v = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0;
+        lua_pop(L, 1);
+        return v;
+    };
+    for (int i = 1;; ++i) {
+        lua_rawgeti(L, 1, i);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        const int t = lua_gettop(L);
+        blueprints::NamedFootprint fp;
+        lua_pushstring(L, "Name");
+        lua_rawget(L, t);
+        if (lua_isstring(L, -1)) fp.name = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        fp.size_x = static_cast<u8>(number(t, "SizeX"));
+        fp.size_z = static_cast<u8>(number(t, "SizeZ"));
+        fp.caps = static_cast<u8>(number(t, "Caps"));
+        fp.flags = static_cast<u8>(number(t, "Flags"));
+        fp.max_slope = static_cast<f32>(number(t, "MaxSlope"));
+        fp.min_water_depth = static_cast<f32>(number(t, "MinWaterDepth"));
+        fp.max_water_depth = static_cast<f32>(number(t, "MaxWaterDepth"));
+        store->add_footprint_class(std::move(fp));
+        lua_pop(L, 1);
+    }
+    spdlog::debug("SpecFootprints: {} classes", store->footprint_classes().size());
     return 0;
 }
 

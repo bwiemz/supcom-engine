@@ -30,7 +30,6 @@ LAYER_Air
 LayerTransitionDuration
 LiftFactor
 MaxBounceCount
-MaxSlope
 MaxSteerForce
 MaxZigZag
 MinBounceCount
