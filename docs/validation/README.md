@@ -9,7 +9,7 @@ Name a record `YYYY-MM-DD-<short sha>.md`. A record covers:
 - **Goldens:** if any were re-baselined, every differing region and the change that explains it.
 - **Long games:** four-AI games of 18,000 ticks on retail and on FAF data (seeds named), Release build. Script errors, and what each one is.
 - **Flows:** campaign, tutorial, outro, mods, save/load (skirmish, campaign, replay), replay, determinism, lobby and network. They are gate tests, called out by name.
-- **FAF client:** the custom-game harness (a scripted GPGNet client hosting a game to a tick).
+- **FAF client:** the custom-game harness, `tools/faf_custom_game.py <opensupcom> [--ticks N]`: on a scratch copy of the FAF install, a scripted GPGNet client hosts SCMP_009 with an AI and plays it to a tick.
 - **Not covered:** what needs a person, such as a real display, audio, Steam or the Deck.
 
 How to run each step is in the record itself.
