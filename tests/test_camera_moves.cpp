@@ -233,6 +233,7 @@ TEST_CASE("A tracked entity is followed, and let go when gone (M217g)", "[camera
     });
     cam.target_entities({7, 8}, true, 50.0f, 0.0f);
     CHECK(cam.target_type() == CameraTarget::Entity);
+    CHECK(cam.target_entity() == 7); // GetTargetEntity (UI_TrackUnit asks it)
     CHECK_THAT(cam.requested_zoom(), WithinAbs(50.0, 1e-5));
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.target_x(), WithinAbs(90.0, 1e-3));
@@ -248,6 +249,7 @@ TEST_CASE("A tracked entity is followed, and let go when gone (M217g)", "[camera
     CHECK(cam.target_type() == CameraTarget::Entity);
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.target_x(), WithinAbs(150.0, 1e-3));
+    CHECK(cam.target_entity() == 8);
     // With the next gone too, on to the one after it, not past it
     world[7].pos = {90.0f, kGround, 90.0f};
     world[9].pos = {170.0f, kGround, 60.0f};
@@ -268,6 +270,9 @@ TEST_CASE("A tracked entity is followed, and let go when gone (M217g)", "[camera
     once.target_entities({8}, false, 50.0f, 0.0f);
     CHECK(once.target_type() == CameraTarget::Location);
     CHECK_THAT(once.target_x(), WithinAbs(150.0, 1e-3));
+    CHECK(once.target_entity() == 0); // followed by none
+    cam.target_nothing();
+    CHECK(cam.target_entity() == 0);
 }
 
 TEST_CASE("The nose camera looks along its entity (M217g)", "[camera][moves]") {

@@ -168,6 +168,12 @@ public:
                          f32 transition);
     /// TargetNothing: a location, followed no more.
     void target_nothing();
+    /// GetTargetEntity: the entity it follows (0: none).
+    u32 target_entity() const {
+        return target_type_ == CameraTarget::Entity && active_target_ < target_ids_.size()
+                   ? target_ids_[active_target_]
+                   : 0;
+    }
     /// Spin (Lua): turn `heading_rate` revolutions a second, zoom
     /// `zoom_rate` a second.
     void spin_rates(f32 heading_rate, f32 zoom_rate);
