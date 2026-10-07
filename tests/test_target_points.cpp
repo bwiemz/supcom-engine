@@ -108,7 +108,7 @@ TEST_CASE("A unit's target points are its TargetBones, else its centre", "[targe
     CHECK(u.target_point_count() == 2);
     CHECK(same(u.target_point(0), {10, 3, 20}));
     CHECK(same(u.target_point(1), {10, 8, 20}));
-    CHECK(same(u.target_point(7), {10, 8, 20})); // past the last: the last
+    CHECK(same(u.target_point(7), {10, 8, 20}));  // past the last: the last
     CHECK(same(u.target_point(-1), {10, 1, 20})); // the centre, half its height up
 
     // A bone the mesh hasn't is the centre too.
