@@ -97,8 +97,22 @@ Mobile units are never in the clusters; only repaths test them, at level 0.
   claimed and released, and spends the background budget each tick. No
   search reads them yet, so nothing a unit does changes. Saved games need
   nothing yet: a load starts every cluster dirty, which no search can see.
-- **4c-2: the search.** The army path queue, the hierarchical A* over the
-  maps, the navigator's string-pulling, and the saved state that makes a
-  loaded game spend its budgets as the original would (each map's dirty
-  bits and scan cursor; clean clusters rebuilt free on load).
+- **4c-2a: the search.** `sim/path_search` (Moho's A* with its open heap
+  and tie-breaks, the levels a cell expands at, cluster edges built on
+  demand from the search's budget, the closest-cell fallback, the army
+  queue) and `sim/path_finder` (CAiPathFinder's rules: where to search cell
+  by cell, the footprint test skipped for a unit that doesn't fit where it
+  stands, the playable area by the footprint's span, goal rects and the
+  1.01 octile heuristic). Not yet asked by any unit. Two things it shows:
+  - a search spread over many ticks finds exactly what one tick's finds
+    (an expansion out of budget is redone whole next tick);
+  - near its start a search goes cell by cell only within the start's
+    8 x 8 cluster, so a unit can walk out of an obstacle only as far as
+    that cluster's edge; past it, the cluster portals must be open.
+- **4c-2b: units use it.** The navigator asks its army's queue and follows
+  the cells as Moho's does (string-pulling ahead with a footprint sweep),
+  and saves what makes a loaded game continue exactly: the queue (Moho
+  restarts the search in flight on a load; the engine's save/load oracle
+  needs it resumed), each finder, and each map's dirty bits and scan cursor
+  (clean clusters rebuilt free on load).
 - **4c-3: repaths** against mobile units, at level 0.

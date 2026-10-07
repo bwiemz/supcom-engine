@@ -34,6 +34,8 @@ add_library(osc_sim STATIC
     occupancy.cpp
     path_clusters.cpp
     path_tables.cpp
+    path_search.cpp
+    path_finder.cpp
     air_combat.cpp
     steering.cpp
     entity_registry.cpp
