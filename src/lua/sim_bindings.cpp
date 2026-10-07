@@ -1252,6 +1252,23 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 unit->set_fly_in_water(lua_toboolean(L, -1) != 0);
                 lua_pop(L, 1);
 
+                // Air.AutoLandTime and StartTurnDistance: an idle aircraft
+                // lands that long after its orders run out, near its place
+                // (item 6; Moho's StartTurnDistance defaults to 3 x SizeZ).
+                {
+                    lua_pushstring(L, "AutoLandTime");
+                    lua_rawget(L, -2);
+                    const f32 land =
+                        lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "StartTurnDistance");
+                    lua_rawget(L, -2);
+                    f32 turn = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                    lua_pop(L, 1);
+                    if (turn == 0.0f) turn = unit->size_z() * 3.0f;
+                    unit->set_auto_land(land, turn);
+                }
+
                 // Air.AccelerateRate
                 lua_pushstring(L, "AccelerateRate");
                 lua_rawget(L, -2);

@@ -758,11 +758,12 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
             if (u.has_command_cap("RULEUCC_Attack")) aim(sim::CommandType::Attack);
             else if (u.has_command_cap("RULEUCC_Capture")) aim(sim::CommandType::Capture);
         } else if (on == On::Ally && tu) {
+            // An aircraft, flying or landed.
             if (tu->has_category("AIRSTAGINGPLATFORM") && u.has_command_cap("RULEUCC_Dock") &&
-                u.is_air_unit())
+                u.can_fly())
                 aim(sim::CommandType::Dock);
             else if (tu->has_category("TRANSPORTATION") &&
-                     u.has_command_cap("RULEUCC_CallTransport") && !u.is_air_unit())
+                     u.has_command_cap("RULEUCC_CallTransport") && !u.can_fly())
                 aim(sim::CommandType::TransportLoad);
             else if (tu->is_being_built() && u.has_command_cap("RULEUCC_Repair"))
                 aim(sim::CommandType::Repair);

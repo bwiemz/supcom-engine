@@ -38,6 +38,7 @@ add_library(osc_sim STATIC
     path_finder.cpp
     path_walk.cpp
     path_navigator.cpp
+    prepare_move.cpp
     air_combat.cpp
     steering.cpp
     entity_registry.cpp

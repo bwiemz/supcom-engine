@@ -9471,6 +9471,9 @@ void test_missile(TestContext& ctx) {
         __osc_d = __osc_watch(__osc_spawn('ueb4302', 'ARMY_1', 680, 250))
         __osc_d:GiveTacticalSiloAmmo(1)
         __osc_bait = __osc_spawn('uea0101', 'ARMY_2', 690, 250)
+        -- An idle aircraft lands after its AutoLandTime: the bait patrols.
+        IssuePatrol({__osc_bait}, {700, 0, 260})
+        IssuePatrol({__osc_bait}, {680, 0, 240})
     )");
     run(1);
     lua_check("Test 1: a silo build starts at once, beside the launch order waiting for it", R"(

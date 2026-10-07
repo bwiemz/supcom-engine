@@ -2,6 +2,7 @@
 #include "core/dmath.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/path_tables.hpp"
+#include "sim/prepare_move.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "map/pathfinder.hpp"
@@ -203,66 +204,6 @@ i32 default_pathcap(u32 extent) {
     return 20000;
 }
 
-/// Moho's Unit::PrepareMove (0x0062B780): a destination the unit's
-/// footprint won't fit moves to the nearest place it will (to the unit),
-/// looked for in rings twice its larger side apart, 900 places at most, each
-/// inside `bounds` by its larger side. False if none.
-bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid& grid,
-                  const OccupancyRect& bounds, Vector3& dest) {
-    const blueprints::Footprint& fp = unit.footprint();
-    const i32 side = std::max<i32>(std::max(fp.size_x, fp.size_z), 1);
-    const f32 hx = static_cast<f32>(fp.size_x) * 0.5f;
-    const f32 hz = static_cast<f32>(fp.size_z) * 0.5f;
-    const auto valid = [&](i32 x, i32 z, f32 wx, f32 wz) {
-        const auto border = static_cast<f32>(side);
-        if (wx - border < static_cast<f32>(bounds.x0) ||
-            wz - border < static_cast<f32>(bounds.z0) ||
-            wx + border > static_cast<f32>(bounds.x1) || wz + border > static_cast<f32>(bounds.z1))
-            return false;
-        u8 caps = map_caps(fp, map, x, z);
-        if (unit.layer() == "Water") caps = static_cast<u8>(caps & ~blueprints::occupancy::kSub);
-        return footprint_fits(fp, map, grid, x, z, caps) != 0;
-    };
-    // The cell the goal will be (ToCellPos, rounded). Moho truncates here,
-    // the same cell for its destinations, which are cell centres; the
-    // engine's order handlers also give cell edges, where only the rounded
-    // one is the goal's.
-    const OccupancyRect start = footprint_rect(fp, dest.x, dest.z);
-    const i32 sx = start.x0;
-    const i32 sz = start.z0;
-    if (valid(sx, sz, dest.x, dest.z)) return true;
-    const i32 step = side * 2;
-    std::vector<Vector3> found;
-    int looked = 0;
-    for (i32 ring = 1;; ++ring) {
-        for (i32 rx = -ring; rx <= ring; ++rx) {
-            const i32 rz_step = rx == -ring || rx == ring ? 1 : 2 * ring;
-            for (i32 rz = -ring; rz <= ring; rz += rz_step) {
-                ++looked;
-                const i32 x = static_cast<i16>(sx + rx * step);
-                const i32 z = static_cast<i16>(sz + rz * step);
-                const f32 wx = static_cast<f32>(x) + hx;
-                const f32 wz = static_cast<f32>(z) + hz;
-                if (valid(x, z, wx, wz)) found.push_back({wx, dest.y, wz});
-            }
-        }
-        if (!found.empty()) break;
-        if (looked >= 900) return false;
-    }
-    const Vector3 at = unit.position();
-    f32 best = std::numeric_limits<f32>::infinity();
-    for (const Vector3& p : found) {
-        const f32 dx = p.x - at.x;
-        const f32 dz = p.z - at.z;
-        if (const f32 d = dx * dx + dz * dz; d < best) {
-            best = d;
-            dest.x = p.x;
-            dest.z = p.z;
-        }
-    }
-    return true;
-}
-
 } // namespace
 
 bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
@@ -285,7 +226,7 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
         // destination first moved to a place it fits (Unit::PrepareMove).
         const blueprints::Footprint& fp = unit.footprint();
         Vector3 dest = goal_;
-        prepare_move(unit, *map, sim_->occupancy(), moho_bounds(unit), dest);
+        prepare_move(unit, *map, sim_->occupancy(), sim_->move_bounds(unit.army()), dest);
         const OccupancyRect at = footprint_rect(fp, dest.x, dest.z);
         const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
         const State st = moho_.state();
@@ -320,7 +261,7 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
                             unit.immobile(),
                             unit.has_unit_state("Attacking"),
                             layer_token(unit.layer())};
-    const OccupancyRect playable = moho_bounds(unit, false);
+    const OccupancyRect playable = sim_->move_bounds(unit.army(), false);
     const path::PathWorld world{map, &sim_->occupancy(), playable, army->use_whole_map(),
                                 default_pathcap(std::max(map->map_width(), map->map_height()))};
     moho_.update(nav, world, army->path_queue());
@@ -349,19 +290,6 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
     if (status_ != Status::Idle)
         status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
     return true;
-}
-
-OccupancyRect Navigator::moho_bounds(const Unit& unit, bool whole_map_if_allowed) const {
-    const map::Terrain* map = sim_ ? sim_->terrain() : nullptr;
-    const OccupancyRect whole{0, 0, map ? static_cast<i32>(map->map_width()) : 0,
-                              map ? static_cast<i32>(map->map_height()) : 0};
-    if (!sim_ || !sim_->has_playable_rect()) return whole;
-    if (whole_map_if_allowed) {
-        const ArmyBrain* army = sim_->get_army(unit.army());
-        if (army && army->use_whole_map()) return whole;
-    }
-    return {static_cast<i32>(sim_->playable_x0()), static_cast<i32>(sim_->playable_z0()),
-            static_cast<i32>(sim_->playable_x1()), static_cast<i32>(sim_->playable_z1())};
 }
 
 void Navigator::arrive() {
