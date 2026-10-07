@@ -140,6 +140,7 @@ App::App(int arg_count, char* arg_values[], TestModes* test_modes, lua::InitConf
              sound} {
     // Loading counts from here
     if (!opt.bench_report.empty()) bench.emplace(opt.bench_report);
+    if (!opt.match_telemetry_path.empty()) telemetry.emplace(opt.match_telemetry_path);
 }
 
 App::~App() = default;

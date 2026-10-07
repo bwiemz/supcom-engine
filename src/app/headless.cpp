@@ -64,6 +64,7 @@ void App::tick_headless() {
     const auto start = BenchRecorder::Clock::now();
     sim_state->tick();
     if (bench) bench->record(BenchRecorder::Clock::now() - start);
+    if (telemetry) telemetry->after_tick(*sim_state);
 }
 
 int App::run_headless() {
@@ -182,6 +183,8 @@ int App::run_headless() {
                      sim_state->thread_manager().active_count(), sim_state->tick_count(),
                      sim_state->game_time());
     }
+
+    if (telemetry) telemetry->finish(sim_state.get(), "ticks");
 
     // --bench's report (M223)
     if (bench && sim_state) {
