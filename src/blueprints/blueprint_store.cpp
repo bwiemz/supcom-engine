@@ -533,6 +533,8 @@ void BlueprintStore::rebind(lua_State* new_L) {
     for (auto& [id, entry] : blueprints_) {
         entry.lua_ref = -1;
     }
+    // The reload runs /lua/footprints.lua again: its classes come anew.
+    footprint_classes_.clear();
     if (new_L)
         spdlog::info("BlueprintStore rebound to new Lua state ({} blueprints, refs cleared)",
                      blueprints_.size());

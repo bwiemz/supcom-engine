@@ -43,6 +43,5 @@ SetStance worldmesh_SetStance
 SetTargetHead frame_SetTargetHead
 SetThrustingParam stub_noop
 SimConExecute stub_noop
-SpecFootprints l_SpecFootprints
 SpecFootprints stub_noop
 SubmitXMLArmyStats stub_noop

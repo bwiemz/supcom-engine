@@ -27,6 +27,7 @@ add_executable(osc_tests
     test_command_feedback.cpp
     test_seabed_layer.cpp
     test_target_points.cpp
+    test_footprint_classes.cpp
     test_hull_facing.cpp
     test_reclaim.cpp
     test_entity_lifetime.cpp
