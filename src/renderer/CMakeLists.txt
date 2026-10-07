@@ -13,6 +13,7 @@ add_library(osc_renderer STATIC
     frustum.cpp
     shadow_camera.cpp
     shadow_map.cpp
+    bloom_renderer.cpp
     shader_utils.cpp
     shield_shaders.cpp
     pipeline_builder.cpp
