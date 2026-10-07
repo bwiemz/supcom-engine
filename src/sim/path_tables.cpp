@@ -66,4 +66,9 @@ bool PathTables::done() const {
     return std::all_of(maps_.begin(), maps_.end(), [](const auto& m) { return m->done(); });
 }
 
+void PathTables::fingerprint(Fnv& f) const {
+    f.mix(maps_.size());
+    for (const auto& m : maps_) m->fingerprint(f);
+}
+
 } // namespace osc::sim

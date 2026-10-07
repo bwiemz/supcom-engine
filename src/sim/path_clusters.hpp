@@ -8,6 +8,7 @@
 // quantised. Identical clusters share one payload, across every class's map.
 // See docs/plans/2026-10-07-per-class-pathing-design.md.
 
+#include "sim/fnv.hpp"
 #include "core/types.hpp"
 #include "sim/occupancy.hpp" // OccupancyRect
 
@@ -151,6 +152,8 @@ public:
     /// bit (the lowest in its word); `progress` stays on that word.
     bool find_set(u32& progress, i32& x, i32& z) const;
     bool any() const;
+    /// Its bits, for the sync checksum.
+    void fingerprint(Fnv& f) const;
 
 private:
     i32 width_ = 0;
@@ -208,6 +211,9 @@ public:
     /// clean clusters the original had built (a clean cluster is exactly
     /// what its window or its children make).
     void rebuild_clean();
+    /// What is dirty and where the background work has got to, for the
+    /// sync checksum (a clean cluster is what its cells make).
+    void fingerprint(Fnv& f) const;
 
 private:
     size_t index(u32 level, i32 cx, i32 cz) const {

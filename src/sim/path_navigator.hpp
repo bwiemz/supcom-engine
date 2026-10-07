@@ -64,6 +64,9 @@ public:
     void reset();
 
     State state() const { return state_; }
+    /// Everything that decides its next step (its path, cells, clocks,
+    /// counts and its finder's), for the sync checksum.
+    void fingerprint(Fnv& f) const;
     const NavGoal& goal() const { return goal_; }
     Cell current() const { return current_; }
     /// The cell it heads for now.

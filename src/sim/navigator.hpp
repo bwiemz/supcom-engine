@@ -63,6 +63,10 @@ public:
     /// item 4c-2c; SimState::moho_pathing).
     bool moho_active() const { return moho_active_ || moho_pending_; }
     const path::PathNavigator& moho_path() const { return moho_; }
+    path::PathNavigator& moho_path() { return moho_; }
+    /// Its Moho pathing state (whether it is following, its waypoint and
+    /// its path navigator's), for the sync checksum.
+    void fingerprint_moho(Fnv& f) const;
 
     // Steering (M203c; Moho's CAiSteeringImpl, see steering.hpp).
     /// A meeting the unit expects on the path ahead (Moho's

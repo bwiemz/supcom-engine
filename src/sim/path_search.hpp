@@ -7,6 +7,7 @@
 // docs/plans/2026-10-07-per-class-pathing-design.md.
 
 #include "core/types.hpp"
+#include "sim/fnv.hpp"
 #include "sim/occupancy.hpp" // OccupancyRect
 
 #include <deque>
@@ -60,6 +61,8 @@ public:
     /// The search ended: the cells from its anchor to the goal (`reached`),
     /// else to the cell it found nearest the goal.
     virtual void on_path(bool reached, std::vector<Cell> cells) = 0;
+    /// The unit it searches for, by id (0: none); the sync checksum's.
+    virtual u32 owner() const { return 0; }
 
 private:
     friend class PathQueue;
@@ -128,6 +131,9 @@ public:
     u32 expansions() const { return static_cast<u32>(expand_count_); }
     const std::vector<Node>& nodes() const { return nodes_; }
     const OpenHeap& open() const { return open_; }
+    /// Its progress, for the sync checksum: whose it is, how far it has
+    /// got, and the nearest cell it has found.
+    void fingerprint(Fnv& f) const;
 
 private:
     struct Neighbour {
@@ -174,6 +180,9 @@ public:
 
     const std::deque<Traveler*>& pending() const { return pending_; }
     const PathSearch& search() const { return search_; }
+    /// Its searches, for the sync checksum: whose wait, in order, and
+    /// the one in flight.
+    void fingerprint(Fnv& f) const;
 
 private:
     std::deque<Traveler*> pending_;
@@ -184,6 +193,12 @@ private:
 inline u32 pack_cell(Cell c) {
     return static_cast<u32>(static_cast<u16>(c.x)) |
            (static_cast<u32>(static_cast<u16>(c.z)) << 16);
+}
+
+/// Rect `r` into a sync checksum fingerprint.
+inline void mix_rect(Fnv& f, const OccupancyRect& r) {
+    f.mix(pack_cell({r.x0, r.z0}));
+    f.mix(pack_cell({r.x1, r.z1}));
 }
 
 } // namespace osc::sim::path

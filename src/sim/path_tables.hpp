@@ -50,6 +50,9 @@ public:
     /// Cells `r` changed what stands on them: dirty every class's clusters
     /// over them (Moho's DirtyClusters).
     void dirty(const OccupancyRect& r);
+    /// Every class's map's dirty clusters and background cursor, for the
+    /// sync checksum.
+    void fingerprint(Fnv& f) const;
     /// Rebuild dirty clusters, the maps in class order spending one budget
     /// (Moho's UpdateBackground).
     void update_background(i32 budget);

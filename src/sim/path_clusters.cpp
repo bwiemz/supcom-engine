@@ -397,6 +397,11 @@ bool BitGrid::any() const {
     return std::any_of(words_.begin(), words_.end(), [](u32 w) { return w != 0; });
 }
 
+void BitGrid::fingerprint(Fnv& f) const {
+    f.mix(static_cast<u64>(static_cast<u32>(width_)) << 32 | static_cast<u32>(height_));
+    for (const u32 w : words_) f.mix(w);
+}
+
 ClusterMap::ClusterMap(const OccupationSource& source, ClusterCache& cache, u32 width, u32 height,
                        i32 size_x, i32 size_z)
     : source_(source), cache_(cache), size_x_(std::max(size_x, 1)), size_z_(std::max(size_z, 1)) {
@@ -501,6 +506,12 @@ void ClusterMap::background_work(i32& budget) {
         if (unlimited) budget = INT_MAX;
         work_on_cluster(cx, cz, kClusterLevels, budget);
     }
+}
+
+void ClusterMap::fingerprint(Fnv& f) const {
+    f.mix(progress_);
+    f.mix(done_ ? 1 : 0);
+    for (u32 level = 1; level <= kClusterLevels; ++level) dirty_[level].fingerprint(f);
 }
 
 } // namespace osc::sim::path

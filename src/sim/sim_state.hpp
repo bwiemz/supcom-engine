@@ -603,9 +603,11 @@ public:
         u64 armies = 0;         ///< the tick; each army's state, resources, rates, platoons
         u64 entities = 0;       ///< every entity: id, army, destroyed, pose, health, build
         u64 units = 0;          ///< settings, layer, dying, transport, work, silo, economy, facing,
-                                ///< stats, states, script flags, veterancy, collision detectors
+                                ///< stats, states, script flags, veterancy, collision detectors,
+                                ///< aircraft flight, circling and idle landing, vertical event
         u64 orders = 0;         ///< every unit's command queue, runtime state included
-        u64 navigation = 0;     ///< navigator goals and status, velocities, heading
+        u64 navigation = 0;     ///< navigator goals and status, velocities, heading; with Moho
+                                ///< pathing its navigators, finders, queues and dirty clusters
         u64 weapons = 0;        ///< targets, ground attacks, fire and target-check clocks,
                                 ///< enabled, script-set range/rate/damage/layers
         u64 projectiles = 0;    ///< velocity, target, lifetime, impacted

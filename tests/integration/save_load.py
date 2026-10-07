@@ -56,8 +56,10 @@ def run(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def load_args(game_args: list[str]) -> list[str]:
-    """The game args a load keeps: the run's length and the player's
-    scripted orders. The map, armies and seed come from the save."""
+    """The game args a load keeps: the run's length, the player's scripted
+    orders and --moho-pathing (a save's history doesn't record the switch,
+    so a catch-up must be given it). The map, armies and seed come from the
+    save."""
     kept: list[str] = []
     i = 0
     while i < len(game_args):
@@ -66,7 +68,7 @@ def load_args(game_args: list[str]) -> list[str]:
             kept += game_args[i : i + 2]
             i += 2
             continue
-        if arg in ("--ai-skirmish", "--scripted-orders"):
+        if arg in ("--ai-skirmish", "--scripted-orders", "--moho-pathing"):
             kept.append(arg)
         elif arg in ("--map", "--ai-armies", "--seed"):
             i += 1  # and its value

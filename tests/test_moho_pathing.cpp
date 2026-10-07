@@ -12,8 +12,10 @@
 #include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/path_navigator.hpp"
+#include "sim/path_tables.hpp"
 #include "sim/saved_game.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/sim_state.hpp"
@@ -25,6 +27,7 @@ extern "C" {
 }
 
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -287,4 +290,91 @@ TEST_CASE("With Moho pathing a destination the unit won't fit moves to the neare
         osc::sim::footprint_rect(other.footprint(), other.position().x, other.position().z);
     CHECK(at.z0 == 64);
     CHECK(ticks < 300);
+}
+
+namespace {
+
+/// The checksum's domains that differ between `a` and `b`, by name.
+std::string changed_domains(const osc::sim::SimState::ChecksumParts& a,
+                            const osc::sim::SimState::ChecksumParts& b) {
+    std::string out;
+    const auto before = a.values();
+    const auto after = b.values();
+    for (size_t i = 0; i < before.size(); ++i) {
+        if (before[i] == after[i]) continue;
+        if (!out.empty()) out += ' ';
+        out += osc::sim::SimState::ChecksumParts::kNames[i];
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("With Moho pathing its state is in the sync checksum's navigation domain, and only "
+          "there; with it off, not at all",
+          "[moho_pathing][checksum]") {
+    for (const bool moho : {true, false}) {
+        INFO("moho pathing " << moho);
+        World w(moho);
+        osc::sim::PathTables& tables = *w.sim.path_tables();
+        osc::sim::path::PathQueue& queue = w.sim.get_army(0)->path_queue();
+        // Every cluster built first, so dirtying one is news.
+        for (int t = 0; t < 2000 && !tables.done(); ++t) w.sim.tick();
+        REQUIRE(tables.done());
+        const auto check = [&](const char* what, const std::function<void()>& change) {
+            const auto before = w.sim.checksum_parts();
+            change();
+            INFO(what);
+            CHECK(changed_domains(before, w.sim.checksum_parts()) == (moho ? "navigation" : ""));
+        };
+        check("a cluster dirtied", [&] { tables.dirty({40, 40, 44, 44}); });
+
+        // Tanks crossing the wall's gap: searches waiting and one in flight.
+        osc::sim::GroundOccupant wall;
+        wall.caps = oc::kLand;
+        wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
+        w.sim.occupy_ground(9999, wall);
+        std::vector<Unit*> tanks;
+        tanks.reserve(12);
+        for (int i = 0; i < 12; ++i)
+            tanks.push_back(w.make(i % 3 == 0 ? "bigtank" : "tank", start_of(i).x, start_of(i).z));
+        for (size_t i = 0; i < tanks.size(); ++i)
+            World::move(*tanks[i], 110.5f, 15.5f + static_cast<f32>(i) * 4.0f);
+        // Ticks until their searches wait (the queue works them as the
+        // next tick begins).
+        for (int t = 0; t < 10 && queue.pending().empty(); ++t) w.sim.tick();
+        if (moho) REQUIRE(queue.pending().size() > 2);
+        if (moho) {
+            const auto work_once = [&] {
+                osc::i32 budget = 1;
+                queue.work(tables, budget);
+            };
+            check("a search begun", work_once);
+            REQUIRE(queue.search().traveler());
+            check("its progress", work_once);
+            check("a search cancelled", [&] { queue.cancel(*queue.pending().back()); });
+        }
+        // Then one following its path.
+        Unit* moving = nullptr;
+        for (int t = 0; t < 20 && !moving; ++t) {
+            w.sim.tick();
+            for (Unit* u : tanks)
+                if (!moving && !queue.queued(u->navigator().moho_path().finder()) &&
+                    u->navigator().moho_path().state() ==
+                        osc::sim::path::PathNavigator::State::HasPath)
+                    moving = u;
+        }
+        if (moho) REQUIRE(moving);
+        if (!moving) moving = tanks.front();
+        osc::sim::path::PathNavigator& nav = moving->navigator().moho_path();
+        check("a search queued", [&] { queue.queue(nav.finder()); });
+        check("the next search's type",
+              [&] { nav.finder().set_type(osc::sim::path::SearchType::Leader); });
+        check("a repath asked", [&] { nav.request_repath(); });
+        check("whether it moved last tick", [&] { moving->note_tick_position(); });
+        check("a new goal", [&] {
+            nav.set_goal({{100, 100, 104, 104}, {}}, moving->position().x, moving->position().z);
+        });
+        check("its path dropped", [&] { nav.reset(); });
+    }
 }
