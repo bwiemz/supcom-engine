@@ -76,4 +76,14 @@ u32 decal_sight_at_creation(const DecalSpec& spec, const DecalArmies& armies);
 u32 decal_sight_on_tick(const DecalSpec& spec, u32 seen_by, u32 created_tick, u32 tick,
                         const DecalArmies& armies);
 
+/// The armies a decal can come to be seen by on a tick's look: the bits of
+/// those that exist and aren't civilians.
+u32 decal_sight_lookers(const DecalArmies& armies);
+
+/// Whether decal_sight_on_tick can change it from `tick` on: not once every
+/// one of `lookers` sees it, nor a splat but in its first 10 ticks (one
+/// with a lifetime; one without never changes).
+bool decal_sight_settled(const DecalSpec& spec, u32 seen_by, u32 created_tick, u32 tick,
+                         u32 lookers);
+
 } // namespace osc::sim

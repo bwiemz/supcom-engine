@@ -88,6 +88,19 @@ u32 decal_sight_at_creation(const DecalSpec& spec, const DecalArmies& armies) {
     return seen;
 }
 
+u32 decal_sight_lookers(const DecalArmies& armies) {
+    u32 lookers = 0;
+    for (size_t i = 0; i < armies.count(); ++i)
+        if (armies.exists(i) && !armies.civilian(i)) lookers |= army_bit(i);
+    return lookers;
+}
+
+bool decal_sight_settled(const DecalSpec& spec, u32 seen_by, u32 created_tick, u32 tick,
+                         u32 lookers) {
+    if (spec.splat) return !(spec.remove_tick != 0 && created_tick + 10 > tick);
+    return (seen_by & lookers) == lookers;
+}
+
 u32 decal_sight_on_tick(const DecalSpec& spec, u32 seen_by, u32 created_tick, u32 tick,
                         const DecalArmies& armies) {
     const size_t count = armies.count();

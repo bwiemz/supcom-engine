@@ -547,11 +547,19 @@ u32 SimState::decal_sight(const DecalSpec& spec) const {
 
 void SimState::update_decal_sight() {
     const SimDecalArmies armies(*this);
-    for (const auto& fx : effect_registry_.all()) {
-        if (!fx || fx->destroyed() || !fx->decal()) continue;
+    const u32 lookers = decal_sight_lookers(armies);
+    size_t kept = 0;
+    for (const u32 id : unsettled_decals_) {
+        IEffect* fx = effect_registry_.find(id);
+        if (!fx || !fx->decal()) continue; // gone
         fx->set_seen_by(decal_sight_on_tick(*fx->decal(), fx->seen_by(), fx->created_tick(),
                                             tick_count_, armies));
+        // Kept while the next tick's look can still change it.
+        if (!decal_sight_settled(*fx->decal(), fx->seen_by(), fx->created_tick(), tick_count_ + 1,
+                                 lookers))
+            unsettled_decals_[kept++] = id;
     }
+    unsettled_decals_.resize(kept);
 }
 
 bool SimState::is_ally(i32 army1, i32 army2) const {
