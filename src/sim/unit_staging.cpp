@@ -527,8 +527,20 @@ bool Unit::tick_fuel(f64 dt, SimContext& ctx, Unit* platform) {
     auto* L = ctx.L;
     const f32 before = fuel_ratio_;
     if (!platform) {
-        // Flying burns a FuelUseTime's worth over its tank.
         refuel_started_ = false;
+        // Landed, or hovering, it refuels by itself, at FuelRechargeRate with
+        // no platform's RefuelingMultiplier (Moho's ProcessFuelLevels, for
+        // the vertical events Bottom and Hover).
+        if (vert_event_ == "Bottom" || vert_event_ == "Hover") {
+            fuel_ratio_ =
+                std::min(before + fuel_recharge_rate_ / fuel_use_time_ * kFuelTickScale, 1.0f);
+            if (before == 0.0f && fuel_ratio_ > 0.0f) {
+                call_lua_method(L, "OnGotFuel");
+                if (destroyed() || dying_) return false;
+            }
+            return true;
+        }
+        // Flying burns a FuelUseTime's worth over its tank.
         if (!is_air_unit()) return true;
         fuel_ratio_ = std::max(before - 1.0f / (fuel_use_time_ * 10.0f), 0.0f);
         if (fuel_ratio_ == 0.0f && before > 0.0f) {

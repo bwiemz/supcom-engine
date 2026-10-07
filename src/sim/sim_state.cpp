@@ -3018,6 +3018,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             units.mix(ac.timeout_tick);
             units.mix(static_cast<u64>(static_cast<u32>(ac.sustained_turn_ticks)));
             units.mix_f32(ac.yaw_rate);
+            // A hovering aircraft's circle, once drawn.
+            if (ac.circle_reverse || ac.circle_elevation != 0.0f ||
+                ac.circle_radius_ratio != 1.0f) {
+                units.mix(0x4349524300000000ull | (ac.circle_reverse ? 1u : 0u)); // "CIRC"
+                units.mix_f32(ac.circle_elevation);
+                units.mix_f32(ac.circle_radius_ratio);
+            }
         }
         // What a carrier keeps inside (M206q), only when it keeps something.
         if (!u.stored_ids().empty()) {

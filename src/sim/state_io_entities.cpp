@@ -1213,6 +1213,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
           ar.random_max_change_combat_state_time, ar.predict_ahead_for_bomb_drop,
           ar.attack_elevation, ar.k_turn, ar.k_turn_damping, ar.k_move, ar.k_move_damping})
         w.f32v(v);
+    w.b(ar.hover_over_attack);
+    w.b(ar.circling_dir_change);
+    for (const f32 v : {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
+                        ar.circling_radius_max, ar.circling_radius_vs_air_mult,
+                        ar.circling_elevation_ratio, ar.circling_change_frequency, ar.bank_factor})
+        w.f32v(v);
     const AirCombatState& ac = u.air_combat_;
     w.u8v(ac.state);
     w.u32v(ac.timeout_tick);
@@ -1220,6 +1226,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(ac.yaw_rate);
     w.vec3(ac.velocity);
     w.b(ac.flying);
+    w.b(ac.circle_reverse);
+    w.f32v(ac.circle_elevation);
+    w.f32v(ac.circle_radius_ratio);
+    w.vec3(ac.circle_anchor);
     w.f32v(u.heading_);
     w.f32v(u.pitch_);
     w.f32v(u.bank_angle_);
@@ -1566,6 +1576,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
           &ar.random_max_change_combat_state_time, &ar.predict_ahead_for_bomb_drop,
           &ar.attack_elevation, &ar.k_turn, &ar.k_turn_damping, &ar.k_move, &ar.k_move_damping})
         *v = r.f32v();
+    ar.hover_over_attack = r.b();
+    ar.circling_dir_change = r.b();
+    for (f32* v : {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
+                   &ar.circling_radius_max, &ar.circling_radius_vs_air_mult,
+                   &ar.circling_elevation_ratio, &ar.circling_change_frequency, &ar.bank_factor})
+        *v = r.f32v();
     AirCombatState& ac = u.air_combat_;
     ac.state = r.u8v();
     ac.timeout_tick = r.u32v();
@@ -1573,6 +1589,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ac.yaw_rate = r.f32v();
     ac.velocity = r.vec3();
     ac.flying = r.b();
+    ac.circle_reverse = r.b();
+    ac.circle_elevation = r.f32v();
+    ac.circle_radius_ratio = r.f32v();
+    ac.circle_anchor = r.vec3();
     u.heading_ = r.f32v();
     u.pitch_ = r.f32v();
     u.bank_angle_ = r.f32v();
