@@ -3,6 +3,7 @@
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
@@ -596,6 +597,9 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     tick_dive(ctx.terrain, L);
     if (destroyed() || !in_registry()) return false;
 
+    // A hovering aircraft circles its work (item 6).
+    tick_work_circling(dt, ctx);
+
     // An idle aircraft comes down (item 6).
     tick_idle_landing(dt, ctx);
     if (destroyed() || !in_registry()) return false;
@@ -651,7 +655,7 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
 
     // Fuel: flying burns it. Running dry doesn't bring an aircraft down: its
     // script slows it (OnRunOutOfFuel) until refuelling restores it (OnGotFuel,
-    // docked at a staging platform: see tick_docked).
+    // landed, or docked at a staging platform: see tick_docked).
     if (!tick_fuel(dt, ctx, nullptr)) return false;
 
     return true;
@@ -2510,6 +2514,28 @@ void Unit::take_off(SimContext& ctx) {
     set_unit_state("MovingDown", false);
     set_unit_state("MovingUp", true);
     set_vert_event("Up", ctx.L);
+}
+
+bool Unit::circles_its_work() const {
+    return circles(*this) && (is_building() || is_repairing() || is_reclaiming() || is_capturing());
+}
+
+void Unit::tick_work_circling(f64 dt, SimContext& ctx) {
+    if (!ctx.sim || !circles_its_work()) return;
+    // An attack it circles is its order's to fly.
+    if (!command_queue_.empty() && command_queue_.front().type == CommandType::Attack &&
+        command_queue_.front().engaged)
+        return;
+    navigator_.abort_move();
+    CircleAround around;
+    around.center = air_combat_.flying ? air_combat_.circle_anchor : position();
+    if (is_building() || is_repairing()) {
+        const Entity* focus =
+            ctx.registry.find(is_building() ? build_target_id_ : repair_target_id_);
+        if (focus && !focus->destroyed()) around.center = focus->position();
+    }
+    around.move_goal = air_combat_.flying ? air_combat_.circle_anchor : position();
+    fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
 }
 
 void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {

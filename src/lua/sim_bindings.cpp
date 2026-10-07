@@ -1316,6 +1316,22 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 rules.k_turn_damping = number("KTurnDamping", 3.0f);
                 rules.k_move = number("KMove", 1.0f);
                 rules.k_move_damping = number("KMoveDamping", 1.0f);
+                // A hovering aircraft's circling (CalcCirclingOrientation).
+                rules.hover_over_attack = flag("HoverOverAttack");
+                {
+                    lua_pushstring(L, "CirclingDirChange");
+                    lua_rawget(L, air);
+                    rules.circling_dir_change = lua_isnil(L, -1) || flag("CirclingDirChange");
+                    lua_pop(L, 1);
+                }
+                rules.circling_min_airspeed = rules.min_airspeed;
+                rules.circling_turn_mult = number("CirclingTurnMult", 3.0f);
+                rules.circling_radius_min = number("CirclingRadiusChangeMinRatio", 0.6f);
+                rules.circling_radius_max = number("CirclingRadiusChangeMaxRatio", 0.9f);
+                rules.circling_radius_vs_air_mult = number("CirclingRadiusVsAirMult", 1.0f);
+                rules.circling_elevation_ratio = number("CirclingElevationChangeRatio", 0.25f);
+                rules.circling_change_frequency = number("CirclingFlightChangeFrequency", 2.0f);
+                rules.bank_factor = number("BankFactor", 0.5f);
                 unit->set_air_combat_rules(rules);
             }
             lua_pop(L, 2); // Air table (or nil) + bp table

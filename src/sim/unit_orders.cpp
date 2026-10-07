@@ -271,10 +271,13 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     }
     // An attack run ends with its order: Moho's flight resets the combat
     // state once the aircraft has no target to attack.
+    // So does a hovering aircraft's circling, which goes on while it works
+    // (Moho's hover orientation zeroes the circling's timeout).
     if (air_combat_.flying || air_combat_.state != 0) {
-        const bool running = !command_queue_.empty() &&
-                             command_queue_.front().type == CommandType::Attack &&
-                             command_queue_.front().engaged;
+        const bool running =
+            (!command_queue_.empty() && command_queue_.front().type == CommandType::Attack &&
+             command_queue_.front().engaged) ||
+            circles_its_work();
         if (!running) end_attack_run(*this);
     }
     while (!command_queue_.empty()) {
@@ -426,6 +429,29 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Hold;
         }
     }
+    // A hovering aircraft is handed its target alike, and from then on
+    // circles it (Moho's CalcCirclingOrientation) at its target weapon's
+    // reach -- the first weapon that can attack it -- facing it.
+    if (circles(*this) && ctx.sim) {
+        const f32 engage = air_combat_rules_.engage_distance;
+        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
+        if (cmd.engaged) {
+            navigator_.abort_move();
+            CircleAround around;
+            around.center = target->position();
+            around.move_goal = target->position();
+            for (const auto& w : weapons_) {
+                if (w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim)) {
+                    around.weapon_radius = w->max_range;
+                    break;
+                }
+            }
+            around.target_in_air =
+                target->is_unit() && static_cast<const Unit*>(target)->layer() == "Air";
+            fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            return OrderStep::Hold;
+        }
+    }
     if (dist2 > range2) {
         // Move toward target
         if (!navigator_.is_moving() || navigator_.goal().x != target->position().x ||
@@ -515,6 +541,23 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (cmd.engaged) {
             navigator_.abort_move();
             fly_attack_run(*this, at, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            return OrderStep::Hold;
+        }
+    }
+    // A hovering aircraft, handed the point alike, circles it at its
+    // weapon's reach (with none, StartTurnDistance's circle).
+    if (circles(*this) && ctx.sim) {
+        const f32 engage = air_combat_rules_.engage_distance;
+        if (!cmd.engaged &&
+            ((weapon && weapon->in_firing_range(*this, at)) || dist2 < engage * engage))
+            cmd.engaged = true;
+        if (cmd.engaged) {
+            navigator_.abort_move();
+            CircleAround around;
+            around.center = at;
+            around.move_goal = at;
+            around.weapon_radius = weapon ? weapon->max_range : 0.0f;
+            fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
             return OrderStep::Hold;
         }
     }

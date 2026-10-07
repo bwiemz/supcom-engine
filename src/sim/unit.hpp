@@ -116,6 +116,19 @@ struct AirCombatRules {
     f32 k_turn_damping = 3.0f;
     f32 k_move = 1.0f;
     f32 k_move_damping = 1.0f;
+    /// A hovering aircraft's circling (Moho's CalcCirclingOrientation):
+    /// HoverOverAttack ones never circle. The rest circle a target, or
+    /// what they work on, at a radius that changes now and then.
+    bool hover_over_attack = false;
+    bool circling_dir_change = true;        ///< it may change direction at each change
+    f32 circling_min_airspeed = 0.0f;       ///< MinAirspeed as given (0 missing): its step round
+    f32 circling_turn_mult = 3.0f;          ///< its turn gain while circling
+    f32 circling_radius_min = 0.6f;         ///< CirclingRadiusChangeMinRatio
+    f32 circling_radius_max = 0.9f;         ///< CirclingRadiusChangeMaxRatio
+    f32 circling_radius_vs_air_mult = 1.0f; ///< against a target in the air
+    f32 circling_elevation_ratio = 0.25f;   ///< x attack_elevation: its height's wobble
+    f32 circling_change_frequency = 2.0f;   ///< seconds, to twice that, between changes
+    f32 bank_factor = 0.5f;                 ///< how far it leans into a change of speed
 };
 
 /// Its attack run under way: Moho's CUnitMotion combat state, and the
@@ -127,6 +140,16 @@ struct AirCombatState {
     f32 yaw_rate = 0.0f; ///< rad/s
     Vector3 velocity{};  ///< per second, horizontal
     bool flying = false; ///< the combat flight has the airframe
+    /// Circling (a hovering aircraft's), drawn again at each timeout: the
+    /// way round (Moho's -90 degree turn of the tangent when set), its
+    /// height off AttackElevation, and its radius's ratio.
+    bool circle_reverse = false;
+    f32 circle_elevation = 0.0f;
+    f32 circle_radius_ratio = 1.0f;
+    /// Where it was when it began circling its work: Moho's motion target
+    /// once it stops (CUnitMotion::Stop), which a reclaim's or capture's
+    /// circle goes round.
+    Vector3 circle_anchor{};
 };
 
 /// A blueprint's Economy.BuildTime, BuildCostMass and BuildCostEnergy (0
@@ -949,6 +972,9 @@ public:
         auto_land_time_ = seconds;
         start_turn_distance_ = start_turn_distance;
     }
+    /// Air.StartTurnDistance: also a circle's radius before its ratio when
+    /// a hovering aircraft circles its work.
+    f32 start_turn_distance() const { return start_turn_distance_; }
     /// An aircraft landing, or landed, of its own accord.
     struct IdleLanding {
         u32 idle_since = 0;       ///< Moho's mPreparationTick: when its orders ran out (0 with one)
@@ -1322,6 +1348,12 @@ private:
     /// AutoLandTime after its orders ran out, near where it is, it finds a
     /// place (PrepareMove), reserves it and comes down onto it.
     void tick_idle_landing(f64 dt, SimContext& ctx);
+    /// A hovering aircraft at work circles it (Moho's ComputeAirControl: its
+    /// focus while Building, Repairing, Reclaiming or Capturing).
+    bool circles_its_work() const;
+    /// Its circling this tick: round what it builds or repairs, or round
+    /// where it stopped to reclaim or capture.
+    void tick_work_circling(f64 dt, SimContext& ctx);
     /// A landed aircraft given an order goes back to the air.
     void take_off(SimContext& ctx);
     /// A new vertical motion event, told to the script
