@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/types.hpp"
+
 namespace osc::sim {
 
 class SimState;
@@ -15,6 +17,17 @@ class Unit;
 /// Units and candidates are taken in id order, so every platform decides the
 /// same.
 void steer_ground_units(SimState& sim);
+
+/// The formation a unit moves in, as a key (0: none): Moho's
+/// mInfoCache.mFormationLayer (Unit::GetFormation, kept only for a form
+/// command). A unit guarding, not an engineer and not off fighting for it,
+/// is in its guarded unit's guard formation; one carrying out a slot of a
+/// formation order, in that order's.
+u64 formation_layer(const Unit& u);
+
+/// Moho's Unit::IsSameFormationLayerWith: in one formation, and neither
+/// attacking.
+bool same_formation_layer(const Unit& a, const Unit& b);
 
 /// Moho's Unit::IsHigherPriorityThan: whether `a` keeps its way when it
 /// meets `b` (the other yields). The formation lead and priority order are

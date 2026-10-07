@@ -76,6 +76,10 @@ struct UnitCommand {
     /// Held to this speed (a formation keeps its slowest unit's pace); 0:
     /// the unit's own. Set when a formation order is laid out.
     f32 speed_cap = 0;
+    /// One slot of a formation order the sim laid out: its units share the
+    /// order's command_id, as Moho's share a formation instance, and so
+    /// move in one formation layer.
+    bool formed = false;
     /// A TransportUnload's cargo to drop, chosen when the order is issued
     /// (IssueTransportUnloadSpecific's category, as Moho's
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The
