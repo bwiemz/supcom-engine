@@ -1,6 +1,7 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/engine_bindings.hpp"
 #include "core/dmath.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
@@ -4402,50 +4403,10 @@ static int l_EulerToQuaternion(lua_State* L) {
 /// with right level; a zero vector gives the identity, and straight up or
 /// down a quarter turn about X.
 static int l_OrientFromDir(lua_State* L) {
-    f32 fx = 0, fy = 0, fz = 0;
-    if (lua_istable(L, 1)) read_vec3(L, 1, fx, fy, fz);
-    const f32 flen = std::sqrt(fx * fx + fy * fy + fz * fz);
-    if (flen == 0.0f) {
-        push_quaternion(L, 0, 0, 0, 1);
-        return 1;
-    }
-    fx /= flen;
-    fy /= flen;
-    fz /= flen;
-    f32 rx = fz, rz = -fx; // right: level, (forward.z, 0, -forward.x)
-    const f32 rlen = std::sqrt(rx * rx + rz * rz);
-    if (rlen == 0.0f) {
-        constexpr f32 kHalfSqrtTwo = 0.70710677f;
-        push_quaternion(L, fy > 0.0f ? -kHalfSqrtTwo : kHalfSqrtTwo, 0, 0, kHalfSqrtTwo);
-        return 1;
-    }
-    rx /= rlen;
-    rz /= rlen;
-    const f32 ry = 0.0f;
-    const f32 ux = fy * rz - fz * ry, uy = fz * rx - rz * fx, uz = ry * fx - fy * rx;
-    // Rows as axes (m): the rotation matrix is its transpose, so
-    // x = m12 - m21, y = m20 - m02, z = m01 - m10 (Moho's MatrixToQuat).
-    const f32 m[3][3] = {{rx, ry, rz}, {ux, uy, uz}, {fx, fy, fz}};
-    const f32 trace = m[0][0] + m[1][1] + m[2][2];
-    f32 x, y, z, w;
-    if (trace > 0.0f) {
-        const f32 t = std::sqrt(trace + 1.0f) * 2.0f; // 4w
-        w = 0.25f * t;
-        x = (m[1][2] - m[2][1]) / t;
-        y = (m[2][0] - m[0][2]) / t;
-        z = (m[0][1] - m[1][0]) / t;
-    } else {
-        // With right level, m11 = |forward.xz| >= 0, and the trace can only
-        // fall to zero when forward.z < 0, which makes m00 and m22 negative:
-        // m11 is the largest diagonal, so of MatrixToQuat's other branches
-        // only the Y one is reachable.
-        const f32 t = std::sqrt(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f; // 4y
-        w = (m[2][0] - m[0][2]) / t;
-        x = (m[0][1] + m[1][0]) / t;
-        y = 0.25f * t;
-        z = (m[1][2] + m[2][1]) / t;
-    }
-    push_quaternion(L, x, y, z, w);
+    sim::Vector3 dir;
+    if (lua_istable(L, 1)) read_vec3(L, 1, dir.x, dir.y, dir.z);
+    const sim::Quaternion q = sim::coords_orient(dir);
+    push_quaternion(L, q.x, q.y, q.z, q.w);
     return 1;
 }
 

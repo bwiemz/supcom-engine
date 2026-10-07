@@ -1614,8 +1614,8 @@ void SimState::update_entities() {
                                                             (after.z - before.z) * per_second});
             }
         } else if (e->is_projectile()) {
-            static_cast<Projectile*>(e)->update(SECONDS_PER_TICK,
-                                                 entity_registry_, L_, terrain_.get());
+            static_cast<Projectile*>(e)->update(SECONDS_PER_TICK, entity_registry_, L_,
+                                                terrain_.get(), tick_count());
         } else if (e->is_prop()) {
             // A fallen tree sinking away (SinkAway) before its script destroys it.
             auto* prop = static_cast<Prop*>(e);

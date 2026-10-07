@@ -67,10 +67,19 @@ public:
     f32 max_speed = 0;           // 0 = unlimited
     f32 acceleration = 0;        // linear accel per second
     f32 ballistic_accel = 0;     // vertical gravity (negative = down)
-    f32 turn_rate = 0;           // degrees/sec (store-only for now)
+    f32 turn_rate = 0;           // degrees/sec: how fast it turns its facing
     bool tracking = false;       // TrackTarget(true/false)
-    f32 max_zig_zag = 0;         // ChangeMaxZigZag / GetMaxZigZag
-    f32 zig_zag_freq = 0;        // ChangeZigZagFrequency / GetZigZagFrequency
+    bool lead_target = false;    // Physics.LeadTarget: it aims where its target will be
+    f32 max_zig_zag = 0;         // Physics.MaxZigZag, ChangeMaxZigZag
+    f32 zig_zag_freq = 0;        // Physics.ZigZagFrequency (seconds), ChangeZigZagFrequency
+    /// Its zig-zag offset and the tick it is next drawn (Moho's
+    /// mZigZagRandomOffset, mZigZagNextTick).
+    Vector3 zig_zag_offset;
+    u32 zig_zag_next_tick = 0;
+    /// Its target gone, it still steers once at where it last was (Moho's
+    /// mKeepLastAimLatch: set at launch at something neither in the air nor
+    /// under the water).
+    bool keep_last_aim = false;
     f32 detonate_above_height = 0;  // ChangeDetonateAboveHeight
     f32 detonate_below_height = 0;  // ChangeDetonateBelowHeight
     bool destroy_on_water = false;   // SetDestroyOnWater
@@ -93,9 +102,14 @@ public:
     /// Entities an OnCollisionCheck turned it away from: it passes them.
     std::vector<u32> passed;
 
-    /// Per-tick: move, check collision, impact.
+    /// Per-tick, `tick` the sim's: move (Moho's MotionTick), check
+    /// collision, impact.
     void update(f64 dt, EntityRegistry& registry, lua_State* L,
-                const map::Terrain* terrain = nullptr);
+                const map::Terrain* terrain = nullptr, u32 tick = 0);
+
+    /// At launch: whether it steers on at its last aim once its target is
+    /// gone (keep_last_aim), from its target's layer.
+    void arm_lost_target_aim(const EntityRegistry& registry);
 
     /// What its blueprint's Physics leaves to whoever creates it.
     struct BlueprintPhysics {
@@ -125,6 +139,11 @@ private:
     /// self:method() on its script, if it has one. False once the projectile
     /// is gone (the script may destroy it).
     bool call_script(lua_State* L, EntityRegistry& registry, const char* method);
+    /// Moho's UpdateTracking: turn `facing` toward its aim (led, zig-zagged,
+    /// kept under the water), at most its turn rate. False once the
+    /// projectile is gone (OnLostTarget may destroy it).
+    bool steer(Quaternion& facing, EntityRegistry& registry, lua_State* L,
+               const map::Terrain* terrain, u32 tick);
     /// The engine's own damage, for projectiles no weapon passed DamageData to
     /// (the engine-fired silo and OverCharge shots).
     void deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry);

@@ -20,7 +20,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 
 | Metric | Value |
 | --- | --- |
-| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,093<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
+| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,104<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
 | Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->224<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below. |
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->5<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->4<!-- /metric --> |

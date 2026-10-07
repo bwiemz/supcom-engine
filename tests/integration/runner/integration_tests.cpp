@@ -7912,11 +7912,17 @@ void test_impact(TestContext& ctx) {
         Warp(dive, {wx + 4, top, wz})
         dive:SetVelocity(0, -10, 0)
         dive:SetDestroyOnWater(false)
-        -- Homing on a unit that is then destroyed.
+        -- Homing on a unit that is then destroyed, and a shell sent at it
+        -- that doesn't home (Moho tells only a tracking one, UpdateTracking).
         local mark = CreateUnitHPR('ueb1101', 'ARMY_2', 300, GetTerrainHeight(300, 700), 700, 0, 0, 0)
         local lost = shell('lost')
         lost:SetVelocity(0, 0, 0)
         lost:SetNewTarget(mark)
+        lost:TrackTarget(true):SetTurnRate(90)
+        local unlost = shell('unlost')
+        unlost:SetVelocity(0, 0, 0)
+        unlost:SetNewTarget(mark)
+        unlost:TrackTarget(false)
         __osc_mark = mark
     )");
     ctx.sim.tick();
@@ -7935,9 +7941,14 @@ void test_impact(TestContext& ctx) {
             error('dive: ' .. table.concat(__osc_events.dive, ','))
         end
     )");
-    lua_check("Test 9: a shell whose target is destroyed hears OnLostTarget", R"(
+    lua_check("Test 9: a homing shot whose target is destroyed hears OnLostTarget; a shell "
+              "that doesn't home doesn't",
+              R"(
         if __osc_events.lost[1] ~= 'OnLostTarget' then
             error('events: ' .. table.concat(__osc_events.lost, ','))
+        end
+        for _, e in __osc_events.unlost do
+            if e == 'OnLostTarget' then error('the shell heard OnLostTarget') end
         end
     )");
 
@@ -8299,7 +8310,8 @@ void test_collide(TestContext& ctx) {
         __osc_spot = {215, __osc_ground(215, 920), 920}
         local p = __osc_shoot(t, 200, __osc_ground(200, 920) + 30, 930, 1.0, __osc_sent)
         p:SetCollideSurface(false)
-        p:TrackTarget(true):SetTurnRate(720)
+        -- A missile: it turns, and thrusts the way it faces (Moho's MotionTick)
+        p:TrackTarget(true):SetTurnRate(720):SetAcceleration(20):SetMaxSpeed(20)
         p:SetNewTargetGround(__osc_spot)
         -- FAF's engine's three-number form (its Projectile.lua calls it).
         __osc_sent_xyz = {}
@@ -8307,7 +8319,7 @@ void test_collide(TestContext& ctx) {
         __osc_spot_xyz = {215, __osc_ground(215, 950), 950}
         local q = __osc_shoot(u, 200, __osc_ground(200, 950) + 30, 960, 1.0, __osc_sent_xyz)
         q:SetCollideSurface(false)
-        q:TrackTarget(true):SetTurnRate(720)
+        q:TrackTarget(true):SetTurnRate(720):SetAcceleration(20):SetMaxSpeed(20)
         q:SetNewTargetGroundXYZ(__osc_spot_xyz[1], __osc_spot_xyz[2], __osc_spot_xyz[3])
     )");
     run(60);
