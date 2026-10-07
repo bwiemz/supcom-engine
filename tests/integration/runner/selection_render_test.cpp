@@ -221,7 +221,8 @@ void test_selection_render(TestContext& ctx) {
     // Where that ray meets the ground beyond the aircraft
     f32 gx = ap.x;
     f32 gz = ap.z;
-    for (f32 s = len; s < len + 400.0f; s += 0.25f) {
+    for (int step = 0; step < 1600; ++step) {
+        const f32 s = len + 0.25f * static_cast<f32>(step);
         gx = eye.x + dir.x * s;
         gz = eye.z + dir.z * s;
         if (eye.y + dir.y * s <= ctx.sim.terrain()->get_surface_height(gx, gz)) break;

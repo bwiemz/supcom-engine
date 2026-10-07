@@ -81,13 +81,13 @@ std::optional<f32> ray_box_distance(const PickRay& ray, const sim::Vector3& cent
     return std::max(t_in, 0.0f);
 }
 
-std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& vp, const sim::Vector3& p,
-                                               f32 width, f32 height) {
+std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_proj,
+                                               const sim::Vector3& p, f32 width, f32 height) {
     // As the overlays project: clip = VP * p, and our projection's y runs
     // down the screen.
-    const f32 cx = vp[0] * p.x + vp[4] * p.y + vp[8] * p.z + vp[12];
-    const f32 cy = vp[1] * p.x + vp[5] * p.y + vp[9] * p.z + vp[13];
-    const f32 cw = vp[3] * p.x + vp[7] * p.y + vp[11] * p.z + vp[15];
+    const f32 cx = view_proj[0] * p.x + view_proj[4] * p.y + view_proj[8] * p.z + view_proj[12];
+    const f32 cy = view_proj[1] * p.x + view_proj[5] * p.y + view_proj[9] * p.z + view_proj[13];
+    const f32 cw = view_proj[3] * p.x + view_proj[7] * p.y + view_proj[11] * p.z + view_proj[15];
     if (cw <= 0.001f) return std::nullopt;
     return std::array<f32, 2>{(cx / cw + 1.0f) * 0.5f * width, (cy / cw + 1.0f) * 0.5f * height};
 }
