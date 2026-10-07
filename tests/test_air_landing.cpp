@@ -252,3 +252,44 @@ TEST_CASE("A game saved while an aircraft comes down loads and goes on as the or
     }
     CHECK(plane.layer() == "Land");
 }
+
+TEST_CASE("A landed aircraft refuels by itself, at its FuelRechargeRate; flying burns fuel",
+          "[air_landing]") {
+    World w;
+    Unit& plane = *w.make("plane", 40.0f, 40.0f);
+    plane.set_fuel_use_time(100.0f);     // 1000 ticks a tank
+    plane.set_fuel_recharge_rate(10.0f); // 10% a second, landed
+    plane.set_fuel_ratio(0.5f);
+    w.sim.tick();
+    CHECK(plane.fuel_ratio() < 0.5f); // up, it burns
+    w.run_until([&] { return !plane.is_air_unit(); }, 300);
+    REQUIRE(plane.vert_event() == "Bottom");
+    const f32 down = plane.fuel_ratio();
+    for (int i = 0; i < 10; ++i) w.sim.tick();
+    // A second on the ground: 10 / 100 x 0.1 a tick, ten ticks.
+    CHECK(std::abs(plane.fuel_ratio() - std::min(down + 0.1f, 1.0f)) < 1e-4f);
+    for (int i = 0; i < 100; ++i) w.sim.tick();
+    CHECK(plane.fuel_ratio() == 1.0f);
+}
+
+TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs back and flies "
+          "the order",
+          "[air_landing]") {
+    World w;
+    Unit& plane = *w.make("plane", 40.0f, 40.0f);
+    w.run_until([&] { return plane.idle_landing().descending; }, 200);
+    REQUIRE(plane.idle_landing().descending);
+    w.sim.tick();
+    const auto place = plane.idle_landing().reserved;
+    REQUIRE(w.sim.occupancy().reserved_any(place));
+    const f32 low = plane.current_altitude();
+    World::move(plane, 100.0f, 40.0f);
+    w.sim.tick();
+    CHECK_FALSE(plane.idle_landing().descending);
+    CHECK_FALSE(plane.has_unit_state("MovingDown"));
+    CHECK_FALSE(w.sim.occupancy().reserved_any(place));
+    CHECK(plane.is_air_unit());
+    w.run_until([&] { return plane.command_queue().empty(); }, 400);
+    CHECK(plane.position().x > 90.0f);
+    CHECK(plane.current_altitude() > low);
+}

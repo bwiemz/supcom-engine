@@ -4,6 +4,8 @@
 // machine (CUnitMotion::ComputeAirCombatTactics), the airframe's lag in a
 // run, and where a bomb must leave to land on its target (CalcBombDrop,
 // UnitWeapon::CanFire). docs/plans/2026-10-05-air-attack-runs-design.md.
+// And a hovering aircraft's circling (CalcCirclingOrientation; roadmap
+// item 6).
 
 #include "core/types.hpp"
 #include "sim/unit.hpp"
@@ -94,5 +96,63 @@ void fly_attack_run(Unit& unit, const Vector3& at, SimState& sim, const map::Ter
 /// The run ended: its combat state goes back to None, and the airframe to
 /// the plain flight, at the speed it had.
 void end_attack_run(Unit& unit);
+
+/// A hovering aircraft that circles rather than hangs still: a flier in the
+/// air, not winged and not HoverOverAttack (Moho's ComputeAirControl; its
+/// target or its work decide when).
+bool circles(const Unit& unit);
+
+/// Moho's re-pick in CalcCirclingOrientation, once `tick` is past the
+/// state's timeout. In order, it draws:
+/// 1. the way round (only with CirclingDirChange);
+/// 2. the height off AttackElevation, within +-CirclingElevationChangeRatio
+///    of it;
+/// 3. the radius's ratio;
+/// 4. the next timeout, CirclingFlightChangeFrequency to twice that on.
+void circling_draws(AirCombatState& state, const AirCombatRules& rules, f32 attack_elevation,
+                    u32 tick, SimRandom& rng);
+
+/// The geometry one circling tick looks at.
+struct CirclingInput {
+    Vector3 position;  ///< the aircraft's
+    Vector3 center;    ///< what it circles
+    f32 radius = 0.0f; ///< its circle's (the ratio applied)
+    f32 min_airspeed = 0.0f;
+    f32 max_airspeed = 0.0f;
+    f32 height = 0.0f; ///< AttackElevation plus the drawn offset
+    bool reverse = false;
+};
+
+/// What the circling asks this tick (CalcCirclingOrientation).
+struct CirclingSteer {
+    Vector3 aim;       ///< the point on the circle it makes for
+    Vector3 velocity;  ///< per second: to the aim, at most MaxAirspeed
+    f32 facing = 0.0f; ///< its nose, at the centre: atan2(x, z)
+};
+
+/// Moho's aim: the circle's point a MinAirspeed's step round from where
+/// the aircraft is, at its height over the terrain there (the terrain only,
+/// at the nearest whole coordinates). Its velocity heads there, in three
+/// dimensions.
+CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrain);
+
+/// What a circling aircraft circles.
+struct CircleAround {
+    Vector3 center;
+    /// Its target weapon's MaxRadius. 0: none, and the circle is
+    /// StartTurnDistance's.
+    f32 weapon_radius = 0.0f;
+    bool target_in_air = false; ///< CirclingRadiusVsAirMult applies
+    /// Where its move order would take it (Moho's mTargetPosition), which
+    /// the airframe's damping reads.
+    Vector3 move_goal;
+};
+
+/// One tick of a hovering aircraft circling: the re-pick, the aim, and the
+/// airframe after it with Moho's lag. The nose turns to the centre under
+/// KTurn x CirclingTurnMult, and the velocity eases under KMove and the
+/// damping. It leans into its change of velocity by BankFactor.
+void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
+                  const map::Terrain* terrain, f32 dt);
 
 } // namespace osc::sim
