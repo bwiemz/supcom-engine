@@ -291,8 +291,9 @@ void apply_unit_defaults(lua_State* L, int bp) {
 /// A projectile's Physics spreads (the *Range fields) a .bp leaves out read
 /// as Moho's RProjectileBlueprintPhysics defaults: 0, but a direction spread
 /// of 1.5 across (faf-re). FAF's cruise missiles add MaxSpeedRange to
-/// MaxSpeed as they are made (TIFMissileCruise01 has none). The engine's own
-/// flight reads none of them, so only scripts see these.
+/// MaxSpeed as they are made (TIFMissileCruise01 has none). The engine
+/// spreads TurnRate, MaxSpeed, Acceleration and Lifetime by theirs as each
+/// projectile is made (Projectile::apply_blueprint_physics).
 void apply_projectile_defaults(lua_State* L, int bp) {
     lua_pushstring(L, "Physics");
     lua_rawget(L, bp);

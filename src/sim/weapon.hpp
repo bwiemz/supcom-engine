@@ -19,6 +19,7 @@ namespace osc::sim {
 class AimManipulator;
 class EntityRegistry;
 class Projectile;
+class SimRandom;
 class SimState;
 class Unit;
 
@@ -44,10 +45,18 @@ public:
     Arc ballistic_arc = Arc::None;
     bool lead_target = true;                 ///< LeadTarget: aim where a moving target will be
     f32 muzzle_velocity_reduce_distance = 0; // MuzzleVelocityReduceDistance
+    /// MuzzleVelocityRandom: each shot's speed is MuzzleVelocity plus a
+    /// normal draw times this (Moho's GetMuzzleVelocity).
+    f32 muzzle_velocity_random = 0;
+    /// UseFiringSolutionInsteadOfAimBone: its shots leave along its aim, not
+    /// its muzzle bone (a mech's arm cannon, an AA gun whose barrel can't
+    /// pitch as far as it shoots).
+    bool use_firing_solution = false;
     struct ProjectilePhysics {
         bool track_target = false;
         bool use_gravity = true;
         f32 max_speed = 0;
+        bool straight_down = false; ///< StraightDownOrdinance: it leaves facing down
     };
     std::optional<ProjectilePhysics> projectile_physics;
 
@@ -55,6 +64,11 @@ public:
     /// `rise` above: its arc's, at its muzzle velocity under gravity (45
     /// degrees, the furthest, when out of reach).
     f32 launch_elevation(f32 dist, f32 rise) const;
+    /// The speed a shot leaves at for a target `distance` away (Moho's
+    /// RUnitBlueprintWeapon::GetMuzzleVelocity): MuzzleVelocity, plus a
+    /// normal draw times MuzzleVelocityRandom when `rng` is given, slowed by
+    /// sqrt(distance / MuzzleVelocityReduceDistance) within that distance.
+    f32 muzzle_speed_at(f32 distance, SimRandom* rng) const;
     /// Where to aim at `target` from a muzzle at `muzzle` facing
     /// `muzzle_forward`: Moho's CAimManipulator::Aim.
     Vector3 aim_point(const Entity& target, const Unit& owner, const Vector3& muzzle,
