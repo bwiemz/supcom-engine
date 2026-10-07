@@ -6,6 +6,7 @@
 #include "app/app.hpp"
 #include "app/bench.hpp"
 #include "app/window_commands.hpp"
+#include "app/match_telemetry.hpp"
 #include "app/support.hpp"
 #include "app/scripted_mouse.hpp"
 #include "app/ui_clicks.hpp"
@@ -76,10 +77,17 @@ struct Options {
     u32 post_load_at = 0;
     bool scripted_orders = false;
     std::string bench_report; ///< --bench <file>: the headless run's tick times (M223)
+    /// --match-telemetry <file>: the match's statistics, as JSON Lines
+    std::string match_telemetry_path;
     /// --render-bench <file> (M223b): a saved game's scene rendered, its
     /// frames' figures written; --render-scene, --render-frames, --render-warmup,
     /// --gpu-passes.
     std::string render_bench_report;
+    /// --fast-match <ticks>: the windowed loop offscreen and unpaced, for a
+    /// game started as a player's is (a launcher's /hostgame, retail's
+    /// lobby): once in the game, a sim tick each frame and a frame drawn
+    /// now and then, until the sim has run this many ticks. 0: off.
+    u32 fast_match_ticks = 0;
     std::string render_scene = "battle";
     u32 render_frames = 600;
     u32 render_warmup = 120;
@@ -337,6 +345,8 @@ private:
     bool save_written = false; ///< --save's file, once written
     /// --bench: each headless tick's time, from the run's start (M223).
     std::optional<BenchRecorder> bench;
+    /// --match-telemetry: the armies' statistics as the match plays.
+    std::optional<MatchTelemetry> telemetry;
     /// --record: the last game's replay is written as the run ends, however
     /// it ends (the normal end writes it before logging shuts down).
     struct RecordingWriter {

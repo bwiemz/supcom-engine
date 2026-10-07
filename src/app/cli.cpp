@@ -55,6 +55,12 @@ void print_usage() {
               << "  --faf-data <path>  Path to FAF data directory\n"
               << "  --print-install    Show which FA install would be used and exit\n"
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
+              << "  --match-telemetry <file>  Write the match's statistics (each army's\n"
+              << "                     economy, units and kills every 30 game seconds)\n"
+              << "                     as JSON Lines\n"
+              << "  --fast-match <ticks>  Play a game started as a player's is (/hostgame,\n"
+              << "                     the lobby) offscreen and unpaced: a sim tick a\n"
+              << "                     frame, few frames drawn; exit after that many ticks\n"
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
               << "  --camera <x>,<z>,<zoom> Initial camera target and zoom\n"
               << "  --capture-scale <s> Capture as a display at scale s draws it: the UI\n"
@@ -398,14 +404,20 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.any_test = request.headless || o.ai_skirmish;
     o.headless = (o.tick_count > 0) || o.any_test || o.replay_to_play.has_value();
 
+    o.match_telemetry_path = parse_string_arg(argc, argv, "--match-telemetry", "");
+    // --fast-match <ticks>: a player's game, offscreen and as fast as it goes
+    o.fast_match_ticks = static_cast<osc::u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--fast-match", "0").c_str(), nullptr, 10));
     o.silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-                       !parse_string_arg(argc, argv, "--golden", "").empty() || o.scripted_window;
+                       !parse_string_arg(argc, argv, "--golden", "").empty() ||
+                       o.scripted_window || o.fast_match_ticks > 0;
     // --seed N: the game's random seed (weapon spread, scripts' Random and
     // math.random). Runs that must repeat default to a fixed one.
     o.seed_arg = parse_string_arg(argc, argv, "--seed", "");
     o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
     o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
-                    parse_string_arg(argc, argv, "--golden", "").empty();
+                    parse_string_arg(argc, argv, "--golden", "").empty() &&
+                    o.fast_match_ticks == 0;
     // --load <file>: a saved game. A headless run (--ticks, --ai-skirmish)
     // catches it up and plays on; else the window opens it.
     o.load_path = parse_string_arg(argc, argv, "--load", "");

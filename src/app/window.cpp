@@ -27,7 +27,8 @@ std::optional<int> App::run_window() {
 App::Window::Window(App& app)
     : app(app), offscreen_capture(!parse_string_arg(argc, argv, "--screenshot", "").empty() ||
                                   !parse_string_arg(argc, argv, "--golden", "").empty() ||
-                                  !opt.render_bench_report.empty() || opt.scripted_window) {}
+                                  !opt.render_bench_report.empty() || opt.scripted_window ||
+                                  opt.fast_match_ticks > 0) {}
 
 std::optional<int> App::Window::run() {
     // The render benchmark's frames are 1920x1080 (M223b); captures keep
@@ -214,6 +215,12 @@ std::optional<int> App::Window::set_up() {
         // Its zones split each frame's CPU time; its overlay would add to it
         osc::Profiler::instance().set_enabled(true);
         renderer.set_profile_overlay_hidden(true);
+    }
+    if (opt.fast_match_ticks > 0) {
+        // A fixed clock, no player at the camera, and no wait for a display
+        renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
+        renderer.camera().set_input_enabled(false);
+        renderer.set_vsync(false);
     }
     if (!screenshot_path.empty()) {
         renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
@@ -435,7 +442,8 @@ std::optional<int> App::Window::start_flows() {
 }
 
 bool App::Window::running() const {
-    return !renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
+    return !renderer.should_close() && !screenshot_done && !fast_match_done() &&
+           !(tests && tests->frames_done()) &&
            !(render_bench && (render_bench->done() || render_bench->gave_up())) &&
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
@@ -444,6 +452,8 @@ bool App::Window::running() const {
 }
 
 std::optional<int> App::Window::finish() {
+    if (app.telemetry)
+        app.telemetry->finish(sim_state.get(), fast_match_done() ? "ticks" : "closed");
     // The render benchmark's report, while the renderer and the game are up
     if (render_bench) {
         const bool complete = render_bench->done() && sim_state;
@@ -558,7 +568,28 @@ std::optional<int> App::Window::finish() {
         return pass ? 0 : 1;
     }
     if (!screenshot_path.empty()) return screenshot_ok ? 0 : 1;
+    if (opt.fast_match_ticks > 0) {
+        if (!fast_match_done()) {
+            spdlog::error("--fast-match: the run ended at tick {}, before tick {}",
+                          sim_state ? sim_state->tick_count() : 0, opt.fast_match_ticks);
+            return 1;
+        }
+        spdlog::info("Fast match: {} ticks ({:.1f}s game time) in {} frames, {} drawn",
+                     sim_state->tick_count(), sim_state->game_time(), fast_match_frames,
+                     fast_match_drawn);
+        return 0;
+    }
     return std::nullopt;
+}
+
+bool App::Window::fast_match_in_game() const {
+    return opt.fast_match_ticks > 0 && sim_state &&
+           game_state_mgr.current() == osc::GameState::GAME;
+}
+
+bool App::Window::fast_match_done() const {
+    return opt.fast_match_ticks > 0 && sim_state &&
+           sim_state->tick_count() >= opt.fast_match_ticks;
 }
 
 std::optional<int> App::Window::run_without_renderer() {

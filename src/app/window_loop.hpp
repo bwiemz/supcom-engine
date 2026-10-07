@@ -119,6 +119,15 @@ private:
     }
 
     static constexpr double kScreenshotFrameDt = 1.0 / 60.0;
+    /// --fast-match draws one frame in this many while the game plays: the
+    /// renderer keeps taking the sim's events, and the run spends its time
+    /// on the sim.
+    static constexpr osc::u32 kFastMatchDrawEvery = 50;
+    /// --fast-match: in the game (a tick a frame), and done (its ticks run).
+    bool fast_match_in_game() const;
+    bool fast_match_done() const;
+    osc::u32 fast_match_frames = 0;
+    osc::u32 fast_match_drawn = 0;
     /// Scripted windowed runs (a test mode's, --replay-flow-test): four
     /// frames per sim tick, on a fixed clock.
     static constexpr double kInterpFrameDt = sim::SimState::SECONDS_PER_TICK / 4.0;

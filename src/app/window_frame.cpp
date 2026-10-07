@@ -36,6 +36,7 @@ bool App::Window::frame() {
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
     advance_sim(session_dt);
+    if (app.telemetry && sim_state) app.telemetry->after_tick(*sim_state);
 
     run_beats();
     finish_world_ui_after_post_load();
@@ -83,6 +84,10 @@ double App::Window::begin_frame() {
     prev_time = now;
     if (!screenshot_path.empty() || render_bench) dt = kScreenshotFrameDt;
     if (opt.scripted_window) dt = kInterpFrameDt;
+    // --fast-match: the front end and the load on the capture clock (their
+    // scripts wait on it), then a sim tick each frame.
+    if (opt.fast_match_ticks > 0)
+        dt = fast_match_in_game() ? osc::sim::SimState::SECONDS_PER_TICK : kScreenshotFrameDt;
     // The session runs on the median of the last frame times (Moho's
     // CScApp::Main and RollingFrameRates), or on a fixed step as Moho's
     // /framerate gives one: a slow frame adds only a usual frame's time to
@@ -90,8 +95,9 @@ double App::Window::begin_frame() {
     // UI's WaitSeconds keeps. (Retail's commander is selected at the start
     // only if that leaves the UI's tick short of the warp's unselectable 30.)
     frame_times.push(dt);
-    session_dt = fixed_step() ? dt : frame_times.median();
+    session_dt = (fixed_step() || opt.fast_match_ticks > 0) ? dt : frame_times.median();
     wall_dt = dt;
+
     // Clamp dt to avoid spiral of death
     if (dt > 0.25) dt = 0.25;
     return dt;
@@ -468,6 +474,10 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
 }
 
 void App::Window::render(const sim::FrameView& frame_view) {
+    if (fast_match_in_game()) {
+        if (fast_match_frames++ % kFastMatchDrawEvery != 0) return;
+        ++fast_match_drawn;
+    }
     const auto& sel = input_handler.selected();
     // The render benchmark waits for its save to load, front end included
     if (render_bench && !(sim_state && game_state_mgr.current() == osc::GameState::GAME))
