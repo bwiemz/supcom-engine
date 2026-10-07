@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "blueprints/blueprint_store.hpp"
 #include "lua/smoke_test.hpp"
@@ -9,6 +10,7 @@
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/weapon.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/projectile.hpp"
 #include "sim/entity_registry.hpp"
 
@@ -857,25 +859,33 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     target->set_position({0, 0, 50});
     osc::u32 tid = registry.register_entity(std::move(target));
 
-    // Create a tracking projectile moving in +X, target is in +Z
+    // A tracking projectile facing and moving +X, its target in +Z. As
+    // Moho's UpdateTracking does, it turns its facing (a tenth of its turn
+    // rate a tick), keeps what of its velocity lies along it (VelocityAlign)
+    // and thrusts along it, up to its top speed.
     osc::sim::Projectile proj;
     proj.set_position({0, 0, 0});
+    proj.set_orientation(osc::sim::coords_orient({1, 0, 0}));
     proj.velocity = {10, 0, 0}; // moving +X
     proj.tracking = true;
-    proj.turn_rate = 360.0f; // fast turn for test
+    proj.velocity_align = true;
+    proj.turn_rate = 360.0f; // 36 degrees a tick
+    proj.acceleration = 10.0f;
     proj.max_speed = 10.0f;
     proj.lifetime = 5.0f;
     proj.target_entity_id = tid;
 
-    // After one update tick, velocity should have Z component (turned toward target)
     proj.update(0.1, registry, nullptr, nullptr);
+    const osc::sim::Vector3 ahead = osc::sim::forward_of(proj.orientation());
+    CHECK(ahead.z == Catch::Approx(std::sin(36.0f * 0.017453292f)).margin(1e-4));
+    // Its velocity turned with it: 10 cos 36 along the facing, plus a tick
+    // of thrust
     CHECK(proj.velocity.z > 0.0f);
-    // Speed should be preserved (approximately 10)
     float spd = std::sqrt(proj.velocity.x * proj.velocity.x +
                         proj.velocity.y * proj.velocity.y +
                         proj.velocity.z * proj.velocity.z);
-    CHECK(spd > 9.5f);
-    CHECK(spd < 10.5f);
+    CHECK(spd == Catch::Approx(10.0f * std::cos(36.0f * 0.017453292f) + 1.0f).margin(1e-3));
+    CHECK(proj.velocity.z / spd == Catch::Approx(ahead.z).margin(1e-4));
 }
 
 TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track falls",

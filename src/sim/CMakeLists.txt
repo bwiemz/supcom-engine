@@ -28,6 +28,7 @@ add_library(osc_sim STATIC
     unit_storage.cpp
     weapon.cpp
     projectile.cpp
+    flight_math.cpp
     shield.cpp
     navigator.cpp
     air_combat.cpp

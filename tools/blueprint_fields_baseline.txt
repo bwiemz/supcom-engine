@@ -31,7 +31,6 @@ LayerTransitionDuration
 LiftFactor
 MaxBounceCount
 MaxSteerForce
-MaxZigZag
 MinBounceCount
 NeedPrep
 NeedToFaceTargetToBuild
@@ -66,4 +65,3 @@ StrategicIconSize
 UseOOBTestZoom
 WobbleFactor
 WobbleSpeed
-ZigZagFrequency

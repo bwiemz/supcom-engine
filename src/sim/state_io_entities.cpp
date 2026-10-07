@@ -1602,8 +1602,12 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.f32v(p.ballistic_accel);
     w.f32v(p.turn_rate);
     w.b(p.tracking);
+    w.b(p.lead_target);
     w.f32v(p.max_zig_zag);
     w.f32v(p.zig_zag_freq);
+    w.vec3(p.zig_zag_offset);
+    w.u32v(p.zig_zag_next_tick);
+    w.b(p.keep_last_aim);
     w.f32v(p.detonate_above_height);
     w.f32v(p.detonate_below_height);
     w.b(p.destroy_on_water);
@@ -1645,8 +1649,12 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.ballistic_accel = r.f32v();
     p.turn_rate = r.f32v();
     p.tracking = r.b();
+    p.lead_target = r.b();
     p.max_zig_zag = r.f32v();
     p.zig_zag_freq = r.f32v();
+    p.zig_zag_offset = r.vec3();
+    p.zig_zag_next_tick = r.u32v();
+    p.keep_last_aim = r.b();
     p.detonate_above_height = r.f32v();
     p.detonate_below_height = r.f32v();
     p.destroy_on_water = r.b();
