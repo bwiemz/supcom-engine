@@ -9829,8 +9829,14 @@ void test_defence(TestContext& ctx) {
         if lane.tml.__osc_fired ~= 1 then error('the launcher fired ' .. lane.tml.__osc_fired) end
         if lane.target:IsDead() then error('the target died') end
         if not m.gone then error('the missile is still flying') end
+        -- Drawn onto the flare: the TMD isn't turreted, so its flare leaves
+        -- along its dome's muzzle (Moho's launch), and the missile comes down
+        -- by the TMD rather than on what it was sent at.
         local off = __osc_dist2d(__osc_last(m), lane.target:GetPosition())
-        if off < 10 then error('the missile came down ' .. off .. ' from its target') end
+        local by_flare = __osc_dist2d(__osc_last(m), lane.tmd:GetPosition())
+        if by_flare >= off then
+            error('the missile came down ' .. off .. ' from its target, ' .. by_flare .. ' from the flare')
+        end
         if m.asked_by_flare then error('the missile was asked about the flare that turned it') end
     )");
 
