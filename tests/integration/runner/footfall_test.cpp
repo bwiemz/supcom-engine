@@ -4,7 +4,8 @@
 // the unit's frame is a footfall (OnAnimCollision, bone and its x, y, z in
 // that frame), and the Galactic Colossus's blueprint makes each one deal
 // damage. With a terrain check a bone is tested against the surface
-// instead, on the way down and back up.
+// instead, on the way down and back up -- as a crashing CZAR's and
+// Ahwassa's bones are, each once, its script's crash damage dealt there.
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp" // Tally
@@ -57,9 +58,9 @@ void test_footfall(TestContext& ctx) {
         end
         __osc_footfall_damage = 0
         local damage_area = DamageArea
-        DamageArea = function(instigator, pos, radius, amount, kind, friendly)
+        DamageArea = function(instigator, pos, radius, amount, kind, friendly, selfdamage)
             if kind == 'ExperimentalFootfall' then __osc_footfall_damage = __osc_footfall_damage + 1 end
-            return damage_area(instigator, pos, radius, amount, kind, friendly)
+            return damage_area(instigator, pos, radius, amount, kind, friendly, selfdamage)
         end
     )");
     run(30);
@@ -164,6 +165,74 @@ void test_footfall(TestContext& ctx) {
     lua("Test 6: a detector never enabled tells nothing", R"(
         if table.getn(__osc_never.__osc_events) ~= 0 then
             error('events: ' .. table.concat(__osc_never.__osc_events, ' '))
+        end
+    )");
+
+    // A crash: the CZAR's and the Ahwassa's OnKilled watch their bones
+    // against the terrain (retail's scripts); each one reaching the ground
+    // deals 1000 in 5 there. Each bone is told once, however long it lies.
+    // (FAF's CZAR keeps the explosions but no longer deals that damage, so
+    // Test 8 holds of retail's data, as the gate runs it.)
+    lua("setup: a CZAR and an Ahwassa in flight, killed", R"(
+        __osc_crashes = {}
+        local function flier(bp, dx)
+            local x, z = __osc_ground[1] + dx, __osc_ground[2] + 50
+            local u = CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z) + 25, z, 0, 0, 0)
+            local rec = {unit = u, bones = {}, at = {}, hits = {}}
+            local crash = u.OnAnimTerrainCollision
+            u.OnAnimTerrainCollision = function(self, bone, bx, by, bz)
+                rec.bones[bone] = (rec.bones[bone] or 0) + 1
+                table.insert(rec.at, {bx, by, bz})
+                return crash(self, bone, bx, by, bz)
+            end
+            table.insert(__osc_crashes, rec)
+        end
+        flier('uaa0310', -45)
+        flier('xsa0402', 45)
+        -- Its script's damage, where each bone lands: 1000 in 5.
+        local damage_area = DamageArea
+        DamageArea = function(instigator, pos, radius, amount, kind, friendly, selfdamage)
+            for _, rec in __osc_crashes do
+                if instigator == rec.unit and amount == 1000 and radius == 5 then
+                    table.insert(rec.hits, {pos[1], pos[2], pos[3]})
+                end
+            end
+            return damage_area(instigator, pos, radius, amount, kind, friendly, selfdamage)
+        end
+    )");
+    run(20);
+    lua("setup: both are shot down", R"(
+        for _, rec in __osc_crashes do rec.unit:Kill() end
+    )");
+    run(200);
+    lua("Test 7: a crashing flier's bones are told on reaching the ground, each once", R"(
+        for _, rec in __osc_crashes do
+            local told = 0
+            for bone, n in rec.bones do
+                if n ~= 1 then error(bone .. ' was told ' .. n .. ' times') end
+                told = told + 1
+            end
+            if told == 0 then error('no bone of the crashing flier was told') end
+            LOG('Footfall test: ' .. told .. ' bones met the ground')
+        end
+    )");
+    lua("Test 8: each landing deals its script's crash damage there, on the ground", R"(
+        for _, rec in __osc_crashes do
+            if table.getn(rec.hits) ~= table.getn(rec.at) then
+                error(table.getn(rec.at) .. ' landings, ' .. table.getn(rec.hits) .. ' crash damages')
+            end
+            for i, p in rec.at do
+                local h = rec.hits[i]
+                if math.abs(h[1] - p[1]) > 0.01 or math.abs(h[3] - p[3]) > 0.01 then
+                    error('a crash damage away from its landing')
+                end
+                -- Told the tick it is first under the surface: at most a
+                -- tick's fall below it.
+                local under = GetSurfaceHeight(p[1], p[3]) - p[2]
+                if under < -0.01 or under > 5 then
+                    error('a landing ' .. under .. ' under the ground')
+                end
+            end
         end
     )");
 

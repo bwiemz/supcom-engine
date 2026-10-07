@@ -212,6 +212,15 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
     CHECK(u.last_attacker_id() == ids[1]);
     CHECK(u.get_stat("KILLS") == 3.0);
     CHECK(b.get_army(0)->find_platoon_by_name("keepme") != nullptr);
+    // A collision detector's bone that was below its foot height still is:
+    // a footfall or crash isn't told again after a load (roadmap item 5).
+    const osc::sim::CollisionDetectorManipulator* detector = nullptr;
+    for (const auto& m : u.manipulators())
+        if (const auto* d = dynamic_cast<const osc::sim::CollisionDetectorManipulator*>(m.get()))
+            detector = d;
+    REQUIRE(detector);
+    REQUIRE(detector->watched().size() == 1);
+    CHECK(detector->watched().front().below_foot_height);
     for (int i = 0; i < 30; ++i) b.tick();
     CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
 }
