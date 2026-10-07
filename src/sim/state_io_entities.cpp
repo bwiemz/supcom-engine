@@ -1159,6 +1159,17 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.quat(u.pickup_facing_);
     w.i32v(u.pickup_ticks_);
     w.f32v(u.transport_hover_height_);
+    // Idle aircraft (item 6)
+    w.f32v(u.auto_land_time_);
+    w.f32v(u.start_turn_distance_);
+    w.u32v(u.idle_landing_.idle_since);
+    w.b(u.idle_landing_.descending);
+    w.vec3(u.idle_landing_.target);
+    w.str(u.idle_landing_.layer);
+    w.i32v(u.idle_landing_.reserved.x0);
+    w.i32v(u.idle_landing_.reserved.z0);
+    w.i32v(u.idle_landing_.reserved.x1);
+    w.i32v(u.idle_landing_.reserved.z1);
     w.i32v(u.beam_up_ticks_);
     w.vec3(u.beam_from_);
     w.quat(u.beam_from_orientation_);
@@ -1500,6 +1511,16 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.pickup_facing_ = r.quat();
     u.pickup_ticks_ = r.i32v();
     u.transport_hover_height_ = r.f32v();
+    u.auto_land_time_ = r.f32v();
+    u.start_turn_distance_ = r.f32v();
+    u.idle_landing_.idle_since = r.u32v();
+    u.idle_landing_.descending = r.b();
+    u.idle_landing_.target = r.vec3();
+    u.idle_landing_.layer = r.str();
+    u.idle_landing_.reserved.x0 = r.i32v();
+    u.idle_landing_.reserved.z0 = r.i32v();
+    u.idle_landing_.reserved.x1 = r.i32v();
+    u.idle_landing_.reserved.z1 = r.i32v();
     u.beam_up_ticks_ = r.i32v();
     u.beam_from_ = r.vec3();
     u.beam_from_orientation_ = r.quat();

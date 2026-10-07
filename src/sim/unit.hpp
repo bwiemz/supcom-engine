@@ -1,6 +1,7 @@
 #pragma once
 
 #include "blueprints/footprint.hpp"
+#include "sim/occupancy.hpp"
 #include "sim/category_set.hpp"
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
@@ -741,6 +742,8 @@ public:
     /// Its vertical motion event: Top, Down, Bottom or Up.
     const std::string& vert_event() const { return vert_event_; }
     bool is_air_unit() const { return layer_ == "Air"; }
+    /// An aircraft, flying or landed (MotionType Air).
+    bool can_fly() const { return motion_type_ == "RULEUMT_Air"; }
     /// Air.FlyInWater: an aircraft that may fly under the water's surface.
     void set_fly_in_water(bool b) { fly_in_water_ = b; }
     /// What an aircraft holds its height over at (x, z): the ground, or the
@@ -938,6 +941,25 @@ public:
     /// for a flier, else -1 (its centre).
     i32 transport_attach_bone() const;
     void set_transport_hover_height(f32 h) { transport_hover_height_ = h; }
+
+    // Idle aircraft (roadmap item 6; Moho's CUnitMotion landing phase).
+    /// Air.AutoLandTime (seconds idle before it lands; 0 or less, never) and
+    /// Air.StartTurnDistance (how near the place it must be).
+    void set_auto_land(f32 seconds, f32 start_turn_distance) {
+        auto_land_time_ = seconds;
+        start_turn_distance_ = start_turn_distance;
+    }
+    /// An aircraft landing, or landed, of its own accord.
+    struct IdleLanding {
+        u32 idle_since = 0;       ///< Moho's mPreparationTick: when its orders ran out (0 with one)
+        bool descending = false;  ///< in its landing phase
+        Vector3 target{};         ///< where it comes down
+        std::string layer;        ///< Land or Water, its layer down there
+        OccupancyRect reserved{}; ///< the place it reserved (none when empty)
+    };
+    const IdleLanding& idle_landing() const { return idle_landing_; }
+    /// Its reservation goes (landed, taken off, or gone).
+    void free_landing_reservation(SimState& sim);
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
     /// whether it is at their centre; the ticks it has waited there.
     const std::vector<u32>& pickup_ids() const { return pickup_ids_; }
@@ -1296,6 +1318,12 @@ private:
     /// A tick of a dive or surfacing, stationary or not (Moho's
     /// HandleDivingAndSurfacing), and a sub held at its depth.
     void tick_dive(const map::Terrain* terrain, lua_State* L);
+    /// An idle aircraft's landing (Moho's CUnitMotion landing phase):
+    /// AutoLandTime after its orders ran out, near where it is, it finds a
+    /// place (PrepareMove), reserves it and comes down onto it.
+    void tick_idle_landing(f64 dt, SimContext& ctx);
+    /// A landed aircraft given an order goes back to the air.
+    void take_off(SimContext& ctx);
     /// A new vertical motion event, told to the script
     /// (OnMotionVertEventChange(new, old)).
     void set_vert_event(const char* event, lua_State* L);
@@ -1566,6 +1594,9 @@ private:
     Quaternion pickup_facing_{};
     i32 pickup_ticks_ = 0;
     f32 transport_hover_height_ = 0.0f; // Air.TransportHoverHeight
+    f32 auto_land_time_ = 0.0f;         // Air.AutoLandTime
+    f32 start_turn_distance_ = 0.0f;    // Air.StartTurnDistance
+    IdleLanding idle_landing_;
     // A unit beaming up into its transport (M206m): ticks left of the 10,
     // and where it started.
     i32 beam_up_ticks_ = 0;

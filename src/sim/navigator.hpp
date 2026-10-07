@@ -135,9 +135,6 @@ private:
     bool update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
     /// Drop the Moho path, if any.
     void reset_moho();
-    /// The playable area (the whole map without one, or for an army that may
-    /// go anywhere when `whole_map_if_allowed`).
-    OccupancyRect moho_bounds(const Unit& unit, bool whole_map_if_allowed = true) const;
     /// The goal by the grid pathfinder (set_goal's own way, and Moho
     /// pathing's for a unit with no footprint class).
     void set_goal_grid(const Vector3& pos, const map::Pathfinder* pathfinder,

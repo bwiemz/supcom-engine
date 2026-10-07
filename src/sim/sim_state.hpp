@@ -201,6 +201,12 @@ public:
     /// clears those too; this keeps them, so a load can rebuild the grid
     /// from its occupants.
     void release_ground(u32 id);
+    /// Reserve, or free, a place a unit will come to rest (Moho's
+    /// Unit::ReserveOgridRect, an aircraft's landing place).
+    void reserve_ground(const OccupancyRect& r, bool reserved) { occupancy_.reserve(r, reserved); }
+    /// Where `army`'s units may go: the playable area (the whole map without
+    /// one, or for an army that may go anywhere when `whole_map_if_allowed`).
+    OccupancyRect move_bounds(i32 army, bool whole_map_if_allowed = true);
     /// The caps footprint `fp` has centred at (wx, wz): Moho's
     /// SFootprint::FitsAt (OCCUPY_FootprintFits). None without a map.
     u8 footprint_fits_at(const blueprints::Footprint& fp, f32 wx, f32 wz) const;

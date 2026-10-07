@@ -206,6 +206,15 @@ void test_selection_render(TestContext& ctx) {
     // holds it by where it is on the screen. By the ground under the cursor
     // (as picking had gone) it is missed.
     const u32 air = spawn_unit(ctx, "__osc_sel_air", "uea0101", "ARMY_1", {sx + 4, sz - 10});
+    // An idle aircraft lands after its AutoLandTime: this one patrols.
+    if (auto* plane = static_cast<sim::Unit*>(ctx.sim.entity_registry().find(air))) {
+        sim::UnitCommand patrol;
+        patrol.type = sim::CommandType::Patrol;
+        patrol.target_pos = {sx + 8, 0, sz - 10};
+        plane->push_command(patrol, true);
+        patrol.target_pos = {sx, 0, sz - 10};
+        plane->push_command(patrol, false);
+    }
     for (int i = 0; i < 60; ++i) ctx.sim.tick(); // up to its height
     seen.capture(ctx.sim);
     seen.capture(ctx.sim);

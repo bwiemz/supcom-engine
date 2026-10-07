@@ -39,6 +39,7 @@ TYPES: list[tuple[str, str]] = [
     ("src/sim/unit.hpp", "Unit::StoragePlace"),
     ("src/sim/unit.hpp", "Unit::ScriptTaskRun"),
     ("src/sim/unit.hpp", "Unit::CarrierLanding"),
+    ("src/sim/unit.hpp", "Unit::IdleLanding"),
     ("src/sim/unit.hpp", "Unit::UnitBuiltCallback"),
     ("src/sim/unit_command.hpp", "UnitCommand"),
     ("src/sim/navigator.hpp", "Navigator"),

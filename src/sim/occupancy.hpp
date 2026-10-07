@@ -48,6 +48,11 @@ public:
     bool water_any(const OccupancyRect& r) const { return any(water_, r); }
     bool ground_at(i32 x, i32 z) const { return ground_any({x, z, x + 1, z + 1}); }
     bool water_at(i32 x, i32 z) const { return water_any({x, z, x + 1, z + 1}); }
+    /// Moho's mOccupation: places units have claimed to come to rest (an
+    /// aircraft's landing place, Unit::ReserveOgridRect), which a move's
+    /// destination (PrepareMove) keeps clear of. Off the map, nothing.
+    void reserve(const OccupancyRect& r, bool reserved) { set(reserved_, r, reserved); }
+    bool reserved_any(const OccupancyRect& r) const;
 
 private:
     bool any(const std::vector<u8>& cells, const OccupancyRect& r) const;
@@ -57,6 +62,7 @@ private:
     u32 height_ = 0;
     std::vector<u8> ground_;
     std::vector<u8> water_;
+    std::vector<u8> reserved_;
 };
 
 /// The caps a footprint at cell `x0, z0` has from the map alone: Moho's
