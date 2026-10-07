@@ -366,3 +366,47 @@ TEST_CASE("A unit standing inside an obstacle searches without its footprint tes
     CHECK_FALSE(g.can_traverse({47, 47}));
     CHECK(g.can_traverse({30, 30}));
 }
+
+TEST_CASE("A traveler gone mid-search leaves its queue, and a queue gone first lets its "
+          "travelers go",
+          "[path_search]") {
+    World w;
+    w.make_tables();
+    PathQueue q;
+    PathFinder keep;
+    w.aim(keep, 0, {20, 10}, {30, 10});
+    {
+        PathFinder gone;
+        w.aim(gone, 0, {10, 10}, {240, 240});
+        q.queue(gone);
+        q.queue(keep);
+        i32 budget = 20;
+        q.work(*w.tables, budget); // `gone` in flight
+        CHECK(q.search().traveler() == &gone);
+        CHECK(gone.queue() == &q);
+    }
+    CHECK(q.search().traveler() == nullptr);
+    i32 budget = 100000;
+    q.work(*w.tables, budget);
+    CHECK(keep.has_result());
+    CHECK(keep.queue() == nullptr);
+
+    PathFinder outlives;
+    w.aim(outlives, 0, {20, 10}, {30, 10});
+    {
+        PathQueue short_lived;
+        short_lived.queue(outlives);
+        CHECK(outlives.queue() == &short_lived);
+    }
+    CHECK(outlives.queue() == nullptr); // and its destructor touches nothing
+
+    // Queued on one queue, then another: it moves.
+    PathQueue a;
+    PathQueue b;
+    PathFinder mover;
+    w.aim(mover, 0, {20, 10}, {30, 10});
+    a.queue(mover);
+    b.queue(mover);
+    CHECK_FALSE(a.queued(mover));
+    CHECK(b.queued(mover));
+}

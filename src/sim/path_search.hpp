@@ -20,6 +20,7 @@ class PathTables;
 namespace osc::sim::path {
 
 class ClusterMap;
+class PathQueue;
 
 /// Moho's SOCellPos: a footprint's corner cell.
 struct Cell {
@@ -32,7 +33,14 @@ struct Cell {
 /// Moho's IPathTraveler: what a search asks of whoever it searches for.
 class Traveler {
 public:
-    virtual ~Traveler() = default;
+    Traveler() = default;
+    Traveler(const Traveler&) = delete;
+    Traveler& operator=(const Traveler&) = delete;
+    /// Leaves the queue it is on, waiting or in flight (Moho's intrusive
+    /// list node unlinks as it goes, a fix faf-re's ~CAiPathFinder notes).
+    virtual ~Traveler();
+    /// The queue it is on, if any.
+    const PathQueue* queue() const { return queue_; }
     /// Its footprint class (which cluster map it searches).
     virtual i32 footprint_class() const = 0;
     /// Where the search starts.
@@ -50,6 +58,10 @@ public:
     /// The search ended: the cells from its anchor to the goal (`reached`),
     /// else to the cell it found nearest the goal.
     virtual void on_path(bool reached, std::vector<Cell> cells) = 0;
+
+private:
+    friend class PathQueue;
+    PathQueue* queue_ = nullptr;
 };
 
 /// Moho's AStarOpenHeap: a binary min-heap of handles, ties broken as
@@ -141,6 +153,13 @@ private:
 /// flight, from the budget it is given each tick.
 class PathQueue {
 public:
+    PathQueue() = default;
+    PathQueue(const PathQueue&) = delete;
+    PathQueue& operator=(const PathQueue&) = delete;
+    /// Lets go of its travelers, who no longer point at it.
+    ~PathQueue();
+
+    /// To the back of the queue, from wherever it was in it.
     void queue(Traveler& t);
     /// Take `t` off the queue, finished or not (it hears nothing).
     void cancel(Traveler& t);

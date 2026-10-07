@@ -292,13 +292,28 @@ void PathSearch::finish(bool reached) {
     if (t) t->on_path(reached, std::move(cells));
 }
 
+Traveler::~Traveler() {
+    if (queue_) queue_->cancel(*this);
+}
+
+PathQueue::~PathQueue() {
+    for (Traveler* t : pending_) t->queue_ = nullptr;
+    if (Traveler* t = search_.traveler()) t->queue_ = nullptr;
+}
+
 void PathQueue::queue(Traveler& t) {
+    // Moho's DList push_back: one already queued, or in flight, moves to
+    // the back (an abandoned search starts again when its turn comes).
+    if (t.queue_) t.queue_->cancel(t);
     pending_.push_back(&t);
+    t.queue_ = this;
 }
 
 void PathQueue::cancel(Traveler& t) {
+    if (t.queue_ != this) return;
     if (search_.traveler() == &t) search_.drop();
     pending_.erase(std::remove(pending_.begin(), pending_.end(), &t), pending_.end());
+    t.queue_ = nullptr;
 }
 
 bool PathQueue::queued(const Traveler& t) const {
@@ -316,8 +331,11 @@ void PathQueue::work(PathTables& tables, i32& budget) {
         }
         const PathSearch::Step step = search_.run(tables, budget);
         // Out of budget, it stays in flight for the next tick.
-        if (step != PathSearch::Step::BudgetExhausted)
+        if (step != PathSearch::Step::BudgetExhausted) {
+            // Off the queue before it hears: hearing, it may queue again.
+            search_.traveler()->queue_ = nullptr;
             search_.finish(step == PathSearch::Step::GoalReached);
+        }
     }
 }
 
