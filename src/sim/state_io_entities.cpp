@@ -496,6 +496,7 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     save(w, wp.restrict_disallow);
     save(w, wp.restrict_only_allow);
     w.b(wp.above_water_targets_only);
+    w.b(wp.below_water_targets_only);
     w.b(wp.yaw_only_on_target);
     w.b(wp.above_water_fire_only);
     w.b(wp.always_recheck_target);
@@ -509,6 +510,8 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.i32v(wp.weapon_index);
     w.u32v(wp.owner_entity_id);
     w.u32v(wp.target_entity_id);
+    w.i32v(wp.aim_spot);
+    w.u32v(wp.aim_spot_target);
     w.b(wp.has_ground_target);
     w.vec3(wp.ground_target);
     w.b(wp.ground_from_order);
@@ -573,6 +576,7 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     load(r, wp.restrict_disallow);
     load(r, wp.restrict_only_allow);
     wp.above_water_targets_only = r.b();
+    wp.below_water_targets_only = r.b();
     wp.yaw_only_on_target = r.b();
     wp.above_water_fire_only = r.b();
     wp.always_recheck_target = r.b();
@@ -586,6 +590,8 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.weapon_index = r.i32v();
     wp.owner_entity_id = r.u32v();
     wp.target_entity_id = r.u32v();
+    wp.aim_spot = r.i32v();
+    wp.aim_spot_target = r.u32v();
     wp.has_ground_target = r.b();
     wp.ground_target = r.vec3();
     wp.ground_from_order = r.b();
@@ -1555,6 +1561,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     }
     w.vec3(p.velocity);
     w.u32v(p.target_entity_id);
+    w.i32v(p.target_point);
     w.vec3(p.target_position);
     w.b(p.has_target_position);
     w.u32v(p.launcher_id);
@@ -1597,6 +1604,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     }
     p.velocity = r.vec3();
     p.target_entity_id = r.u32v();
+    p.target_point = r.i32v();
     p.target_position = r.vec3();
     p.has_target_position = r.b();
     p.launcher_id = r.u32v();

@@ -127,11 +127,17 @@ static int weapon_GetCurrentTarget(lua_State* L) {
     return 1;
 }
 
+// Where it aims (Moho's GetTargetPosGun): on a unit, its aim spot.
 static int weapon_GetCurrentTargetPos(lua_State* L) {
     auto* w = check_weapon(L);
     auto* sim = get_sim(L);
-    const auto at = w && sim ? w->target_point(sim->entity_registry()) : std::nullopt;
+    auto at = w && sim ? w->target_point(sim->entity_registry()) : std::nullopt;
     if (!at) { lua_pushnil(L); return 1; }
+    if (w->target_entity_id != 0) {
+        const auto* target = sim->entity_registry().find(w->target_entity_id);
+        if (target && target->is_unit())
+            at = static_cast<const sim::Unit*>(target)->target_point(w->current_aim_spot());
+    }
     push_vector3(L, *at);
     return 1;
 }
@@ -175,11 +181,15 @@ static int weapon_GetMinRadius(lua_State* L) {
     return 1;
 }
 
+// weapon:SetTargetEntity(entity): its target now, with an aim spot picked
+// on it at once if it is a new one (Moho's UnitWeapon::SetTarget).
 static int weapon_SetTargetEntity(lua_State* L) {
     auto* w = check_weapon(L);
     if (!w) return 0;
     auto* target = check_entity(L, 2);
     w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : 0);
+    if (auto* sim = get_sim(L); sim && w->aim_spot_target != w->target_entity_id)
+        w->pick_aim_spot(sim->entity_registry(), sim);
     return 0;
 }
 
@@ -376,10 +386,19 @@ static int weapon_IsFireControl(lua_State* L) {
     return 1;
 }
 
+// weapon:TransferTarget(other): `other` takes this one's target, ground
+// or unit, picks its own aim spot on it and counts its shots afresh
+// (Moho's cfunc_UnitWeaponTransferTarget).
 static int weapon_TransferTarget(lua_State* L) {
-    auto* w = check_weapon(L);
-    auto* src = check_weapon(L, 2);
-    if (w && src) w->target_entity_id = src->target_entity_id;
+    auto* src = check_weapon(L);
+    auto* dst = check_weapon(L, 2);
+    auto* sim = get_sim(L);
+    if (!src || !dst) return 0;
+    if (src->target_entity_id == 0 && src->has_ground_target)
+        dst->set_target_ground(src->ground_target);
+    else dst->set_target_entity(src->target_entity_id);
+    dst->shots_at_target = 0;
+    if (sim) dst->pick_aim_spot(sim->entity_registry(), sim);
     return 0;
 }
 

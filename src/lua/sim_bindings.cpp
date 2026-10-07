@@ -518,6 +518,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     }
                     for (auto [field, flag] :
                          {std::pair{"AboveWaterTargetsOnly", &weapon->above_water_targets_only},
+                          std::pair{"BelowWaterTargetsOnly", &weapon->below_water_targets_only},
                           std::pair{"AboveWaterFireOnly", &weapon->above_water_fire_only},
                           std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target},
                           std::pair{"YawOnlyOnTarget", &weapon->yaw_only_on_target},

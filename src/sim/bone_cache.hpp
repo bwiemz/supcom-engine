@@ -34,6 +34,9 @@ private:
     /// unitBP.Display.MeshBlueprint → __blueprints[meshId].LODs[1].MeshName
     /// The blueprint's Display.UniformScale (1 without one).
     f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
+    /// The blueprint's AI.TargetBones, resolved against `bones`.
+    std::vector<i32> resolve_target_bones(const std::string& bp_id, lua_State* L,
+                                          const BoneData& bones);
     std::string resolve_mesh_path(const std::string& bp_id, lua_State* L);
 
     vfs::VirtualFileSystem* vfs_;

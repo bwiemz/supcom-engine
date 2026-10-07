@@ -49,6 +49,9 @@ public:
 
     Vector3 velocity;
     u32 target_entity_id = 0;
+    /// Which of its target unit's target points it homes on (its weapon's
+    /// aim spot; -1: the unit's centre).
+    i32 target_point = -1;
     Vector3 target_position;
     /// target_position is somewhere it was sent (a weapon's aim, a ground
     /// target, where its target was): a tracking shot flies there.

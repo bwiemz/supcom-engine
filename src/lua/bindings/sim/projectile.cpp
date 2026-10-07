@@ -177,7 +177,18 @@ static int proj_SetNewTarget(lua_State* L) {
     auto* target = check_entity(L, 2);
     if (target && !target->destroyed()) {
         p->target_entity_id = target->entity_id();
-        p->target_position = sim::collision_centre(*target);
+        // A target point on a unit at random, as Moho's every target made
+        // from an entity (CAiTarget::UpdateTarget). This function's own
+        // body isn't in faf-re: inferred from that.
+        p->target_point = -1;
+        auto* sim = get_sim(L);
+        if (target->is_unit() && sim) {
+            const auto& unit = static_cast<const sim::Unit&>(*target);
+            p->target_point = unit.pick_target_point(sim->entity_registry().sim_random());
+            p->target_position = unit.target_point(p->target_point);
+        } else {
+            p->target_position = sim::collision_centre(*target);
+        }
         p->has_target_position = true;
     }
     return 0;
@@ -197,6 +208,7 @@ static int proj_SetNewTargetGround(lua_State* L) {
         p->target_position.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
         p->target_entity_id = 0; // ground target
+        p->target_point = -1;
         p->has_target_position = true;
     }
     return 0;
@@ -212,6 +224,7 @@ static int proj_SetNewTargetGroundXYZ(lua_State* L) {
                           static_cast<f32>(luaL_checknumber(L, 3)),
                           static_cast<f32>(luaL_checknumber(L, 4))};
     p->target_entity_id = 0; // ground target
+    p->target_point = -1;
     p->has_target_position = true;
     return 0;
 }
@@ -421,6 +434,7 @@ static int proj_CreateChildProjectile(lua_State* L) {
     child->launcher_id = parent->launcher_id;
     child->velocity = parent->velocity;
     child->target_entity_id = parent->target_entity_id;
+    child->target_point = parent->target_point;
     child->target_position = parent->target_position;
     child->has_target_position = parent->has_target_position;
     apply_script_projectile_physics(L, *child);

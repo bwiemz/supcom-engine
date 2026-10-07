@@ -34,6 +34,7 @@ namespace osc::sim {
 
 struct SimContext;
 class EntityRegistry;
+class SimRandom;
 class SimState;
 
 struct IntelState {
@@ -1070,6 +1071,23 @@ public:
     /// place and turn as the sim poses it; for bone -1, or one we haven't,
     /// our centre, half our height up.
     BonePose bone_world_transform(i32 bone) const;
+    /// Its blueprint's AI.TargetBones: the points weapons aim at on it
+    /// (Moho's target points). How many it has.
+    i32 target_point_count() const;
+    /// Where target point `index` is in the world (Moho's
+    /// Unit::GetTargetPoint): its bone, the last for an index past them;
+    /// for -1, or one with no bone in the mesh, its centre, half its
+    /// height up.
+    Vector3 target_point(i32 index) const;
+    /// One of its target points at random (Moho's Unit::PickTargetPoint):
+    /// -1, drawing nothing, with none.
+    i32 pick_target_point(SimRandom& rng) const;
+    /// One of its target points above `water` (`above`), or below it, at
+    /// random: Moho's PickTargetPointAboveWater / BelowWater. `out` is -1
+    /// with none. Returns whether there is one; with no target points,
+    /// whether the unit itself is above the water (at or below it). With
+    /// no `rng` it only answers, drawing nothing.
+    bool pick_target_point_by_water(SimRandom* rng, f32 water, bool above, i32& out) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
     /// A Script order's Lua task (Moho's CUnitScriptTask, M206w): whether one
