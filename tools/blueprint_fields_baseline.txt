@@ -35,8 +35,6 @@ MaxZigZag
 MinBounceCount
 NeedPrep
 NeedToFaceTargetToBuild
-OccupancyCaps
-OccupyRects
 PlaceholderMeshName
 PositionY
 PrefersPrimaryWeaponTarget

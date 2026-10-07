@@ -18,6 +18,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -172,6 +173,31 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
             prop.set_default_collision_shape(blueprint_collision_shape(L, lua_gettop(L)));
             const auto [sx, sz] = blueprint_footprint(L, lua_gettop(L));
             prop.set_footprint_size(sx, sz);
+            // One worth reclaiming stands on its footprint's ground, with
+            // its blueprint's Footprint.OccupancyCaps (Moho's Prop: 88 of
+            // retail's, buses, ruins and the like, have LAND|SEABED; trees and
+            // rocks none).
+            lua_pushstring(L, "Footprint");
+            lua_rawget(L, -2);
+            const u8 caps = lua_istable(L, -1) ? [&] {
+                lua_pushstring(L, "OccupancyCaps");
+                lua_rawget(L, -2);
+                const auto c = static_cast<u8>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                return c;
+            }()
+                                               : u8{0};
+            lua_pop(L, 1);
+            if (caps != 0 && (prop.reclaim_mass_max > 0 || prop.reclaim_energy_max > 0)) {
+                blueprints::Footprint fp;
+                fp.size_x = static_cast<u8>(std::clamp(std::lround(sx), 0L, 255L));
+                fp.size_z = static_cast<u8>(std::clamp(std::lround(sz), 0L, 255L));
+                fp.caps = caps;
+                GroundOccupant ground;
+                ground.caps = caps;
+                ground.rects.push_back(footprint_rect(fp, prop.position().x, prop.position().z));
+                sim.occupy_ground(prop.entity_id(), std::move(ground));
+            }
         }
         lua_pop(L, 1);
     }

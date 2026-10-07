@@ -97,11 +97,18 @@ Who occupies:
 
 ### PR 4b: the occupation grid and `footprint_fits`
 
-- An occupation grid of 1-unit cells with terrain and water bitmaps, kept as refcounts. Engine footprints can overlap where Moho's can't (scripted structures), so counts keep release safe.
-- Structures occupy with their footprint caps, replacing `mark_obstacle`'s caller. Props with reclaim value and caps occupy too, and are released on unregister (reclaim, destruction).
-- `footprint_fits(footprint, origin) → caps` is Moho's MobileCheck + FootprintFits, exactly, on the heightfield.
-- Blocking terrain comes from the map's blocking flags, if the .scmap carries them; otherwise none.
-- Tests: Moho's narrowing rules one by one (depth, slope, blocking, occupation, IgnoreStructures), and a reclaimed prop freeing its cells.
+- **The grid.** `sim/occupancy.hpp` has `OccupancyGrid`: one cell a map cell, ground and water bits as Moho's `COGrid`, with off the map counting as occupied.
+- **Who claims it.** `SimState::occupy_ground`/`release_ground` record each entity's claim (`GroundOccupant`: caps and rects).
+  - **Releases:** a release clears the claim's rects, then any other occupant standing on those cells claims them again. Moho's grid, bits alone, leaves them cleared; keeping them makes the grid exactly what stands on it.
+  - **Saves:** a save keeps the claims, and a load rebuilds the grid from them (state version 21).
+  - **Immobile units** claim at spawn, finished or not (Moho's `ExecuteOccupyGround`): their `Physics.OccupyRects` (centre offset and half size; the quantum gateways), else their footprint. Ferry beacons and in-place upgrades don't.
+  - **Props** worth reclaiming claim their footprint with their blueprint's `Footprint.OccupancyCaps`, as Moho's `Prop` does. 88 of retail's 336 prop blueprints have LAND|SEABED.
+  - **Released** as the entity leaves the sim.
+- **The fit test.** `map_caps` and `footprint_fits` are Moho's `OCCUPY_MobileCheck` (with `OccupancyCapsOfFootprintAt` for one cell) and `OCCUPY_FootprintFits`, exactly. `SimState::footprint_fits_at` is `SFootprint::FitsAt`.
+- **Blocking terrain.** `Terrain::is_blocking_cell` is Moho's `STIMap::IsBlockingTerrain`: the map's last row and column, and terrain types `/lua/TerrainTypes.lua` marks Blocking. Those are read at map load.
+- **Measured:** claims at a session's start are 22 on SCMP_009, 1,186 on SCMP_001, 16 on SCMP_015 and 108 on SCMP_024.
+- Nothing paths by the grid yet (4c).
+- **Tests:** Moho's narrowing rules one by one; a single cell against its own cell; the map's edge; occupied ground and water; IgnoreStructures; claims overlapping and released; a save restoring the grid; units' claims through `CreateUnit` (a footprint, a gateway's rects, none for a ferry beacon or a tank, freed on destruction).
 
 ### PR 4c: paths per footprint class
 

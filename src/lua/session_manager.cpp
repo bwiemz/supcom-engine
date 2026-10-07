@@ -395,6 +395,8 @@ Result<void> SessionManager::start_session(LuaState& state,
     // The map's props were made before the sim's scripts loaded; now they
     // get their script objects (trees, rocks...), before BeginSession.
     sim::create_map_prop_objects(L, sim);
+    spdlog::info("Occupation grid: {} props and structures stand on it",
+                 sim.ground_occupant_count());
 
     bool has_ai = !ai_army_indices_.empty();
     for (size_t i = 0; i < army_slot_configs_.size() && !has_ai; ++i) {
