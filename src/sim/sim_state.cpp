@@ -913,6 +913,7 @@ SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitComma
                 cmd.target_pos = slot.position;
                 cmd.formation.clear();
                 cmd.speed_cap = pace;
+                cmd.formed = true;
                 out.emplace_back(slot.unit_id, std::move(cmd));
             }
             return out;

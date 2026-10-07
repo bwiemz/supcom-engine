@@ -84,15 +84,12 @@ u32 awaited_transport(const Unit& u) {
     return !q.empty() && q.front().type == CommandType::TransportLoad ? q.front().target_id : 0;
 }
 
-/// The formation move it is in (its head order's id), or 0.
-u32 formation_move(const Unit& u) {
-    const auto& q = u.command_queue();
-    return !q.empty() && !q.front().formation.empty() ? q.front().command_id : 0;
-}
-
+/// Both in one formation (attacking or not), of one army: a formation is an
+/// army's, and the guard key names only the guarded unit, which allies may
+/// both guard.
 bool same_formation(const Unit& a, const Unit& b) {
-    const u32 f = formation_move(a);
-    return f != 0 && f == formation_move(b) && a.army() == b.army();
+    const u64 f = formation_layer(a);
+    return f != 0 && f == formation_layer(b) && a.army() == b.army();
 }
 
 bool attacking(const Unit& u) {
@@ -198,7 +195,7 @@ void predict(Unit& rec, const std::vector<Vector3>& rec_path, const Unit& other,
     if (rec_path.empty() && other_path.empty()) return;
     Navigator& nav = rec.navigator();
     if (nav.collision().other == other.entity_id()) nav.clear_collision();
-    const bool ignore_braking = !attacking(rec) && !attacking(other) && same_formation(rec, other);
+    const bool ignore_braking = same_formation_layer(rec, other);
     V2 rec_at{rec.position().x, rec.position().z};
     V2 other_at{other.position().x, other.position().z};
     V2 rec_vel{rec.velocity().x, rec.velocity().z};
@@ -292,11 +289,10 @@ void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
     const V2 other_vel{other.velocity().x, other.velocity().z};
     // Not moving, not on course to meet, or not closing: nothing to do.
     const V2 rel_vel{owner_vel.x - other_vel.x, owner_vel.z - other_vel.z};
-    const bool closing =
-        !zero(other_vel) && !zero(rel_vel) &&
-        will_collide(owner, owner_at, owner_vel, other, other_at, other_vel,
-                     !attacking(owner) && !attacking(other) && same_formation(owner, other)) &&
-        dot({owner_at.x - other_at.x, owner_at.z - other_at.z}, rel_vel) < 0;
+    const bool closing = !zero(other_vel) && !zero(rel_vel) &&
+                         will_collide(owner, owner_at, owner_vel, other, other_at, other_vel,
+                                      same_formation_layer(owner, other)) &&
+                         dot({owner_at.x - other_at.x, owner_at.z - other_at.z}, rel_vel) < 0;
     if (!closing) {
         nav.set_next_check(now);
         return;
@@ -354,6 +350,22 @@ void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
 }
 
 } // namespace
+
+u64 formation_layer(const Unit& u) {
+    const auto& q = u.command_queue();
+    if (q.empty()) return 0;
+    const UnitCommand& head = q.front();
+    // (Moho's GuardBusy, a guard off fighting for its unit: here its head
+    // order is the fight, so it isn't in the guard formation.)
+    if (head.type == CommandType::Guard && head.target_id != 0 && !u.has_category("ENGINEER"))
+        return (u64{1} << 32) | head.target_id;
+    if (head.formed) return (u64{2} << 32) | head.command_id;
+    return 0;
+}
+
+bool same_formation_layer(const Unit& a, const Unit& b) {
+    return !attacking(a) && !attacking(b) && same_formation(a, b);
+}
 
 bool outranks(const Unit& a, const Unit& b) {
     if (a.immobile() || a.has_unit_state("Upgrading")) return true;

@@ -305,6 +305,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.has_facing);
     w.f32v(c.facing);
     w.f32v(c.speed_cap);
+    w.b(c.formed);
     save_ids(w, c.unload_ids);
     w.str(c.script_args);
     w.u32v(c.task_serial);
@@ -346,6 +347,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.has_facing = r.b();
     c.facing = r.f32v();
     c.speed_cap = r.f32v();
+    c.formed = r.b();
     c.unload_ids = load_ids(r);
     c.script_args = r.str();
     c.task_serial = r.u32v();
