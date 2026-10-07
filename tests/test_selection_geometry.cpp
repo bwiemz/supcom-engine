@@ -61,3 +61,46 @@ TEST_CASE("A drag box keeps the units of the highest selection priority", "[sele
     CHECK(highest_selection_priority({{3, 5}}) == Ids{3});
     CHECK(highest_selection_priority({}).empty());
 }
+
+TEST_CASE("A ray meets a turned box where it enters, or not at all", "[selection]") {
+    using osc::renderer::PickRay;
+    using osc::renderer::ray_box_distance;
+    const osc::sim::Quaternion level{};
+    const Vector3 half{1, 0.5f, 2};
+    // Straight down onto its top, 0.5 above its centre.
+    const PickRay down{{0, 10, 0}, {0, -1, 0}};
+    REQUIRE(ray_box_distance(down, {0, 0, 0}, level, half));
+    CHECK(*ray_box_distance(down, {0, 0, 0}, level, half) == Catch::Approx(9.5f));
+    // Beside it: past its x half size of 1, within its z of 2.
+    CHECK_FALSE(ray_box_distance({{1.5f, 10, 0}, {0, -1, 0}}, {0, 0, 0}, level, half));
+    CHECK(ray_box_distance({{0, 10, 1.5f}, {0, -1, 0}}, {0, 0, 0}, level, half));
+    // Turned a quarter about y, its long side lies along x.
+    const osc::sim::Quaternion quarter{0, 0.70710678f, 0, 0.70710678f};
+    CHECK(ray_box_distance({{1.5f, 10, 0}, {0, -1, 0}}, {0, 0, 0}, quarter, half));
+    CHECK_FALSE(ray_box_distance({{0, 10, 1.5f}, {0, -1, 0}}, {0, 0, 0}, quarter, half));
+    // A slanting ray from the side; one going away; one from inside.
+    const PickRay slant{{-10, 10.5f, 0}, {0.70710678f, -0.70710678f, 0}};
+    REQUIRE(ray_box_distance(slant, {0, 0, 0}, level, half));
+    CHECK(*ray_box_distance(slant, {0, 0, 0}, level, half) == Catch::Approx(14.142f).epsilon(1e-3));
+    CHECK_FALSE(ray_box_distance({{0, 10, 0}, {0, 1, 0}}, {0, 0, 0}, level, half));
+    CHECK(*ray_box_distance({{0, 0, 0}, {1, 0, 0}}, {0, 0, 0}, level, half) == 0.0f);
+}
+
+TEST_CASE("A world point lands on the screen as the overlays project it", "[selection]") {
+    using osc::renderer::screen_point;
+    // Identity: clip space is the world, w = 1; y runs down the screen.
+    std::array<osc::f32, 16> identity{};
+    identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
+    const auto mid = screen_point(identity, {0, 0, 0}, 800, 600);
+    REQUIRE(mid);
+    CHECK((*mid)[0] == Catch::Approx(400.0f));
+    CHECK((*mid)[1] == Catch::Approx(300.0f));
+    const auto corner = screen_point(identity, {1, 1, 0}, 800, 600);
+    REQUIRE(corner);
+    CHECK((*corner)[0] == Catch::Approx(800.0f));
+    CHECK((*corner)[1] == Catch::Approx(600.0f));
+    // Behind the camera: w <= 0.
+    std::array<osc::f32, 16> behind = identity;
+    behind[15] = -1.0f;
+    CHECK_FALSE(screen_point(behind, {0, 0, 0}, 800, 600));
+}

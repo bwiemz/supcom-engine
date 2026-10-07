@@ -37,6 +37,24 @@ struct BuildGhost;
 /// order, either way round)
 bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z);
 
+/// A ray: where it starts and its direction, of unit length.
+struct PickRay {
+    sim::Vector3 origin;
+    sim::Vector3 dir;
+};
+
+/// How far along `ray` it first meets the box centred at `centre`, turned
+/// by `orient`, with half sizes `half` along its own axes; nothing if it
+/// misses (or the box is wholly behind it). From inside, 0.
+std::optional<f32> ray_box_distance(const PickRay& ray, const sim::Vector3& centre,
+                                    const sim::Quaternion& orient, const sim::Vector3& half);
+
+/// Where world point `p` is on a `width` x `height` screen by the camera's
+/// `view_proj` (column-major, as Camera::view_proj), in pixels from the top
+/// left; nothing behind the camera.
+std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_proj,
+                                               const sim::Vector3& p, f32 width, f32 height);
+
 /// Whether the player may select `e`: a live unit not made unselectable
 /// (SetUnSelectable), not still being built, and not INSIGNIFICANTUNIT (the
 /// Cybran build bots, which Moho's selection skips)
@@ -243,8 +261,24 @@ public:
     /// __osc_RemoveCommand for every unit of order `command_id`
     std::optional<sim::SimCallbackEntry> remove_order(sim::SimState& sim, u32 command_id);
 
-    /// The shown unit whose box, turned with it, holds (wx, wz), or 0
+    /// The shown unit the cursor is on, as it is drawn: the nearest whose box
+    /// (its blueprint's size, turned with it, standing on where it is drawn)
+    /// the cursor's ray meets -- an aircraft where it flies, not the ground
+    /// under it. For a world point the cursor isn't on (a script's click),
+    /// the ray comes straight down onto (wx, wz). 0 for none.
     u32 unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
+    /// The cursor's ray and the world point it is on, as update() takes them
+    /// each frame (tests set it).
+    void set_cursor_ray(const PickRay& ray, f32 wx, f32 wz) {
+        cursor_ray_ = ray;
+        cursor_ray_ground_ = {wx, wz};
+    }
+    /// Select the player's units drawn inside the screen box (x0, y0)-(x1,
+    /// y1) by the camera's `view_proj` on a `width` x `height` screen: those
+    /// of the highest selection priority there, or with `shift` all of them
+    /// added to the selection.
+    void select_in_box(sim::SimState& sim, const std::array<f32, 16>& view_proj, f32 width,
+                       f32 height, f32 x0, f32 y0, f32 x1, f32 y1, bool shift);
 
     /// Drag box corners in screen pixels (valid when is_dragging).
     void drag_rect(f32& x0, f32& y0, f32& x1, f32& y1) const {
@@ -288,6 +322,9 @@ private:
     bool lmb_raw_prev_ = false;  // left button last frame, whoever owned it
     bool lmb_on_minimap_ = false; // current left press began on the minimap
     bool dragging_ = false;
+    /// This frame's cursor ray, and the world point under it it was made for
+    std::optional<PickRay> cursor_ray_;
+    std::array<f32, 2> cursor_ray_ground_{};
     f32 drag_start_x_ = 0, drag_start_y_ = 0;
     f32 drag_end_x_ = 0, drag_end_y_ = 0;
     f32 drag_world_x0_ = 0, drag_world_z0_ = 0;

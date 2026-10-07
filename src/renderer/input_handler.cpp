@@ -52,6 +52,46 @@ bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z) {
     return !(positive && negative);
 }
 
+std::optional<f32> ray_box_distance(const PickRay& ray, const sim::Vector3& centre,
+                                    const sim::Quaternion& orient, const sim::Vector3& half) {
+    // Into the box's own frame: turned back by its orientation.
+    const sim::Quaternion back{-orient.x, -orient.y, -orient.z, orient.w};
+    const sim::Vector3 o = sim::quat_rotate(
+        back, {ray.origin.x - centre.x, ray.origin.y - centre.y, ray.origin.z - centre.z});
+    const sim::Vector3 d = sim::quat_rotate(back, ray.dir);
+    // The slabs: where the ray is inside each pair of faces.
+    f32 t_in = -std::numeric_limits<f32>::max();
+    f32 t_out = std::numeric_limits<f32>::max();
+    const f32 os[3] = {o.x, o.y, o.z};
+    const f32 ds[3] = {d.x, d.y, d.z};
+    const f32 hs[3] = {half.x, half.y, half.z};
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(ds[i]) < 1e-8f) {
+            if (std::abs(os[i]) > hs[i]) return std::nullopt; // parallel, outside
+            continue;
+        }
+        f32 a = (-hs[i] - os[i]) / ds[i];
+        f32 b = (hs[i] - os[i]) / ds[i];
+        if (a > b) std::swap(a, b);
+        t_in = std::max(t_in, a);
+        t_out = std::min(t_out, b);
+        if (t_in > t_out) return std::nullopt;
+    }
+    if (t_out < 0) return std::nullopt; // behind it
+    return std::max(t_in, 0.0f);
+}
+
+std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_proj,
+                                               const sim::Vector3& p, f32 width, f32 height) {
+    // As the overlays project: clip = VP * p, and our projection's y runs
+    // down the screen.
+    const f32 cx = view_proj[0] * p.x + view_proj[4] * p.y + view_proj[8] * p.z + view_proj[12];
+    const f32 cy = view_proj[1] * p.x + view_proj[5] * p.y + view_proj[9] * p.z + view_proj[13];
+    const f32 cw = view_proj[3] * p.x + view_proj[7] * p.y + view_proj[11] * p.z + view_proj[15];
+    if (cw <= 0.001f) return std::nullopt;
+    return std::array<f32, 2>{(cx / cw + 1.0f) * 0.5f * width, (cy / cw + 1.0f) * 0.5f * height};
+}
+
 std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units) {
     int best = std::numeric_limits<int>::max();
     for (const auto& unit : units) {
@@ -111,6 +151,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
     const bool mode_active = mode.mode == "build" || mode.mode == "order";
     cursor_world_.reset();
+    cursor_ray_.reset();
     hovered_ = 0;
     hovered_command_ = 0;
     if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
@@ -118,6 +159,15 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
         f32 wz = 0;
         if (world_at(renderer, sim, mx, my, wx, wz)) {
             cursor_world_ = std::array<f32, 2>{wx, wz};
+            // The ray the cursor is on, for picking units where they are
+            // drawn (an aircraft where it flies).
+            f32 o[3];
+            f32 d[3];
+            if (renderer.camera().screen_ray(mx, my, static_cast<f32>(renderer.width()),
+                                             static_cast<f32>(renderer.height()), o, d)) {
+                cursor_ray_ = PickRay{{o[0], o[1], o[2]}, {d[0], d[1], d[2]}};
+                cursor_ray_ground_ = {wx, wz};
+            }
             if (!dragging_) {
                 hovered_ = unit_under(sim, wx, wz);
             }
@@ -583,32 +633,34 @@ void InputHandler::select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
 
 void InputHandler::handle_drag_select(Renderer& renderer,
                                       sim::SimState& sim) {
-    f32 wx0 = drag_quad_[0].x;
-    f32 wx1 = wx0;
-    f32 wz0 = drag_quad_[0].z;
-    f32 wz1 = wz0;
-    for (const sim::Vector3& p : drag_quad_) {
-        wx0 = std::min(wx0, p.x);
-        wx1 = std::max(wx1, p.x);
-        wz0 = std::min(wz0, p.z);
-        wz1 = std::max(wz1, p.z);
-    }
+    const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                       renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+    const f32 sw = static_cast<f32>(renderer.width());
+    const f32 sh = static_cast<f32>(renderer.height());
+    select_in_box(sim, renderer.camera().view_proj(sh > 0 ? sw / sh : 1.0f), sw, sh, drag_start_x_,
+                  drag_start_y_, drag_end_x_, drag_end_y_, shift);
+}
 
-    bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                 renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& view_proj,
+                                 f32 width, f32 height, f32 x0, f32 y0, f32 x1, f32 y1,
+                                 bool shift) {
     if (!shift)
         selected_.clear();
-
+    // What the box holds on the screen, where each unit is drawn: an
+    // aircraft at its height, not the ground under it (which the box's
+    // footprint on the ground had missed).
+    const f32 sx0 = std::min(x0, x1);
+    const f32 sx1 = std::max(x0, x1);
+    const f32 sy0 = std::min(y0, y1);
+    const f32 sy1 = std::max(y0, y1);
     std::vector<std::pair<u32, int>> boxed;
-    for (u32 id : sim.entity_registry().collect_in_rect(wx0, wz0, wx1, wz1)) {
-        auto* e = sim.entity_registry().find(id);
-        if (!e || !selectable(*e)) continue;
-        if (e->army() != player_army_) continue;
-        const sim::Vector3 pos = view_.position(*e);
-        if (inside_ground_quad(drag_quad_, pos.x, pos.z)) {
-            boxed.emplace_back(id, static_cast<const sim::Unit*>(e)->selection_priority());
-        }
-    }
+    sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
+        if (e.army() != player_army_ || !selectable(e)) return;
+        const auto at = screen_point(view_proj, view_.position(e), width, height);
+        if (at && (*at)[0] >= sx0 && (*at)[0] <= sx1 && (*at)[1] >= sy0 && (*at)[1] <= sy1)
+            boxed.emplace_back(e.entity_id(),
+                               static_cast<const sim::Unit&>(e).selection_priority());
+    });
     if (shift) {
         for (const auto& unit : boxed) {
             selected_.insert(unit.first);
@@ -620,8 +672,8 @@ void InputHandler::handle_drag_select(Renderer& renderer,
     }
 
     selection_event_ = true;
-    spdlog::debug("Drag select: {} units in ({:.0f},{:.0f})-({:.0f},{:.0f})", selected_.size(), wx0,
-                  wz0, wx1, wz1);
+    spdlog::debug("Drag select: {} units in ({:.0f},{:.0f})-({:.0f},{:.0f})", selected_.size(), sx0,
+                  sy0, sx1, sy1);
 }
 
 void InputHandler::handle_right_click(Renderer& renderer,
@@ -1015,9 +1067,30 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
 }
 
 u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) const {
+    // The cursor's ray if (wx, wz) is what it is on; else straight down.
+    const bool on_cursor = cursor_ray_ && std::abs(cursor_ray_ground_[0] - wx) < 1e-3f &&
+                           std::abs(cursor_ray_ground_[1] - wz) < 1e-3f;
+    const PickRay ray = on_cursor ? *cursor_ray_ : PickRay{{wx, 10000.0f, wz}, {0.0f, -1.0f, 0.0f}};
+    // What the ray passes over, from 150 above the ground down to it: an
+    // aircraft at height is drawn over ground short of (wx, wz).
+    f32 x0 = wx;
+    f32 x1 = wx;
+    f32 z0 = wz;
+    f32 z1 = wz;
+    if (on_cursor && ray.dir.y < -1e-4f) {
+        const f32 back = 150.0f / -ray.dir.y;
+        const f32 hx = wx - ray.dir.x * back;
+        const f32 hz = wz - ray.dir.z * back;
+        x0 = std::min(x0, hx);
+        x1 = std::max(x1, hx);
+        z0 = std::min(z0, hz);
+        z1 = std::max(z1, hz);
+    }
+    constexpr f32 kReach = 16.0f; // the widest unit's half size
     u32 best_id = 0;
-    f32 best_d2 = std::numeric_limits<f32>::max();
-    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
+    f32 best_t = std::numeric_limits<f32>::max();
+    for (u32 id : sim.entity_registry().collect_in_rect(x0 - kReach, z0 - kReach, x1 + kReach,
+                                                        z1 + kReach)) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit() || !shown(*e)) {
             continue;
@@ -1027,21 +1100,15 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
         }
         const auto& unit = static_cast<const sim::Unit&>(*e);
         const sim::Vector3 pos = view_.position(*e);
-        const sim::Vector3 right = sim::quat_rotate(view_.orientation(*e), {1, 0, 0});
-        const f32 len = std::sqrt(right.x * right.x + right.z * right.z);
-        const f32 rx = len > 1e-4f ? right.x / len : 1.0f;
-        const f32 rz = len > 1e-4f ? right.z / len : 0.0f;
-        const f32 dx = wx - pos.x;
-        const f32 dz = wz - pos.z;
-        const f32 along_x = dx * rx + dz * rz;
-        const f32 along_z = -dx * rz + dz * rx;
-        if (std::abs(along_x) > std::max(unit.size_x(), 0.5f) * 0.5f ||
-            std::abs(along_z) > std::max(unit.size_z(), 0.5f) * 0.5f) {
-            continue;
-        }
-        const f32 d2 = dx * dx + dz * dz;
-        if (d2 < best_d2) {
-            best_d2 = d2;
+        const sim::Quaternion orient = view_.orientation(*e);
+        const sim::Vector3 half{std::max(unit.size_x(), 0.5f) * 0.5f,
+                                std::max(unit.size_y(), 0.5f) * 0.5f,
+                                std::max(unit.size_z(), 0.5f) * 0.5f};
+        const sim::Vector3 up = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
+        const sim::Vector3 centre{pos.x + up.x, pos.y + up.y, pos.z + up.z};
+        const std::optional<f32> t = ray_box_distance(ray, centre, orient, half);
+        if (t && *t < best_t) {
+            best_t = *t;
             best_id = id;
         }
     }

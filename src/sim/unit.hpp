@@ -913,6 +913,7 @@ public:
     /// by its centre, half of it up, where entities attached to its bone -1
     /// sit (bone_world_transform).
     void set_size_y(f32 size_y) { size_y_ = size_y; }
+    f32 size_y() const { return size_y_; }
     void set_size_xz(f32 size_x, f32 size_z) {
         size_x_ = size_x;
         size_z_ = size_z;
