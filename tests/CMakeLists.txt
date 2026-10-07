@@ -30,6 +30,7 @@ add_executable(osc_tests
     test_footprint_classes.cpp
     test_occupancy.cpp
     test_path_clusters.cpp
+    test_path_search.cpp
     test_hull_facing.cpp
     test_reclaim.cpp
     test_entity_lifetime.cpp

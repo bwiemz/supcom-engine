@@ -430,6 +430,20 @@ void ClusterMap::dirty_rect(const OccupancyRect& r) {
     }
 }
 
+OccupancyRect ClusterMap::cluster_rect(i32 x, i32 z, u32 level) const {
+    const i32 size = kClusterSize[level];
+    const i32 mask = -size;
+    return {std::max(mask & (x - 1), 0), std::max(mask & (z - 1), 0),
+            std::min((mask & (size + x)) + 1, width_), std::min((mask & (size + z)) + 1, height_)};
+}
+
+OccupancyRect ClusterMap::cluster_index_rect(i32 x, i32 z, u32 level) const {
+    const i32 shift = kClusterShift[level];
+    return {std::max((x - 1) >> shift, 0), std::max((z - 1) >> shift, 0),
+            std::min((x >> shift) + 1, width_ >> shift),
+            std::min((z >> shift) + 1, height_ >> shift)};
+}
+
 bool ClusterMap::work_on_cluster(i32 cx, i32 cz, u32 level, i32& budget) {
     if (!dirty_[level].test(cx, cz)) return true;
     if (budget <= 0) return false;
