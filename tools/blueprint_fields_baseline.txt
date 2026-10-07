@@ -1,6 +1,5 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 AimsStraightOnDisable
-AutoLandTime
 BankFactor
 BankForward
 BankingSlope
@@ -54,7 +53,6 @@ Silhouette
 SinkLower
 SpawnRandomRotation
 StandUpright
-StartTurnDistance
 StayUpright
 StopOnPrimaryWeaponBusy
 StraddleWater

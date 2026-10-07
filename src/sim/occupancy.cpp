@@ -26,7 +26,21 @@ OccupancyRect footprint_rect(const blueprints::Footprint& fp, f32 wx, f32 wz) {
 
 OccupancyGrid::OccupancyGrid(u32 width, u32 height)
     : width_(width), height_(height), ground_(static_cast<size_t>(width) * height, 0),
-      water_(static_cast<size_t>(width) * height, 0) {}
+      water_(static_cast<size_t>(width) * height, 0),
+      reserved_(static_cast<size_t>(width) * height, 0) {}
+
+bool OccupancyGrid::reserved_any(const OccupancyRect& r) const {
+    // Moho's IsRectOccupied reads the bits within the map only.
+    const i32 x0 = std::max(r.x0, 0);
+    const i32 z0 = std::max(r.z0, 0);
+    const i32 x1 = std::min(r.x1, static_cast<i32>(width_));
+    const i32 z1 = std::min(r.z1, static_cast<i32>(height_));
+    for (i32 z = z0; z < z1; ++z)
+        for (i32 x = x0; x < x1; ++x)
+            if (reserved_[static_cast<size_t>(z) * width_ + static_cast<size_t>(x)] != 0)
+                return true;
+    return false;
+}
 
 bool OccupancyGrid::any(const std::vector<u8>& cells, const OccupancyRect& r) const {
     if (r.x0 < 0 || r.z0 < 0 || r.x1 > static_cast<i32>(width_) || r.z1 > static_cast<i32>(height_))

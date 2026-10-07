@@ -33,6 +33,7 @@ add_executable(osc_tests
     test_path_search.cpp
     test_path_navigator.cpp
     test_moho_pathing.cpp
+    test_air_landing.cpp
     test_hull_facing.cpp
     test_reclaim.cpp
     test_entity_lifetime.cpp

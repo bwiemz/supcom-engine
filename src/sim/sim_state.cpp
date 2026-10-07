@@ -103,6 +103,18 @@ void SimState::release_ground(u32 id) {
     }
 }
 
+OccupancyRect SimState::move_bounds(i32 army, bool whole_map_if_allowed) {
+    const OccupancyRect whole{0, 0, terrain_ ? static_cast<i32>(terrain_->map_width()) : 0,
+                              terrain_ ? static_cast<i32>(terrain_->map_height()) : 0};
+    if (!has_playable_rect_) return whole;
+    if (whole_map_if_allowed) {
+        const ArmyBrain* a = get_army(army);
+        if (a && a->use_whole_map()) return whole;
+    }
+    return {static_cast<i32>(playable_x0_), static_cast<i32>(playable_z0_),
+            static_cast<i32>(playable_x1_), static_cast<i32>(playable_z1_)};
+}
+
 u8 SimState::footprint_fits_at(const blueprints::Footprint& fp, f32 wx, f32 wz) const {
     if (!terrain_) return 0;
     const OccupancyRect r = footprint_rect(fp, wx, wz);
@@ -134,8 +146,10 @@ void SimState::on_entity_unregistered(Entity& entity) {
     // Its ambient loops end with it: the audio side stops what no entity wants.
     entity.clear_ambient_sounds();
 
-    // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor).
+    // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor),
+    // and any place it reserved to land on.
     release_ground(entity.entity_id());
+    if (entity.is_unit()) static_cast<Unit&>(entity).free_landing_reservation(*this);
 
     // A dead structure stops blocking paths (it used to block forever).
     if (auto it = occupied_footprints_.find(entity.entity_id());

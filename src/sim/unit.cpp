@@ -1,3 +1,4 @@
+#include "sim/prepare_move.hpp"
 #include "sim/unit.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
@@ -412,6 +413,14 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
 void Unit::update(f64 dt, SimContext& ctx) {
     if (!tick_lifecycle(dt, ctx)) return;
 
+    // A landed aircraft given an order goes back to the air before it
+    // carries the order out (Moho's motion target set, layer Air).
+    if (can_fly() && !is_being_built() && !command_queue_.empty() && parent_entity_id() == 0 &&
+        (layer_ == "Land" || layer_ == "Water")) {
+        take_off(ctx);
+        if (destroyed() || !in_registry()) return;
+    }
+
     // Compute economy efficiency for this unit's army
     f32 econ_eff = 1.0f;
     if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES) {
@@ -585,6 +594,10 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
 
     // A sub dives or surfaces, moving or not (M206o).
     tick_dive(ctx.terrain, L);
+    if (destroyed() || !in_registry()) return false;
+
+    // An idle aircraft comes down (item 6).
+    tick_idle_landing(dt, ctx);
     if (destroyed() || !in_registry()) return false;
 
     // An idle transport hovers low with cargo aboard, and climbs back to its
@@ -2478,6 +2491,114 @@ void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {
         if (walks_seabed()) set_layer_with_callback("Land", L);
     } else if (layer_ == "Water" && (floats || motion_type_ == "RULEUMT_Water")) {
         set_layer_with_callback("Land", L);
+    }
+}
+
+void Unit::free_landing_reservation(SimState& sim) {
+    OccupancyRect& r = idle_landing_.reserved;
+    if (r.x1 > r.x0 && r.z1 > r.z0) sim.reserve_ground(r, false);
+    r = {};
+}
+
+void Unit::take_off(SimContext& ctx) {
+    idle_landing_.descending = false;
+    idle_landing_.idle_since = 0;
+    if (ctx.sim) free_landing_reservation(*ctx.sim);
+    set_layer_with_callback("Air", ctx.L);
+    if (destroyed() || !in_registry()) return;
+    current_altitude_ = 0;
+    set_unit_state("MovingDown", false);
+    set_unit_state("MovingUp", true);
+    set_vert_event("Up", ctx.L);
+}
+
+void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
+    // Not one under construction: it neither moves nor flies yet.
+    if (!can_fly() || dying_ || is_being_built() || parent_entity_id() != 0 || !ctx.sim ||
+        !ctx.terrain)
+        return;
+    SimState& sim = *ctx.sim;
+    lua_State* L = ctx.L;
+    // Up at its height after a take-off: level flight.
+    if (is_air_unit() && has_unit_state("MovingUp") &&
+        current_altitude_ >= elevation_target_ - 0.1f) {
+        set_unit_state("MovingUp", false);
+        set_vert_event("Top", L);
+        if (destroyed() || !in_registry()) return;
+    }
+    if (!is_air_unit()) return; // down
+    IdleLanding& land = idle_landing_;
+    if (!command_queue_.empty() || navigator_.busy()) {
+        // An order: no clock, no landing.
+        land.idle_since = 0;
+        if (land.descending) {
+            land.descending = false;
+            free_landing_reservation(sim);
+            set_unit_state("MovingDown", false);
+        }
+        return;
+    }
+    const u32 now = sim.tick_count();
+    if (land.idle_since == 0) land.idle_since = now;
+    const Vector3 pos = position();
+    if (!land.descending) {
+        const auto wait = static_cast<i32>(auto_land_time_ * 10.0f);
+        if (wait <= 0 || now <= land.idle_since + static_cast<u32>(wait)) return;
+        // A transport with cargo hovers instead (ShouldHoverInsteadOfLand).
+        if (transport_hover_height_ > 0 && !cargo_ids_.empty()) return;
+        // Its last goal, if it is near it; else where it hangs.
+        Vector3 target = navigator_.goal();
+        const f32 gx = target.x - pos.x;
+        const f32 gz = target.z - pos.z;
+        if (gx * gx + gz * gz > start_turn_distance_ * start_turn_distance_) target = pos;
+        if (!prepare_move(*this, *ctx.terrain, sim.occupancy(), sim.move_bounds(army()), target)) {
+            land.idle_since = now; // and looks again later
+            set_unit_state("CannotFindPlaceToLand", true);
+            return;
+        }
+        set_unit_state("CannotFindPlaceToLand", false);
+        // Its own footprint's rect there (COORDS_ToGridRect), reserved.
+        land.reserved = footprint_rect(footprint(), target.x, target.z);
+        sim.reserve_ground(land.reserved, true);
+        land.descending = true;
+        land.target = target;
+        const bool wet =
+            ctx.terrain->has_water() &&
+            ctx.terrain->get_terrain_height(target.x, target.z) <= ctx.terrain->water_elevation();
+        land.layer = wet ? "Water" : "Land";
+    }
+    // Coming down: over the place, then onto it, half its height a step.
+    set_unit_state("MovingDown", true);
+    set_vert_event("Down", L);
+    if (destroyed() || !in_registry()) return;
+    const auto step = static_cast<f32>(dt);
+    Vector3 at = pos;
+    const f32 dx = land.target.x - at.x;
+    const f32 dz = land.target.z - at.z;
+    const f32 dist = std::sqrt(dx * dx + dz * dz);
+    const f32 move = std::min(dist, std::max(max_airspeed_, 1.0f) * step);
+    if (dist > 0) {
+        at.x += dx / dist * move;
+        at.z += dz / dist * move;
+    }
+    const f32 left = dist - move;
+    const f32 goal_alt = left < 0.5f ? 0.0f : current_altitude_ * 0.5f;
+    current_altitude_ = std::max(goal_alt, current_altitude_ - climb_rate_ * step);
+    at.y = air_floor(ctx.terrain, at.x, at.z) + current_altitude_;
+    set_position(at);
+    current_airspeed_ = std::min(current_airspeed_, move / std::max(step, 1e-4f));
+    if (left < 0.5f && current_altitude_ < 0.1f) {
+        // Down: its place freed, on its new layer, still.
+        free_landing_reservation(sim);
+        land.descending = false;
+        current_altitude_ = 0;
+        current_airspeed_ = 0;
+        at.y = air_floor(ctx.terrain, at.x, at.z);
+        set_position(at);
+        set_unit_state("MovingDown", false);
+        set_layer_with_callback(land.layer, L);
+        if (destroyed() || !in_registry()) return;
+        set_vert_event("Bottom", L);
     }
 }
 
