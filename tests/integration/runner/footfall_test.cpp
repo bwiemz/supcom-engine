@@ -58,9 +58,9 @@ void test_footfall(TestContext& ctx) {
         end
         __osc_footfall_damage = 0
         local damage_area = DamageArea
-        DamageArea = function(instigator, pos, radius, amount, kind, friendly)
+        DamageArea = function(instigator, pos, radius, amount, kind, friendly, selfdamage)
             if kind == 'ExperimentalFootfall' then __osc_footfall_damage = __osc_footfall_damage + 1 end
-            return damage_area(instigator, pos, radius, amount, kind, friendly)
+            return damage_area(instigator, pos, radius, amount, kind, friendly, selfdamage)
         end
     )");
     run(30);
