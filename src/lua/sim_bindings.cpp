@@ -3358,6 +3358,7 @@ static sim::IEffect* make_decal_effect(sim::SimState& sim, sim::EffectType type,
         fx->set_ends_at(static_cast<f64>(spec.remove_tick) * sim::SimState::SECONDS_PER_TICK);
     fx->set_seen_by(sim.decal_sight(spec));
     fx->set_decal(std::make_shared<const sim::DecalSpec>(std::move(spec)));
+    sim.track_decal(fx->id());
     return fx;
 }
 
