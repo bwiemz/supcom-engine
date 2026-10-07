@@ -4,6 +4,7 @@
 #include "core/test_status.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/unit.hpp"
 #include "map/terrain.hpp"
 
@@ -22,6 +23,17 @@ extern "C" {
 
 namespace osc::sim {
 
+namespace {
+
+constexpr f32 kDegToRad = 0.017453292f;
+
+/// The water's height, or Moho's -10000 on a map without
+f32 water_line(const map::Terrain* terrain) {
+    return terrain && terrain->has_water() ? terrain->water_elevation() : -10000.0f;
+}
+
+} // namespace
+
 // Helper: push a Vector3 as {[1]=x, [2]=y, [3]=z}
 static void push_vec3(lua_State* L, const Vector3& v) {
     lua_newtable(L);
@@ -36,8 +48,8 @@ static void push_vec3(lua_State* L, const Vector3& v) {
     lua_settable(L, -3);
 }
 
-void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
-                         const map::Terrain* terrain) {
+void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const map::Terrain* terrain,
+                        u32 tick) {
     if (destroyed()) return;
 
     // Tick lifetime
@@ -62,110 +74,68 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     }
     if (impacted) return;
 
-    // Gravity, for a shot that doesn't track: Moho integrates a TrackTarget
-    // projectile's steering in its place, whatever its UseGravity (faf-re
-    // Projectile's motion: the ballistic step runs only `if (!mTrackTarget)`).
-    // FAF's torpedoes say UseGravity and sank to the seabed under their sub.
-    const f32 gravity = tracking ? 0.0f : ballistic_accel;
-    if (gravity != 0) {
-        velocity.y += gravity * static_cast<f32>(dt);
-    }
-
-    // Apply linear acceleration capped at max_speed
-    if (acceleration > 0 && max_speed > 0) {
-        f32 spd = std::sqrt(velocity.x * velocity.x +
-                            velocity.y * velocity.y +
-                            velocity.z * velocity.z);
-        if (spd <= 0) {
-            // At rest (a nuke in its silo): it sets off the way it faces.
-            const Vector3 ahead = quat_rotate(orientation(), Vector3{0.0f, 0.0f, 1.0f});
-            const f32 start = std::min(max_speed, acceleration * static_cast<f32>(dt));
-            velocity = {ahead.x * start, ahead.y * start, ahead.z * start};
-        } else if (spd < max_speed) {
-            f32 new_spd = std::min(max_speed,
-                                    spd + acceleration * static_cast<f32>(dt));
-            f32 scale = new_spd / spd;
-            velocity.x *= scale;
-            velocity.y *= scale;
-            velocity.z *= scale;
-        }
-    }
-
-    // A tracking shot follows its target (a unit's target point, anything
-    // else's middle), and flies on to where it last was once it is gone;
-    // with no target, to its ground target.
-    if (target_entity_id > 0) {
-        auto* target = registry.find(target_entity_id);
-        if (target && !target->destroyed()) {
-            target_position = target->is_unit()
-                                  ? static_cast<const Unit*>(target)->target_point(target_point)
-                                  : collision_centre(*target);
-            has_target_position = true;
-        } else {
-            // Its target is gone: the script decides (a homing missile's
-            // OnLostTarget shortens its lifetime).
-            target_entity_id = 0;
-            if (!call_script(L, registry, "OnLostTarget")) return;
-        }
-    }
-    if (tracking && has_target_position) {
-        auto pos = position();
-        // A torpedo aims a quarter under the surface, so one launched above
-        // the water dives into it (Moho's underwater aim clamp, M206o).
-        f32 aim_y = target_position.y;
-        if (stay_underwater && terrain && terrain->has_water())
-            aim_y = std::min(aim_y, terrain->water_elevation() - 0.25f);
-        f32 tx = target_position.x - pos.x;
-        f32 ty = aim_y - pos.y;
-        f32 tz = target_position.z - pos.z;
-        f32 to_len = std::sqrt(tx * tx + ty * ty + tz * tz);
-        if (to_len > 0.01f) {
-            f32 spd = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y +
-                                velocity.z * velocity.z);
-            if (spd < 0.01f) spd = max_speed > 0 ? max_speed : 1.0f;
-
-            // Desired velocity: direction to target * current speed
-            f32 inv_len = 1.0f / to_len;
-            f32 dx = tx * inv_len * spd;
-            f32 dy = ty * inv_len * spd;
-            f32 dz = tz * inv_len * spd;
-
-            // Turn rate: degrees/sec -> radians/sec
-            f32 turn_rad = turn_rate * 3.14159265f / 180.0f;
-            f32 max_turn = turn_rad * static_cast<f32>(dt);
-
-            // Angle between current velocity and desired
-            f32 dot = (velocity.x * dx + velocity.y * dy + velocity.z * dz) / (spd * spd);
-            dot = std::clamp(dot, -1.0f, 1.0f);
-            f32 angle = osc::dmath::acos(dot);
-
-            if (angle > 0.001f) {
-                f32 t = std::min(1.0f, max_turn / angle);
-                velocity.x += (dx - velocity.x) * t;
-                velocity.y += (dy - velocity.y) * t;
-                velocity.z += (dz - velocity.z) * t;
-
-                // Normalize to maintain speed
-                f32 new_spd = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y +
-                                        velocity.z * velocity.z);
-                if (new_spd > 0.01f) {
-                    f32 scale = spd / new_spd;
-                    velocity.x *= scale;
-                    velocity.y *= scale;
-                    velocity.z *= scale;
-                }
-            }
-        }
-    }
-
-    // Move. Gravity was added to the velocity above; taking half of it back
-    // keeps the fall on the parabola an arc's launch angle was solved for.
+    // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
+    // faces. One that doesn't track falls (Moho runs the ballistic step only
+    // `if (!mTrackTarget)`: FAF's torpedoes say UseGravity and sank to the
+    // seabed under their sub), and with VelocityAlign turns after its
+    // velocity; one that tracks turns toward its target first
+    // (UpdateTracking). Its speed is capped, and it moves by the mean of its
+    // old and new velocity (a shell's fall stays on the parabola its launch
+    // angle was solved for).
+    const auto step = static_cast<f32>(dt);
+    const Vector3 start_velocity = velocity;
     const Vector3 from = position();
+    Quaternion facing = orientation();
+    const auto thrust = [&] {
+        const Vector3 ahead = forward_of(facing);
+        velocity.x += ahead.x * acceleration * step;
+        velocity.y += ahead.y * acceleration * step;
+        velocity.z += ahead.z * acceleration * step;
+    };
+    if (!tracking) {
+        velocity.y += ballistic_accel * step;
+        thrust();
+        // TurnRate degrees a tick here, where UpdateTracking turns a tenth
+        // of that: a shot with none keeps the facing it left with.
+        if (velocity_align) facing = turned_toward(facing, velocity, turn_rate * kDegToRad);
+    } else {
+        if (!steer(facing, registry, L, terrain, tick)) return; // its script destroyed it
+        thrust();
+    }
+    if (max_speed != 0.0f) {
+        const f32 speed =
+            std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
+        if (speed > max_speed) {
+            const f32 cut = max_speed / speed;
+            velocity = {velocity.x * cut, velocity.y * cut, velocity.z * cut};
+        }
+    }
+    if (stay_upright) facing = coords_orient(forward_of(facing));
+
     auto pos = from;
-    const auto step_dt = static_cast<f32>(dt);
-    pos.x += velocity.x * step_dt;
-    pos.y += velocity.y * step_dt - 0.5f * gravity * step_dt * step_dt;
-    pos.z += velocity.z * step_dt;
+    pos.x += (velocity.x + start_velocity.x) * step * 0.5f;
+    pos.y += (velocity.y + start_velocity.y) * step * 0.5f;
+    pos.z += (velocity.z + start_velocity.z) * step * 0.5f;
+
+    // SetLocalAngularVelocity: it spins in its own frame, about its forward
+    // axis if it aligns or tracks, its up axis if it stays upright, with the
+    // rate it was given.
+    const f32 spin_sq = angular_velocity.x * angular_velocity.x +
+                        angular_velocity.y * angular_velocity.y +
+                        angular_velocity.z * angular_velocity.z;
+    if (spin_sq > 0.0f) {
+        if (velocity_align || tracking || stay_upright) {
+            const f32 rate = std::sqrt(spin_sq);
+            angular_velocity =
+                velocity_align || tracking ? Vector3{0.0f, 0.0f, rate} : Vector3{0.0f, rate, 0.0f};
+        }
+        const Vector3 turn{angular_velocity.x * step, angular_velocity.y * step,
+                           angular_velocity.z * step};
+        const f32 angle = std::sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z);
+        const f32 s = osc::dmath::sin(angle * 0.5f) / angle;
+        facing = quat_multiply(
+            facing, Quaternion{turn.x * s, turn.y * s, turn.z * s, osc::dmath::cos(angle * 0.5f)});
+    }
 
     // A torpedo in the water stays just under its surface; one above it
     // (launched from a surfaced sub) is free to fall in (Moho clamps only
@@ -173,6 +143,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     if (stay_underwater && in_water && terrain && pos.y > terrain->water_elevation() - 0.01f)
         pos.y = terrain->water_elevation() - 0.01f;
     set_position(pos);
+    set_orientation(facing);
 
     // SetScaleVelocity: an effect that grows or shrinks as it flies.
     if (scale_velocity.x != 0 || scale_velocity.y != 0 || scale_velocity.z != 0) {
@@ -181,16 +152,6 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         };
         set_scale(grown(scale_x(), scale_velocity.x), grown(scale_y(), scale_velocity.y),
                   grown(scale_z(), scale_velocity.z));
-    }
-
-    // Velocity-align orientation for rendering
-    if (velocity_align) {
-        f32 spd_xz = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-        if (spd_xz > 0.001f || std::abs(velocity.y) > 0.001f) {
-            f32 heading = osc::dmath::atan2(velocity.x, velocity.z);
-            f32 pitch = osc::dmath::atan2(-velocity.y, spd_xz);
-            set_orientation(euler_to_quat(heading, pitch, 0.0f));
-        }
     }
 
     if (collide(from, registry, L, terrain)) return;
@@ -218,6 +179,135 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
             return;
         }
     }
+}
+
+bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* L,
+                       const map::Terrain* terrain, u32 tick) {
+    // Its aim: its target's aim spot (a unit's target point, anything
+    // else's middle) while it has one, a ground target always. Once its
+    // target is gone it has none: the script decides (Projectile.lua's
+    // OnLostTarget shortens a homing shot's life) and it stops tracking,
+    // steering this once more at the last aim if it was sent at something on
+    // the ground or the water.
+    bool has_target = has_target_position;
+    if (target_entity_id > 0) {
+        auto* target = registry.find(target_entity_id);
+        if (target && !target->destroyed()) {
+            target_position = target->is_unit()
+                                  ? static_cast<const Unit*>(target)->target_point(target_point)
+                                  : collision_centre(*target);
+            has_target_position = true;
+            has_target = true;
+        } else {
+            target_entity_id = 0;
+            has_target_position = false;
+            has_target = false;
+        }
+    }
+    if (!has_target) {
+        if (tracking) {
+            if (!call_script(L, registry, "OnLostTarget")) return false;
+            tracking = false;
+        }
+        if (!keep_last_aim) return true;
+    }
+    const Vector3 pos = position();
+    Vector3 aim = target_position;
+
+    // LeadTarget: where its target will be by the time it gets there at its
+    // top speed, the time found twice over, both times from the aim
+    if (lead_target && max_speed > 0.0f && target_entity_id > 0) {
+        if (const Entity* target = registry.find(target_entity_id)) {
+            const Vector3 v = target->is_unit() ? static_cast<const Unit*>(target)->velocity()
+                              : target->is_projectile()
+                                  ? static_cast<const Projectile*>(target)->velocity
+                                  : Vector3{};
+            const Vector3 aim0 = aim;
+            const auto lead_from = [&](const Vector3& at) {
+                const f32 dx = pos.x - at.x, dy = pos.y - at.y, dz = pos.z - at.z;
+                const f32 t = std::sqrt(dx * dx + dy * dy + dz * dz) / max_speed;
+                return Vector3{aim0.x + v.x * t, aim0.y + v.y * t, aim0.z + v.z * t};
+            };
+            aim = lead_from(lead_from(aim0));
+        }
+    }
+
+    // A torpedo aims at most a quarter under the surface, so one launched
+    // above the water dives into it (Moho's underwater aim clamp, M206o).
+    const f32 water = water_line(terrain);
+    if (stay_underwater) aim.y = std::min(aim.y, water - 0.25f);
+
+    Vector3 toward{aim.x - pos.x, aim.y - pos.y, aim.z - pos.z};
+
+    // Zig-zag: a random offset, redrawn every ZigZagFrequency (in whole
+    // ticks), weighted down within MaxZigZag of the aim, on a point its top
+    // speed ahead; never under the ground, nor (unless it keeps under) the
+    // water.
+    if (max_zig_zag > 0.0f && zig_zag_freq > 0.0f) {
+        if (zig_zag_next_tick <= tick) {
+            SimRandom& rng = registry.sim_random();
+            zig_zag_offset.x = rng.range(-max_zig_zag, max_zig_zag);
+            zig_zag_offset.y = rng.range(-max_zig_zag, max_zig_zag);
+            zig_zag_offset.z = rng.range(-max_zig_zag, max_zig_zag);
+            zig_zag_next_tick = tick + static_cast<u32>(static_cast<i32>(zig_zag_freq * 10.0f));
+        }
+        const f32 dist = std::sqrt(toward.x * toward.x + toward.y * toward.y + toward.z * toward.z);
+        const f32 blend = std::min(dist / max_zig_zag, 1.0f);
+        const Vector3 dir =
+            dist > 0.0f ? Vector3{toward.x / dist, toward.y / dist, toward.z / dist} : Vector3{};
+        const f32 jx = pos.x + dir.x * max_speed + zig_zag_offset.x * blend;
+        const f32 jz = pos.z + dir.z * max_speed + zig_zag_offset.z * blend;
+        const f32 base_y = pos.y + dir.y * max_speed;
+        f32 jy = base_y + zig_zag_offset.y * blend;
+        const f32 ground = (terrain ? terrain->get_terrain_height(jx, jz) : 0.0f) + 0.5f;
+        jy = std::max(jy, std::max(base_y, ground));
+        if (!stay_underwater) jy = std::max(jy, std::min(base_y, water + 0.5f));
+        toward = {jx - pos.x, jy - pos.y, jz - pos.z};
+    }
+
+    // It turns at most TurnRate degrees a second
+    facing = turned_toward(facing, toward, turn_rate * kDegToRad * 0.1f);
+
+    // Under the water, one rising toward the surface levels off at it
+    if (stay_underwater && in_water) {
+        const Vector3 ahead = forward_of(facing);
+        if (ahead.y > 0.0f) {
+            const f32 t = (water - pos.y) / ahead.y;
+            if (t < 1.0f) {
+                Vector3 clipped{ahead.x, ahead.y * t, ahead.z};
+                const f32 len_sq =
+                    clipped.x * clipped.x + clipped.y * clipped.y + clipped.z * clipped.z;
+                if (len_sq < 1.0e-6f && len_sq > 0.0f) {
+                    const f32 len = std::sqrt(len_sq);
+                    clipped = {clipped.x / len, clipped.y / len, clipped.z / len};
+                }
+                facing = coords_orient(clipped);
+            }
+        }
+    }
+
+    // VelocityAlign: what of its velocity lies along its new facing
+    if (velocity_align) {
+        const Vector3 ahead = forward_of(facing);
+        const f32 len_sq = ahead.x * ahead.x + ahead.y * ahead.y + ahead.z * ahead.z;
+        const f32 along =
+            len_sq > 0.0f
+                ? (velocity.x * ahead.x + velocity.y * ahead.y + velocity.z * ahead.z) / len_sq
+                : 0.0f;
+        velocity = {ahead.x * along, ahead.y * along, ahead.z * along};
+    }
+    return true;
+}
+
+void Projectile::arm_lost_target_aim(const EntityRegistry& registry) {
+    // Moho's Projectile constructor: a homing shot sent at something neither
+    // in the air nor under the water steers on at where it last was.
+    keep_last_aim = false;
+    if (!tracking || target_entity_id == 0) return;
+    const Entity* target = registry.find(target_entity_id);
+    if (!target || !target->is_unit()) return;
+    const std::string layer = static_cast<const Unit*>(target)->layer();
+    keep_last_aim = layer != "Air" && layer != "Sub";
 }
 
 namespace {
@@ -394,6 +484,9 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
     number("MaxSpeed", max_speed);
     flag("TrackTarget", tracking);
     number("TurnRate", turn_rate);
+    flag("LeadTarget", lead_target);
+    number("MaxZigZag", max_zig_zag);
+    number("ZigZagFrequency", zig_zag_freq);
     flag("StayUnderwater", stay_underwater);
     // Where it ends of itself: on the water (209 retail shells), or
     // bursting at a height above the surface.

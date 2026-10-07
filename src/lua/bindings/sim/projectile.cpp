@@ -438,6 +438,7 @@ static int proj_CreateChildProjectile(lua_State* L) {
     child->target_position = parent->target_position;
     child->has_target_position = parent->has_target_position;
     apply_script_projectile_physics(L, *child);
+    child->arm_lost_target_aim(sim->entity_registry());
 
     u32 child_id = sim->entity_registry().register_entity(std::move(child));
     auto* child_ptr = static_cast<sim::Projectile*>(

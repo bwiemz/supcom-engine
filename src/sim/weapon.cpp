@@ -1,4 +1,5 @@
 #include "sim/weapon.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/projectile_script.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
@@ -924,9 +925,11 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         proj->set_orientation(euler_to_quat(osc::dmath::atan2(facing.x, facing.z),
                                             osc::dmath::atan2(-facing.y, across), 0.0f));
     } else {
-        f32 heading = osc::dmath::atan2(vel.x, vel.z);
-        proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+        // Facing the way it leaves: it thrusts and turns from there (Moho's
+        // launch transform)
+        proj->set_orientation(coords_orient(vel));
     }
+    proj->arm_lost_target_aim(registry);
 
     // An arc is gravity's: its shot falls whatever its blueprint says. A
     // straight shot falls only if its blueprint says so, and a bomb unless it
