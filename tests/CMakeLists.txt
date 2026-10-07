@@ -67,6 +67,7 @@ add_executable(osc_tests
     test_console_keymap.cpp
     test_range_overlays.cpp
     test_selection_geometry.cpp
+    test_build_template.cpp
     test_command_graph.cpp
     test_utf8_substring.cpp
     test_overlay_footprint.cpp
