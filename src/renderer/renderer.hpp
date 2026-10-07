@@ -35,6 +35,7 @@
 #include "renderer/shadow_map.hpp"
 #include "renderer/shadow_casters.hpp"
 #include "renderer/bloom_renderer.hpp"
+#include "renderer/frame_targets.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_feedback.hpp"
@@ -566,8 +567,6 @@ private:
     VkPipelineLayout terrain_normal_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_normal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_normal_layout_ = VK_NULL_HANDLE;
-    AllocatedImage terrain_normal_image_{};
-    VkFramebuffer terrain_normal_framebuffer_ = VK_NULL_HANDLE;
     /// Point the terrain set's binding 26 at the normal target (a new scene,
     /// or a new target after a resize).
     void bind_normal_target();
@@ -796,22 +795,9 @@ private:
     bool legacy_hud_ = false;        // --legacy-hud
     bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
 
-    // Offscreen scene image (rendered instead of swapchain, then composited)
-    /// The frame before the water, which the water refracts (M213a).
-    AllocatedImage refraction_image_{};
-    /// The units reflected in the water, drawn mirrored before the scene
-    /// (M213b), and its framebuffer, which shares the scene's depth.
-    AllocatedImage reflection_image_{};
-    VkFramebuffer reflection_framebuffer_ = VK_NULL_HANDLE;
-    /// The scene's two passes around the water on a map with it (M213a).
-    VkRenderPass scene_first_pass_ = VK_NULL_HANDLE;
-    VkRenderPass scene_second_pass_ = VK_NULL_HANDLE;
-    /// One between them, which goes on from the first and ends as it does:
-    /// on a map with water, before the refracting particles' copy (M214d).
-    VkRenderPass scene_middle_pass_ = VK_NULL_HANDLE;
-    AllocatedImage scene_color_image_{};
-    VkRenderPass scene_render_pass_ = VK_NULL_HANDLE;
-    VkFramebuffer scene_framebuffer_ = VK_NULL_HANDLE;
+    /// The frame's own targets (the HDR scene, the water's refraction and
+    /// reflection, the normal target), the scene's passes and framebuffers.
+    FrameTargets frame_;
 
     /// FA's bloom (M211e): its half-size targets, and the composite that
     /// puts the scene on the screen.
