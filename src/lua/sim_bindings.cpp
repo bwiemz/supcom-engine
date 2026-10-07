@@ -1392,6 +1392,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
         unit->init_animated_bones();
     }
 
+    unit->set_creation_tick(sim->tick_count());
     u32 id = sim->entity_registry().register_entity(std::move(unit));
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
     unit_ptr->navigator().set_sim_state(sim);

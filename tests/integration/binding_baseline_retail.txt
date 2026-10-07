@@ -18,7 +18,6 @@ G ClearQueueGrid            # not Moho's
 G ConTextMatches
 G ERROR                     # not Moho's: a retail typo (error)
 G ExecLuaInSim
-G GenerateBuildTemplateFromSelection
 G GetArmy                   # not Moho's as a global (a method of units and brains)
 G InternalCreateMesh
 G IssueEnhance              # not Moho's

@@ -962,6 +962,125 @@ static int l_GetSelectedUnits(lua_State* L) {
     return 1;
 }
 
+// --- Build templates (Moho's CWldSession::GenerateBuildTemplates & co) ---
+
+/// GenerateBuildTemplateFromSelection(): the selected structures (standing,
+/// not mobile) as the active template, in the order they were made, each
+/// from the first. With none selected the active one is kept.
+static int l_GenerateBuildTemplateFromSelection(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
+    if (!ih || !sim) return 0;
+    std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    std::sort(ids.begin(), ids.end());
+    std::vector<renderer::TemplateStructure> structures;
+    for (const u32 id : ids) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || !e->is_unit() || e->destroyed()) continue;
+        const auto* u = static_cast<const sim::Unit*>(e);
+        if (u->is_mobile() || u->is_dying()) continue;
+        renderer::TemplateStructure t;
+        t.blueprint_id = u->unit_id();
+        std::transform(t.blueprint_id.begin(), t.blueprint_id.end(), t.blueprint_id.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        t.creation_tick = u->creation_tick();
+        t.x = u->position().x;
+        t.z = u->position().z;
+        t.foot_x = u->footprint_size_x();
+        t.foot_z = u->footprint_size_z();
+        t.skirt_x = u->skirt_size_x();
+        t.skirt_z = u->skirt_size_z();
+        t.skirt_off_x = u->skirt_offset_x();
+        t.skirt_off_z = u->skirt_offset_z();
+        structures.push_back(std::move(t));
+    }
+    if (auto made = renderer::generate_build_template(structures))
+        ih->build_template() = std::move(*made);
+    return 0;
+}
+
+/// GetActiveBuildTemplate(): {spanX, spanZ, {bpId, buildOrder, x, z}, ...},
+/// or an empty table with none.
+static int l_GetActiveBuildTemplate(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    if (!ih) return 0;
+    const renderer::BuildTemplate& t = ih->build_template();
+    lua_newtable(L);
+    if (t.entries.empty()) return 1;
+    const int result = lua_gettop(L);
+    lua_pushnumber(L, t.span_x);
+    lua_rawseti(L, result, 1);
+    lua_pushnumber(L, t.span_z);
+    lua_rawseti(L, result, 2);
+    int i = 3;
+    for (const auto& e : t.entries) {
+        lua_newtable(L);
+        lua_pushstring(L, e.blueprint_id.c_str());
+        lua_rawseti(L, -2, 1);
+        lua_pushnumber(L, e.build_order);
+        lua_rawseti(L, -2, 2);
+        lua_pushnumber(L, e.x);
+        lua_rawseti(L, -2, 3);
+        lua_pushnumber(L, e.z);
+        lua_rawseti(L, -2, 4);
+        lua_rawseti(L, result, i++);
+    }
+    return 1;
+}
+
+/// SetActiveBuildTemplate(template): the template (as GetActiveBuildTemplate
+/// gives one) active, if it has a structure; malformed entries are warned of
+/// and left out.
+static int l_SetActiveBuildTemplate(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return luaL_error(L, "set this as an active build template.\n  expected 1 args, but got %d",
+                          lua_gettop(L));
+    auto* ih = get_input_handler(L);
+    if (!ih) return 0;
+    if (!lua_istable(L, 1) || luaL_getn(L, 1) < 3) {
+        spdlog::warn("Build template error! Not a table or insufficient members");
+        return 0;
+    }
+    const auto number_at = [L](int table, int i) {
+        lua_rawgeti(L, table, i);
+        const auto v = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return v;
+    };
+    renderer::BuildTemplate t;
+    t.span_x = number_at(1, 1);
+    t.span_z = number_at(1, 2);
+    const int count = luaL_getn(L, 1);
+    for (int i = 3; i <= count; ++i) {
+        lua_rawgeti(L, 1, i);
+        const int entry = lua_gettop(L);
+        if (!lua_istable(L, entry) || luaL_getn(L, entry) < 4) {
+            spdlog::warn("Template info error! Not a table or insufficient members");
+            lua_pop(L, 1);
+            continue;
+        }
+        renderer::BuildTemplateEntry e;
+        lua_rawgeti(L, entry, 1);
+        if (const char* bp = lua_tostring(L, -1)) e.blueprint_id = bp;
+        lua_pop(L, 1);
+        e.build_order = static_cast<i32>(number_at(entry, 2));
+        e.x = number_at(entry, 3);
+        e.z = number_at(entry, 4);
+        t.entries.push_back(std::move(e));
+        lua_pop(L, 1);
+    }
+    if (!t.entries.empty()) ih->build_template() = std::move(t);
+    return 0;
+}
+
+/// ClearBuildTemplates(): no active template. (Retail calls it as a build
+/// mode ends, so the engine's build ghost goes with it, as before.)
+static int l_ClearBuildTemplates(lua_State* L) {
+    if (auto* ih = get_input_handler(L)) ih->build_template() = {};
+    if (auto* sim = get_sim(L)) sim->clear_build_ghost();
+    return 0;
+}
+
 static int l_SelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
     auto* sim = get_sim(L);
@@ -1499,6 +1618,11 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
     state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
+    state.register_function("GenerateBuildTemplateFromSelection",
+                            l_GenerateBuildTemplateFromSelection);
+    state.register_function("GetActiveBuildTemplate", l_GetActiveBuildTemplate);
+    state.register_function("SetActiveBuildTemplate", l_SetActiveBuildTemplate);
+    state.register_function("ClearBuildTemplates", l_ClearBuildTemplates);
     set_ui_wait_hook(L, ui_wait_camera); // WaitFor(camera) (M217g)
     state.register_function("GetSelectedUnits", l_GetSelectedUnits);
     state.register_function("SelectUnits", l_SelectUnits);

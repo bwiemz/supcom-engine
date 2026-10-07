@@ -39,6 +39,7 @@ add_library(osc_renderer STATIC
     command_graph_renderer.cpp
     world_quad_batch.cpp
     selection_renderer.cpp
+    build_template.cpp
     effect_blueprint_file.cpp
     trail_blueprint.cpp
     trail_renderer.cpp
