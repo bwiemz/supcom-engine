@@ -1,0 +1,290 @@
+// Units moving as Moho's do (roadmap item 4c-2c): with the sim's switch on,
+// a ground unit's move asks its army's path queue, and its navigator
+// follows the cells (faf-re CAiNavigatorLand, CAiPathNavigator), driving at
+// each target and refused ground it won't fit.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "blueprints/blueprint_store.hpp"
+#include "blueprints/footprint.hpp"
+#include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
+#include "sim/occupancy.hpp"
+#include "sim/path_navigator.hpp"
+#include "sim/saved_game.hpp"
+#include "sim/sim_snapshot.hpp"
+#include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
+
+extern "C" {
+#include <lua.h>
+}
+
+#include <cmath>
+#include <memory>
+#include <string>
+#include <vector>
+
+using osc::f32;
+using osc::i32;
+using osc::u32;
+using osc::u8;
+using osc::blueprints::NamedFootprint;
+using osc::sim::Unit;
+namespace oc = osc::blueprints::occupancy;
+
+namespace {
+
+constexpr u32 kMap = 128;
+
+std::unique_ptr<osc::map::Terrain> flat_terrain() {
+    std::vector<osc::u16> heights(static_cast<size_t>(kMap + 1) * (kMap + 1), 1280);
+    osc::map::Heightmap hm(kMap, kMap, 1.0f / 128.0f, std::move(heights));
+    return std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false);
+}
+
+NamedFootprint land_class(int size, const char* name) {
+    NamedFootprint f;
+    f.name = name;
+    f.size_x = static_cast<u8>(size);
+    f.size_z = static_cast<u8>(size);
+    f.caps = oc::kLand;
+    f.max_water_depth = 0.05f;
+    f.max_slope = 0.75f;
+    return f;
+}
+
+/// A sim on a flat 128 x 128 map with land classes 1x1 and 3x3, a 1x1 and a
+/// 3x3 tank, and Moho pathing as `moho` says.
+struct World {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+
+    explicit World(bool moho) {
+        osc::sim::GameSetup game;
+        game.scenario = "/maps/test/test_scenario.lua";
+        game.seed = 3;
+        store.add_footprint_class(land_class(1, "Vehicle1x1"));
+        store.add_footprint_class(land_class(3, "Vehicle3x3"));
+        osc::lua::register_moho_bindings(state, sim);
+        osc::lua::register_sim_bindings(state, sim);
+        sim.set_terrain(flat_terrain());
+        sim.build_pathfinding_grid();
+        sim.add_army("ARMY_1", "ARMY_1");
+        sim.set_game_setup(game);
+        sim.set_moho_pathing(moho);
+        lua_State* L = state.raw();
+        for (const char* bp : {
+                 "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4, MaxAcceleration = 4,"
+                 "  MaxBrake = 4, TurnRate = 180}}",
+                 "{BlueprintId = 'bigtank', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, Footprint = {SizeX = 3, SizeZ = 3},"
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4, MaxAcceleration = 4,"
+                 "  MaxBrake = 4, TurnRate = 180}}",
+             }) {
+            REQUIRE(state.do_string(std::string("return ") + bp).ok());
+            store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+            lua_pop(L, 1);
+        }
+        store.expose_to_lua(L);
+        REQUIRE(state
+                    .do_string("Plain = setmetatable({}, {__index = moho.unit_methods})"
+                               " Plain.__index = Plain")
+                    .ok());
+        lua_pushstring(L, "__osc_unit_script_classes");
+        lua_newtable(L);
+        for (const char* id : {"tank", "bigtank"}) {
+            lua_pushstring(L, id);
+            lua_getglobal(L, "Plain");
+            lua_rawset(L, -3);
+        }
+        lua_rawset(L, LUA_REGISTRYINDEX);
+        lua_settop(L, 0); // at rest, as a save wants it
+    }
+
+    Unit* make(const char* bp, f32 x, f32 z) {
+        REQUIRE(state
+                    .do_string("made = CreateUnit('" + std::string(bp) + "', 1, " +
+                               std::to_string(x) + ", 10, " + std::to_string(z) + ")")
+                    .ok());
+        Unit* found = nullptr;
+        sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            const auto& u = static_cast<Unit&>(e);
+            if (u.blueprint_id() == bp && u.position().x == x && u.position().z == z)
+                found = static_cast<Unit*>(&e);
+        });
+        REQUIRE(found);
+        return found;
+    }
+
+    static void move(Unit& u, f32 x, f32 z) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = osc::sim::CommandType::Move;
+        cmd.target_pos = {x, 10.0f, z};
+        u.push_command(cmd, true);
+    }
+
+    /// Ticks until `u` has no orders left (or `limit`); whether its
+    /// footprint always fitted where it stood.
+    bool run(Unit& u, int limit, int& ticks) {
+        bool fitted = true;
+        for (ticks = 0; ticks < limit && !u.command_queue().empty(); ++ticks) {
+            sim.tick();
+            if (sim.footprint_fits_at(u.footprint(), u.position().x, u.position().z) == 0)
+                fitted = false;
+        }
+        return fitted;
+    }
+};
+
+} // namespace
+
+TEST_CASE("With Moho pathing a tank's move asks its army, follows the cells and stops in its "
+          "goal cell",
+          "[moho_pathing]") {
+    World w(true);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    CHECK(tank.footprint_class() == 0);
+    World::move(tank, 100.5f, 90.5f);
+    w.sim.tick();
+    CHECK(tank.navigator().moho_active());
+    int ticks = 0;
+    CHECK(w.run(tank, 600, ticks));
+    CHECK(tank.command_queue().empty());
+    const auto at =
+        osc::sim::footprint_rect(tank.footprint(), tank.position().x, tank.position().z);
+    CHECK(at.x0 == 100);
+    CHECK(at.z0 == 90);
+    CHECK_FALSE(tank.navigator().moho_active());
+    CHECK(ticks < 400); // ~106 units at 4 a second
+}
+
+TEST_CASE("With Moho pathing tanks go round a wall through its gap, never standing in it",
+          "[moho_pathing]") {
+    for (const char* bp : {"tank", "bigtank"}) {
+        INFO(bp);
+        World w(true);
+        osc::sim::GroundOccupant wall;
+        wall.caps = oc::kLand;
+        wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
+        w.sim.occupy_ground(9999, wall);
+        Unit& tank = *w.make(bp, 30.5f, 20.5f);
+        World::move(tank, 100.5f, 20.5f);
+        int ticks = 0;
+        CHECK(w.run(tank, 1200, ticks));
+        CHECK(tank.command_queue().empty());
+        CHECK(tank.position().x > 95.0f);
+        CHECK(std::abs(tank.position().z - 20.5f) < 4.0f);
+    }
+}
+
+TEST_CASE("With Moho pathing off, a tank moves by the grid pathfinder as before",
+          "[moho_pathing]") {
+    World w(false);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    World::move(tank, 100.5f, 90.5f);
+    int ticks = 0;
+    w.run(tank, 600, ticks);
+    CHECK(tank.command_queue().empty());
+    CHECK_FALSE(tank.navigator().moho_active());
+    CHECK(std::abs(tank.position().x - 100.5f) < 1.0f);
+}
+
+namespace {
+
+/// Where the save test's tank `i` starts: six to a row, twelve apart.
+osc::sim::Vector3 start_of(int i) {
+    const int col = i % 6;
+    const int row = i / 6;
+    return {10.5f + static_cast<f32>(col) * 6.0f, 10.0f, 10.5f + static_cast<f32>(row) * 12.0f};
+}
+
+} // namespace
+
+TEST_CASE("With Moho pathing a game saved with searches waiting and one in flight loads and "
+          "goes on exactly as the original",
+          "[moho_pathing]") {
+    const auto setup = [](World& w) {
+        osc::sim::GroundOccupant wall;
+        wall.caps = oc::kLand;
+        wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
+        w.sim.occupy_ground(9999, wall);
+    };
+    World a(true);
+    setup(a);
+    std::vector<Unit*> tanks;
+    tanks.reserve(24);
+    for (int i = 0; i < 24; ++i)
+        tanks.push_back(a.make(i % 3 == 0 ? "bigtank" : "tank", start_of(i).x, start_of(i).z));
+    a.sim.set_recording(true);
+    a.sim.tick();
+    for (size_t i = 0; i < tanks.size(); ++i)
+        World::move(*tanks[i], 110.5f - static_cast<f32>(i % 4) * 5.0f,
+                    15.5f + static_cast<f32>(i) * 4.0f);
+    // A few ticks in: some searches done, one in flight, the rest waiting.
+    bool waiting = false;
+    for (int t = 0; t < 10 && !waiting; ++t) {
+        a.sim.tick();
+        const auto& q = a.sim.get_army(0)->path_queue();
+        waiting = !q.pending().empty() && q.search().traveler() != nullptr;
+    }
+    CHECK(waiting);
+    const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "paths");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    World b(true);
+    setup(b);
+    for (int i = 0; i < 24; ++i)
+        b.make(i % 3 == 0 ? "bigtank" : "tank", start_of(i).x, start_of(i).z);
+    const std::string err = osc::sim::load_snapshot(b.sim, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    CHECK(b.sim.moho_pathing());
+    CHECK(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
+    for (int t = 0; t < 300; ++t) {
+        a.sim.tick();
+        b.sim.tick();
+        INFO("tick " << t);
+        REQUIRE(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
+    }
+    // And they got somewhere.
+    int arrived = 0;
+    for (Unit* u : tanks) arrived += u->command_queue().empty() ? 1 : 0;
+    CHECK(arrived >= 12); // half: the rest still through the gap
+}
+
+TEST_CASE("With Moho pathing a destination the unit won't fit moves to the nearest place it "
+          "will (Unit::PrepareMove), so the move ends beside a structure, not round and round",
+          "[moho_pathing]") {
+    World w(true);
+    osc::sim::GroundOccupant site;
+    site.caps = oc::kLand;
+    site.rects = {{60, 60, 64, 64}};
+    w.sim.occupy_ground(9999, site);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    World::move(tank, 62.0f, 62.0f); // inside it
+    int ticks = 0;
+    CHECK(w.run(tank, 600, ticks));
+    CHECK(tank.command_queue().empty());
+    CHECK(std::abs(tank.position().x - 62.0f) < 5.0f);
+    CHECK(std::abs(tank.position().z - 62.0f) < 5.0f);
+
+    // On a cell edge beside it: z = 65.0 rounds to cell 64 (free), where
+    // truncating 64.5 would also say 64; z = 64.0 rounds to cell 64 too,
+    // where truncating 63.5 says 63, inside.
+    Unit& other = *w.make("tank", 30.5f, 80.5f);
+    World::move(other, 62.5f, 64.0f);
+    CHECK(w.run(other, 600, ticks));
+    CHECK(other.command_queue().empty());
+    const auto at =
+        osc::sim::footprint_rect(other.footprint(), other.position().x, other.position().z);
+    CHECK(at.z0 == 64);
+    CHECK(ticks < 300);
+}

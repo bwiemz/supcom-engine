@@ -17,6 +17,10 @@
 #include <utility>
 #include <vector>
 
+namespace osc::sim {
+struct StateIO;
+}
+
 namespace osc::sim::path {
 
 /// Cells a cluster spans by level (Moho's sClusterSize); level 0 is a cell.
@@ -28,6 +32,8 @@ constexpr std::array<i32, kClusterLevels + 1> kClusterShift = {0, 3, 5};
 constexpr i32 kClusterCost = 10;
 /// The sim's background budget a tick (path_BackgroundBudget).
 constexpr i32 kBackgroundBudget = 1000;
+/// Each army's search budget a tick (path_ArmyBudget).
+constexpr i32 kArmyPathBudget = 2500;
 
 /// Moho's OccupationData: a level-1 cluster's 9 x 9 window, its own 8 x 8
 /// cells and the far boundary lines it shares with its neighbours. Bit x of
@@ -131,6 +137,7 @@ public:
 /// Moho's gpg::BitArray2D: bit (x, z) in word x + (z / 32) * width, bit
 /// z % 32, so a scan finds the dirty clusters in Moho's order.
 class BitGrid {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     BitGrid() = default;
     BitGrid(i32 width, i32 height);
@@ -154,6 +161,7 @@ private:
 /// Moho's gpg::HaStar::ClusterMap: one class's clusters, levels 1 and 2,
 /// each rebuilt when dirty as a search or the background work reaches it.
 class ClusterMap {
+    friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
     /// A map of `width` x `height` cells, rounded up to whole top-level
     /// clusters, for a class `size_x` x `size_z`. Every cluster starts dirty.
@@ -196,6 +204,10 @@ public:
     bool dirty(u32 level, i32 cx, i32 cz) const { return dirty_[level].test(cx, cz); }
     /// Nothing dirty since the background work last looked.
     bool done() const { return done_; }
+    /// Every clean cluster built, at no cost: a loaded game's maps, whose
+    /// clean clusters the original had built (a clean cluster is exactly
+    /// what its window or its children make).
+    void rebuild_clean();
 
 private:
     size_t index(u32 level, i32 cx, i32 cz) const {

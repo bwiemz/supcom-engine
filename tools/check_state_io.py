@@ -87,6 +87,14 @@ TYPES: list[tuple[str, str]] = [
     ("src/sim/armor_definition.hpp", "ArmorDefinition"),
     ("src/sim/intel_sources.hpp", "IntelHandle"),
     ("src/sim/intel_sources.hpp", "PaintedIntel"),
+    ("src/sim/path_clusters.hpp", "BitGrid"),
+    ("src/sim/path_clusters.hpp", "ClusterMap"),
+    ("src/sim/path_search.hpp", "Traveler"),
+    ("src/sim/path_search.hpp", "OpenHeap"),
+    ("src/sim/path_search.hpp", "PathSearch"),
+    ("src/sim/path_search.hpp", "PathQueue"),
+    ("src/sim/path_finder.hpp", "PathFinder"),
+    ("src/sim/path_navigator.hpp", "PathNavigator"),
 ]
 
 SERIALIZERS = [
@@ -94,6 +102,7 @@ SERIALIZERS = [
     "src/sim/state_io_entities.cpp",
     "src/sim/state_io_world.cpp",
     "src/sim/sim_snapshot.cpp",
+    "src/sim/state_io_paths.cpp",
 ]
 
 _COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)

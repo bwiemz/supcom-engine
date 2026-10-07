@@ -1167,6 +1167,11 @@ void SimState::tick() {
     if (path_tables_) {
         PROFILE_ZONE("Sim::path_clusters");
         path_tables_->update_background(path::kBackgroundBudget);
+        // Then each army's searches (CArmyImpl::OnTick), in army order.
+        for (const auto& army : armies_) {
+            i32 budget = path::kArmyPathBudget;
+            army->path_queue().work(*path_tables_, budget);
+        }
     }
     // Each army's tick begins by destroying its spent platoons, before any
     // script runs (Moho's CArmyImpl::OnTick).
