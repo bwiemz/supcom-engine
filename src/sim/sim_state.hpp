@@ -674,6 +674,9 @@ public:
     /// Which armies see a decal or splat as it is made (M212c; Moho's
     /// CDecalBuffer::CreateHandle), a bit per army.
     u32 decal_sight(const DecalSpec& spec) const;
+    /// A decal or splat effect just made: update_decal_sight looks at it
+    /// until its sight can't change any more.
+    void track_decal(u32 effect_id) { unsettled_decals_.push_back(effect_id); }
     IEffectRegistry& effect_registry() { return effect_registry_; }
     const IEffectRegistry& effect_registry() const { return effect_registry_; }
 
@@ -846,6 +849,10 @@ private:
     /// This tick's look at the decals (CDecalBuffer::CleanupTick): one army
     /// in turn may come to see those it didn't.
     void update_decal_sight();
+    /// The decals whose sight may still change, in the order they were made
+    /// (the rest are settled, and walking every effect a tick for them was
+    /// a twentieth of a late game's sim).
+    std::vector<u32> unsettled_decals_;
     /// Influence maps (M207b): the army whose turn it is (tick % army
     /// count) reports what its intel sees to its map, after the visibility
     /// pass, as Moho's recon tick does.

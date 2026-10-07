@@ -433,6 +433,11 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     }
     load(r, sim.effect_registry_);
+    // unsettled_decals_: every decal restored, in the order it was made
+    // (the settled ones drop out on the next look).
+    sim.unsettled_decals_.clear();
+    for (const auto& fx : sim.effect_registry_.all())
+        if (fx && !fx->destroyed() && fx->decal()) sim.unsettled_decals_.push_back(fx->id());
     load(r, sim.economy_events_);
     if (r.size(64) != sim.armies_.size()) return r.fail("another count of armies");
     for (auto& a : sim.armies_) load(r, *a, sim);

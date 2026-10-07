@@ -170,3 +170,30 @@ TEST_CASE("A splat is looked at again only in its first 10 ticks, with a lifetim
     CHECK(sim::decal_sight_on_tick(lasting, 0b01u, 20, 21, a) == 0b01u);
 }
 
+
+TEST_CASE("A decal's sight is settled once no army's look can change it", "[decal]") {
+    // Army 1 a civilian: only 0 and 2 ever look.
+    FakeArmies a(3);
+    a.civilians[1] = true;
+    for (size_t i = 0; i < 3; ++i) a.sees[i] = true; // every look would see it
+    const u32 lookers = sim::decal_sight_lookers(a);
+    CHECK(lookers == 0b101u);
+    const DecalSpec d = spec_from(0, false);
+    CHECK_FALSE(sim::decal_sight_settled(d, 0b001u, 0, 5, lookers));
+    CHECK(sim::decal_sight_settled(d, 0b101u, 0, 5, lookers));
+    // Settled means settled: no later tick's look changes it, whatever the
+    // decal's flags and whoever's turn.
+    for (u32 seen = 0; seen < 8; ++seen)
+        for (u32 tick = 0; tick < 24; ++tick)
+            if (sim::decal_sight_settled(d, seen, 0, tick, lookers))
+                for (u32 later = tick; later < tick + 12; ++later)
+                    CHECK(sim::decal_sight_on_tick(d, seen, 0, later, a) == seen);
+    // A splat with a lifetime settles after its first 10 ticks; one without
+    // never changes.
+    const DecalSpec timed = spec_from(0, true, 100);
+    CHECK_FALSE(sim::decal_sight_settled(timed, 0b001u, 20, 29, lookers));
+    CHECK(sim::decal_sight_settled(timed, 0b001u, 20, 30, lookers));
+    CHECK(sim::decal_sight_settled(spec_from(0, true, 0), 0b001u, 20, 21, lookers));
+    for (u32 tick = 30; tick < 40; ++tick)
+        CHECK(sim::decal_sight_on_tick(timed, 0b001u, 20, tick, a) == 0b001u);
+}
