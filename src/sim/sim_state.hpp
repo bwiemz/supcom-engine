@@ -50,6 +50,7 @@ struct ProjectileBlueprintInfo;
 
 class AnimCache;
 class BoneCache;
+class PathTables;
 class SimState;
 class Unit;
 
@@ -167,6 +168,9 @@ public:
     void set_terrain(std::unique_ptr<map::Terrain> terrain);
     map::Terrain* terrain() const { return terrain_.get(); }
     void build_pathfinding_grid();
+    /// The footprint classes' path clusters, made again for the map and
+    /// the ground's claims, every cluster dirty (a new map, a load).
+    void reset_path_tables();
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -178,6 +182,11 @@ public:
     /// The occupation grid (roadmap item 4b, Moho's COGrid): the cells
     /// structures and props stand on, one map cell each.
     const OccupancyGrid& occupancy() const { return occupancy_; }
+    /// The footprint classes' path clusters (roadmap item 4c): made with
+    /// the pathfinding grid, dirtied as ground is claimed and released,
+    /// rebuilt kBackgroundBudget a tick. Null without a map or classes.
+    PathTables* path_tables() { return path_tables_.get(); }
+    const PathTables* path_tables() const { return path_tables_.get(); }
     size_t ground_occupant_count() const { return ground_occupants_.size(); }
     /// Entity `id` stands on `occupant`'s rects (Moho's ExecuteOccupyGround,
     /// a prop's reclaim-area claim), in place of any claim it had.
@@ -963,6 +972,9 @@ private:
     std::unordered_map<u32, Footprint> occupied_footprints_;
     OccupancyGrid occupancy_;
     std::unordered_map<u32, GroundOccupant> ground_occupants_;
+    /// One cluster map a footprint class over terrain_ and occupancy_
+    /// (roadmap item 4c), made with the pathfinding grid.
+    std::unique_ptr<PathTables> path_tables_;
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;
