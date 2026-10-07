@@ -1767,6 +1767,11 @@ void SimState::separate_ground_units() {
                                                     u.is_amphibious() || u.is_hover()))
                 continue;
         }
+        // With Moho pathing, as its drive does (Moho's CUnitMotion): no push
+        // onto ground the unit won't fit, from ground it does.
+        if (moho_pathing_ && footprint_fits_at(u.footprint(), p.x, p.z) == 0 &&
+            footprint_fits_at(u.footprint(), u.position().x, u.position().z) != 0)
+            continue;
         // On the surface as it drives; a submarine keeps its depth.
         if (terrain_ && !bodies[i].sub) p.y = u.ground_y(terrain_.get(), p.x, p.z);
         u.set_position(clamp_to_playable(p, u.army()));
