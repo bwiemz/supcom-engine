@@ -143,6 +143,10 @@ void PathFinder::on_path(bool reached, std::vector<Cell> cells) {
     has_result_ = true;
     reached_ = reached;
     path_ = std::move(cells);
+    if (PathListener* l = listener_) {
+        listener_ = nullptr;
+        l->on_path_event(reached, path_);
+    }
 }
 
 } // namespace osc::sim::path
