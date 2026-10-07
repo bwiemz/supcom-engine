@@ -142,4 +142,40 @@ Mobile units are never in the clusters; only repaths test them, at level 0.
   cursor (clean clusters rebuilt free on load). Then the switch goes on and
   the gate tests move with it: Moho stops a unit in its goal cell, not on
   the exact point.
-- **4c-3: repaths** against mobile units, at level 0.
+- **4c-3a: mobile units in the way** (`sim/unit_blocking`). Mobile units
+  never enter the cluster maps. Moho asks about them only at level 0,
+  through one question per cell and one sweep. The port:
+  - **`UnitIsBlocked`** gathers units whose collision boxes touch the
+    footprint's maxSpan square, skipping Air and Sub ones. A 1x1 unit
+    blocks outright; otherwise its shape must overlap the footprint's box
+    (a 15-axis box test, or box against sphere; touching counts).
+  - **`SweptPathBlockedByUnit`** sweeps a box 1.11 × SizeX wide, centre to
+    centre.
+  - **`func_IsSourceUnit`** says whom a unit ignores. In **mode 1**
+    (planning) that is units that moved last tick, and units it outranks;
+    a moving unit therefore routes round idle ones. **Mode 2** (a leader's
+    search, the extended probe) ignores only units on another layer,
+    flying, carried, and the like.
+  - **Where each is asked.** Searches past the first ask per cell, through
+    `PathWorld::blockers`, which a load fills from the sim, so a loaded
+    game asks as the original. The navigator asks `can_transition` and
+    `can_reach_from_current`.
+  - **The 10-tick wait.** When the unit is making for its last cell and a
+    unit stands there, it waits 10 ticks before asking again.
+  - **"Moved last tick"** is each unit's position as the tick begins
+    against the last tick's. Moho commits moves at the end of each beat.
+
+  FAF's exe differs from faf-re's text in two places, and the port follows
+  the exe:
+  - the tail calls `owner->IsHigherPriorityThan(candidate)` (0x0062F00E);
+    faf-re's text swaps the two units;
+  - the wait reads the target cell (`mTargetPos`, 0x005AEB48), not the
+    unit's own.
+
+  faf-re's `UnitCanShoveAside` is FAF's own change, not retail's, and is
+  left out.
+- **4c-3b: formations** (not yet). Moho's formation layer exempts units in
+  one formation from blocking each other, and orders formation leads and
+  priorities. The engine keeps no formation layer: a laid-out formation
+  order clears its formation name. That also leaves the steering's
+  `same_formation` never true for formation moves.

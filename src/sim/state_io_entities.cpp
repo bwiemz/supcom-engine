@@ -1251,6 +1251,9 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.crash_velocity_y_);
     w.f32v(u.crash_spin_rate_);
     w.u32v(u.creator_id_);
+    w.vec3(u.tick_position_);
+    w.b(u.tick_position_set_);
+    w.b(u.moved_last_tick_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1614,6 +1617,9 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.crash_velocity_y_ = r.f32v();
     u.crash_spin_rate_ = r.f32v();
     u.creator_id_ = r.u32v();
+    u.tick_position_ = r.vec3();
+    u.tick_position_set_ = r.b();
+    u.moved_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();

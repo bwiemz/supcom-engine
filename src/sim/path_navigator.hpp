@@ -21,11 +21,13 @@ namespace osc::sim::path {
 /// What the navigator reads of its unit each tick.
 struct NavUnit {
     f32 x = 0;
+    f32 y = 0;
     f32 z = 0;
-    bool moved = false;     ///< its position changed since the last tick
-    bool immobile = false;  ///< UNITSTATE_Immobile
-    bool attacking = false; ///< UNITSTATE_Attacking
-    u32 layer = 0;          ///< its layer, as a token
+    bool moved = false;                 ///< its position changed since the last tick
+    bool immobile = false;              ///< UNITSTATE_Immobile
+    bool attacking = false;             ///< UNITSTATE_Attacking
+    u32 layer = 0;                      ///< its layer, as a token
+    bool waiting_for_transport = false; ///< UNITSTATE_WaitingForTransport
 };
 
 class PathNavigator final : public PathListener {

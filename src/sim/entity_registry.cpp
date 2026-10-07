@@ -311,6 +311,38 @@ void EntityRegistry::notify_collision_shape_changed(const Entity& entity) {
     else large_colliders_.erase(entity.entity_id());
 }
 
+bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
+                                            bool (*visit)(const Entity&, void*), void* ctx) const {
+    if (x0 > x1) std::swap(x0, x1);
+    if (z0 > z1) std::swap(z0, z1);
+    const auto near = [&](const Entity& e, f32 reach) {
+        if (e.destroyed() || e.collision_shape().type == CollisionShapeType::NONE) return false;
+        const Vector3& p = e.position();
+        return p.x >= x0 - reach && p.x <= x1 + reach && p.z >= z0 - reach && p.z <= z1 + reach;
+    };
+    if (!grid_initialized_) {
+        bool hit = false;
+        for_each_unit([&](const Entity& e) {
+            if (!hit && near(e, COLLIDER_REACH) && visit(e, ctx)) hit = true;
+        });
+        if (hit) return true;
+    } else {
+        i32 cx_min, cz_min, cx_max, cz_max;
+        world_to_cell(x0 - COLLIDER_REACH, z0 - COLLIDER_REACH, cx_min, cz_min);
+        world_to_cell(x1 + COLLIDER_REACH, z1 + COLLIDER_REACH, cx_max, cz_max);
+        for (i32 cz = cz_min; cz <= cz_max; ++cz)
+            for (i32 cx = cx_min; cx <= cx_max; ++cx)
+                for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
+                    if (near(*unit.entity, COLLIDER_REACH) && visit(*unit.entity, ctx)) return true;
+    }
+    for (const u32 id : large_colliders_) {
+        const Entity* e = find(id);
+        if (e && e->is_unit() && near(*e, collision_reach(e->collision_shape())) && visit(*e, ctx))
+            return true;
+    }
+    return false;
+}
+
 void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
                                        std::vector<u32>& out) const {
     out.clear();
