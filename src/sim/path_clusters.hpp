@@ -182,6 +182,17 @@ public:
     const Cluster* cluster(u32 level, i32 cx, i32 cz) const {
         return levels_[level][index(level, cx, cz)].get();
     }
+    /// A hold on it, kept across further builds.
+    ClusterRef cluster_ref(u32 level, i32 cx, i32 cz) const {
+        return levels_[level][index(level, cx, cz)];
+    }
+    /// Moho's ClusterRect: the world rect of the `level` cluster(s) holding
+    /// cell (x, z), a cell beyond on the far sides (both clusters for a
+    /// cell on a line between them); at level 0, the 3 x 3 around it.
+    OccupancyRect cluster_rect(i32 x, i32 z, u32 level) const;
+    /// Moho's ClusterIndexRect: the `level` clusters holding cell (x, z) (two
+    /// for a cell on a line between them, four at a corner).
+    OccupancyRect cluster_index_rect(i32 x, i32 z, u32 level) const;
     bool dirty(u32 level, i32 cx, i32 cz) const { return dirty_[level].test(cx, cz); }
     /// Nothing dirty since the background work last looked.
     bool done() const { return done_; }
