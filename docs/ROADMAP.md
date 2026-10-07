@@ -413,7 +413,21 @@ in the repo if they contain game assets).
 
 ## 10. Current status
 
-Updated 2026-09-29, after PRs through #230.
+The engine's state is in `docs/current-state.md`: its acceptance matrix, each area with its evidence and the validation record (`docs/validation/`) of the commit it was last checked on, its benchmarks and its known gaps.
+
+The work order since 2026-10-06, from an external review:
+1. Validate the integrated head and record it (`docs/validation/`).
+2. The sync checksum's coverage, and DDS sizes checked before allocating.
+3. Projectile targeting: TargetBones and seabed targets, then launch, spread, retargeting, zig-zag and bounce.
+4. Footprint classes and occupation: big and small units, blocking props, shorelines, clearance.
+5. Animation collision callbacks: crashes, duplicates, saves.
+6. Aircraft: idle landing, circling, interrupted orders, staging and fuel.
+7. Player input: 3D picking, graph editing through the UI, build templates, range overlays.
+8. Performance rebaselined and profiled.
+9. Release QA (audio, visual comparison, packages, Steam and the Deck, testers): mostly for a person.
+10. Docs: this acceptance matrix; the renderer broken into subsystems.
+
+The rest of this section is the state on 2026-09-29, after PRs through #230, kept as history.
 
 | Phase | State |
 |---|---|
@@ -429,7 +443,7 @@ Updated 2026-09-29, after PRs through #230.
 
 The priorities agreed on 2026-09-29, in order:
 
-1. **P0, closure:** finish M216b (the listening pass remains), the Phase-F tail above, long FAF regression runs, and keeping this document and `current-state.md` current. This machine has no FAF install, so retail runs stood in: on 2026-09-29, five skirmishes of 2 to 8 retail AIs (up to 18,000 ticks) and the six FA operations ran without a Lua error once X1CA_002's one was fixed (#232; `current-state.md` has the list). On 2026-09-30 the same set ran on FAF's release (3839), built from FAF's public repository (`tools/faf_regression.py --packaged --suite long`): it found three engine gaps (FAF's victory condition, Moho's Guard order filter, `--faf-data` with `--fa-path`), fixed, and FAF's own missing `GetUnitsInArea` in X1CA_003. What is left: FAF's client and ICE adapter, and FAF's coop mod.
+1. **P0, closure:** finish M216b (the listening pass remains), the Phase-F tail above, long FAF regression runs, and keeping this document and `current-state.md` current. This machine has no FAF install, so retail runs stood in: on 2026-09-29, five skirmishes of 2 to 8 retail AIs (up to 18,000 ticks) and the six FA operations ran without a Lua error once X1CA_002's one was fixed (#232). On 2026-09-30 the same set ran on FAF's release (3839), built from FAF's public repository (`tools/faf_regression.py --packaged --suite long`): it found three engine gaps (FAF's victory condition, Moho's Guard order filter, `--faf-data` with `--fa-path`), fixed, and FAF's own missing `GetUnitsInArea` in X1CA_003. What is left: FAF's client and ICE adapter, and FAF's coop mod.
 2. **P1, performance and robustness:** M224h and M223b done (see Phase H); the collection's mark investigated (live state; nothing left to freeze); the instance cap fixed; next `ui_update` and `unit_update`, then M225 or M226 if the numbers still call for one; ASan/UBSan, mutation tests and cross-OS play as now.
 3. **P1/P2, what players meet:** M209's campaign front end (done: M209b), M229, tests of the downloadable packages on fresh profiles and machines, and a real FAF client and ICE stack.
 4. **P2, compatibility tail:** the remaining engine API gaps, small M206/M207 fidelity quirks (repeat-queue display, the unit cap), and a small representative mod suite.
