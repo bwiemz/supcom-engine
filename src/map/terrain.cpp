@@ -55,6 +55,17 @@ u8 Terrain::terrain_type(f32 x, f32 z) const {
     return terrain_types_[static_cast<size_t>(cz) * map_width() + cx];
 }
 
+bool Terrain::is_blocking_cell(i32 x, i32 z) const {
+    if (x < 0 || z < 0 || static_cast<u32>(x) >= map_width() || static_cast<u32>(z) >= map_height())
+        return true;
+    constexpr u8 kDefault = 1;
+    const u8 type =
+        terrain_types_.empty()
+            ? kDefault
+            : terrain_types_[static_cast<size_t>(z) * map_width() + static_cast<u32>(x)];
+    return blocking_[type];
+}
+
 void Terrain::set_decals(std::vector<DecalInfo> decals) {
     decals_ = std::move(decals);
 }

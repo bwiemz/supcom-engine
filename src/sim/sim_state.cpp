@@ -69,6 +69,37 @@ void SimState::occupy_footprint(Unit& unit) {
     pathfinding_grid_->mark_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
 }
 
+void SimState::occupy_ground(u32 id, GroundOccupant occupant) {
+    release_ground(id);
+    for (const OccupancyRect& r : occupant.rects) occupancy_.fill(occupant.caps, r, true);
+    ground_occupants_[id] = std::move(occupant);
+}
+
+void SimState::release_ground(u32 id) {
+    const auto it = ground_occupants_.find(id);
+    if (it == ground_occupants_.end()) return;
+    const GroundOccupant gone = std::move(it->second);
+    ground_occupants_.erase(it);
+    for (const OccupancyRect& r : gone.rects) occupancy_.fill(gone.caps, r, false);
+    // What still stands on any of those cells claims them again.
+    const auto overlaps = [](const OccupancyRect& a, const OccupancyRect& b) {
+        return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
+    };
+    for (const auto& [other_id, other] : ground_occupants_) {
+        for (const OccupancyRect& r : other.rects) {
+            const bool shared = std::any_of(gone.rects.begin(), gone.rects.end(),
+                                            [&](const OccupancyRect& g) { return overlaps(g, r); });
+            if (shared) occupancy_.fill(other.caps, r, true);
+        }
+    }
+}
+
+u8 SimState::footprint_fits_at(const blueprints::Footprint& fp, f32 wx, f32 wz) const {
+    if (!terrain_) return 0;
+    const OccupancyRect r = footprint_rect(fp, wx, wz);
+    return footprint_fits(fp, *terrain_, occupancy_, r.x0, r.z0);
+}
+
 void SimState::notify_script_destroy(Entity& entity) {
     if (!L_ || entity.script_destroy_notified() || entity.lua_table_ref() < 0) return;
     entity.set_script_destroy_notified();
@@ -93,6 +124,9 @@ void SimState::on_entity_unregistered(Entity& entity) {
     notify_script_destroy(entity);
     // Its ambient loops end with it: the audio side stops what no entity wants.
     entity.clear_ambient_sounds();
+
+    // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor).
+    release_ground(entity.entity_id());
 
     // A dead structure stops blocking paths (it used to block forever).
     if (auto it = occupied_footprints_.find(entity.entity_id());
@@ -451,6 +485,11 @@ bool SimState::is_valid_teleport_destination(
 
 void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
     terrain_ = std::move(terrain);
+    // One cell of the occupation grid a map cell, empty (the map's
+    // structures and props claim theirs as they are made).
+    occupancy_ =
+        terrain_ ? OccupancyGrid(terrain_->map_width(), terrain_->map_height()) : OccupancyGrid();
+    ground_occupants_.clear();
 }
 
 void SimState::set_sound_manager(audio::SoundManager* mgr) {

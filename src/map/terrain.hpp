@@ -3,6 +3,7 @@
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
@@ -126,6 +127,12 @@ public:
     /// /lua/TerrainTypes.lua. Off the map, or on a map without the layer,
     /// it is 1 ('Default').
     u8 terrain_type(f32 x, f32 z) const;
+    /// Which terrain types no footprint stands on (/lua/TerrainTypes.lua's
+    /// Blocking, by TypeCode: retail's Dirt09 and Lava01).
+    void set_blocking_types(const std::array<bool, 256>& blocking) { blocking_ = blocking; }
+    /// Moho's STIMap::IsBlockingTerrain: map cell (x, z) is blocked -- the
+    /// map's last row and column (and beyond), or a cell of a blocking type.
+    bool is_blocking_cell(i32 x, i32 z) const;
 
 private:
     Heightmap heightmap_;
@@ -137,6 +144,7 @@ private:
     std::vector<DecalInfo> decals_;
     NormalMaps normal_maps_;
     std::vector<u8> terrain_types_;
+    std::array<bool, 256> blocking_{};
     ScmapLighting lighting_;
     ScmapEnvironment environment_;
     ScmapWater water_;
