@@ -109,10 +109,28 @@ Mobile units are never in the clusters; only repaths test them, at level 0.
   - near its start a search goes cell by cell only within the start's
     8 x 8 cluster, so a unit can walk out of an obstacle only as far as
     that cluster's edge; past it, the cluster portals must be open.
-- **4c-2b: units use it.** The navigator asks its army's queue and follows
-  the cells as Moho's does (string-pulling ahead with a footprint sweep),
-  and saves what makes a loaded game continue exactly: the queue (Moho
-  restarts the search in flight on a load; the engine's save/load oracle
-  needs it resumed), each finder, and each map's dirty bits and scan cursor
-  (clean clusters rebuilt free on load).
+- **4c-2b: following a path.** `sim/path_walk` (Moho's grid line walk and
+  footprint sweeps: a straight step down its middle, a diagonal twice past
+  opposite corners) and `sim/path_navigator` (CAiPathNavigator: ask next
+  tick, string-pull up to ten cells ahead under 50 off by sweeping the
+  footprint, drop the cells behind, ask the way to the next cell on a new
+  layer, a stall or a steering refresh, merge the answer in front, give up
+  after three failures of three). Tested with a stand-in unit; no unit
+  uses it yet. What it shows of Moho:
+  - a path's portal jumps are steered at straight, even across a wall; the
+    unit's motion refuses the move, its steering asks a refresh, and the
+    repath (the 16 x 16 round the unit, cell by cell) finds the way round;
+  - a new goal forgets the layer it pathed on, so the first step with a
+    path asks once for the way on (one tick waiting);
+  - a unit held still 30 ticks stops where it is, as arrived.
+- **4c-2c: units use it**, behind a sim switch that is off by default:
+  the army queues served each tick, the navigator driving the unit at its
+  target (top speed through targets outside the goal; a move into a cell
+  it won't fit refused, and a refresh asked), and the saved state that
+  makes a loaded game continue exactly: the queue (Moho restarts the
+  search in flight on a load; the engine's save/load oracle needs it
+  resumed), each navigator and finder, and each map's dirty bits and scan
+  cursor (clean clusters rebuilt free on load). Then the switch goes on and
+  the gate tests move with it: Moho stops a unit in its goal cell, not on
+  the exact point.
 - **4c-3: repaths** against mobile units, at level 0.

@@ -40,8 +40,24 @@ struct PathWorld {
     i32 pathcap = 0;
 };
 
+/// Who hears a finder's answer (Moho's Listener<const SNavPath&>).
+class PathListener {
+public:
+    virtual ~PathListener() = default;
+    virtual void on_path_event(bool reached, const std::vector<Cell>& cells) = 0;
+};
+
 class PathFinder final : public Traveler {
 public:
+    /// Hear the next answer, once (Moho's AddListener; the listener
+    /// unlinks as it hears).
+    void listen(PathListener* l) { listener_ = l; }
+    PathListener* listener() const { return listener_; }
+    /// The search type for the next prepare (the navigator sets it back to
+    /// None as an answer comes, as Moho's does).
+    void set_type(SearchType type) { type_ = type; }
+    SearchType type() const { return type_; }
+    const NavGoal& goal() const { return goal_; }
     /// The unit it searches for: its footprint (resolved to its class, or
     /// its alt one), and whether it is on the Water layer (where SUB
     /// doesn't count).
@@ -94,6 +110,7 @@ private:
     bool has_result_ = false;
     bool reached_ = false;
     std::vector<Cell> path_;
+    PathListener* listener_ = nullptr;
 };
 
 } // namespace osc::sim::path
