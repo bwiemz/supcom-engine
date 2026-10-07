@@ -1,4 +1,5 @@
 #include "sim/projectile.hpp"
+#include "sim/sim_random.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
 #include "sim/collision.hpp"
@@ -355,7 +356,7 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
     return check(other_id, self_id);
 }
 
-Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
+Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, SimRandom* rng) {
     BlueprintPhysics found;
     velocity_align = true;
     if (!L || blueprint_id().empty()) return found;
@@ -412,6 +413,20 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
     lua_pop(L, 1);
     if (field("Lifetime") == LUA_TNUMBER) found.lifetime = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
+    // Each made a little different: base +- its range, uniformly (Moho's
+    // RandomSymmetricAround). Moho draws even for a range of 0; this only
+    // for one there is.
+    if (rng) {
+        const auto spread = [&](const char* key, f32& value) {
+            f32 range = 0;
+            number(key, range);
+            if (range != 0.0f) value += rng->range(-range, range);
+        };
+        spread("TurnRateRange", turn_rate);
+        spread("MaxSpeedRange", max_speed);
+        spread("AccelerationRange", acceleration);
+        if (found.lifetime) spread("LifetimeRange", *found.lifetime);
+    }
     lua_settop(L, top);
     return found;
 }

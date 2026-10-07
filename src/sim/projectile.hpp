@@ -15,6 +15,7 @@ namespace osc::map { class Terrain; }
 namespace osc::sim {
 
 class EntityRegistry;
+class SimRandom;
 
 /// What a projectile's blueprint says of it as a target (M206b), shared by
 /// every projectile of the blueprint.
@@ -105,8 +106,10 @@ public:
         bool realistic_ordinance = false;
     };
     /// Take its blueprint's Physics: speed, acceleration, tracking, where it
-    /// ends of itself, what it collides with.
-    BlueprintPhysics apply_blueprint_physics(lua_State* L);
+    /// ends of itself, what it collides with. With `rng`, its TurnRate,
+    /// MaxSpeed, Acceleration and Lifetime each move by up to their *Range
+    /// either way, uniformly, as Moho's Projectile does.
+    BlueprintPhysics apply_blueprint_physics(lua_State* L, SimRandom* rng = nullptr);
 
     /// What retail's Projectile.OnImpact calls the thing hit: 'Unit',
     /// 'UnitAir', 'UnitUnderwater', 'Prop', 'Shield', 'Projectile',
