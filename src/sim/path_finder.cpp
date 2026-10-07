@@ -149,4 +149,34 @@ void PathFinder::on_path(bool reached, std::vector<Cell> cells) {
     }
 }
 
+void mix_footprint(Fnv& f, const blueprints::Footprint& fp) {
+    f.mix(static_cast<u64>(fp.size_x) | static_cast<u64>(fp.size_z) << 8 |
+          static_cast<u64>(fp.caps) << 16 | static_cast<u64>(fp.flags) << 24);
+    f.mix_f32(fp.max_slope);
+    f.mix_f32(fp.min_water_depth);
+    f.mix_f32(fp.max_water_depth);
+}
+
+void PathFinder::fingerprint(Fnv& f) const {
+    // world_ but its owner (the unit's id, hashed beside it): the playable
+    // rect and cap the next search uses
+    mix_rect(f, world_.playable);
+    f.mix(static_cast<u64>(static_cast<u32>(world_.pathcap)) << 1 | (world_.use_whole_map ? 1 : 0));
+    mix_footprint(f, footprint_);
+    f.mix(static_cast<u32>(class_));
+    f.mix(static_cast<u64>(static_cast<u32>(max_span_)) << 1 | (on_water_ ? 1 : 0));
+    mix_rect(f, goal_.outer);
+    mix_rect(f, goal_.inner);
+    f.mix(static_cast<u64>(type_) | static_cast<u64>(goal_boundary_blocked_ ? 1 : 0) << 8 |
+          static_cast<u64>(inside_playable_ ? 1 : 0) << 9 |
+          static_cast<u64>(has_occupancy_mask_ ? 1 : 0) << 10 |
+          static_cast<u64>(has_result_ ? 1 : 0) << 11 | static_cast<u64>(reached_ ? 1 : 0) << 12 |
+          static_cast<u64>(listener_ ? 1 : 0) << 13);
+    f.mix(pack_cell(anchor_));
+    f.mix(history_.size());
+    for (const OccupancyRect& r : history_) mix_rect(f, r);
+    f.mix(path_.size());
+    for (const Cell c : path_) f.mix(pack_cell(c));
+}
+
 } // namespace osc::sim::path

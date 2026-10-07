@@ -767,6 +767,9 @@ public:
     bool surfacing() const { return vert_motion_ == VertMotion::Up; }
     /// Its vertical motion event: Top, Down, Bottom or Up.
     const std::string& vert_event() const { return vert_event_; }
+    /// A new vertical motion event, told to the script (when `L` is given)
+    /// as OnMotionVertEventChange(new, old).
+    void set_vert_event(const char* event, lua_State* L);
     bool is_air_unit() const { return layer_ == "Air"; }
     /// An aircraft, flying or landed (MotionType Air).
     bool can_fly() const { return motion_type_ == "RULEUMT_Air"; }
@@ -840,6 +843,8 @@ public:
     /// against the last's (Moho's committed transform against the one
     /// before). A new unit hasn't.
     bool moved_last_tick() const { return moved_last_tick_; }
+    /// Where it stood as this tick began (the next tick's moved_last_tick).
+    const Vector3& tick_position() const { return tick_position_; }
     /// Note where it stands as a tick begins (SimState::tick).
     void note_tick_position() {
         const Vector3& p = position();
@@ -1000,6 +1005,8 @@ public:
         OccupancyRect reserved{}; ///< the place it reserved (none when empty)
     };
     const IdleLanding& idle_landing() const { return idle_landing_; }
+    /// For tests: its landing as given (no reservation taken or freed).
+    void set_idle_landing(const IdleLanding& l) { idle_landing_ = l; }
     /// Its reservation goes (landed, taken off, or gone).
     void free_landing_reservation(SimState& sim);
     /// A transport's pickup (M206m): the units given slots, not yet aboard;
@@ -1372,9 +1379,6 @@ private:
     void tick_work_circling(f64 dt, SimContext& ctx);
     /// A landed aircraft given an order goes back to the air.
     void take_off(SimContext& ctx);
-    /// A new vertical motion event, told to the script
-    /// (OnMotionVertEventChange(new, old)).
-    void set_vert_event(const char* event, lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A Script order (M206w): its task made at the front of the queue, then
     /// its TaskTick each tick it asks for, its status deciding what follows.

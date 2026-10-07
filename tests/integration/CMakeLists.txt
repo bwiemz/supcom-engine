@@ -216,6 +216,18 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
+    # The same with Moho pathing (--moho-pathing): each save holds paths
+    # being followed, searches waiting and in flight, and dirty clusters,
+    # all in the checksum's navigation domain.
+    add_test(NAME data.save_load_moho_pathing
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
+                     --seed 4242 --scripted-orders --moho-pathing)
+    set_tests_properties(data.save_load_moho_pathing PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
     # A campaign operation's (M209): blips, the playable area, its platoons
     # and objectives, restored with the rest.
     add_test(NAME data.save_load_campaign

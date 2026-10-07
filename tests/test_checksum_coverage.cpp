@@ -1,7 +1,7 @@
 // The sync checksum's coverage: state that decides what a unit does next
-// is fingerprinted (two states that differ in it don't share a checksum),
-// and a game saved with it set, restored and played on matches the one
-// that went on.
+// is fingerprinted, in the domain a desync report names for it (two states
+// that differ in it don't share a checksum), and a game saved with it set,
+// restored and played on matches the one that went on.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -63,79 +63,169 @@ Unit& unit(SimState& sim, osc::u32 id) {
     return static_cast<Unit&>(*sim.entity_registry().find(id));
 }
 
+/// The checksum's domains that differ between `a` and `b`, by name.
+std::string changed_domains(const SimState::ChecksumParts& a, const SimState::ChecksumParts& b) {
+    std::string out;
+    const auto before = a.values();
+    const auto after = b.values();
+    for (size_t i = 0; i < before.size(); ++i) {
+        if (before[i] == after[i]) continue;
+        if (!out.empty()) out += ' ';
+        out += SimState::ChecksumParts::kNames[i];
+    }
+    return out;
+}
+
+struct Change {
+    const char* what;
+    const char* domain; ///< the one domain it changes
+    std::function<void()> apply;
+};
+
+/// Apply each change in turn: each changes its domain, and only that.
+void check_changes(const SimState& sim, const std::vector<Change>& changes) {
+    for (const Change& c : changes) {
+        const SimState::ChecksumParts before = sim.checksum_parts();
+        c.apply();
+        INFO(c.what);
+        CHECK(changed_domains(before, sim.checksum_parts()) == c.domain);
+    }
+}
+
 } // namespace
 
-TEST_CASE("State that decides a unit's next move changes the sync checksum", "[sync][checksum]") {
+TEST_CASE("State that decides a unit's next move changes the sync checksum, in its domain",
+          "[sync][checksum]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     const auto ids = setup(sim);
     Unit& u = unit(sim, ids[0]);
     osc::sim::Weapon& w = *u.weapons().front();
-    const std::vector<std::pair<const char*, std::function<void()>>> changes = {
-        // A ground attack's shots decide when its order goes round the queue
-        {"weapon shots at target", [&] { w.shots_at_target = 2; }},
-        {"weapon ground order", [&] { w.ground_from_order = true; }},
-        {"weapon last order point", [&] { w.last_order_point = osc::sim::Vector3{4, 0, 4}; }},
-        {"weapon target check clock", [&] { w.target_check_clock = 7; }},
-        {"weapon range (ChangeMaxRadius)", [&] { w.max_range = 30.0f; }},
-        {"weapon minimum range", [&] { w.min_range = 3.0f; }},
-        {"weapon damage radius", [&] { w.damage_radius = 2.0f; }},
-        {"weapon rate of fire", [&] { w.rate_of_fire = 2.0f; }},
-        {"weapon damage", [&] { w.damage = 55.0f; }},
-        {"weapon target layers", [&] { w.fire_target_layer_caps = 0x3; }},
-        {"attack facing", [&] { u.set_attack_facing({0, 0, 1}); }},
-        {"statistics (KILLS)", [&] { u.set_stat("KILLS", 3.0); }},
-        {"a second statistic", [&] { u.set_stat("DamageTaken", 40.0); }},
-        {"unit state", [&] { u.set_unit_state("Busy", true); }},
-        {"busy", [&] { u.set_busy(true); }},
-        {"blocked command queue", [&] { u.set_block_command_queue(true); }},
-        {"can't take damage", [&] { u.set_can_take_damage(false); }},
-        {"can't be killed", [&] { u.set_can_be_killed(false); }},
-        {"jostled", [&] { u.set_jostled(true); }},
-        {"speed multiplier", [&] { u.set_speed_mult(0.5f); }},
-        {"acceleration multiplier", [&] { u.set_accel_mult(0.5f); }},
-        {"turn multiplier", [&] { u.set_turn_mult(0.5f); }},
-        {"veterancy", [&] { u.set_vet_level(2); }},
-        {"last attacker", [&] { u.set_last_attacker_id(ids[1]); }},
-        {"enhancement", [&] { u.add_enhancement("Back", "Shield"); }},
-        {"heading", [&] { u.set_heading(1.25f); }},
-        {"elevation target", [&] { u.set_elevation_target(25.0f); }},
-        {"an attack's facing clock",
-         [&] {
-             UnitCommand c;
-             c.type = CommandType::Attack;
-             c.target_id = ids[1];
-             u.push_command(c, true);
-             const auto before = sim.compute_sync_checksum();
-             UnitCommand clocked = c;
-             clocked.facing_clock = 5;
-             u.push_command(clocked, true);
-             CHECK(sim.compute_sync_checksum() != before);
-         }},
-        {"a platoon", [&] { sim.get_army(0)->create_platoon("Label"); }},
-        {"its unique name", [&] { sim.get_army(0)->platoon_at(0)->set_unique_name("KeepMe"); }},
-        {"its DisbandOnIdle", [&] { sim.get_army(0)->platoon_at(0)->set_disband_on_idle(); }},
-        {"its unit", [&] { sim.get_army(0)->platoon_at(0)->add_unit(ids[0]); }},
-        {"a collision detector",
-         [&] {
-             auto d = std::make_unique<osc::sim::CollisionDetectorManipulator>();
-             d->set_enabled(false);
-             d->watch_bone(0);
-             u.add_manipulator(std::move(d));
-         }},
-        {"its bone's contact",
-         [&] {
-             for (const auto& m : u.manipulators())
-                 if (auto* d = dynamic_cast<osc::sim::CollisionDetectorManipulator*>(m.get()))
-                     d->watched().front().below_foot_height = true;
-         }},
+    const auto order = [&](const std::function<void(UnitCommand&)>& set) {
+        UnitCommand c;
+        c.type = CommandType::Move;
+        c.target_pos = {40, 0, 40};
+        set(c);
+        u.push_command(c, true);
     };
-    for (const auto& [what, change] : changes) {
-        const auto before = sim.compute_sync_checksum();
-        change();
-        INFO(what);
-        CHECK(sim.compute_sync_checksum() != before);
-    }
+    const auto landing = [&](const std::function<void(Unit::IdleLanding&)>& set) {
+        Unit::IdleLanding l = u.idle_landing();
+        set(l);
+        u.set_idle_landing(l);
+    };
+    check_changes(
+        sim,
+        {
+            // A ground attack's shots decide when its order goes round the queue
+            {"weapon shots at target", "weapons", [&] { w.shots_at_target = 2; }},
+            {"weapon ground order", "weapons", [&] { w.ground_from_order = true; }},
+            {"weapon last order point", "weapons",
+             [&] { w.last_order_point = osc::sim::Vector3{4, 0, 4}; }},
+            {"weapon target check clock", "weapons", [&] { w.target_check_clock = 7; }},
+            {"weapon range (ChangeMaxRadius)", "weapons", [&] { w.max_range = 30.0f; }},
+            {"weapon minimum range", "weapons", [&] { w.min_range = 3.0f; }},
+            {"weapon damage radius", "weapons", [&] { w.damage_radius = 2.0f; }},
+            {"weapon rate of fire", "weapons", [&] { w.rate_of_fire = 2.0f; }},
+            {"weapon damage", "weapons", [&] { w.damage = 55.0f; }},
+            {"weapon target layers", "weapons", [&] { w.fire_target_layer_caps = 0x3; }},
+            {"attack facing", "units", [&] { u.set_attack_facing({0, 0, 1}); }},
+            {"statistics (KILLS)", "units", [&] { u.set_stat("KILLS", 3.0); }},
+            {"a second statistic", "units", [&] { u.set_stat("DamageTaken", 40.0); }},
+            {"unit state", "units", [&] { u.set_unit_state("Busy", true); }},
+            {"busy", "units", [&] { u.set_busy(true); }},
+            {"blocked command queue", "units", [&] { u.set_block_command_queue(true); }},
+            {"can't take damage", "units", [&] { u.set_can_take_damage(false); }},
+            {"can't be killed", "units", [&] { u.set_can_be_killed(false); }},
+            {"jostled", "units", [&] { u.set_jostled(true); }},
+            {"speed multiplier", "units", [&] { u.set_speed_mult(0.5f); }},
+            {"acceleration multiplier", "units", [&] { u.set_accel_mult(0.5f); }},
+            {"turn multiplier", "units", [&] { u.set_turn_mult(0.5f); }},
+            {"veterancy", "units", [&] { u.set_vet_level(2); }},
+            {"last attacker", "units", [&] { u.set_last_attacker_id(ids[1]); }},
+            {"enhancement", "units", [&] { u.add_enhancement("Back", "Shield"); }},
+            {"heading", "navigation", [&] { u.set_heading(1.25f); }},
+            {"elevation target", "navigation", [&] { u.set_elevation_target(25.0f); }},
+            // An idle aircraft's landing (AutoLandTime) and its flight
+            {"idle since", "units", [&] { landing([](auto& l) { l.idle_since = 40; }); }},
+            {"descending", "units", [&] { landing([](auto& l) { l.descending = true; }); }},
+            {"landing place", "units",
+             [&] { landing([](auto& l) { l.target = osc::sim::Vector3{12, 0, 9}; }); }},
+            {"landing layer", "units", [&] { landing([](auto& l) { l.layer = "Water"; }); }},
+            {"landing reservation", "units",
+             [&] { landing([](auto& l) { l.reserved = {10, 7, 14, 11}; }); }},
+            {"vertical event", "units", [&] { u.set_vert_event("Bottom", nullptr); }},
+            {"flying", "units", [&] { u.air_combat().flying = true; }},
+            {"airframe velocity", "units",
+             [&] { u.air_combat().velocity = osc::sim::Vector3{3, 0, 1}; }},
+            {"circle anchor", "units",
+             [&] { u.air_combat().circle_anchor = osc::sim::Vector3{5, 0, 5}; }},
+            // Orders
+            {"a move", "orders", [&] { order([](UnitCommand&) {}); }},
+            {"its formation", "orders",
+             [&] { order([](UnitCommand& c) { c.formation = "GrowthFormation"; }); }},
+            {"its formation slot", "orders",
+             [&] {
+                 order([](UnitCommand& c) {
+                     c.formation = "GrowthFormation";
+                     c.formed = true;
+                 });
+             }},
+            {"its formation pace", "orders",
+             [&] {
+                 order([](UnitCommand& c) {
+                     c.formation = "GrowthFormation";
+                     c.formed = true;
+                     c.speed_cap = 2.5f;
+                 });
+             }},
+            {"its formation facing", "orders",
+             [&] {
+                 order([](UnitCommand& c) {
+                     c.formation = "GrowthFormation";
+                     c.formed = true;
+                     c.speed_cap = 2.5f;
+                     c.has_facing = true;
+                     c.facing = 90.0f;
+                 });
+             }},
+            {"a winged attack within reach", "orders",
+             [&] {
+                 order([&](UnitCommand& c) {
+                     c.type = CommandType::Attack;
+                     c.target_id = ids[1];
+                 });
+                 UnitCommand c = u.command_queue().front();
+                 c.engaged = true;
+                 u.push_command(c, true);
+             }},
+            {"an attack's facing clock", "orders",
+             [&] {
+                 UnitCommand c = u.command_queue().front();
+                 c.facing_clock = 5;
+                 u.push_command(c, true);
+             }},
+            {"a patrol's look-about clock", "orders",
+             [&] { order([](UnitCommand& c) { c.patrol_scan = 4; }); }},
+            {"a platoon", "armies", [&] { sim.get_army(0)->create_platoon("Label"); }},
+            {"its unique name", "armies",
+             [&] { sim.get_army(0)->platoon_at(0)->set_unique_name("KeepMe"); }},
+            {"its DisbandOnIdle", "armies",
+             [&] { sim.get_army(0)->platoon_at(0)->set_disband_on_idle(); }},
+            {"its unit", "armies", [&] { sim.get_army(0)->platoon_at(0)->add_unit(ids[0]); }},
+            {"a collision detector", "units",
+             [&] {
+                 auto d = std::make_unique<osc::sim::CollisionDetectorManipulator>();
+                 d->set_enabled(false);
+                 d->watch_bone(0);
+                 u.add_manipulator(std::move(d));
+             }},
+            {"its bone's contact", "units",
+             [&] {
+                 for (const auto& m : u.manipulators())
+                     if (auto* d = dynamic_cast<osc::sim::CollisionDetectorManipulator*>(m.get()))
+                         d->watched().front().below_foot_height = true;
+             }},
+        });
 }
 
 TEST_CASE("A game saved with that state, restored and played on, matches", "[sync][checksum]") {
@@ -173,9 +263,21 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
         d->watch_bone(0);
         d->watched().front().below_foot_height = true;
         u.add_manipulator(std::move(d));
-        UnitCommand move;
+        Unit::IdleLanding landing;
+        landing.idle_since = 3;
+        landing.descending = true;
+        landing.target = {12, 0, 9};
+        landing.layer = "Land";
+        u.set_idle_landing(landing);
+        u.set_vert_event("Down", nullptr);
+        u.air_combat().circle_anchor = {5, 0, 5};
+        u.air_combat().circle_reverse = true;
+        UnitCommand move; // a formation's slot
         move.type = CommandType::Move;
         move.target_pos = {60.0f, 0.0f, 30.0f};
+        move.formation = "GrowthFormation";
+        move.formed = true;
+        move.speed_cap = 3.0f;
         u.push_command(move, true);
         UnitCommand attack; // queued behind it, its facing clock running
         attack.type = CommandType::Attack;
@@ -212,6 +314,11 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
     CHECK(u.last_attacker_id() == ids[1]);
     CHECK(u.get_stat("KILLS") == 3.0);
     CHECK(b.get_army(0)->find_platoon_by_name("keepme") != nullptr);
+    CHECK(u.idle_landing().descending);
+    CHECK(u.idle_landing().layer == "Land");
+    CHECK(u.vert_event() == "Down");
+    CHECK(u.air_combat().circle_reverse);
+    CHECK(u.command_queue().front().formed);
     // A collision detector's bone that was below its foot height still is:
     // a footfall or crash isn't told again after a load (roadmap item 5).
     const osc::sim::CollisionDetectorManipulator* detector = nullptr;

@@ -462,4 +462,40 @@ void PathNavigator::on_path_event(bool /*reached*/, const std::vector<Cell>& cel
     state_ = State::HasPath;
 }
 
+void PathNavigator::fingerprint(Fnv& f) const {
+    finder_.fingerprint(f);
+    mix_footprint(f, footprint_);
+    f.mix(on_water_ ? 1 : 0);
+    // The unit as it last saw it: what an answer arriving between updates
+    // searches from.
+    f.mix_f32(unit_.x);
+    f.mix_f32(unit_.y);
+    f.mix_f32(unit_.z);
+    f.mix(static_cast<u64>(unit_.layer) << 8 | static_cast<u64>(unit_.moved ? 1 : 0) |
+          static_cast<u64>(unit_.immobile ? 1 : 0) << 1 |
+          static_cast<u64>(unit_.attacking ? 1 : 0) << 2 |
+          static_cast<u64>(unit_.waiting_for_transport ? 1 : 0) << 3);
+    f.mix(static_cast<u8>(state_));
+    mix_rect(f, goal_.outer);
+    mix_rect(f, goal_.inner);
+    f.mix(path_.size());
+    for (const Cell c : path_) f.mix(pack_cell(c));
+    f.mix(pack_cell(current_));
+    f.mix(pack_cell(target_));
+    f.mix(last_blocked_cell_);
+    f.mix(last_layer_);
+    f.mix(static_cast<u32>(last_node_index_));
+    f.mix(static_cast<u32>(search_fail_count_));
+    f.mix(static_cast<u32>(retry_delay_));
+    f.mix(static_cast<u32>(no_forward_fail_count_));
+    f.mix_f32(repath_threshold_);
+    f.mix(static_cast<u32>(no_progress_ticks_));
+    f.mix(static_cast<u64>(forward_probe_ ? 1 : 0) |
+          static_cast<u64>(repath_requested_ ? 1 : 0) << 1 |
+          static_cast<u64>(extended_probe_ ? 1 : 0) << 2 |
+          static_cast<u64>(target_within_one_cell_ ? 1 : 0) << 3);
+    f.mix(static_cast<u32>(request_mode_));
+    f.mix(static_cast<u32>(request_countdown_));
+}
+
 } // namespace osc::sim::path

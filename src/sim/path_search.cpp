@@ -292,6 +292,22 @@ void PathSearch::finish(bool reached) {
     if (t) t->on_path(reached, std::move(cells));
 }
 
+void PathSearch::fingerprint(Fnv& f) const {
+    if (!traveler_) {
+        f.mix(0);
+        return;
+    }
+    // Its nodes are what its expansions made from the anchor; how many,
+    // how many are open, and the nearest found tell a search's progress.
+    f.mix(static_cast<u64>(traveler_->owner()) + 1);
+    f.mix(nodes_.size());
+    f.mix(open_.entries().size());
+    f.mix(static_cast<u32>(expand_count_));
+    f.mix(static_cast<u32>(pathcap_));
+    f.mix(pack_cell(closest_));
+    f.mix_f32(closest_distance_);
+}
+
 Traveler::~Traveler() {
     if (queue_) queue_->cancel(*this);
 }
@@ -337,6 +353,12 @@ void PathQueue::work(PathTables& tables, i32& budget) {
             search_.finish(step == PathSearch::Step::GoalReached);
         }
     }
+}
+
+void PathQueue::fingerprint(Fnv& f) const {
+    f.mix(pending_.size());
+    for (const Traveler* t : pending_) f.mix(t->owner());
+    search_.fingerprint(f);
 }
 
 } // namespace osc::sim::path

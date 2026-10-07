@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/fnv.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -2892,24 +2893,6 @@ void SimState::update_victory() {
     }
 }
 
-namespace {
-
-/// FNV-1a over 64-bit words.
-struct Fnv {
-    u64 h = 1469598103934665603ULL;
-    void mix(u64 v) {
-        h ^= v;
-        h *= 1099511628211ULL;
-    }
-    void mix_f32(f32 f) {
-        u32 bits;
-        std::memcpy(&bits, &f, sizeof(bits));
-        mix(bits);
-    }
-};
-
-} // namespace
-
 std::array<u64, SimState::ChecksumParts::kCount> SimState::ChecksumParts::values() const {
     return {rng,     armies,      entities, units,          orders, navigation,
             weapons, projectiles, shields,  economy_events, threads};
@@ -3023,12 +3006,17 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             units.mix(ac.timeout_tick);
             units.mix(static_cast<u64>(static_cast<u32>(ac.sustained_turn_ticks)));
             units.mix_f32(ac.yaw_rate);
-            // A hovering aircraft's circle, once drawn.
+            // The airframe's own velocity, while it has the unit.
+            if (ac.flying) mix_vec(units, ac.velocity);
+            // A hovering aircraft's circle, once drawn, and where it is
+            // drawn about.
+            const Vector3& around = ac.circle_anchor;
             if (ac.circle_reverse || ac.circle_elevation != 0.0f ||
-                ac.circle_radius_ratio != 1.0f) {
+                ac.circle_radius_ratio != 1.0f || around.x != 0 || around.y != 0 || around.z != 0) {
                 units.mix(0x4349524300000000ull | (ac.circle_reverse ? 1u : 0u)); // "CIRC"
                 units.mix_f32(ac.circle_elevation);
                 units.mix_f32(ac.circle_radius_ratio);
+                mix_vec(units, around);
             }
         }
         // What a carrier keeps inside (M206q), only when it keeps something.
@@ -3050,6 +3038,26 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             units.mix(static_cast<u64>(static_cast<u32>(u.retrieve_wait())));
             units.mix(u.landing_phase());
             units.mix(static_cast<u64>(static_cast<u32>(u.landing_wait())));
+        }
+        // An idle aircraft's landing (AutoLandTime), only once its orders
+        // ran out: since when, whether it comes down, where, and the place
+        // it reserved.
+        if (const Unit::IdleLanding& il = u.idle_landing();
+            il.idle_since != 0 || il.descending || il.target.x != 0 || il.target.y != 0 ||
+            il.target.z != 0 || !il.layer.empty() || il.reserved.x1 != il.reserved.x0 ||
+            il.reserved.z1 != il.reserved.z0 || il.reserved.x0 != 0 || il.reserved.z0 != 0) {
+            units.mix(0x49444c4500000000ull | (il.descending ? 1u : 0u)); // "IDLE"
+            units.mix(il.idle_since);
+            mix_vec(units, il.target);
+            mix_str(units, il.layer);
+            units.mix(path::pack_cell({il.reserved.x0, il.reserved.z0}));
+            units.mix(path::pack_cell({il.reserved.x1, il.reserved.z1}));
+        }
+        // Its last vertical motion event (OnMotionVertEventChange tells the
+        // next against it), only off Top.
+        if (u.vert_event() != "Top") {
+            units.mix(0x5645525400000000ull); // "VERT"
+            mix_str(units, u.vert_event());
         }
         // A stun, only while it lasts.
         if (u.stun_ticks() > 0)
@@ -3214,6 +3222,22 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(cmd.launch_queue.size()));
                 for (u32 id : cmd.launch_queue) orders.mix(id);
             }
+            // A formation's slot, pace and facing, only for a formation order.
+            if (cmd.formed || cmd.speed_cap != 0 || cmd.has_facing || !cmd.formation.empty()) {
+                orders.mix(0x464f524du | (cmd.formed ? 1ull << 32 : 0u) | // "FORM"
+                           (cmd.has_facing ? 2ull << 32 : 0u));
+                orders.mix_f32(cmd.speed_cap);
+                orders.mix_f32(cmd.facing);
+                mix_str(orders, cmd.formation);
+            }
+            // A winged attack within reach, flying its runs, only then.
+            if (cmd.engaged) orders.mix(0x454e4744u); // "ENGD"
+            // A patrol's or guard's wait before it next looks about, only
+            // while it waits.
+            if (cmd.patrol_scan != 0) {
+                orders.mix(0x5053434eu); // "PSCN"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.patrol_scan)));
+            }
             // An attack's facing clock (its SetFacing every 9 ticks), only while
             // it runs.
             if (cmd.facing_clock != 0) {
@@ -3255,6 +3279,14 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         mix_vec(navigation, u.velocity());
         navigation.mix_f32(u.heading());
         navigation.mix_f32(u.elevation_target());
+        // Moho pathing's (--moho-pathing), only with it on: its navigator
+        // and finder, and whether it moved over the last tick (which units
+        // a search walks through) and where from.
+        if (moho_pathing_) {
+            navigation.mix(0x4d4f484f00000000ull | (u.moved_last_tick() ? 1u : 0u)); // "MOHO"
+            mix_vec(navigation, u.tick_position());
+            u.navigator().fingerprint_moho(navigation);
+        }
 
         weapons.mix(e.entity_id());
         for (const auto& w : u.weapons()) {
@@ -3289,6 +3321,14 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             }
         }
     });
+    // Each army's searches, waiting and in flight, and each footprint
+    // class's dirty clusters: Moho pathing's, only with it on (the tables'
+    // background work runs either way, but only its searches read them).
+    if (moho_pathing_ && path_tables_) {
+        navigation.mix(0x5041544800000000ull); // "PATH"
+        for (const auto& a : armies_) a->path_queue().fingerprint(navigation);
+        path_tables_->fingerprint(navigation);
+    }
     parts.entities = entities.h;
     parts.units = units.h;
     parts.orders = orders.h;

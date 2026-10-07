@@ -685,4 +685,19 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     return true;
 }
 
+void Navigator::fingerprint_moho(Fnv& f) const {
+    f.mix(static_cast<u64>(moho_pending_ ? 1 : 0) | static_cast<u64>(moho_active_ ? 1 : 0) << 1 |
+          static_cast<u64>(through_target_ ? 1 : 0) << 2 |
+          static_cast<u64>(moho_amphibious_ ? 1 : 0) << 3);
+    f.mix(path::pack_cell(moho_waypoint_cell_));
+    // Where it was last update decides whether it has moved since.
+    f.mix_f32(last_pos_.x);
+    f.mix_f32(last_pos_.y);
+    f.mix_f32(last_pos_.z);
+    f.mix(moho_layer_.size());
+    for (const char c : moho_layer_) f.mix(static_cast<u8>(c));
+    f.mix_f32(moho_draft_);
+    moho_.fingerprint(f);
+}
+
 } // namespace osc::sim

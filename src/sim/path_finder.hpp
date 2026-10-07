@@ -74,6 +74,9 @@ public:
     virtual void on_path_event(bool reached, const std::vector<Cell>& cells) = 0;
 };
 
+/// Footprint `fp` into a sync checksum fingerprint.
+void mix_footprint(Fnv& f, const blueprints::Footprint& fp);
+
 class PathFinder final : public Traveler {
     friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
 public:
@@ -110,6 +113,9 @@ public:
     bool can_traverse(Cell c) const override;
     bool in_bounds(Cell from, Cell to, f32& cost) const override;
     void on_path(bool reached, std::vector<Cell> cells) override;
+    u32 owner() const override { return world_.owner; }
+    /// Its search's settings and last answer, for the sync checksum.
+    void fingerprint(Fnv& f) const;
 
     /// The last search's answer, once it has one.
     bool has_result() const { return has_result_; }
