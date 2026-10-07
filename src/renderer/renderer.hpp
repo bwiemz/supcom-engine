@@ -33,6 +33,7 @@
 #include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/shadow_camera.hpp"
 #include "renderer/shadow_map.hpp"
+#include "renderer/bloom_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_feedback.hpp"
@@ -816,32 +817,15 @@ private:
     VkRenderPass scene_render_pass_ = VK_NULL_HANDLE;
     VkFramebuffer scene_framebuffer_ = VK_NULL_HANDLE;
 
-    // Bloom intermediate images (half resolution)
-    AllocatedImage bloom_bright_image_{};
-    AllocatedImage bloom_blur_h_image_{};
-    AllocatedImage bloom_blur_v_image_{};
+    /// FA's bloom (M211e): its half-size targets, and the composite that
+    /// puts the scene on the screen.
+    BloomRenderer bloom_;
 
-    VkRenderPass bloom_render_pass_ = VK_NULL_HANDLE;  // single-color-attachment pass
-    VkFramebuffer bloom_bright_fb_ = VK_NULL_HANDLE;
-    VkFramebuffer bloom_blur_h_fb_ = VK_NULL_HANDLE;
-    VkFramebuffer bloom_blur_v_fb_ = VK_NULL_HANDLE;
-
-    // Bloom pipelines (will be created in Task 9, declare here for cleanup)
-    VkPipeline bloom_bright_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout bloom_bright_layout_ = VK_NULL_HANDLE;
-    VkPipeline bloom_blur_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout bloom_blur_layout_ = VK_NULL_HANDLE;
-    VkPipeline bloom_composite_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout bloom_composite_layout_ = VK_NULL_HANDLE;
-
-    // Bloom descriptors
-    VkDescriptorPool bloom_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet scene_ds_ = VK_NULL_HANDLE;        // samples scene_color_image_
-    VkDescriptorSet bloom_bright_ds_ = VK_NULL_HANDLE;  // samples bloom_bright_image_
-    VkDescriptorSet bloom_blur_h_ds_ = VK_NULL_HANDLE;  // samples bloom_blur_h_image_
-    VkDescriptorSet bloom_blur_v_ds_ = VK_NULL_HANDLE;  // samples bloom_blur_v_image_
-
-    void create_bloom_resources();
+    /// The frame's targets, which follow the window's size: the HDR scene,
+    /// the water's refraction and reflection, the normal target, the scene's
+    /// passes and framebuffers, and the bloom's.
+    void create_frame_targets();
+    void destroy_frame_targets();
     /// Copy the frame drawn so far for the water to refract, between the
     /// scene's two passes (M213a).
     void copy_refraction(VkCommandBuffer cmd);
@@ -857,8 +841,6 @@ private:
     /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
     /// (for the reflection, already mirrored).
     void draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp, MeshPass stage);
-    void create_bloom_pipelines();
-    void destroy_bloom_resources();
 
     // Frame-in-flight tracking
     u32 frame_index_ = 0;
