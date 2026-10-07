@@ -400,11 +400,11 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
     create_shadow_resources();
 
-    // The frame's targets (must be created before pipelines — scene_render_pass_ is
+    // The frame's targets (must be created before pipelines — frame_.scene_pass() is
     // needed for scene pipeline builds now that all scene draws target offscreen HDR)
     create_frame_targets();
 
-    // Pipelines (scene pipelines built against scene_render_pass_)
+    // Pipelines (scene pipelines built against frame_.scene_pass())
     create_pipelines();
 
     // Shadow depth-only pipelines (need shadow_map_'s pass + bone_ds_layout_)
@@ -422,25 +422,25 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     overlay_renderer_.init(device_, allocator_);
 
     // FA's particles, in the scene pass (M214c)
-    particle_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    particle_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // Scripts' decals and splats, in the scene pass (M212c)
-    runtime_decals_.init(device_, allocator_, scene_render_pass_, terrain_tex_ds_layout_,
+    runtime_decals_.init(device_, allocator_, frame_.scene_pass(), terrain_tex_ds_layout_,
                          shadow_ds_layout_, texture_ds_layout_);
     // FA's beams, in the scene pass too (M214a)
-    beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
-    command_graph_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
-    selection_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
-    if (has_stencil()) range_renderer_.init(device_, allocator_, scene_render_pass_);
+    beam_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
+    command_graph_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
+    selection_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
+    if (has_stencil()) range_renderer_.init(device_, allocator_, frame_.scene_pass());
     // FA's trails, likewise (M214b)
-    trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    trail_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's sky (M210b)
-    sky_renderer_.init(device_, allocator_, scene_render_pass_);
+    sky_renderer_.init(device_, allocator_, frame_.scene_pass());
     // FA's water (M213a)
-    water_renderer_.init(device_, allocator_, scene_render_pass_);
+    water_renderer_.init(device_, allocator_, frame_.scene_pass());
     water_renderer_.set_frame_images(
-        {.refraction = refraction_image_.view, .reflection = reflection_image_.view});
+        {.refraction = frame_.refraction().view, .reflection = frame_.reflection().view});
     // The refracting particles bend the same copy, made again for them.
-    particle_renderer_.set_background(refraction_image_.view);
+    particle_renderer_.set_background(frame_.refraction().view);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -887,14 +887,14 @@ void Renderer::create_pipelines() {
             return b;
         };
         terrain_pipeline_ =
-            terrain_builder(tf).build(device_, scene_render_pass_, &terrain_layout_);
+            terrain_builder(tf).build(device_, frame_.scene_pass(), &terrain_layout_);
         // The low fidelity terrain (M212h; LowFidelityTerrain, then its
         // lighting): the same vertices, sets and push block.
         VkShaderModule low =
             compile_glsl(device_, shaders::terrain_low_frag(), "terrain_low.frag", false);
         if (low) {
             terrain_low_pipeline_ =
-                terrain_builder(low).build(device_, scene_render_pass_, &terrain_low_layout_);
+                terrain_builder(low).build(device_, frame_.scene_pass(), &terrain_low_layout_);
             vkDestroyShaderModule(device_, low, nullptr);
         }
     }
@@ -922,7 +922,7 @@ void Renderer::create_pipelines() {
                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                     .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
                     .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: its light
-                    .build(device_, scene_render_pass_, &terrain_normal_layout_);
+                    .build(device_, frame_.scene_pass(), &terrain_normal_layout_);
         if (nf) vkDestroyShaderModule(device_, nf, nullptr);
     }
 
@@ -957,7 +957,7 @@ void Renderer::create_pipelines() {
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(shadow_ds_layout_) // set=0: shadow
                 .set_color_write_mask(kColorOnly)             // the glow in alpha stays (M211e)
-                .build(device_, scene_render_pass_, &unit_layout_);
+                .build(device_, frame_.scene_pass(), &unit_layout_);
     }
 
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
@@ -1028,7 +1028,7 @@ void Renderer::create_pipelines() {
                 .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
                 .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
                 .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
-                .build(device_, scene_render_pass_, layout);
+                .build(device_, frame_.scene_pass(), layout);
         };
         mesh_pipeline_ = build_mesh(Blend::Opaque, &mesh_layout_);
         mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
@@ -1073,7 +1073,7 @@ void Renderer::create_pipelines() {
                 .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: light, environment
                 .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
                 .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
-                .build(device_, scene_render_pass_, layout);
+                .build(device_, frame_.scene_pass(), layout);
         };
         for (u32 i = 0; i < kShieldStates; ++i)
             shield_pipelines_[i] = build_shield(static_cast<ShieldState>(i), &shield_layouts_[i]);
@@ -1113,7 +1113,7 @@ void Renderer::create_pipelines() {
         decal_pipeline_ = decal_builder(df)
                               .set_blend(true)
                               .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
-                              .build(device_, scene_render_pass_, &decal_layout_);
+                              .build(device_, frame_.scene_pass(), &decal_layout_);
         // The glowing decals (M212d; TDecalsGlow): One/One into alpha alone,
         // the frame's glow. The glow masks (TDecalGlowMask): no blending,
         // colour and glow both written.
@@ -1126,12 +1126,12 @@ void Renderer::create_pipelines() {
                                        .set_blend(true)
                                        .set_alpha_blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE)
                                        .set_color_write_mask(VK_COLOR_COMPONENT_A_BIT)
-                                       .build(device_, scene_render_pass_, &decal_glow_layout_);
+                                       .build(device_, frame_.scene_pass(), &decal_glow_layout_);
         if (glow_mask)
             decal_glow_mask_pipeline_ =
                 decal_builder(glow_mask)
                     .set_color_write_mask(kColorAndGlow)
-                    .build(device_, scene_render_pass_, &decal_glow_mask_layout_);
+                    .build(device_, frame_.scene_pass(), &decal_glow_mask_layout_);
         // The normal decals (M212e; TDecalsNormals): into the normal
         // target's RG, SrcAlpha / InvSrcAlpha.
         VkShaderModule normals =
@@ -1141,7 +1141,7 @@ void Renderer::create_pipelines() {
                 decal_builder(normals)
                     .set_blend(true)
                     .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT)
-                    .build(device_, scene_render_pass_, &decal_normal_layout_);
+                    .build(device_, frame_.scene_pass(), &decal_normal_layout_);
         // The water's albedo decals (M212g; TDecalsWaterAlbedo): on its
         // surface, SrcAlpha / InvSrcAlpha into RGB.
         VkShaderModule water_vert =
@@ -1152,7 +1152,7 @@ void Renderer::create_pipelines() {
             decal_water_pipeline_ = decal_builder(water_frag, water_vert)
                                         .set_blend(true)
                                         .set_color_write_mask(kColorOnly)
-                                        .build(device_, scene_render_pass_, &decal_water_layout_);
+                                        .build(device_, frame_.scene_pass(), &decal_water_layout_);
         if (glow) vkDestroyShaderModule(device_, glow, nullptr);
         if (glow_mask) vkDestroyShaderModule(device_, glow_mask, nullptr);
         if (normals) vkDestroyShaderModule(device_, normals, nullptr);
@@ -1205,218 +1205,23 @@ void Renderer::create_pipelines() {
 void Renderer::create_frame_targets() {
     u32 w = window_width_;
     u32 h = window_height_;
-    VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    frame_.create(device_, allocator_, w, h, depth_format_, depth_image_.view);
 
-    // Helper to create an HDR image + view
-    auto create_hdr_image = [&](AllocatedImage& img, u32 iw, u32 ih) {
-        VkImageCreateInfo img_ci{};
-        img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.format = hdr_format;
-        img_ci.extent = {iw, ih, 1};
-        img_ci.mipLevels = 1;
-        img_ci.arrayLayers = 1;
-        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        // Copyable both ways: the water refracts a copy of the frame (M213a).
-        img_ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
-        VmaAllocationCreateInfo alloc_ci{};
-        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                       &img.image, &img.allocation, nullptr));
-
-        VkImageViewCreateInfo view_ci{};
-        view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_ci.image = img.image;
-        view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_ci.format = hdr_format;
-        view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
-    };
-
-    // Scene color uses HDR format — all scene pipelines are built against
-    // scene_render_pass_ so format compatibility is guaranteed. HDR allows
-    // overbright values for proper bloom extraction.
-    create_hdr_image(scene_color_image_, w, h);
-    // The frame as it is before the water, which the water refracts (M213a).
-    create_hdr_image(refraction_image_, w, h);
-    // The units reflected in the water (M213b).
-    create_hdr_image(reflection_image_, w, h);
-    // The normal target (M212e): the normal pass's, which the scene reads.
-    create_hdr_image(terrain_normal_image_, w, h);
-
-    // Scene render pass (color + depth, HDR format for overbright bloom extraction)
-    {
-        VkAttachmentDescription color_att{};
-        color_att.format = hdr_format;
-        color_att.samples = VK_SAMPLE_COUNT_1_BIT;
-        color_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        color_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        color_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        color_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        color_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        // The stencil is cleared with the depth: the range overlays count
-        // in it, and leave it clear (before the water, in the first pass)
-        VkAttachmentDescription depth_att{};
-        depth_att.format = depth_format_;
-        depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
-        depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depth_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        depth_att.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-        VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-
-        VkSubpassDescription subpass{};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &color_ref;
-        subpass.pDepthStencilAttachment = &depth_ref;
-
-        std::array<VkAttachmentDescription, 2> attachments = {color_att, depth_att};
-
-        std::array<VkSubpassDependency, 2> deps{};
-        // Incoming: external writes complete before we start
-        // The depth image is shared by every frame in flight, so the previous
-        // frame's depth writes (early AND late tests) must finish before this
-        // frame clears and writes it.
-        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-        deps[0].dstSubpass = 0;
-        deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        // Outgoing: finalLayout transition visible to subsequent fragment reads
-        deps[1].srcSubpass = 0;
-        deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-        VkRenderPassCreateInfo rp_ci{};
-        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rp_ci.attachmentCount = static_cast<u32>(attachments.size());
-        rp_ci.pAttachments = attachments.data();
-        rp_ci.subpassCount = 1;
-        rp_ci.pSubpasses = &subpass;
-        rp_ci.dependencyCount = static_cast<u32>(deps.size());
-        rp_ci.pDependencies = deps.data();
-
-        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_render_pass_));
-
-        // On a map with water the scene is drawn in two passes around it
-        // (M213a): the first keeps its colour and depth as attachments; the
-        // second goes on from where it was. Only their loads, stores and
-        // layouts differ (their dependencies must not, for them to stay
-        // compatible), so the scene's pipelines draw in both; the copy
-        // between them has barriers of its own (copy_refraction).
-        {
-            std::array<VkAttachmentDescription, 2> first = attachments;
-            first[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            first[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            rp_ci.pAttachments = first.data();
-            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_first_pass_));
-
-            std::array<VkAttachmentDescription, 2> second = attachments;
-            second[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-            second[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            second[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-            second[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-            second[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            rp_ci.pAttachments = second.data();
-            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_second_pass_));
-
-            // The middle one (M214d): goes on, and ends as the first.
-            std::array<VkAttachmentDescription, 2> middle = second;
-            middle[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            middle[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            rp_ci.pAttachments = middle.data();
-            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_middle_pass_));
-        }
-    }
-
-    // Scene framebuffer (full resolution, scene_render_pass_)
-    {
-        std::array<VkImageView, 2> views = {scene_color_image_.view, depth_image_.view};
-        VkFramebufferCreateInfo fb_ci{};
-        fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fb_ci.renderPass = scene_render_pass_;
-        fb_ci.attachmentCount = static_cast<u32>(views.size());
-        fb_ci.pAttachments = views.data();
-        fb_ci.width = w;
-        fb_ci.height = h;
-        fb_ci.layers = 1;
-        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &scene_framebuffer_));
-
-        // The reflection's (M213b): drawn with the scene's pass, whose
-        // pipelines draw it, on the scene's depth, which the scene clears
-        // again after.
-        views[0] = reflection_image_.view;
-        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &reflection_framebuffer_));
-        // The normal pass's (M212e), likewise on the scene's depth.
-        views[0] = terrain_normal_image_.view;
-        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &terrain_normal_framebuffer_));
-    }
-
-    bloom_.create(device_, allocator_, w, h, scene_color_image_.view, texture_ds_layout_,
+    bloom_.create(device_, allocator_, w, h, frame_.scene_color().view, texture_ds_layout_,
                   texture_sampler_);
 
     water_renderer_.set_frame_images(
-        {.refraction = refraction_image_.view, .reflection = reflection_image_.view});
+        {.refraction = frame_.refraction().view, .reflection = frame_.reflection().view});
     bind_normal_target(); // the terrain reads the new one (M212e)
     // The refracting particles bend the same copy, made again for them.
-    particle_renderer_.set_background(refraction_image_.view);
+    particle_renderer_.set_background(frame_.refraction().view);
     spdlog::info("Frame targets created ({}x{})", w, h);
 }
 
 void Renderer::destroy_frame_targets() {
     bloom_.destroy();
 
-    // Framebuffers
-    if (scene_framebuffer_) vkDestroyFramebuffer(device_, scene_framebuffer_, nullptr);
-    if (reflection_framebuffer_) vkDestroyFramebuffer(device_, reflection_framebuffer_, nullptr);
-    reflection_framebuffer_ = VK_NULL_HANDLE;
-    if (terrain_normal_framebuffer_)
-        vkDestroyFramebuffer(device_, terrain_normal_framebuffer_, nullptr);
-    terrain_normal_framebuffer_ = VK_NULL_HANDLE;
-
-    // Render passes
-    if (scene_render_pass_) vkDestroyRenderPass(device_, scene_render_pass_, nullptr);
-    if (scene_first_pass_) vkDestroyRenderPass(device_, scene_first_pass_, nullptr);
-    if (scene_second_pass_) vkDestroyRenderPass(device_, scene_second_pass_, nullptr);
-    if (scene_middle_pass_) vkDestroyRenderPass(device_, scene_middle_pass_, nullptr);
-    scene_first_pass_ = VK_NULL_HANDLE;
-    scene_second_pass_ = VK_NULL_HANDLE;
-    scene_middle_pass_ = VK_NULL_HANDLE;
-
-    // Images
-    auto destroy_img = [&](AllocatedImage& img) {
-        if (img.view) vkDestroyImageView(device_, img.view, nullptr);
-        if (img.image) vmaDestroyImage(allocator_, img.image, img.allocation);
-        img = {};
-    };
-    destroy_img(scene_color_image_);
-    destroy_img(refraction_image_);
-    destroy_img(reflection_image_);
-    destroy_img(terrain_normal_image_);
-
-    // Reset handles
-    scene_framebuffer_ = VK_NULL_HANDLE;
-    scene_render_pass_ = VK_NULL_HANDLE;
+    frame_.destroy();
 }
 
 void Renderer::destroy_decal_buffers() {
@@ -2298,7 +2103,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // The low fidelity terrain draws no normals (its DrawTerrainNormal is
     // empty, M212h): the pass only clears the target then, which keeps it
     // readable for what samples it (a fidelity 0 decal's light).
-    const bool normal_pass = terrain_normal_framebuffer_ && terrain_normal_pipeline_ &&
+    const bool normal_pass = frame_.terrain_normal_framebuffer() && terrain_normal_pipeline_ &&
                              terrain_tex_ds_ && shadow_ds_[fi] && terrain_mesh_.index_count() > 0;
     if (normal_pass) {
         PROFILE_ZONE("Render::normals");
@@ -2307,8 +2112,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         cleared[1].depthStencil = {1.0f, 0};
         VkRenderPassBeginInfo begin{};
         begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        begin.renderPass = scene_render_pass_;
-        begin.framebuffer = terrain_normal_framebuffer_;
+        begin.renderPass = frame_.scene_pass();
+        begin.framebuffer = frame_.terrain_normal_framebuffer();
         begin.renderArea.extent = {window_width_, window_height_};
         begin.clearValueCount = static_cast<u32>(cleared.size());
         begin.pClearValues = cleared.data();
@@ -2363,14 +2168,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // the target: a source stage takes in the stages before it, and a write
     // after a read needs no more than that.
     // Only the high fidelity water reads it (M213d).
-    if (water_renderer_.has_water() && reflection_framebuffer_ && fidelity() >= 2) {
+    if (water_renderer_.has_water() && frame_.reflection_framebuffer() && fidelity() >= 2) {
         PROFILE_ZONE("Render::reflection");
         std::array<VkClearValue, 2> cleared{};
         cleared[1].depthStencil = {1.0f, 0};
         VkRenderPassBeginInfo mirror{};
         mirror.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        mirror.renderPass = scene_render_pass_;
-        mirror.framebuffer = reflection_framebuffer_;
+        mirror.renderPass = frame_.scene_pass();
+        mirror.framebuffer = frame_.reflection_framebuffer();
         mirror.renderArea.extent = {window_width_, window_height_};
         mirror.clearValueCount = static_cast<u32>(cleared.size());
         mirror.pClearValues = cleared.data();
@@ -2393,7 +2198,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     bool do_bloom = bloom_enabled_ && bloom_.ready();
 
-    // Always render scene to offscreen HDR image (scene_render_pass_).
+    // Always render scene to offscreen HDR image (frame_.scene_pass()).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
     // Black, and no glow, as Moho clears the head; the sky dome draws over it
@@ -2409,8 +2214,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     const bool refracting = fidelity() >= 2 && particle_renderer_.refracting();
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass = high_water || refracting ? scene_first_pass_ : scene_render_pass_;
-    rp_begin.framebuffer = scene_framebuffer_;
+    rp_begin.renderPass = high_water || refracting ? frame_.first_pass() : frame_.scene_pass();
+    rp_begin.framebuffer = frame_.scene_framebuffer();
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
     rp_begin.pClearValues = clear_values.data();
@@ -2559,7 +2364,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     if (water_renderer_.has_water()) {
         if (high_water) {
             water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
-            copy_and_continue(cmd_buf_[fi], refracting ? scene_middle_pass_ : scene_second_pass_);
+            copy_and_continue(cmd_buf_[fi],
+                              refracting ? frame_.middle_pass() : frame_.second_pass());
             water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
         } else {
             water_renderer_.render_surface_low(cmd_buf_[fi], window_width_, window_height_, fi);
@@ -2589,7 +2395,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // RenderRefractingEffects draws them: last, over a copy of the finished
     // frame.
     if (refracting) {
-        copy_and_continue(cmd_buf_[fi], scene_second_pass_);
+        copy_and_continue(cmd_buf_[fi], frame_.second_pass());
         particle_renderer_.render_refracting(cmd_buf_[fi], window_width_, window_height_, vp.data(),
                                              fi);
     }
@@ -3015,7 +2821,7 @@ void Renderer::copy_and_continue(VkCommandBuffer cmd, VkRenderPass next) {
     VkRenderPassBeginInfo again{};
     again.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     again.renderPass = next;
-    again.framebuffer = scene_framebuffer_;
+    again.framebuffer = frame_.scene_framebuffer();
     again.renderArea.extent = {window_width_, window_height_};
     vkCmdBeginRenderPass(cmd, &again, VK_SUBPASS_CONTENTS_INLINE);
 }
@@ -3031,7 +2837,7 @@ void Renderer::copy_refraction(VkCommandBuffer cmd) {
     to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_src.image = scene_color_image_.image;
+    to_src.image = frame_.scene_color().image;
     to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
@@ -3043,7 +2849,7 @@ void Renderer::copy_refraction(VkCommandBuffer cmd) {
     to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_dst.image = refraction_image_.image;
+    to_dst.image = frame_.refraction().image;
     to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &to_dst);
@@ -3052,8 +2858,8 @@ void Renderer::copy_refraction(VkCommandBuffer cmd) {
     region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.extent = {window_width_, window_height_, 1};
-    vkCmdCopyImage(cmd, scene_color_image_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   refraction_image_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    vkCmdCopyImage(cmd, frame_.scene_color().image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   frame_.refraction().image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
     // The copy for the water to read; the frame back to be drawn on.
     std::array<VkImageMemoryBarrier, 2> after{};
@@ -3063,7 +2869,7 @@ void Renderer::copy_refraction(VkCommandBuffer cmd) {
     after[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     after[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     after[1] = to_dst;
-    after[1].image = scene_color_image_.image;
+    after[1].image = frame_.scene_color().image;
     after[1].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     after[1].dstAccessMask =
         VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -3131,7 +2937,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     // The movies' new frames (before the render pass).
     movie_textures_.record(cmd_buf_[fi]);
 
-    // Begin swapchain render pass (NOT scene_render_pass_)
+    // Begin swapchain render pass (NOT frame_.scene_pass())
     // render_pass_ has 2 attachments: color + depth
     std::array<VkClearValue, 2> clear{};
     clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -3317,10 +3123,10 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
 }
 
 void Renderer::bind_normal_target() {
-    if (!terrain_tex_ds_ || !terrain_normal_image_.view) return;
+    if (!terrain_tex_ds_ || !frame_.terrain_normal().view) return;
     VkDescriptorImageInfo info{};
     info.sampler = water_renderer_.clamp_sampler(); // read with texelFetch
-    info.imageView = terrain_normal_image_.view;
+    info.imageView = frame_.terrain_normal().view;
     info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -3722,7 +3528,7 @@ void Renderer::deliver_capture() {
 }
 
 bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
-    if (!pending_scene_capture_ || !scene_color_image_.image) return false;
+    if (!pending_scene_capture_ || !frame_.scene_color().image) return false;
     const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 8;
     if (scene_capture_buf_size_ != size) {
         if (scene_capture_buf_.buffer)
@@ -3753,14 +3559,14 @@ bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
     to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_src.image = scene_color_image_.image;
+    to_src.image = frame_.scene_color().image;
     to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {window_width_, window_height_, 1};
-    vkCmdCopyImageToBuffer(cmd, scene_color_image_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    vkCmdCopyImageToBuffer(cmd, frame_.scene_color().image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                            scene_capture_buf_.buffer, 1, &region);
     VkImageMemoryBarrier back = to_src;
     back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
