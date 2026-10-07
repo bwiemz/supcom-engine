@@ -162,9 +162,8 @@ bool UnitBlockers::unit_blocked(u32 unit_id, path::Cell cell, i32 mode) const {
         } else if (c.layer() == "Air" || c.layer() == "Sub") {
             return false;
         }
-        // (Units in one formation don't block each other: the engine keeps
-        // no formation layer yet, so none share one.)
-        if (is_source_unit(mode, *unit, c)) return false;
+        // Units in one formation don't block each other.
+        if (same_formation_layer(*unit, c) || is_source_unit(mode, *unit, c)) return false;
         if (!c.is_mobile()) return true;
         if (std::max(c.footprint().size_x, c.footprint().size_z) <= 1) return true;
         return shape_overlaps_box(c, box);
@@ -212,7 +211,7 @@ bool UnitBlockers::swept_blocked(u32 unit_id, const path::WorldPoint& from,
     return any_unit_touching(sim_, lo, hi, [&](const Unit& c) {
         if (!shape_overlaps_box(c, box)) return false;
         if (c.layer() == "Air" || c.layer() == "Sub") return false;
-        return !is_source_unit(mode, *unit, c);
+        return !same_formation_layer(*unit, c) && !is_source_unit(mode, *unit, c);
     });
 }
 

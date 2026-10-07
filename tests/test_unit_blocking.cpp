@@ -73,6 +73,7 @@ struct World {
         osc::sim::GameSetup game;
         game.scenario = "/maps/test/test_scenario.lua";
         game.seed = 5;
+        sim.set_victory_condition("sandbox"); // no commanders here: nobody is eliminated
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
         sim.set_terrain(flat_terrain(128));
@@ -90,6 +91,14 @@ struct World {
                  " Defense = {MaxHealth = 100}, SizeX = 1.8, SizeY = 1, SizeZ = 1.8,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4}}",
+                 "{BlueprintId = 'fasttank', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 0.8, SizeY = 0.5, SizeZ = 0.8,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 8}}",
+                 "{BlueprintId = 'engineer', Categories = {'LAND', 'MOBILE', 'ENGINEER'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 0.8, SizeY = 0.5, SizeZ = 0.8,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 4}}",
                  "{BlueprintId = 'gunship', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeY = 1, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2}, Air = {CanFly = true, MaxAirspeed = 10},"
@@ -106,7 +115,7 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "bigtank", "gunship"}) {
+        for (const char* id : {"tank", "fasttank", "bigtank", "engineer", "gunship"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -251,4 +260,105 @@ TEST_CASE("A search minds mobile units only past its first: a leader's goes roun
     finder.prepare(world, osc::sim::path::SearchType::Leader, Cell{10, 10}, 10.5f, 10.5f);
     CHECK_FALSE(finder.can_traverse(Cell{30, 30}));
     CHECK(finder.can_traverse(Cell{35, 30}));
+}
+
+namespace {
+
+/// Give `u` an order of `type` (at the head, the queue cleared).
+void order(Unit& u, osc::sim::CommandType type, u32 command_id, bool formed, u32 target = 0) {
+    osc::sim::UnitCommand cmd;
+    cmd.type = type;
+    cmd.command_id = command_id;
+    cmd.formed = formed;
+    cmd.target_id = target;
+    cmd.target_pos = u.position();
+    u.push_command(cmd, true);
+}
+
+} // namespace
+
+TEST_CASE("Formation layers: one formation order's slots, and a unit's guards (no engineers)",
+          "[unit_blocking]") {
+    World w;
+    using osc::sim::CommandType;
+    using osc::sim::formation_layer;
+    using osc::sim::same_formation_layer;
+    Unit& a = *w.make("tank", 10.5f, 10.5f);
+    Unit& b = *w.make("tank", 12.5f, 10.5f);
+    Unit& c = *w.make("tank", 14.5f, 10.5f);
+    Unit& guarded = *w.make("bigtank", 30.0f, 30.0f);
+    Unit& g1 = *w.make("tank", 20.5f, 20.5f);
+    Unit& g2 = *w.make("tank", 22.5f, 20.5f);
+    Unit& eng = *w.make("engineer", 24.5f, 20.5f);
+    CHECK(formation_layer(a) == 0); // no orders
+    order(a, CommandType::Move, 7, true);
+    order(b, CommandType::Move, 7, true);
+    order(c, CommandType::Move, 7, false); // the same order, not laid out
+    CHECK(formation_layer(a) != 0);
+    CHECK(same_formation_layer(a, b));
+    CHECK_FALSE(same_formation_layer(a, c));
+    // Attacking, it leaves the formation's exemptions.
+    b.set_unit_state("Attacking", true);
+    CHECK_FALSE(same_formation_layer(a, b));
+    b.set_unit_state("Attacking", false);
+    // A unit's guards share its guard formation; an engineer guards alone.
+    order(g1, CommandType::Guard, 11, false, guarded.entity_id());
+    order(g2, CommandType::Guard, 12, false, guarded.entity_id());
+    order(eng, CommandType::Guard, 13, false, guarded.entity_id());
+    CHECK(same_formation_layer(g1, g2));
+    CHECK(formation_layer(eng) == 0);
+    // An ally's guard of the same unit is in its own army's formation.
+    Unit& ally = *w.make("tank", 26.5f, 20.5f, 2);
+    order(ally, CommandType::Guard, 14, false, guarded.entity_id());
+    CHECK(formation_layer(ally) == formation_layer(g1));
+    CHECK_FALSE(same_formation_layer(g1, ally));
+    CHECK_FALSE(same_formation_layer(g1, a));
+}
+
+TEST_CASE("Units in one formation don't block each other's way", "[unit_blocking]") {
+    World w;
+    using osc::sim::CommandType;
+    Unit& owner = *w.make("tank", 10.5f, 10.5f);
+    Unit& parked = *w.make("bigtank", 30.0f, 30.0f);
+    w.sim.tick();
+    w.sim.tick();
+    const u32 id = owner.entity_id();
+    order(owner, CommandType::Move, 21, true);
+    order(parked, CommandType::Move, 21, true);
+    CHECK_FALSE(w.blockers().unit_blocked(id, Cell{30, 30}, 2));
+    using osc::sim::path::WorldPoint;
+    CHECK_FALSE(w.blockers().swept_blocked(id, WorldPoint{20, 0, 30}, WorldPoint{40, 0, 30}, 2));
+    order(parked, CommandType::Move, 22, true); // another formation
+    CHECK(w.blockers().unit_blocked(id, Cell{30, 30}, 2));
+    CHECK(w.blockers().swept_blocked(id, WorldPoint{20, 0, 30}, WorldPoint{40, 0, 30}, 2));
+}
+
+TEST_CASE("Overtaking in one formation, the slower unit isn't stopped for the faster",
+          "[unit_blocking]") {
+    using osc::sim::CommandType;
+    // A fast tank comes up behind a slow one on its line, both going north;
+    // whether the slow one is ever held for it.
+    const auto slow_held = [](bool formed) {
+        World w;
+        Unit& slow = *w.make("tank", 64.5f, 20.5f);
+        Unit& fast = *w.make("fasttank", 64.5f, 12.5f);
+        const auto go = [&](Unit& u, f32 z) {
+            osc::sim::UnitCommand cmd;
+            cmd.type = CommandType::Move;
+            cmd.command_id = 31;
+            cmd.formed = formed;
+            cmd.target_pos = {64.5f, 10.0f, z};
+            u.push_command(cmd, true);
+        };
+        go(slow, 60.5f);
+        go(fast, 100.5f);
+        bool held = false;
+        for (int t = 0; t < 200; ++t) {
+            w.sim.tick();
+            held = held || slow.navigator().holding();
+        }
+        return held;
+    };
+    CHECK(slow_held(false)); // the steering stops it for the overtaker
+    CHECK_FALSE(slow_held(true));
 }
