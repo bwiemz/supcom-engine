@@ -53,7 +53,7 @@ std::unique_ptr<osc::map::Terrain> terrain(bool wet) {
     return std::make_unique<osc::map::Terrain>(std::move(hm), 5.0f, wet);
 }
 
-Footprint fp(int size, u8 caps, f32 max_depth, f32 min_depth, f32 slope) {
+constexpr Footprint fp(int size, u8 caps, f32 max_depth, f32 min_depth, f32 slope) {
     Footprint f;
     f.size_x = static_cast<u8>(size);
     f.size_z = static_cast<u8>(size);
@@ -65,10 +65,10 @@ Footprint fp(int size, u8 caps, f32 max_depth, f32 min_depth, f32 slope) {
 }
 
 // Retail's classes, as footprints.lua specs them.
-const Footprint kVehicle2x2 = fp(2, oc::kLand, 0.05f, 0, 0.75f);
-const Footprint kAmphibious3x3 = fp(3, oc::kLand | oc::kSeabed, 25, 0, 0.75f);
-const Footprint kWaterLand1x1 = fp(1, oc::kLand | oc::kWater, 1, 0.1f, 0.75f);
-const Footprint kWater3x3 = fp(3, oc::kWater, 0, 0.25f, 0);
+constexpr Footprint kVehicle2x2 = fp(2, oc::kLand, 0.05f, 0, 0.75f);
+constexpr Footprint kAmphibious3x3 = fp(3, oc::kLand | oc::kSeabed, 25, 0, 0.75f);
+constexpr Footprint kWaterLand1x1 = fp(1, oc::kLand | oc::kWater, 1, 0.1f, 0.75f);
+constexpr Footprint kWater3x3 = fp(3, oc::kWater, 0, 0.25f, 0);
 
 struct LuaGuard {
     lua_State* L = lua_open();

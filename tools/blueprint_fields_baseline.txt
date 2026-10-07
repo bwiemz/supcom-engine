@@ -36,8 +36,6 @@ MinBounceCount
 MuzzleVelocityRandom
 NeedPrep
 NeedToFaceTargetToBuild
-OccupancyCaps
-OccupyRects
 PlaceholderMeshName
 PositionY
 PrefersPrimaryWeaponTarget
