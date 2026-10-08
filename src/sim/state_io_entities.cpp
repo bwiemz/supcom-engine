@@ -319,6 +319,11 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.i32v(c.facing_clock);
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
+    w.b(c.site_cleared);
+    w.u32v(c.rebuild_wreck_id);
+    w.f32v(c.rebuild_bonus);
+    w.u32v(c.clearing_prop_id);
+    w.b(c.clearing_approached);
     w.b(c.in_band);
     w.u32v(c.beacon_id);
     w.u32v(c.assigned_id);
@@ -364,6 +369,11 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.facing_clock = r.i32v();
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
+    c.site_cleared = r.b();
+    c.rebuild_wreck_id = r.u32v();
+    c.rebuild_bonus = r.f32v();
+    c.clearing_prop_id = r.u32v();
+    c.clearing_approached = r.b();
     c.in_band = r.b();
     c.beacon_id = r.u32v();
     c.assigned_id = r.u32v();
@@ -1763,8 +1773,8 @@ void StateIO::load(StateReader& r, Projectile& p) {
 void StateIO::save(StateWriter& w, const Prop& p) {
     save(w, static_cast<const Entity&>(p));
     w.tag("PROP");
-    // untargetable, reclaimable_category, reclaim_mass_max, reclaim_energy_max:
-    // its blueprint's (read_prop_blueprint)
+    // untargetable, reclaimable_category, obstructs_building, reclaim_mass_max,
+    // reclaim_energy_max: its blueprint's (read_prop_blueprint)
     w.f32v(p.sink_rate);
     w.size(p.pose.size());
     for (const auto& m : p.pose)

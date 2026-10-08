@@ -8,6 +8,7 @@
 #include "sim/bone_data.hpp"
 #include "core/test_status.hpp"
 #include "sim/blueprint_categories.hpp"
+#include "sim/build_site_props.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/work_range.hpp"
@@ -144,6 +145,17 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
     if (build_rate > 0)
         costs.time = time_mult * std::max(costs.mass, costs.energy) / build_rate / 10.0;
     return costs;
+}
+
+/// Moho's Unit::Materialize.
+void materialize(Unit& target, f32 step) {
+    if (target.is_being_built()) {
+        const f32 health_ratio =
+            target.max_health() > 0.0f ? target.health() / target.max_health() : 0.0f;
+        const f32 progressed = std::clamp(target.fraction_complete() + step, 0.0f, 1.0f);
+        target.set_fraction_complete(std::max(health_ratio, progressed));
+    }
+    target.set_health(std::min(target.max_health(), target.health() + target.max_health() * step));
 }
 
 } // namespace
@@ -610,6 +622,41 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     if (build_target_id_ == 0) {
+        if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
+            const BuildSiteProp site =
+                find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
+            if (destroyed() || !in_registry()) {
+                return OrderStep::Gone;
+            }
+            if (site.reclaim_id != 0) {
+                cmd.clearing_prop_id = site.reclaim_id;
+                cmd.clearing_approached = false;
+            } else {
+                cmd.site_cleared = true;
+                if (site.rebuild) {
+                    cmd.rebuild_wreck_id = site.wreck_id;
+                    cmd.rebuild_bonus = site.bonus;
+                }
+            }
+        }
+        if (cmd.clearing_prop_id != 0) {
+            UnitCommand reclaim;
+            reclaim.type = CommandType::Reclaim;
+            reclaim.target_id = cmd.clearing_prop_id;
+            reclaim.approached = cmd.clearing_approached;
+            const u32 building = cmd.command_id;
+            const OrderStep step = reclaim_work(reclaim, dt, ctx);
+            if (step == OrderStep::Gone) {
+                return OrderStep::Gone;
+            }
+            if (command_queue_.empty() || command_queue_.front().command_id != building) {
+                return OrderStep::Next;
+            }
+            const bool done = step == OrderStep::Next;
+            cmd.clearing_prop_id = done ? 0 : reclaim.target_id;
+            cmd.clearing_approached = !done && reclaim.approached;
+            return OrderStep::Hold;
+        }
         // Phase 1: reach the site. In range when the gap to its skirt
         // is within MaxBuildDistance and the builder is off the
         // skirt (Moho's CUnitMobileBuildTask); else it walks just
@@ -667,6 +714,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
+        const u32 wreck_id = cmd.rebuild_wreck_id;
+        const f32 bonus = cmd.rebuild_bonus;
         switch (start_build(cmd, registry, L)) {
         case BuildStart::Started: break;
         case BuildStart::AtCap: return hold_for_unit_cap(building);
@@ -674,6 +723,21 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             if (!command_queue_.empty() && command_queue_.front().command_id == building)
                 command_queue_.pop_front();
             return OrderStep::Next;
+        }
+        if (Entity* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
+            wreck && !wreck->destroyed() && ctx.sim) {
+            ctx.sim->notify_script_destroy(*wreck);
+            if (!wreck->destroyed()) {
+                wreck->mark_destroyed();
+                registry.unregister_entity(wreck_id);
+            }
+        }
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        auto* built = registry.find(build_target_id_);
+        if (bonus > 0.0f && built && !built->destroyed() && built->is_unit()) {
+            materialize(static_cast<Unit&>(*built), bonus);
         }
     }
     // Phase 3: Progress the build
@@ -867,12 +931,19 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 }
 
 OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    const OrderStep step = reclaim_work(cmd, dt, ctx);
+    if (step == OrderStep::Next) {
+        command_queue_.pop_front();
+    }
+    return step;
+}
+
+OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         end_approach(cmd);
-        command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target = registry.find(cmd.target_id);
@@ -880,7 +951,6 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         (reclaim_target_id_ != cmd.target_id && !reclaim_target_valid(*target))) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         end_approach(cmd);
-        command_queue_.pop_front();
         return OrderStep::Next;
     }
 
@@ -896,7 +966,6 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (reclaim_target_id_ != cmd.target_id) {
             if (!cmd.approached && (gap > max_build_distance_ || on_top)) {
                 if (effective_speed() <= 0) {
-                    command_queue_.pop_front();
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
@@ -909,12 +978,10 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
                 if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
-                command_queue_.pop_front();
                 return OrderStep::Next;
             }
         } else if (gap > max_build_distance_) {
             stop_reclaiming(ctx.L, &ctx.registry);
-            command_queue_.pop_front();
             return OrderStep::Next;
         }
     }
@@ -925,8 +992,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         const ReclaimCosts costs = reclaim_costs(L, *this, *target, static_cast<f64>(build_rate_));
-        if (std::max(costs.mass, costs.energy) <= 0 || build_rate_ <= 0) {
-            command_queue_.pop_front();
+        if (costs.mass < 0 || costs.energy < 0 || build_rate_ <= 0) {
             return OrderStep::Next;
         }
         f64 reclaim_time = costs.time;
@@ -978,7 +1044,6 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         auto* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
         if (!wreck) {
             stop_reclaiming(L, &registry);
-            command_queue_.pop_front();
             return OrderStep::Next;
         }
         const ReclaimCosts costs = reclaim_costs(L, *this, *wreck, static_cast<f64>(build_rate_));
@@ -992,7 +1057,6 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 
     // Progress reclaim
     if (!progress_reclaim(dt, registry, L)) {
-        command_queue_.pop_front();
         return OrderStep::Next;
     }
     return OrderStep::Hold;
@@ -2422,22 +2486,13 @@ void Unit::donate_sacrifice(Unit& target, lua_State* L) {
         }
         return;
     }
-    // Anything else takes it as Unit::Materialize does: construction (never
-    // less complete than its health says) and the health with it, so a
-    // finished unit is mended.
     const f32 step = std::min(
         cost_fraction(mass,
                       blueprint_economy_number(L, target.blueprint_id(), "BuildCostMass", 0.0f)),
         cost_fraction(energy,
                       blueprint_economy_number(L, target.blueprint_id(), "BuildCostEnergy", 0.0f)));
     if (step == 0.0f) return;
-    if (target.is_being_built()) {
-        const f32 health_ratio =
-            target.max_health() > 0.0f ? target.health() / target.max_health() : 0.0f;
-        const f32 progressed = std::clamp(target.fraction_complete() + step, 0.0f, 1.0f);
-        target.set_fraction_complete(std::max(health_ratio, progressed));
-    }
-    target.set_health(std::min(target.max_health(), target.health() + target.max_health() * step));
+    materialize(target, step);
 }
 
 OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {

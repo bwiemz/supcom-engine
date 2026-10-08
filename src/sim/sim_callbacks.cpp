@@ -241,6 +241,9 @@ std::pair<f32, f32> footprint_of(lua_State* L, std::string bp_id) {
 
 void forget_target(UnitCommand& c) {
     c.approached = false;
+    c.site_cleared = false;
+    c.clearing_prop_id = 0;
+    c.clearing_approached = false;
     c.engaged = false;
     c.in_band = false;
     c.patrol_claimed.clear();
