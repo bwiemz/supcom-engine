@@ -3499,6 +3499,7 @@ void Unit::update_silo(f64 dt, f32 efficiency, lua_State* L) {
             return;
         }
         silo_build_ = {weapon->weapon_index, *kind, 0.0, cost.build_time, cost.energy, cost.mass};
+        silo_build_.progress = silo_blocks_progress(std::exchange(silo_blocks_, 0));
         set_unit_state("SiloBuildingAmmo", true);
         call_with_weapon(L, *this, "OnSiloBuildStart", *weapon);
         if (destroyed() || !silo_building()) return;
@@ -3563,7 +3564,24 @@ void Unit::end_silo_build(lua_State* L) {
 
 void Unit::stop_silo_build() {
     silo_orders_.clear();
+    silo_blocks_ = 0;
     abandon_silo_build();
+}
+
+f64 Unit::silo_blocks_progress(i32 blocks) const {
+    const f64 blocks_total = 10.0 * silo_build_.build_time / static_cast<f64>(build_rate_);
+    if (!(blocks_total > 0)) {
+        return 0.0;
+    }
+    return std::clamp(static_cast<f64>(blocks) / blocks_total, 0.0, 1.0);
+}
+
+void Unit::set_silo_blocks(i32 blocks) {
+    if (silo_building()) {
+        silo_build_.progress = silo_blocks_progress(blocks);
+    } else {
+        silo_blocks_ = blocks;
+    }
 }
 
 void Unit::assist_silo_build(f32 rate, f64 dt, f32 efficiency) {

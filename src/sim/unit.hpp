@@ -654,6 +654,10 @@ public:
     /// StopSiloBuild: the missile under way is abandoned and the builds
     /// ordered are dropped.
     void stop_silo_build();
+    /// GiveNukeSiloAmmo(blocks, true), FAF's: the missile under way, else the
+    /// next one, has `blocks` of its 10 * BuildTime / build rate done.
+    void set_silo_blocks(i32 blocks);
+    i32 silo_blocks() const { return silo_blocks_; }
     /// An assisting engineer's build power, `rate`, on the missile under way.
     void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
 
@@ -1645,6 +1649,7 @@ private:
     i32 tactical_silo_ammo_ = 0;
     std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
     SiloBuild silo_build_;
+    i32 silo_blocks_ = 0;
     bool assisting_silo_ = false; // this tick, a Guard lent a silo its build power
     // Orders handed to the script (M206d): a teleport charging (and the snap
     // count its warp will change), an OverCharge weapon switched on.
@@ -1692,6 +1697,7 @@ private:
     void abandon_silo_build();
     /// A finished missile: taken off the silo, and OnSiloBuildEnd.
     void end_silo_build(lua_State* L);
+    f64 silo_blocks_progress(i32 blocks) const;
     // Adjacency system
     std::set<u32> adjacent_unit_ids_;
     int selection_priority_ = 1;
