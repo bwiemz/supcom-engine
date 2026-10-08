@@ -215,10 +215,11 @@ static int unit_IsUnitState(lua_State* L) {
     const char* state = luaL_checkstring(L, 2);
     bool result = false;
     if (u) {
-        if (std::strcmp(state, "Building") == 0)
-            result = u->is_building();
-        else if (std::strcmp(state, "Moving") == 0)
-            result = u->is_moving();
+        if (std::strcmp(state, "Building") == 0) {
+            result = u->is_building() ||
+                     (u->arm_awaited() && !u->command_queue().empty() &&
+                      u->command_queue().front().type == sim::CommandType::BuildMobile);
+        } else if (std::strcmp(state, "Moving") == 0) result = u->is_moving();
         else if (std::strcmp(state, "BeingBuilt") == 0)
             result = u->is_being_built();
         else if (std::strcmp(state, "Guarding") == 0)

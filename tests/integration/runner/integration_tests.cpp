@@ -10581,10 +10581,19 @@ void test_range(TestContext& ctx) {
         IssueBuildMobile({__osc_onsite}, __osc_at(610.5, 165.5), 'ueb1101', {})
         __osc_armed = __osc_spawn('uel0001', 'ARMY_1', 650.5, 130.5)
         __osc_arm_prep = 0
+        __osc_arm_prep_tick = false
+        __osc_arm_start = false
         local prepare = __osc_armed.OnPrepareArmToBuild
         __osc_armed.OnPrepareArmToBuild = function(self)
             __osc_arm_prep = __osc_arm_prep + 1
+            __osc_arm_prep_tick = __osc_arm_prep_tick or GetGameTick()
             return prepare(self)
+        end
+        local start = __osc_armed.OnStartBuild
+        __osc_armed.OnStartBuild = function(self, unit, order)
+            __osc_arm_start = __osc_arm_start or
+                {GetGameTick(), self.BuildArmManipulator:GetHeadingPitch()}
+            return start(self, unit, order)
         end
         IssueBuildMobile({__osc_armed}, __osc_at(658.5, 130.5), 'ueb2101', {})
 
@@ -10621,14 +10630,6 @@ void test_range(TestContext& ctx) {
         if __osc_from(__osc_fac, 600.5, 120.5) > 0.1 then error('the factory builder moved') end
         if __osc_from(__osc_acu, 650.5, 100.5) > 0.1 then error('the ACU moved') end
     )");
-    lua_check("Test 2: repair, reclaim and capture in reach start where they stand", R"(
-        if not __osc_mender:IsUnitState('Repairing') then error('the mender is not repairing') end
-        if not __osc_reclaimer:IsUnitState('Reclaiming') then error('the reclaimer is not reclaiming') end
-        if not __osc_taker:IsUnitState('Capturing') then error('the taker is not capturing') end
-        if __osc_from(__osc_mender, 575.5, 80.5) > 0.1 then error('the mender moved') end
-        if __osc_from(__osc_reclaimer, 620.5, 80.5) > 0.1 then error('the reclaimer moved') end
-        if __osc_from(__osc_taker, 640.5, 80.5) > 0.1 then error('the taker moved') end
-    )");
     lua_check("Test 3: a guard out of reach of the build helps with nothing yet", R"(
         if not __osc_boss:IsUnitState('Building') then error('the boss is not building') end
         if __osc_helper:GetConsumptionPerSecondEnergy() > 0 then error('the helper already pays') end
@@ -10646,6 +10647,16 @@ void test_range(TestContext& ctx) {
         if not __osc_tml:IsUnitState('SiloBuildingAmmo') then error('the launcher is not building') end
         local n = __osc_tml:GetMissileInfo().tacticalSiloBuildCount
         if n ~= 1 then error(n .. ' missiles ordered') end
+    )");
+
+    run(5);
+    lua_check("Test 2: repair, reclaim and capture in reach start where they stand", R"(
+        if not __osc_mender:IsUnitState('Repairing') then error('the mender is not repairing') end
+        if not __osc_reclaimer:IsUnitState('Reclaiming') then error('the reclaimer is not reclaiming') end
+        if not __osc_taker:IsUnitState('Capturing') then error('the taker is not capturing') end
+        if __osc_from(__osc_mender, 575.5, 80.5) > 0.1 then error('the mender moved') end
+        if __osc_from(__osc_reclaimer, 620.5, 80.5) > 0.1 then error('the reclaimer moved') end
+        if __osc_from(__osc_taker, 640.5, 80.5) > 0.1 then error('the taker moved') end
     )");
 
     // The repair's target moves off: within twice the reach it goes on.
@@ -10711,6 +10722,15 @@ void test_range(TestContext& ctx) {
             error('arm heading ' .. heading)
         end
         if __osc_arm_prep == 0 then error('OnPrepareArmToBuild never ran') end
+    )");
+
+    lua_check("Test 12j: the ACU builds once its arm is on the site, a tick after it turns it",
+              R"(
+        local tick, heading = __osc_arm_start[1], __osc_arm_start[2]
+        if tick - __osc_arm_prep_tick ~= 1 or math.abs(math.abs(heading) - math.pi / 2) > 0.3 then
+            error(string.format('OnStartBuild %d ticks after OnPrepareArmToBuild, arm at %.2f',
+                                tick - __osc_arm_prep_tick, heading))
+        end
     )");
 
     lua_check("Test 12h setup", R"(
@@ -12546,8 +12566,10 @@ void test_right_click(TestContext& ctx) {
 
     if (unbuilt) {
         right_click({eng->entity_id(), tank2->entity_id()}, *unbuilt);
-        // (The engineer was building it: the repair order hands it straight
-        // back to that work.)
+        // The orders since dropped the arm's aim: the repair waits for it to turn back.
+        for (int i = 0; i < 5 && eng->build_target_id() != unbuilt->entity_id(); ++i) {
+            ctx.sim.tick();
+        }
         check(gave("Repair", unbuilt->entity_id()) && gave("Guard", unbuilt->entity_id()) &&
                   issued.size() == 2 && eng->build_target_id() == unbuilt->entity_id() &&
                   head(*tank2, CT::Guard, unbuilt->entity_id()),

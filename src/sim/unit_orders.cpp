@@ -265,7 +265,8 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
-    if (!is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
+    const bool awaited = std::exchange(arm_awaited_, false);
+    if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
         (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile)) {
         aim_builder_arms(nullptr, ctx.L);
     }
@@ -662,6 +663,9 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.pop_front();
             return OrderStep::Next;
         }
+        if (awaits_arm()) {
+            return OrderStep::Hold;
+        }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
         switch (start_build(cmd, registry, L)) {
         case BuildStart::Started: break;
@@ -943,8 +947,11 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
 
     if (reclaim_wait_ > 0) {
-        --reclaim_wait_;
         const auto* reclaimed = registry.find(cmd.target_id);
+        if (reclaim_wait_ == 1 && reclaimed && !reclaim_arm_ready(*reclaimed)) {
+            return OrderStep::Hold;
+        }
+        --reclaim_wait_;
         if (reclaim_wait_ == 0 && reclaimed) {
             const ReclaimCosts costs =
                 reclaim_costs(L, *this, *reclaimed, static_cast<f64>(build_rate_));
@@ -958,6 +965,9 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // the task goes on to the wreck its CreateWreckageProp(0) returns.
     auto* reclaimed = registry.find(cmd.target_id);
     if (reclaimed && reclaim_wears_down(*reclaimed)) {
+        if (!reclaim_arm_ready(*reclaimed)) {
+            return OrderStep::Hold;
+        }
         if (wear_down(static_cast<Unit&>(*reclaimed))) {
             return OrderStep::Hold;
         }
@@ -1064,6 +1074,14 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     // Start repair if not already repairing this target
     if (repair_target_id_ != cmd.target_id) {
         if (is_repairing()) stop_repairing(L, registry);
+        const Vector3 at = rtarget->position();
+        aim_builder_arms(&at, L);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        if (awaits_arm()) {
+            return OrderStep::Hold;
+        }
         if (!start_repair(cmd, registry, L)) {
             command_queue_.pop_front();
             return OrderStep::Next;
@@ -1096,6 +1114,14 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         }
         const BuildEconomy costs = blueprint_build_economy(ctx.L, target.unit_id());
         if (costs.time <= 0 || build_rate_ <= 0) return done();
+        const Vector3 at = target.position();
+        aim_builder_arms(&at, ctx.L);
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
+        if (awaits_arm()) {
+            return OrderStep::Hold;
+        }
         build_target_id_ = tid;
         build_command_id_ = cmd.command_id;
         build_released_with_order_ = true;
@@ -1106,8 +1132,6 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         economy_.consumption_mass = costs.mass * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_energy = costs.energy * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_active = true;
-        const Vector3 at = target.position();
-        aim_builder_arms(&at, ctx.L);
         call_build_callback(ctx.L, "OnStartBuild", registry.find(tid), "Repair");
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
@@ -1548,32 +1572,36 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             if (build_target_id_ != target_build_id) {
                 // Switch to new assist target
                 if (is_building()) stop_assisting(ctx.L, &ctx.registry);
-
-                build_target_id_ = target_build_id;
-                build_command_id_ = cmd.command_id;
-                build_released_with_order_ = true;
-                build_time_ = target_unit->build_time();
-                build_cost_mass_ = target_unit->build_cost_mass();
-                build_cost_energy_ = target_unit->build_cost_energy();
-                work_progress_ = guarded_build->fraction_complete();
-
-                if (build_time_ > 0 && build_rate_ > 0) {
-                    economy_.consumption_mass =
-                        build_cost_mass_ * static_cast<f64>(build_rate_) / build_time_;
-                    economy_.consumption_energy =
-                        build_cost_energy_ * static_cast<f64>(build_rate_) / build_time_;
-                    economy_.consumption_active = true;
-                }
-
-                spdlog::info("Guard assist: entity #{} assisting #{} "
-                             "building target #{}",
-                             entity_id(), cmd.target_id, target_build_id);
                 const Vector3 at = guarded_build->position();
                 aim_builder_arms(&at, ctx.L);
-                call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
-                                    "Repair");
                 if (destroyed() || !in_registry()) {
                     return OrderStep::Gone;
+                }
+                if (!awaits_arm()) {
+                    build_target_id_ = target_build_id;
+                    build_command_id_ = cmd.command_id;
+                    build_released_with_order_ = true;
+                    build_time_ = target_unit->build_time();
+                    build_cost_mass_ = target_unit->build_cost_mass();
+                    build_cost_energy_ = target_unit->build_cost_energy();
+                    work_progress_ = guarded_build->fraction_complete();
+
+                    if (build_time_ > 0 && build_rate_ > 0) {
+                        economy_.consumption_mass =
+                            build_cost_mass_ * static_cast<f64>(build_rate_) / build_time_;
+                        economy_.consumption_energy =
+                            build_cost_energy_ * static_cast<f64>(build_rate_) / build_time_;
+                        economy_.consumption_active = true;
+                    }
+
+                    spdlog::info("Guard assist: entity #{} assisting #{} "
+                                 "building target #{}",
+                                 entity_id(), cmd.target_id, target_build_id);
+                    call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
+                                        "Repair");
+                    if (destroyed() || !in_registry()) {
+                        return OrderStep::Gone;
+                    }
                 }
             }
 
@@ -1656,11 +1684,18 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             } else {
                 if (repair_target_id_ != cmd.target_id) {
                     if (is_repairing()) stop_repairing(L, registry);
-                    UnitCommand repair_cmd;
-                    repair_cmd.type = CommandType::Repair;
-                    repair_cmd.target_id = cmd.target_id;
-                    repair_cmd.target_pos = target->position();
-                    start_repair(repair_cmd, registry, L);
+                    const Vector3 at = target->position();
+                    aim_builder_arms(&at, L);
+                    if (destroyed() || !in_registry()) {
+                        return OrderStep::Gone;
+                    }
+                    if (!awaits_arm()) {
+                        UnitCommand repair_cmd;
+                        repair_cmd.type = CommandType::Repair;
+                        repair_cmd.target_id = cmd.target_id;
+                        repair_cmd.target_pos = target->position();
+                        start_repair(repair_cmd, registry, L);
+                    }
                 }
                 if (repair_target_id_ != 0) {
                     progress_repair(dt, registry, L, econ_eff);

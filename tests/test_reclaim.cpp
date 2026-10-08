@@ -183,3 +183,27 @@ TEST_CASE("A prop's reclaim takes it down from the second tick after it starts",
     w.sim.tick();
     CHECK(w.wreck->fraction_complete() < 1.0f);
 }
+
+TEST_CASE("A reclaim takes nothing while the reclaimer's arm is off its target", "[reclaim][arm]") {
+    ReclaimSim w;
+    Unit* eng = w.engineer(10.0f);
+    auto arm = std::make_unique<osc::sim::AimManipulator>();
+    arm->set_builder_arm(true);
+    arm->set_enabled(false);
+    osc::sim::Manipulator* raw = eng->add_manipulator(std::move(arm));
+    eng->set_builder_on_target(false);
+    eng->push_command(order(CommandType::Reclaim, w.wreck->entity_id()), true);
+    for (int i = 0; i < 4; ++i) {
+        w.sim.tick();
+        CHECK(eng->reclaim_target_id() == w.wreck->entity_id());
+        CHECK(w.wreck->fraction_complete() == 1.0f);
+        CHECK(eng->economy().reclaim_mass == 0.0);
+    }
+    raw->set_enabled(true);
+    w.sim.tick();
+    CHECK(w.wreck->fraction_complete() == 1.0f);
+    w.sim.tick();
+    CHECK(eng->economy().reclaim_mass == 30.0);
+    w.sim.tick();
+    CHECK(w.wreck->fraction_complete() < 1.0f);
+}
