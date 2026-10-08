@@ -81,7 +81,7 @@ FR = faf-re `src/sdk/moho/` (the decompiled FAF build of Moho).
 **What Moho does:**
 - `UNITCOMMAND_AggressiveMove` is the patrol task for one leg, made in formation (FR `ai/IAiCommandDispatchImpl.cpp:736-742`). When the leg ends, the dispatch removes the command; it does not rotate it to the back (:1005-1013).
 - Its search box runs from where the unit stands to the goal. The exception is a Patrol queued behind it: Moho takes the box's far end from the queue's tail whenever that is a distinct Patrol, whatever the current leg (FR `CUnitPatrolTask.cpp:759-776`), and the engine does the same.
-- Being in formation, COMMAND and SACU_BEHAVIOR units skip the helpers' sweep.
+- Being in formation, COMMAND and SUBCOMMANDER units (FAF's exe: SACU_BEHAVIOR) skip the helpers' sweep.
 - `IsUnitState('Patrolling')` holds throughout.
 - **Who issues it:**
   - `CPlatoon::AggressiveMoveToLocation` and `IssueFormAggressiveMove`, laid out in formation;
