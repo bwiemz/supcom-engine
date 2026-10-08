@@ -277,7 +277,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         const bool running =
             (!command_queue_.empty() && command_queue_.front().type == CommandType::Attack &&
              command_queue_.front().engaged) ||
-            circles_its_work();
+            circles_its_work() || flies_winged_on_guard(*this);
         if (!running) end_attack_run(*this);
     }
     while (!command_queue_.empty()) {
@@ -1289,6 +1289,13 @@ OrderStep Unit::order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // A place to guard (IssueGuard at a position): Moho's guard task with
     // no guarded unit, its reference the point.
     if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, dt, ctx)) return *step;
+    // A hovering aircraft with nothing to do flies as a winged one, hunting
+    // round its point rather than hanging still (flies_winged_on_guard).
+    if (flies_winged_on_guard(*this) && ctx.sim) {
+        navigator_.abort_move();
+        fly_winged_to(*this, cmd.target_pos, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+        return OrderStep::Hold;
+    }
     const f32 dx = cmd.target_pos.x - position().x;
     const f32 dz = cmd.target_pos.z - position().z;
     if (dx * dx + dz * dz > 2.0f * 2.0f) {
@@ -1438,6 +1445,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // begin, twice that to go on); a reclaim, to its footprint. Out
     // of reach, the unit walks just clear of the work, helping with
     // nothing meanwhile.
+    // Where a hovering aircraft flying its guard winged makes for (the work
+    // it closes on, else what it guards): its one flight this tick, below.
+    std::optional<Vector3> winged_goal;
     const auto within_reach = [&](const Entity& work, bool skirt, bool helping) {
         f32 extent = footprint_extent(work);
         f32 half_x = work.footprint_size_x() * 0.5f;
@@ -1455,6 +1465,13 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
         if (effective_speed() > 0) {
             const Vector3 goal = approach_point(*this, work.position(), half_x, half_z);
+            // A hovering aircraft not yet at work flies winged to it (Moho:
+            // guarding, neither Building nor Repairing yet), not by its
+            // navigator.
+            if (flies_winged_on_guard(*this) && ctx.sim) {
+                winged_goal = goal;
+                return false;
+            }
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
                 std::abs(heading.z - goal.z) > 1.0f) {
@@ -1612,6 +1629,23 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // Otherwise follow: an engineer stays put within twice its
     // MaxBuildDistance of what it guards (Moho's CUnitGuardTask),
     // other units within 10; past that, back just clear of it.
+    // A hovering aircraft with nothing to do flies as a winged one round
+    // what it guards (or the wreck or unit it reclaims or captures for it,
+    // which don't make it hover), never hanging still (flies_winged_on_guard).
+    if (flies_winged_on_guard(*this) && ctx.sim && !destroyed() && in_registry()) {
+        const Entity* focus = is_reclaiming()  ? registry.find(reclaim_target_id_)
+                              : is_capturing() ? registry.find(capture_target_id_)
+                                               : nullptr;
+        const Vector3 goal =
+            winged_goal ? *winged_goal
+            : focus && !focus->destroyed()
+                ? focus->position()
+                : approach_point(*this, target->position(), target_unit->skirt_size_x() * 0.5f,
+                                 target_unit->skirt_size_z() * 0.5f);
+        navigator_.abort_move();
+        fly_winged_to(*this, goal, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+        return OrderStep::Hold;
+    }
     if (!working && !destroyed() && in_registry()) {
         const f32 follow = has_category("ENGINEER") ? 2 * max_build_distance_ : 10.0f;
         const f32 gdx = target->position().x - position().x;

@@ -42,6 +42,9 @@ struct AirSteer {
     f32 altitude = 0.0f;      ///< the height to hold, absolute
     bool full_thrust = false; ///< past NormalTurn: thrust doesn't wait for the nose
     bool making_attack_run = false;
+    /// The most of the speed its thrust may take (a guard's slowing within
+    /// StartTurnDistance; 1 otherwise)
+    f32 thrust_cap = 1.0f;
 };
 
 /// The geometry a tactics step looks at (so the rules can be tested alone).
@@ -93,14 +96,38 @@ void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::
 void fly_attack_run(Unit& unit, const Vector3& at, SimState& sim, const map::Terrain* terrain,
                     f32 dt);
 
+/// One tick of a flight that has the airframe (an attack run, a guard's
+/// winged flight): the nose and velocity follow `steer` with Moho's lag
+/// (KTurn, KTurnDamping, KMove), the height its climb rate toward
+/// steer.altitude.
+void fly_airframe(Unit& unit, const AirSteer& steer, SimState& sim, const map::Terrain* terrain,
+                  f32 dt);
+
 /// The run ended: its combat state goes back to None, and the airframe to
 /// the plain flight, at the speed it had.
 void end_attack_run(Unit& unit);
 
 /// A hovering aircraft that circles rather than hangs still: a flier in the
 /// air, not winged and not HoverOverAttack (Moho's ComputeAirControl; its
-/// target or its work decide when).
+/// target or its work decide when), and not flying winged on guard.
 bool circles(const Unit& unit);
+
+/// A hovering aircraft (not Air.Winged) on a guard order with nothing to do
+/// -- not attacking, building, repairing or ferrying -- flies as a winged
+/// one (Moho's ComputeAirControl, 0x006BE6B0: the hover family only
+/// `!Guarding || Moving || Ferrying || Attacking || Building || Repairing`).
+/// Reclaim and capture don't count. HoverOverAttack doesn't spare it.
+bool flies_winged_on_guard(const Unit& unit);
+
+/// Its flight then (CalcWingedOrientation, no combat state, guarding): the
+/// nose turned toward `goal`, the thrust along the nose at the lesser of
+/// the distance and its top speed, scaled by how well the nose points
+/// (at least half), and within StartTurnDistance by at most
+/// distance / StartTurnDistance, never past half -- so it slows onto its
+/// goal and comes to rest there (CalcMoveAir's Stopping and Stopped, with
+/// no combat state). It never circles.
+void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
+                   f32 dt);
 
 /// Moho's re-pick in CalcCirclingOrientation, once `tick` is past the
 /// state's timeout. In order, it draws:
