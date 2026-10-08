@@ -29,6 +29,11 @@ bool targetable_prop(const sim::Entity& e) {
     return e.is_prop() && !static_cast<const sim::Prop&>(e).untargetable;
 }
 
+// Moho's func_GetRightMouseButtonAction: a unit riding another is busy.
+bool capture_target(const sim::Unit& u) {
+    return u.capturable() && !u.is_being_built() && u.parent_entity_id() == 0;
+}
+
 } // namespace
 
 bool aboard(const sim::Unit& unit) {
@@ -784,41 +789,16 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
         sim::Entity* e = registry.find(id);
         return e && !e->destroyed() ? e : nullptr;
     };
-    // What the click is on: an enemy within 5 (the one drawn nearest), else
-    // an ally or a wreck the click falls on (within its footprint).
     enum class On : u8 { Ground, Enemy, Ally, Wreck };
     On on = On::Ground;
     u32 target = 0;
-    {
-        f32 best = 25.0f;
-        for (u32 id : registry.collect_in_radius(wx, wz, 5.0f)) {
-            const sim::Entity* e = live(id);
-            if (!e || !e->is_unit() || e->army() < 0 || allied(e->army()) || !shown(*e)) continue;
-            const sim::Vector3 pos = view_.position(*e);
-            const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
-            if (d2 < best) {
-                best = d2;
-                target = id;
-                on = On::Enemy;
-            }
-        }
-    }
-    if (on == On::Ground) {
-        f32 best = std::numeric_limits<f32>::max();
-        for (u32 id : registry.collect_in_radius(wx, wz, 16.0f)) {
-            const sim::Entity* e = live(id);
-            if (!e) continue;
-            const bool ally = e->is_unit() && allied(e->army());
-            const bool wreck = targetable_prop(*e) && sim::reclaim_target_valid(*e);
-            if (!ally && !wreck) continue;
-            const sim::Vector3 pos = view_.position(*e);
-            const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
-            const f32 reach = std::max(
-                1.0f, 0.5f * std::max(e->footprint_size_x(), e->footprint_size_z()) + 0.5f);
-            if (d2 > reach * reach || d2 >= best) continue;
-            best = d2;
-            target = id;
-            on = ally ? On::Ally : On::Wreck;
+    if (const sim::Entity* e = live(unit_under(sim, wx, wz)); e && e->army() >= 0) {
+        target = e->entity_id();
+        on = allied(e->army()) ? On::Ally : On::Enemy;
+    } else {
+        target = prop_under(sim, wx, wz);
+        if (target != 0) {
+            on = On::Wreck;
         }
     }
 
@@ -836,8 +816,14 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
             cmd.target_pos = view_.position(*t);
         };
         if (on == On::Enemy) {
-            if (u.has_command_cap("RULEUCC_Attack")) aim(sim::CommandType::Attack);
-            else if (u.has_command_cap("RULEUCC_Capture")) aim(sim::CommandType::Capture);
+            if (u.has_command_cap("RULEUCC_Attack")) {
+                aim(sim::CommandType::Attack);
+            } else if (u.has_command_cap("RULEUCC_Capture") && tu && capture_target(*tu)) {
+                aim(sim::CommandType::Capture);
+            } else if (u.has_command_cap("RULEUCC_Reclaim") && tu && tu->parent_entity_id() == 0 &&
+                       sim::reclaim_target_valid(*tu)) {
+                aim(sim::CommandType::Reclaim);
+            }
         } else if (on == On::Ally && tu) {
             // An aircraft, flying or landed.
             if (tu->has_category("AIRSTAGINGPLATFORM") && u.has_command_cap("RULEUCC_Dock") &&
@@ -1152,8 +1138,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         if (!spec) return std::nullopt;
         cmd.type = spec->type;
         out.type = spec->fa_type;
-        cmd.target_id = pick_any_unit(sim, wx, wz, 5.0f,
-                                      spec->type == sim::CommandType::Reclaim);
+        cmd.target_id = target_under(sim, wx, wz, spec->type);
         if (spec->targets_unit && cmd.target_id == 0) return std::nullopt;
         live_selected([&](const sim::Unit& u) {
             return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
@@ -1369,25 +1354,36 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
     return best_id;
 }
 
-u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
-                                f32 radius, bool reclaim) const {
+u32 InputHandler::target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const {
+    const bool reclaim = type == sim::CommandType::Reclaim;
+    const u32 unit = unit_under(sim, wx, wz);
+    const auto* u =
+        unit ? static_cast<const sim::Unit*>(sim.entity_registry().find(unit)) : nullptr;
+    if (u && (!reclaim || sim::reclaim_target_valid(*u)) &&
+        (type != sim::CommandType::Capture || capture_target(*u))) {
+        return unit;
+    }
+    return reclaim ? prop_under(sim, wx, wz) : 0;
+}
+
+u32 InputHandler::prop_under(sim::SimState& sim, f32 wx, f32 wz) const {
     u32 best_id = 0;
-    f32 best_dist2 = radius * radius;
-    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
-        auto* e = sim.entity_registry().find(id);
-        if (!e || e->destroyed() || !shown(*e)) continue;
-        if (reclaim ? !((e->is_unit() || targetable_prop(*e)) && sim::reclaim_target_valid(*e))
-                    : !e->is_unit()) {
+    f32 best = std::numeric_limits<f32>::max();
+    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        if (!e || e->destroyed() || !shown(*e) || !targetable_prop(*e) ||
+            !sim::reclaim_target_valid(*e)) {
             continue;
         }
         const sim::Vector3 pos = view_.position(*e);
-        const f32 dx = pos.x - wx;
-        const f32 dz = pos.z - wz;
-        const f32 d2 = dx * dx + dz * dz;
-        if (d2 <= best_dist2) {
-            best_dist2 = d2;
-            best_id = id;
+        const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
+        const f32 reach =
+            std::max(1.0f, 0.5f * std::max(e->footprint_size_x(), e->footprint_size_z()) + 0.5f);
+        if (d2 > reach * reach || d2 >= best) {
+            continue;
         }
+        best = d2;
+        best_id = id;
     }
     return best_id;
 }
