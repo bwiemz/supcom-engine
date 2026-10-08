@@ -380,11 +380,8 @@ i32 item_list_row(lua_State* L, const UIControl& list, const UIEvent& ev) {
 
 } // namespace
 
-bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
-                                    const UIEvent& ev) {
-    if (!ctrl || ctrl->lua_table_ref() < 0) return false;
-
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+static bool handle_event_of(lua_State* L, int table_ref, const UIEvent& ev) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, table_ref);
     lua_pushstring(L, "HandleEvent");
     lua_gettable(L, -2);  // gettable for metatable lookup (HandleEvent is on class)
     if (!lua_isfunction(L, -1)) {
@@ -402,6 +399,13 @@ bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
     bool consumed = lua_toboolean(L, -1) != 0;
     lua_pop(L, 2); // return value + control table
     return consumed;
+}
+
+bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl, const UIEvent& ev) {
+    if (!ctrl || ctrl->lua_table_ref() < 0) {
+        return false;
+    }
+    return handle_event_of(L, ctrl->lua_table_ref(), ev);
 }
 
 namespace {
@@ -650,10 +654,14 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         // A press on another control than the focused one: the focused one is
         // losing the keyboard (Moho's LosingKeyboardFocus, before the global
         // handler below): an edit gives it up.
+        int pressed_table = LUA_NOREF;
         if (is_press(ev.type)) {
+            if (target && target->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                pressed_table = luaL_ref(L, LUA_REGISTRYINDEX);
+            }
             UIControl* const focused = registry.keyboard_focus();
             if (focused && focused != target) losing_keyboard_focus(L, registry, focused);
-            if (target && target->destroyed()) target = nullptr;
         }
 
         // Call UIMain.OnMouseButtonPress for global click handlers
@@ -671,6 +679,19 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             lua_pushnumber(L, ev.mouse_y);
             lua_rawset(L, -3);
             core::call_ui_callback(L, core::kUiMainModule, "OnMouseButtonPress", 1);
+        }
+
+        // Moho's CMauiWxEventMapper::OnMouseMove: a target destroyed by the
+        // two calls above still has the press, its parents not.
+        if (is_press(ev.type)) {
+            const bool target_gone = target && target->destroyed();
+            if (target_gone && pressed_table != LUA_NOREF) {
+                handle_event_of(L, pressed_table, ev);
+            }
+            luaL_unref(L, LUA_REGISTRYINDEX, pressed_table);
+            if (target_gone) {
+                continue;
+            }
         }
 
         // An Edit takes the focus on a left press its script leaves, the
