@@ -750,13 +750,20 @@ bool Unit::holds_for_rolloff(i32& wait) const {
 }
 
 OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
-    // A factory repeating its queue sends a finished build order to the
-    // back, and starts the next one next tick (Moho's command dispatch; an
-    // order for n units is n orders here, so each goes back alone, which
-    // builds them in Moho's order).
+    // Moho's command dispatch, a unit built: an order with more to make
+    // counts down and builds the next at once; one done goes, or, on a
+    // repeating factory, to the back with its count back at its most, the
+    // next order starting next tick.
+    if (cmd.count > 1) {
+        --cmd.count;
+        cmd.rolloff_wait = 0;
+        cmd.cap_wait = 0;
+        return OrderStep::Next;
+    }
     if (repeat_queue_) {
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.rolloff_wait = 0;
+        finished.count = std::max(finished.max_count, 1);
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));
         return OrderStep::Hold;
@@ -1360,18 +1367,31 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         auto& queue = target_unit->command_queue_;
         for (size_t i = 0; i < queue.size() && L; ++i) {
             if (queue[i].type != CommandType::BuildFactory) continue;
-            if (i == 0) continue; // the guarded factory's own build
+            // Not the guarded factory's own build, unless it has more to make
+            // than the one under way, or is all there is and this factory
+            // repeats (Moho's CUnitGuardTask).
+            const bool spare = queue[i].count > 1;
+            if (i == 0 && !spare && !(queue.size() == 1 && repeat_queue_)) continue;
             if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
             UnitCommand build;
             build.type = CommandType::BuildFactory;
             build.blueprint_id = queue[i].blueprint_id;
             const UnitCommand taken = queue[i];
-            queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
+            // One of an order with more is counted off it; else the order
+            // is taken.
+            if (spare) --queue[i].count;
+            else queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
             // Taken even if the lobby's rules forbid it, as Moho's build task
             // fails after the take; such an order is dropped, repeating or
             // not, as the guarded factory drops it when it comes to it.
             if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
-            if (repeat_queue_) queue.push_back(taken);
+            // A repeating assister sends the order round, its count back at
+            // its most (Moho's MoveCommandToBackOfQueue)
+            if (repeat_queue_ && !spare) {
+                UnitCommand round = taken;
+                round.count = std::max(round.max_count, 1);
+                queue.push_back(std::move(round));
+            }
             const u32 guard_id = cmd.command_id; // cmd may go with the scripts' changes
             const BuildStart started = start_build(build, registry, L);
             if (started == BuildStart::AtCap) {
@@ -1381,10 +1401,22 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 auto* guarded = registry.find(guarded_factory);
                 if (guarded && !guarded->destroyed() && guarded->is_unit()) {
                     auto& its = static_cast<Unit*>(guarded)->command_queue_;
-                    if (repeat_queue_ && !its.empty() && its.back().command_id == taken.command_id)
-                        its.pop_back();
-                    its.insert(its.begin() + static_cast<std::ptrdiff_t>(std::min(i, its.size())),
-                               taken);
+                    if (spare) {
+                        // Counted back onto its order, if it is still there
+                        for (UnitCommand& c : its)
+                            if (c.command_id == taken.command_id &&
+                                c.type == CommandType::BuildFactory) {
+                                ++c.count;
+                                break;
+                            }
+                    } else {
+                        if (repeat_queue_ && !its.empty() &&
+                            its.back().command_id == taken.command_id)
+                            its.pop_back();
+                        its.insert(its.begin() +
+                                       static_cast<std::ptrdiff_t>(std::min(i, its.size())),
+                                   taken);
+                    }
                 }
                 return hold_for_unit_cap(guard_id);
             }

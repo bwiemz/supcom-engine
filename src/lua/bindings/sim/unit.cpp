@@ -310,11 +310,11 @@ static int unit_GetNumBuildOrders(lua_State* L) {
     int count = 0;
     if (u) {
         // Active build command stays in queue while building, so just
-        // count Build commands in the queue (no separate is_building check).
+        // count Build commands in the queue (no separate is_building check);
+        // a factory build counts the units it still makes.
         for (const auto& cmd : u->command_queue()) {
-            if (cmd.type == sim::CommandType::BuildMobile ||
-                cmd.type == sim::CommandType::BuildFactory)
-                count++;
+            if (cmd.type == sim::CommandType::BuildMobile) count++;
+            else if (cmd.type == sim::CommandType::BuildFactory) count += std::max(cmd.count, 1);
         }
     }
     lua_pushnumber(L, count);

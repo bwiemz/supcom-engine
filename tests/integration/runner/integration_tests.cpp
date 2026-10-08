@@ -10757,19 +10757,23 @@ void test_factory_assist(TestContext& ctx) {
         if not __osc_b_second:IsDead() then error('its tank is still there') end
     )");
 
-    // B takes nothing from a queue whose only order A is building, even
-    // repeating (Moho would restart that order's count; there are no counts
-    // or repeat queues here, so it would only be a duplicate).
-    lua_check("B, repeating, leaves A's only order alone", R"(
+    // A queue whose only order A is building: B, repeating, takes it too
+    // (Moho's CUnitGuardTask: a lone order may go to a repeating assister,
+    // its count back at its most and sent round, here to where it was), so
+    // both build one, and the order stays.
+    lua_check("B, repeating, takes A's only order too", R"(
         IssueClearCommands({__osc_a})
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
         __osc_b:SetRepeatQueue(true)
         IssueGuard({__osc_b}, __osc_a)
     )");
     run(20);
-    lua_check("so B builds nothing", R"(
+    lua_check("so both build, and the order stays", R"(
         if not __osc_building(__osc_a) then error('A is not building its order') end
-        if __osc_building(__osc_b) then error('B builds a duplicate') end
+        if not __osc_building(__osc_b) then error('B is not building') end
+        if __osc_queue(__osc_a) ~= 1 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected')
+        end
     )");
 
     // Given a second order, the repeating B takes it and sends it to the
@@ -10804,13 +10808,62 @@ void test_factory_assist(TestContext& ctx) {
     )");
     run(20);
     lua_check("and builds nothing from it", R"(
+        -- (A's lone tank order it may take, repeating: Moho's rule above)
         local b = __osc_building(__osc_b)
-        if b then error('B builds ' .. b:GetBlueprint().BlueprintId) end
+        if b and b:GetBlueprint().BlueprintId == 'uel0105' then error('B builds the engineer') end
         if __osc_queue(__osc_a) ~= 1 then
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected (1 dropped)')
         end
     )");
     if (brain) brain->remove_build_restriction("ENGINEER");
+
+    // An order raised past one unit (IncreaseBuildCountInQueue) is one order
+    // with a count; B, guarding, counts one off it even while A builds it
+    // (Moho's guard task takes from the head when its count is above 1).
+    lua_check("A and B are cleared, and repeat no more", R"(
+        IssueClearCommands({__osc_a, __osc_b})
+        __osc_b:SetRepeatQueue(false)
+        __osc_a:SetRepeatQueue(false)
+    )");
+    run(2);
+    lua_check("A, given one tank raised to three, and B guarding it", R"(
+        if __osc_building(__osc_b) then error('B still builds') end
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+        __osc_a_id = __osc_a:GetEntityId()
+    )");
+    lua_getglobal(ctx.lua_state.raw(), "__osc_a_id");
+    const auto a_id = static_cast<u32>(std::stoul(lua_tostring(ctx.lua_state.raw(), -1)));
+    lua_pop(ctx.lua_state.raw(), 1);
+    auto* a_unit = static_cast<osc::sim::Unit*>(ctx.sim.entity_registry().find(a_id));
+    if (a_unit) a_unit->increase_build_count(1, 2);
+    const auto a_count = [&] {
+        const auto q = a_unit ? a_unit->factory_queue() : std::vector<osc::sim::BuildQueueEntry>{};
+        return q.empty() ? 0 : q.front().count;
+    };
+    const bool raised = a_unit && a_unit->command_queue().size() == 1 && a_count() == 3;
+    if (raised) {
+        ++pass;
+        spdlog::info("[PASS] the raised order is one order of three");
+    } else {
+        ++fail;
+        osc::test_status::fail("[FAIL] the raised order: {} orders, count {}",
+                               a_unit ? a_unit->command_queue().size() : 0, a_count());
+    }
+    lua_check("B guards A", "IssueGuard({__osc_b}, __osc_a)");
+    run(20);
+    lua_check("B builds one of A's three while A builds another", R"(
+        if not __osc_building(__osc_a) then error('A is not building') end
+        if not __osc_building(__osc_b) then error('B is not building') end
+        if __osc_building(__osc_a) == __osc_building(__osc_b) then error('one tank') end
+        if __osc_queue(__osc_a) ~= 1 then error('A has ' .. __osc_queue(__osc_a) .. ' orders') end
+    )");
+    if (a_count() == 2) {
+        ++pass;
+        spdlog::info("[PASS] the one B took is counted off A's order");
+    } else {
+        ++fail;
+        osc::test_status::fail("[FAIL] A's order counts {}; 2 expected", a_count());
+    }
 
     // A factory repeating its queue builds its orders again (M206i), through
     // retail's factory scripts: A, given one tank, finishes it and starts

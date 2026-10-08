@@ -3179,6 +3179,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(0x524f4c4cu); // "ROLL"
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.rolloff_wait)));
             }
+            // A factory build raised past one unit, only then: what it still
+            // makes, and what it goes round with.
+            if (cmd.count != 1 || cmd.max_count != 1) {
+                orders.mix(0x434e5453u); // "CNTS"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.count)) << 32 |
+                           static_cast<u32>(cmd.max_count));
+            }
             // A build waiting out its army's unit cap, only then.
             if (cmd.cap_wait != 0) {
                 orders.mix(0x43415057u); // "CAPW"
