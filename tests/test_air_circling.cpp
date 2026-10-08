@@ -26,6 +26,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -95,14 +96,32 @@ struct World {
             s += "}}";
             return s;
         };
-        for (const std::string& bp : {
-                 blueprint("gunship", gunship_air),
-                 blueprint("steady", gunship_air + ", CirclingDirChange = false"),
-                 blueprint("hoverer", gunship_air + ", HoverOverAttack = true"),
-                 blueprint("plane", gunship_air + ", Winged = true"),
-                 blueprint("drone", "CanFly = true, MaxAirspeed = 4, MinAirspeed = 3,"
-                                    " StartTurnDistance = 5, KMove = 1, KMoveDamping = 1.2"),
-             }) {
+        for (
+            const std::string& bp : {
+                blueprint("gunship", gunship_air),
+                blueprint("steady", gunship_air + ", CirclingDirChange = false"),
+                blueprint("hoverer", gunship_air + ", HoverOverAttack = true"),
+                blueprint("plane", gunship_air + ", Winged = true"),
+                blueprint("drone", "CanFly = true, MaxAirspeed = 4, MinAirspeed = 3,"
+                                   " StartTurnDistance = 5, KMove = 1, KMoveDamping = 1.2"),
+                // An engineering drone: it repairs what it guards (REPAIR, a
+                // build rate), as the UEF commander's does
+                std::string(
+                    "return {BlueprintId = 'repairdrone', Categories = {'AIR', 'MOBILE', 'REPAIR'},"
+                    " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                    " Footprint = {SizeX = 1, SizeZ = 1}, Economy = {BuildRate = 5,"
+                    " MaxBuildDistance = 4}, Physics = {MotionType = 'RULEUMT_Air', Elevation = 10,"
+                    " MaxSpeed = 6},"
+                    " Air = {CanFly = true, MaxAirspeed = 6, MinAirspeed = 3, StartTurnDistance = "
+                    "5,"
+                    " KMove = 1, KMoveDamping = 1.2}}"),
+                std::string(
+                    "return {BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
+                    " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                    " Economy = {BuildTime = 100, BuildCostMass = 50, BuildCostEnergy = 100},"
+                    " Footprint = {SizeX = 1, SizeZ = 1},"
+                    " Physics = {MotionType = 'RULEUMT_Land', MaxSpeed = 2}}"),
+            }) {
             REQUIRE(state.do_string(bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
             lua_pop(L, 1);
@@ -114,7 +133,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"gunship", "steady", "hoverer", "plane", "drone"}) {
+        for (const char* id :
+             {"gunship", "steady", "hoverer", "plane", "drone", "repairdrone", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -448,4 +468,155 @@ TEST_CASE("A circling gunship given a move stops circling and flies it", "[air_c
     CHECK(g.air_combat().timeout_tick == 0);
     w.run_until(g, [&] { return g.command_queue().empty(); }, 400);
     CHECK(flat_dist(g, {110.0f, 0.0f, 110.0f}) < 6.0f);
+}
+
+namespace {
+
+void guard(Unit& u, const Unit& what) {
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::Guard;
+    cmd.target_id = what.entity_id();
+    cmd.target_pos = what.position();
+    u.push_command(cmd, true);
+}
+
+} // namespace
+
+TEST_CASE("A gunship guarding with nothing to do flies as a winged one: nose first onto what it "
+          "guards, slowing to rest there, never circling",
+          "[air_circling]") {
+    World w;
+    Unit& charge = *w.make("plane", 64.0f, 64.0f);
+    charge.set_is_being_built(true); // stays put: it neither flies nor lands
+    Unit& g = *w.make("gunship", 30.0f, 64.0f);
+    guard(g, charge);
+    w.tick(g);
+    CHECK(osc::sim::flies_winged_on_guard(g));
+    CHECK_FALSE(osc::sim::circles(g));
+    // On its way: its nose leads, the thrust along it (no sideways drift as
+    // a hovering flight would)
+    f32 worst_slip = 0.0f;
+    for (int t = 0; t < 40; ++t) {
+        w.tick(g);
+        const Vector3& v = g.air_combat().velocity;
+        const f32 speed = std::hypot(v.x, v.z);
+        if (speed > 1.0f)
+            worst_slip = std::max(worst_slip, std::abs(wrap(std::atan2(v.x, v.z) - g.heading())));
+    }
+    CHECK(worst_slip < 0.6f);
+    for (int t = 0; t < 300; ++t) w.tick(g);
+    // At rest by what it guards, its approach point just clear of it (not 10
+    // off, as a parked guard stops), never having drawn a circle
+    const f32 there = flat_dist(g, charge.position());
+    INFO("there " << there);
+    CHECK(there < 6.0f);
+    CHECK(std::hypot(g.air_combat().velocity.x, g.air_combat().velocity.z) < 0.5f);
+    CHECK(g.air_combat().flying);
+    CHECK(g.air_combat().state == 0);                  // no attack runs
+    CHECK(g.air_combat().circle_radius_ratio == 1.0f); // never drew a circle
+}
+
+TEST_CASE("Only a hovering aircraft guarding with nothing to do flies winged: not a winged one, "
+          "not one attacking, building or repairing; reclaiming doesn't spare it",
+          "[air_circling]") {
+    World w;
+    Unit& charge = *w.make("plane", 64.0f, 64.0f);
+    charge.set_is_being_built(true);
+    Unit& plane = *w.make("plane", 30.0f, 40.0f);
+    guard(plane, charge);
+    CHECK_FALSE(osc::sim::flies_winged_on_guard(plane)); // Air.Winged: its own flight
+
+    Unit& d = *w.make("drone", 30.0f, 80.0f);
+    guard(d, charge);
+    CHECK(osc::sim::flies_winged_on_guard(d));
+    d.set_repair_target_id(charge.entity_id());
+    CHECK_FALSE(osc::sim::flies_winged_on_guard(d)); // repairing: it hovers, circling
+    CHECK(osc::sim::circles(d));
+    d.set_repair_target_id(0);
+    d.set_reclaim_target_id(charge.entity_id());
+    CHECK(osc::sim::flies_winged_on_guard(d)); // reclaiming doesn't count
+    d.set_reclaim_target_id(0);
+
+    // The guard's attack is an order of its own at the head: it circles
+    Unit& g = *w.make("gunship", 30.0f, 100.0f);
+    guard(g, charge);
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_pos = {80.0f, 10.0f, 100.0f};
+    attack.from_guard = true;
+    g.push_command(attack, false);
+    std::swap(const_cast<std::deque<osc::sim::UnitCommand>&>(g.command_queue()).front(),
+              const_cast<std::deque<osc::sim::UnitCommand>&>(g.command_queue()).back());
+    CHECK_FALSE(osc::sim::flies_winged_on_guard(g));
+    CHECK(osc::sim::circles(g));
+}
+
+TEST_CASE("A game saved while a gunship flies its guard winged loads and goes on as the original",
+          "[air_circling]") {
+    World a;
+    Unit& charge = *a.make("plane", 64.0f, 64.0f);
+    charge.set_is_being_built(true);
+    Unit& g = *a.make("gunship", 30.0f, 64.0f);
+    guard(g, charge);
+    a.sim.set_recording(true);
+    for (int t = 0; t < 120; ++t) a.tick(g);
+    REQUIRE(g.air_combat().flying);
+    const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "guard");
+    REQUIRE_FALSE(save.snapshot.empty());
+    World b;
+    b.make("plane", 64.0f, 64.0f);
+    b.make("gunship", 30.0f, 64.0f);
+    const std::string err = osc::sim::load_snapshot(b.sim, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    Unit* loaded = nullptr;
+    b.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (e.entity_id() == g.entity_id()) loaded = static_cast<Unit*>(&e);
+    });
+    REQUIRE(loaded);
+    for (int t = 0; t < 120; ++t) {
+        a.tick(g);
+        b.tick(*loaded);
+        INFO("tick " << t);
+        REQUIRE(b.sim.compute_sync_checksum() == a.sim.compute_sync_checksum());
+    }
+    CHECK(loaded->position().x == g.position().x);
+    CHECK(loaded->position().z == g.position().z);
+}
+
+TEST_CASE("A drone guarding a hurt unit out of its reach flies winged to it, once a tick, then "
+          "repairs it hovering",
+          "[air_circling]") {
+    World w;
+    Unit& hurt = *w.make("tank", 90.0f, 64.0f);
+    hurt.set_health(40.0f);
+    Unit& d = *w.make("repairdrone", 30.0f, 64.0f);
+    guard(d, hurt);
+    w.tick(d);
+    CHECK(osc::sim::flies_winged_on_guard(d));
+    // On its way, one flight a tick: each tick it moves by its airframe's own
+    // velocity, nothing more (a navigator's move as well would add to it)
+    f32 fastest = 0.0f;
+    f32 worst_extra = 0.0f;
+    Vector3 last = d.position();
+    int t = 0;
+    for (; t < 600 && !d.is_repairing(); ++t) {
+        w.tick(d);
+        const Vector3 p = d.position();
+        const f32 moved = std::hypot(p.x - last.x, p.z - last.z);
+        fastest = std::max(fastest, moved * 10.0f);
+        if (d.air_combat().flying && !d.is_repairing()) {
+            const Vector3& v = d.air_combat().velocity;
+            worst_extra = std::max(worst_extra, std::abs(moved - std::hypot(v.x, v.z) * 0.1f));
+        }
+        last = p;
+    }
+    INFO("ticks " << t << " fastest " << fastest << " worst extra " << worst_extra);
+    CHECK(d.is_repairing());
+    CHECK(d.repair_target_id() == hurt.entity_id());
+    CHECK(fastest <= 6.0f * 1.05f);
+    CHECK(worst_extra < 0.01f);
+    // At work it hovers, circling what it repairs (Moho: Repairing)
+    CHECK_FALSE(osc::sim::flies_winged_on_guard(d));
+    CHECK(osc::sim::circles(d));
 }

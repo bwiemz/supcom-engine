@@ -246,10 +246,21 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
         steer.altitude =
             (mode == M::Combat ? r.attack_elevation : unit.elevation_target()) + floor_there;
 
-    // The airframe follows with Moho's lag: the nose led by at most the turn
-    // clamp, a yaw rate under KTurn and KTurnDamping, and the velocity
-    // easing toward the nose under KMove (thrust waits for the nose until
-    // the turns).
+    fly_airframe(unit, steer, sim, terrain, dt);
+}
+
+} // namespace
+
+/// The airframe follows `steer` with Moho's lag: the nose led by at most the
+/// turn clamp, a yaw rate under KTurn and KTurnDamping, and the velocity
+/// easing toward the nose under KMove (thrust waits for the nose until the
+/// turns); its height toward steer.altitude at its climb rate.
+void fly_airframe(Unit& unit, const AirSteer& steer, SimState& sim, const map::Terrain* terrain,
+                  f32 dt) {
+    AirCombatState& st = unit.air_combat();
+    const AirCombatRules& r = unit.air_combat_rules();
+    const Vector3 pos = unit.position();
+    f32 heading = unit.heading();
     const f32 err =
         std::clamp(wrap_angle(steer.heading - heading), -steer.turn_clamp, steer.turn_clamp);
     st.yaw_rate += (steer.turn_gain * err - r.k_turn_damping * st.yaw_rate) * dt;
@@ -259,11 +270,12 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
     unit.set_heading(heading);
     const f32 nx = osc::dmath::sin(heading);
     const f32 nz = osc::dmath::cos(heading);
-    const f32 thrust =
+    const f32 thrust = std::min(
         steer.full_thrust
             ? 1.0f
             : std::max(osc::dmath::sin(steer.heading) * nx + osc::dmath::cos(steer.heading) * nz,
-                       0.5f);
+                       0.5f),
+        steer.thrust_cap);
     st.velocity.x += (r.k_move * steer.speed * thrust * nx - r.k_move * st.velocity.x) * dt;
     st.velocity.z += (r.k_move * steer.speed * thrust * nz - r.k_move * st.velocity.z) * dt;
     st.velocity.y = 0.0f;
@@ -292,8 +304,6 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
     unit.set_unit_state("MakingAttackRun", steer.making_attack_run);
 }
 
-} // namespace
-
 void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::Terrain* terrain,
                     f32 dt) {
     fly_run(unit, &target, target.position(), sim, terrain, dt);
@@ -317,7 +327,48 @@ bool circles(const Unit& unit) {
     // circles, target or not. faf-re's text gates only the work half.
     const AirCombatRules& r = unit.air_combat_rules();
     return unit.can_fly() && unit.is_air_unit() && !r.winged && !r.hover_over_attack &&
-           !unit.is_dying() && !unit.is_being_built();
+           !unit.is_dying() && !unit.is_being_built() && !flies_winged_on_guard(unit);
+}
+
+bool flies_winged_on_guard(const Unit& unit) {
+    const AirCombatRules& r = unit.air_combat_rules();
+    if (!unit.can_fly() || !unit.is_air_unit() || r.winged || unit.is_dying() ||
+        unit.is_being_built())
+        return false;
+    // UNITSTATE_Guarding lasts the guard task's life; an attack it breaks
+    // off for is its own order here, at the head of the queue.
+    const auto& queue = unit.command_queue();
+    if (queue.empty() || queue.front().type != CommandType::Guard) return false;
+    return !unit.is_building() && !unit.is_repairing() && !unit.has_unit_state("Ferrying") &&
+           !unit.has_unit_state("Attacking");
+}
+
+void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
+                   f32 dt) {
+    AirCombatState& st = unit.air_combat();
+    const AirCombatRules& r = unit.air_combat_rules();
+    const Vector3 pos = unit.position();
+    const f32 heading = unit.heading();
+    if (!st.flying) {
+        // It takes over the airframe as it flies.
+        st.flying = true;
+        st.yaw_rate = 0.0f;
+        st.velocity = {osc::dmath::sin(heading) * unit.current_airspeed(), 0.0f,
+                       osc::dmath::cos(heading) * unit.current_airspeed()};
+    }
+    const f32 dx = goal.x - pos.x;
+    const f32 dz = goal.z - pos.z;
+    const f32 limited =
+        std::min(std::sqrt(dx * dx + dz * dz), unit.max_airspeed() * unit.speed_mult());
+    AirSteer steer;
+    steer.heading = (dx != 0.0f || dz != 0.0f) ? osc::dmath::atan2(dx, dz) : heading;
+    steer.speed = limited;
+    steer.turn_clamp = unit.turn_rate_rad() * unit.turn_mult();
+    steer.turn_gain = r.k_turn;
+    const f32 start_turn = unit.start_turn_distance();
+    if (start_turn > limited) steer.thrust_cap = std::min(limited / start_turn, 0.5f);
+    steer.altitude = unit.elevation_target() + unit.air_floor(terrain, goal.x, goal.z);
+    fly_airframe(unit, steer, sim, terrain, dt);
 }
 
 void circling_draws(AirCombatState& st, const AirCombatRules& r, f32 attack_elevation, u32 tick,
