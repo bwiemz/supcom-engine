@@ -543,6 +543,8 @@ public:
     u32 reclaim_target_id() const { return reclaim_target_id_; }
     void set_reclaim_target_id(u32 id) { reclaim_target_id_ = id; }
     bool is_reclaiming() const { return reclaim_target_id_ != 0; }
+    i32 reclaim_wait() const { return reclaim_wait_; }
+    void set_reclaim_wait(i32 ticks) { reclaim_wait_ = ticks; }
     void begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry);
     void stop_reclaiming(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
@@ -1503,6 +1505,7 @@ private:
     f32 work_progress_ = 0.0f;
     u32 reclaim_target_id_ = 0;   // entity ID being reclaimed
     f32 reclaim_rate_ = 0;        // fraction_complete decrease per second
+    i32 reclaim_wait_ = 0;
     u32 repair_target_id_ = 0;    // entity ID of unit being repaired
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass

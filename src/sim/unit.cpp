@@ -1159,6 +1159,9 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
     reclaim_target_id_ = target_id;
     auto* target = registry.find(target_id);
+    // Moho's CUnitReclaimTask takes a tick in Starting and one in Processing
+    // before it first reclaims anything but a unit it wears down.
+    reclaim_wait_ = target && !reclaim_wears_down(*target) ? 2 : 0;
     if (target) {
         const Vector3 at = target->position();
         aim_builder_arms(&at, L);
@@ -1176,6 +1179,7 @@ void Unit::stop_reclaiming(lua_State* L, EntityRegistry* registry) {
     economy_.reclaim_energy = 0;
     reclaim_target_id_ = 0;
     reclaim_rate_ = 0;
+    reclaim_wait_ = 0;
 }
 
 /// Helper: call OnReclaimed on target, then ensure it's marked destroyed.
@@ -1315,6 +1319,11 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
 
     if (reclaim_rate_ <= 0)
         return false;
+
+    if (reclaim_wait_ > 0) {
+        --reclaim_wait_;
+        return true;
+    }
 
     if (reclaim_wears_down(*target)) {
         wear_down(static_cast<Unit&>(*target));

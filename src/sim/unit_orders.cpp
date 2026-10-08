@@ -265,7 +265,7 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
-    if (!is_reclaiming() && !is_repairing() && !is_capturing() &&
+    if (!is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
         (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile)) {
         aim_builder_arms(nullptr, ctx.L);
     }
@@ -921,8 +921,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         const ReclaimCosts costs = reclaim_costs(L, *this, *target, static_cast<f64>(build_rate_));
-        const f64 max_mass = costs.mass, max_energy = costs.energy;
-        if (std::max(max_mass, max_energy) <= 0 || build_rate_ <= 0) {
+        if (std::max(costs.mass, costs.energy) <= 0 || build_rate_ <= 0) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -935,14 +934,24 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Gone;
         }
 
-        const auto* started = registry.find(cmd.target_id);
-        const bool income = started && !reclaim_wears_down(*started);
-        economy_.reclaim_mass = income ? max_mass * static_cast<f64>(reclaim_rate_) : 0.0;
-        economy_.reclaim_energy = income ? max_energy * static_cast<f64>(reclaim_rate_) : 0.0;
+        economy_.reclaim_mass = 0;
+        economy_.reclaim_energy = 0;
 
         spdlog::info("Reclaim start: entity #{} reclaiming #{} "
                      "(mass={:.0f}, energy={:.0f}, time={:.1f}s)",
-                     entity_id(), cmd.target_id, max_mass, max_energy, reclaim_time);
+                     entity_id(), cmd.target_id, costs.mass, costs.energy, reclaim_time);
+    }
+
+    if (reclaim_wait_ > 0) {
+        --reclaim_wait_;
+        const auto* reclaimed = registry.find(cmd.target_id);
+        if (reclaim_wait_ == 0 && reclaimed) {
+            const ReclaimCosts costs =
+                reclaim_costs(L, *this, *reclaimed, static_cast<f64>(build_rate_));
+            economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
+            economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+        }
+        return OrderStep::Hold;
     }
 
     // Moho's CUnitReclaimTask: a finished unit loses health for nothing, then
@@ -967,8 +976,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         cmd.target_id = wreck_id;
         reclaim_target_id_ = wreck_id;
         reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
-        economy_.reclaim_mass = costs.mass * static_cast<f64>(reclaim_rate_);
-        economy_.reclaim_energy = costs.energy * static_cast<f64>(reclaim_rate_);
+        reclaim_wait_ = 1;
         return OrderStep::Hold;
     }
 
@@ -987,7 +995,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     // or the build of one under construction.
     const auto let_go = [&] {
         if (is_repairing()) stop_repairing(L, registry);
-        if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) stop_assisting();
+        if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) {
+            stop_assisting(L, &registry);
+        }
         end_approach(cmd);
     };
     if (cmd.target_id == 0) {
@@ -1080,7 +1090,9 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
     };
     if (build_target_id_ != tid) {
         // Its blueprint's build time and costs set the pace and the bill.
-        if (is_building()) stop_assisting();
+        if (is_building()) {
+            stop_assisting(ctx.L, &registry);
+        }
         const BuildEconomy costs = blueprint_build_economy(ctx.L, target.unit_id());
         if (costs.time <= 0 || build_rate_ <= 0) return done();
         build_target_id_ = tid;
@@ -1093,6 +1105,12 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         economy_.consumption_mass = costs.mass * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_energy = costs.energy * static_cast<f64>(build_rate_) / costs.time;
         economy_.consumption_active = true;
+        const Vector3 at = target.position();
+        aim_builder_arms(&at, ctx.L);
+        call_build_callback(ctx.L, "OnStartBuild", registry.find(tid), "Repair");
+        if (destroyed() || !in_registry()) {
+            return OrderStep::Gone;
+        }
     }
     // It builds alongside any builder; whoever completes it finishes it
     // (OnStopBeingBuilt, once).
@@ -1549,6 +1567,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 spdlog::info("Guard assist: entity #{} assisting #{} "
                              "building target #{}",
                              entity_id(), cmd.target_id, target_build_id);
+                const Vector3 at = guarded_build->position();
+                aim_builder_arms(&at, ctx.L);
                 call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
                                     "Repair");
                 if (destroyed() || !in_registry()) {
