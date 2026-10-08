@@ -286,7 +286,7 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
 
 - **`DamageArea`:** retail's falloff and rings, and a real direction vector (a tree's `'Force'` reads `direction[1]`).
 - **Shields** absorb through `OnGetDamageAbsorption` and `ArtilleryShieldBlocks`, and spill over.
-- **Open question:** whether area damage touches projectiles.
+- **Open question:** whether area damage touches projectiles. *Done (2026-10-08): Moho's `SIM_DoDamageArea` gathers units, props, projectiles and entities through their collision shapes and skips NOSPLASHDAMAGE; a projectile has none unless its script sets one.*
 
 **What building M201f established:**
 
