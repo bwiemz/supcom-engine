@@ -55,23 +55,36 @@ Each area, what is accepted and by what. "Last verified" names the validation re
 
 ## Benchmarks
 
-`tools/bench.py` (Release, four retail AIs on SCMP_009, seed 4242, an RTX PRO 4500 at 1920×1080), recorded on 2026-10-06 with main's engine at b167ab14 (built from d97d43f8, which changes only tests) as the baselines `bench.py check` holds later builds to:
+`tools/bench.py` (Release, four retail AIs on SCMP_009, seed 4242, an RTX PRO 4500 at 1920×1080). These are the baselines `bench.py check` holds later builds to. They were recorded on 2026-10-07 with main's engine at 6d59aa3b, which is main at 75efb749 plus this bench's search counters. The `-moho` scenarios play the same game with `--moho-pathing`, and their reports count the path searches and the cells they expanded.
 
 | Scenario | Game at the end | Measured |
 | --- | --- | --- |
-| `early`: 6,000 ticks (10 game-minutes) | 555 units, 11,926 entities | 6.7 s of sim; a tick's mean 1.1 ms, p50 0.7 ms, p99 9.7 ms; peak 290 MB |
-| `late`: 18,000 ticks (30 game-minutes) | 1,666 units, 24,569 entities | 106 s of sim; a tick's mean 5.9 ms, p50 5.1 ms, p99 36 ms; peak 391 MB |
-| `render-battle`: 600 frames of tick 6,000 | | CPU `render()` p50 1.3 ms, p95 2.3 ms; GPU 0.64 ms |
-| `render-late`: 600 frames of tick 18,000 | | CPU p50 1.4 ms, p95 3.0 ms; GPU 0.65 ms |
-| `render-strategic`: the same, zoomed out to icons | | CPU p50 0.85 ms, p95 2.4 ms; GPU 0.34 ms |
+| `early`: 6,000 ticks (10 game-minutes) | 517 units, 12,630 entities | 7.4 s of sim; a tick's mean 1.2 ms, p50 0.9 ms, p99 8.0 ms; peak 304 MB |
+| `early-moho`: the same, Moho pathing | 581 units, 13,344 entities; 7,902 searches, 1.6 M cells expanded | 10.4 s of sim; mean 1.7 ms, p50 1.2 ms, p99 11 ms; peak 306 MB |
+| `late`: 18,000 ticks (30 game-minutes) | 1,418 units, 28,882 entities | 91 s of sim; a tick's mean 5.1 ms, p50 4.4 ms, p99 31 ms; peak 410 MB |
+| `late-moho`: the same, Moho pathing | 1,570 units, 26,068 entities; 162,748 searches, 55 M cells expanded | 184 s of sim; mean 10.2 ms, p50 10.3 ms, p99 38 ms; peak 456 MB |
+| `render-battle`: 600 frames of tick 6,000 | | CPU `render()` p50 1.2 ms, p95 1.9 ms; GPU 0.49 ms |
+| `render-late`: 600 frames of tick 18,000 | | CPU p50 1.6 ms, p95 4.2 ms; GPU 0.75 ms |
+| `render-strategic`: the same, zoomed out to icons | | CPU p50 0.95 ms, p95 3.4 ms; GPU 0.34 ms |
 
-Against the previous baselines (2026-09-29/30), the renderer's CPU frame fell from a p50 of 6-8 ms to 1-1.4 ms. The sim's games aren't comparable: the parity work since changed how the AIs play, and the late game now ends with 54% more units (1,666 against 1,081), its ticks about twice as long (a mean of 5.9 ms against 2.9 ms).
+Moho pathing costs 1.4× the default's sim time in the early game and 2.0× in the late game. A late-game search expands about 340 cells; an early-game one about 200.
+
+The games differ with it, because the AIs' units move otherwise. From tick 7,000 its ticks cost 2.0-2.3× the default's, for two reasons:
+- **More units.** From tick 8,000 it holds 30-40% more units: 1,220 against 870 at tick 10,000.
+- **The searches.** In a profile from tick 10,000 (400 samples), the path searches take 26% of its tick, and the navigator's checks along its path another 9%. Half the searches' time is the test for units in the way.
+
+Without those, a unit costs about the same as in the default game (7.6 against 7.0 µs a tick).
+
+Against the 2026-10-06 baselines (b167ab14):
+- The default games changed since. The parity and pathing work changed how the AIs play: the late game ends with 1,418 units against 1,666.
+- Its ticks are shorter: a mean of 5.1 ms against 5.9 ms.
+- The render frames hold within noise.
 
 ## Known gaps
 
 What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`docs/ROADMAP.md`, and the external review's work order of 2026-10-06).
 
-- **Pathing by footprint.** By default units still path as points on one 2-unit grid. Moho keeps passability per footprint class, so a big unit can't take a gap a small one can, and its pathing is now ported (#415–#418, `docs/plans/2026-10-07-per-class-pathing-design.md`). It stays behind `--moho-pathing` until games with it on have been watched: the four-AI late game runs about 65% longer in sim time with it (a bigger game, and the searches), and the AIs play differently. Mobile units in the way and formation layers are #427's.
+- **Pathing by footprint.** By default units still path as points on one 2-unit grid. Moho keeps passability per footprint class, so a big unit can't take a gap a small one can, and its pathing is now ported (#415–#418, `docs/plans/2026-10-07-per-class-pathing-design.md`). It stays behind `--moho-pathing` until games with it on have been watched: the four-AI late game runs 2.0× longer in sim time with it (184 s against 91 s: 162,748 searches, 55 M cells expanded; see *Benchmarks*), and the AIs play differently. Mobile units in the way and formation layers are #427's.
 - **Projectile flight.** As Moho's since #405 and #408, but for two things nothing in retail uses: bounce (no projectile has `Min/MaxBounceCount`), and retargeting on a miss, which Moho gates on `AutoInitiateAttackCommand` as well as `ReTargetOnMiss`, a pair no retail weapon has.
 - **Needs a person:** a listening pass of the audio; comparison with the original game's look (no reference captures exist here); the hardware cursor on a real display; Steam and the Steam Deck; external testers.
 - **Multiplayer:** peers are not authenticated; two players dropping at once can leave the survivors disagreeing; FAF's ICE adapter and client are tested only through stand-ins.

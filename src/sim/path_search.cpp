@@ -348,6 +348,8 @@ void PathQueue::work(PathTables& tables, i32& budget) {
         const PathSearch::Step step = search_.run(tables, budget);
         // Out of budget, it stays in flight for the next tick.
         if (step != PathSearch::Step::BudgetExhausted) {
+            ++searches_done_;
+            expansions_done_ += search_.expansions();
             // Off the queue before it hears: hearing, it may queue again.
             search_.traveler()->queue_ = nullptr;
             search_.finish(step == PathSearch::Step::GoalReached);

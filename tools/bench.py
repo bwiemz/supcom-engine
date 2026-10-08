@@ -8,7 +8,8 @@ of a saved game offscreen at 1920x1080 and times its frames on the CPU and the
 GPU, with what they drew (src/app/render_bench.cpp, M223b). This plays the
 pinned scenarios with them and compares the reports:
 
-  Scenarios: early, late (the sim); render-battle, render-late,
+  Scenarios: early, late (the sim), early-moho, late-moho (the same with
+  --moho-pathing); render-battle, render-late,
   render-strategic (the renderer: the pinned game saved at a tick, made once
   per machine beside the baselines, then the scene's camera path over it).
 
@@ -76,6 +77,10 @@ SCENARIOS: dict[str, list[str]] = {
         "4242",
     ],
 }
+# The same games with Moho's pathing by footprint class (--moho-pathing, off
+# by default until it is accepted): their reports also count the searches.
+SCENARIOS["early-moho"] = [*SCENARIOS["early"], "--moho-pathing"]
+SCENARIOS["late-moho"] = [*SCENARIOS["late"], "--moho-pathing"]
 TIMEOUT_SECONDS = 3600
 
 # The render scenes (M223b): the pinned game saved at a tick (made once, with
