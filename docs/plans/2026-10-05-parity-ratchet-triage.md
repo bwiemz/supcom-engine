@@ -88,7 +88,7 @@ The ranking weighs gameplay impact against breadth. Items from different lists t
 | Attached-death and prop collisions | hooks: OnAttachedKilled, OnCollision | A killed passenger stays attached; tanks and experimentals don't knock trees over |
 | Mesh UV scrolling | stubs: AddThreadScroller. bp: Scrolling | Tank treads (36 units) and conveyors don't scroll. AddPingPongScroller, AddManualScroller and RemoveScroller are LOW and belong in the same PR |
 | World-view feedback | stubs: AddCommandFeedbackBlip, EnableResourceRendering. bp: StrategicIconSize | No order flag/crosshair blip; no mass/hydro icons, and the Resources toggle does nothing; no projectile icons at strategic zoom |
-| UI WorldMesh | stubs: SetMesh, SetStance, SetLifetimeParameter | The factory rally-flag mesh and tutorial arrows are not drawn *Done (2026-10-08): a WorldMesh is drawn once shown.* |
+| UI WorldMesh | stubs: SetMesh, SetStance, SetLifetimeParameter | The factory rally-flag mesh and tutorial arrows are not drawn *Done (2026-10-08): a WorldMesh is drawn once shown; a selected factory shows its rally flag.* |
 | Terrain and wrecks | stubs: FlattenMapRect, AddBoundedProp | Structure skirts don't flatten terrain (219 structures); no 1000-wreck cap |
 | Selection refresh | stubs: RequestRefreshUI | Panels go stale after upgrades and transport loads until the player reselects |
 | Thrusters | stubs: SetThrustingParam | UEF transport and gunship nozzles don't swivel |

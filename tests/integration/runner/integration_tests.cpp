@@ -13,6 +13,7 @@
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/command_feedback.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/ui_renderer.hpp"
@@ -17748,6 +17749,58 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10b3: a build bot and an unbuilt factory can't be selected",
            select_unselectable.c_str());
     sim_lua("__osc_ui_bot:Destroy() __osc_ui_fac:Destroy()");
+    play(2);
+
+    // 10b5. Retail's rallypoint.lua on a selected factory.
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_rally = CreateUnitHPR('ueb0101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
+    )");
+    osc::u32 rally_factory = 0;
+    osc::sim::Vector3 rally_at;
+    ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb0101") {
+            rally_factory = e.entity_id();
+            static_cast<osc::sim::Unit&>(e).rally_point(ctx.sim.lua_state(), rally_at);
+        }
+    });
+    play(2);
+    {
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const auto shown = [&] {
+            return reg ? osc::renderer::shown_world_meshes(*reg)
+                       : std::vector<osc::renderer::WorldMeshDraw>{};
+        };
+        const std::string select_factory = fmt::format(R"(
+            __osc_rally_acu = GetSelectedUnits()[1]
+            SelectUnits({{{{EntityId = {}}}}})
+        )",
+                                                       rally_factory);
+        lua_ok("Test 10b5: select a factory", select_factory.c_str());
+        pump_frames(2);
+        const auto flags = shown();
+        const bool at_rally = flags.size() == 1 &&
+                              flags[0].spec.mesh_name == "/meshes/game/Rally_lod0.scm" &&
+                              flags[0].spec.shader_name == "RallyPoint" &&
+                              std::abs(flags[0].spec.position.x - rally_at.x) < 0.01f &&
+                              std::abs(flags[0].spec.position.z - rally_at.z) < 0.01f;
+        lua_ok("Test 10b5: select the commander again", "SelectUnits({__osc_rally_acu})");
+        pump_frames(2);
+        const size_t after = shown().size();
+        if (at_rally && after == 0) {
+            spdlog::info("[PASS] Test 10b5: a selected factory's rally flag shows at its rally");
+        } else {
+            osc::test_status::fail(
+                "[FAIL] Test 10b5: rally flags {} (at {:.1f}, {:.1f}; rally {:.1f}, {:.1f}), {} "
+                "once deselected",
+                flags.size(), flags.empty() ? 0.0f : flags[0].spec.position.x,
+                flags.empty() ? 0.0f : flags[0].spec.position.z, rally_at.x, rally_at.z, after);
+        }
+    }
+    sim_lua("__osc_ui_rally:Destroy()");
     play(2);
 
     // Test 10b4: retail's CreateBuildTemplate (its key, build_templates.lua)

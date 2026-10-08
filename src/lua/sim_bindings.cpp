@@ -1602,6 +1602,14 @@ static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
     }
 }
 
+// Moho's Unit constructor (faf-re Unit.cpp): a factory's initial rally
+// (BuilderSetUpInitialRally) after its weapons, before OnCreate.
+static void set_up_initial_rally(sim::SimState& sim, u32 id) {
+    if (auto* unit = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
+        unit->validated_rally_orders(sim.lua_state(), &sim);
+    }
+}
+
 /// CreateUnit(blueprintId, army, x, y, z, qx, qy, qz, qw, layer)
 /// CreateUnit and CreateUnitHPR: a complete unit at (x, y, z) facing
 /// `orientation`, its script told as retail's are (OnPreCreate, OnCreate,
@@ -1669,6 +1677,7 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     }
 
     create_unit_weapons(L, tbl, "Unit");
+    set_up_initial_rally(sim, id);
 
     // OnCreate
     lua_pushstring(L, "OnCreate");
@@ -1803,6 +1812,9 @@ static int l_create_building_unit(lua_State* L) {
     }
 
     create_unit_weapons(L, tbl, "Building");
+    if (auto* sim = get_sim(L)) {
+        set_up_initial_rally(*sim, id);
+    }
 
     // OnCreate
     lua_pushstring(L, "OnCreate");
