@@ -89,7 +89,7 @@ What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`do
 - **Needs a person:** a listening pass of the audio; comparison with the original game's look (no reference captures exist here); the hardware cursor on a real display; Steam and the Steam Deck; external testers.
 - **Multiplayer:** peers are not authenticated; two players dropping at once can leave the survivors disagreeing; FAF's ICE adapter and client are tested only through stand-ins.
 - **Lobby options:** difficulty cheat multipliers are applied by FA's AI scripts, not the engine; `PrebuiltUnits` needs map data.
-- **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()` is down from 756 lines to 143: the frame's CPU updates and each pass (normals, reflection, the scene, the screen's layers, submission) are their own functions. `build_scene`, `init` and `create_pipelines` are still large.
+- **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()` is down from 756 lines to 143: the frame's CPU updates and each pass (normals, reflection, the scene, the screen's layers, submission) are their own functions. `build_scene` is down from 393 to 108: its bone descriptors, terrain strata set, fog texture, normal maps and map decals are their own functions. `init` and `create_pipelines` are still large.
 
 ## Game modes and victory
 
