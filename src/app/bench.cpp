@@ -2,6 +2,7 @@
 
 #include "core/version.hpp"
 #include "platform/system_info.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
 
@@ -87,6 +88,14 @@ bool BenchRecorder::write(const sim::SimState& sim) const {
     sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
         if (!e.destroyed()) ++units;
     });
+    // The path searches' work (Moho pathing's army queues; none without it)
+    u64 searches = 0;
+    u64 expansions = 0;
+    for (size_t i = 0; i < sim.army_count(); ++i)
+        if (const sim::ArmyBrain* army = sim.army_at(i)) {
+            searches += army->path_queue().searches_done();
+            expansions += army->path_queue().expansions_done();
+        }
     const double load_s =
         tick_ms_.empty() ? 0.0 : std::chrono::duration<double>(first_tick_ - created_).count();
 
@@ -108,7 +117,10 @@ bool BenchRecorder::write(const sim::SimState& sim) const {
          {{"tick", sim.tick_count()},
           {"checksum", fmt::format("{:08x}", sim.compute_sync_checksum())},
           {"entities", sim.entity_registry().count()},
-          {"units", units}}},
+          {"units", units},
+          {"moho_pathing", sim.moho_pathing()},
+          {"path_searches", searches},
+          {"path_expansions", expansions}}},
         {"peak_memory_mb", static_cast<double>(platform::peak_memory_bytes()) / (1024.0 * 1024.0)},
     };
     std::ofstream out(path_, std::ios::binary | std::ios::trunc);
