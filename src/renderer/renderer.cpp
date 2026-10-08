@@ -1448,29 +1448,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // cache is up.
     bind_mesh_environment(terrain->environment());
 
-    // Create bone SSBO descriptor pool and per-frame sets
-    if (unit_renderer_.bone_ssbo_buffer(0) && bone_ds_layout_) {
-        VkDescriptorPoolSize pool_size{};
-        pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pool_size.descriptorCount = FRAMES_IN_FLIGHT;
-
-        VkDescriptorPoolCreateInfo pool_ci{};
-        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets = FRAMES_IN_FLIGHT;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes = &pool_size;
-        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bone_ds_pool_));
-
-        for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-            VkDescriptorSetAllocateInfo alloc_info{};
-            alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            alloc_info.descriptorPool = bone_ds_pool_;
-            alloc_info.descriptorSetCount = 1;
-            alloc_info.pSetLayouts = &bone_ds_layout_;
-            VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &bone_ds_[i]));
-            write_bone_descriptor(i);
-        }
-    }
+    // Bone SSBO descriptor pool and per-frame sets
+    create_bone_descriptors();
 
     // FA's water: its quad, water map, Fresnel table and textures (M213a),
     // before the terrain, which is tinted under it by the water map.
@@ -1484,240 +1463,109 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     const TerrainNormalMaps normal_maps = terrain_normal_maps(*terrain);
 
     // Load terrain stratum textures and create terrain descriptor set
-    // Requires texture_cache_ to be initialized (needs VFS for albedo textures)
-    if (terrain_tex_ds_layout_ && !terrain->strata().empty() &&
-        texture_cache_.fallback_view()) {
-        // Store map dimensions and strata scales
-        terrain_map_width_ = static_cast<f32>(terrain->map_width());
-        terrain_map_height_ = static_cast<f32>(terrain->map_height());
-        auto& strata = terrain->strata();
-        // Strata 0-8 blend by the masks; stratum 9 (the upper) lies over
-        // them by its own alpha.
-        for (size_t i = 0; i < strata.size() && i < 10; i++) {
-            spdlog::info("Terrain stratum {}: albedo='{}' ({:.1f}) normal='{}' ({:.1f})", i,
-                         strata[i].albedo_path, strata[i].albedo_scale, strata[i].normal_path,
-                         strata[i].normal_scale);
-        }
-        create_terrain_strata_ubo(strata, normal_maps.tile_width, normal_maps.tile_height);
-
-        // Collect 20 image views:
-        // [blend0, blend1, stratum0..8 albedo, stratum0..8 normal]
-        std::array<VkImageView, 20> views{};
-
-        // Blend maps from embedded DDS
-        VkImageView white_view = texture_cache_.fallback_view();
-        VkImageView zero_view = texture_cache_.zero_fallback_view();
-        VkImageView normal_fb_view = texture_cache_.normal_fallback_view();
-
-        // A stratum with no albedo texture must have no influence. FA ignores
-        // such strata, and maps rely on it: SCMP_009 stores a copy of blend0
-        // as blend1 while strata 5-8 are empty, which painted most of the
-        // terrain in the black placeholder. Zero those weight channels.
-        auto masked_blend = [&](const std::vector<char>& dds, size_t first_stratum) {
-            std::vector<char> copy = dds;
-            bool unused[4];
-            for (size_t c = 0; c < 4; ++c) {
-                const size_t s = first_stratum + c;
-                unused[c] = s >= strata.size() || strata[s].albedo_path.empty();
-            }
-            zero_dds_channels(copy, unused);
-            return copy;
-        };
-        auto* blend0 = terrain->blend_dds_0().empty() ? nullptr
-            : texture_cache_.get_raw("__terrain_blend0",
-                                     masked_blend(terrain->blend_dds_0(), 1));
-        auto* blend1 = terrain->blend_dds_1().empty() ? nullptr
-            : texture_cache_.get_raw("__terrain_blend1",
-                                     masked_blend(terrain->blend_dds_1(), 5));
-
-        views[0] = blend0 ? blend0->image.view : zero_view;  // black = no blending
-        views[1] = blend1 ? blend1->image.view : zero_view;
-
-        spdlog::info("Terrain blend maps: blend0={} ({}B), blend1={} ({}B), map={}x{}",
-                     blend0 ? "OK" : "NONE", terrain->blend_dds_0().size(),
-                     blend1 ? "OK" : "NONE", terrain->blend_dds_1().size(),
-                     terrain->map_width(), terrain->map_height());
-
-        // Stratum albedo textures (0-8) at bindings 2-10
-        // Empty strata use black (zero) so blend weights don't add white.
-        // The set is written once, so the textures must be loaded now: an
-        // async get() of a first load returned nothing, and the terrain kept
-        // the white fallback all game.
-        for (size_t i = 0; i < 9; i++) {
-            if (i < strata.size() && !strata[i].albedo_path.empty()) {
-                auto* tex = texture_cache_.get_blocking(strata[i].albedo_path);
-                views[2 + i] = tex ? tex->image.view : white_view;
-            } else {
-                views[2 + i] = zero_view; // black = no color contribution
-            }
-        }
-
-        // Stratum normal map textures (0-8) at bindings 11-19
-        for (size_t i = 0; i < 9; i++) {
-            if (i < strata.size() && !strata[i].normal_path.empty()) {
-                auto* tex = texture_cache_.get_blocking(strata[i].normal_path);
-                views[11 + i] = tex ? tex->image.view : normal_fb_view;
-            } else {
-                views[11 + i] = normal_fb_view;
-            }
-        }
-
-        // Create descriptor pool and set
-        std::array<VkDescriptorPoolSize, 2> pool_sizes{};
-        pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_sizes[0].descriptorCount = 26;
-        pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        pool_sizes[1].descriptorCount = 1;
-
-        VkDescriptorPoolCreateInfo pool_ci{};
-        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets = 1;
-        pool_ci.poolSizeCount = static_cast<u32>(pool_sizes.size());
-        pool_ci.pPoolSizes = pool_sizes.data();
-        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr,
-                                &terrain_tex_ds_pool_));
-
-        VkDescriptorSetAllocateInfo alloc_info{};
-        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        alloc_info.descriptorPool = terrain_tex_ds_pool_;
-        alloc_info.descriptorSetCount = 1;
-        alloc_info.pSetLayouts = &terrain_tex_ds_layout_;
-        VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &terrain_tex_ds_));
-
-        // Write all 20 image descriptors
-        std::array<VkDescriptorImageInfo, 20> img_infos{};
-        std::array<VkWriteDescriptorSet, 20> writes{};
-        for (u32 i = 0; i < 20; i++) {
-            img_infos[i].sampler = texture_sampler_;
-            img_infos[i].imageView = views[i];
-            img_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = terrain_tex_ds_;
-            writes[i].dstBinding = i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType =
-                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[i].pImageInfo = &img_infos[i];
-        }
-        vkc::update_descriptor_sets(device_, 20, writes.data(), 0, nullptr);
-
-        // The upper stratum (binding 22); without one, a transparent texel
-        // leaves the strata below as they are.
-        {
-            const GPUTexture* upper = strata.size() > 9 && !strata[9].albedo_path.empty()
-                                          ? texture_cache_.get_blocking(strata[9].albedo_path)
-                                          : nullptr;
-            VkDescriptorImageInfo upper_info{};
-            upper_info.sampler = texture_sampler_;
-            upper_info.imageView = upper ? upper->image.view : zero_view;
-            upper_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            VkDescriptorBufferInfo strata_info{};
-            strata_info.buffer = terrain_strata_ubo_.buffer;
-            strata_info.offset = 0;
-            strata_info.range = sizeof(TerrainStrataData);
-
-            // Under the water, the map's water ramp by the water map's depth
-            // (ApplyWaterColor; M213a); a map without water has neither.
-            const bool wet = water_renderer_.has_water();
-            VkDescriptorImageInfo ramp_info{};
-            ramp_info.sampler = water_renderer_.clamp_sampler();
-            ramp_info.imageView = wet ? water_renderer_.ramp_view() : zero_view;
-            ramp_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            VkDescriptorImageInfo depth_info = ramp_info;
-            depth_info.imageView = wet ? water_renderer_.water_map_view() : zero_view;
-
-            std::array<VkWriteDescriptorSet, 4> more{};
-            more[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            more[2].dstSet = terrain_tex_ds_;
-            more[2].dstBinding = 24;
-            more[2].descriptorCount = 1;
-            more[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            more[2].pImageInfo = &ramp_info;
-            more[3] = more[2];
-            more[3].dstBinding = 25;
-            more[3].pImageInfo = &depth_info;
-            more[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            more[0].dstSet = terrain_tex_ds_;
-            more[0].dstBinding = 22;
-            more[0].descriptorCount = 1;
-            more[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            more[0].pImageInfo = &upper_info;
-            more[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            more[1].dstSet = terrain_tex_ds_;
-            more[1].dstBinding = kTerrainStrataBinding;
-            more[1].descriptorCount = 1;
-            more[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            more[1].pBufferInfo = &strata_info;
-            vkc::update_descriptor_sets(device_, static_cast<u32>(more.size()), more.data(), 0,
-                                        nullptr);
-        }
-
-        spdlog::info("Terrain textures: {} strata loaded, blend0={}, blend1={}",
-                     strata.size(),
-                     blend0 ? "OK" : "fallback",
-                     blend1 ? "OK" : "fallback");
-    }
-
+    bind_terrain_strata(*terrain, normal_maps);
 
     // Init fog of war texture: a texel per cell of the vision grid
-    {
-        const u32 cell = map::intel_cell_size(map::IntelLayer::Vision);
-        const u32 fog_w = std::max<u32>(static_cast<u32>(terrain->map_width()) / cell, 1);
-        const u32 fog_h = std::max<u32>(static_cast<u32>(terrain->map_height()) / cell, 1);
-        fog_renderer_.init(fog_w, fog_h, device_, allocator_, cmd_pool_,
-                           graphics_queue_);
-
-        // Write fog texture to terrain descriptor set binding 20
-        if (fog_renderer_.initialized() && terrain_tex_ds_) {
-            VkDescriptorImageInfo fog_info{};
-            fog_info.sampler = fog_renderer_.sampler();
-            fog_info.imageView = fog_renderer_.image_view();
-            fog_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-            VkWriteDescriptorSet fog_write{};
-            fog_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            fog_write.dstSet = terrain_tex_ds_;
-            fog_write.dstBinding = 20;
-            fog_write.descriptorCount = 1;
-            fog_write.descriptorType =
-                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            fog_write.pImageInfo = &fog_info;
-            vkc::update_descriptor_sets(device_, 1, &fog_write, 0, nullptr);
-        }
-    }
+    init_fog_texture(*terrain);
 
     // The map's normal maps (M212e; binding 21), which the normal pass's
     // basis samples, and the normal target it draws (binding 26).
-    if (terrain_tex_ds_) {
-        const GPUTexture* maps =
-            normal_maps.dds.empty()
-                ? texture_cache_.upload_rgba("__terrain_normal_maps", normal_maps.rgba.data(),
-                                             normal_maps.width, normal_maps.height)
-                : texture_cache_.get_raw("__terrain_normal_maps", normal_maps.dds);
-        VkDescriptorImageInfo info{};
-        info.sampler = water_renderer_.clamp_sampler();
-        info.imageView = maps ? maps->image.view : texture_cache_.normal_fallback_view();
-        info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = terrain_tex_ds_;
-        write.dstBinding = 21;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &info;
-        vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
-        bind_normal_target();
-        spdlog::info("Normal maps: {}x{} in tiles of {}x{}{}", normal_maps.width,
-                     normal_maps.height, normal_maps.tile_width, normal_maps.tile_height,
-                     normal_maps.dds.empty() ? " (made from the heights)" : "");
-    }
+    bind_terrain_normal_maps(normal_maps);
 
-    // The map's lit decals (M212b): each the terrain's triangles under its
-    // footprint, projected by its texture matrix (CWldTerrainDecal::Update).
-    if (!terrain->decals().empty() && decal_pipeline_) {
+    // The map's lit decals (M212b) and retail's decal mask (M212c).
+    load_map_decals(*terrain);
+
+    // Build minimap terrain texture
+    minimap_renderer_.build_terrain_texture(*terrain, texture_cache_);
+
+    // Build strategic icon atlas
+    strategic_icon_renderer_.build_atlas(texture_cache_);
+
+    // The view's size before the reset: the farthest zoom takes its aspect
+    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+    camera_.init(static_cast<f32>(terrain->map_width()),
+                 static_cast<f32>(terrain->map_height()));
+
+    spdlog::info("Scene built");
+}
+
+void Renderer::create_bone_descriptors() {
+    if (!unit_renderer_.bone_ssbo_buffer(0) || !bone_ds_layout_) return;
+    VkDescriptorPoolSize pool_size{};
+    pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    pool_size.descriptorCount = FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo pool_ci{};
+    pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_ci.maxSets = FRAMES_IN_FLIGHT;
+    pool_ci.poolSizeCount = 1;
+    pool_ci.pPoolSizes = &pool_size;
+    VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bone_ds_pool_));
+
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = bone_ds_pool_;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &bone_ds_layout_;
+        VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &bone_ds_[i]));
+        write_bone_descriptor(i);
+    }
+}
+
+void Renderer::init_fog_texture(const map::Terrain& terrain) {
+    const u32 cell = map::intel_cell_size(map::IntelLayer::Vision);
+    const u32 fog_w = std::max<u32>(static_cast<u32>(terrain.map_width()) / cell, 1);
+    const u32 fog_h = std::max<u32>(static_cast<u32>(terrain.map_height()) / cell, 1);
+    fog_renderer_.init(fog_w, fog_h, device_, allocator_, cmd_pool_, graphics_queue_);
+
+    // Write fog texture to terrain descriptor set binding 20
+    if (fog_renderer_.initialized() && terrain_tex_ds_) {
+        VkDescriptorImageInfo fog_info{};
+        fog_info.sampler = fog_renderer_.sampler();
+        fog_info.imageView = fog_renderer_.image_view();
+        fog_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet fog_write{};
+        fog_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        fog_write.dstSet = terrain_tex_ds_;
+        fog_write.dstBinding = 20;
+        fog_write.descriptorCount = 1;
+        fog_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        fog_write.pImageInfo = &fog_info;
+        vkc::update_descriptor_sets(device_, 1, &fog_write, 0, nullptr);
+    }
+}
+
+void Renderer::bind_terrain_normal_maps(const TerrainNormalMaps& normal_maps) {
+    if (!terrain_tex_ds_) return;
+    const GPUTexture* maps =
+        normal_maps.dds.empty()
+            ? texture_cache_.upload_rgba("__terrain_normal_maps", normal_maps.rgba.data(),
+                                         normal_maps.width, normal_maps.height)
+            : texture_cache_.get_raw("__terrain_normal_maps", normal_maps.dds);
+    VkDescriptorImageInfo info{};
+    info.sampler = water_renderer_.clamp_sampler();
+    info.imageView = maps ? maps->image.view : texture_cache_.normal_fallback_view();
+    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = terrain_tex_ds_;
+    write.dstBinding = 21;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &info;
+    vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
+    bind_normal_target();
+    spdlog::info("Normal maps: {}x{} in tiles of {}x{}{}", normal_maps.width, normal_maps.height,
+                 normal_maps.tile_width, normal_maps.tile_height,
+                 normal_maps.dds.empty() ? " (made from the heights)" : "");
+}
+
+void Renderer::load_map_decals(const map::Terrain& terrain) {
+    if (!terrain.decals().empty() && decal_pipeline_) {
         std::vector<u32> indices;
-        for (const map::DecalInfo& d : terrain->decals()) {
+        for (const map::DecalInfo& d : terrain.decals()) {
             const std::optional<DecalTechnique> technique = decal_technique(d.type);
             if (!technique) continue; // Water Mask and Water Normals: never drawn
             if (d.scale_x == 0.0f || d.scale_y == 0.0f || d.scale_z == 0.0f) continue;
@@ -1759,19 +1607,193 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         const GPUTexture* mask = texture_cache_.get_blocking("/textures/engine/decalMask.dds");
         decal_mask_ds_ = mask ? mask->descriptor_set : texture_cache_.fallback_descriptor();
     }
+}
 
-    // Build minimap terrain texture
-    minimap_renderer_.build_terrain_texture(*terrain, texture_cache_);
+void Renderer::bind_terrain_strata(const map::Terrain& terrain,
+                                   const TerrainNormalMaps& normal_maps) {
+    if (!terrain_tex_ds_layout_ || terrain.strata().empty() || !texture_cache_.fallback_view())
+        return;
+    // Store map dimensions and strata scales
+    terrain_map_width_ = static_cast<f32>(terrain.map_width());
+    terrain_map_height_ = static_cast<f32>(terrain.map_height());
+    auto& strata = terrain.strata();
+    // Strata 0-8 blend by the masks; stratum 9 (the upper) lies over
+    // them by its own alpha.
+    for (size_t i = 0; i < strata.size() && i < 10; i++) {
+        spdlog::info("Terrain stratum {}: albedo='{}' ({:.1f}) normal='{}' ({:.1f})", i,
+                     strata[i].albedo_path, strata[i].albedo_scale, strata[i].normal_path,
+                     strata[i].normal_scale);
+    }
+    create_terrain_strata_ubo(strata, normal_maps.tile_width, normal_maps.tile_height);
 
-    // Build strategic icon atlas
-    strategic_icon_renderer_.build_atlas(texture_cache_);
+    const TerrainStrataViews strata_views = terrain_strata_views(terrain);
+    const auto& views = strata_views.views;
+    const bool blend0 = strata_views.blend0;
+    const bool blend1 = strata_views.blend1;
+    VkImageView zero_view = texture_cache_.zero_fallback_view();
 
-    // The view's size before the reset: the farthest zoom takes its aspect
-    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
-    camera_.init(static_cast<f32>(terrain->map_width()),
-                 static_cast<f32>(terrain->map_height()));
+    // Create descriptor pool and set
+    std::array<VkDescriptorPoolSize, 2> pool_sizes{};
+    pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pool_sizes[0].descriptorCount = 26;
+    pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    pool_sizes[1].descriptorCount = 1;
 
-    spdlog::info("Scene built");
+    VkDescriptorPoolCreateInfo pool_ci{};
+    pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_ci.maxSets = 1;
+    pool_ci.poolSizeCount = static_cast<u32>(pool_sizes.size());
+    pool_ci.pPoolSizes = pool_sizes.data();
+    VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &terrain_tex_ds_pool_));
+
+    VkDescriptorSetAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool = terrain_tex_ds_pool_;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts = &terrain_tex_ds_layout_;
+    VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &terrain_tex_ds_));
+
+    // Write all 20 image descriptors
+    std::array<VkDescriptorImageInfo, 20> img_infos{};
+    std::array<VkWriteDescriptorSet, 20> writes{};
+    for (u32 i = 0; i < 20; i++) {
+        img_infos[i].sampler = texture_sampler_;
+        img_infos[i].imageView = views[i];
+        img_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = terrain_tex_ds_;
+        writes[i].dstBinding = i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].pImageInfo = &img_infos[i];
+    }
+    vkc::update_descriptor_sets(device_, 20, writes.data(), 0, nullptr);
+
+    // The upper stratum (binding 22); without one, a transparent texel
+    // leaves the strata below as they are.
+    {
+        const GPUTexture* upper = strata.size() > 9 && !strata[9].albedo_path.empty()
+                                      ? texture_cache_.get_blocking(strata[9].albedo_path)
+                                      : nullptr;
+        VkDescriptorImageInfo upper_info{};
+        upper_info.sampler = texture_sampler_;
+        upper_info.imageView = upper ? upper->image.view : zero_view;
+        upper_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorBufferInfo strata_info{};
+        strata_info.buffer = terrain_strata_ubo_.buffer;
+        strata_info.offset = 0;
+        strata_info.range = sizeof(TerrainStrataData);
+
+        // Under the water, the map's water ramp by the water map's depth
+        // (ApplyWaterColor; M213a); a map without water has neither.
+        const bool wet = water_renderer_.has_water();
+        VkDescriptorImageInfo ramp_info{};
+        ramp_info.sampler = water_renderer_.clamp_sampler();
+        ramp_info.imageView = wet ? water_renderer_.ramp_view() : zero_view;
+        ramp_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorImageInfo depth_info = ramp_info;
+        depth_info.imageView = wet ? water_renderer_.water_map_view() : zero_view;
+
+        std::array<VkWriteDescriptorSet, 4> more{};
+        more[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        more[2].dstSet = terrain_tex_ds_;
+        more[2].dstBinding = 24;
+        more[2].descriptorCount = 1;
+        more[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        more[2].pImageInfo = &ramp_info;
+        more[3] = more[2];
+        more[3].dstBinding = 25;
+        more[3].pImageInfo = &depth_info;
+        more[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        more[0].dstSet = terrain_tex_ds_;
+        more[0].dstBinding = 22;
+        more[0].descriptorCount = 1;
+        more[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        more[0].pImageInfo = &upper_info;
+        more[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        more[1].dstSet = terrain_tex_ds_;
+        more[1].dstBinding = kTerrainStrataBinding;
+        more[1].descriptorCount = 1;
+        more[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        more[1].pBufferInfo = &strata_info;
+        vkc::update_descriptor_sets(device_, static_cast<u32>(more.size()), more.data(), 0,
+                                    nullptr);
+    }
+
+    spdlog::info("Terrain textures: {} strata loaded, blend0={}, blend1={}", strata.size(),
+                 blend0 ? "OK" : "fallback", blend1 ? "OK" : "fallback");
+}
+
+Renderer::TerrainStrataViews Renderer::terrain_strata_views(const map::Terrain& terrain) {
+    TerrainStrataViews out;
+    auto& strata = terrain.strata();
+    // Collect 20 image views:
+    // [blend0, blend1, stratum0..8 albedo, stratum0..8 normal]
+    std::array<VkImageView, 20> views{};
+
+    // Blend maps from embedded DDS
+    VkImageView white_view = texture_cache_.fallback_view();
+    VkImageView zero_view = texture_cache_.zero_fallback_view();
+    VkImageView normal_fb_view = texture_cache_.normal_fallback_view();
+
+    // A stratum with no albedo texture must have no influence. FA ignores
+    // such strata, and maps rely on it: SCMP_009 stores a copy of blend0
+    // as blend1 while strata 5-8 are empty, which painted most of the
+    // terrain in the black placeholder. Zero those weight channels.
+    auto masked_blend = [&](const std::vector<char>& dds, size_t first_stratum) {
+        std::vector<char> copy = dds;
+        bool unused[4];
+        for (size_t c = 0; c < 4; ++c) {
+            const size_t s = first_stratum + c;
+            unused[c] = s >= strata.size() || strata[s].albedo_path.empty();
+        }
+        zero_dds_channels(copy, unused);
+        return copy;
+    };
+    auto* blend0 =
+        terrain.blend_dds_0().empty()
+            ? nullptr
+            : texture_cache_.get_raw("__terrain_blend0", masked_blend(terrain.blend_dds_0(), 1));
+    auto* blend1 =
+        terrain.blend_dds_1().empty()
+            ? nullptr
+            : texture_cache_.get_raw("__terrain_blend1", masked_blend(terrain.blend_dds_1(), 5));
+
+    views[0] = blend0 ? blend0->image.view : zero_view; // black = no blending
+    views[1] = blend1 ? blend1->image.view : zero_view;
+
+    spdlog::info("Terrain blend maps: blend0={} ({}B), blend1={} ({}B), map={}x{}",
+                 blend0 ? "OK" : "NONE", terrain.blend_dds_0().size(), blend1 ? "OK" : "NONE",
+                 terrain.blend_dds_1().size(), terrain.map_width(), terrain.map_height());
+
+    // Stratum albedo textures (0-8) at bindings 2-10
+    // Empty strata use black (zero) so blend weights don't add white.
+    // The set is written once, so the textures must be loaded now: an
+    // async get() of a first load returned nothing, and the terrain kept
+    // the white fallback all game.
+    for (size_t i = 0; i < 9; i++) {
+        if (i < strata.size() && !strata[i].albedo_path.empty()) {
+            auto* tex = texture_cache_.get_blocking(strata[i].albedo_path);
+            views[2 + i] = tex ? tex->image.view : white_view;
+        } else {
+            views[2 + i] = zero_view; // black = no color contribution
+        }
+    }
+
+    // Stratum normal map textures (0-8) at bindings 11-19
+    for (size_t i = 0; i < 9; i++) {
+        if (i < strata.size() && !strata[i].normal_path.empty()) {
+            auto* tex = texture_cache_.get_blocking(strata[i].normal_path);
+            views[11 + i] = tex ? tex->image.view : normal_fb_view;
+        } else {
+            views[11 + i] = normal_fb_view;
+        }
+    }
+    out.views = views;
+    out.blend0 = blend0 != nullptr;
+    out.blend1 = blend1 != nullptr;
+    return out;
 }
 
 void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
