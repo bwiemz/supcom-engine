@@ -18,7 +18,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <set>
+#include <map>
 
 namespace osc::renderer {
 
@@ -251,17 +251,44 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
     return paths;
 }
 
-std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
-                                                  u32 highlight, u32 hovered_unit) {
-    std::vector<CommandGraphNode> nodes;
-    std::vector<Vector3> sums;
-    std::vector<u32> counts;
-    std::vector<std::set<u64>> ins;
-    std::vector<std::set<u64>> outs;
-    std::unordered_map<u64, size_t> index;
+CommandGraph command_graph(const std::vector<CommandGraphPath>& paths, u32 highlight,
+                           u32 hovered_unit) {
+    struct Point {
+        Vector3 sum{0, 0, 0};
+        f32 weight = 0;
+        size_t node = SIZE_MAX;
+        std::vector<size_t> ins;
+        std::vector<size_t> outs;
+    };
+    CommandGraph graph;
+    std::vector<Point> points;
+    std::unordered_map<u64, size_t> point_of;
+    std::map<std::pair<size_t, size_t>, size_t> edge_of;
+    std::vector<std::pair<size_t, size_t>> ends;
+    std::vector<u32> touches;
+    const auto point = [&](u64 key) {
+        const auto [it, fresh] = point_of.emplace(key, points.size());
+        if (fresh) {
+            points.emplace_back();
+        }
+        return it->second;
+    };
+    const auto link = [&](size_t from, size_t to) {
+        const auto [it, fresh] = edge_of.emplace(std::pair{from, to}, ends.size());
+        if (fresh) {
+            ends.emplace_back(from, to);
+            touches.push_back(0);
+            points[from].outs.push_back(it->second);
+            points[to].ins.push_back(it->second);
+        }
+        ++touches[it->second];
+    };
     u64 unnumbered = 0;
     for (const CommandGraphPath& path : paths) {
-        std::vector<u64> keys = {(u64{2} << 32) | path.unit->id};
+        if (path.legs.empty()) {
+            continue;
+        }
+        std::vector<u64> keys;
         std::unordered_map<size_t, u64> key_of_leg;
         for (size_t i = 0; i < path.legs.size(); ++i) {
             const CommandGraphPath::Leg& leg = path.legs[i];
@@ -273,39 +300,56 @@ std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraph
                 leg.order.command_id != 0 ? leg.order.command_id : (u64{1} << 32) | ++unnumbered;
             keys.push_back(key);
             key_of_leg[leg.index] = key;
-            const auto [it, fresh] = index.emplace(key, nodes.size());
-            if (fresh) {
+            Point& p = points[point(key)];
+            if (p.node == SIZE_MAX) {
+                p.node = graph.nodes.size();
                 CommandGraphNode node;
                 node.order = leg.order;
                 node.style = leg.style;
-                nodes.push_back(std::move(node));
-                sums.push_back({0, 0, 0});
-                counts.push_back(0);
-                ins.emplace_back();
-                outs.emplace_back();
+                graph.nodes.push_back(std::move(node));
             }
-            const size_t n = it->second;
-            sums[n] = add(sums[n], path.chain[i + 1]);
-            ++counts[n];
-            if (nodes[n].units.empty() || nodes[n].units.back() != path.unit->id) {
-                nodes[n].units.push_back(path.unit->id);
+            p.sum = add(p.sum, path.chain[i + 1]);
+            p.weight += 1.0f;
+            CommandGraphNode& node = graph.nodes[p.node];
+            if (node.units.empty() || node.units.back() != path.unit->id) {
+                node.units.push_back(path.unit->id);
             }
-            nodes[n].chosen = nodes[n].chosen || path.chosen;
+            node.chosen = node.chosen || path.chosen;
         }
-        for (size_t k = 0; k + 1 < keys.size(); ++k) {
-            if (const auto to = index.find(keys[k + 1]); to != index.end()) {
-                ins[to->second].insert(keys[k]);
-            }
-            if (const auto from = index.find(keys[k]); from != index.end()) {
-                outs[from->second].insert(keys[k + 1]);
-            }
+        size_t from = point((u64{2} << 32) ^ keys.front());
+        points[from].sum = add(points[from].sum, path.chain.front());
+        points[from].weight += 1.0f;
+        for (const u64 key : keys) {
+            const size_t to = point_of.at(key);
+            link(from, to);
+            from = to;
         }
     }
-    for (size_t n = 0; n < nodes.size(); ++n) {
-        nodes[n].position = scale(sums[n], 1.0f / static_cast<f32>(counts[n]));
-        const size_t lanes = std::max<size_t>({ins[n].size(), outs[n].size(), 1});
-        nodes[n].unit_scale = std::sqrt(static_cast<f32>(lanes));
-        CommandGraphNode& node = nodes[n];
+    std::vector<Vector3> at(points.size());
+    for (size_t p = 0; p < points.size(); ++p) {
+        at[p] = scale(points[p].sum, 1.0f / points[p].weight);
+    }
+    const auto unit = [](const Vector3& v) {
+        const f32 len = length(v);
+        return len > 0.0f ? scale(v, 1.0f / len) : v;
+    };
+    std::vector<Vector3> tangent(points.size());
+    for (size_t p = 0; p < points.size(); ++p) {
+        Vector3 t{0, 0, 0};
+        for (const size_t e : points[p].ins) {
+            t = add(t, unit(sub(at[p], at[ends[e].first])));
+        }
+        for (const size_t e : points[p].outs) {
+            t = add(t, unit(sub(at[ends[e].second], at[p])));
+        }
+        tangent[p] = length(t) <= 1e-6f ? Vector3{0, 0, 0} : unit(t);
+        if (points[p].node == SIZE_MAX) {
+            continue;
+        }
+        CommandGraphNode& node = graph.nodes[points[p].node];
+        node.position = at[p];
+        const size_t lanes = std::max<size_t>({points[p].ins.size(), points[p].outs.size(), 1});
+        node.unit_scale = std::sqrt(static_cast<f32>(lanes));
         node.highlighted = (highlight != 0 && node.order.command_id == highlight) ||
                            (hovered_unit != 0 && std::find(node.units.begin(), node.units.end(),
                                                            hovered_unit) != node.units.end());
@@ -318,7 +362,19 @@ std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraph
             node.scale = node.chosen ? s.waypoint_selected_scale : s.waypoint_scale;
         }
     }
-    return nodes;
+    for (size_t e = 0; e < ends.size(); ++e) {
+        const auto [from, to] = ends[e];
+        const CommandGraphNode& node = graph.nodes[points[to].node];
+        graph.edges.push_back(
+            {at[from], at[to], tangent[from], tangent[to], touches[e], node.order.type, node.style,
+             node.chosen ? node.style->line_selected_color : node.style->line_color});
+    }
+    return graph;
+}
+
+std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
+                                                  u32 highlight, u32 hovered_unit) {
+    return command_graph(paths, highlight, hovered_unit).nodes;
 }
 
 std::vector<WaypointOnScreen> waypoints_on_screen(const std::vector<CommandGraphNode>& nodes,
@@ -420,31 +476,18 @@ std::string command_graph_key(sim::CommandType type) {
     }
 }
 
-std::vector<Vector3> command_curve(const std::vector<Vector3>& chain, size_t leg, u32 segments,
-                                   f32 width, f32 smoothness) {
+std::vector<Vector3> command_curve(const Vector3& a, const Vector3& b, const Vector3& ta,
+                                   const Vector3& tb, u32 segments, f32 width, f32 smoothness) {
     std::vector<Vector3> out;
-    if (leg + 1 >= chain.size() || segments == 0) return out;
-    const auto unit = [](const Vector3& v) {
-        const f32 len = length(v);
-        return len > 1e-6f ? scale(v, 1.0f / len) : Vector3{0, 0, 0};
-    };
-    const auto tangent = [&](size_t i) {
-        Vector3 t{0, 0, 0};
-        if (i > 0) t = add(t, unit(sub(chain[i], chain[i - 1])));
-        if (i + 1 < chain.size()) t = add(t, unit(sub(chain[i + 1], chain[i])));
-        return length(t) < 1e-4f ? Vector3{0, 0, 0} : unit(t);
-    };
-    const Vector3& a = chain[leg];
-    const Vector3& b = chain[leg + 1];
+    if (segments == 0) {
+        return out;
+    }
     const Vector3 d = sub(b, a);
-    const Vector3 dir = unit(d);
-    Vector3 ta = tangent(leg);
-    Vector3 tb = tangent(leg + 1);
-    if (length(ta) < 1e-4f) ta = dir;
-    if (length(tb) < 1e-4f) tb = dir;
-    const f32 m = std::min(0.25f * length(d), smoothness * width);
-    ta = scale(ta, m);
-    tb = scale(tb, m);
+    const f32 len = length(d);
+    const Vector3 dir = len > 1e-6f ? scale(d, 1.0f / len) : Vector3{0, 0, 0};
+    const f32 m = std::min(0.25f * len, smoothness * width);
+    const Vector3 sa = scale(length(ta) < 1e-4f ? dir : ta, m);
+    const Vector3 sb = scale(length(tb) < 1e-4f ? dir : tb, m);
     out.reserve(segments + 1);
     for (u32 k = 0; k <= segments; ++k) {
         const f32 t = static_cast<f32>(k) / static_cast<f32>(segments);
@@ -454,7 +497,7 @@ std::vector<Vector3> command_curve(const std::vector<Vector3>& chain, size_t leg
         const f32 h10 = t3 - 2 * t2 + t;
         const f32 h01 = -2 * t3 + 3 * t2;
         const f32 h11 = t3 - t2;
-        out.push_back(add(add(scale(a, h00), scale(ta, h10)), add(scale(b, h01), scale(tb, h11))));
+        out.push_back(add(add(scale(a, h00), scale(sa, h10)), add(scale(b, h01), scale(sb, h11))));
     }
     return out;
 }
@@ -577,70 +620,75 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     if (preview_ != 0) {
         preview_paths(paths, preview_, preview_at_);
     }
+    const CommandGraph graph = command_graph(paths, highlight_, hovered_unit_);
+    for (const CommandGraphEdge& edge : graph.edges) {
+        const CommandGraphStyle* s = edge.style;
+        if (lines.size() + kCurveSegments + 1 > MAX_QUADS) {
+            break;
+        }
+        const GPUTexture* line_tex =
+            s->line_texture.empty() ? nullptr : tex_cache.get(s->line_texture);
+        if (!line_tex) {
+            continue;
+        }
+        const f32 width = kLineWidth * std::min(std::sqrt(static_cast<f32>(edge.units)), 10.0f);
+        const auto& col = edge.color;
+        const f32 shift = -s->anim_rate * time;
+        const std::vector<Vector3> points = command_curve(edge.from, edge.to, edge.from_tangent,
+                                                          edge.to_tangent, kCurveSegments, width);
+        f32 u0 = 0.0f;
+        for (size_t k = 0; k + 1 < points.size(); ++k) {
+            std::array<Vector3, 4> q;
+            const f32 u1 = u0 + length(sub(points[k + 1], points[k])) / width * s->uv_aspect;
+            if (command_strip(points[k], points[k + 1], width * 0.5f, q)) {
+                const Vertex a = vertex(q[0], u0 + shift, 0.0f, col);
+                const Vertex b = vertex(q[1], u1 + shift, 0.0f, col);
+                const Vertex cc = vertex(q[2], u1 + shift, 1.0f, col);
+                const Vertex d = vertex(q[3], u0 + shift, 1.0f, col);
+                lines.push_back({line_tex->descriptor_set, {a, b, cc, a, cc, d}});
+            }
+            u0 = u1;
+        }
+        legs_.push_back({edge.units, edge.type, edge.from, edge.to, col, s->line_texture});
+    }
     for (const CommandGraphPath& path : paths) {
         const sim::EntityRecord* e = path.unit;
-        const u32 uid = e->id;
-        const auto& chain = path.chain;
         for (size_t i = 0; i < path.legs.size(); ++i) {
             const CommandGraphPath::Leg& leg = path.legs[i];
-            const sim::CommandType type = leg.order.type;
             const CommandGraphStyle* s = leg.style;
-            const std::string* blueprint = &leg.order.blueprint_id;
-            const sim::CommandRecord* order = &leg.order;
-            const size_t index = leg.index;
-            const Vector3& from = chain[i];
-            const Vector3& to = chain[i + 1];
-            if (lines.size() + waypoints.size() + kCurveSegments + 1 > MAX_QUADS) break;
-            const GPUTexture* line_tex =
-                s->line_texture.empty() ? nullptr : tex_cache.get(s->line_texture);
-            if (line_tex) {
-                const auto& col = leg.line_color;
-                const f32 shift = -s->anim_rate * time;
-                const std::vector<Vector3> points =
-                    command_curve(chain, i, kCurveSegments, kLineWidth);
-                f32 u0 = 0.0f;
-                for (size_t k = 0; k + 1 < points.size(); ++k) {
-                    std::array<Vector3, 4> q;
-                    const f32 u1 =
-                        u0 + length(sub(points[k + 1], points[k])) / kLineWidth * s->uv_aspect;
-                    if (command_strip(points[k], points[k + 1], kLineWidth * 0.5f, q)) {
-                        const Vertex a = vertex(q[0], u0 + shift, 0.0f, col);
-                        const Vertex b = vertex(q[1], u1 + shift, 0.0f, col);
-                        const Vertex cc = vertex(q[2], u1 + shift, 1.0f, col);
-                        const Vertex d = vertex(q[3], u0 + shift, 1.0f, col);
-                        lines.push_back({line_tex->descriptor_set, {a, b, cc, a, cc, d}});
-                    }
-                    u0 = u1;
-                }
-                legs_.push_back({uid, type, from, to, col, s->line_texture});
+            const std::string& blueprint = leg.order.blueprint_id;
+            const Vector3& to = path.chain[i + 1];
+            if (lines.size() + waypoints.size() + 4 > MAX_QUADS) {
+                break;
             }
             const GPUTexture* wp_tex =
                 s->waypoint_texture.empty() ? nullptr : tex_cache.get(s->waypoint_texture);
-            const bool site = wp_tex && !leg.closes && !blueprint->empty() && per_px > 0.0f &&
-                              !build_started(*cur, *e, index, *order);
-            if (site) {
-                const auto& p = pad_of(*blueprint, L);
-                const auto pad = build_pad(to.x, to.z, p[0], p[1], p[2], p[3], p[4], p[5]);
-                const std::array<Vector3, 4> corner = {{{pad[0], to.y, pad[1]},
-                                                        {pad[2], to.y, pad[1]},
-                                                        {pad[2], to.y, pad[3]},
-                                                        {pad[0], to.y, pad[3]}}};
-                const f32 half = kPadOutlinePx * 0.5f * per_px * length(sub(to, eye));
-                for (size_t k = 0; k < 4; ++k) {
-                    std::array<Vector3, 4> q;
-                    if (command_strip(corner[k], corner[(k + 1) % 4], half, q)) {
-                        const Vertex qa = vertex(q[0], 0.0f, 0.0f, kPadOutlineColor);
-                        const Vertex qb = vertex(q[1], 1.0f, 0.0f, kPadOutlineColor);
-                        const Vertex qc = vertex(q[2], 1.0f, 1.0f, kPadOutlineColor);
-                        const Vertex qd = vertex(q[3], 0.0f, 1.0f, kPadOutlineColor);
-                        waypoints.push_back(
-                            {tex_cache.fallback_descriptor(), {qa, qb, qc, qa, qc, qd}});
-                    }
+            const bool site = wp_tex && !leg.closes && !blueprint.empty() && per_px > 0.0f &&
+                              !build_started(*cur, *e, leg.index, leg.order);
+            if (!site) {
+                continue;
+            }
+            const auto& p = pad_of(blueprint, L);
+            const auto pad = build_pad(to.x, to.z, p[0], p[1], p[2], p[3], p[4], p[5]);
+            const std::array<Vector3, 4> corner = {{{pad[0], to.y, pad[1]},
+                                                    {pad[2], to.y, pad[1]},
+                                                    {pad[2], to.y, pad[3]},
+                                                    {pad[0], to.y, pad[3]}}};
+            const f32 half = kPadOutlinePx * 0.5f * per_px * length(sub(to, eye));
+            for (size_t k = 0; k < 4; ++k) {
+                std::array<Vector3, 4> q;
+                if (command_strip(corner[k], corner[(k + 1) % 4], half, q)) {
+                    const Vertex qa = vertex(q[0], 0.0f, 0.0f, kPadOutlineColor);
+                    const Vertex qb = vertex(q[1], 1.0f, 0.0f, kPadOutlineColor);
+                    const Vertex qc = vertex(q[2], 1.0f, 1.0f, kPadOutlineColor);
+                    const Vertex qd = vertex(q[3], 0.0f, 1.0f, kPadOutlineColor);
+                    waypoints.push_back(
+                        {tex_cache.fallback_descriptor(), {qa, qb, qc, qa, qc, qd}});
                 }
             }
         }
     }
-    for (const CommandGraphNode& node : command_graph_nodes(paths, highlight_, hovered_unit_)) {
+    for (const CommandGraphNode& node : graph.nodes) {
         if (node.order.command_id == preview_ && preview_ != 0 && !preview_valid_) {
             continue;
         }
