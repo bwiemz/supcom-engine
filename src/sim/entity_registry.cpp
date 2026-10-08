@@ -325,13 +325,16 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
     // collision_reach bounds the box turned by a unit quaternion; one off
     // by |q|^2 = 1 + e stretches it by at most 1 + 2e, which the slack
     // covers (with the rounding at map coordinates). Farther off unit
-    // length, only COLLIDER_REACH filters, as before.
+    // length, or a NaN in a script's quaternion or shape (which fails
+    // every comparison, so the tests are written to keep it), only
+    // COLLIDER_REACH filters, as before.
     const auto may_reach = [&](const Entity& e) {
         if (!near(e, COLLIDER_REACH)) return false;
         const Quaternion& q = e.orientation();
         const f32 norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-        if (std::abs(norm - 1.0f) > 1e-3f) return true;
-        return near(e, e.shape_reach() * 1.01f + 0.01f);
+        const f32 reach = e.shape_reach() * 1.01f + 0.01f;
+        if (!(std::abs(norm - 1.0f) <= 1e-3f) || !(reach < COLLIDER_REACH)) return true;
+        return near(e, reach);
     };
     if (!grid_initialized_) {
         bool hit = false;

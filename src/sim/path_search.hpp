@@ -126,7 +126,12 @@ private:
     u32* slot_of(u32 key, bool& found);
     void grow();
 
+    /// Where `key` starts its probe: Fibonacci hashing's top bits, which
+    /// both a packed cell's x (low half) and z (high half) reach.
+    u32 home(u32 key) const { return (key * 0x9E3779B1u) >> shift_; }
+
     std::vector<Slot> slots_;
+    u32 shift_ = 32; ///< 32 - log2 of the slots
     u32 generation_ = 1;
     u32 size_ = 0;
 };

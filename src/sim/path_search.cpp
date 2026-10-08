@@ -114,8 +114,7 @@ void OpenHeap::sift_down(size_t i, size_t count) {
 u32* CellIndex::slot_of(u32 key, bool& found) {
     if (slots_.empty() || (size_ + 1) * 2 > slots_.size()) grow();
     const auto mask = static_cast<u32>(slots_.size() - 1);
-    // Fibonacci hashing: a packed cell's x and z both reach the top bits.
-    for (u32 i = (key * 0x9E3779B1u) & mask;; i = (i + 1) & mask) {
+    for (u32 i = home(key);; i = (i + 1) & mask) {
         Slot& slot = slots_[i];
         if (slot.generation != generation_) {
             slot.generation = generation_;
@@ -146,7 +145,7 @@ void CellIndex::set(u32 key, u32 node) {
 const u32* CellIndex::find(u32 key) const {
     if (slots_.empty()) return nullptr;
     const auto mask = static_cast<u32>(slots_.size() - 1);
-    for (u32 i = (key * 0x9E3779B1u) & mask;; i = (i + 1) & mask) {
+    for (u32 i = home(key);; i = (i + 1) & mask) {
         const Slot& slot = slots_[i];
         if (slot.generation != generation_) return nullptr;
         if (slot.key == key) return &slot.node;
@@ -165,6 +164,8 @@ void CellIndex::clear() {
 void CellIndex::grow() {
     std::vector<Slot> old = std::move(slots_);
     slots_.assign(std::max<size_t>(1024, old.size() * 2), Slot{});
+    shift_ = 32;
+    for (size_t n = slots_.size(); n > 1; n >>= 1) --shift_;
     const u32 live = generation_;
     generation_ = 1;
     size_ = 0;

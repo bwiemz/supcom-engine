@@ -246,6 +246,11 @@ TEST_CASE("UnitIsBlocked sees a box as far as it reaches turned, and stretched b
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{37, 30}, 2));
     parked.set_orientation({0.0f, half, 0.0f, half});
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
+    // A NaN (a script's normalized zero vector) fails every comparison, so
+    // its box passes every overlap test: it blocks all the grid looks at.
+    parked.set_orientation({std::nanf(""), 0.0f, 0.0f, 1.0f});
+    CHECK(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
+    CHECK_FALSE(w.blockers().unit_blocked(id, Cell{40, 30}, 2)); // past COLLIDER_REACH
 }
 
 TEST_CASE("SweptPathBlockedByUnit: a unit across the way blocks it; beside it, not",
