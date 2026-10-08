@@ -356,6 +356,70 @@ TEST_CASE("A patrolling engineer reclaims a RECLAIMABLE prop on its route once a
     CHECK(seen == std::vector<osc::u32>{stone->entity_id()});
 }
 
+TEST_CASE("A patrol back from reclaiming looks for the next prop at once", "[patrol]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    rock(sim, 30.0f, 14.0f, 1.0f, 0.0f);
+    rock(sim, 24.0f, 14.0f, 1.0f, 0.0f);
+    eng->push_command(patrol(90.0f, 10.0f, 1), true);
+    const auto patrolling = [&] { return !eng->command_queue().front().from_patrol; };
+    int t = 0;
+    for (; t < 400 && patrolling(); ++t) {
+        sim.tick();
+    }
+    REQUIRE_FALSE(patrolling());
+    for (; t < 400 && !patrolling(); ++t) {
+        sim.tick();
+    }
+    const auto claimed = [&] { return eng->command_queue().back().patrol_claimed.size(); };
+    int heading_on = 0;
+    for (; t < 400 && patrolling() && claimed() < 2; ++t) {
+        sim.tick();
+        ++heading_on;
+    }
+    CHECK(claimed() == 2);
+    CHECK(heading_on == 0);
+}
+
+TEST_CASE("A patrol leg looks over all of itself, behind the unit too", "[patrol]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->push_command(patrol(110.0f, 10.0f, 1), true);
+    for (int t = 0; t < 400 && eng->position().x < 70.0f; ++t) {
+        sim.tick();
+    }
+    REQUIRE(eng->position().x >= 70.0f);
+    Prop* behind = rock(sim, 12.0f, 14.0f, 1.0f, 0.0f);
+    CHECK(break_offs(sim, *eng, CommandType::Reclaim, 7) ==
+          std::vector<osc::u32>{behind->entity_id()});
+}
+
+TEST_CASE("A patrol's break-off starts 6 ticks after the patrol looked", "[patrol]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    rock(sim, 30.0f, 14.0f, 1.0f, 0.0f);
+    eng->push_command(patrol(90.0f, 10.0f, 1), true);
+    for (int t = 0; t < 12 && !eng->command_queue().front().from_patrol; ++t) {
+        sim.tick();
+    }
+    REQUIRE(eng->command_queue().front().from_patrol);
+    std::vector<bool> walking;
+    for (int t = 0; t < 6; ++t) {
+        sim.tick();
+        walking.push_back(eng->command_queue().front().approached);
+    }
+    CHECK(walking == std::vector<bool>{false, false, false, false, false, true});
+}
+
 TEST_CASE("A patrolling engineer reclaims a still enemy at half its distance's weight",
           "[patrol]") {
     LuaGuard g;
