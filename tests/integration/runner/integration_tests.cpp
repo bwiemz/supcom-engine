@@ -10759,6 +10759,30 @@ void test_range(TestContext& ctx) {
             if u:IsUnitState('Moving') then error('the ' .. name .. ' is still Moving') end
         end
     )");
+    // A launcher backing off from a target too close (MinRadius 5) whose
+    // target goes: its launch order ends, and its back-off with it.
+    lua_check("setup: an ACU backs off from a tank 3 off it was ordered to strike", R"(
+        __osc_far.lobber = __osc_spawn('uel0001', 'ARMY_1', 590.5, 120.5)
+        __osc_far.lobber:SetFireState(1)
+        __osc_far.lobber:CreateEnhancement('TacticalMissile')
+        __osc_far.lobber:GiveTacticalSiloAmmo(1)
+        __osc_far.mark = __osc_spawn('uel0201', 'ARMY_2', 593.5, 120.5)
+        __osc_far.mark:SetFireState(1)
+        IssueTactical({__osc_far.lobber}, __osc_far.mark)
+    )");
+    run(5);
+    lua_check("setup: it is backing off when its target goes", R"(
+        if not __osc_far.lobber:IsUnitState('Moving') then error('the ACU is not backing off') end
+        __osc_far.mark:Destroy()
+    )");
+    run(2);
+    lua_check("Test 12k: a launcher whose target goes as it backs off is left neither ordered nor "
+              "Moving",
+              R"(
+        local n = table.getn(__osc_far.lobber:GetCommandQueue())
+        if n ~= 0 then error('the ACU has ' .. n .. ' orders') end
+        if __osc_far.lobber:IsUnitState('Moving') then error('the ACU is still Moving') end
+    )");
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }

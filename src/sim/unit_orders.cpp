@@ -2227,6 +2227,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     Weapon* weapon =
         overcharge ? overcharge_weapon() : launch_weapon(cmd.type == CommandType::Nuke);
     if (!weapon || cmd.launched || (overcharge && cmd.target_id == 0)) {
+        release_navigator(); // a back-off under way ends with it
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -2234,6 +2235,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (cmd.target_id != 0) {
         const Entity* target = registry.find(cmd.target_id);
         if (!target || target->destroyed()) {
+            release_navigator();
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -2379,6 +2381,8 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed() || !target->is_unit()) {
         call_lua_method(L, "OnStopSacrifice");
+        set_unit_state("Sacrificing", false);
+        release_navigator(); // its walk to the target ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -2584,6 +2588,8 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
     // (assigned_id), and it boards as for a load order.
     const Entity* beacon = registry.find(cmd.target_id);
     if (!beacon || beacon->destroyed()) {
+        set_unit_state("WaitForFerry", false);
+        release_navigator(); // its walk to the beacon ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }
