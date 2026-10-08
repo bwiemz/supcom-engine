@@ -19,6 +19,7 @@
 
 namespace osc::sim {
 class SimState;
+class Unit;
 }
 
 namespace osc::renderer {
@@ -56,10 +57,15 @@ std::optional<f32> ray_box_distance(const PickRay& ray, const sim::Vector3& cent
 std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_proj,
                                                const sim::Vector3& p, f32 width, f32 height);
 
+/// Rejected by Moho's UserUnit::IsSelectable.
+bool aboard(const sim::Unit& unit);
+
 /// Whether the player may select `e`: a live unit not made unselectable
-/// (SetUnSelectable), not still being built, and not INSIGNIFICANTUNIT (the
-/// Cybran build bots, which Moho's selection skips)
+/// (SetUnSelectable), not aboard, not still being built, and not
+/// INSIGNIFICANTUNIT (the Cybran build bots, which Moho's selection skips)
 bool selectable(const sim::Entity& e);
+
+u32 carrier_of(const sim::Entity& e);
 
 std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int>>& units);
 
@@ -238,6 +244,9 @@ public:
     /// CWldSession::HandleDoubleClickSelection). Not on a wall.
     void select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
                                 const std::array<f32, 16>& view_proj);
+
+    /// Moho's UserUnit::UpdateUnitData: a unit that boards leaves the selection.
+    void deselect_aboard(const sim::EntityRegistry& registry);
 
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {

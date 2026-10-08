@@ -31,12 +31,24 @@ bool targetable_prop(const sim::Entity& e) {
 
 } // namespace
 
+bool aboard(const sim::Unit& unit) {
+    return (unit.transport_id() != 0 || unit.parent_entity_id() != 0) && unit.is_mobile() &&
+           !unit.has_category("POD");
+}
+
 bool selectable(const sim::Entity& e) {
     if (!e.is_unit() || e.destroyed() || e.unselectable()) {
         return false;
     }
     const auto& unit = static_cast<const sim::Unit&>(e);
-    return !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
+    return !aboard(unit) && !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
+}
+
+u32 carrier_of(const sim::Entity& e) {
+    if (e.parent_entity_id() != 0) {
+        return e.parent_entity_id();
+    }
+    return e.is_unit() ? static_cast<const sim::Unit&>(e).transport_id() : 0;
 }
 
 bool inside_ground_quad(const std::array<sim::Vector3, 4>& q, f32 x, f32 z) {
@@ -109,6 +121,7 @@ std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int
 void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                           const std::function<bool()>& mouse_over_ui) {
     clock_ += dt;
+    deselect_aboard(sim.entity_registry());
     f64 mx_d, my_d;
     renderer.mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
@@ -592,6 +605,13 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift)
     selection_event_ = true;
     spdlog::debug("Selection: {} units (click at world {:.0f},{:.0f})",
                   selected_.size(), wx, wz);
+}
+
+void InputHandler::deselect_aboard(const sim::EntityRegistry& registry) {
+    std::erase_if(selected_, [&](u32 id) {
+        const sim::Entity* e = registry.find(id);
+        return e && e->is_unit() && !e->destroyed() && aboard(static_cast<const sim::Unit&>(*e));
+    });
 }
 
 void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
