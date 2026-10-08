@@ -181,11 +181,12 @@ TEST_CASE("SmokeTestHarness pcall error recording", "[smoke]") {
 
 TEST_CASE("ArmyBrain build restriction add/remove/check", "[m154]") {
     osc::sim::ArmyBrain brain;
-    REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
-    brain.add_build_restriction("TECH1 LAND FACTORY");
-    REQUIRE(brain.is_build_restricted("TECH1 LAND FACTORY"));
-    brain.remove_build_restriction("TECH1 LAND FACTORY");
-    REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
+    REQUIRE_FALSE(brain.is_build_restricted("ueb0101"));
+    brain.add_build_restriction({"ueb0101", "ueb0201"});
+    REQUIRE(brain.is_build_restricted("UEB0101"));
+    brain.remove_build_restriction({"ueb0101"});
+    REQUIRE_FALSE(brain.is_build_restricted("ueb0101"));
+    REQUIRE(brain.is_build_restricted("ueb0201"));
 }
 
 namespace {
@@ -281,20 +282,32 @@ TEST_CASE("Factory build obeys army unit cap", "[session][rules]") {
     CHECK(h.sim.get_army(0)->get_unit_cost_total(h.sim.entity_registry()) == 1);
 }
 
-TEST_CASE("Factory build obeys lobby restricted categories", "[session][rules]") {
+TEST_CASE("A scenario's build restriction is a category that RemoveBuildRestriction lifts",
+          "[session][rules]") {
     BuildRuleHarness h;
-    h.sim.get_army(0)->add_build_restriction("EXPERIMENTAL");
-
-    auto result = h.state.do_string(
-        "local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
-        "IssueBuildFactory({factory}, 'test_experimental', 1)\n");
-    REQUIRE(result);
-    REQUIRE(h.sim.entity_registry().count() == 1);
-
+    REQUIRE(
+        h.state.do_string("__blueprints.test_factory.Economy.BuildableCategory = {'MOBILE LAND'}\n"
+                          "AddBuildRestriction(1, categories.EXPERIMENTAL + categories.NAVAL)\n"
+                          "__osc_factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                          "IssueBuildFactory({__osc_factory}, 'test_experimental', 1)\n"));
     h.sim.tick();
-
     CHECK(h.sim.entity_registry().count() == 1);
-    CHECK(h.sim.get_army(0)->get_unit_cost_total(h.sim.entity_registry()) == 1);
+    const auto can_build = [&h] {
+        REQUIRE(h.state.do_string(
+            "__osc_can = moho.unit_methods.CanBuild(__osc_factory, 'test_experimental')"));
+        lua_getglobal(h.state.raw(), "__osc_can");
+        const bool can = lua_toboolean(h.state.raw(), -1) != 0;
+        lua_pop(h.state.raw(), 1);
+        return can;
+    };
+    CHECK_FALSE(can_build());
+
+    REQUIRE(h.state.do_string("RemoveBuildRestriction(1, categories.EXPERIMENTAL)\n"
+                              "IssueClearCommands({__osc_factory})\n"
+                              "IssueBuildFactory({__osc_factory}, 'test_experimental', 1)\n"));
+    h.sim.tick();
+    CHECK(h.sim.entity_registry().count() == 2);
+    CHECK(can_build());
 }
 
 namespace {

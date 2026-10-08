@@ -4,6 +4,7 @@
 #include "sim/flight_math.hpp"
 #include "sim/game_colors.hpp"
 #include "sim/blueprint_categories.hpp"
+#include "sim/category_expr.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
@@ -4290,6 +4291,38 @@ static int l_EntityCategoryGetUnitList(lua_State* L) {
     return 1;
 }
 
+/// Moho's army keeps the blueprints the category holds when called
+/// (CArmyImpl::AddBuildRestriction on mCategoryFilterSet), not the category
+static void restrict_army_builds(lua_State* L, bool restrict) {
+    auto* sim = get_sim(L);
+    if (!sim || !sim->blueprint_store()) {
+        return;
+    }
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
+    if (!brain) {
+        return;
+    }
+    const sim::CategoryExpr category = lua_type(L, 2) == LUA_TSTRING
+                                           ? sim::parse_category_list(lua_tostring(L, 2))
+                                           : sim::compile_category(L, 2);
+    std::vector<std::string> ids;
+    auto* store = sim->blueprint_store();
+    for (const auto* entry : store->get_all(blueprints::BlueprintType::Unit)) {
+        store->push_lua_table(*entry, L);
+        std::unordered_set<std::string> bp_cats;
+        sim::collect_blueprint_categories(L, lua_gettop(L), bp_cats);
+        lua_pop(L, 1);
+        if (category.matches(bp_cats)) {
+            ids.push_back(entry->id);
+        }
+    }
+    if (restrict) {
+        brain->add_build_restriction(ids);
+    } else {
+        brain->remove_build_restriction(ids);
+    }
+}
+
 // Helper: create a simple category table with __name and metatable
 static void push_simple_category(lua_State* L, const char* name) {
     lua_newtable(L);
@@ -6658,25 +6691,11 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyColor", l_SetArmyColor);
     state.register_function("ChangeUnitArmy", l_ChangeUnitArmy);
     state.register_function("AddBuildRestriction", [](lua_State* L) -> int {
-        auto* sim = get_sim(L);
-        if (!sim) return 0;
-        i32 army = resolve_army(L, 1, sim);
-        if (army < 0) return 0;
-        const char* cat = lua_tostring(L, 2);
-        if (!cat) return 0;
-        auto* brain = sim->get_army(army);
-        if (brain) brain->add_build_restriction(cat);
+        restrict_army_builds(L, true);
         return 0;
     });
     state.register_function("RemoveBuildRestriction", [](lua_State* L) -> int {
-        auto* sim = get_sim(L);
-        if (!sim) return 0;
-        i32 army = resolve_army(L, 1, sim);
-        if (army < 0) return 0;
-        const char* cat = lua_tostring(L, 2);
-        if (!cat) return 0;
-        auto* brain = sim->get_army(army);
-        if (brain) brain->remove_build_restriction(cat);
+        restrict_army_builds(L, false);
         return 0;
     });
     state.register_function("SetArmyShowScore", stub_noop);

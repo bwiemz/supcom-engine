@@ -282,11 +282,9 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.str(a.current_plan_);
     w.b(a.resource_sharing_);
     w.str(a.skin_name_);
-    {
-        std::vector<std::string> sorted(a.build_restrictions_.begin(), a.build_restrictions_.end());
-        std::sort(sorted.begin(), sorted.end());
-        w.size(sorted.size());
-        for (const auto& s : sorted) w.str(s);
+    w.size(a.restricted_blueprints_.size());
+    for (const auto& id : a.restricted_blueprints_) {
+        w.str(id);
     }
     save_str_f64(w, a.stats_);
     {
@@ -365,9 +363,11 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.current_plan_ = r.str();
     a.resource_sharing_ = r.b();
     a.skin_name_ = r.str();
-    a.build_restrictions_.clear();
+    a.restricted_blueprints_.clear();
     const size_t restrictions = r.size(4);
-    for (size_t i = 0; i < restrictions; ++i) a.build_restrictions_.insert(r.str());
+    for (size_t i = 0; i < restrictions; ++i) {
+        a.restricted_blueprints_.insert(r.str());
+    }
     a.stats_ = load_str_f64<std::unordered_map<std::string, f64>>(r);
     a.blueprint_stats_.clear();
     const size_t bp_stats = r.size(8);

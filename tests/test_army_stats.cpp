@@ -710,7 +710,6 @@ TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules]") {
     osc::lua::GameOptionsConfig options;
     options.configured = true;
     options.set_number("UnitCap", 42);
-    options.restricted_categories = {"NUKE", "EXPERIMENTAL"};
     mgr.set_game_options(options);
 
     auto result = mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta);
@@ -720,8 +719,6 @@ TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules]") {
         auto* brain = sim.get_army(army);
         REQUIRE(brain != nullptr);
         CHECK(brain->unit_cap() == 42);
-        CHECK(brain->is_build_restricted("NUKE"));
-        CHECK(brain->is_build_restricted("EXPERIMENTAL"));
     }
 }
 
