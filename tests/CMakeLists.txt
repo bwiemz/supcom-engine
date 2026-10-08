@@ -38,6 +38,7 @@ add_executable(osc_tests
     test_unit_blocking.cpp
     test_hull_facing.cpp
     test_reclaim.cpp
+    test_build_assist.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_interpolation.cpp

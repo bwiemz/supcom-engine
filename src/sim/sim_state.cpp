@@ -3190,6 +3190,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         }
         units.mix(u.build_target_id());
         units.mix(u.reclaim_target_id());
+        if (u.reclaim_wait() != 0) {
+            units.mix(0x52574149u); // "RWAI"
+            units.mix(static_cast<u64>(static_cast<u32>(u.reclaim_wait())));
+        }
         units.mix(u.repair_target_id());
         units.mix(u.capture_target_id());
         units.mix_f32(u.work_progress());

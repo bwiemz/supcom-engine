@@ -142,7 +142,10 @@ TEST_CASE("A reclaimed unit wears down for nothing, then its wreck is reclaimed"
     CHECK(eng->reclaim_target_id() == w.wreck->entity_id());
     REQUIRE_FALSE(eng->command_queue().empty());
     CHECK(eng->command_queue().front().target_id == w.wreck->entity_id());
+    CHECK(eng->economy().reclaim_mass == 0.0);
+    w.sim.tick();
     CHECK(eng->economy().reclaim_mass == 30.0);
+    CHECK(w.wreck->fraction_complete() == 1.0f);
 }
 
 TEST_CASE("A guard helps wear a reclaimed unit down and leaves the finish to the reclaimer",
@@ -164,4 +167,19 @@ TEST_CASE("A guard helps wear a reclaimed unit down and leaves the finish to the
     CHECK(ticks < 5);
     CHECK(w.log() == "reclaimed,wreck 0");
     CHECK(eng->reclaim_target_id() == w.wreck->entity_id());
+}
+
+TEST_CASE("A prop's reclaim takes it down from the second tick after it starts", "[reclaim]") {
+    ReclaimSim w;
+    Unit* eng = w.engineer(10.0f);
+    eng->push_command(order(CommandType::Reclaim, w.wreck->entity_id()), true);
+    w.sim.tick();
+    CHECK(eng->reclaim_target_id() == w.wreck->entity_id());
+    CHECK(w.wreck->fraction_complete() == 1.0f);
+    CHECK(eng->economy().reclaim_mass == 0.0);
+    w.sim.tick();
+    CHECK(w.wreck->fraction_complete() == 1.0f);
+    CHECK(eng->economy().reclaim_mass == 30.0);
+    w.sim.tick();
+    CHECK(w.wreck->fraction_complete() < 1.0f);
 }
