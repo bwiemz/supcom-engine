@@ -111,14 +111,76 @@ void OpenHeap::sift_down(size_t i, size_t count) {
     }
 }
 
+u32* CellIndex::slot_of(u32 key, bool& found) {
+    if (slots_.empty() || (size_ + 1) * 2 > slots_.size()) grow();
+    const auto mask = static_cast<u32>(slots_.size() - 1);
+    for (u32 i = home(key);; i = (i + 1) & mask) {
+        Slot& slot = slots_[i];
+        if (slot.generation != generation_) {
+            slot.generation = generation_;
+            slot.key = key;
+            ++size_;
+            found = false;
+            return &slot.node;
+        }
+        if (slot.key == key) {
+            found = true;
+            return &slot.node;
+        }
+    }
+}
+
+std::pair<u32, bool> CellIndex::try_emplace(u32 key, u32 node) {
+    bool found = false;
+    u32* slot = slot_of(key, found);
+    if (!found) *slot = node;
+    return {*slot, !found};
+}
+
+void CellIndex::set(u32 key, u32 node) {
+    bool found = false;
+    *slot_of(key, found) = node;
+}
+
+const u32* CellIndex::find(u32 key) const {
+    if (slots_.empty()) return nullptr;
+    const auto mask = static_cast<u32>(slots_.size() - 1);
+    for (u32 i = home(key);; i = (i + 1) & mask) {
+        const Slot& slot = slots_[i];
+        if (slot.generation != generation_) return nullptr;
+        if (slot.key == key) return &slot.node;
+    }
+}
+
+void CellIndex::clear() {
+    size_ = 0;
+    if (++generation_ == 0) {
+        // Wrapped: no slot may look current.
+        for (Slot& slot : slots_) slot.generation = 0;
+        generation_ = 1;
+    }
+}
+
+void CellIndex::grow() {
+    std::vector<Slot> old = std::move(slots_);
+    slots_.assign(std::max<size_t>(1024, old.size() * 2), Slot{});
+    shift_ = 32;
+    for (size_t n = slots_.size(); n > 1; n >>= 1) --shift_;
+    const u32 live = generation_;
+    generation_ = 1;
+    size_ = 0;
+    for (const Slot& slot : old)
+        if (slot.generation == live) set(slot.key, slot.node);
+}
+
 u32 PathSearch::find_or_create(Cell c) {
-    const auto [it, made] = index_.try_emplace(pack_cell(c), static_cast<u32>(nodes_.size()));
+    const auto [node, made] = index_.try_emplace(pack_cell(c), static_cast<u32>(nodes_.size()));
     if (made) {
         Node n;
         n.cell = c;
         nodes_.push_back(n);
     }
-    return it->second;
+    return node;
 }
 
 void PathSearch::note_candidate(Cell c, f32 estimate) {
@@ -281,9 +343,8 @@ bool PathSearch::add_cluster_edges(Cell c, u32 level, ClusterMap& map, i32& budg
 
 void PathSearch::finish(bool reached) {
     std::vector<Cell> cells;
-    if (const auto it = index_.find(pack_cell(closest_)); it != index_.end()) {
-        for (i32 i = static_cast<i32>(it->second); i >= 0;
-             i = nodes_[static_cast<size_t>(i)].parent)
+    if (const u32* node = index_.find(pack_cell(closest_))) {
+        for (i32 i = static_cast<i32>(*node); i >= 0; i = nodes_[static_cast<size_t>(i)].parent)
             cells.push_back(nodes_[static_cast<size_t>(i)].cell);
         std::reverse(cells.begin(), cells.end());
     }

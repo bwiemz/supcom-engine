@@ -7,6 +7,7 @@
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
 #include "sim/category_expr.hpp"
+#include "sim/collision.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/navigator.hpp"
 #include "sim/projectile.hpp"
@@ -265,6 +266,7 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.viz_focus_player_ = enum8<VizMode>(r);
     e.viz_neutrals_ = enum8<VizMode>(r);
     e.collision_shape_ = load_shape(r);
+    e.shape_reach_ = collision_reach(e.collision_shape_); // derived, not saved
     e.default_collision_shape_ = load_shape(r);
     e.mesh_override_ = r.str();
     e.unselectable_ = r.b();

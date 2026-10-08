@@ -1,4 +1,5 @@
 #include "sim/entity.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 
 namespace osc::sim {
@@ -10,6 +11,7 @@ void Entity::set_position(const Vector3& p) {
 
 void Entity::set_collision_shape(const CollisionShape& s) {
     collision_shape_ = s;
+    shape_reach_ = collision_reach(s);
     if (registry_) registry_->notify_collision_shape_changed(*this);
 }
 
