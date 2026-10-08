@@ -105,7 +105,10 @@ static int l_test_find_unit(lua_State* L) {
     return 1;
 }
 
-void register_test_helpers(lua_State* L) {
+void register_test_helpers(lua_State* L, bool moho_pathing) {
+    lua_pushstring(L, "__osc_moho_pathing");
+    lua_pushboolean(L, moho_pathing ? 1 : 0);
+    lua_rawset(L, LUA_GLOBALSINDEX);
     lua_pushstring(L, "__osc_test_acu_id");
     lua_pushcfunction(L, l_test_acu_id);
     lua_rawset(L, LUA_GLOBALSINDEX); // rawset: config.lua locks globals
@@ -7085,9 +7088,11 @@ void test_weapon(TestContext& ctx) {
 
     lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
         local seen = table.concat(__osc_motion, ' ')
-        if seen ~= 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped' then
-            error('events: ' .. seen)
-        end
+        local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
+        -- With Moho's pathing, first a start and a stop at its own cell's
+        -- centre while the path is searched (drive-test, Test 5).
+        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
+        if seen ~= want then error('events: ' .. seen) end
     )");
     lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
         local seen, weapon = table.concat(__osc_motion, ' '), table.concat(__osc_wmotion, ' ')
@@ -8704,7 +8709,10 @@ void test_drive(TestContext& ctx) {
         local s = __osc_striker.samples
         local last = s[table.getn(s)]
         local miss = math.sqrt((last[1] - __osc_goal[1]) ^ 2 + (last[2] - __osc_goal[3]) ^ 2)
-        if miss > 0.5 then error('stopped ' .. miss .. ' from the goal') end
+        -- Moho's path navigator is done once the unit's cell is its path's
+        -- last (CAiPathNavigator::UpdateCurrentPosition): anywhere in the
+        -- goal's cell, up to its half-diagonal off.
+        if miss > (__osc_moho_pathing and 0.75 or 0.5) then error('stopped ' .. miss .. ' from the goal') end
         local v = __osc_speeds(__osc_striker)
         local slowing = 0
         for i = 2, table.getn(v) do
@@ -8716,6 +8724,10 @@ void test_drive(TestContext& ctx) {
     lua_check("Test 5: its motion events come in order", R"(
         local got = table.concat(__osc_striker.events, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
+        -- While Moho's path search runs, CAiNavigatorLand::Execute steers
+        -- at GetTargetPos, the unit's own cell's centre: a start and a
+        -- stop before the drive.
+        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if got ~= want then error(got) end
     )");
 
@@ -8749,7 +8761,8 @@ void test_drive(TestContext& ctx) {
         end
         local last = s[table.getn(s)]
         local miss = math.sqrt((last[1] - __osc_mantis_goal[1]) ^ 2 + (last[2] - __osc_mantis_goal[3]) ^ 2)
-        if miss > 0.5 then error('it ended ' .. miss .. ' from its goal') end
+        -- In its goal's cell with Moho's pathing (Test 4).
+        if miss > (__osc_moho_pathing and 0.75 or 0.5) then error('it ended ' .. miss .. ' from its goal') end
     )");
 
     // SetImmobile holds it; GetCurrentMoveLocation is where it is going.
@@ -8929,9 +8942,22 @@ void test_steer(TestContext& ctx) {
                          cx, cz)))
         return;
 
+    // Moho's path navigator aims no farther than 50 cells along its path
+    // (CAiPathNavigator, faf-re's target pick): with a goal past that, a
+    // unit aims at the path's cluster portals, a lane apart from one that
+    // aims straight at a nearer goal, and the two never meet. With Moho's
+    // pathing each case's goals are nearer, so both keep one lane.
+    const bool moho = ctx.sim.moho_pathing();
+
     // 1. Overtaking: a Striker (3.4 u/s) comes up behind an engineer going
     //    the same way (+z). It steps aside and passes.
-    lua(R"(
+    lua(moho ? R"(
+        __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
+        __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
+        __osc_move(__osc_slow, 0, -12)
+        __osc_move(__osc_fast, 0, -2)
+    )"
+             : R"(
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
         __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
         __osc_move(__osc_slow, 0, 5)
@@ -8972,7 +8998,13 @@ void test_steer(TestContext& ctx) {
     //    half a unit apart sideways (exactly in line, separation would push
     //    straight back). The engineer stops; the Pillar keeps its line. The
     //    engineer is made first, so its smaller footprint decides, not its id.
-    lua(R"(
+    lua(moho ? R"(
+        __osc_eng = __osc_spawn('uel0105', 'ARMY_1', 24, 0.5, -math.pi / 2)
+        __osc_big = __osc_spawn('uel0202', 'ARMY_1', -24, 0, math.pi / 2)
+        __osc_move(__osc_big, 24, 0)
+        __osc_move(__osc_eng, -24, 0.5)
+    )"
+             : R"(
         __osc_eng = __osc_spawn('uel0105', 'ARMY_1', 40, 0.5, -math.pi / 2)
         __osc_big = __osc_spawn('uel0202', 'ARMY_1', -40, 0, math.pi / 2)
         __osc_move(__osc_big, 40, 0)
@@ -9008,7 +9040,13 @@ void test_steer(TestContext& ctx) {
     //    Pillar of its own army (footprint 2, so the Pillar never yields on
     //    its own). The Striker steps aside, and the Pillar is made to stop
     //    while it passes (Moho's repath of the unit overtaken).
-    lua(R"(
+    lua(moho ? R"(
+        __osc_pillar = __osc_spawn('uel0202', 'ARMY_1', 0, -40, 0)
+        __osc_striker = __osc_spawn('uel0201', 'ARMY_1', 0, -46, 0)
+        __osc_move(__osc_pillar, 0, -5)
+        __osc_move(__osc_striker, 0, 2)
+    )"
+             : R"(
         __osc_pillar = __osc_spawn('uel0202', 'ARMY_1', 0, -40, 0)
         __osc_striker = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
         __osc_move(__osc_pillar, 0, 10)
@@ -9116,12 +9154,21 @@ void test_crowd(TestContext& ctx) {
             if u:IsMoving() then error('tank ' .. i .. ' is still trying to reach it') end
         end
     )");
-    lua_check("Test 3: a moving tank pushes an idle friend out of its way, and arrives", R"(
+    lua_check("Test 3: a moving tank gets past an idle friend (pushing it, or round it with Moho's "
+              "pathing), and arrives",
+              R"(
         local p = __osc_idle:GetPosition()
-        if math.abs(p[1] - 680) < 0.3 and math.abs(p[3] - 100) < 0.3 then error('the idle tank never moved') end
+        local still = math.abs(p[1] - 680) < 0.3 and math.abs(p[3] - 100) < 0.3
+        if __osc_moho_pathing then
+            -- Planning, a still unit outranks a moving one (func_IsSourceUnit
+            -- mode 1): it blocks the mover's way, which goes round it.
+            if not still then error('the idle tank was pushed to ' .. p[1] .. ',' .. p[3]) end
+        elseif still then
+            error('the idle tank never moved')
+        end
         local m = __osc_mover:GetPosition()
         local miss = math.sqrt((m[1] - __osc_through[1]) ^ 2 + (m[3] - __osc_through[3]) ^ 2)
-        if miss > 0.6 then error('the mover stopped ' .. miss .. ' short') end
+        if miss > (__osc_moho_pathing and 0.75 or 0.6) then error('the mover stopped ' .. miss .. ' short') end
     )");
 
     lua_check("Test 4: a held tank isn't moved; the passing one goes round it", R"(
@@ -10556,6 +10603,15 @@ void test_range(TestContext& ctx) {
     run(140);
     lua_check("Test 12: a launcher too close backs off, and fires", R"(
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
+        if __osc_moho_pathing then
+            -- Moho's CUnitFireAtTask backs off to a one-cell goal 1.1 x
+            -- MinRadius out (5.5 here), done once the unit's cell is the
+            -- goal's (IsAtPosition compares cells): from 4.5 out. Inside
+            -- MinRadius it asks for the same cell again, so it may wait
+            -- there unfired, as faf-re reads Moho (unconfirmed in retail).
+            if d < 4.5 or d > 6.5 then error(string.format('the ACU is %.2f from its target', d)) end
+            return
+        end
         if d < 5 then error(string.format('the ACU is %.2f from its target', d)) end
         if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
     )");
@@ -11217,7 +11273,9 @@ void test_factory_rally(TestContext& ctx) {
     lua_check("the engineer rolls straight off to the roll-off point", R"(
         local p = __osc_rolled_to
         if not p then error('the roll-off move never ended') end
-        if VDist2(p[1], p[3], 677.25, 140.35) > 0.25 then
+        -- With Moho's pathing the move is done anywhere in the point's cell
+        -- (drive-test, Test 4).
+        if VDist2(p[1], p[3], 677.25, 140.35) > (__osc_moho_pathing and 0.75 or 0.25) then
             error('rolled off to ' .. p[1] .. ', ' .. p[3] .. '; 677.25, 140.35 expected')
         end
         if __osc_strayed > 0.5 then error('strayed ' .. __osc_strayed .. ' from its line') end

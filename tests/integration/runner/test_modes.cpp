@@ -1107,7 +1107,7 @@ void IntegrationModes::headless(Engine& e) {
     // UI tests run against the UI Lua state, where the UI factories live
     // (the sim and UI states have been separate since M135c).
     TestContext ui_test_ctx{*sim_state, e.ui_lua_state, e.ui_lua_state.raw(), e.vfs, e.store};
-    register_test_helpers(sim_lua_state->raw());
+    register_test_helpers(sim_lua_state->raw(), sim_state->moho_pathing());
     const bool have_map = !e.map_path.empty();
 
     for (const Mode& m : kModesBefore)
