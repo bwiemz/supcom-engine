@@ -97,6 +97,64 @@ void Renderer::on_scroll(f64 y_offset) {
 bool Renderer::init(u32 width, u32 height, const std::string& title,
                     bool offscreen) {
     offscreen_ = offscreen;
+    if (!create_window(width, height, title, offscreen)) return false;
+
+    vkb::Instance vkb_inst;
+    if (!create_instance(offscreen, vkb_inst)) return false;
+
+    if (!create_surface(offscreen)) return false;
+
+    if (!create_logical_device(vkb_inst)) return false;
+
+    // Swapchain
+    if (!create_swapchain(width, height)) return false;
+
+    // Depth image, with a stencil for the range overlays' volumes (FA's
+    // D24S8): the first of these the device can attach
+    for (const VkFormat f : {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}) {
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(physical_device_, f, &props);
+        if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+            depth_format_ = f;
+            break;
+        }
+    }
+    if (!has_stencil()) spdlog::warn("No depth-stencil format: range overlays won't draw");
+    create_depth_image();
+
+    // Render pass & framebuffers
+    create_render_pass();
+    create_framebuffers();
+
+    // Command pool + buffers, and the frames' sync objects
+    create_command_objects();
+
+    // The texture, bone and terrain descriptor set layouts
+    create_descriptor_layouts();
+
+    // The texture and lookup samplers
+    create_samplers();
+
+    // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
+    create_shadow_resources();
+
+    // The frame's targets (must be created before pipelines — frame_.scene_pass() is
+    // needed for scene pipeline builds now that all scene draws target offscreen HDR)
+    create_frame_targets();
+
+    // Pipelines (scene pipelines built against frame_.scene_pass())
+    create_pipelines();
+
+    // The passes and renderers built on those: shadow casters, bloom, UI,
+    // overlays, the scene's effects, sky, water, minimap, icons, HUD
+    init_sub_renderers();
+
+    initialized_ = true;
+    spdlog::info("Renderer initialized ({}x{})", width, height);
+    return true;
+}
+
+bool Renderer::create_window(u32 width, u32 height, const std::string& title, bool offscreen) {
     // GLFW
     if (!glfwInit()) {
         spdlog::error("Failed to initialize GLFW");
@@ -144,7 +202,10 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
             r->on_framebuffer_resized();
     });
     ui_dispatch_.install_callbacks(window_);
+    return true;
+}
 
+bool Renderer::create_instance(bool offscreen, vkb::Instance& vkb_inst) {
     // Vulkan instance (vk-bootstrap). Validation: on in debug builds, off in
     // release; OSC_VK_VALIDATION=0/1 overrides either way.
     bool validation =
@@ -188,10 +249,13 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         return false;
     }
 
-    auto vkb_inst = inst_ret.value();
+    vkb_inst = inst_ret.value();
     instance_ = vkb_inst.instance;
     debug_messenger_ = vkb_inst.debug_messenger;
+    return true;
+}
 
+bool Renderer::create_surface(bool offscreen) {
     // Surface
     if (offscreen && std::getenv("OSC_HEADLESS_SURFACE")) {
         auto create_headless = reinterpret_cast<PFN_vkCreateHeadlessSurfaceEXT>(
@@ -210,7 +274,10 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         spdlog::error("Failed to create window surface");
         return false;
     }
+    return true;
+}
 
+bool Renderer::create_logical_device(const vkb::Instance& vkb_inst) {
     // Physical device — require BC texture compression + anisotropic filtering
     VkPhysicalDeviceFeatures required_features{};
     required_features.textureCompressionBC = VK_TRUE;
@@ -272,27 +339,10 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         spdlog::error("Failed to create VMA allocator");
         return false;
     }
+    return true;
+}
 
-    // Swapchain
-    if (!create_swapchain(width, height)) return false;
-
-    // Depth image, with a stencil for the range overlays' volumes (FA's
-    // D24S8): the first of these the device can attach
-    for (const VkFormat f : {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}) {
-        VkFormatProperties props{};
-        vkGetPhysicalDeviceFormatProperties(physical_device_, f, &props);
-        if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-            depth_format_ = f;
-            break;
-        }
-    }
-    if (!has_stencil()) spdlog::warn("No depth-stencil format: range overlays won't draw");
-    create_depth_image();
-
-    // Render pass & framebuffers
-    create_render_pass();
-    create_framebuffers();
-
+void Renderer::create_command_objects() {
     // Command pool + buffer
     VkCommandPoolCreateInfo pool_ci{};
     pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -319,7 +369,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         VK_CHECK(vkCreateFence(device_, &fence_ci, nullptr, &render_fence_[i]));
         VK_CHECK(vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_[i]));
     }
+}
 
+void Renderer::create_descriptor_layouts() {
     // Texture descriptor set layout (set=0, binding=0: combined image sampler)
     {
         VkDescriptorSetLayoutBinding sampler_binding{};
@@ -374,39 +426,31 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr,
                                     &terrain_tex_ds_layout_));
     }
+}
 
+void Renderer::create_samplers() {
     // Texture sampler (trilinear, anisotropic, repeat wrap)
-    {
-        VkSamplerCreateInfo sampler_ci{};
-        sampler_ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        sampler_ci.magFilter = VK_FILTER_LINEAR;
-        sampler_ci.minFilter = VK_FILTER_LINEAR;
-        sampler_ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        sampler_ci.anisotropyEnable = VK_TRUE;
-        sampler_ci.maxAnisotropy = 8.0f;
-        sampler_ci.maxLod = 16.0f;
-        VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_));
-        // FA's lookup textures clamp (mesh.fx anisotropicSampler, insectSampler)
-        sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        sampler_ci.anisotropyEnable = VK_FALSE;
-        VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &lookup_sampler_));
-    }
+    VkSamplerCreateInfo sampler_ci{};
+    sampler_ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_ci.magFilter = VK_FILTER_LINEAR;
+    sampler_ci.minFilter = VK_FILTER_LINEAR;
+    sampler_ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_ci.anisotropyEnable = VK_TRUE;
+    sampler_ci.maxAnisotropy = 8.0f;
+    sampler_ci.maxLod = 16.0f;
+    VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_));
+    // FA's lookup textures clamp (mesh.fx anisotropicSampler, insectSampler)
+    sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.anisotropyEnable = VK_FALSE;
+    VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &lookup_sampler_));
+}
 
-    // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
-    create_shadow_resources();
-
-    // The frame's targets (must be created before pipelines — frame_.scene_pass() is
-    // needed for scene pipeline builds now that all scene draws target offscreen HDR)
-    create_frame_targets();
-
-    // Pipelines (scene pipelines built against frame_.scene_pass())
-    create_pipelines();
-
+void Renderer::init_sub_renderers() {
     // Shadow depth-only pipelines (need shadow_map_'s pass + bone_ds_layout_)
     shadow_casters_.create(device_, shadow_map_.map_pass(), bone_ds_layout_, texture_ds_layout_);
 
@@ -467,10 +511,6 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     // Profile overlay
     profile_overlay_.init(device_, allocator_);
-
-    initialized_ = true;
-    spdlog::info("Renderer initialized ({}x{})", width, height);
-    return true;
 }
 
 bool Renderer::create_swapchain(u32 width, u32 height) {

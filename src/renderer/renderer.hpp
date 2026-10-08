@@ -65,6 +65,10 @@ struct GLFWwindow;
 struct GLFWcursor;
 struct lua_State;
 
+namespace vkb {
+struct Instance;
+}
+
 namespace osc::vfs {
 class VirtualFileSystem;
 }
@@ -477,6 +481,30 @@ private:
     /// swapchain image, each for at most a moment: false means skip this
     /// frame (the slot is untouched; the next frame tries it again).
     bool begin_frame_slot(u32 fi, u32& image_index);
+
+    // init's stages, in its order; each that can fail logs why and returns
+    // false, as init does.
+    /// GLFW, the window (hidden offscreen), the camera's viewport and entity
+    /// lookup, and the window's callbacks.
+    bool create_window(u32 width, u32 height, const std::string& title, bool offscreen);
+    /// The Vulkan instance (validation as the build and OSC_VK_VALIDATION
+    /// say; headless offscreen with OSC_HEADLESS_SURFACE) into `vkb_inst`.
+    bool create_instance(bool offscreen, vkb::Instance& vkb_inst);
+    /// The window's surface, or a headless one offscreen.
+    bool create_surface(bool offscreen);
+    /// The GPU (BC textures, anisotropy; pipeline statistics if present), the
+    /// device, its graphics queue, the GPU queries and the VMA allocator.
+    bool create_logical_device(const vkb::Instance& vkb_inst);
+    /// The command pool, a command buffer, fence and semaphore a frame slot.
+    void create_command_objects();
+    /// The texture (set 0), bone SSBO (set 1) and terrain descriptor set
+    /// layouts.
+    void create_descriptor_layouts();
+    /// The repeating texture sampler and the clamping lookup sampler.
+    void create_samplers();
+    /// The sub-renderers on the device and passes made before them, and
+    /// what they share (the recon, the beams, trails and particles).
+    void init_sub_renderers();
     void create_shadow_resources();
 
     // build_scene's stages, each for the map it is given.
