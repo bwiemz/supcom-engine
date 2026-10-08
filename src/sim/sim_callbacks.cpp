@@ -274,6 +274,22 @@ void remove_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     });
 }
 
+void set_command_type(SimState& sim, const SimCallbackEntry& cb) {
+    const auto* command = number_in(cb, "Command", 1, 4294967295.0);
+    const auto* type = number_in(cb, "Type", 0, 255);
+    if (!command || !type || static_cast<CommandType>(*type) != CommandType::Patrol) {
+        return;
+    }
+    for_each_unit(sim, cb, [&](Unit& u) {
+        for (UnitCommand* c : u.commands_with_id(static_cast<u32>(*command))) {
+            if (c->type == CommandType::Move) {
+                c->type = CommandType::Patrol;
+                forget_target(*c);
+            }
+        }
+    });
+}
+
 void push_arg(lua_State* L, const SimCallbackArg& arg) {
     std::visit(
         [&](const auto& v) {
@@ -446,6 +462,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kPostLoadCallback) post_load(*this, L);
     else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
     else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);
+    else if (cb.func_name == kSetCommandTypeCallback) set_command_type(*this, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

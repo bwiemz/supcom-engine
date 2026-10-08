@@ -49,6 +49,10 @@ inline constexpr const char* kSetCommandTargetCallback = "__osc_SetCommandTarget
 /// each named unit's queue (unit_ids).
 inline constexpr const char* kRemoveCommandCallback = "__osc_RemoveCommand";
 
+/// Func name of Moho's CMDST_SetCommandType, as the UI sends it: move order
+/// `Command` of the named units (unit_ids) made a patrol (`Type`).
+inline constexpr const char* kSetCommandTypeCallback = "__osc_SetCommandType";
+
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";
 
