@@ -119,7 +119,8 @@ would and fixes what breaks, each fix against Moho's own code (faf-re).
 ## Left
 
 - The `Cam_Free` and `range_Render*` console commands (`gamemain` sets them; no visible
-  effect yet).
+  effect yet). *Done (2026-10-08): they exist from startup, so a `--map` game's interface,
+  built before the window, keeps what it sets; its range profiles too.*
 - Operation select's Load, and campaign saves: `simuistate.OnPostLoad` re-syncs
   `CampaignMode` after a restore. That path is unchecked.
 - The tutorial (X1CA_TUT, `tutorial = true`) and the final operation's outro and credits

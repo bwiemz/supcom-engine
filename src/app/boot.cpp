@@ -654,6 +654,9 @@ void App::publish_session_objects() {
         lua_pushstring(uL, "__osc_console");
         lua_pushlightuserdata(uL, &console);
         lua_rawset(uL, LUA_REGISTRYINDEX);
+        lua_pushstring(uL, "__osc_range_overlays");
+        lua_pushlightuserdata(uL, &range_overlays);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
     // FrontEndData — cross-state key-value store (M147c)
@@ -792,6 +795,7 @@ std::optional<int> App::start() {
     // once; the key map outlives each UI state.
     osc::lua::register_console_commands(console);
     osc::lua::register_session_console_commands(console);
+    register_option_commands(console, held_convars, range_overlays);
     osc::lua::load_key_mappings(ui_lua_state.raw(), keymap_registry);
     // SetupUI already ran during the UI state's boot above; the initial
     // transitions pass nullptr so it does not run a second time.

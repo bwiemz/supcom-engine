@@ -230,7 +230,8 @@ public:
     const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
     /// FA's range overlays: the profiles and filters its UI sets and the
     /// range convars (Moho's viewport keeps them), and what they drew.
-    RangeOverlays& range_overlays() { return range_overlays_; }
+    RangeOverlays& range_overlays() { return *range_overlays_; }
+    void share_range_overlays(RangeOverlays& overlays) { range_overlays_ = &overlays; }
     const RangeRenderer& range_renderer() const { return range_renderer_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
@@ -863,7 +864,8 @@ private:
     CommandGraphRenderer command_graph_renderer_;
     bool ui_keys_blocked_ = false;
     SelectionRenderer selection_renderer_;
-    RangeOverlays range_overlays_;
+    RangeOverlays own_range_overlays_;
+    RangeOverlays* range_overlays_ = &own_range_overlays_;
     RangeRenderer range_renderer_;
     RangeBlueprints range_blueprints_;
     u32 hovered_ = 0;

@@ -5,6 +5,7 @@
 
 #include "app/app.hpp"
 #include "app/bench.hpp"
+#include "app/window_commands.hpp"
 #include "app/support.hpp"
 #include "app/ui_clicks.hpp"
 #include "audio/sound_manager.hpp"
@@ -20,6 +21,7 @@
 #include "lua/scenario_loader.hpp"
 #include "lua/special_files.hpp"
 #include "lua/url_bindings.hpp"
+#include "renderer/range_overlays.hpp"
 #include "sim/game_setup.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
@@ -356,6 +358,8 @@ private:
     lua::BeatFunctionRegistry beat_registry;
     ui::KeyMapRegistry keymap_registry;
     ui::Console console; ///< Moho's console: key map actions and ConExecute run through it
+    HeldConVars held_convars;
+    renderer::RangeOverlays range_overlays;
     FrontEndData front_end_data;
     GameStateManager game_state_mgr;
     /// What a test mode drives.
