@@ -85,6 +85,8 @@ class BlueprintStore;
 
 namespace osc::renderer {
 
+struct TerrainNormalMaps;
+
 /// A structure being placed: drawn translucent at its snapped spot, green
 /// where it can be built and red where it can't. Input works it out.
 struct BuildGhost {
@@ -476,6 +478,32 @@ private:
     /// frame (the slot is untouched; the next frame tries it again).
     bool begin_frame_slot(u32 fi, u32& image_index);
     void create_shadow_resources();
+
+    // build_scene's stages, each for the map it is given.
+    /// The bone SSBOs' descriptor pool, and a set for each frame slot.
+    void create_bone_descriptors();
+    /// The terrain's descriptor set: its strata's UBO and textures (the two
+    /// blend maps, nine albedos and nine normals), the upper stratum, and
+    /// the water's ramp and depth under it.
+    void bind_terrain_strata(const map::Terrain& terrain, const TerrainNormalMaps& normal_maps);
+    /// The terrain set's first 20 image views: [blend0, blend1, stratum 0-8
+    /// albedo, stratum 0-8 normal], loaded now (the set is written once),
+    /// and whether each blend map loaded.
+    struct TerrainStrataViews {
+        std::array<VkImageView, 20> views{};
+        bool blend0 = false;
+        bool blend1 = false;
+    };
+    TerrainStrataViews terrain_strata_views(const map::Terrain& terrain);
+    /// The fog of war's texture, a texel per vision cell, into the terrain's
+    /// set (binding 20).
+    void init_fog_texture(const map::Terrain& terrain);
+    /// The map's normal maps into the terrain's set (binding 21), and the
+    /// normal target the normal pass draws (binding 26).
+    void bind_terrain_normal_maps(const TerrainNormalMaps& normal_maps);
+    /// The map's lit decals, their terrain indices and textures, and
+    /// retail's decal mask (M212b/c).
+    void load_map_decals(const map::Terrain& terrain);
 
     /// This frame's scene on the CPU, before any command is recorded: what
     /// the focus army sees, the order graph, the meshes and the build ghost,
