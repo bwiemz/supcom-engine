@@ -60,6 +60,7 @@ add_executable(osc_tests
     test_map.cpp
     test_transport_slots.cpp
     test_influence_map.cpp
+    test_jammer_fakes.cpp
     test_anim_blend.cpp
     test_emitter_blueprint.cpp
     test_particle_system.cpp

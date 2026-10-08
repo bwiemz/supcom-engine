@@ -20,7 +20,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 
 | Metric | Value |
 | --- | --- |
-| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,168<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
+| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,169<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
 | Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->225<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below. |
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->5<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->4<!-- /metric --> |
@@ -77,7 +77,7 @@ What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`do
 - **Build templates.** Kept and made as Moho's session keeps them (#410), but placing one builds its first structure only: Moho's code that places and issues a whole template isn't recovered.
 - **Needs a person:** a listening pass of the audio; comparison with the original game's look (no reference captures exist here); the hardware cursor on a real display; Steam and the Steam Deck; external testers.
 - **Multiplayer:** peers are not authenticated; two players dropping at once can leave the survivors disagreeing; FAF's ICE adapter and client are tested only through stand-ins.
-- **Smaller order gaps:** a repeating factory's queue shows an order split by its trip round the queue as two entries; the AI's influence maps take no false blips from jammers.
+- **Smaller order gaps:** a repeating factory's queue shows an order split by its trip round the queue as two entries.
 - **Lobby options:** difficulty cheat multipliers are applied by FA's AI scripts, not the engine; `PrebuiltUnits` needs map data.
 - **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()`, `build_scene`, `init` and `create_pipelines` are still large.
 

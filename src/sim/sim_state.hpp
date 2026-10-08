@@ -825,12 +825,18 @@ public:
         Vector3 position;
         bool sensed = false; ///< the army's sight, omni, radar or sonar reach it
         /// RECON_KnownFake: in the army's sight or omni, or off the
-        /// playable area; the army can tell it from real
+        /// playable area (inset by the jammer's footprint), now or ever
+        /// since the army took up the fake; the army can tell it from real
         bool known_fake = false;
     };
     /// The fakes army `viewer` holds (every army's: -1), by jammer, army and
     /// index.
     std::vector<HeldFake> held_fakes(i32 viewer = -1) const;
+    /// Whether a fake of `jammer` at `pos` is known fake to `army` now (Moho's
+    /// UpdateBlip: its sight or omni there, or outside the playable area
+    /// inset by the jammer's larger footprint side; a fake once known stays
+    /// so while held, which held_fakes adds).
+    bool fake_known_now(const Unit& jammer, const Vector3& pos, u32 army) const;
 
     bool ever_in_sight(u32 id, u32 army) const {
         const auto it = los_ever_.find(id);
@@ -1085,6 +1091,10 @@ private:
 
     // Jammers' fake blips' offsets, by jam_key (see jam_offsets).
     std::map<u64, std::vector<Vector3>> jam_offsets_;
+    /// Which of each jam_offsets_ entry's fakes its army has known fake:
+    /// a bit per fake, latched as Moho's UpdateBlip keeps RECON_KnownFake
+    /// (newFlags |= oldFlags & 0x30) until the fake goes.
+    std::map<u64, u64> jam_known_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>
