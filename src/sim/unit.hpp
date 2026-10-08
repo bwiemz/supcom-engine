@@ -1270,6 +1270,11 @@ private:
     void end_approach(const UnitCommand& cmd) {
         if (cmd.approached) navigator_.abort_move();
     }
+    /// An order ending before its tick's move (its target gone) lets go of
+    /// the move it was making, if any: the head order's is the only one.
+    void release_navigator() {
+        if (navigator_.busy()) navigator_.abort_move();
+    }
 
     // update's phases. Each but the last says whether the tick goes on.
     /// Dying (the death animation), or carried (following the transport):

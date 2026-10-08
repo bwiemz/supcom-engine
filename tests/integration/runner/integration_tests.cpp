@@ -10718,7 +10718,8 @@ void test_range(TestContext& ctx) {
 
     // A worker walking to its target whose target goes first: its order
     // ends, and with it its move (Moho's task ends its move), so it isn't
-    // left Moving with nothing to do. Repair, reclaim and capture.
+    // left Moving with nothing to do. Repair, reclaim and capture; an
+    // attack's chase and a guard's walk the same.
     lua_check("setup: three workers walk to targets 30 off", R"(
         __osc_far = {}
         __osc_far.mender = __osc_spawn('uel0105', 'ARMY_1', 595.5, 140.5)
@@ -10732,20 +10733,26 @@ void test_range(TestContext& ctx) {
         __osc_far.prize = __osc_spawn('uel0201', 'ARMY_2', 625.5, 150.5)
         __osc_far.prize:SetFireState(1)
         IssueCapture({__osc_far.taker}, __osc_far.prize)
+        -- And an attack's chase, and a guard's walk.
+        __osc_far.attacker = __osc_spawn('uel0201', 'ARMY_1', 595.5, 130.5)
+        __osc_far.foe = __osc_spawn('uel0201', 'ARMY_2', 625.5, 130.5)
+        __osc_far.foe:SetFireState(1)
+        IssueAttack({__osc_far.attacker}, __osc_far.foe)
+        __osc_far.guard = __osc_spawn('uel0105', 'ARMY_1', 595.5, 135.5)
+        __osc_far.ward = __osc_spawn('uel0201', 'ARMY_1', 625.5, 135.5)
+        IssueGuard({__osc_far.guard}, __osc_far.ward)
     )");
     run(20);
     lua_check("setup: they're on their way when their targets go", R"(
-        for _, name in {'mender', 'reclaimer', 'taker'} do
+        for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
             if not __osc_far[name]:IsUnitState('Moving') then error('the ' .. name .. ' is not walking') end
         end
-        __osc_far.hurt:Destroy()
-        __osc_far.scrap:Destroy()
-        __osc_far.prize:Destroy()
+        for _, name in {'hurt', 'scrap', 'prize', 'foe', 'ward'} do __osc_far[name]:Destroy() end
     )");
     run(2);
     lua_check("Test 12j: a worker whose target goes on its way is left neither ordered nor Moving",
               R"(
-        for _, name in {'mender', 'reclaimer', 'taker'} do
+        for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
             local u = __osc_far[name]
             local n = table.getn(u:GetCommandQueue())
             if n ~= 0 then error('the ' .. name .. ' has ' .. n .. ' orders') end

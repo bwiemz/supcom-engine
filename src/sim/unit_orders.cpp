@@ -378,6 +378,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
         if (cmd.engaged) end_attack_run(*this); // the run ends with its target
+        release_navigator();                    // and the chase
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -388,6 +389,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             best_range = std::max(best_range, w->max_range);
     }
     if (best_range <= 0) {
+        release_navigator();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -1322,11 +1324,13 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
         end_guard_build(registry, L);
+        release_navigator(); // the walk to it ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     if (!target->is_unit()) {
         end_guard_build(registry, L);
+        release_navigator();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -1988,6 +1992,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             abandon_beam_up(ctx.terrain, L);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
         }
+        release_navigator(); // its walk to the transport ends with it
         return finish_order();
     };
     if (cmd.target_id == 0 || transport_id_ != 0) return end();
