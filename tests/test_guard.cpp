@@ -17,11 +17,14 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <cmath>
+#include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::f32;
@@ -263,4 +266,71 @@ TEST_CASE("A guard leaves alone what its own queue captures", "[guard]") {
         sim.tick();
         CHECK(fight(*tank) == nullptr);
     }
+}
+
+namespace {
+
+int lua_ref_of(lua_State* L, const char* source) {
+    const std::string code = std::string("return ") + source;
+    REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "t") == 0);
+    REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+void run_lua(lua_State* L, const char* code) {
+    REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "c") == 0);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+}
+
+} // namespace
+
+TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it is on",
+          "[guard]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    run_lua(g.L, "on = true\n"
+                 "__blueprints = { gen = { Economy = { BuildTime = 100 },"
+                 " Defense = { Shield = { RegenAssistMult = 60 } } } }");
+    Unit* gen = still(sim, 0, 50.0f, 50.0f);
+    gen->set_unit_id("gen");
+    gen->add_category("SHIELD");
+    gen->set_lua_table_ref(lua_ref_of(g.L, "{ ShieldIsOn = function() return on end }"));
+    auto bubble_owned = std::make_unique<osc::sim::Shield>();
+    osc::sim::Shield* bubble = bubble_owned.get();
+    bubble->set_army(0);
+    bubble->set_max_health(9000.0f);
+    bubble->set_health(1000.0f);
+    sim.entity_registry().register_entity(std::move(bubble_owned));
+    bubble->set_lua_table_ref(lua_ref_of(g.L, "{ RegenRate = 120 }"));
+    gen->set_focus_entity_id(bubble->entity_id());
+
+    Unit* eng = walker(sim, 0, 53.0f, 50.0f);
+    eng->add_category("ENGINEER");
+    eng->add_category("REPAIR");
+    eng->set_build_rate(5.0f);
+    eng->set_max_build_distance(5.0f);
+    eng->push_command(guard(gen, 1), true);
+    for (int t = 0; t < 10; ++t) {
+        sim.tick();
+    }
+    CHECK(eng->repair_target_id() == gen->entity_id());
+    CHECK(bubble->health() > 1005.0f);
+
+    const f32 off_at = bubble->health();
+    run_lua(g.L, "on = false");
+    for (int t = 0; t < 10; ++t) {
+        sim.tick();
+    }
+    CHECK(eng->repair_target_id() == 0);
+    CHECK(bubble->health() == off_at);
+
+    run_lua(g.L, "on = true");
+    gen->set_health(50.0f);
+    for (int t = 0; t < 2; ++t) {
+        sim.tick();
+    }
+    const f32 before = bubble->health();
+    sim.tick();
+    CHECK(std::abs(bubble->health() - before - 0.5f) < 1e-3f);
 }

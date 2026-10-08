@@ -1013,7 +1013,8 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     }
     // Already at full health? Done. (One under construction is built first.)
     const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
-    if (!under_construction && rtarget->health() >= rtarget->max_health()) {
+    if (!under_construction && rtarget->health() >= rtarget->max_health() &&
+        !static_cast<Unit*>(rtarget)->shield_needs_repair(registry, L)) {
         let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -1647,7 +1648,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged and we have build_rate
-        if (repairs && target_unit->health() < target_unit->max_health()) {
+        if (repairs && (target_unit->health() < target_unit->max_health() ||
+                        target_unit->shield_needs_repair(registry, L))) {
             working = true;
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                 if (is_repairing()) stop_repairing(L, registry);
