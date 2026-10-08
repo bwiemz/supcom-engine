@@ -102,6 +102,8 @@ struct CommandModeHooks {
     /// commandgraph.lua's OnCommandDragBegin() and OnCommandDragEnd(event, cmdId)
     std::function<void()> drag_begin;
     std::function<void(u32 command, f32 mx, f32 my)> drag_end;
+    /// A blueprint's footprint, for a build template's structures (none: 1x1)
+    FootprintOf footprint;
 };
 
 /// A command graph waypoint dragged (Moho's UICommandDragger): where it is
@@ -149,8 +151,18 @@ public:
     std::optional<BuildGhost> build_ghost(const Renderer& renderer,
                                           const sim::SimState& sim) const;
 
+    /// The active build template's ghosts for a build drag from (x0, z0) to
+    /// (x1, z1) (a click: both the same): the first, the rest in its `line`,
+    /// each green or red on its own, none for a structure off the playable
+    /// area (Moho's CBuildDragPreview); nothing when none is on it.
+    std::optional<BuildGhost> template_ghost(const sim::SimState& sim, const CommandMode& mode,
+                                             f32 x0, f32 z0, f32 x1, f32 z1) const;
+
     /// The structure being placed, centred at (wx, wz)
     BuildGhost ghost_at(const sim::SimState& sim, f32 wx, f32 wz) const;
+    /// Structure `bp` (footprint `size_x` x `size_z`) centred at (wx, wz)
+    BuildGhost ghost_at(const sim::SimState& sim, const std::string& bp, f32 size_x, f32 size_z,
+                        f32 wx, f32 wz) const;
 
     /// Where this frame draws the world: clicks pick the unit the player
     /// sees under the cursor, not its position at the last tick. Without
@@ -187,8 +199,17 @@ public:
     /// it is DRAGBUILD), each site it may stand on a build order for the
     /// selection's mobile builders; the first clears their queues unless
     /// `shift`, the rest queue. Reported, only the last clears.
+    /// With a build template active, each of its structures instead, copy by
+    /// copy (template_sites); one that can't stand where it falls is left
+    /// out, the rest still ordered (Moho's IssueBuildDragOrders).
     std::vector<IssuedCommand> build_line(sim::SimState& sim, const CommandMode& mode, f32 x0,
                                           f32 z0, f32 x1, f32 z1, bool shift);
+
+    /// Whether a build mode places the active build template rather than its
+    /// one structure.
+    bool placing_template(const CommandMode& mode) const {
+        return mode.mode == "build" && !build_template_.entries.empty();
+    }
 
     /// The build line being dragged ({x0, z0, x1, z1}), while the button is held
     std::optional<std::array<f32, 4>> build_line_drag() const { return build_line_; }
@@ -300,6 +321,12 @@ public:
     /// Where the cursor at (mx, my) points on the ground: the terrain, or
     /// the water over it (M217a). Every click and drag resolves through it.
     void snap_to_deposit(const sim::SimState& sim, const CommandMode& mode, f32& x, f32& z) const;
+    /// Blueprint `bp`'s footprint for a template's structure: the hook's,
+    /// else 1x1
+    std::array<f32, 2> footprint_of(const std::string& bp) const;
+    /// The active template's structures for a build drag (template_sites)
+    std::vector<TemplateSite> template_sites_for(const CommandMode& mode, f32 x0, f32 z0, f32 x1,
+                                                 f32 z1) const;
     void measure_snap_radius(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my);
     static bool world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
                          f32& wx, f32& wz);

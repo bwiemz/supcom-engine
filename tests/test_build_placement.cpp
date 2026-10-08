@@ -302,6 +302,61 @@ TEST_CASE("placement: a ghost stands where its structure would", "[placement]") 
           Catch::Approx(sim.terrain()->get_terrain_height(20.0f, 20.0f)));
 }
 
+TEST_CASE("placement: a build template shows a ghost of each structure, its own blueprint "
+          "judged on its own, none off the playable area",
+          "[placement][build_template]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim); // land for x < 64, sea beyond
+    osc::renderer::InputHandler input;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.can_place = [&sim](osc::i32 army, const std::string& bp, osc::f32 x, osc::f32 z,
+                             osc::u32) {
+        sim.placement_rules(bp, [&bp] { return rules_for(bp); });
+        return StructurePlacement(sim, army, rules_for).can_build(bp, x, z);
+    };
+    hooks.footprint = [](const std::string& bp) {
+        const PlacementRules r = rules_for(bp);
+        return std::array<osc::f32, 2>{r.size_x, r.size_z};
+    };
+    input.set_command_mode_hooks(std::move(hooks));
+    // A generator, a factory 10 east of it, a generator 30 east (in the sea)
+    auto& t = input.build_template();
+    t.span_x = 40;
+    t.span_z = 8;
+    t.entries = {{"pgen", 1, 0, 0}, {"factory", 2, 10, 0}, {"pgen", 3, 30, 0}};
+    osc::renderer::CommandMode mode;
+    mode.mode = "build";
+    mode.name = "pgen";
+    REQUIRE(input.placing_template(mode));
+    // Lead 2x2: corner cell (lrint(39.3), lrint(19.2)) = (39, 19), so the
+    // anchor is (39.5, 19.5) and the generator snaps to (39, 19) --
+    // nearbyint(38.5) and nearbyint(18.5) round to even, + 1 -- the 8x8
+    // factory to (50, 20), the far generator to (69, 19).
+    const auto ghost = input.template_ghost(sim, mode, 40.3f, 20.2f, 40.3f, 20.2f);
+    REQUIRE(ghost);
+    CHECK(ghost->blueprint_id == "pgen");
+    CHECK(ghost->x == 39.0f);
+    CHECK(ghost->z == 19.0f);
+    CHECK(ghost->valid);
+    REQUIRE(ghost->line.size() == 2);
+    CHECK(ghost->line[0].blueprint_id == "factory");
+    CHECK(ghost->line[0].x == 50.0f);
+    CHECK(ghost->line[0].z == 20.0f);
+    CHECK(ghost->line[0].valid);
+    CHECK(ghost->line[1].blueprint_id == "pgen");
+    CHECK(ghost->line[1].x == 69.0f);
+    CHECK_FALSE(ghost->line[1].valid); // in the sea, the rest still valid
+
+    // The far generator off the playable area: no ghost for it
+    sim.set_playable_rect(0, 0, 60, 128);
+    const auto inside = input.template_ghost(sim, mode, 40.3f, 20.2f, 40.3f, 20.2f);
+    REQUIRE(inside);
+    CHECK(inside->line.size() == 1);
+    input.build_template() = {};
+    CHECK_FALSE(input.placing_template(mode));
+}
+
 TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
     float x = 10.3f, z = 20.8f;
     osc::sim::snap_structure_center(x, z, 1.0f, 1.0f);

@@ -43,6 +43,16 @@ bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
 // ── FA's command mode (/lua/ui/game/commandmode.lua) ──
 static constexpr const char* kCommandModeModule = "/lua/ui/game/commandmode.lua";
 
+std::array<osc::f32, 2> ui_blueprint_footprint(lua_State* uiL, const std::string& bp_id) {
+    auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
+    auto* entry = store ? store->find(bp_id) : nullptr;
+    if (!entry) return {1.0f, 1.0f};
+    store->push_lua_table(*entry, uiL);
+    const auto [fx, fz] = osc::sim::blueprint_footprint(uiL, lua_gettop(uiL));
+    lua_pop(uiL, 1);
+    return {fx > 0 ? fx : 1.0f, fz > 0 ? fz : 1.0f};
+}
+
 /// The structure a build mode places, from the UI state's blueprint store:
 /// its footprint, and whether a drag lays a line of it (DRAGBUILD), its skirt
 /// apart.

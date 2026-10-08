@@ -9,6 +9,7 @@
 #include "renderer/input_handler.hpp"
 #include "sim/game_setup.hpp"
 
+#include <array>
 #include <string>
 #include <unordered_set>
 
@@ -64,6 +65,9 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<u32>& prev,
                                const std::unordered_set<u32>& cur, bool action);
 /// FA's command mode (commandmode.lua), as world clicks read it.
 renderer::CommandMode read_command_mode(lua_State* uiL);
+/// A blueprint's footprint (SizeX, SizeZ) from the UI state's blueprint
+/// store; 1x1 for one it doesn't hold. A build template's structures.
+std::array<f32, 2> ui_blueprint_footprint(lua_State* uiL, const std::string& bp_id);
 /// A command a world click issued, told to the UI (OnCommandIssued).
 void report_command_issued(lua_State* uiL, const renderer::IssuedCommand& c);
 /// The UI's SimCallbacks, into the sim.

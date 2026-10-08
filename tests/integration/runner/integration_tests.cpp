@@ -18212,6 +18212,132 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )",
                                                 dragged);
     lua_ok("Test 11t: the drag queued a line of them, and ended the mode", line_queued.c_str());
+
+    // Test 11u: a build template placed through the world, as construction.lua
+    // starts one (the mode on its lead, then SetActiveBuildTemplate): every
+    // structure ordered, each from the centre of the 1x1 cell under the
+    // lead's corner and snapped by its own footprint (Moho's
+    // IssueBuildDragOrders); one that can't stand where it falls left out;
+    // Shift keeps the mode; a drag lays copies a span apart.
+    lua_ok("setup: the selected commander", R"(
+        __osc_test_acu_id = GetSelectedUnits()[1]:GetEntityId()
+    )");
+    lua_getglobal(L, "__osc_test_acu_id");
+    const auto tpl_acu = static_cast<u32>(std::stoul(lua_tostring(L, -1)));
+    lua_pop(L, 1);
+    if (const auto* commander =
+            static_cast<const osc::sim::Unit*>(ctx.sim.entity_registry().find(tpl_acu))) {
+        const f32 ax = commander->position().x;
+        const f32 az = commander->position().z;
+        const auto start_template = [&] {
+            lua_ok("setup: a two-generator template", R"(
+                import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})
+                SetActiveBuildTemplate({12, 8, {'ueb1101', 1, 0, 0}, {'ueb1101', 2, 10, 6}})
+            )");
+        };
+        // Where a click at (x, z) puts the template's structures. ueb1101
+        // has no Footprint block: SizeX 0.6, one cell (the 2x2 is its skirt).
+        const auto expected = [](f32 x, f32 z) {
+            const f32 bx = static_cast<f32>(std::lrint(x - 0.5f)) + 0.5f;
+            const f32 bz = static_cast<f32>(std::lrint(z - 0.5f)) + 0.5f;
+            std::array<std::array<f32, 2>, 2> sites{};
+            const std::array<std::array<f32, 2>, 2> offsets{{{0, 0}, {10, 6}}};
+            for (size_t i = 0; i < 2; ++i) {
+                f32 sx = bx + offsets[i][0];
+                f32 sz = bz + offsets[i][1];
+                osc::sim::snap_structure_center(sx, sz, 1.0f, 1.0f);
+                sites[i] = {sx, sz};
+            }
+            return sites;
+        };
+        const auto queued_at = [&](f32 x, f32 z) {
+            int n = 0;
+            for (const auto& c : commander->command_queue())
+                if (c.type == osc::sim::CommandType::BuildMobile && c.blueprint_id == "ueb1101" &&
+                    std::abs(c.target_pos.x - x) < 0.01f && std::abs(c.target_pos.z - z) < 0.01f)
+                    ++n;
+            return n;
+        };
+
+        const f32 px = ax + 14.3f;
+        const f32 pz = az - 18.6f;
+        start_template();
+        const int placed = drag(px, pz, px, pz, false);
+        play(1);
+        const auto site = expected(px, pz);
+        const bool both = placed == 2 && commander->command_queue().size() == 2 &&
+                          queued_at(site[0][0], site[0][1]) == 1 &&
+                          queued_at(site[1][0], site[1][1]) == 1;
+        if (both) spdlog::info("[PASS] Test 11u: a template click orders each of its structures");
+        else
+            osc::test_status::fail(
+                "[FAIL] Test 11u: {} issued, {} queued, at ({}, {}) {} and ({}, {}) {}", placed,
+                commander->command_queue().size(), site[0][0], site[0][1],
+                queued_at(site[0][0], site[0][1]), site[1][0], site[1][1],
+                queued_at(site[1][0], site[1][1]));
+        lua_ok("Test 11u2: the click ended the mode and cleared the template", R"(
+            if import('/lua/ui/game/commandmode.lua').GetCommandMode()[1] then
+                error('the build mode stayed')
+            end
+            if table.getn(GetActiveBuildTemplate()) ~= 0 then error('the template stayed') end
+        )");
+
+        // A generator where the second would go: only the first is ordered
+        const f32 qx = px;
+        const f32 qz = pz - 24.0f;
+        const auto blocked = expected(qx, qz);
+        sim_lua(
+            fmt::format("__osc_tpl_block = CreateUnitHPR('ueb1101', 'ARMY_1', {}, 0, {}, 0, 0, 0)",
+                        blocked[1][0], blocked[1][1])
+                .c_str());
+        play(2);
+        start_template();
+        const int partial = drag(qx, qz, qx, qz, false);
+        play(1);
+        if (partial == 1 && commander->command_queue().size() == 1 &&
+            queued_at(blocked[0][0], blocked[0][1]) == 1)
+            spdlog::info("[PASS] Test 11u3: a structure that can't stand there is left out, the "
+                         "rest ordered");
+        else
+            osc::test_status::fail("[FAIL] Test 11u3: {} issued, {} queued", partial,
+                                   commander->command_queue().size());
+        sim_lua("__osc_tpl_block:Destroy()");
+        play(2);
+
+        // Shift: the orders queue behind, and the mode and template stay (until
+        // the next beat finds Shift up, as commandmode.lua's OnCommandModeBeat
+        // has it: no key is held in this run)
+        start_template();
+        const int shifted = drag(px, pz - 48.0f, px, pz - 48.0f, true);
+        lua_ok("Test 11u4: with Shift the mode and the template stay", fmt::format(R"(
+            if {} ~= 2 then error('{} issued') end
+            if not import('/lua/ui/game/commandmode.lua').GetCommandMode()[1] then
+                error('the build mode ended')
+            end
+            if table.getn(GetActiveBuildTemplate()) == 0 then error('the template went') end
+            import('/lua/ui/game/commandmode.lua').EndCommandMode(true)
+            if table.getn(GetActiveBuildTemplate()) ~= 0 then error('not cleared on cancel') end
+        )",
+                                                                                   shifted, shifted)
+                                                                           .c_str());
+        play(1);
+
+        // A drag 25 along x: spanX (12) apart, 25 / 12 + 1 = 3 copies
+        start_template();
+        const f32 dx = ax - 30.3f;
+        const f32 dz = az + 22.4f;
+        const int copies = drag(dx, dz, dx + 25.0f, dz, false);
+        play(1);
+        const auto first = expected(dx, dz);
+        const bool spaced = copies == 6 && queued_at(first[0][0], first[0][1]) == 1 &&
+                            queued_at(first[0][0] + 12.0f, first[0][1]) == 1 &&
+                            queued_at(first[0][0] + 24.0f, first[0][1]) == 1 &&
+                            queued_at(first[1][0] + 24.0f, first[1][1]) == 1;
+        if (spaced) spdlog::info("[PASS] Test 11u5: a template dragged lays copies a span apart");
+        else
+            osc::test_status::fail("[FAIL] Test 11u5: {} issued, {} queued", copies,
+                                   commander->command_queue().size());
+    }
     lua_ok("Test 11a: pick the T1 power generator from the build panel", R"(
         __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
         import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})

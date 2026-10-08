@@ -866,6 +866,16 @@ constexpr OrderSpec kOrders[] = {
 
 std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     sim::SimState& sim, const CommandMode& mode, f32 wx, f32 wz, bool shift) {
+    if (placing_template(mode)) {
+        // A click is a drag of no length: every structure it orders, all but
+        // the last reported here, the last (which ends the mode without
+        // Shift) returned.
+        auto issued = build_line(sim, mode, wx, wz, wx, wz, shift);
+        if (issued.empty()) return std::nullopt;
+        for (size_t i = 0; i + 1 < issued.size(); ++i)
+            if (mode_hooks_.issued) mode_hooks_.issued(issued[i]);
+        return issued.back();
+    }
     snap_to_deposit(sim, mode, wx, wz);
     IssuedCommand out;
     out.clear = !shift;
@@ -1015,8 +1025,10 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     if (mode.mode != "build" || mode.name.empty()) {
         return issued;
     }
-    snap_to_deposit(sim, mode, x0, z0);
-    snap_to_deposit(sim, mode, x1, z1);
+    if (!placing_template(mode)) { // a template's structures don't snap
+        snap_to_deposit(sim, mode, x0, z0);
+        snap_to_deposit(sim, mode, x1, z1);
+    }
     // Mobile builders take the orders; factories build through their queue.
     std::vector<u32> ids;
     for (u32 uid : selected_) {
@@ -1033,6 +1045,36 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     if (ids.empty()) {
         return issued;
     }
+    const auto order = [&](const std::string& bp, f32 x, f32 z) {
+        const bool clear = issued.empty() && !shift;
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::BuildMobile;
+        cmd.blueprint_id = bp;
+        cmd.target_pos = {x, sim.terrain() ? sim.terrain()->get_surface_height(x, z) : 0.0f, z};
+        // Player-issued order: routed so a networked match broadcasts it.
+        sim.set_human_input_active(true);
+        sim.route_player_command(ids, cmd, clear);
+        sim.set_human_input_active(false);
+        IssuedCommand out;
+        out.type = "BuildMobile";
+        out.blueprint = bp;
+        out.position = cmd.target_pos;
+        out.clear = false;
+        out.units = ids;
+        issued.push_back(out);
+    };
+    if (placing_template(mode)) {
+        // Each structure of each copy that may stand where it falls; one
+        // ordered before counts against the next (can_place sees it queued).
+        for (const TemplateSite& site : template_sites_for(mode, x0, z0, x1, z1)) {
+            if (mode_hooks_.can_place &&
+                !mode_hooks_.can_place(player_army_, site.blueprint_id, site.x, site.z, 0))
+                continue;
+            order(site.blueprint_id, site.x, site.z);
+        }
+        if (!issued.empty()) issued.back().clear = !shift;
+        return issued;
+    }
     if (!mode.drag_build) {
         x1 = x0;
         z1 = z0;
@@ -1042,22 +1084,7 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
         if (mode_hooks_.can_place && !mode_hooks_.can_place(player_army_, mode.name, x, z, 0)) {
             continue;
         }
-        const bool clear = issued.empty() && !shift;
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::BuildMobile;
-        cmd.blueprint_id = mode.name;
-        cmd.target_pos = {x, sim.terrain() ? sim.terrain()->get_surface_height(x, z) : 0.0f, z};
-        // Player-issued order: routed so a networked match broadcasts it.
-        sim.set_human_input_active(true);
-        sim.route_player_command(ids, cmd, clear);
-        sim.set_human_input_active(false);
-        IssuedCommand out;
-        out.type = "BuildMobile";
-        out.blueprint = mode.name;
-        out.position = cmd.target_pos;
-        out.clear = false;
-        out.units = ids;
-        issued.push_back(out);
+        order(mode.name, x, z);
     }
     // The last one tells commandmode.lua the line is done, ending the mode
     // without Shift
@@ -1145,10 +1172,28 @@ bool InputHandler::shown(const sim::Entity& e) const {
     return !record || shows_icon(recon_->sight(*record));
 }
 
+std::array<f32, 2> InputHandler::footprint_of(const std::string& bp) const {
+    // (Not the sim's placement-rules cache: a lookup there would store a
+    // default for a blueprint it hasn't read, which can_place would then use.)
+    if (mode_hooks_.footprint) return mode_hooks_.footprint(bp);
+    return {1.0f, 1.0f};
+}
+
+std::vector<TemplateSite> InputHandler::template_sites_for(const CommandMode& mode, f32 x0, f32 z0,
+                                                           f32 x1, f32 z1) const {
+    // A drag lays copies only when its lead (the mode's structure) is
+    // DRAGBUILD, as Moho's ReleaseDrag allows.
+    return template_sites(build_template_, x0, z0, x1, z1, mode.drag_build,
+                          [&](const std::string& bp) { return footprint_of(bp); });
+}
+
 BuildGhost InputHandler::ghost_at(const sim::SimState& sim, f32 wx, f32 wz) const {
-    const auto& bp = sim.build_ghost_bp();
-    const f32 size_x = sim.build_ghost_foot_x();
-    const f32 size_z = sim.build_ghost_foot_z();
+    return ghost_at(sim, sim.build_ghost_bp(), sim.build_ghost_foot_x(), sim.build_ghost_foot_z(),
+                    wx, wz);
+}
+
+BuildGhost InputHandler::ghost_at(const sim::SimState& sim, const std::string& bp, f32 size_x,
+                                  f32 size_z, f32 wx, f32 wz) const {
     BuildGhost ghost;
     ghost.blueprint_id = bp;
     ghost.x = wx;
@@ -1181,6 +1226,22 @@ BuildGhost InputHandler::ghost_at(const sim::SimState& sim, f32 wx, f32 wz) cons
     return ghost;
 }
 
+std::optional<BuildGhost> InputHandler::template_ghost(const sim::SimState& sim,
+                                                       const CommandMode& mode, f32 x0, f32 z0,
+                                                       f32 x1, f32 z1) const {
+    std::optional<BuildGhost> ghost;
+    for (const TemplateSite& site : template_sites_for(mode, x0, z0, x1, z1)) {
+        if (sim.has_playable_rect() && (site.x < sim.playable_x0() || site.x > sim.playable_x1() ||
+                                        site.z < sim.playable_z0() || site.z > sim.playable_z1()))
+            continue;
+        const auto f = footprint_of(site.blueprint_id);
+        BuildGhost g = ghost_at(sim, site.blueprint_id, f[0], f[1], site.x, site.z);
+        if (ghost) ghost->line.push_back(std::move(g));
+        else ghost = std::move(g);
+    }
+    return ghost;
+}
+
 std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
                                                     const sim::SimState& sim) const {
     if (sim.build_ghost_bp().empty() || !sim.terrain()) return std::nullopt;
@@ -1193,6 +1254,19 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     f32 wx = 0, wz = 0;
     const bool on_ground =
         world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz);
+    // A build template: a ghost of each of its structures, each green or red
+    // on its own, none for one off the playable area (Moho's
+    // CBuildDragPreview), and no deposit snap.
+    const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
+    if (placing_template(mode) && (build_line_ || on_ground)) {
+        const auto line = build_line_ ? *build_line_ : std::array<f32, 4>{wx, wz, wx, wz};
+        auto ghost = template_ghost(sim, mode, line[0], line[1], line[2], line[3]);
+        if (ghost) {
+            ghost->cursor_x = on_ground ? wx : ghost->x;
+            ghost->cursor_z = on_ground ? wz : ghost->z;
+        }
+        return ghost;
+    }
     if (build_line_ && line_drag_build_) {
         const auto& l = *build_line_;
         const auto sites =
