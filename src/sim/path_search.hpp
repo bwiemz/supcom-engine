@@ -127,8 +127,10 @@ private:
     void grow();
 
     /// Where `key` starts its probe: Fibonacci hashing's top bits, which
-    /// both a packed cell's x (low half) and z (high half) reach.
-    u32 home(u32 key) const { return (key * 0x9E3779B1u) >> shift_; }
+    /// both a packed cell's x (low half) and z (high half) reach. (Only a
+    /// grown table is probed, so the shift is at most 22; the mask keeps
+    /// the unprobed empty table's 32 from being a shift past the width.)
+    u32 home(u32 key) const { return (key * 0x9E3779B1u) >> (shift_ & 31u); }
 
     std::vector<Slot> slots_;
     u32 shift_ = 32; ///< 32 - log2 of the slots
