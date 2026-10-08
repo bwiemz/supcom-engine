@@ -10715,6 +10715,43 @@ void test_range(TestContext& ctx) {
         for _, name in __osc_stat_calls do if name == 'OscStore' then n = n + 1 end end
         if n ~= 1 then error(n .. ' calls') end
     )");
+
+    // A worker walking to its target whose target goes first: its order
+    // ends, and with it its move (Moho's task ends its move), so it isn't
+    // left Moving with nothing to do. Repair, reclaim and capture.
+    lua_check("setup: three workers walk to targets 30 off", R"(
+        __osc_far = {}
+        __osc_far.mender = __osc_spawn('uel0105', 'ARMY_1', 595.5, 140.5)
+        __osc_far.hurt = __osc_spawn('uel0201', 'ARMY_1', 625.5, 140.5)
+        __osc_far.hurt:SetHealth(__osc_far.hurt, 20)
+        IssueRepair({__osc_far.mender}, __osc_far.hurt)
+        __osc_far.reclaimer = __osc_spawn('uel0105', 'ARMY_1', 595.5, 145.5)
+        __osc_far.scrap = __osc_spawn('ueb2101', 'ARMY_1', 625.5, 145.5)
+        IssueReclaim({__osc_far.reclaimer}, __osc_far.scrap)
+        __osc_far.taker = __osc_spawn('uel0105', 'ARMY_1', 595.5, 150.5)
+        __osc_far.prize = __osc_spawn('uel0201', 'ARMY_2', 625.5, 150.5)
+        __osc_far.prize:SetFireState(1)
+        IssueCapture({__osc_far.taker}, __osc_far.prize)
+    )");
+    run(20);
+    lua_check("setup: they're on their way when their targets go", R"(
+        for _, name in {'mender', 'reclaimer', 'taker'} do
+            if not __osc_far[name]:IsUnitState('Moving') then error('the ' .. name .. ' is not walking') end
+        end
+        __osc_far.hurt:Destroy()
+        __osc_far.scrap:Destroy()
+        __osc_far.prize:Destroy()
+    )");
+    run(2);
+    lua_check("Test 12j: a worker whose target goes on its way is left neither ordered nor Moving",
+              R"(
+        for _, name in {'mender', 'reclaimer', 'taker'} do
+            local u = __osc_far[name]
+            local n = table.getn(u:GetCommandQueue())
+            if n ~= 0 then error('the ' .. name .. ' has ' .. n .. ' orders') end
+            if u:IsUnitState('Moving') then error('the ' .. name .. ' is still Moving') end
+        end
+    )");
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }

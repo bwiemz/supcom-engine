@@ -852,6 +852,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -859,6 +860,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (!target || target->destroyed() || !target->reclaimable() ||
         (reclaim_target_id_ != cmd.target_id && !reclaim_target_valid(*target))) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -971,6 +973,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     const auto let_go = [&] {
         if (is_repairing()) stop_repairing(L, registry);
         if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) stop_assisting();
+        end_approach(cmd);
     };
     if (cmd.target_id == 0) {
         let_go();
@@ -1088,18 +1091,21 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         if (is_capturing()) stop_capturing(L, registry, true);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* ctarget = registry.find(cmd.target_id);
     if (!ctarget || ctarget->destroyed() || !ctarget->is_unit()) {
         if (is_capturing()) stop_capturing(L, registry, true);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     // Already same army (captured by someone else)
     if (ctarget->is_unit() && static_cast<Unit*>(ctarget)->army() == army()) {
         if (is_capturing()) stop_capturing(L, registry, false);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
