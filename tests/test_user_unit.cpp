@@ -231,6 +231,27 @@ TEST_CASE("GetCommandQueue holds the orders given and not yet run", "[userunit]"
     osc::lua::set_ui_world_source(L, nullptr);
 }
 
+TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[userunit]") {
+    UiWorld w;
+    w.unit().add_category("FACTORY");
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    w.unit().push_command(build, false);
+    osc::sim::UnitCommand rally;
+    rally.type = osc::sim::CommandType::Move;
+    rally.target_pos = {40.0f, 0.0f, 60.0f};
+    w.unit().add_rally_order(rally);
+    auto result = w.ui.do_string(R"(
+        local q = units[1]:GetCommandQueue()
+        local last = q[table.getn(q)]
+        return table.getn(q) .. ' ' .. last.type .. ' ' .. last.position[1] .. ' ' ..
+               last.position[3]
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(std::string(lua_tostring(w.ui.raw(), -1)) == "1 Move 40 60");
+}
+
 TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     UiWorld w;
     auto& u = w.unit();
