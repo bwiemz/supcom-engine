@@ -720,4 +720,11 @@ void Projectile::deal_engine_damage(lua_State* L, Entity* target, EntityRegistry
     }
 }
 
+bool Projectile::has_live_target(const EntityRegistry& registry) const {
+    if (target_entity_id == 0) return has_target_position;
+    const Entity* target = registry.find(target_entity_id);
+    if (!target || target->destroyed()) return false;
+    return !target->is_unit() || !static_cast<const Unit*>(target)->is_dying();
+}
+
 } // namespace osc::sim

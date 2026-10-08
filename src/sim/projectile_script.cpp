@@ -113,8 +113,9 @@ void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, boo
     // Its categories first: its own OnCreate may test them.
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
-    if (auto* sim = static_cast<SimState*>(lua_touserdata(L, -1)))
-        proj.set_blueprint_info(sim->projectile_blueprint_info(proj.blueprint_id()));
+    auto* sim_of_registry = static_cast<SimState*>(lua_touserdata(L, -1));
+    if (sim_of_registry)
+        proj.set_blueprint_info(sim_of_registry->projectile_blueprint_info(proj.blueprint_id()));
     lua_settop(L, top);
     lua_newtable(L);
     const int obj = lua_gettop(L);
@@ -128,6 +129,26 @@ void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, boo
     lua_rawset(L, obj);
     lua_pushvalue(L, obj);
     proj.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+
+    // Moho's Projectile constructor: one that tracks with no target to go
+    // for (CAiTarget::HasTarget: none, or a dead or dying unit) is destroyed
+    // at once, before its OnCreate; its maker gets the handle, BeenDestroyed.
+    // A script creation passes no target; a weapon its own; a child its
+    // parent's.
+    if (proj.tracking && sim_of_registry &&
+        !proj.has_live_target(sim_of_registry->entity_registry())) {
+        lua_pushstring(L, "Destroy");
+        lua_gettable(L, obj);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, obj);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("Projectile {} Destroy error: {}", proj.blueprint_id(),
+                             lua_tostring(L, -1));
+            }
+        }
+        lua_settop(L, push ? obj : top);
+        return;
+    }
 
     // OnCreate(inWater): damage data, trails, sounds, homing ground targets.
     lua_pushstring(L, "OnCreate");
