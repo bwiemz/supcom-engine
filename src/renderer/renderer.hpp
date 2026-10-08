@@ -354,6 +354,7 @@ public:
     bool fullscreen() const;
     /// The primary display's modes (width, height, refresh), as it lists them.
     std::vector<std::array<u32, 3>> display_modes() const;
+    std::optional<std::array<u32, 3>> desktop_mode() const;
     /// The window's place and size while windowed (Moho's Windows.Main.*);
     /// nothing while full screen or without a window.
     struct WindowGeometry {

@@ -108,6 +108,14 @@ WindowMode startup_window_mode(const std::vector<std::string>& args, const Windo
     return m;
 }
 
+Resolution fullscreen_mode(const Resolution& requested, const std::optional<Resolution>& desktop,
+                           bool keep_desktop) {
+    if (keep_desktop && desktop) {
+        return *desktop;
+    }
+    return requested;
+}
+
 std::pair<std::vector<OptionState>, std::string>
 adapter_states(const std::vector<Resolution>& modes, bool overridden) {
     std::vector<OptionState> states;

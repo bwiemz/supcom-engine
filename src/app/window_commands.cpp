@@ -56,6 +56,16 @@ renderer::Renderer* renderer_of(lua_State* L) {
     return r;
 }
 
+Resolution go_fullscreen(renderer::Renderer& r, const Resolution& requested) {
+    std::optional<Resolution> desktop;
+    if (const auto d = r.desktop_mode()) {
+        desktop = Resolution{(*d)[0], (*d)[1], (*d)[2]};
+    }
+    const Resolution mode = fullscreen_mode(requested, desktop);
+    r.set_fullscreen(mode.width, mode.height, mode.rate);
+    return mode;
+}
+
 /// Run `code` in the UI state, logging a failure.
 void run(lua_State* L, const std::string& code, const char* what) {
     const int top = lua_gettop(L);
@@ -107,9 +117,9 @@ bool vsync_option(const core::Preferences& prefs) {
 
 WindowMode open_window(renderer::Renderer& r, const std::vector<std::string>& args,
                        const core::Preferences& prefs) {
-    const WindowMode m = startup_window_mode(args, read_window_prefs(prefs));
+    WindowMode m = startup_window_mode(args, read_window_prefs(prefs));
     if (m.fullscreen) {
-        r.set_fullscreen(m.size.width, m.size.height, m.size.rate);
+        m.size = go_fullscreen(r, m.size);
     } else {
         r.set_windowed(m.size.width, m.size.height, m.position, m.maximized);
     }
@@ -206,7 +216,7 @@ void register_window_commands(ui::Console& console, core::Preferences& prefs, bo
             return;
         }
         save_window_geometry(prefs, *r); // for "windowed" again
-        r->set_fullscreen(mode->width, mode->height, mode->rate);
+        go_fullscreen(*r, *mode);
     });
     // SC_SecondaryAdapter <bool>: republishes the secondary adapter's states
     // (one display here: disabled, or the command line's).

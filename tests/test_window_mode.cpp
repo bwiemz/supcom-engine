@@ -90,6 +90,17 @@ TEST_CASE("The command line overrides the options, with Moho's prefixes (M217h)"
         startup_window_mode({"--map", "/maps/SCMP_009/SCMP_009_scenario.lua"}, prefs).overridden);
 }
 
+TEST_CASE("Full screen keeps the desktop's mode where asked to", "[window]") {
+    const Resolution desktop{1512, 982, 120};
+    CHECK(fullscreen_mode({1024, 768, 60}, desktop, true) == desktop);
+    CHECK(fullscreen_mode({2560, 1440, 60}, desktop, true) == desktop);
+    CHECK(fullscreen_mode({1024, 768, 60}, std::nullopt, true) == Resolution{1024, 768, 60});
+    CHECK(fullscreen_mode({1024, 768, 60}, desktop, false) == Resolution{1024, 768, 60});
+#ifdef __APPLE__
+    CHECK(fullscreen_mode({1024, 768, 60}, desktop) == desktop);
+#endif
+}
+
 TEST_CASE("The adapter option lists the display's modes as Moho does (M217h)", "[window]") {
     const std::vector<Resolution> modes = {{800, 600, 60},    {1024, 768, 60}, {1920, 1080, 60},
                                            {1920, 1080, 144}, {1024, 768, 60}, {1280, 720, 60},

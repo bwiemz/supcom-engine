@@ -3304,6 +3304,16 @@ std::vector<std::array<u32, 3>> Renderer::display_modes() const {
     return out;
 }
 
+std::optional<std::array<u32, 3>> Renderer::desktop_mode() const {
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+    if (!mode) {
+        return std::nullopt;
+    }
+    return std::array<u32, 3>{static_cast<u32>(mode->width), static_cast<u32>(mode->height),
+                              static_cast<u32>(mode->refreshRate)};
+}
+
 std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
     if (!window_ || glfwGetWindowMonitor(window_)) return std::nullopt;
     WindowGeometry g;
