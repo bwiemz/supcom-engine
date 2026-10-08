@@ -52,14 +52,14 @@ struct PatrolBox {
 
 PatrolBox patrol_box(const Unit& unit, const UnitCommand& leg) {
     // The box runs to the leg from the queue's tail when that is another
-    // patrol point, else from the unit. Moho reads only the tail, whatever
-    // the leg: an attack-move with a patrol queued after it measures from
-    // that patrol's point too (faf-re RecomputePatrolSearchBox).
+    // patrol point, else from where the leg began. Moho reads only the tail,
+    // whatever the leg: an attack-move with a patrol queued after it measures
+    // from that patrol's point too (faf-re RecomputePatrolSearchBox).
     const auto& queue = unit.command_queue();
     const UnitCommand& last = queue.back();
     const Vector3 to = leg.target_pos;
     const Vector3 from =
-        &last != &leg && last.type == CommandType::Patrol ? last.target_pos : unit.position();
+        &last != &leg && last.type == CommandType::Patrol ? last.target_pos : leg.patrol_from;
     PatrolBox box;
     const f32 dx = to.x - from.x;
     const f32 dz = to.z - from.z;

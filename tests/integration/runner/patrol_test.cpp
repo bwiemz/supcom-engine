@@ -83,7 +83,7 @@ void test_patrol(TestContext& ctx) {
     run_lua(ctx, fmt::format("IssuePatrol({{__osc_pt_eng}}, {{{0}, {1}, {2}}})\n"
                              "IssuePatrol({{__osc_pt_eng}}, {{{3}, {4}, {2}}})\n",
                              sx + 40, y(sx + 40, sz), sz, sx - 20, y(sx - 20, sz)));
-    for (int i = 0; i < 3000 && prop_of(ctx, crystal); ++i) {
+    for (int i = 0; i < 6000 && prop_of(ctx, crystal); ++i) {
         economy.mass.stored = 0;
         economy.energy.stored = 0;
         ctx.sim.tick();

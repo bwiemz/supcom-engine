@@ -3271,6 +3271,11 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                     orders.mix(id);
                 }
             }
+            const Vector3& from = cmd.patrol_from;
+            if (from.x != 0 || from.y != 0 || from.z != 0) {
+                orders.mix(0x5046524du); // "PFRM"
+                mix_vec(orders, from);
+            }
             // A carrier's launch under way (M206q), only then.
             if (cmd.launch_wait >= 0) {
                 orders.mix(0x4c4e4348u); // "LNCH"

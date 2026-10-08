@@ -206,6 +206,8 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
              }},
             {"a patrol's look-about clock", "orders",
              [&] { order([](UnitCommand& c) { c.patrol_scan = 4; }); }},
+            {"a patrol leg's start", "orders",
+             [&] { order([](UnitCommand& c) { c.patrol_from = {3.0f, 0.0f, 4.0f}; }); }},
             {"a raised factory build", "orders",
              [&] {
                  order([](UnitCommand& c) {

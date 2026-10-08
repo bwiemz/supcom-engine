@@ -289,7 +289,12 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
             begin_order(command_queue_.front(), ctx.L);
             continue;
         }
-        const OrderStep step = run_order(command_queue_.front(), dt, ctx, econ_eff);
+        UnitCommand& front = command_queue_.front();
+        if (front.from_patrol && front.patrol_scan > 0) {
+            --front.patrol_scan;
+            return true;
+        }
+        const OrderStep step = run_order(front, dt, ctx, econ_eff);
         if (step == OrderStep::Hold) return true;
         if (step == OrderStep::Gone) return false;
     }
@@ -298,6 +303,9 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
 
 void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     cmd.begun = true;
+    if (cmd.type == CommandType::Patrol || cmd.type == CommandType::AggressiveMove) {
+        cmd.patrol_from = position();
+    }
     // Moho's move, patrol, guard and attack tasks, as they are made: an
     // Immobile NeedUnpack unit's attacker drops its desired target, and with
     // it every weapon's (CAiAttackerImpl::SetDesiredTarget). Retail's
@@ -778,9 +786,14 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         --cmd.patrol_scan;
     } else {
         cmd.patrol_scan = 5;
+        // Moho's patrol task returns 7 with its new task above it, which so
+        // starts 6 ticks on; done, it hands straight back to the patrol's Execute.
+        // An aircraft goes at once: nothing here flies it while it would wait.
         const auto break_off = [&](UnitCommand order) {
             order.command_id = cmd.command_id;
             order.from_patrol = true;
+            order.patrol_scan = is_air_unit() ? 0 : 5;
+            cmd.patrol_scan = 0;
             navigator_.abort_move();
             command_queue_.push_front(
                 std::move(order)); // cmd stays valid: a deque keeps references
