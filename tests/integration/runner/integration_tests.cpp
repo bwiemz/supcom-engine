@@ -8460,7 +8460,7 @@ void test_area(TestContext& ctx) {
     )");
 
     // A blast reaches the units within its radius, in three dimensions,
-    // each taking it whole; it spares allies and leaves projectiles be.
+    // each taking it whole; it spares allies.
     lua_check("Test 1: a blast reaches enemies within its radius, not beyond or above", R"(
         local near = __osc_spawn('uel0201', 'ARMY_2', 652, 90)
         local far = __osc_spawn('uel0201', 'ARMY_2', 658, 90)
@@ -8502,24 +8502,32 @@ void test_area(TestContext& ctx) {
         if lost.inner ~= 0 then error('inside the ring lost ' .. lost.inner) end
         if math.abs(lost.outer - 30) > 1e-3 then error('in the ring lost ' .. lost.outer) end
     )");
-    lua_check("Test 4: props in it are damaged; projectiles are not", R"(
+    lua_check("Test 4: props in it are damaged", R"(
         local rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
                                    660, GetTerrainHeight(660, 120), 120, 0, 0, 0)
-        -- An enemy's projectile, which the ally rule would not spare: one
-        -- with health that doesn't home (a script's has no target, and Moho
-        -- destroys a homing one so made at once).
-        local enemy = __osc_spawn('uel0201', 'ARMY_2', 640, 140)
-        local shot = enemy:CreateProjectile(
-            '/projectiles/CIFMissileTacticalSplit01/CIFMissileTacticalSplit01_proj.bp',
-            0, 1, 0, 0, 0, 1)
-        Warp(shot, __osc_at(662, 120, 1))
         local before = rock:GetHealth()
         DamageArea(__osc_gunner, __osc_at(660, 120), 5, 10, 'Normal', false)
         if rock:GetHealth() >= before then error('the rock took nothing') end
-        if shot:BeenDestroyed() or shot:GetHealth() < shot:GetMaxHealth() then
-            error('the projectile was hit')
+    )");
+    lua_check("Test 5: an enemy's projectile with a collision shape dies in it", R"(
+        local enemy = __osc_spawn('uel0201', 'ARMY_2', 640, 160)
+        local function shot(owner, bp, shape)
+            local p = owner:CreateProjectile('/projectiles/' .. bp .. '/' .. bp .. '_proj.bp',
+                                             0, 1, 0, 0, 0, 1)
+            if shape then p:SetCollisionShape('Sphere', 0, 0, 0, 1) end
+            Warp(p, __osc_at(662, 150, 1))
+            return p
         end
-        shot:Destroy()
+        local shaped = shot(enemy, 'TDFGauss01', true)
+        local bare = shot(enemy, 'TDFGauss01', false)
+        local mine = shot(__osc_gunner, 'TDFGauss01', true)
+        local nosplash = shot(enemy, 'CANTorpedoMeson01', true)
+        DamageArea(__osc_gunner, __osc_at(660, 150), 5, 10, 'Normal', false)
+        if not shaped:BeenDestroyed() then error('the shaped projectile survived') end
+        if bare:BeenDestroyed() then error('the projectile with no shape was hit') end
+        if mine:BeenDestroyed() then error('the ally projectile was hit') end
+        if nosplash:BeenDestroyed() then error('the NOSPLASHDAMAGE projectile was hit') end
+        for _, p in {bare, mine, nosplash} do p:Destroy() end
     )");
 
     // A shield the blast meets from outside takes it; the units under it
@@ -8529,7 +8537,7 @@ void test_area(TestContext& ctx) {
         __osc_under = __osc_spawn('uel0201', 'ARMY_2', 335, 800)
     )");
     for (int i = 0; i < 20; ++i) ctx.sim.tick();
-    lua_check("Test 5: a strong shield absorbs a blast on its surface", R"(
+    lua_check("Test 6: a strong shield absorbs a blast on its surface", R"(
         local shield = __osc_gen.MyShield
         if not shield or not shield:IsOn() then error('the shield is down') end
         local lost = __osc_loss({shield = shield, under = __osc_under}, function()
@@ -8538,7 +8546,7 @@ void test_area(TestContext& ctx) {
         if math.abs(lost.shield - 100) > 1e-3 then error('the shield lost ' .. lost.shield) end
         if lost.under ~= 0 then error('the tank under it lost ' .. lost.under) end
     )");
-    lua_check("Test 6: a weak shield passes on the rest", R"(
+    lua_check("Test 7: a weak shield passes on the rest", R"(
         local shield = __osc_gen.MyShield
         shield:SetHealth(shield, 30)
         local lost = __osc_loss({under = __osc_under}, function()
@@ -8546,7 +8554,7 @@ void test_area(TestContext& ctx) {
         end)
         if math.abs(lost.under - 70) > 1e-3 then error('the tank lost ' .. lost.under .. ', not 70') end
     )");
-    lua_check("Test 7: a blast inside the shield reaches the tank whole", R"(
+    lua_check("Test 8: a blast inside the shield reaches the tank whole", R"(
         local lost = __osc_loss({under = __osc_under}, function()
             DamageArea(__osc_gunner, __osc_at(334, 800), 4, 25, 'Normal', false)
         end)
@@ -8572,12 +8580,12 @@ void test_area(TestContext& ctx) {
         const osc::u32 gunner = global("__osc_gunner_id");
         check(victim && victim->is_unit() &&
                   static_cast<const osc::sim::Unit*>(victim)->last_attacker_id() == gunner,
-              "Test 8: area damage credits its instigator");
+              "Test 9: area damage credits its instigator");
     }
 
     // A blast reaches what its radius touches: a big unit's hull, far from
     // its position at its feet (a beam ending on it, a shell on its roof).
-    lua_check("Test 9: a small blast on a big unit's roof reaches it; one just above doesn't", R"(
+    lua_check("Test 10: a small blast on a big unit's roof reaches it; one just above doesn't", R"(
         local big = __osc_spawn('ueb1301', 'ARMY_2', 760, 170)
         local bp = big:GetBlueprint()
         local p = big:GetPosition()
@@ -8593,7 +8601,7 @@ void test_area(TestContext& ctx) {
         if lost.big ~= 0 then error('0.8 above its roof it lost ' .. lost.big) end
     )");
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 10: no script errors");
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 11: no script errors");
     spdlog::info("Area test: {}/{} passed", pass, pass + fail);
 }
 

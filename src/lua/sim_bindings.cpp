@@ -2687,13 +2687,24 @@ static f32 shield_absorption(lua_State* L, const sim::Entity& shield, const Blas
     return std::max(absorbed, 0.0f);
 }
 
+static bool no_splash(const sim::Entity& e) {
+    static const sim::CategoryName kNoSplash{"NOSPLASHDAMAGE"};
+    if (e.is_unit()) {
+        return static_cast<const sim::Unit&>(e).has_category(kNoSplash);
+    }
+    if (e.is_projectile()) {
+        return static_cast<const sim::Projectile&>(e).categories().count("NOSPLASHDAMAGE") > 0;
+    }
+    return false;
+}
+
 /// Moho's DamageArea and DamageRing, as FAF's Lua copy of it
 /// (/lua/sim/DamageArea.lua) and retail's shields describe it:
 /// - It reaches the units and props whose positions lie within the
-///   radius, measured in three dimensions, all taking the full amount.
-///   Projectiles are untouched.
+///   radius, measured in three dimensions, all taking the full amount, and
+///   the projectiles whose collision shapes it touches.
 /// - Allies are spared unless damageFriendly, and the instigator unless
-///   damageSelf.
+///   damageSelf; NOSPLASHDAMAGE ones always.
 /// - A shield the blast meets from outside takes the blast, and the units
 ///   under it take only what its OnGetDamageAbsorption leaves.
 static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
@@ -2742,8 +2753,14 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
     for (const u32 id : candidates) {
         const sim::Entity* e = registry.find(id);
         if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-        if (!e->is_unit() && !e->is_prop()) continue;
+        if (!e->is_unit() && !e->is_prop() && !e->is_projectile()) continue;
         if (e->is_unit() && !static_cast<const sim::Unit*>(e)->can_take_damage()) continue;
+        if (e->is_projectile() && e->collision_shape().type == sim::CollisionShapeType::NONE) {
+            continue;
+        }
+        if (no_splash(*e)) {
+            continue;
+        }
         f32 d = 0;
         if (e->collision_shape().type != sim::CollisionShapeType::NONE) {
             d = std::max(0.0f, sim::shape_distance(e->collision_shape(), e->position(),

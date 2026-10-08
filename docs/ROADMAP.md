@@ -271,7 +271,7 @@ In order of how much they change what the player feels:
 - Expiring shots burst in the air, tracking shots end at their ground target, bombs fall, and script-made projectiles take their blueprint's physics.
 
 `--collide-test` (gate). **M201f ✅** Blasts reach what stands in them, as FAF's Lua copy of `DamageArea` describes Moho's:
-- Every unit and prop within the radius, measured in three dimensions, takes the whole amount. Allies and the instigator are spared unless the blast says otherwise, and projectiles are untouched. `DamageRing` spares its inner circle.
+- Every unit and prop within the radius, measured in three dimensions, takes the whole amount. Allies and the instigator are spared unless the blast says otherwise, and NOSPLASHDAMAGE ones always. A projectile is reached only through a collision shape its script set. `DamageRing` spares its inner circle.
 - A shield the blast meets from outside takes it, and the units under the shield take only what its `OnGetDamageAbsorption` leaves.
 - Area kills are credited to their instigator.
 
