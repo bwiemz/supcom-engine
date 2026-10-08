@@ -5767,8 +5767,9 @@ static int l_NotifyUpgrade(lua_State* L) {
 
 // ChangeUnitArmy(unit, army): Moho's cfunc_ChangeUnitArmyL. The unit (and
 // what it carries) changes army by replacement; returns the new unit, or
-// nil. A unit already of that army is an error; one carrying a commander
-// stays as it is (nil).
+// nil. A unit already of that army is an error; a commander, a unit being
+// built or one carrying a commander stays as it is (nil). FAF's exe drops the
+// first two (FA-Binary-Patches hooks/HTransferACUs.cpp).
 static int l_ChangeUnitArmy(lua_State* L) {
     if (lua_gettop(L) != 2)
         return luaL_error(L, "ChangeUnitArmy(unit, army)\n  expected 2 args, but got %d",
@@ -5784,6 +5785,10 @@ static int l_ChangeUnitArmy(lua_State* L) {
     if (army < 0 || army >= static_cast<int>(sim->army_count()))
         return luaL_error(L, "Invalid army %d", static_cast<int>(lua_tonumber(L, 2)));
     if (unit->army() == army) return luaL_error(L, "Unit already belongs to army %d", army);
+    if (unit->is_being_built() || unit->has_category("COMMAND")) {
+        lua_pushnil(L);
+        return 1;
+    }
     for (const u32 id : unit->cargo_ids()) {
         const auto* c = sim->entity_registry().find(id);
         if (c && c->is_unit() && static_cast<const sim::Unit*>(c)->has_category("COMMAND")) {
