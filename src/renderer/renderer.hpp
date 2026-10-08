@@ -42,6 +42,7 @@
 #include "renderer/command_feedback.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/range_renderer.hpp"
+#include "renderer/input_handler.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "renderer/trail_renderer.hpp"
@@ -237,6 +238,9 @@ public:
     void set_command_preview(u32 command_id, const sim::Vector3& at, bool valid, bool held) {
         command_graph_renderer_.set_preview(command_id, at, valid);
         command_drag_held_ = held && command_id != 0;
+    }
+    void set_formation_ghosts(std::vector<FormationGhost> ghosts) {
+        formation_ghosts_ = std::move(ghosts);
     }
     void set_selection_marks(u32 hovered, std::optional<std::array<sim::Vector3, 4>> drag) {
         hovered_ = hovered;
@@ -865,6 +869,7 @@ private:
     u32 hovered_ = 0;
     u32 highlight_command_ = 0;
     bool command_drag_held_ = false;
+    std::vector<FormationGhost> formation_ghosts_;
     std::optional<std::array<sim::Vector3, 4>> drag_box_;
     BeamBlueprintCache beam_bp_cache_;
     TrailRenderer trail_renderer_;

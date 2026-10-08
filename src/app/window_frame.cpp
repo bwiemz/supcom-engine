@@ -423,6 +423,7 @@ void App::Window::render(const sim::FrameView& frame_view) {
         const auto render_start = std::chrono::steady_clock::now();
         renderer.set_selection_marks(input_handler.hovered(), input_handler.drag_box());
         renderer.set_command_highlight(input_handler.hovered_command());
+        renderer.set_formation_ghosts(input_handler.formation_ghosts(*sim_state));
         const auto drag = input_handler.order_drag();
         renderer.set_command_preview(drag ? drag->command_id : 0,
                                      drag ? drag->at : osc::sim::Vector3{}, !drag || drag->valid,

@@ -174,7 +174,7 @@ public:
     void set_ghost_slots(u32 n) { ghost_slots_ = n; }
 
     bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
-                      TextureCache* tex_cache);
+                      TextureCache* tex_cache, f32 heading = 0.0f);
     /// Inject one instance of a UI world mesh (an order's feedback blip),
     /// its own group unless it follows one of the same mesh. Call after
     /// update(), in the room set_ghost_slots left.
