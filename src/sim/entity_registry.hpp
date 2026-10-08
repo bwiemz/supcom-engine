@@ -101,10 +101,13 @@ public:
     void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<u32>& out) const;
 
     /// Whether `visit` says yes to a live unit with a collision shape that
-    /// could reach the rectangle [x0, x1] x [z0, z1] (within COLLIDER_REACH
-    /// of it, or a large shape's own reach), stopping at the first yes. The
-    /// units come in no fixed order and may come twice: only for a
-    /// question whose answer depends on neither (is any unit in the way?).
+    /// could reach the rectangle [x0, x1] x [z0, z1] (its position within
+    /// the shape's reach of it, as collision_reach bounds the shape's box
+    /// turned any way), stopping at the first yes. A unit farther away is
+    /// never offered: `visit` must say no to a shape that can't reach the
+    /// rectangle. The units come in no fixed order and may come twice:
+    /// only for a question whose answer depends on neither (is any unit in
+    /// the way?).
     template <typename F> bool any_unit_collider(f32 x0, f32 z0, f32 x1, f32 z1, F&& visit) const {
         using Visit = std::remove_reference_t<F>;
         return any_unit_collider_impl(
