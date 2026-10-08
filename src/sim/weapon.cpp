@@ -873,7 +873,11 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     // It homes on the point its weapon aimed at (Moho copies the target in).
     proj->target_point = proj->target_entity_id != 0 ? current_aim_spot() : -1;
     proj->target_position = aim;
-    proj->has_target_position = true;
+    // Sent somewhere: at a target, a ground target or a manual order's
+    // point. Fired along its facing with none, it has no target (Moho's
+    // weapon target is None then), which a homing shot can't fly with.
+    proj->has_target_position =
+        target != nullptr || has_ground_target || (manual_fire && last_order_point);
     proj->launcher_id = owner.entity_id();
     proj->damage_amount = damage;
     proj->damage_radius = damage_radius;

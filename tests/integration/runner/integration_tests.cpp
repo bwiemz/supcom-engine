@@ -8505,10 +8505,13 @@ void test_area(TestContext& ctx) {
     lua_check("Test 4: props in it are damaged; projectiles are not", R"(
         local rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
                                    660, GetTerrainHeight(660, 120), 120, 0, 0, 0)
-        -- An enemy's projectile, which the ally rule would not spare.
+        -- An enemy's projectile, which the ally rule would not spare: one
+        -- with health that doesn't home (a script's has no target, and Moho
+        -- destroys a homing one so made at once).
         local enemy = __osc_spawn('uel0201', 'ARMY_2', 640, 140)
-        local shot = enemy:CreateProjectile('/projectiles/aantorpedo01/aantorpedo01_proj.bp',
-                                            0, 1, 0, 0, 0, 1)
+        local shot = enemy:CreateProjectile(
+            '/projectiles/CIFMissileTacticalSplit01/CIFMissileTacticalSplit01_proj.bp',
+            0, 1, 0, 0, 0, 1)
         Warp(shot, __osc_at(662, 120, 1))
         local before = rock:GetHealth()
         DamageArea(__osc_gunner, __osc_at(660, 120), 5, 10, 'Normal', false)
@@ -9896,9 +9899,23 @@ void test_defence(TestContext& ctx) {
     lua_check("Test 8: projectiles have their blueprint's categories", R"(
         local tml = __osc_spawn('ueb2108', 'ARMY_1', 300, 800)
         local tank = __osc_spawn('uel0201', 'ARMY_2', 310, 800)
-        __osc_missile = tml:CreateProjectile('/projectiles/TIFMissileCruise01/TIFMissileCruise01_proj.bp', 0, 5, 0, 0, 0, 1)
+        -- Homing shots need a target to live (Moho destroys one made with
+        -- none, as a script's CreateProjectile makes it): each is a child of
+        -- a shell sent at something, whose target it takes.
+        local function homing(from, bp, at)
+            local carrier = from:CreateProjectile('/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 5, 0, 0, 0, 1)
+            carrier:SetNewTarget(at)
+            local shot = carrier:CreateChildProjectile(bp)
+            carrier:Destroy()
+            return shot
+        end
+        __osc_missile = homing(tml, '/projectiles/TIFMissileCruise01/TIFMissileCruise01_proj.bp', tank)
         __osc_shell = tank:CreateProjectile('/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 2, 0, 0, 0, 1)
-        __osc_interceptor = tank:CreateProjectile('/projectiles/TIMMissileIntercerptor01/TIMMissileIntercerptor01_proj.bp', 0, 2, 0, 0, 0, 1)
+        -- (sent at the launcher: not the missile, so unassigned to it)
+        __osc_interceptor = homing(tank, '/projectiles/TIMMissileIntercerptor01/TIMMissileIntercerptor01_proj.bp', tml)
+        if __osc_missile:BeenDestroyed() or __osc_interceptor:BeenDestroyed() then
+            error('a homing shot with a target was destroyed')
+        end
         local m = __osc_missile
         for _, c in {'MISSILE', 'TACTICAL', 'PROJECTILE', 'ALLPROJECTILES'} do
             if not EntityCategoryContains(categories[c], m) then error('the missile is not ' .. c) end
@@ -9968,6 +9985,49 @@ void test_defence(TestContext& ctx) {
         if __osc_missile:GetTrackingTarget() == own then error('its own side\'s flare lured the missile') end
         enemy_flare:OnCollisionCheck(__osc_missile)
         if __osc_missile:GetTrackingTarget() ~= __osc_shell then error('the enemy flare did not lure it') end
+    )");
+
+    // Moho's Projectile constructor: a homing shot with no target to go for
+    // is destroyed at once, before its OnCreate (CAiTarget::HasTarget). A
+    // script's CreateProjectile passes none; a child takes its parent's.
+    lua_check("Test 12: a homing shot a script makes is destroyed at once, before its OnCreate",
+              R"(
+        local tml = __osc_spawn('ueb2108', 'ARMY_1', 300, 830)
+        local m = tml:CreateProjectile('/projectiles/TIFMissileCruise01/TIFMissileCruise01_proj.bp', 0, 5, 0, 0, 0, 1)
+        if not m then error('no handle') end
+        if not m:BeenDestroyed() then error('it lives') end
+        if m.DamageData or m.Trash then error('its OnCreate ran') end
+        -- One that doesn't home lives, and may home later
+        local split = tml:CreateProjectile('/projectiles/CIFMissileTacticalSplit01/CIFMissileTacticalSplit01_proj.bp', 0, 5, 0, 0, 0, 1)
+        if split:BeenDestroyed() then error('a shot that does not home was destroyed') end
+        split:TrackTarget(true)
+        if split:BeenDestroyed() then error('tracking later destroyed it') end
+        split:Destroy()
+    )");
+    lua_check("Test 13: a child takes its parent's target: alive, it homes; gone or dying, it is "
+              "destroyed",
+              R"(
+        local tank = __osc_spawn('uel0201', 'ARMY_2', 310, 830)
+        local carrier = tank:CreateProjectile('/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 2, 0, 0, 0, 1)
+        local bp = '/projectiles/TIFMissileCruise01/TIFMissileCruise01_proj.bp'
+        local alive = __osc_spawn('uel0201', 'ARMY_1', 320, 830)
+        carrier:SetNewTarget(alive)
+        local homing = carrier:CreateChildProjectile(bp)
+        if homing:BeenDestroyed() then error('a child sent at a live unit was destroyed') end
+        local gone = __osc_spawn('uel0201', 'ARMY_1', 325, 830)
+        carrier:SetNewTarget(gone)
+        gone:Destroy()
+        if not carrier:CreateChildProjectile(bp):BeenDestroyed() then
+            error('a child sent at a gone unit lives')
+        end
+        local dying = __osc_spawn('uel0201', 'ARMY_1', 330, 830)
+        carrier:SetNewTarget(dying)
+        dying:Kill()
+        if not carrier:CreateChildProjectile(bp):BeenDestroyed() then
+            error('a child sent at a dying unit lives')
+        end
+        homing:Destroy()
+        carrier:Destroy()
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 11: no script errors");
@@ -11367,8 +11427,11 @@ void test_naval_depth(TestContext& ctx) {
     lua_check("setup: a torpedo dropped over the sea", R"(
         IssueClearCommands({__osc_sub})
         __osc_target:Destroy()
+        -- (one that doesn't home: a script's has no target, and Moho
+        -- destroys a homing one so made at once)
         __osc_drop = __osc_sub:CreateProjectile(
-            '/projectiles/TANAnglerTorpedo02/TANAnglerTorpedo02_proj.bp', 0, 8, 0, 0, -1, 0)
+            '/projectiles/SANHeavyCavitationTorpedo03/SANHeavyCavitationTorpedo03_proj.bp',
+            0, 8, 0, 0, -1, 0)
         local p = __osc_drop:GetPosition()
         __osc_drop_start = p[2] - GetSurfaceHeight(p[1], p[3])
     )");
