@@ -393,14 +393,24 @@ TEST_CASE("A drone at work circles what it repairs at StartTurnDistance's ratio;
           "when the work does",
           "[air_circling]") {
     World w;
-    Unit& patient = *w.make("plane", 64.0f, 64.0f);
-    patient.set_is_being_built(true); // stays put: it neither flies nor lands
-    Unit& d = *w.make("drone", 66.0f, 64.0f);
-    d.set_repair_target_id(patient.entity_id());
-    for (int t = 0; t < 60; ++t) w.tick(d);
+    Unit& patient = *w.make("tank", 64.0f, 64.0f);
+    Unit& d = *w.make("repairdrone", 66.0f, 64.0f);
+    // Its repair order: Moho repairs only under one (CUnitRepairTask).
+    osc::sim::UnitCommand repair;
+    repair.type = osc::sim::CommandType::Repair;
+    repair.target_id = patient.entity_id();
+    repair.target_pos = patient.position();
+    d.push_command(repair, true);
+    const auto hurt = [&] { patient.set_health(1.0f); }; // work that never ends
+    for (int t = 0; t < 60; ++t) {
+        hurt();
+        w.tick(d);
+    }
+    REQUIRE(d.is_repairing());
     f32 nearest = 1e9f;
     f32 farthest = 0.0f;
     for (int t = 0; t < 200; ++t) {
+        hurt();
         w.tick(d);
         nearest = std::min(nearest, flat_dist(d, patient.position()));
         farthest = std::max(farthest, flat_dist(d, patient.position()));
@@ -410,9 +420,10 @@ TEST_CASE("A drone at work circles what it repairs at StartTurnDistance's ratio;
     CHECK(farthest < 0.9f * 5.0f + 1.0f);
     CHECK(d.air_combat().flying);
 
-    d.set_repair_target_id(0);
+    d.clear_commands(); // stopped: the repair ends with its order
     w.tick(d);
     w.tick(d);
+    CHECK_FALSE(d.is_repairing());
     CHECK_FALSE(d.air_combat().flying);
     CHECK(d.air_combat().circle_radius_ratio == 1.0f); // drawn again next time
 }
