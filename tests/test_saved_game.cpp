@@ -255,6 +255,48 @@ TEST_CASE("A game restored from its snapshot plays on as the saved one did", "[s
     CHECK(b.recorded_replay().commands.size() == a.recorded_replay().commands.size());
 }
 
+TEST_CASE("A snapshot holds Moho's random stream where the game left it", "[savegame][sync]") {
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    a.set_seed(31);
+    a.set_moho_random(true);
+    const auto ids = setup(a);
+    a.set_recording(true);
+    for (int i = 0; i < 700; ++i) {
+        a.random().next_u32();
+    }
+    const SavedGame save = osc::sim::save_game(a, "mt");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    b.set_seed(31);
+    REQUIRE(setup(b) == ids);
+    const std::string err = osc::sim::load_snapshot(b, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    CHECK(b.moho_random());
+    CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
+    for (int i = 0; i < 1000; ++i) {
+        REQUIRE(b.random().next_u32() == a.random().next_u32());
+    }
+
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    c.set_seed(31);
+    setup(c);
+    c.set_recording(true);
+    const SavedGame plain = osc::sim::save_game(c, "splitmix");
+    LuaGuard gd;
+    SimState d(gd.L, nullptr);
+    d.set_seed(31);
+    d.set_moho_random(true);
+    setup(d);
+    REQUIRE(osc::sim::load_snapshot(d, plain.snapshot).empty());
+    CHECK_FALSE(d.moho_random());
+    CHECK(d.random().next_u64() == c.random().next_u64());
+}
+
 TEST_CASE("A damaged snapshot is refused before anything loads", "[savegame]") {
     LuaGuard ga;
     SimState a(ga.L, nullptr);

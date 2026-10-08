@@ -676,6 +676,11 @@ public:
         sim_random_.seed(s);
     }
     u64 seed() const { return seed_; }
+    bool moho_random() const { return sim_random_.mt19937(); }
+    void set_moho_random(bool on) {
+        sim_random_.set_mt19937(on);
+        sim_random_.seed(seed_);
+    }
     /// The session's one random stream: weapons, scripts' Random and
     /// math.random. Deterministic from the seed and the calls made on it.
     SimRandom& random() { return sim_random_; }

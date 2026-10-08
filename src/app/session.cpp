@@ -76,6 +76,10 @@ osc::u32 g_rng_trace_to = 0xFFFFFFFFu;
 /// doesn't record it, so play one back with the switch it was made with.
 bool g_moho_pathing = false;
 
+/// --moho-random: a new game draws from Moho's MT19937 stream (SimRandom::set_mt19937); its
+/// setup records it, so its replays and saves play back with it.
+bool g_moho_random = false;
+
 /// --record <file>: each game records (SimState::set_recording), and the
 /// run writes the last one's replay here as it ends. Empty: no recording.
 std::string g_record_path;

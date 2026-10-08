@@ -15,9 +15,18 @@ extern "C" {
 }
 
 #include <cstdint>
+#include <random>
 #include <string>
 
 using osc::sim::SimRandom;
+
+namespace {
+
+std::mt19937 reference_mt(osc::u32 seed) {
+    return std::mt19937(seed);
+}
+
+} // namespace
 
 TEST_CASE("SimRandom is deterministic for a given seed", "[simrand]") {
     SimRandom a(12345), b(12345);
@@ -91,6 +100,45 @@ TEST_CASE("SimRandom's stream is pinned", "[simrand]") {
     CHECK(n.next_int(1, 100) == 14);
 }
 
+TEST_CASE("Moho's random stream is std::mt19937's, seeded with the seed's low word", "[simrand]") {
+    SimRandom r;
+    r.set_mt19937(true);
+    r.seed(5489);
+    auto ref = reference_mt(5489);
+    for (int i = 0; i < 9999; ++i) {
+        REQUIRE(r.next_u32() == ref());
+    }
+    CHECK(r.next_u32() == 4123659995u);
+
+    SimRandom wide;
+    wide.set_mt19937(true);
+    wide.seed(0xABCD000000000007ull);
+    auto low = reference_mt(7);
+    for (int i = 0; i < 10; ++i) {
+        REQUIRE(wide.next_u32() == low());
+    }
+}
+
+TEST_CASE("Moho's random stream turns its words into numbers as CRandomStream does", "[simrand]") {
+    auto ref = reference_mt(42);
+    SimRandom r;
+    r.set_mt19937(true);
+    r.seed(42);
+    const osc::u32 w0 = ref();
+    CHECK(r.next_double() == static_cast<double>(static_cast<float>(w0) * 0x1p-32f));
+    const osc::u32 w1 = ref();
+    CHECK(r.next_int(1, 6) == 1 + static_cast<osc::i64>((osc::u64{6} * w1) >> 32));
+    const osc::u32 w2 = ref();
+    CHECK(r.range(-2.0f, 3.0f) == -2.0f + SimRandom::mul_word(5.0f, w2) * 0x1p-32f);
+    const osc::u64 hi = ref();
+    const osc::u64 lo = ref();
+    CHECK(r.next_u64() == ((hi << 32) | lo));
+
+    CHECK(SimRandom::mul_word(0x800005p-24f, 1481428173u) == 740714560.0f);
+    CHECK(SimRandom::mul_word(1.0f, 0xFFFFFFFFu) == 4294967296.0f);
+    CHECK(SimRandom::mul_word(-3.0f, 0x80000001u) == -6442450944.0f);
+}
+
 // --- Scripts' randomness (M196) ----------------------------------------------
 
 namespace {
@@ -157,4 +205,33 @@ TEST_CASE("Sim math.random is the session's stream; the UI's is its own", "[simr
     osc::lua::LuaState ui;
     REQUIRE(ui.do_string("local x = math.random() local y = math.random(5)").ok());
     CHECK(sim.sim.random().state() == before);
+}
+
+TEST_CASE("With Moho's random stream sim scripts' Random draws as Moho's does", "[simrand][lua]") {
+    SimLua s(42);
+    s.sim.set_moho_random(true);
+    auto ref = reference_mt(42);
+    CHECK(s.number("return Random()") == static_cast<double>(static_cast<float>(ref()) * 0x1p-32f));
+    CHECK(s.number("return Random(6)") == static_cast<double>(1 + ((osc::u64{6} * ref()) >> 32)));
+    CHECK(s.number("return Random(10, 20)") ==
+          static_cast<double>(10 + ((osc::u64{11} * ref()) >> 32)));
+    s.number("math.randomseed(9) return 0");
+    auto reseeded = reference_mt(9);
+    CHECK(s.number("return math.random(100)") ==
+          static_cast<double>(1 + ((osc::u64{100} * reseeded()) >> 32)));
+}
+
+TEST_CASE("Moho's random stream is in the sync checksum's rng part", "[simrand][checksum]") {
+    SimLua a(3);
+    SimLua b(3);
+    a.sim.set_moho_random(true);
+    b.sim.set_moho_random(true);
+    CHECK(a.sim.checksum_parts().rng == b.sim.checksum_parts().rng);
+    for (int i = 0; i < 700; ++i) {
+        a.sim.random().next_u32();
+        INFO("draw " << i);
+        REQUIRE(a.sim.checksum_parts().rng != b.sim.checksum_parts().rng);
+        b.sim.random().next_u32();
+        REQUIRE(a.sim.checksum_parts().rng == b.sim.checksum_parts().rng);
+    }
 }

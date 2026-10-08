@@ -394,13 +394,18 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     });
     w.size(sim.blip_objects_.size());
     for (u32 id : sim.blip_objects_) w.u32v(id);
-    w.b(sim.moho_pathing_);
+    const SimRandom& rng = sim.sim_random_;
+    w.u8v(static_cast<u8>((sim.moho_pathing_ ? 1 : 0) | (rng.mt_ ? 2 : 0)));
+    if (rng.mt_) {
+        w.u32v(rng.mt_seed_);
+        w.u64v(rng.mt_drawn_);
+    }
     save_path_maps(w, sim);
 }
 
 void StateIO::load(StateReader& r, SimState& sim) {
     r.tag("SIMS");
-    sim.sim_random_.seed(r.u64v());
+    sim.sim_random_.state_ = r.u64v();
     sim.seed_ = r.u64v();
     sim.projectile_info_.clear(); // (the projectiles fill it again as they load)
     load(r, sim.entity_registry_, sim);
@@ -608,7 +613,15 @@ void StateIO::load(StateReader& r, SimState& sim) {
     // painted intel all loaded by now)
     sim.intel_grids_.reset();
     sim.build_intel_grids();
-    sim.moho_pathing_ = r.b();
+    const u8 switches = r.u8v();
+    sim.moho_pathing_ = (switches & 1) != 0;
+    SimRandom& rng = sim.sim_random_;
+    rng.mt_ = (switches & 2) != 0;
+    if (rng.mt_) {
+        rng.mt_seed(r.u32v());
+        rng.mt_drawn_ = r.u64v();
+        rng.mt_engine_->discard(rng.mt_drawn_);
+    }
     load_path_maps(r, sim);
 }
 
