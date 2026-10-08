@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+namespace osc::ui {
+class UIControlRegistry;
+}
+
 namespace osc::renderer {
 
 /// What the UI asks AddCommandFeedbackBlip(meshInfo, duration) for (faf-re
@@ -47,6 +51,15 @@ public:
 private:
     std::vector<FeedbackBlip> blips_;
 };
+
+struct WorldMeshDraw {
+    FeedbackBlipSpec spec;
+    f32 created_tick = 0.0f;
+    f32 lifetime = 0.0f;
+    f32 lod_cutoff = 0.0f;
+};
+
+std::vector<WorldMeshDraw> shown_world_meshes(const ui::UIControlRegistry& registry);
 
 /// mesh.fx's LOD metric at `p` (lodBasis, GeomCamera3's viewport row 1):
 /// the view's width at p's depth along `forward` from `eye`, for a

@@ -1,5 +1,7 @@
 #include "renderer/command_feedback.hpp"
 
+#include "ui/ui_control.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -18,6 +20,29 @@ void CommandFeedbackBlips::update(f32 dt) {
     blips_.erase(std::remove_if(blips_.begin(), blips_.end(),
                                 [](const FeedbackBlip& b) { return b.age >= b.spec.duration; }),
                  blips_.end());
+}
+
+std::vector<WorldMeshDraw> shown_world_meshes(const ui::UIControlRegistry& registry) {
+    std::vector<WorldMeshDraw> out;
+    for (const auto& control : registry.all()) {
+        if (!control || control->destroyed() || !control->world_mesh() ||
+            control->world_mesh()->hidden) {
+            continue;
+        }
+        const ui::UIControl::WorldMesh& mesh = *control->world_mesh();
+        WorldMeshDraw draw;
+        draw.spec.position = {mesh.position[0], mesh.position[1], mesh.position[2]};
+        draw.spec.mesh_name = mesh.mesh_name;
+        draw.spec.blueprint_id = mesh.blueprint_id;
+        draw.spec.texture_name = mesh.texture_name;
+        draw.spec.shader_name = mesh.shader_name;
+        draw.spec.uniform_scale = mesh.uniform_scale;
+        draw.created_tick = mesh.created_tick;
+        draw.lifetime = mesh.lifetime;
+        draw.lod_cutoff = mesh.lod_cutoff;
+        out.push_back(std::move(draw));
+    }
+    return out;
 }
 
 f32 lod_metric(const sim::Vector3& p, const sim::Vector3& eye, const sim::Vector3& forward,

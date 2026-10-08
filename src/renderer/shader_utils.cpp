@@ -1363,14 +1363,14 @@ void main() {
         // PositionNormalOffsetVS(0.05)
         local += inNormal * (0.05 / length(inModel[1].xyz));
     }
-    if (pc.technique == 28u || pc.technique == 29u) {
+    if (pc.technique == 28u || pc.technique == 29u || pc.technique == 30u) {
         // CommandFeedbackVS(0.7 or 1.1): to that much of its size over its
         // lifetime, material.y ticks from material.x (its distance scale is
         // in the instance's matrix).
         float age = pc.time - inShaderTime;
         if (age < 0.0) age += 36000.0; // the times wrap at 36000
         float t = clamp(age / max(inParameter, 1e-4), 0.0, 1.0);
-        local *= mix(1.0, pc.technique == 28u ? 0.7 : 1.1, t);
+        local *= mix(1.0, pc.technique == 29u ? 1.1 : 0.7, t);
     }
     vec4 skinnedPos = bone * vec4(local, 1.0);
     vec4 worldPos = inModel * skinnedPos;
@@ -1749,12 +1749,12 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
                         R"glsl(
 
 void main() {
-    if (pc.technique == 28u || pc.technique == 29u) {
+    if (pc.technique == 28u || pc.technique == 29u || pc.technique == 30u) {
         // CommandFeedbackPS0(fade): the albedo, its alpha fading over the
-        // lifetime, tested over 0x23.
+        // lifetime (not RallyPoint's), tested over 0x23.
         float age = pc.time - fragShaderTime;
         if (age < 0.0) age += 36000.0;
-        float t = clamp(age / max(fragParameter, 1e-4), 0.0, 1.0);
+        float t = pc.technique == 30u ? 0.0 : clamp(age / max(fragParameter, 1e-4), 0.0, 1.0);
         vec4 feedback = texture(texAlbedo, fragUV);
         float alpha = clamp(feedback.a * (1.0 - t), 0.0, 1.0);
         if (alpha <= 35.0 / 255.0) discard;
