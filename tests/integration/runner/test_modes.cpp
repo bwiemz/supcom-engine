@@ -435,6 +435,7 @@ void IntegrationModes::print_usage() const {
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
               << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
+              << "  --mouse-scene      Six Strikers of army 1 beside its commander, for --mouse goldens\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
@@ -476,6 +477,7 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     for (const char* flag : kOwnModes) note(flag);
     interp_ = parse_flag(argc, argv, "--interp-test");
     render_dump_path_ = parse_string_arg(argc, argv, "--render-dump", "");
+    mouse_scene_ = parse_flag(argc, argv, "--mouse-scene");
     render_dump_.emplace(render_dump_path_);
 
     app::TestRequest request;
@@ -717,6 +719,17 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
 }
 
 void IntegrationModes::frame_view(Engine& e, app::Frame& frame) {
+    if (mouse_scene_ && !mouse_scene_spawned_ && e.sim_state->tick_count() >= 1) {
+        mouse_scene_spawned_ = true;
+        if (!run_sim_lua(e, R"(
+            for i = 0, 5 do
+                local x, z = 662 + 3 * math.mod(i, 3), 348 + 3 * math.floor(i / 3)
+                CreateUnitHPR('uel0201', 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+            end
+        )")) {
+            osc::test_status::fail("[FAIL] mouse-scene: the scene script failed");
+        }
+    }
     if (!interp_) return;
     interp_probe_.on_frame(*e.sim_state, frame.view,
                            [&](const char* code) { return run_sim_lua(e, code); });

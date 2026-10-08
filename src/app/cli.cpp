@@ -66,6 +66,11 @@ void print_usage() {
               << "                     repeat for the next (captures of retail's menus)\n"
               << "  --click-at <x>,<y> Click that point, a frame after the click before;\n"
               << "                     in turn with --click (a scrollbar's track, say)\n"
+              << "  --mouse \"<when> <verb> <what>\"  A player's mouse, a step at a time:\n"
+              << "                     <when> a frame (as --screenshot-frame counts) or t<tick>;\n"
+              << "                     move <x>,<y> (pixels) or w<x>,<z> (the ground there),\n"
+              << "                     press|release left|right|middle|shift|ctrl|alt.\n"
+              << "                     Steps go in turn; one held stays held\n"
               << "  --binding-coverage <file>  Report engine API the scripts call but\n"
               << "                     the engine lacks (needs --map)\n"
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
@@ -326,6 +331,16 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
                 return std::nullopt;
             }
             o.clicks.push_back(*at);
+        } else if (std::strcmp(argv[i], "--mouse") == 0) {
+            auto step = parse_mouse_step(argv[++i]);
+            if (!step) {
+                spdlog::error("--mouse '{}': give a step as '<frame>|t<tick> move "
+                              "<x>,<y>|w<x>,<z>' or '<frame>|t<tick> press|release "
+                              "left|right|middle|shift|ctrl|alt'",
+                              argv[i]);
+                return std::nullopt;
+            }
+            o.mouse.push_back(std::move(*step));
         }
     }
     // --lan-game-host / --lan-game-join <address> (--mp-port <port>): two
@@ -347,7 +362,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
     o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
                         o.mods_flow_test || o.campaign_flow_test || !o.clicks.empty() ||
-                        o.lan_game_test() || o.gpgnet_scripted;
+                        !o.mouse.empty() || o.lan_game_test() || o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");

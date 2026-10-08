@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/cursor.hpp"
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 
@@ -380,6 +381,7 @@ public:
 
     /// Check if a mouse button is currently pressed.
     bool is_mouse_pressed(int glfw_button) const;
+    void set_scripted_pointer(const core::ScriptedPointer& pointer) { scripted_pointer_ = pointer; }
 
     /// Receives a captured frame (RGBA8, rows top to bottom).
     using CaptureCallback = std::function<void(ImageRGBA8)>;
@@ -468,6 +470,7 @@ private:
     f32 fixed_frame_dt_ = 0.0f;
     bool capture_supported_ = false;
     bool vsync_ = true;
+    std::optional<core::ScriptedPointer> scripted_pointer_;
     VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
     bool swapchain_stale_ = false; ///< rebuild before the next frame
     bool resized_ = false;         ///< the swapchain's size changed
