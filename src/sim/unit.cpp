@@ -500,8 +500,11 @@ void Unit::update(f64 dt, SimContext& ctx) {
         // had built on from afar, and the next build order had gone on with
         // the old one.
         if (build_target_id_ != 0 && build_released_with_order_ &&
-            !(head && head->command_id == build_command_id_))
+            !(head && head->command_id == build_command_id_)) {
             stop_assisting(ctx.L, &ctx.registry);
+            if (destroyed() || !in_registry()) return;
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+        }
         if (is_reclaiming() &&
             !(head &&
               (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
@@ -510,6 +513,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             if (destroyed() || !in_registry()) {
                 return;
             }
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // So does a repair (its order's, or a guard's help) and a capture:
         // stopped or replaced, the unit had gone on Repairing or Capturing,
@@ -518,6 +522,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             !(head && (head->type == CommandType::Repair || head->type == CommandType::Guard))) {
             stop_repairing(ctx.L, ctx.registry);
             if (destroyed() || !in_registry()) return;
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (is_capturing() && !(head && head->type == CommandType::Capture)) {
             stop_capturing(ctx.L, ctx.registry, true);
