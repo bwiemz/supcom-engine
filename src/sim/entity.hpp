@@ -248,6 +248,9 @@ public:
     // Collision shape: its blueprint's until a script sets one ('None'
     // included); RevertCollisionShape goes back to the blueprint's.
     const CollisionShape& collision_shape() const { return collision_shape_; }
+    /// How far the shape reaches from the position, turned any way
+    /// (collision_reach, kept with the shape for the registry's walks).
+    f32 shape_reach() const { return shape_reach_; }
     void set_collision_shape(const CollisionShape& s); // entity.cpp: tells the registry
     void set_default_collision_shape(const CollisionShape& s) {
         default_collision_shape_ = s;
@@ -386,6 +389,7 @@ private:
     VizMode viz_focus_player_ = VizMode::ALWAYS;
     VizMode viz_neutrals_ = VizMode::INTEL;
     CollisionShape collision_shape_;
+    f32 shape_reach_ = 0; ///< collision_reach(collision_shape_)
     CollisionShape default_collision_shape_;
     std::string mesh_override_;
     u32 mesh_changes_ = 0;

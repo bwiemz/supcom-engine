@@ -306,8 +306,7 @@ std::vector<Entity*> EntityRegistry::units_in_rect(f32 x0, f32 z0, f32 x1, f32 z
 }
 
 void EntityRegistry::notify_collision_shape_changed(const Entity& entity) {
-    if (collision_reach(entity.collision_shape()) > COLLIDER_REACH)
-        large_colliders_.insert(entity.entity_id());
+    if (entity.shape_reach() > COLLIDER_REACH) large_colliders_.insert(entity.entity_id());
     else large_colliders_.erase(entity.entity_id());
 }
 
@@ -320,10 +319,24 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
         const Vector3& p = e.position();
         return p.x >= x0 - reach && p.x <= x1 + reach && p.z >= z0 - reach && p.z <= z1 + reach;
     };
+    // Within COLLIDER_REACH, then within the unit's own reach: what a
+    // visit turns into the world (a box, four rotations) is mostly too far
+    // to touch, as the path searches' blocking test asks of every cell.
+    // collision_reach bounds the box turned by a unit quaternion; one off
+    // by |q|^2 = 1 + e stretches it by at most 1 + 2e, which the slack
+    // covers (with the rounding at map coordinates). Farther off unit
+    // length, only COLLIDER_REACH filters, as before.
+    const auto may_reach = [&](const Entity& e) {
+        if (!near(e, COLLIDER_REACH)) return false;
+        const Quaternion& q = e.orientation();
+        const f32 norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+        if (std::abs(norm - 1.0f) > 1e-3f) return true;
+        return near(e, e.shape_reach() * 1.01f + 0.01f);
+    };
     if (!grid_initialized_) {
         bool hit = false;
         for_each_unit([&](const Entity& e) {
-            if (!hit && near(e, COLLIDER_REACH) && visit(e, ctx)) hit = true;
+            if (!hit && may_reach(e) && visit(e, ctx)) hit = true;
         });
         if (hit) return true;
     } else {
@@ -333,12 +346,11 @@ bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,
         for (i32 cz = cz_min; cz <= cz_max; ++cz)
             for (i32 cx = cx_min; cx <= cx_max; ++cx)
                 for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
-                    if (near(*unit.entity, COLLIDER_REACH) && visit(*unit.entity, ctx)) return true;
+                    if (may_reach(*unit.entity) && visit(*unit.entity, ctx)) return true;
     }
     for (const u32 id : large_colliders_) {
         const Entity* e = find(id);
-        if (e && e->is_unit() && near(*e, collision_reach(e->collision_shape())) && visit(*e, ctx))
-            return true;
+        if (e && e->is_unit() && near(*e, e->shape_reach()) && visit(*e, ctx)) return true;
     }
     return false;
 }
@@ -366,7 +378,7 @@ void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
                     if (const Entity* e = find(id)) consider(*e, COLLIDER_REACH);
     }
     for (u32 id : large_colliders_)
-        if (const Entity* e = find(id)) consider(*e, collision_reach(e->collision_shape()));
+        if (const Entity* e = find(id)) consider(*e, e->shape_reach());
     // A cell lists ids in the order they moved in, and a large shape may be
     // in a cell too: one canonical list.
     std::sort(out.begin(), out.end());

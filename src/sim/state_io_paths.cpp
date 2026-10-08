@@ -289,7 +289,7 @@ void StateIO::load(StateReader& r, path::PathSearch& s) {
         n.cost = r.f32v();
         n.estimate = r.f32v();
         n.handle = r.i32v();
-        s.index_[path::pack_cell(n.cell)] = static_cast<u32>(i);
+        s.index_.set(path::pack_cell(n.cell), static_cast<u32>(i));
     }
     std::vector<path::OpenHeap::Entry> entries(r.size(12));
     for (path::OpenHeap::Entry& e : entries) {

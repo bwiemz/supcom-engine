@@ -11,7 +11,7 @@
 #include "sim/occupancy.hpp" // OccupancyRect
 
 #include <deque>
-#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -103,6 +103,34 @@ private:
     i32 free_handle_ = -1;
 };
 
+/// A search's packed cell -> node lookup: open addressing over a
+/// power-of-two table, emptied by moving to the next generation instead of
+/// sweeping it. Only lookups read it (nothing walks it), so how it lays its
+/// slots out never reaches the search, the checksum or a snapshot.
+class CellIndex {
+public:
+    /// `key`'s node, or `node` recorded for it if it has none (and true).
+    std::pair<u32, bool> try_emplace(u32 key, u32 node);
+    /// `key`'s node, recorded (or replaced) as `node`.
+    void set(u32 key, u32 node);
+    /// `key`'s node, or null.
+    const u32* find(u32 key) const;
+    void clear();
+
+private:
+    struct Slot {
+        u32 key = 0;
+        u32 node = 0;
+        u32 generation = 0; ///< in use while it is generation_
+    };
+    u32* slot_of(u32 key, bool& found);
+    void grow();
+
+    std::vector<Slot> slots_;
+    u32 generation_ = 1;
+    u32 size_ = 0;
+};
+
 /// One search, as Moho's PathQueue::ImplBase runs it over AStarSearch.
 class PathSearch {
     friend struct osc::sim::StateIO; // snapshots (state_io.hpp)
@@ -151,7 +179,7 @@ private:
 
     Traveler* traveler_ = nullptr;
     std::vector<Node> nodes_;
-    std::unordered_map<u32, u32> index_; ///< packed cell -> node (lookup only)
+    CellIndex index_; ///< packed cell -> node (lookup only)
     OpenHeap open_;
     Cell closest_;
     f32 closest_distance_ = 0;

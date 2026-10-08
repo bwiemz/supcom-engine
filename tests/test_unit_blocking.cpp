@@ -223,6 +223,31 @@ TEST_CASE("UnitIsBlocked: a still unit blocks the cells its box reaches; a flier
     CHECK(w.blockers().unit_blocked(parked.entity_id(), Cell{10, 10}, 2));
 }
 
+TEST_CASE("UnitIsBlocked sees a box as far as it reaches turned, and stretched by a quaternion "
+          "off unit length",
+          "[unit_blocking]") {
+    World w;
+    Unit& owner = *w.make("tank", 10.5f, 10.5f);
+    Unit& parked = *w.make("bigtank", 30.0f, 30.0f);
+    w.sim.tick();
+    w.sim.tick();
+    const u32 id = owner.entity_id();
+    // Turned 45 degrees, its corner (0.9 * sqrt 2 = 1.27 out) reaches the
+    // next cell along x.
+    const f32 half = std::sqrt(0.5f);
+    parked.set_orientation({0.0f, std::sin(0.3926991f), 0.0f, std::cos(0.3926991f)});
+    CHECK(w.blockers().unit_blocked(id, Cell{31, 30}, 2));
+    CHECK_FALSE(w.blockers().unit_blocked(id, Cell{32, 30}, 2));
+    // A script's quaternion of length 2 stretches the box sevenfold along x
+    // and z (the rotation formula assumes unit length): 6.3 out, far past
+    // the shape's own reach, as far as the grid's COLLIDER_REACH looks.
+    parked.set_orientation({0.0f, 2.0f, 0.0f, 0.0f});
+    CHECK(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
+    CHECK_FALSE(w.blockers().unit_blocked(id, Cell{37, 30}, 2));
+    parked.set_orientation({0.0f, half, 0.0f, half});
+    CHECK_FALSE(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
+}
+
 TEST_CASE("SweptPathBlockedByUnit: a unit across the way blocks it; beside it, not",
           "[unit_blocking]") {
     World w;

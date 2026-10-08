@@ -16,9 +16,11 @@
 #include <climits>
 #include <cstdlib>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using osc::f32;
+using osc::i16;
 using osc::i32;
 using osc::u32;
 using osc::u8;
@@ -27,7 +29,9 @@ using osc::sim::OccupancyGrid;
 using osc::sim::OccupancyRect;
 using osc::sim::PathTables;
 using osc::sim::path::Cell;
+using osc::sim::path::CellIndex;
 using osc::sim::path::OpenHeap;
+using osc::sim::path::pack_cell;
 using osc::sim::path::PathFinder;
 using osc::sim::path::PathQueue;
 using osc::sim::path::PathWorld;
@@ -137,6 +141,44 @@ TEST_CASE("Moho's open heap: the cheapest first, an equal priority over the olde
     CHECK(h.top() == 3);
     h.pop();
     CHECK(h.empty());
+}
+
+TEST_CASE("A search's cell index: the first node a cell gets stays, through growth; cleared, "
+          "it holds nothing",
+          "[path_search]") {
+    CellIndex index;
+    CHECK(index.find(0) == nullptr);
+    // Every cell of a 100x100 square, the corner cells at -1 among them
+    // (0xFFFFFFFF packed), well past the first table's 1,024 slots.
+    u32 next = 0;
+    for (i32 z = -1; z < 99; ++z)
+        for (i32 x = -1; x < 99; ++x) {
+            const auto [node, made] =
+                index.try_emplace(pack_cell(Cell{static_cast<i16>(x), static_cast<i16>(z)}), next);
+            CHECK(made);
+            CHECK(node == next);
+            ++next;
+        }
+    const u32 corner = pack_cell(Cell{-1, -1});
+    REQUIRE(index.find(corner) != nullptr);
+    CHECK(*index.find(corner) == 0);
+    const auto [again, made] = index.try_emplace(corner, 12345);
+    CHECK_FALSE(made);
+    CHECK(again == 0);
+    for (u32 n = 0; n < next; n += 997) {
+        const auto x = static_cast<i16>(static_cast<i32>(n % 100) - 1);
+        const auto z = static_cast<i16>(static_cast<i32>(n / 100) - 1);
+        const u32* found = index.find(pack_cell(Cell{x, z}));
+        REQUIRE(found != nullptr);
+        CHECK(*found == n);
+    }
+    index.set(corner, 7); // a snapshot's load sets each node
+    CHECK(*index.find(corner) == 7);
+    index.clear();
+    CHECK(index.find(corner) == nullptr);
+    CHECK(index.find(pack_cell(Cell{50, 50})) == nullptr);
+    CHECK(index.try_emplace(pack_cell(Cell{50, 50}), 3) == std::pair<u32, bool>{3, true});
+    CHECK(index.find(corner) == nullptr);
 }
 
 TEST_CASE("Across an open map the path is cells near its ends and portal jumps between, "
