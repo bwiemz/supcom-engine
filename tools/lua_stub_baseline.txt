@@ -26,7 +26,6 @@ RemoveScroller stub_noop
 RequestRefreshUI stub_noop
 SessionIsReplay stub_false
 SetActiveBuildTemplate l_SetActiveBuildTemplate
-SetArmyColorIndex stub_noop
 SetArmyShowScore stub_noop
 SetAuxiliaryParameter worldmesh_SetAuxiliaryParameter
 SetColor worldmesh_SetColor

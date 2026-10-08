@@ -108,8 +108,8 @@ void test_army_colors(TestContext& ctx) {
 
     // Test 1: GameColors.ArmyColors, decoded: ten, named ones included; and
     // as many PlayerColors, the rows of a Seraphim mesh's lookup.
-    const sim::GameColors game_colors = sim::read_game_colors(ctx.L);
-    const std::vector<u32>& colors = game_colors.army_colors;
+    sim::GameColors game_colors = sim::read_game_colors(ctx.L);
+    const std::vector<u32> colors = game_colors.army_colors;
     t.check(colors.size() == 10 && colors[0] == 0xFFE80A0Au && colors[1] == 0xFF006400u &&
                 colors[3] == 0xFFDAA520u && colors[9] == 0xFF8A2BE2u &&
                 game_colors.player_colors.size() == 10,
@@ -122,11 +122,13 @@ void test_army_colors(TestContext& ctx) {
         auto* brain = ctx.sim.get_army(0);
         lua::ArmySlotConfig slot;
         slot.army_color = 1;
-        lua::apply_config_to_brain(&slot, brain, colors);
+        sim::GameColors by_army_color = game_colors;
+        by_army_color.player_colors = colors;
+        lua::apply_config_to_brain(&slot, brain, by_army_color);
         const bool red = brain && brain->has_color() && brain->color_r() == 0xE8 &&
                          brain->color_g() == 0x0A && brain->color_b() == 0x0A;
         slot.army_color = 2;
-        lua::apply_config_to_brain(&slot, brain, colors);
+        lua::apply_config_to_brain(&slot, brain, by_army_color);
         const bool green =
             brain && brain->color_r() == 0 && brain->color_g() == 100 && brain->color_b() == 0;
         t.check(red && green,
@@ -138,12 +140,44 @@ void test_army_colors(TestContext& ctx) {
         lua::ArmySlotConfig slot;
         slot.player_color = 2;
         slot.army_color = 1;
-        lua::apply_config_to_brain(&slot, brain, game_colors.player_colors);
+        lua::apply_config_to_brain(&slot, brain, game_colors);
         const bool green =
             brain && brain->color_r() == 0 && brain->color_g() == 100 && brain->color_b() == 0;
         t.check(green, fmt::format("Test 2b: a lobby slot's PlayerColor 2, its ArmyColor left 1, "
                                    "is DarkGreen: {}",
                                    green));
+    }
+
+    {
+        auto* brain = ctx.sim.get_army(0);
+        const auto result = ctx.lua_state.do_string("SetArmyColorIndex(1, 2)");
+        const bool blue = result && brain && brain->color_r() == 0x13 && brain->color_g() == 0x1C &&
+                          brain->color_b() == 0xD3;
+        t.check(blue, fmt::format("Test 3: SetArmyColorIndex(army, 2) is PlayerColors[3] "
+                                  "FF131cd3: {:02x}{:02x}{:02x}",
+                                  brain ? brain->color_r() : 0, brain ? brain->color_g() : 0,
+                                  brain ? brain->color_b() : 0));
+    }
+
+    {
+        auto* brain = ctx.sim.get_army(0);
+        const bool was_civilian = brain && brain->is_civilian();
+        lua::ArmySlotConfig slot;
+        slot.player_color = 1;
+        if (brain) {
+            brain->set_civilian(true);
+        }
+        lua::apply_config_to_brain(&slot, brain, game_colors);
+        const bool burlywood = brain && brain->color_r() == 0xDE && brain->color_g() == 0xB8 &&
+                               brain->color_b() == 0x87 &&
+                               game_colors.civilian_army_color == 0xFFDEB887u;
+        if (brain) {
+            brain->set_civilian(was_civilian);
+        }
+        t.check(burlywood,
+                fmt::format("Test 4: a civilian army with PlayerColor 1 is CivilianArmyColor "
+                            "BurlyWood: {}",
+                            burlywood));
     }
 
     spdlog::info("Army colors test: {}/{} passed", t.pass, t.pass + t.fail);
