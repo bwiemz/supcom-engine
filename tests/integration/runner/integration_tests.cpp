@@ -14,6 +14,7 @@
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/formation.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/ui_renderer.hpp"
 #include "ui/wld_ui_provider.hpp"
@@ -9368,6 +9369,47 @@ void test_formation(TestContext& ctx) {
         for _, t in __osc_tracks do
             if t.top > 2.8 + 0.25 then error(t.u:GetUnitId() .. ' reached ' .. t.top) end
         end
+    )");
+
+    lua_check("setup: four Strikers for a right button held and dragged east", R"(
+        __osc_dragged = {}
+        for i = 0, 3 do table.insert(__osc_dragged, __osc_spawn('uel0201', 'ARMY_1', 720 + 2 * i, 75)) end
+    )");
+    {
+        osc::renderer::InputHandler input;
+        input.set_player_army(0);
+        osc::renderer::CommandModeHooks hooks;
+        hooks.formation_scripts = [&](bool air) {
+            return osc::sim::formation_scripts(ctx.lua_state.raw(), air);
+        };
+        input.set_command_mode_hooks(hooks);
+        std::unordered_set<osc::u32> sel;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (!e.destroyed() && e.is_unit() && e.blueprint_id() == "uel0201" &&
+                std::abs(e.position().z - 75.0f) < 0.5f && e.position().x > 719.0f) {
+                sel.insert(e.entity_id());
+            }
+        });
+        check(sel.size() == 4, "four Strikers selected");
+        input.set_selected(sel);
+        input.right_press(ctx.sim, 730, 100, false);
+        for (int i = 0; i < 6; ++i) {
+            input.right_drag(std::array<osc::f32, 2>{740, 100}, 0.1);
+        }
+        input.right_release(ctx.sim);
+    }
+    run(300);
+    lua_check("Test 5b: dragged east, the Strikers' row runs along z at the press", R"(
+        local xs, zs = {}, {}
+        for _, u in __osc_dragged do
+            local p = u:GetPosition()
+            table.insert(xs, p[1])
+            table.insert(zs, p[3])
+        end
+        local xspan = math.max(unpack(xs)) - math.min(unpack(xs))
+        local zspan = math.max(unpack(zs)) - math.min(unpack(zs))
+        if xspan > 1.5 or zspan < 7 then error('row spans x ' .. xspan .. ', z ' .. zspan) end
+        if math.abs(xs[1] - 730) > 1.5 then error('the row stands at x ' .. xs[1]) end
     )");
 
     // A platoon queues its moves: it passes the first waypoint on the way

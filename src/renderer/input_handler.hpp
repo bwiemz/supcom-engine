@@ -110,6 +110,20 @@ struct CommandModeHooks {
     std::function<void(u32 command, f32 mx, f32 my)> drag_end;
     /// A blueprint's footprint, for a build template's structures (none: 1x1)
     FootprintOf footprint;
+    /// /lua/formations.lua's AirFormations for `air`, else SurfaceFormations
+    std::function<std::vector<std::string>(bool air)> formation_scripts;
+};
+
+/// Moho's CFormation: the right button's drag formation
+struct FormationDrag {
+    static constexpr f32 kWait = 0.5f;
+    sim::Vector3 at;
+    sim::Vector3 mouse;
+    f32 facing = 0;
+    f32 wait = kWait;
+    std::vector<u32> units;
+    std::string script;
+    bool settled() const { return wait <= 0; }
 };
 
 /// A command graph waypoint dragged (Moho's UICommandDragger): where it is
@@ -199,6 +213,14 @@ public:
     /// unit on open ground, move there. One order per kind, routed to its
     /// units; what was issued comes back (headless clicks and tests).
     std::vector<IssuedCommand> right_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+
+    /// CUIWorldView's right button: the orders picked at the press, issued at the release
+    void right_press(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+    void right_drag(std::optional<std::array<f32, 2>> cursor, f64 dt);
+    std::vector<IssuedCommand> right_release(sim::SimState& sim);
+    /// CFormation::LuaFinalize
+    bool cycle_formation();
+    const std::optional<FormationDrag>& formation_drag() const { return formation_; }
 
     /// A build mode's press from (x0, z0) released at (x1, z1), as Moho lays
     /// a build drag: the structure along the line (at the press alone unless
@@ -405,10 +427,20 @@ private:
     bool rmb_was_pressed_ = false;
     bool rmb_on_ui_ = false;     // current right press began over the UI
     bool rmb_raw_prev_ = false;
+    struct PendingRight {
+        std::vector<std::pair<sim::UnitCommand, std::vector<u32>>> orders;
+        bool shift = false;
+    };
+    std::optional<PendingRight> pending_right_;
+    std::optional<FormationDrag> formation_;
+    size_t formation_index_ = 0;
+    std::vector<std::string> formation_scripts_;
+    std::vector<IssuedCommand>
+    issue_right_orders(sim::SimState& sim,
+                       const std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>& orders,
+                       bool shift, const FormationDrag* formation);
 
     void handle_drag_select(Renderer& renderer, sim::SimState& sim);
-    void handle_right_click(Renderer& renderer, sim::SimState& sim,
-                            f32 mx, f32 my);
 
     /// The live unit of any army nearest (wx, wz) within `radius`, or 0.
     /// With `reclaim`, the nearest thing a Reclaim order takes: a unit or a

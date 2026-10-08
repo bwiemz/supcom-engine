@@ -22,6 +22,9 @@ struct FormationSlot {
     Vector3 position;
 };
 
+/// /lua/formations.lua's AirFormations, else its SurfaceFormations (FORMATION_GetScriptName)
+std::vector<std::string> formation_scripts(lua_State* L, bool air);
+
 /// Lay a group order out in `formation`, as Moho does (M204). The function
 /// of that name in /lua/formations.lua gives the slots, {x, y, category,
 /// moveDelay, rotate}, with x across the formation and y forward (rows behind
