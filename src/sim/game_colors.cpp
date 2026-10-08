@@ -32,6 +32,18 @@ std::vector<u32> decode_list(lua_State* L) {
     return colors;
 }
 
+void read_color(lua_State* L, const char* field, u32& out) {
+    lua_pushstring(L, field);
+    lua_gettable(L, -2);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        if (const auto color =
+                decode_color(std::string_view(lua_tostring(L, -1), lua_strlen(L, -1)))) {
+            out = *color;
+        }
+    }
+    lua_pop(L, 1);
+}
+
 } // namespace
 
 GameColors read_game_colors(lua_State* L) {
@@ -53,14 +65,8 @@ GameColors read_game_colors(lua_State* L) {
                 lua_gettable(L, -2);
                 out.player_colors = decode_list(L);
                 lua_pop(L, 1);
-                lua_pushstring(L, "UnidentifiedColor");
-                lua_gettable(L, -2);
-                if (lua_type(L, -1) == LUA_TSTRING) {
-                    if (const auto color =
-                            decode_color(std::string_view(lua_tostring(L, -1), lua_strlen(L, -1))))
-                        out.unidentified_color = *color;
-                }
-                lua_pop(L, 1);
+                read_color(L, "UnidentifiedColor", out.unidentified_color);
+                read_color(L, "CivilianArmyColor", out.civilian_army_color);
             }
         } else {
             spdlog::warn("GameColors: {}",

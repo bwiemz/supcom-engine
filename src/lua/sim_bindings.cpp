@@ -2,6 +2,7 @@
 #include "lua/engine_bindings.hpp"
 #include "core/dmath.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/game_colors.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
@@ -4985,6 +4986,24 @@ static int l_SetArmyColor(lua_State* L) {
     return 0;
 }
 
+// Moho's cfunc_SetArmyColorIndexL: GameColors.PlayerColors[index + 1].
+static int l_SetArmyColorIndex(lua_State* L) {
+    auto* sim = get_sim(L);
+    const i32 army = resolve_army(L, 1, sim);
+    const int index = static_cast<int>(luaL_checknumber(L, 2));
+    auto* brain = sim ? sim->get_army(army) : nullptr;
+    if (!brain) {
+        return 0;
+    }
+    const std::vector<u32> colors = sim::read_game_colors(L).player_colors;
+    if (index >= 0 && index < static_cast<int>(colors.size())) {
+        const u32 argb = colors[static_cast<size_t>(index)];
+        brain->set_color(static_cast<u8>(argb >> 16), static_cast<u8>(argb >> 8),
+                         static_cast<u8>(argb));
+    }
+    return 0;
+}
+
 static int l_InternalCreateArmy(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
@@ -6749,7 +6768,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyStart", l_SetArmyStart);
     state.register_function("SetArmyPlans", l_SetArmyPlans);
     state.register_function("SetArmyFactionIndex", l_SetArmyFactionIndex);
-    state.register_function("SetArmyColorIndex", stub_noop);
+    state.register_function("SetArmyColorIndex", l_SetArmyColorIndex);
     state.register_function("SetArmyAIPersonality", l_SetArmyAIPersonality);
     state.register_function("SetIgnoreArmyUnitCap", l_SetIgnoreArmyUnitCap);
     state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
