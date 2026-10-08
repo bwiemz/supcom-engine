@@ -903,40 +903,59 @@ void Renderer::create_pipelines() {
         return;
     }
 
+    create_terrain_pipelines(tv, tf);
+
+    create_unit_pipeline(uv, uf);
+
+    create_mesh_pipelines(mv, mf);
+
+    create_decal_pipelines(dv, df);
+
+    create_ui_pipeline();
+
+    // Destroy shader modules (already compiled into pipelines)
+    vkDestroyShaderModule(device_, tv, nullptr);
+    vkDestroyShaderModule(device_, tf, nullptr);
+    vkDestroyShaderModule(device_, uv, nullptr);
+    vkDestroyShaderModule(device_, uf, nullptr);
+    vkDestroyShaderModule(device_, mv, nullptr);
+    vkDestroyShaderModule(device_, mf, nullptr);
+    vkDestroyShaderModule(device_, dv, nullptr);
+    vkDestroyShaderModule(device_, df, nullptr);
+}
+
+void Renderer::create_terrain_pipelines(VkShaderModule tv, VkShaderModule tf) {
     // --- Terrain pipeline ---
-    {
-        VkVertexInputBindingDescription binding{};
-        binding.binding = 0;
-        binding.stride = sizeof(TerrainVertex);
-        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputBindingDescription binding{};
+    binding.binding = 0;
+    binding.stride = sizeof(TerrainVertex);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        std::array<VkVertexInputAttributeDescription, 2> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
-        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
+    std::array<VkVertexInputAttributeDescription, 2> attrs{};
+    attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
+    attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
 
-        // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
-        const auto terrain_builder = [&](VkShaderModule frag) {
-            PipelineBuilder b;
-            b.set_shaders(tv, frag)
-                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
-                .set_depth_test(true, true)
-                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(92, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
-                .add_descriptor_set_layout(shadow_ds_layout_);     // set=1: shadow
-            return b;
-        };
-        terrain_pipeline_ =
-            terrain_builder(tf).build(device_, frame_.scene_pass(), &terrain_layout_);
-        // The low fidelity terrain (M212h; LowFidelityTerrain, then its
-        // lighting): the same vertices, sets and push block.
-        VkShaderModule low =
-            compile_glsl(device_, shaders::terrain_low_frag(), "terrain_low.frag", false);
-        if (low) {
-            terrain_low_pipeline_ =
-                terrain_builder(low).build(device_, frame_.scene_pass(), &terrain_low_layout_);
-            vkDestroyShaderModule(device_, low, nullptr);
-        }
+    // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
+    const auto terrain_builder = [&](VkShaderModule frag) {
+        PipelineBuilder b;
+        b.set_shaders(tv, frag)
+            .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+            .set_depth_test(true, true)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(92, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
+            .add_descriptor_set_layout(shadow_ds_layout_);     // set=1: shadow
+        return b;
+    };
+    terrain_pipeline_ = terrain_builder(tf).build(device_, frame_.scene_pass(), &terrain_layout_);
+    // The low fidelity terrain (M212h; LowFidelityTerrain, then its
+    // lighting): the same vertices, sets and push block.
+    VkShaderModule low =
+        compile_glsl(device_, shaders::terrain_low_frag(), "terrain_low.frag", false);
+    if (low) {
+        terrain_low_pipeline_ =
+            terrain_builder(low).build(device_, frame_.scene_pass(), &terrain_low_layout_);
+        vkDestroyShaderModule(device_, low, nullptr);
     }
 
     // --- The terrain in the normal pass (M212e): its normals into the
@@ -965,241 +984,246 @@ void Renderer::create_pipelines() {
                     .build(device_, frame_.scene_pass(), &terrain_normal_layout_);
         if (nf) vkDestroyShaderModule(device_, nf, nullptr);
     }
+}
 
+void Renderer::create_unit_pipeline(VkShaderModule uv, VkShaderModule uf) {
     // --- Unit pipeline (instanced cubes — fallback) ---
-    {
-        std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex cube data
-        bindings[0].binding = 0;
-        bindings[0].stride = sizeof(f32) * 6; // pos + normal
-        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance data
-        bindings[1].binding = 1;
-        bindings[1].stride = sizeof(CubeInstance);
-        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+    std::array<VkVertexInputBindingDescription, 2> bindings{};
+    // Binding 0: per-vertex cube data
+    bindings[0].binding = 0;
+    bindings[0].stride = sizeof(f32) * 6; // pos + normal
+    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    // Binding 1: per-instance data
+    bindings[1].binding = 1;
+    bindings[1].stride = sizeof(CubeInstance);
+    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        std::array<VkVertexInputAttributeDescription, 5> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
-        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
-        attrs[2] = {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeInstance, x)};   // instancePos
-        attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT,       offsetof(CubeInstance, scale)};// scale
-        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, r)}; // color
+    std::array<VkVertexInputAttributeDescription, 5> attrs{};
+    attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                            // position
+    attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};              // normal
+    attrs[2] = {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeInstance, x)};    // instancePos
+    attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT, offsetof(CubeInstance, scale)};      // scale
+    attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, r)}; // color
 
-        unit_pipeline_ =
-            PipelineBuilder()
-                .set_shaders(uv, uf)
-                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
-                                  static_cast<u32>(attrs.size()))
-                .set_depth_test(true, true)
-                .set_blend(true)
-                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 19, // viewProj(64) + eye(12) = 76B
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(shadow_ds_layout_) // set=0: shadow
-                .set_color_write_mask(kColorOnly)             // the glow in alpha stays (M211e)
-                .build(device_, frame_.scene_pass(), &unit_layout_);
-    }
+    unit_pipeline_ =
+        PipelineBuilder()
+            .set_shaders(uv, uf)
+            .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true, true)
+            .set_blend(true)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 19, // viewProj(64) + eye(12) = 76B
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(shadow_ds_layout_) // set=0: shadow
+            .set_color_write_mask(kColorOnly)             // the glow in alpha stays (M211e)
+            .build(device_, frame_.scene_pass(), &unit_layout_);
+}
 
+void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
-    {
-        std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_indices + bone_weights +
-        // tangent + binormal = 76 bytes)
-        bindings[0].binding = 0;
-        bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
-        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup + time +
-        // parameter = 92 bytes)
-        bindings[1].binding = 1;
-        bindings[1].stride = sizeof(MeshInstance);
-        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+    std::array<VkVertexInputBindingDescription, 2> bindings{};
+    // Binding 0: per-vertex mesh data (pos + normal + UV + bone_indices + bone_weights +
+    // tangent + binormal = 76 bytes)
+    bindings[0].binding = 0;
+    bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
+    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup + time +
+    // parameter = 92 bytes)
+    bindings[1].binding = 1;
+    bindings[1].stride = sizeof(MeshInstance);
+    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 15 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
-        // bone_weights(9), tangent(10), binormal(11), colour lookup(12), instance time(13),
-        // parameter(14)
-        std::array<VkVertexInputAttributeDescription, 15> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
-        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
-        attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
-        attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + 0};
-        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 4};
-        attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 8};
-        attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 12};
-        attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)};   // color
-        attrs[8] = {8, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(sim::SCMMesh::Vertex, bone_indices)};    // bone_indices
-        attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bone_weights)}; // bone_weights
-        attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};  // tangent
-        attrs[11] = {11, 0, VK_FORMAT_R32G32B32_SFLOAT,
-                     offsetof(sim::SCMMesh::Vertex, bx)}; // binormal
-        attrs[12] = {12, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, color_lookup)};
-        attrs[13] = {13, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, shader_time)};
-        attrs[14] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
+    // 15 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
+    // bone_weights(9), tangent(10), binormal(11), colour lookup(12), instance time(13),
+    // parameter(14)
+    std::array<VkVertexInputAttributeDescription, 15> attrs{};
+    attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
+    attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
+    attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};    // UV
+    attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + 0};
+    attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                offsetof(MeshInstance, model) + sizeof(f32) * 4};
+    attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                offsetof(MeshInstance, model) + sizeof(f32) * 8};
+    attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                offsetof(MeshInstance, model) + sizeof(f32) * 12};
+    attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)}; // color
+    attrs[8] = {8, 0, VK_FORMAT_R8G8B8A8_UINT,
+                offsetof(sim::SCMMesh::Vertex, bone_indices)}; // bone_indices
+    attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
+                offsetof(sim::SCMMesh::Vertex, bone_weights)}; // bone_weights
+    attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)}; // tangent
+    attrs[11] = {11, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bx)}; // binormal
+    attrs[12] = {12, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, color_lookup)};
+    attrs[13] = {13, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, shader_time)};
+    attrs[14] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
-        // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
-        // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) + uint
-        // mirrored + float surface (8B, M213b) = 104B
-        // Opaque meshes write their glow to alpha (M211e); fading ones blend
-        // by their alpha and write colour only; the build overlays that
-        // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
-        // leaves depth unwritten (M211g). The layouts match.
-        // The order marks (CommandFeedback) blend colour with no depth test.
-        enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback };
-        const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
-            const bool colour_only = blend == Blend::Fade || blend == Blend::FadeNoDepthWrite ||
-                                     blend == Blend::Feedback;
-            return PipelineBuilder()
-                .set_shaders(mv, mf)
-                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
-                                  static_cast<u32>(attrs.size()))
-                .set_depth_test(blend != Blend::Feedback,
-                                blend != Blend::FadeNoDepthWrite && blend != Blend::Feedback)
-                .set_blend(blend != Blend::Opaque)
-                .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-                .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
-                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
-                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
-                                       sizeof(u32) * 2,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
-                .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
-                .add_descriptor_set_layout(texture_ds_layout_) // set=2: specteam
-                .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
-                .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
-                .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
-                .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
-                .build(device_, frame_.scene_pass(), layout);
-        };
-        mesh_pipeline_ = build_mesh(Blend::Opaque, &mesh_layout_);
-        mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
-        mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
-        mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
-        mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
+    // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
+    // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) + uint
+    // mirrored + float surface (8B, M213b) = 104B
+    // Opaque meshes write their glow to alpha (M211e); fading ones blend
+    // by their alpha and write colour only; the build overlays that
+    // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
+    // leaves depth unwritten (M211g). The layouts match.
+    // The order marks (CommandFeedback) blend colour with no depth test.
+    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback };
+    const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
+        const bool colour_only =
+            blend == Blend::Fade || blend == Blend::FadeNoDepthWrite || blend == Blend::Feedback;
+        return PipelineBuilder()
+            .set_shaders(mv, mf)
+            .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(blend != Blend::Feedback,
+                            blend != Blend::FadeNoDepthWrite && blend != Blend::Feedback)
+            .set_blend(blend != Blend::Opaque)
+            .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+            .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
+                                   sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
+                                   sizeof(u32) * 2,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
+            .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
+            .add_descriptor_set_layout(texture_ds_layout_) // set=2: specteam
+            .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
+            .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
+            .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
+            .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
+            .build(device_, frame_.scene_pass(), layout);
+    };
+    mesh_pipeline_ = build_mesh(Blend::Opaque, &mesh_layout_);
+    mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
+    mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
+    mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
+    mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
 
-        // The shields' (M211k): their own shaders, the mesh's input, push
-        // block and sets, and mesh.fx's states. Each depth-tests; only the
-        // fill writes depth (and nothing else). Blending RGBA blends the
-        // glow in alpha by the colour's factors, as D3D9 does.
-        VkShaderModule sv = compile_glsl(device_, shaders::shield_vert(), "shield.vert", true);
-        VkShaderModule sf = compile_glsl(device_, shaders::shield_frag(), "shield.frag", false);
-        const auto build_shield = [&](ShieldState state, VkPipelineLayout* layout) {
-            const bool added = state == ShieldState::AddRGB || state == ShieldState::AddRGBA;
-            const VkBlendFactor dst =
-                added ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            VkColorComponentFlags mask = kColorAndGlow;
-            if (state == ShieldState::AddRGB) mask = kColorOnly;
-            else if (state == ShieldState::Fill) mask = 0;
-            return PipelineBuilder()
-                .set_shaders(sv, sf)
-                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
-                                  static_cast<u32>(attrs.size()))
-                .set_depth_test(true,
-                                state == ShieldState::Fill || state == ShieldState::BlendDepthWrite)
-                .set_blend(state != ShieldState::Fill)
-                .set_color_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
-                .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
-                .set_color_write_mask(mask)
-                .set_cull_mode(state == ShieldState::BlendUnculled ? VK_CULL_MODE_NONE
-                                                                   : VK_CULL_MODE_BACK_BIT,
-                               VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
-                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
-                                       sizeof(u32) * 2,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
-                .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
-                .add_descriptor_set_layout(texture_ds_layout_) // set=2: specular
-                .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
-                .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: light, environment
-                .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
-                .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
-                .build(device_, frame_.scene_pass(), layout);
-        };
-        for (u32 i = 0; i < kShieldStates; ++i)
-            shield_pipelines_[i] = build_shield(static_cast<ShieldState>(i), &shield_layouts_[i]);
-        vkDestroyShaderModule(device_, sv, nullptr);
-        vkDestroyShaderModule(device_, sf, nullptr);
-    }
+    // The shields' (M211k): their own shaders, the mesh's input, push
+    // block and sets, and mesh.fx's states. Each depth-tests; only the
+    // fill writes depth (and nothing else). Blending RGBA blends the
+    // glow in alpha by the colour's factors, as D3D9 does.
+    VkShaderModule sv = compile_glsl(device_, shaders::shield_vert(), "shield.vert", true);
+    VkShaderModule sf = compile_glsl(device_, shaders::shield_frag(), "shield.frag", false);
+    const auto build_shield = [&](ShieldState state, VkPipelineLayout* layout) {
+        const bool added = state == ShieldState::AddRGB || state == ShieldState::AddRGBA;
+        const VkBlendFactor dst = added ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        VkColorComponentFlags mask = kColorAndGlow;
+        if (state == ShieldState::AddRGB) mask = kColorOnly;
+        else if (state == ShieldState::Fill) mask = 0;
+        return PipelineBuilder()
+            .set_shaders(sv, sf)
+            .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true,
+                            state == ShieldState::Fill || state == ShieldState::BlendDepthWrite)
+            .set_blend(state != ShieldState::Fill)
+            .set_color_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
+            .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
+            .set_color_write_mask(mask)
+            .set_cull_mode(state == ShieldState::BlendUnculled ? VK_CULL_MODE_NONE
+                                                               : VK_CULL_MODE_BACK_BIT,
+                           VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
+                                   sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
+                                   sizeof(u32) * 2,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
+            .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
+            .add_descriptor_set_layout(texture_ds_layout_) // set=2: specular
+            .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
+            .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: light, environment
+            .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
+            .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
+            .build(device_, frame_.scene_pass(), layout);
+    };
+    for (u32 i = 0; i < kShieldStates; ++i)
+        shield_pipelines_[i] = build_shield(static_cast<ShieldState>(i), &shield_layouts_[i]);
+    vkDestroyShaderModule(device_, sv, nullptr);
+    vkDestroyShaderModule(device_, sf, nullptr);
+}
 
+void Renderer::create_decal_pipelines(VkShaderModule dv, VkShaderModule df) {
     // --- The map's decals (M212b): the terrain's vertices, lit as the
     // terrain is, blended over it (TDecals / TDecalsXP: SrcAlpha /
     // InvSrcAlpha, RGB, depth LessEqual unwritten, FA's bias in the shader).
-    {
-        VkVertexInputBindingDescription binding{};
-        binding.binding = 0;
-        binding.stride = sizeof(TerrainVertex);
-        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::array<VkVertexInputAttributeDescription, 2> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
-        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
+    VkVertexInputBindingDescription binding{};
+    binding.binding = 0;
+    binding.stride = sizeof(TerrainVertex);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    std::array<VkVertexInputAttributeDescription, 2> attrs{};
+    attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
+    attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
 
-        // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B.
-        // Every decal technique's pipeline takes these sets and this block.
-        const auto decal_builder = [&](VkShaderModule frag, VkShaderModule vert = VK_NULL_HANDLE) {
-            PipelineBuilder b;
-            b.set_shaders(vert ? vert : dv, frag)
-                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
-                .set_depth_test(true, false)
-                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 32,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: the terrain's
-                .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow and light
-                .add_descriptor_set_layout(texture_ds_layout_)     // set=2: albedo
-                .add_descriptor_set_layout(texture_ds_layout_)     // set=3: specular
-                .add_descriptor_set_layout(texture_ds_layout_);    // set=4: the mask
-            return b;
-        };
-        decal_pipeline_ = decal_builder(df)
-                              .set_blend(true)
-                              .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
-                              .build(device_, frame_.scene_pass(), &decal_layout_);
-        // The glowing decals (M212d; TDecalsGlow): One/One into alpha alone,
-        // the frame's glow. The glow masks (TDecalGlowMask): no blending,
-        // colour and glow both written.
-        VkShaderModule glow =
-            compile_glsl(device_, shaders::decal_glow_frag(), "decal_glow.frag", false);
-        VkShaderModule glow_mask =
-            compile_glsl(device_, shaders::decal_glow_mask_frag(), "decal_glow_mask.frag", false);
-        if (glow)
-            decal_glow_pipeline_ = decal_builder(glow)
-                                       .set_blend(true)
-                                       .set_alpha_blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE)
-                                       .set_color_write_mask(VK_COLOR_COMPONENT_A_BIT)
-                                       .build(device_, frame_.scene_pass(), &decal_glow_layout_);
-        if (glow_mask)
-            decal_glow_mask_pipeline_ =
-                decal_builder(glow_mask)
-                    .set_color_write_mask(kColorAndGlow)
-                    .build(device_, frame_.scene_pass(), &decal_glow_mask_layout_);
-        // The normal decals (M212e; TDecalsNormals): into the normal
-        // target's RG, SrcAlpha / InvSrcAlpha.
-        VkShaderModule normals =
-            compile_glsl(device_, shaders::decal_normal_frag(), "decal_normal.frag", false);
-        if (normals)
-            decal_normal_pipeline_ =
-                decal_builder(normals)
-                    .set_blend(true)
-                    .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT)
-                    .build(device_, frame_.scene_pass(), &decal_normal_layout_);
-        // The water's albedo decals (M212g; TDecalsWaterAlbedo): on its
-        // surface, SrcAlpha / InvSrcAlpha into RGB.
-        VkShaderModule water_vert =
-            compile_glsl(device_, shaders::decal_water_vert, "decal_water.vert", true);
-        VkShaderModule water_frag =
-            compile_glsl(device_, shaders::decal_water_frag, "decal_water.frag", false);
-        if (water_vert && water_frag)
-            decal_water_pipeline_ = decal_builder(water_frag, water_vert)
-                                        .set_blend(true)
-                                        .set_color_write_mask(kColorOnly)
-                                        .build(device_, frame_.scene_pass(), &decal_water_layout_);
-        if (glow) vkDestroyShaderModule(device_, glow, nullptr);
-        if (glow_mask) vkDestroyShaderModule(device_, glow_mask, nullptr);
-        if (normals) vkDestroyShaderModule(device_, normals, nullptr);
-        if (water_vert) vkDestroyShaderModule(device_, water_vert, nullptr);
-        if (water_frag) vkDestroyShaderModule(device_, water_frag, nullptr);
-    }
+    // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B.
+    // Every decal technique's pipeline takes these sets and this block.
+    const auto decal_builder = [&](VkShaderModule frag, VkShaderModule vert = VK_NULL_HANDLE) {
+        PipelineBuilder b;
+        b.set_shaders(vert ? vert : dv, frag)
+            .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+            .set_depth_test(true, false)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 32,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: the terrain's
+            .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow and light
+            .add_descriptor_set_layout(texture_ds_layout_)     // set=2: albedo
+            .add_descriptor_set_layout(texture_ds_layout_)     // set=3: specular
+            .add_descriptor_set_layout(texture_ds_layout_);    // set=4: the mask
+        return b;
+    };
+    decal_pipeline_ = decal_builder(df)
+                          .set_blend(true)
+                          .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
+                          .build(device_, frame_.scene_pass(), &decal_layout_);
+    // The glowing decals (M212d; TDecalsGlow): One/One into alpha alone,
+    // the frame's glow. The glow masks (TDecalGlowMask): no blending,
+    // colour and glow both written.
+    VkShaderModule glow =
+        compile_glsl(device_, shaders::decal_glow_frag(), "decal_glow.frag", false);
+    VkShaderModule glow_mask =
+        compile_glsl(device_, shaders::decal_glow_mask_frag(), "decal_glow_mask.frag", false);
+    if (glow)
+        decal_glow_pipeline_ = decal_builder(glow)
+                                   .set_blend(true)
+                                   .set_alpha_blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE)
+                                   .set_color_write_mask(VK_COLOR_COMPONENT_A_BIT)
+                                   .build(device_, frame_.scene_pass(), &decal_glow_layout_);
+    if (glow_mask)
+        decal_glow_mask_pipeline_ =
+            decal_builder(glow_mask)
+                .set_color_write_mask(kColorAndGlow)
+                .build(device_, frame_.scene_pass(), &decal_glow_mask_layout_);
+    // The normal decals (M212e; TDecalsNormals): into the normal
+    // target's RG, SrcAlpha / InvSrcAlpha.
+    VkShaderModule normals =
+        compile_glsl(device_, shaders::decal_normal_frag(), "decal_normal.frag", false);
+    if (normals)
+        decal_normal_pipeline_ =
+            decal_builder(normals)
+                .set_blend(true)
+                .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT)
+                .build(device_, frame_.scene_pass(), &decal_normal_layout_);
+    // The water's albedo decals (M212g; TDecalsWaterAlbedo): on its
+    // surface, SrcAlpha / InvSrcAlpha into RGB.
+    VkShaderModule water_vert =
+        compile_glsl(device_, shaders::decal_water_vert, "decal_water.vert", true);
+    VkShaderModule water_frag =
+        compile_glsl(device_, shaders::decal_water_frag, "decal_water.frag", false);
+    if (water_vert && water_frag)
+        decal_water_pipeline_ = decal_builder(water_frag, water_vert)
+                                    .set_blend(true)
+                                    .set_color_write_mask(kColorOnly)
+                                    .build(device_, frame_.scene_pass(), &decal_water_layout_);
+    if (glow) vkDestroyShaderModule(device_, glow, nullptr);
+    if (glow_mask) vkDestroyShaderModule(device_, glow_mask, nullptr);
+    if (normals) vkDestroyShaderModule(device_, normals, nullptr);
+    if (water_vert) vkDestroyShaderModule(device_, water_vert, nullptr);
+    if (water_frag) vkDestroyShaderModule(device_, water_frag, nullptr);
+}
 
+void Renderer::create_ui_pipeline() {
     // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
     auto uiv = compile_glsl(device_, shaders::ui_vert, "ui.vert", true);
     auto uif = compile_glsl(device_, shaders::ui_frag, "ui.frag", false);
@@ -1227,16 +1251,6 @@ void Renderer::create_pipelines() {
             .set_descriptor_set_layout(texture_ds_layout_)
             .build(device_, render_pass_, &ui_layout_);
     }
-
-    // Destroy shader modules (already compiled into pipelines)
-    vkDestroyShaderModule(device_, tv, nullptr);
-    vkDestroyShaderModule(device_, tf, nullptr);
-    vkDestroyShaderModule(device_, uv, nullptr);
-    vkDestroyShaderModule(device_, uf, nullptr);
-    vkDestroyShaderModule(device_, mv, nullptr);
-    vkDestroyShaderModule(device_, mf, nullptr);
-    vkDestroyShaderModule(device_, dv, nullptr);
-    vkDestroyShaderModule(device_, df, nullptr);
     if (uiv) vkDestroyShaderModule(device_, uiv, nullptr);
     if (uif) vkDestroyShaderModule(device_, uif, nullptr);
 }

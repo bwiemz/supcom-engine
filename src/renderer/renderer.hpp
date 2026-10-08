@@ -482,6 +482,20 @@ private:
     /// frame (the slot is untouched; the next frame tries it again).
     bool begin_frame_slot(u32 fi, u32& image_index);
 
+    // create_pipelines' groups, given the shaders it compiled for them.
+    /// The terrain's pipelines: high and low fidelity, and the normal pass's.
+    void create_terrain_pipelines(VkShaderModule tv, VkShaderModule tf);
+    /// The instanced cubes drawn for units without a mesh.
+    void create_unit_pipeline(VkShaderModule uv, VkShaderModule uf);
+    /// The mesh pipelines (opaque, fading, overlay, build cube, order marks)
+    /// and the shields' states (M211k), on the meshes' vertex input.
+    void create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf);
+    /// The map's decals' pipelines: albedo, glow, glow mask, normals and
+    /// the water's albedo.
+    void create_decal_pipelines(VkShaderModule dv, VkShaderModule df);
+    /// FA's interface's quads, on the swapchain's pass (its own shaders).
+    void create_ui_pipeline();
+
     // init's stages, in its order; each that can fail logs why and returns
     // false, as init does.
     /// GLFW, the window (hidden offscreen), the camera's viewport and entity
