@@ -22,6 +22,8 @@ extern "C" {
 }
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 using Catch::Approx;
 using osc::TickClock;
@@ -705,4 +707,48 @@ TEST_CASE("An order given and not yet run is in its unit's orders before its tic
     sim.set_playback(true);
     sim.schedule_command(0, {id}, move, false);
     CHECK(orders() == std::vector<osc::f32>{20});
+}
+
+TEST_CASE("An order moved or removed and not yet run is so in its unit's orders before its tick",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20, 0, 10};
+    move.command_id = 7;
+    unit(sim, id).push_command(move, true);
+    move.target_pos = {30, 0, 10};
+    move.command_id = 8;
+    unit(sim, id).push_command(move, false);
+    WorldHistory history;
+    history.capture(sim);
+    const auto orders = [&] {
+        history.refresh_pending(sim);
+        std::vector<std::pair<osc::u32, osc::f32>> out;
+        for (const auto& c : history.cur().orders_of(*history.cur().find(id))) {
+            out.emplace_back(c.command_id, c.target_pos.x);
+        }
+        return out;
+    };
+    const auto edit = [&](const char* func, osc::u32 command) {
+        osc::sim::SimCallbackEntry cb;
+        cb.func_name = func;
+        cb.args["Command"] = static_cast<osc::f64>(command);
+        cb.args["X"] = 50.0;
+        cb.args["Y"] = 0.0;
+        cb.args["Z"] = 10.0;
+        cb.unit_ids = {id};
+        return cb;
+    };
+
+    sim.schedule_callback(0, edit(osc::sim::kSetCommandTargetCallback, 8));
+    using Shown = std::vector<std::pair<osc::u32, osc::f32>>;
+    CHECK(orders() == Shown{{7, 20.0f}, {8, 50.0f}});
+    CHECK(unit(sim, id).command_queue().back().target_pos.x == 30.0f);
+
+    sim.schedule_callback(0, edit(osc::sim::kRemoveCommandCallback, 7));
+    CHECK(orders() == Shown{{8, 50.0f}});
+    CHECK(unit(sim, id).command_queue().size() == 2);
 }

@@ -19,6 +19,7 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -474,6 +475,15 @@ public:
     };
     /// Moho's UserCommandQueue with its pending edits applied
     std::map<u32, QueueWithPending> queues_with_pending() const;
+    struct CommandToRetarget {
+        const Unit* unit = nullptr;
+        UnitCommand* command = nullptr;
+        bool front = false;
+    };
+    /// Sim::SetCommandTarget / CUnitCommand::SetTarget: the order moves for
+    /// all its units, a formation keeping its shape.
+    void retarget_command(const SimCallbackEntry& cb, const std::vector<CommandToRetarget>& orders,
+                          std::optional<std::pair<f32, f32>> footprint) const;
     /// A player's order for the units they selected, as Moho's UI issues it
     /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
     /// units among them (factories) as a factory command -- their rally

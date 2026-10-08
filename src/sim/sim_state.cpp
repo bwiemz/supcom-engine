@@ -44,7 +44,9 @@ extern "C" {
 #include <cctype>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace osc::sim {
@@ -811,32 +813,98 @@ bool SimState::command_queued(u32 command_id) const {
     return found;
 }
 
+namespace {
+
+std::optional<u32> edited_command(const SimCallbackEntry& cb) {
+    const auto it = cb.args.find("Command");
+    const f64* id = it == cb.args.end() ? nullptr : std::get_if<f64>(&it->second);
+    if (!id || !(*id >= 1.0 && *id <= 4294967295.0)) {
+        return std::nullopt;
+    }
+    return static_cast<u32>(*id);
+}
+
+} // namespace
+
 std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const {
     std::map<u32, QueueWithPending> queues;
+    const auto live_unit = [&](u32 id) -> const Unit* {
+        const Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            return nullptr;
+        }
+        return static_cast<const Unit*>(e);
+    };
+    const auto queue_of = [&](u32 id, const Unit& unit) -> QueueWithPending& {
+        auto [it, fresh] = queues.try_emplace(id);
+        if (fresh) {
+            it->second.orders.assign(unit.command_queue().begin(), unit.command_queue().end());
+            it->second.kept_from_queue = it->second.orders.size();
+        }
+        return it->second;
+    };
+    const auto holds = [&](u32 id, const Unit& unit, u32 command) {
+        const auto it = queues.find(id);
+        const auto has = [&](const UnitCommand& c) { return c.command_id == command; };
+        if (it != queues.end()) {
+            return std::any_of(it->second.orders.begin(), it->second.orders.end(), has);
+        }
+        return std::any_of(unit.command_queue().begin(), unit.command_queue().end(), has);
+    };
     for (const auto& scheduled : command_scheduler_.pending()) {
-        if (scheduled.callback || scheduled.command.factory) {
+        if (scheduled.callback) {
+            const SimCallbackEntry& cb = *scheduled.callback;
+            const bool remove = cb.func_name == kRemoveCommandCallback;
+            if (!remove && cb.func_name != kSetCommandTargetCallback) {
+                continue;
+            }
+            const auto command = edited_command(cb);
+            if (!command) {
+                continue;
+            }
+            std::vector<CommandToRetarget> orders;
+            for (const u32 id : cb.unit_ids) {
+                const Unit* unit = live_unit(id);
+                if (!unit || !holds(id, *unit, *command)) {
+                    continue;
+                }
+                QueueWithPending& queue = queue_of(id, *unit);
+                for (size_t i = 0; i < queue.orders.size(); ++i) {
+                    if (queue.orders[i].command_id != *command) {
+                        continue;
+                    }
+                    if (remove) {
+                        queue.orders.erase(queue.orders.begin() + static_cast<std::ptrdiff_t>(i));
+                        if (i < queue.kept_from_queue) {
+                            --queue.kept_from_queue;
+                        }
+                        break;
+                    }
+                    orders.push_back({unit, &queue.orders[i], i == 0 && queue.kept_from_queue > 0});
+                }
+            }
+            if (!remove) {
+                retarget_command(cb, orders, std::nullopt);
+            }
+            continue;
+        }
+        if (scheduled.command.factory) {
             continue;
         }
         const UnitCommand& cmd = scheduled.command;
         for (const u32 id : scheduled.unit_ids) {
-            const Entity* e = entity_registry_.find(id);
-            if (!e || e->destroyed() || !e->is_unit()) {
+            const Unit* unit = live_unit(id);
+            if (!unit) {
                 continue;
             }
-            const auto& unit = static_cast<const Unit&>(*e);
-            auto [it, fresh] = queues.try_emplace(id);
-            QueueWithPending& queue = it->second;
-            if (fresh) {
-                queue.orders.assign(unit.command_queue().begin(), unit.command_queue().end());
-                queue.kept_from_queue = queue.orders.size();
-            }
+            QueueWithPending& queue = queue_of(id, *unit);
             if (cmd.type == CommandType::Stop) {
                 queue.orders.clear();
                 queue.kept_from_queue = 0;
                 continue;
             }
             if (cmd.type == CommandType::SiloBuildNuke ||
-                cmd.type == CommandType::SiloBuildTactical || !takes_command(unit, cmd)) {
+                cmd.type == CommandType::SiloBuildTactical || !takes_command(*unit, cmd)) {
                 continue;
             }
             if (scheduled.clear_existing) {
