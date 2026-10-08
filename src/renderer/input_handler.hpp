@@ -457,11 +457,11 @@ private:
 
     void handle_drag_select(Renderer& renderer, sim::SimState& sim);
 
-    /// The live unit of any army nearest (wx, wz) within `radius`, or 0.
-    /// With `reclaim`, the nearest thing a Reclaim order takes: a unit or a
-    /// prop (tree, rock, wreck) that is reclaimable.
-    u32 pick_any_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius,
-                      bool reclaim = false) const;
+    /// What an order of `type` clicked at (wx, wz) targets: the unit under the
+    /// cursor if the order takes it, else for Reclaim a prop there. 0 for none.
+    u32 target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const;
+    /// The reclaimable prop (tree, rock, wreck) whose footprint holds (wx, wz), or 0.
+    u32 prop_under(sim::SimState& sim, f32 wx, f32 wz) const;
     CommandModeHooks mode_hooks_;
 };
 
