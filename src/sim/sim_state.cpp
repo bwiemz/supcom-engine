@@ -2309,9 +2309,40 @@ void SimState::update_jam_blips() {
             while (offsets.size() < u.jammer_blips()) offsets.push_back(jam_offset(u));
             offsets.resize(u.jammer_blips());
             kept.insert(key);
+            // Known fake once, known fake while the army holds it
+            u64& known = jam_known_[key];
+            for (size_t i = 0; i < offsets.size() && i < 64; ++i) {
+                const Vector3 at{u.position().x + offsets[i].x, u.position().y + offsets[i].y,
+                                 u.position().z + offsets[i].z};
+                if (fake_known_now(u, at, a)) known |= u64{1} << i;
+            }
+            if (offsets.size() < 64) known &= (u64{1} << offsets.size()) - 1;
+            if (known == 0) jam_known_.erase(key);
         }
     });
     std::erase_if(jam_offsets_, [&](const auto& entry) { return kept.count(entry.first) == 0; });
+    std::erase_if(jam_known_, [&](const auto& entry) { return kept.count(entry.first) == 0; });
+}
+
+bool SimState::fake_known_now(const Unit& jammer, const Vector3& pos, u32 army) const {
+    if ((recon_of(jammer, pos, army) & (kReconLOS | kReconOmni)) != 0) return true;
+    // Moho's IsWithinPlayableMapRadius: the map, and the playable area unless
+    // the army may use the whole map, each side inset by the jammer's larger
+    // footprint side.
+    f32 x0 = 0, z0 = 0;
+    f32 x1 = terrain_ ? static_cast<f32>(terrain_->map_width()) : 1e9f;
+    f32 z1 = terrain_ ? static_cast<f32>(terrain_->map_height()) : 1e9f;
+    const ArmyBrain* brain = army_at(army);
+    if (has_playable_rect_ && !(brain && brain->use_whole_map())) {
+        x0 = std::max(x0, playable_x0_);
+        z0 = std::max(z0, playable_z0_);
+        x1 = std::min(x1, playable_x1_);
+        z1 = std::min(z1, playable_z1_);
+    }
+    const blueprints::Footprint& fp = jammer.footprint(); // SFootprint's whole cells
+    const auto inset = static_cast<f32>(std::max(fp.size_x, fp.size_z));
+    return !(pos.x >= x0 + inset && pos.x <= x1 - inset && pos.z >= z0 + inset &&
+             pos.z <= z1 - inset);
 }
 
 std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
@@ -2336,9 +2367,10 @@ std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
             // the jammer's layer, cloak and stealth count.
             const u8 recon = recon_of(u, f.position, army);
             f.sensed = recon != 0;
-            const Vector3 kept = clamp_to_playable(f.position, static_cast<i32>(army));
-            f.known_fake = (recon & (kReconLOS | kReconOmni)) != 0 || kept.x != f.position.x ||
-                           kept.z != f.position.z;
+            const auto latched = jam_known_.find(key);
+            f.known_fake =
+                (latched != jam_known_.end() && i < 64 && ((latched->second >> i) & 1) != 0) ||
+                fake_known_now(u, f.position, army);
             held.push_back(f);
         }
     }
@@ -2952,6 +2984,18 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 armies.mix(v.id);
                 armies.mix_f32(v.strength);
             });
+        }
+    }
+    // The jammers' fakes each army holds, only where any: their places
+    // about their jammers and which it knows fake (a known fake adds no
+    // threat to its influence map).
+    if (!jam_offsets_.empty()) {
+        armies.mix(0x4a414d5300000000ull | jam_offsets_.size()); // "JAMS"
+        for (const auto& [key, offsets] : jam_offsets_) {
+            armies.mix(key);
+            for (const Vector3& o : offsets) mix_vec(armies, o);
+            const auto known = jam_known_.find(key);
+            armies.mix(known == jam_known_.end() ? 0 : known->second);
         }
     }
     parts.armies = armies.h;
