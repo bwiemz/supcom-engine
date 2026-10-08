@@ -1594,6 +1594,10 @@ static int unit_GiveNukeSiloAmmo(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) return 0;
     i32 amount = (lua_type(L, 2) == LUA_TNUMBER) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    if (lua_gettop(L) == 3) {
+        u->set_silo_blocks(amount);
+        return 0;
+    }
     if (amount > 0) u->give_nuke_silo_ammo(amount);
     return 0;
 }

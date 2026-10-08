@@ -1161,6 +1161,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(sb.build_time);
     w.f64v(sb.energy);
     w.f64v(sb.mass);
+    w.i32v(u.silo_blocks_);
     w.b(u.assisting_silo_);
     w.b(u.teleporting_);
     w.u32v(u.teleport_snap_);
@@ -1528,6 +1529,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     sb.build_time = r.f64v();
     sb.energy = r.f64v();
     sb.mass = r.f64v();
+    u.silo_blocks_ = r.i32v();
     u.assisting_silo_ = r.b();
     u.teleporting_ = r.b();
     u.teleport_snap_ = r.u32v();
