@@ -11090,9 +11090,8 @@ void test_factory_assist(TestContext& ctx) {
     // fails after the take (and as A would drop it), rather than left for B
     // to find again every tick -- even with B repeating, which would
     // otherwise send it round A's queue for good.
-    auto* brain = ctx.sim.get_army(0);
-    if (brain) brain->add_build_restriction("ENGINEER");
     lua_check("A and B are cleared", R"(
+        AddBuildRestriction(1, categories.ENGINEER)
         IssueClearCommands({__osc_a, __osc_b})
         if not __osc_b:IsRepeatQueue() then error('B is not repeating') end
     )");
@@ -11112,7 +11111,7 @@ void test_factory_assist(TestContext& ctx) {
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected (1 dropped)')
         end
     )");
-    if (brain) brain->remove_build_restriction("ENGINEER");
+    lua_check("the lobby's rule lifted", "RemoveBuildRestriction(1, categories.ENGINEER)");
 
     // An order raised past one unit (IncreaseBuildCountInQueue) is one order
     // with a count; B, guarding, counts one off it even while A builds it
@@ -18200,6 +18199,24 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
         if table.getn(shown) < 1 then error('construction panel shows no build options') end
     )");
+    const char* acu_offers_power = R"(
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        for _, id in EntityCategoryGetUnitList(buildable) do
+            if id == 'ueb1101' then return end
+        end
+        error('no ueb1101 among the build options')
+    )";
+    sim_lua("AddBuildRestriction('ARMY_1', categories.ueb1101 + categories.ueb1103)");
+    play(2);
+    lua_ok("Test 10g1: the army's build restriction leaves the options", R"(
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        for _, id in EntityCategoryGetUnitList(buildable) do
+            if id == 'ueb1101' or id == 'ueb1103' then error('restricted ' .. id .. ' offered') end
+        end
+    )");
+    sim_lua("RemoveBuildRestriction('ARMY_1', categories.ueb1101 + categories.ueb1103)");
+    play(2);
+    lua_ok("Test 10g1b: and lifting it brings them back", acu_offers_power);
     lua_ok("Test 10g2: a structure's button places it", R"(
         import('/lua/ui/game/construction.lua').OnClickHandler(
             {Data = {type = 'item', id = 'ueb1101'}}, {Left = true})

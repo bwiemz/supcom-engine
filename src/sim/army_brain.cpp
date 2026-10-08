@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 
 namespace osc::sim {
 
@@ -153,26 +152,10 @@ f32 ArmyBrain::get_unit_cost_total(const EntityRegistry& registry) const {
     return total;
 }
 
-bool ArmyBrain::is_build_restricted(
-    const std::unordered_set<std::string>& blueprint_categories) const {
-    for (const auto& restriction : build_restrictions_) {
-        if (restriction.empty()) continue;
-        if (blueprint_categories.count(restriction) > 0) return true;
-
-        std::istringstream tokens(restriction);
-        std::string token;
-        bool has_token = false;
-        bool all_tokens_match = true;
-        while (tokens >> token) {
-            has_token = true;
-            if (blueprint_categories.count(token) == 0) {
-                all_tokens_match = false;
-                break;
-            }
-        }
-        if (has_token && all_tokens_match) return true;
-    }
-    return false;
+bool ArmyBrain::is_build_restricted(std::string blueprint_id) const {
+    std::transform(blueprint_id.begin(), blueprint_id.end(), blueprint_id.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return restricted_blueprints_.count(blueprint_id) > 0;
 }
 
 std::vector<Entity*> ArmyBrain::get_units(EntityRegistry& registry) const {

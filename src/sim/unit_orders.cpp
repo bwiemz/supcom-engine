@@ -28,24 +28,6 @@ extern "C" {
 namespace osc::sim {
 
 namespace {
-std::unordered_set<std::string> read_blueprint_categories(lua_State* L, const std::string& bp_id) {
-    std::unordered_set<std::string> categories;
-    if (!L || bp_id.empty()) return categories;
-
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return categories;
-    }
-
-    lua_pushstring(L, bp_id.c_str());
-    lua_gettable(L, -2);
-    collect_blueprint_categories(L, lua_gettop(L), categories);
-    lua_pop(L, 2); // blueprint entry + __blueprints
-    return categories;
-}
-
 /// A number in unit blueprint `bp_id`'s Economy table, or `fallback`.
 f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char* field,
                              f32 fallback) {
@@ -83,8 +65,7 @@ bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
 
     // (The unit cap is no rule of the order's: the unit's making checks it,
     // and the builder waits it out -- start_build, kCapRetryTicks.)
-    auto categories = read_blueprint_categories(ctx.L, cmd.blueprint_id);
-    if (!categories.empty() && brain->is_build_restricted(categories)) {
+    if (brain->is_build_restricted(cmd.blueprint_id)) {
         spdlog::info("Build blocked: army {} restricted blueprint {}", builder.army(),
                      cmd.blueprint_id);
         return true;

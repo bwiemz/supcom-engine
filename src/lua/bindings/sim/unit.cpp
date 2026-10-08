@@ -1380,11 +1380,15 @@ static int unit_IsPaused(lua_State* L) {
     return 1;
 }
 
-// unit:CanBuild(bp_id) -> bool — checks Economy.BuildableCategory
+// unit:CanBuild(bp_id) -> bool — Economy.BuildableCategory less its army's restriction
 static int unit_CanBuild(lua_State* L) {
     auto* u = check_unit(L);
     const char* target_bp = luaL_checkstring(L, 2);
-    lua_pushboolean(L, u && target_bp && sim::blueprint_can_build(L, u->blueprint_id(), target_bp));
+    auto* sim = get_sim(L);
+    auto* brain = sim && u ? sim->get_army(u->army()) : nullptr;
+    lua_pushboolean(L, u && target_bp &&
+                           sim::blueprint_can_build(L, u->blueprint_id(), target_bp) &&
+                           !(brain && brain->is_build_restricted(target_bp)));
     return 1;
 }
 
