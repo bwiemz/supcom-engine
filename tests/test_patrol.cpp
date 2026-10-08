@@ -547,7 +547,7 @@ TEST_CASE("An attack-move goes for an enemy near its route, then ends where it a
 TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol it reclaims",
           "[patrol][attack-move]") {
     // Moho's patrol task in formation, as an attack-move's always is: COMMAND
-    // and SACU_BEHAVIOR units skip the helpers' sweep.
+    // and SUBCOMMANDER units skip the helpers' sweep.
     LuaGuard g;
     SimState sim(g.L, nullptr);
     flat(sim);
@@ -565,6 +565,27 @@ TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol
     acu->push_command(patrol(10.0f, 10.0f, 2), true);
     CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300) ==
           std::vector<osc::u32>{stone->entity_id()});
+}
+
+TEST_CASE("A support commander on attack-move leaves the reclaiming to others, as retail's "
+          "SUBCOMMANDER or FAF's SACU_BEHAVIOR",
+          "[patrol][attack-move]") {
+    for (const char* category : {"SUBCOMMANDER", "SACU_BEHAVIOR"}) {
+        CAPTURE(category);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        flat(sim);
+        two_armies(sim);
+        Unit* sacu = engineer(sim, 10.0f, 10.0f);
+        sacu->add_category(category);
+        rock(sim, 50.0f, 14.0f, 1.0f, 0.0f);
+        osc::sim::UnitCommand go;
+        go.type = CommandType::AggressiveMove;
+        go.target_pos = {90.0f, 0.0f, 10.0f};
+        go.command_id = 1;
+        sacu->push_command(go, true);
+        CHECK(break_offs(sim, *sacu, CommandType::Reclaim, 300).empty());
+    }
 }
 
 TEST_CASE("An Attack on bare ground attack-moves a mobile unit on ReturnFire, and not others",

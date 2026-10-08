@@ -201,7 +201,9 @@ Entity* Unit::find_patrol_target(const UnitCommand& cmd, SimContext& ctx) {
 Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
     static const CategoryName kPatrolHelper{"PATROLHELPER"};
     static const CategoryName kCommand{"COMMAND"};
-    static const CategoryName kSacu{"SACU_BEHAVIOR"};
+    static const CategoryName kSubcommander{"SUBCOMMANDER"};
+    // FAF's exe names it SACU_BEHAVIOR (FA-Binary-Patches hooks/CategoryRenames.cpp).
+    static const CategoryName kSacuBehavior{"SACU_BEHAVIOR"};
     static const CategoryName kReclaim{"RECLAIM"};
     static const CategoryName kReclaimable{"RECLAIMABLE"};
     const SimState* sim = ctx.sim;
@@ -211,7 +213,8 @@ Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
     // In formation (an attack-move always is: Moho makes its patrol task so)
     // a commander or support commander leaves the helping to the others.
     const bool in_formation = cmd.type == CommandType::AggressiveMove || !cmd.formation.empty();
-    if (in_formation && (has_category(kCommand) || has_category(kSacu))) {
+    if (in_formation &&
+        (has_category(kCommand) || has_category(kSubcommander) || has_category(kSacuBehavior))) {
         return nullptr;
     }
     const ArmyBrain* brain = army() >= 0 ? sim->army_at(static_cast<size_t>(army())) : nullptr;
