@@ -760,6 +760,28 @@ TEST_CASE("The reclaim cursor and right-click pass over what is not RECLAIMABLE"
     CHECK(input.click_in_command_mode(sim, mode, 60.0f, 10.0f, false));
 }
 
+TEST_CASE("Past zoom 150 the cursor passes over props", "[reclaim]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->add_command_cap("RULEUCC_Reclaim");
+    eng->add_command_cap("RULEUCC_Move");
+    rock(sim, 40.0f, 10.0f, 5.0f, 0.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eng->entity_id()});
+    input.set_camera_zoom(150.0f);
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Reclaim);
+    input.set_camera_zoom(151.0f);
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Move);
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Reclaim";
+    CHECK_FALSE(input.click_in_command_mode(sim, mode, 40.0f, 10.0f, false));
+}
+
 TEST_CASE("Capture targets the unit under the cursor, not one beside it", "[capture]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
