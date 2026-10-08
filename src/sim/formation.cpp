@@ -28,8 +28,8 @@ struct Slot {
     int category = 0; ///< index of its category in the result table
 };
 
-/// Push /lua/formations.lua's function `name`, or nothing (false).
-bool push_formation_function(lua_State* L, const std::string& name) {
+/// Push /lua/formations.lua's module, or nothing (false).
+bool push_formations_module(lua_State* L) {
     const int top = lua_gettop(L);
     lua_pushstring(L, "import");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -40,6 +40,15 @@ bool push_formation_function(lua_State* L, const std::string& name) {
     lua_pushstring(L, "/lua/formations.lua");
     if (lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
         lua_settop(L, top);
+        return false;
+    }
+    return true;
+}
+
+/// Push /lua/formations.lua's function `name`, or nothing (false).
+bool push_formation_function(lua_State* L, const std::string& name) {
+    const int top = lua_gettop(L);
+    if (!push_formations_module(L)) {
         return false;
     }
     lua_pushstring(L, name.c_str());
@@ -53,6 +62,28 @@ bool push_formation_function(lua_State* L, const std::string& name) {
 }
 
 } // namespace
+
+std::vector<std::string> formation_scripts(lua_State* L, bool air) {
+    std::vector<std::string> out;
+    const int top = lua_gettop(L);
+    if (!push_formations_module(L)) {
+        return out;
+    }
+    lua_pushstring(L, air ? "AirFormations" : "SurfaceFormations");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        const int n = luaL_getn(L, -1);
+        for (int i = 1; i <= n; ++i) {
+            lua_rawgeti(L, -1, i);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                out.emplace_back(lua_tostring(L, -1));
+            }
+            lua_pop(L, 1);
+        }
+    }
+    lua_settop(L, top);
+    return out;
+}
 
 std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& registry,
                                           const map::Terrain* terrain, std::vector<u32> unit_ids,

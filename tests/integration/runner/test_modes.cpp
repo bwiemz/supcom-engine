@@ -1185,7 +1185,8 @@ void IntegrationModes::headless(Engine& e) {
              },
              {},
              {},
-             [&](const std::string& bp) { return osc::app::ui_blueprint_footprint(uL, bp); }});
+             [&](const std::string& bp) { return osc::app::ui_blueprint_footprint(uL, bp); },
+             {}});
         // A world click as the input handler makes it under FA's command mode.
         auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
             const auto mode = read_command_mode(uL);
