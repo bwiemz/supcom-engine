@@ -89,23 +89,39 @@ std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& re
                                           const map::Terrain* terrain, std::vector<u32> unit_ids,
                                           const std::string& formation, const Vector3& target,
                                           std::optional<f32> facing) {
-    std::vector<FormationSlot> out;
-    if (!L) return out;
     std::sort(unit_ids.begin(), unit_ids.end());
     unit_ids.erase(std::unique(unit_ids.begin(), unit_ids.end()), unit_ids.end());
-    std::vector<const Unit*> units;
+    std::vector<FormationMember> members;
     for (const u32 id : unit_ids) {
         const Entity* e = registry.find(id);
-        if (e && !e->destroyed() && e->is_unit() && e->lua_table_ref() >= 0)
-            units.push_back(static_cast<const Unit*>(e));
+        if (e && !e->destroyed() && e->is_unit() && e->lua_table_ref() >= 0) {
+            members.push_back({id, e->army(), e->position(),
+                               std::max(e->footprint_size_x(), e->footprint_size_z()),
+                               e->blueprint_id()});
+        }
     }
-    if (units.size() < 2) return out;
+    return plan_formation(
+        L, members,
+        [&](lua_State* state, const FormationMember& m) {
+            lua_rawgeti(state, LUA_REGISTRYINDEX, registry.find(m.id)->lua_table_ref());
+        },
+        terrain, formation, target, facing);
+}
+
+std::vector<FormationSlot> plan_formation(lua_State* L, const std::vector<FormationMember>& units,
+                                          const PushFormationMember& push,
+                                          const map::Terrain* terrain, const std::string& formation,
+                                          const Vector3& target, std::optional<f32> facing) {
+    std::vector<FormationSlot> out;
+    if (!L || units.size() < 2) {
+        return out;
+    }
 
     const int top = lua_gettop(L);
     if (!push_formation_function(L, formation)) return out;
     lua_newtable(L);
     for (size_t i = 0; i < units.size(); ++i) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, units[i]->lua_table_ref());
+        push(L, units[i]);
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
     if (lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
@@ -122,10 +138,10 @@ std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& re
     // Facing: as ordered, else from the group's centre toward the target.
     f32 cx = 0, cz = 0;
     f32 widest = 1.0f;
-    for (const Unit* u : units) {
-        cx += u->position().x;
-        cz += u->position().z;
-        widest = std::max({widest, u->footprint_size_x(), u->footprint_size_z()});
+    for (const FormationMember& u : units) {
+        cx += u.position.x;
+        cz += u.position.z;
+        widest = std::max(widest, u.size);
     }
     cx /= static_cast<f32>(units.size());
     cz /= static_cast<f32>(units.size());
@@ -158,11 +174,11 @@ std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& re
     // Each slot in turn takes the nearest unassigned unit of its category.
     // Retail's formation scripts make one slot per unit, category by category.
     std::map<std::pair<const void*, std::string>, bool> fits; // (category, blueprint)
-    const auto matches = [&](int slot_index, const Unit& u) {
+    const auto matches = [&](int slot_index, const FormationMember& u) {
         lua_rawgeti(L, slots_table, slot_index);
         lua_rawgeti(L, -1, 3);
         const void* category = lua_topointer(L, -1);
-        const auto key = std::make_pair(category, u.blueprint_id());
+        const auto key = std::make_pair(category, u.blueprint_id);
         if (const auto it = fits.find(key); it != fits.end()) {
             lua_pop(L, 2);
             return it->second;
@@ -172,7 +188,7 @@ std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& re
             lua_pushstring(L, "EntityCategoryContains");
             lua_rawget(L, LUA_GLOBALSINDEX);
             lua_pushvalue(L, -2);
-            lua_rawgeti(L, LUA_REGISTRYINDEX, u.lua_table_ref());
+            push(L, u);
             fit = lua_pcall(L, 2, 1, 0) == 0 && lua_toboolean(L, -1) != 0;
             lua_pop(L, 1);
         }
@@ -186,20 +202,20 @@ std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& re
         f32 best_d2 = std::numeric_limits<f32>::max();
         for (size_t i = 0; i < units.size(); ++i) {
             if (taken[i]) continue;
-            const f32 dx = units[i]->position().x - slot.x;
-            const f32 dz = units[i]->position().z - slot.z;
+            const f32 dx = units[i].position.x - slot.x;
+            const f32 dz = units[i].position.z - slot.z;
             const f32 d2 = dx * dx + dz * dz;
-            if (d2 >= best_d2 || !matches(slot.category, *units[i])) continue;
+            if (d2 >= best_d2 || !matches(slot.category, units[i])) continue;
             best = i;
             best_d2 = d2;
         }
         if (best == units.size()) continue;
         taken[best] = true;
         const f32 y = terrain ? terrain->get_surface_height(slot.x, slot.z) : target.y;
-        out.push_back({units[best]->entity_id(), {slot.x, y, slot.z}});
+        out.push_back({units[best].id, {slot.x, y, slot.z}});
     }
     for (size_t i = 0; i < units.size(); ++i)
-        if (!taken[i]) out.push_back({units[i]->entity_id(), target});
+        if (!taken[i]) out.push_back({units[i].id, target});
     lua_settop(L, top);
     std::sort(out.begin(), out.end(),
               [](const FormationSlot& a, const FormationSlot& b) { return a.unit_id < b.unit_id; });

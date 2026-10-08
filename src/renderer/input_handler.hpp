@@ -5,6 +5,7 @@
 #include "core/types.hpp"
 #include "renderer/build_template.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/formation.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/entity.hpp" // Vector3
 #include "sim/unit_command.hpp"
@@ -112,6 +113,10 @@ struct CommandModeHooks {
     FootprintOf footprint;
     /// /lua/formations.lua's AirFormations for `air`, else SurfaceFormations
     std::function<std::vector<std::string>(bool air)> formation_scripts;
+    std::function<std::vector<sim::FormationSlot>(const std::vector<sim::FormationMember>&,
+                                                  const std::string& script, const sim::Vector3& at,
+                                                  f32 facing)>
+        formation_slots;
 };
 
 /// Moho's CFormation: the right button's drag formation
@@ -124,6 +129,13 @@ struct FormationDrag {
     std::vector<u32> units;
     std::string script;
     bool settled() const { return wait <= 0; }
+};
+
+/// A unit's place in a settled drag formation (CWldSession::RenderMeshPreviews)
+struct FormationGhost {
+    std::string blueprint_id;
+    sim::Vector3 position;
+    f32 heading = 0;
 };
 
 /// A command graph waypoint dragged (Moho's UICommandDragger): where it is
@@ -221,6 +233,7 @@ public:
     /// CFormation::LuaFinalize
     bool cycle_formation();
     const std::optional<FormationDrag>& formation_drag() const { return formation_; }
+    const std::vector<FormationGhost>& formation_ghosts(const sim::SimState& sim);
 
     /// A build mode's press from (x0, z0) released at (x1, z1), as Moho lays
     /// a build drag: the structure along the line (at the press alone unless
@@ -435,6 +448,8 @@ private:
     std::optional<FormationDrag> formation_;
     size_t formation_index_ = 0;
     std::vector<std::string> formation_scripts_;
+    std::vector<FormationGhost> formation_ghosts_;
+    std::optional<std::pair<std::string, f32>> formation_ghosts_for_;
     std::vector<IssuedCommand>
     issue_right_orders(sim::SimState& sim,
                        const std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>& orders,

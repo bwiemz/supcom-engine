@@ -2477,6 +2477,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         unit_renderer_.set_ghost_slots(
             1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
             static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
+            static_cast<u32>(formation_ghosts_.size()) +
             static_cast<u32>(feedback_blips_.blips().size()));
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
@@ -2513,6 +2514,15 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
             unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
                                         0.2f, 0.9f, 0.3f, &texture_cache_);
+        }
+    }
+    // Moho's formation preview tint, 0xD8D8D800
+    constexpr f32 kFormationTint = 0xD8 / 255.0f;
+    for (const FormationGhost& ghost : formation_ghosts_) {
+        if (const GPUMesh* mesh = mesh_cache_.get(ghost.blueprint_id, L)) {
+            unit_renderer_.inject_ghost(mesh, ghost.position.x, ghost.position.y, ghost.position.z,
+                                        kFormationTint, kFormationTint, 0.0f, &texture_cache_,
+                                        ghost.heading);
         }
     }
 
