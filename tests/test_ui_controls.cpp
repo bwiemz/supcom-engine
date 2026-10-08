@@ -1411,3 +1411,17 @@ TEST_CASE("A press reaches uimain's OnMouseButtonPress, a module function", "[ui
     f.deliver();
     CHECK(f.check("pressed == 'ButtonPress'"));
 }
+
+TEST_CASE("A press still reaches the control OnMouseButtonPress destroys, not its parents",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run("menu = box('menu', GetFrame(0), 0, 0, 100, 100, 1) "
+          "entry = box('entry', menu, 0, 0, 100, 20, 2) "
+          "__modules = __modules or {} "
+          "__modules['/lua/ui/uimain.lua'] = { OnMouseButtonPress = function(e) menu:Destroy() "
+          "end }");
+    f.dispatch.on_cursor_pos(10, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('ButtonPress') == 'entry'"));
+}
