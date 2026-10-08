@@ -32,7 +32,6 @@ ReTargetOnMiss
 RepairRate
 RotationalVelocity
 Scrolling
-SelectionCenterOffsetY
 SelectionMeshScaleX
 SelectionMeshScaleZ
 SelectionMeshUseTopAmount

@@ -9,7 +9,8 @@ using osc::renderer::inside_ground_quad;
 using osc::renderer::SelectionBox;
 using osc::sim::Vector3;
 
-TEST_CASE("A selection box's brackets sit at its corners, along the unit", "[selection]") {
+TEST_CASE("A selection box's bracket tiles are centred on its corners, along the unit",
+          "[selection]") {
     SelectionBox box;
     box.center = {10, 2, 20};
     box.right = {0, 0, 1};
@@ -17,19 +18,49 @@ TEST_CASE("A selection box's brackets sit at its corners, along the unit", "[sel
     box.half_x = 3;
     box.half_z = 1;
     const auto quads = bracket_quads(box, 0.5f);
-    CHECK(quads[0][0].x == Catch::Approx(11.0f));
-    CHECK(quads[0][0].z == Catch::Approx(17.0f));
-    CHECK(quads[0][1].z == Catch::Approx(17.5f));
-    CHECK(quads[0][3].x == Catch::Approx(10.5f));
-    CHECK(quads[2][0].x == Catch::Approx(9.0f));
-    CHECK(quads[2][0].z == Catch::Approx(23.0f));
-    CHECK(quads[2][2].x == Catch::Approx(9.5f));
-    CHECK(quads[2][2].z == Catch::Approx(22.5f));
+    CHECK(quads[0][0].x == Catch::Approx(11.5f));
+    CHECK(quads[0][0].z == Catch::Approx(16.5f));
+    CHECK(quads[0][2].x == Catch::Approx(10.5f));
+    CHECK(quads[0][2].z == Catch::Approx(17.5f));
+    CHECK(quads[2][0].x == Catch::Approx(9.5f));
+    CHECK(quads[2][0].z == Catch::Approx(22.5f));
+    CHECK(quads[2][2].x == Catch::Approx(8.5f));
+    CHECK(quads[2][2].z == Catch::Approx(23.5f));
     for (const auto& q : quads) {
         for (const Vector3& p : q) {
             CHECK(p.y == Catch::Approx(2.0f));
         }
     }
+}
+
+TEST_CASE("A unit's selection box: its blueprint's size scaled, round its mesh's centre",
+          "[selection]") {
+    osc::renderer::SelectionBlueprint bp;
+    bp.size_x = 0.7f;
+    bp.size_z = 0.6f;
+    bp.offset = {0.1f, 0.0f, -0.4f};
+    const Vector3 mesh_min{-1.15f, 0.0f, -0.52f};
+    const Vector3 mesh_max{0.95f, 2.0f, 1.42f};
+    const osc::sim::Quaternion level{};
+    const SelectionBox box =
+        osc::renderer::selection_box(bp, mesh_min, mesh_max, {10, 2, 20}, level);
+    CHECK(box.half_x == Catch::Approx(0.525f));
+    CHECK(box.half_z == Catch::Approx(0.45f));
+    CHECK(box.center.x == Catch::Approx(10.0f));
+    CHECK(box.center.y == Catch::Approx(2.12f));
+    CHECK(box.center.z == Catch::Approx(20.05f));
+
+    const osc::sim::Quaternion quarter{0, 0.70710678f, 0, 0.70710678f};
+    const SelectionBox turned =
+        osc::renderer::selection_box(bp, mesh_min, mesh_max, {10, 2, 20}, quarter);
+    CHECK(turned.center.x == Catch::Approx(10.05f));
+    CHECK(turned.center.z == Catch::Approx(20.0f).margin(1e-4));
+
+    const osc::renderer::SelectionBlueprint none;
+    const SelectionBox fudged =
+        osc::renderer::selection_box(none, mesh_min, mesh_max, {10, 2, 20}, level);
+    CHECK(fudged.half_x == Catch::Approx(1.85f * 1.05f));
+    CHECK(fudged.half_z == Catch::Approx(1.85f * 0.97f));
 }
 
 TEST_CASE("A drag box on the ground holds what is inside it", "[selection]") {
@@ -43,14 +74,14 @@ TEST_CASE("A drag box on the ground holds what is inside it", "[selection]") {
     CHECK_FALSE(inside_ground_quad(back, -4, 4));
 }
 
-TEST_CASE("A bracket corner holds its stroke to a few pixels, within its box", "[selection]") {
+TEST_CASE("A bracket tile is its box's longer half times its thickness, a few pixels at least",
+          "[selection]") {
     SelectionBox box;
-    box.half_x = 2.4f;
-    box.half_z = 2.3f;
-    CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.01f) == Catch::Approx(0.69f));
-    // Farther off, 3 pixels of stroke, 12 of the texture's 64
-    CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.1f) == Catch::Approx(1.6f));
-    CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.15f) == Catch::Approx(2.3f));
+    box.half_x = 2.3f;
+    box.half_z = 2.4f;
+    CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.01f) == Catch::Approx(0.72f));
+    CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.1f) == Catch::Approx(0.72f));
+    CHECK(osc::renderer::bracket_corner(box, 0.3f, 3.0f, 0.5f) == Catch::Approx(1.5f));
 }
 
 TEST_CASE("A drag box keeps the units of the highest selection priority", "[selection]") {

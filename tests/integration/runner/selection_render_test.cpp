@@ -81,8 +81,8 @@ void test_selection_render(TestContext& ctx) {
     draw();
     const auto* mine = bracket_of(r, own);
     t.check(mine && ends_with(mine->texture, "selection_brackets_player.dds") &&
-                std::abs(mine->box.half_x - 0.4f) < 1e-3f &&
-                std::abs(mine->box.half_z - 0.4f) < 1e-3f,
+                std::abs(mine->box.half_x - 0.3f) < 1e-3f &&
+                std::abs(mine->box.half_z - 0.3f) < 1e-3f,
             fmt::format("Test 1: the selected unit's brackets: {}, half {:.3f} x {:.3f}",
                         mine ? mine->texture : "none", mine ? mine->box.half_x : 0.0f,
                         mine ? mine->box.half_z : 0.0f));
