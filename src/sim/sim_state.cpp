@@ -3262,6 +3262,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             units.mix(0x52574149u); // "RWAI"
             units.mix(static_cast<u64>(static_cast<u32>(u.reclaim_wait())));
         }
+        if (!u.builder_on_target() || u.arm_awaited()) {
+            units.mix(0x41524d54u); // "ARMT"
+            units.mix((u.builder_on_target() ? 1u : 0u) | (u.arm_awaited() ? 2u : 0u));
+        }
         units.mix(u.repair_target_id());
         units.mix(u.capture_target_id());
         units.mix_f32(u.work_progress());

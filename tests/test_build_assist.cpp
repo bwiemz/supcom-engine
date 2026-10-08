@@ -147,3 +147,29 @@ TEST_CASE("A guard helping a build aims its arm at what it helps build", "[build
     CHECK(helper->is_building());
     CHECK(arm_of(*helper).has_target());
 }
+
+TEST_CASE("A repair of a unit under construction starts once the builder's arm is on it",
+          "[build][assist][arm]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    auto& arm = *eng->manipulators().front();
+    arm.set_enabled(false);
+    eng->set_builder_on_target(false);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    w.sim.tick();
+    CHECK(w.log() == "eng arm");
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+        CHECK_FALSE(eng->is_building());
+        CHECK(arm_of(*eng).has_target());
+    }
+    CHECK(w.log().empty());
+    CHECK(w.site->fraction_complete() == 0.1f);
+
+    arm.set_enabled(true);
+    w.sim.tick();
+    CHECK_FALSE(eng->is_building());
+    w.sim.tick();
+    CHECK(eng->is_building());
+    CHECK(w.log() == "eng start Repair");
+}
