@@ -276,8 +276,10 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
     moho_.update(nav, world, army->path_queue());
     const State st = moho_.state();
     if (st == State::Idle || st == State::Failed) {
-        // There (or as near as it gets), or given up: it stops.
-        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+        // There (or as near as it gets), or given up: it stops. Moho's
+        // steering->Stop() retargets CUnitMotion to where the unit is, which
+        // brakes it from its speed (CUnitMotion::Stop); undriven, the unit
+        // coasts to a stop at its brake (Unit::coast), not dead in a tick.
         reset_moho();
         arrive();
         return false;
