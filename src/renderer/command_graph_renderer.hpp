@@ -63,11 +63,12 @@ std::string command_graph_key(sim::CommandType type);
 bool command_strip(const sim::Vector3& a, const sim::Vector3& b, f32 half_width,
                    std::array<sim::Vector3, 4>& corners);
 
-/// Leg `leg` of an order chain as Moho's UICommandGraph bends it, in
-/// `segments` + 1 points: a cubic Hermite curve, its tangents bisecting the
-/// legs at each waypoint, a quarter of the leg long, at most
+/// A leg from `a` to `b` as Moho's UICommandGraph bends it, in `segments` + 1
+/// points: a cubic Hermite curve along the unit tangents `ta` and `tb` (the
+/// leg's direction where zero), a quarter of the leg long, at most
 /// `smoothness` × `width`.
-std::vector<sim::Vector3> command_curve(const std::vector<sim::Vector3>& chain, size_t leg,
+std::vector<sim::Vector3> command_curve(const sim::Vector3& a, const sim::Vector3& b,
+                                        const sim::Vector3& ta, const sim::Vector3& tb,
                                         u32 segments, f32 width, f32 smoothness = 50.0f);
 
 /// A structure's pad from its footprint and skirt (Physics.SkirtSizeX/Z,
@@ -134,11 +135,33 @@ struct CommandGraphNode {
     f32 scale = 1.0f;
 };
 
+/// A leg between two nodes, drawn once for all the units that run it
+/// (Moho's CommandGraphEdge)
+struct CommandGraphEdge {
+    sim::Vector3 from, to;
+    sim::Vector3 from_tangent, to_tangent;
+    u32 units = 0;
+    sim::CommandType type = sim::CommandType::Move;
+    const CommandGraphStyle* style = nullptr;
+    std::array<f32, 4> color{};
+};
+
+struct CommandGraph {
+    std::vector<CommandGraphNode> nodes;
+    std::vector<CommandGraphEdge> edges;
+};
+
 /// The paths' orders, a node each: at the mean of its units' targets, as
 /// big as the square root of its busier side's distinct legs
 /// (RecomputeDrawNodeOrientation, ui_CommandGraphMaxNodeUnits = 1).
 /// Highlighted: order `highlight`'s, or one of `hovered_unit`'s
 /// (ResolveDrawNodeHighlightState).
+/// The legs run from the mean of the units whose queues start with the same
+/// order, then node to node (AddCommandQueueToCommandGraph), in the colours
+/// of the order they lead to.
+CommandGraph command_graph(const std::vector<CommandGraphPath>& paths, u32 highlight = 0,
+                           u32 hovered_unit = 0);
+
 std::vector<CommandGraphNode> command_graph_nodes(const std::vector<CommandGraphPath>& paths,
                                                   u32 highlight = 0, u32 hovered_unit = 0);
 
@@ -196,7 +219,7 @@ public:
 
     /// A leg drawn this frame (tests read them)
     struct Leg {
-        u32 unit = 0;
+        u32 units = 0;
         sim::CommandType type = sim::CommandType::Move;
         sim::Vector3 from, to;
         std::array<f32, 4> color{};
@@ -209,7 +232,8 @@ public:
     static constexpr u32 MAX_QUADS = 32768;
     /// Segments a leg's curve is drawn in (ui_CurveSegments)
     static constexpr u32 kCurveSegments = 20;
-    /// A leg's width in the world (CalculateWaypointLineWidth for one unit)
+    /// A leg's width in the world for one unit; for n, √n of it, at most 10
+    /// (commandwaypoint.lua's CalculateWaypointLineWidth)
     static constexpr f32 kLineWidth = 1.0f;
     /// A waypoint's size in the world, and its least and most on the screen
     /// (ui_MinWaypointSize, ui_MaxWaypointSize)

@@ -117,19 +117,19 @@ TEST_CASE("An order chain bends through its waypoints, as Moho's command graph d
           "[renderer][command_graph]") {
     using osc::renderer::command_curve;
     using osc::sim::Vector3;
-    const std::vector<Vector3> straight = {{0, 0, 0}, {10, 0, 0}, {20, 0, 0}};
-    for (const Vector3& p : command_curve(straight, 0, 20, 1.0f)) {
+    const Vector3 none{0, 0, 0};
+    for (const Vector3& p : command_curve({0, 0, 0}, {10, 0, 0}, none, {1, 0, 0}, 20, 1.0f)) {
         CHECK(p.z == Catch::Approx(0.0f).margin(1e-5));
     }
-    const std::vector<Vector3> corner = {{0, 0, 0}, {10, 0, 0}, {10, 0, 10}};
-    const auto leg = command_curve(corner, 0, 20, 1.0f);
+    const Vector3 bisector{std::sqrt(0.5f), 0, std::sqrt(0.5f)};
+    const auto leg = command_curve({0, 0, 0}, {10, 0, 0}, none, bisector, 20, 1.0f);
     REQUIRE(leg.size() == 21);
     CHECK(leg.front().x == Catch::Approx(0.0f));
     CHECK(leg.back().x == Catch::Approx(10.0f));
     CHECK(leg.back().z == Catch::Approx(0.0f));
     CHECK(leg[15].z < -0.01f);
     CHECK(std::abs(leg[10].z) < 0.25f * 10.0f);
-    CHECK(command_curve(corner, 2, 20, 1.0f).empty());
+    CHECK(command_curve({0, 0, 0}, {10, 0, 0}, none, bisector, 0, 1.0f).empty());
 }
 
 TEST_CASE("A build order's site is its structure's skirt", "[renderer][command_graph]") {
@@ -246,7 +246,7 @@ TEST_CASE("Units given one order share its waypoint, at the mean of their target
     CHECK(nodes[0].order.command_id == 7);
     CHECK(nodes[0].units == std::vector<osc::u32>{1, 2});
     CHECK(nodes[0].position.x == Catch::Approx(50.0f));
-    CHECK(nodes[0].unit_scale == Catch::Approx(std::sqrt(2.0f)));
+    CHECK(nodes[0].unit_scale == Catch::Approx(1.0f));
     CHECK(nodes[0].chosen);
     CHECK(nodes[1].order.command_id == 9);
     CHECK(nodes[1].position.x == Catch::Approx(85.0f));
@@ -255,6 +255,53 @@ TEST_CASE("Units given one order share its waypoint, at the mean of their target
     CHECK_FALSE(nodes[2].chosen);
     CHECK(nodes[3].units == std::vector<osc::u32>{4});
     CHECK(nodes[4].units == std::vector<osc::u32>{5});
+}
+
+TEST_CASE("Units given one order together draw one line to it, from their mean",
+          "[renderer][command_graph]") {
+    using osc::sim::CommandType;
+    osc::sim::WorldSnapshot world;
+    const auto move = [](osc::u32 id, osc::f32 x) {
+        osc::sim::CommandRecord c;
+        c.type = CommandType::Move;
+        c.command_id = id;
+        c.target_pos = {x, 0, 50};
+        return c;
+    };
+    const auto add = [&](osc::u32 id, const std::vector<osc::sim::CommandRecord>& orders) {
+        osc::sim::EntityRecord e;
+        e.id = id;
+        e.army = 0;
+        e.is_unit = true;
+        e.position = {static_cast<osc::f32>(id) * 10.0f, 0, 0};
+        e.command_offset = static_cast<osc::u32>(world.commands.size());
+        e.command_count = static_cast<osc::u32>(orders.size());
+        world.commands.insert(world.commands.end(), orders.begin(), orders.end());
+        world.entities.push_back(e);
+    };
+    add(1, {move(7, 40), move(9, 80)});
+    add(2, {move(7, 60), move(9, 90)});
+    add(3, {move(7, 50), move(8, 20)});
+    add(4, {move(9, 85)});
+    osc::renderer::CommandGraphStyle style;
+    style.line_color = {0, 1, 1, 0.2f};
+    const auto graph = osc::renderer::command_graph(
+        osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0,
+                                           [&](CommandType) { return &style; }));
+    REQUIRE(graph.edges.size() == 4);
+    const auto& start = graph.edges[0];
+    CHECK(start.from.x == Catch::Approx(20.0f));
+    CHECK(start.to.x == Catch::Approx(50.0f));
+    CHECK(start.units == 3);
+    CHECK(start.color == style.line_color);
+    CHECK(graph.edges[1].from.x == Catch::Approx(50.0f));
+    CHECK(graph.edges[1].to.x == Catch::Approx(85.0f));
+    CHECK(graph.edges[1].units == 2);
+    CHECK(graph.edges[2].to.x == Catch::Approx(20.0f));
+    CHECK(graph.edges[2].units == 1);
+    CHECK(graph.edges[3].from.x == Catch::Approx(40.0f));
+    CHECK(graph.edges[3].to.x == Catch::Approx(85.0f));
+    CHECK(graph.edges[3].units == 1);
 }
 
 TEST_CASE("A patrol's path runs back to its first patrol point", "[renderer][command_graph]") {
