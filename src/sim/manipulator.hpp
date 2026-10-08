@@ -245,6 +245,7 @@ public:
     }
     void clear_target() { has_target_ = false; }
     bool has_target() const { return has_target_; }
+    const Vector3& target() const { return target_; }
     /// Its weapon's YawOnlyOnTarget: on target once the heading is, whatever
     /// the pitch (the barrel still turns toward it). Moho copies the weapon's
     /// blueprint into the controller as it is made.

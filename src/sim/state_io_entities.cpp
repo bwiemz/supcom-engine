@@ -1002,6 +1002,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u32v(u.reclaim_target_id_);
     w.f32v(u.reclaim_rate_);
     w.i32v(u.reclaim_wait_);
+    w.b(u.builder_on_target_);
+    w.b(u.arm_awaited_);
     w.u32v(u.repair_target_id_);
     w.f64v(u.repair_build_time_);
     w.f64v(u.repair_cost_mass_);
@@ -1363,6 +1365,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.reclaim_target_id_ = r.u32v();
     u.reclaim_rate_ = r.f32v();
     u.reclaim_wait_ = r.i32v();
+    u.builder_on_target_ = r.b();
+    u.arm_awaited_ = r.b();
     u.repair_target_id_ = r.u32v();
     u.repair_build_time_ = r.f64v();
     u.repair_cost_mass_ = r.f64v();

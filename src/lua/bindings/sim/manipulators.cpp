@@ -430,6 +430,21 @@ static int aim_SetFiringArc(lua_State* L) {
     return 1;
 }
 
+static int builder_SetAimingArc(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        // Moho's CBuilderArmManipulator slews its arc's speed every tick.
+        const f64 per_second = 1.0 / sim::SimState::SECONDS_PER_TICK;
+        static_cast<sim::AimManipulator*>(m)->set_firing_arc(
+            static_cast<f32>(lua_tonumber(L, 2)), static_cast<f32>(lua_tonumber(L, 3)),
+            static_cast<f32>(lua_tonumber(L, 4) * per_second), static_cast<f32>(lua_tonumber(L, 5)),
+            static_cast<f32>(lua_tonumber(L, 6)),
+            static_cast<f32>(lua_tonumber(L, 7) * per_second));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
 static int aim_SetHeadingPitch(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) {
@@ -497,7 +512,7 @@ const MethodEntry manipulator_methods[] = {
 // clang-format off
 const MethodEntry aim_manipulator_methods[] = {
     {"SetFiringArc",            aim_SetFiringArc},
-    {"SetAimingArc",            aim_SetFiringArc},   // alias used by builder arm
+    {"SetAimingArc",            builder_SetAimingArc},
     {"SetHeadingPitch",         aim_SetHeadingPitch},
     {"GetHeadingPitch",         aim_GetHeadingPitch},
     {"OnTarget",                aim_OnTarget},
@@ -576,7 +591,7 @@ const MethodEntry slide_manipulator_methods[] = {
 // BuilderArmManipulator — FA scripts cache moho.BuilderArmManipulator.SetAimingArc
 // clang-format off
 const MethodEntry builder_arm_methods[] = {
-    {"SetAimingArc",            aim_SetFiringArc},
+    {"SetAimingArc",            builder_SetAimingArc},
     {nullptr, nullptr},
 };
 // clang-format on

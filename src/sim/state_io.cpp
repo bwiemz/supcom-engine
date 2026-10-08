@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 33; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 34; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -58,7 +58,8 @@ constexpr u32 kVersion = 33; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 30: formation orders' slots (formation layers);
                              // 31: jammers' fakes known fake (latched);
                              // 32: factory builds' counts (IncreaseBuildCountInQueue);
-                             // 33: reclaims' ticks before their first share
+                             // 33: reclaims' ticks before their first share;
+                             // 34: builders' arm on target, and orders waiting for it
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

@@ -1201,6 +1201,17 @@ void Unit::run_on_reclaimed(Entity& target, lua_State* L) {
     }
 }
 
+bool Unit::reclaim_arm_ready(const Entity& target) const {
+    const f32 dx = target.position().x - position().x;
+    const f32 dz = target.position().z - position().z;
+    return builder_on_target_ || dx * dx + dz * dz <= 1.0f;
+}
+
+bool Unit::awaits_arm() {
+    arm_awaited_ = !builder_on_target_;
+    return arm_awaited_;
+}
+
 bool Unit::reclaim_wears_down(const Entity& target) {
     return target.is_unit() && !static_cast<const Unit&>(target).is_being_built();
 }
@@ -1304,12 +1315,16 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
         return false;
 
     if (reclaim_wait_ > 0) {
-        --reclaim_wait_;
+        if (reclaim_wait_ > 1 || reclaim_arm_ready(*target)) {
+            --reclaim_wait_;
+        }
         return true;
     }
 
     if (reclaim_wears_down(*target)) {
-        wear_down(static_cast<Unit&>(*target));
+        if (reclaim_arm_ready(*target)) {
+            wear_down(static_cast<Unit&>(*target));
+        }
         return true;
     }
 
@@ -2964,6 +2979,23 @@ void Unit::remove_manipulator(Manipulator* m) {
 }
 
 void Unit::aim_builder_arms(const Vector3* at, lua_State* L) {
+    if (at) {
+        bool aimed = false;
+        for (const auto& m : manipulators_) {
+            const auto* arm = dynamic_cast<const AimManipulator*>(m.get());
+            if (!arm || !arm->builder_arm()) {
+                continue;
+            }
+            const Vector3& t = arm->target();
+            aimed = arm->has_target() && t.x == at->x && t.y == at->y && t.z == at->z;
+            if (!aimed) {
+                break;
+            }
+        }
+        if (aimed) {
+            return;
+        }
+    }
     for (auto& m : manipulators_) {
         auto* arm = dynamic_cast<AimManipulator*>(m.get());
         if (!arm || !arm->builder_arm()) {
@@ -2996,6 +3028,9 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
         Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !m->enabled()) continue;
         m->tick(dt);
+        if (const auto* arm = dynamic_cast<const AimManipulator*>(m); arm && arm->builder_arm()) {
+            builder_on_target_ = arm->has_target() && arm->on_target();
+        }
         // A thread waiting for it goes on once it is at its goal -- reached
         // in this tick, or set so between ticks (an animator a script sets
         // to rate 0, say).

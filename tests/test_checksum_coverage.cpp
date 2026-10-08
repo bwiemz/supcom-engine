@@ -143,6 +143,8 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
             {"veterancy", "units", [&] { u.set_vet_level(2); }},
             {"a reclaim's ticks before it takes its first share", "units",
              [&] { u.set_reclaim_wait(2); }},
+            {"builder arm off target", "units", [&] { u.set_builder_on_target(false); }},
+            {"an order waiting for its builder arm", "units", [&] { u.awaits_arm(); }},
             {"last attacker", "units", [&] { u.set_last_attacker_id(ids[1]); }},
             {"enhancement", "units", [&] { u.add_enhancement("Back", "Shield"); }},
             {"heading", "navigation", [&] { u.set_heading(1.25f); }},

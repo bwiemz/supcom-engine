@@ -550,6 +550,9 @@ public:
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry);
     static bool reclaim_wears_down(const Entity& target);
+    bool reclaim_arm_ready(const Entity& target) const;
+    bool awaits_arm();
+    bool arm_awaited() const { return arm_awaited_; }
     bool wear_down(Unit& target) const;
     u32 reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L);
 
@@ -1131,6 +1134,10 @@ public:
     /// Turn the builder arms to `at`, or back with none; Moho's mobile build
     /// task calls OnPrepareArmToBuild as an arm takes its site
     void aim_builder_arms(const Vector3* at, lua_State* L);
+    /// Moho's IAiBuilder on-target latch: what its builder arms last said,
+    /// true for a unit without one.
+    bool builder_on_target() const { return builder_on_target_; }
+    void set_builder_on_target(bool b) { builder_on_target_ = b; }
     void destroy_all_manipulators();
     const std::vector<std::unique_ptr<Manipulator>>& manipulators() const { return manipulators_; }
 
@@ -1495,6 +1502,8 @@ private:
     u32 reclaim_target_id_ = 0;   // entity ID being reclaimed
     f32 reclaim_rate_ = 0;        // fraction_complete decrease per second
     i32 reclaim_wait_ = 0;
+    bool builder_on_target_ = true;
+    bool arm_awaited_ = false;
     u32 repair_target_id_ = 0;    // entity ID of unit being repaired
     f64 repair_build_time_ = 0;   // target's Economy.BuildTime
     f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
