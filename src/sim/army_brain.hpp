@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -253,17 +254,18 @@ public:
     }
 
     // --- Build restrictions (per-army) ---
-    void add_build_restriction(const std::string& category) {
-        build_restrictions_.insert(category);
+    void add_build_restriction(const std::vector<std::string>& blueprint_ids) {
+        for (const auto& id : blueprint_ids) {
+            restricted_blueprints_.insert(id);
+        }
     }
-    void remove_build_restriction(const std::string& category) {
-        build_restrictions_.erase(category);
+    void remove_build_restriction(const std::vector<std::string>& blueprint_ids) {
+        for (const auto& id : blueprint_ids) {
+            restricted_blueprints_.erase(id);
+        }
     }
-    bool is_build_restricted(const std::string& category) const {
-        return build_restrictions_.count(category) > 0;
-    }
-    bool is_build_restricted(
-        const std::unordered_set<std::string>& blueprint_categories) const;
+    bool is_build_restricted(std::string blueprint_id) const;
+    const std::set<std::string>& restricted_blueprints() const { return restricted_blueprints_; }
 
     // --- Color ---
     void set_color(u8 r, u8 g, u8 b) {
@@ -310,7 +312,7 @@ private:
     std::string current_plan_;
     bool resource_sharing_ = false;
     std::string skin_name_;
-    std::unordered_set<std::string> build_restrictions_;
+    std::set<std::string> restricted_blueprints_;
     std::unordered_map<std::string, f64> stats_;
     std::unordered_map<std::string, std::map<std::string, f64>> blueprint_stats_;
 

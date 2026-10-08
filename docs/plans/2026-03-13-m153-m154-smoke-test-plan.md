@@ -1143,6 +1143,9 @@ state.register_function("RemoveBuildRestriction", [](lua_State* L) -> int {
 
 **Category type note:** FA's global `AddBuildRestriction` may pass an EntityCategory expression rather than a plain string. This simplified implementation stores raw category strings. If the smoke test reveals FA passes EntityCategory objects, the implementer should integrate with the existing EntityCategory bitmask infrastructure instead. Add a code comment noting this.
 
+*Done (2026-10-08): FA passes category objects (ScenarioFramework.AddRestriction, simInit's lobby
+restrictions). The army keeps the blueprints the category holds, as Moho's `CArmyImpl` does.*
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cmake --build build --config Debug --target osc_tests && ./build/tests/Debug/osc_tests.exe "[m154]" -v`

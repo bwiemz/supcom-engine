@@ -48,10 +48,6 @@ void apply_game_options_to_brain(const GameOptionsConfig& options,
             brain->set_unit_cap(static_cast<i32>(value.number_value));
         }
     }
-
-    for (const auto& category : options.restricted_categories) {
-        brain->add_build_restriction(category);
-    }
 }
 
 namespace {

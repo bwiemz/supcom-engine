@@ -505,6 +505,13 @@ void CampaignFlowTest::frame(lua::LuaState& ui, lua::LuaState* sim_lua, const si
         const auto building =
             evaluate(sim_lua->raw(), "return ScenarioInfo.MissionNumber == 3 and 'yes' or 'wait'");
         if (building && *building == "yes") {
+            const auto factory =
+                evaluate(sim_lua->raw(),
+                         "return ScenarioInfo.PlayerCDR:CanBuild('ueb0101') and 'yes' or 'no'");
+            if (!factory || *factory != "no") {
+                fail("the build-mass mission lets the commander build a land factory");
+                return;
+            }
             passed_ = true;
             done_ = true;
             next(Step::Done);
@@ -620,7 +627,8 @@ void CampaignFlowTest::fail(const std::string& why) {
 void CampaignFlowTest::finish() const {
     if (passed_ && route_ == Route::Tutorial) {
         spdlog::info("[PASS] tutorial-flow: from operation select through the tutorial's zoom, "
-                     "move and attack missions to its build-mass mission, in {} frames",
+                     "move and attack missions to its build-mass mission (no land factory yet), "
+                     "in {} frames",
                      frames_);
     } else if (passed_ && route_ == Route::Outro) {
         spdlog::info("[PASS] outro-flow: X1CA_006 won, the outro's movies played, and the UEF's "

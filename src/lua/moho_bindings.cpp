@@ -2476,8 +2476,53 @@ static std::vector<std::string> buildable_category_strings(lua_State* L,
 /// A unit's buildable categories, and what it may not build
 struct UnitBuildable {
     std::vector<std::string> lists;
-    const sim::CategoryExpr* restriction = nullptr;
+    sim::CategoryExpr restriction;
 };
+
+static sim::CategoryExpr union_of_blueprints(const std::set<std::string>& ids) {
+    std::vector<sim::CategoryExpr> level;
+    level.reserve(ids.size());
+    for (const auto& id : ids) {
+        level.push_back(sim::CategoryExpr::name(id));
+    }
+    while (level.size() > 1) {
+        std::vector<sim::CategoryExpr> next;
+        next.reserve((level.size() + 1) / 2);
+        for (size_t i = 0; i < level.size(); i += 2) {
+            if (i + 1 < level.size()) {
+                next.push_back(sim::CategoryExpr::combine(
+                    sim::CategoryExpr::Op::Union, std::move(level[i]), std::move(level[i + 1])));
+            } else {
+                next.push_back(std::move(level[i]));
+            }
+        }
+        level = std::move(next);
+    }
+    return level.empty() ? sim::CategoryExpr{} : std::move(level.front());
+}
+
+/// Moho's GetUnitCommandData: the blueprint's buildable categories, within
+/// its army's allowed set, less the unit's own restriction
+static sim::CategoryExpr
+unit_build_restriction(sim::SimState& sim, const sim::Unit& unit,
+                       std::map<i32, sim::CategoryExpr>& army_restrictions) {
+    auto it = army_restrictions.find(unit.army());
+    if (it == army_restrictions.end()) {
+        const auto* brain = sim.get_army(unit.army());
+        it = army_restrictions
+                 .emplace(unit.army(), brain ? union_of_blueprints(brain->restricted_blueprints())
+                                             : sim::CategoryExpr{})
+                 .first;
+    }
+    if (it->second.empty()) {
+        return unit.build_restriction();
+    }
+    if (unit.build_restriction().empty()) {
+        return it->second;
+    }
+    return sim::CategoryExpr::combine(sim::CategoryExpr::Op::Union, unit.build_restriction(),
+                                      it->second);
+}
 
 /// Pushes a compiled category as a description the combine helper builds
 /// back: {op = 'all'}, {op = 'name', name = ...} or {op = '+' | '*' | '-',
@@ -2576,8 +2621,8 @@ static void push_buildable_category(lua_State* L, const std::vector<UnitBuildabl
     }
     lua_newtable(L);
     for (size_t i = 0; i < per_unit.size(); ++i) {
-        if (!per_unit[i].restriction || per_unit[i].restriction->empty()) continue;
-        push_category_description(L, *per_unit[i].restriction);
+        if (per_unit[i].restriction.empty()) continue;
+        push_category_description(L, per_unit[i].restriction);
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
     if (lua_pcall(L, 2, 1, 0) != 0) {
@@ -2631,6 +2676,7 @@ static int l_GetUnitCommandData(lua_State* L) {
     bool first_unit = true;
     std::unordered_set<std::string> common_caps;
     std::vector<UnitBuildable> buildable;
+    std::map<i32, sim::CategoryExpr> army_restrictions;
 
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
@@ -2641,7 +2687,8 @@ static int l_GetUnitCommandData(lua_State* L) {
             continue;
         }
         auto* unit = static_cast<sim::Unit*>(entity);
-        buildable.push_back({buildable_category_strings(L, unit), &unit->build_restriction()});
+        buildable.push_back({buildable_category_strings(L, unit),
+                             unit_build_restriction(*sim, *unit, army_restrictions)});
 
         if (first_unit) {
             for (const char** cap = all_caps; *cap; ++cap) {
