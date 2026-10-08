@@ -156,11 +156,15 @@ struct UnitCommand {
     /// without waiting for others. Runtime state.
     bool from_patrol = false;
     /// A patrol's or guard's ticks to wait before it next looks about
-    /// (Moho's patrol and guard tasks run every 6 ticks). Runtime state.
+    /// (Moho's patrol and guard tasks run every 6 ticks), or a patrol's
+    /// break-off's before it starts. Runtime state.
     i32 patrol_scan = 0;
     /// What a patrol leg has gone to reclaim, not to be picked again on it
     /// (Moho's patrol task's entity set). Runtime state.
     std::vector<u32> patrol_claimed;
+    /// Where the unit stood as its patrol leg began (Moho's patrol task
+    /// builds its search box then). Runtime state.
+    Vector3 patrol_from;
     /// Unit::begin_order has run for it: the order has started (a patrol's
     /// leg, until it goes round). Runtime state.
     bool begun = false;
