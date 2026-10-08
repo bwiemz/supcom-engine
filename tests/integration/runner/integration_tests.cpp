@@ -13273,6 +13273,24 @@ void test_change_army(TestContext& ctx) {
         )");
         if (x2) x2->remove_cargo(acu_id);
     }
+    lua_check("Test 7b: a commander stays as it is (nil)", R"(
+        local acu = GetArmyBrain('ARMY_1'):GetListOfUnits(categories.COMMAND, false)[1]
+        if not acu then error('no commander') end
+        if ChangeUnitArmy(acu, 2) then error('it was given') end
+        if IsDestroyed(acu) or acu:GetArmy() ~= 1 then error('it changed') end
+    )");
+    lua(R"(
+        local x, y, z = __osc_at(60, 60)
+        __osc_frame = CreateUnitHPR('uel0106', 'ARMY_1', x, y, z, 0, 0, 0)
+    )");
+    if (auto* f = unit("__osc_frame")) {
+        f->set_is_being_built(true);
+        f->set_fraction_complete(0.5f);
+        lua_check("Test 7c: a unit being built stays as it is (nil)", R"(
+            if ChangeUnitArmy(__osc_frame, 2) then error('it was given') end
+            if IsDestroyed(__osc_frame) or __osc_frame:GetArmy() ~= 1 then error('it changed') end
+        )");
+    }
 
     // An aircraft in flight keeps its height and heading (a new one starts
     // facing 0), flying east.
@@ -13342,6 +13360,7 @@ void test_change_army(TestContext& ctx) {
         __osc_defector = __osc_new_tank
         __osc_defector_pos = __osc_defector:GetPosition()
     )");
+    const osc::u32 defeated_acu = army_acu_id(ctx.sim, 1);
     ctx.sim.set_share_condition("Defectors");
     ctx.sim.defeat_army(1);
     lua_check("Test 10: a defeated army's units go over to an enemy as new units", R"(
@@ -13350,6 +13369,17 @@ void test_change_army(TestContext& ctx) {
         if not found or VDist3(found:GetPosition(), __osc_defector_pos) > 0.01 then
             error('ARMY_1 has no tank where it stood')
         end
+    )");
+    {
+        auto* e = registry.find(defeated_acu);
+        const auto* acu =
+            e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+        check(defeated_acu != 0 && (!acu || (acu->is_dying() && acu->army() == 1)),
+              "Test 10b: a defeated army's commander is not given; it dies with its army");
+    }
+    lua_check("Test 10c: the enemy gets no commander", R"(
+        local n = table.getn(GetArmyBrain('ARMY_1'):GetListOfUnits(categories.COMMAND, false))
+        if n ~= 1 then error(n .. ' commanders') end
     )");
 
     spdlog::info("=== CHANGE ARMY TEST: {} passed, {} failed ===", pass, fail);

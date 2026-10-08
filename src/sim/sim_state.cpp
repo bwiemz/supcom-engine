@@ -2843,8 +2843,13 @@ void SimState::dispose_defeated_army(i32 army) {
     // scripts, which may kill others.
     for (const u32 id : to_give) {
         Entity* e = entity_registry_.find(id);
-        if (e && !e->destroyed() && e->is_unit() && e->army() == army)
-            transferred_any |= give_unit(static_cast<Unit&>(*e), recipient);
+        if (e && !e->destroyed() && e->is_unit() && e->army() == army) {
+            if (give_unit(static_cast<Unit&>(*e), recipient)) {
+                transferred_any = true;
+            } else {
+                to_kill.push_back(id);
+            }
+        }
     }
     for (const u32 id : to_kill) {
         Entity* e = entity_registry_.find(id);

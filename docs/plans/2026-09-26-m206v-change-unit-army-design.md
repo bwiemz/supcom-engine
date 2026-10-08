@@ -30,8 +30,11 @@ The reference is faf-re's decompiled Moho:
 - If any unit attached to it is a COMMAND unit, it returns nil and nothing
   changes.
 - Otherwise it returns `TransferUnit`'s result: the new unit, or nil.
-- The retail binary computes an "ineligible source" test (being built, dead,
-  COMMAND), but its branch was patched to no-ops, so it never gates anything.
+- A unit being built, dead, queued for destruction or a COMMAND unit returns
+  nil too. faf-re shows this test as never gating: it is decompiled from FAF's
+  exe, whose patch (FA-Binary-Patches `hooks/HTransferACUs.cpp`) turns its
+  branch into no-ops so FAF can give ACUs. *Done (2026-10-08): the engine
+  keeps the unpatched test.*
 
 **`Sim::TransferUnit(unit, army)`.**
 1. It returns nil for a dead unit, or one whose destruction is queued.
@@ -132,10 +135,11 @@ then changed the army in place. The script classes are now imported after
    clears when the replacement is destroyed.
 6. A transport's two engineers are new units of the new army, aboard the
    new transport.
-7. A transport carrying a commander stays as it is (nil).
+7. A transport carrying a commander, a commander and a unit being built stay
+   as they are (nil).
 8. An aircraft in flight keeps its height and heading.
 9. A carrier's stored fighter is stored, as a new unit, in the new carrier.
-10. A defeated army's units defect as new units.
+10. A defeated army's units defect as new units; its commander dies with it.
 
 **`--capture-test`** (rewritten): it used to log its failures and relied on
 the in-place change. Now it asserts two things:
