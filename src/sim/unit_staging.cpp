@@ -164,6 +164,9 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     const auto finish = [&] {
         set_unit_state("Refueling", false);
         navigator_.set_speed_through_goal(false);
+        // Its circling of the platform ends too: left Moving, the aircraft
+        // would never come down idle (tick_idle_landing waits on it).
+        release_navigator();
         if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
             command_queue_.front().command_id == order_id)
             command_queue_.pop_front();

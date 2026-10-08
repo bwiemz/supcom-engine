@@ -378,6 +378,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
         if (cmd.engaged) end_attack_run(*this); // the run ends with its target
+        release_navigator();                    // and the chase
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -388,6 +389,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             best_range = std::max(best_range, w->max_range);
     }
     if (best_range <= 0) {
+        release_navigator();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -852,6 +854,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -859,6 +862,7 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (!target || target->destroyed() || !target->reclaimable() ||
         (reclaim_target_id_ != cmd.target_id && !reclaim_target_valid(*target))) {
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -971,6 +975,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     const auto let_go = [&] {
         if (is_repairing()) stop_repairing(L, registry);
         if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) stop_assisting();
+        end_approach(cmd);
     };
     if (cmd.target_id == 0) {
         let_go();
@@ -1088,18 +1093,21 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         if (is_capturing()) stop_capturing(L, registry, true);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* ctarget = registry.find(cmd.target_id);
     if (!ctarget || ctarget->destroyed() || !ctarget->is_unit()) {
         if (is_capturing()) stop_capturing(L, registry, true);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     // Already same army (captured by someone else)
     if (ctarget->is_unit() && static_cast<Unit*>(ctarget)->army() == army()) {
         if (is_capturing()) stop_capturing(L, registry, false);
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -1316,11 +1324,13 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
         end_guard_build(registry, L);
+        release_navigator(); // the walk to it ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     if (!target->is_unit()) {
         end_guard_build(registry, L);
+        release_navigator();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -1982,6 +1992,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             abandon_beam_up(ctx.terrain, L);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
         }
+        release_navigator(); // its walk to the transport ends with it
         return finish_order();
     };
     if (cmd.target_id == 0 || transport_id_ != 0) return end();
@@ -2216,6 +2227,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     Weapon* weapon =
         overcharge ? overcharge_weapon() : launch_weapon(cmd.type == CommandType::Nuke);
     if (!weapon || cmd.launched || (overcharge && cmd.target_id == 0)) {
+        release_navigator(); // a back-off under way ends with it
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -2223,6 +2235,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (cmd.target_id != 0) {
         const Entity* target = registry.find(cmd.target_id);
         if (!target || target->destroyed()) {
+            release_navigator();
             command_queue_.pop_front();
             return OrderStep::Next;
         }
@@ -2368,6 +2381,8 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed() || !target->is_unit()) {
         call_lua_method(L, "OnStopSacrifice");
+        set_unit_state("Sacrificing", false);
+        release_navigator(); // its walk to the target ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -2573,6 +2588,8 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
     // (assigned_id), and it boards as for a load order.
     const Entity* beacon = registry.find(cmd.target_id);
     if (!beacon || beacon->destroyed()) {
+        set_unit_state("WaitForFerry", false);
+        release_navigator(); // its walk to the beacon ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }

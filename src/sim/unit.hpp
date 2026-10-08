@@ -1264,6 +1264,17 @@ private:
     /// off (the navigator keeps a throttled request without retrying it).
     /// True until the unit gets there.
     bool approach_update(f64 dt, SimContext& ctx);
+    /// An order that walked toward its target lets the navigator go when it
+    /// ends before it got there (its target gone, taken or whole): Moho's
+    /// task ends its move with it, so the unit isn't left Moving.
+    void end_approach(const UnitCommand& cmd) {
+        if (cmd.approached) navigator_.abort_move();
+    }
+    /// An order ending before its tick's move (its target gone) lets go of
+    /// the move it was making, if any: the head order's is the only one.
+    void release_navigator() {
+        if (navigator_.busy()) navigator_.abort_move();
+    }
 
     // update's phases. Each but the last says whether the tick goes on.
     /// Dying (the death animation), or carried (following the transport):

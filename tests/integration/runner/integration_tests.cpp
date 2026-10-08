@@ -10771,6 +10771,74 @@ void test_range(TestContext& ctx) {
         for _, name in __osc_stat_calls do if name == 'OscStore' then n = n + 1 end end
         if n ~= 1 then error(n .. ' calls') end
     )");
+
+    // A worker walking to its target whose target goes first: its order
+    // ends, and with it its move (Moho's task ends its move), so it isn't
+    // left Moving with nothing to do. Repair, reclaim and capture; an
+    // attack's chase and a guard's walk the same.
+    lua_check("setup: three workers walk to targets 30 off", R"(
+        __osc_far = {}
+        __osc_far.mender = __osc_spawn('uel0105', 'ARMY_1', 595.5, 140.5)
+        __osc_far.hurt = __osc_spawn('uel0201', 'ARMY_1', 625.5, 140.5)
+        __osc_far.hurt:SetHealth(__osc_far.hurt, 20)
+        IssueRepair({__osc_far.mender}, __osc_far.hurt)
+        __osc_far.reclaimer = __osc_spawn('uel0105', 'ARMY_1', 595.5, 145.5)
+        __osc_far.scrap = __osc_spawn('ueb2101', 'ARMY_1', 625.5, 145.5)
+        IssueReclaim({__osc_far.reclaimer}, __osc_far.scrap)
+        __osc_far.taker = __osc_spawn('uel0105', 'ARMY_1', 595.5, 150.5)
+        __osc_far.prize = __osc_spawn('uel0201', 'ARMY_2', 625.5, 150.5)
+        __osc_far.prize:SetFireState(1)
+        IssueCapture({__osc_far.taker}, __osc_far.prize)
+        -- And an attack's chase, and a guard's walk.
+        __osc_far.attacker = __osc_spawn('uel0201', 'ARMY_1', 595.5, 130.5)
+        __osc_far.foe = __osc_spawn('uel0201', 'ARMY_2', 625.5, 130.5)
+        __osc_far.foe:SetFireState(1)
+        IssueAttack({__osc_far.attacker}, __osc_far.foe)
+        __osc_far.guard = __osc_spawn('uel0105', 'ARMY_1', 595.5, 135.5)
+        __osc_far.ward = __osc_spawn('uel0201', 'ARMY_1', 625.5, 135.5)
+        IssueGuard({__osc_far.guard}, __osc_far.ward)
+    )");
+    run(20);
+    lua_check("setup: they're on their way when their targets go", R"(
+        for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
+            if not __osc_far[name]:IsUnitState('Moving') then error('the ' .. name .. ' is not walking') end
+        end
+        for _, name in {'hurt', 'scrap', 'prize', 'foe', 'ward'} do __osc_far[name]:Destroy() end
+    )");
+    run(2);
+    lua_check("Test 12j: a worker whose target goes on its way is left neither ordered nor Moving",
+              R"(
+        for _, name in {'mender', 'reclaimer', 'taker', 'attacker', 'guard'} do
+            local u = __osc_far[name]
+            local n = table.getn(u:GetCommandQueue())
+            if n ~= 0 then error('the ' .. name .. ' has ' .. n .. ' orders') end
+            if u:IsUnitState('Moving') then error('the ' .. name .. ' is still Moving') end
+        end
+    )");
+    // A launcher backing off from a target too close (MinRadius 5) whose
+    // target goes: its launch order ends, and its back-off with it.
+    lua_check("setup: an ACU backs off from a tank 3 off it was ordered to strike", R"(
+        __osc_far.lobber = __osc_spawn('uel0001', 'ARMY_1', 590.5, 120.5)
+        __osc_far.lobber:SetFireState(1)
+        __osc_far.lobber:CreateEnhancement('TacticalMissile')
+        __osc_far.lobber:GiveTacticalSiloAmmo(1)
+        __osc_far.mark = __osc_spawn('uel0201', 'ARMY_2', 593.5, 120.5)
+        __osc_far.mark:SetFireState(1)
+        IssueTactical({__osc_far.lobber}, __osc_far.mark)
+    )");
+    run(5);
+    lua_check("setup: it is backing off when its target goes", R"(
+        if not __osc_far.lobber:IsUnitState('Moving') then error('the ACU is not backing off') end
+        __osc_far.mark:Destroy()
+    )");
+    run(2);
+    lua_check("Test 12k: a launcher whose target goes as it backs off is left neither ordered nor "
+              "Moving",
+              R"(
+        local n = table.getn(__osc_far.lobber:GetCommandQueue())
+        if n ~= 0 then error('the ACU has ' .. n .. ' orders') end
+        if __osc_far.lobber:IsUnitState('Moving') then error('the ACU is still Moving') end
+    )");
     check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }
