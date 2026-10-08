@@ -495,7 +495,8 @@ private:
     /// The GPU (BC textures, anisotropy; pipeline statistics if present), the
     /// device, its graphics queue, the GPU queries and the VMA allocator.
     bool create_logical_device(const vkb::Instance& vkb_inst);
-    /// The command pool, a command buffer, fence and semaphore a frame slot.
+    /// The command pool, and a command buffer, fence and semaphore for each
+    /// frame slot.
     void create_command_objects();
     /// The texture (set 0), bone SSBO (set 1) and terrain descriptor set
     /// layouts.
