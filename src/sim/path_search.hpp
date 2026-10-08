@@ -180,6 +180,11 @@ public:
 
     const std::deque<Traveler*>& pending() const { return pending_; }
     const PathSearch& search() const { return search_; }
+    /// The searches it has finished and the cells they expanded, since the
+    /// game (or its load) began: the bench's measure of search work. Not
+    /// game state: never in the checksum or a snapshot.
+    u64 searches_done() const { return searches_done_; }
+    u64 expansions_done() const { return expansions_done_; }
     /// Its searches, for the sync checksum: whose wait, in order, and
     /// the one in flight.
     void fingerprint(Fnv& f) const;
@@ -187,6 +192,8 @@ public:
 private:
     std::deque<Traveler*> pending_;
     PathSearch search_;
+    u64 searches_done_ = 0;
+    u64 expansions_done_ = 0;
 };
 
 /// Cell `c` packed for a lookup, as Moho's int16 x and z.

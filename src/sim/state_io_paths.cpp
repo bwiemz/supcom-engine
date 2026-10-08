@@ -310,6 +310,7 @@ void StateIO::load(StateReader& r, path::PathSearch& s) {
 // ---------------------------------------------------------- PathQueue
 
 void StateIO::save(StateWriter& w, const path::PathQueue& q, const SimState& sim) {
+    // searches_done_, expansions_done_: the bench's counters, not game state
     w.size(q.pending_.size());
     for (const path::Traveler* t : q.pending_) w.u32v(traveler_id(sim, t));
     w.u32v(q.search_.traveler_ ? traveler_id(sim, q.search_.traveler_) : 0);

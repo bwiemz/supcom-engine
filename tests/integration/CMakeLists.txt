@@ -365,7 +365,8 @@ if(Python3_Interpreter_FOUND)
     # and p99 tick and peak memory within 15%, the same game (checksum).
     # Label `bench` alone (not `data`): timing wants a quiet machine, so they
     # run one at a time, and a Release build (`ctest -L bench`).
-    foreach(_scenario early late)
+    # (early-moho and late-moho: the same with --moho-pathing.)
+    foreach(_scenario early late early-moho late-moho)
         add_test(NAME bench.${_scenario}
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/bench.py
                          check $<TARGET_FILE:opensupcom> --scenario ${_scenario})
