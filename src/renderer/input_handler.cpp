@@ -188,6 +188,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     if (order_drag_) {
         hovered_command_ = order_drag_->command_id;
     }
+    converts_to_patrol_ = !moves_to_patrol(sim, hovered_command_).empty();
     if (dropped_) {
         dropped_for_ += dt;
         const auto node = graph_node(dropped_->command_id);
@@ -535,6 +536,65 @@ std::optional<sim::SimCallbackEntry> InputHandler::remove_order(sim::SimState& s
     return cb;
 }
 
+std::vector<u32> InputHandler::moves_to_patrol(sim::SimState& sim, u32 hovered) const {
+    const sim::WorldSnapshot* cur = view_.cur();
+    if (hovered == 0 || player_army_ < 0 || !cur) {
+        return {};
+    }
+    std::vector<u32> ids(selected_.begin(), selected_.end());
+    std::sort(ids.begin(), ids.end());
+    std::vector<u32> moves;
+    for (const u32 id : ids) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        const sim::EntityRecord* record = cur->find(id);
+        if (!e || e->destroyed() || !e->is_unit() || !record) {
+            continue;
+        }
+        if (static_cast<const sim::Unit*>(e)->has_category("POD")) {
+            return {};
+        }
+        const auto orders = cur->orders_of(*record);
+        const auto at = std::find_if(orders.begin(), orders.end(),
+                                     [&](const auto& c) { return c.command_id == hovered; });
+        if (orders.size() <= 1 || orders.back().command_id == hovered || at == orders.end()) {
+            return {};
+        }
+        if (std::any_of(orders.begin(), orders.end(),
+                        [](const auto& c) { return c.type != sim::CommandType::Move; })) {
+            return {};
+        }
+        for (auto it = at; it != orders.end(); ++it) {
+            if (it->command_id != 0 &&
+                std::find(moves.begin(), moves.end(), it->command_id) == moves.end()) {
+                moves.push_back(it->command_id);
+            }
+        }
+    }
+    return moves;
+}
+
+std::vector<sim::SimCallbackEntry> InputHandler::restart_as_patrol(sim::SimState& sim,
+                                                                   u32 hovered) {
+    std::vector<sim::SimCallbackEntry> sent;
+    for (const u32 command : moves_to_patrol(sim, hovered)) {
+        const auto node = graph_node(command);
+        if (!node) {
+            continue;
+        }
+        sim::SimCallbackEntry cb;
+        cb.unit_ids = own_units(sim, node->units);
+        if (cb.unit_ids.empty()) {
+            continue;
+        }
+        cb.func_name = sim::kSetCommandTypeCallback;
+        cb.args["Command"] = static_cast<f64>(command);
+        cb.args["Type"] = static_cast<f64>(sim::CommandType::Patrol);
+        sim.submit_callback(cb);
+        sent.push_back(std::move(cb));
+    }
+    return sent;
+}
+
 bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
                             f32& wx, f32& wz) {
     // Where the cursor's ray meets the ground, or the water over it (M217a):
@@ -687,6 +747,10 @@ void InputHandler::handle_right_click(Renderer& renderer,
     // Check if Shift is held (queue commands without clearing)
     const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                        renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+    if (converts_to_patrol_ && right_button_order(sim, wx, wz) == sim::CommandType::Move) {
+        restart_as_patrol(sim, hovered_command_);
+        return;
+    }
     const auto issued = right_click_at(sim, wx, wz, shift);
     spdlog::debug("Right-click: {} order(s) for {} units at ({:.0f},{:.0f})", issued.size(),
                   selected_.size(), wx, wz);

@@ -558,3 +558,90 @@ TEST_CASE("A dragged waypoint draws its order's legs to where it is", "[order_ed
     CHECK(paths[1].chain[1].z == 20.0f);
     CHECK(osc::renderer::command_graph_nodes(paths)[0].position.x == 80.0f);
 }
+
+TEST_CASE("A click on an earlier move's waypoint makes the moves from it a patrol",
+          "[order_edit][input][patrol]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(10, 20);
+    const std::vector<osc::u32> both = {a.entity_id(), b.entity_id()};
+    w.order(both, CommandType::Move, 60, 10);
+    w.order(both, CommandType::Move, 60, 60, false);
+    w.order(both, CommandType::Move, 10, 60, false);
+    w.ticks(2);
+    const auto ids = ids_of(a);
+    REQUIRE(ids.size() == 3);
+    Ui ui(*w.sim);
+    ui.input.set_selected({a.entity_id(), b.entity_id()});
+    CHECK(ui.input.moves_to_patrol(*w.sim, ids[2]).empty());
+    REQUIRE(ui.input.moves_to_patrol(*w.sim, ids[1]) == std::vector<osc::u32>{ids[1], ids[2]});
+    ui.input.restart_as_patrol(*w.sim, ids[1]);
+    REQUIRE(ui.sent.size() == 2);
+    CHECK(ui.sent[0].func_name == osc::sim::kSetCommandTypeCallback);
+    CHECK(number(ui.sent[0], "Command") == ids[1]);
+    CHECK(ui.sent[0].unit_ids == both);
+    w.sim->set_local_callback_sink(nullptr);
+    for (const SimCallbackEntry& cb : ui.sent) {
+        w.sim->submit_callback(cb);
+    }
+    w.ticks(1);
+    for (const Unit* u : {&a, &b}) {
+        REQUIRE(u->command_queue().size() == 3);
+        CHECK(u->command_queue()[0].type == CommandType::Move);
+        CHECK(u->command_queue()[1].type == CommandType::Patrol);
+        CHECK(u->command_queue()[2].type == CommandType::Patrol);
+    }
+    w.ticks(600);
+    CHECK(a.command_queue().size() == 2);
+    CHECK(a.command_queue().front().type == CommandType::Patrol);
+}
+
+TEST_CASE("A queue with more than moves, or not holding the waypoint, starts no patrol",
+          "[order_edit][input][patrol]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(10, 20);
+    w.order({a.entity_id(), b.entity_id()}, CommandType::Move, 60, 10);
+    w.order({a.entity_id()}, CommandType::Move, 60, 60, false);
+    w.order({b.entity_id()}, CommandType::Patrol, 60, 60, false);
+    w.ticks(2);
+    const osc::u32 first = a.command_queue()[0].command_id;
+    Ui ui(*w.sim);
+    ui.input.set_selected({a.entity_id()});
+    CHECK(ui.input.moves_to_patrol(*w.sim, first).size() == 2);
+    ui.input.set_selected({a.entity_id(), b.entity_id()});
+    CHECK(ui.input.moves_to_patrol(*w.sim, first).empty());
+    ui.input.set_selected({a.entity_id()});
+    CHECK(ui.input.moves_to_patrol(*w.sim, b.command_queue()[1].command_id).empty());
+    CHECK(ui.input.restart_as_patrol(*w.sim, b.command_queue()[1].command_id).empty());
+    CHECK(ui.sent.empty());
+}
+
+TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[order_edit][patrol]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& theirs = w.walker(10, 20, 1);
+    w.order({a.entity_id()}, CommandType::Move, 60, 10);
+    w.order({a.entity_id()}, CommandType::Attack, 60, 60, false);
+    w.order({theirs.entity_id()}, CommandType::Move, 60, 60);
+    w.ticks(2);
+    const auto patrol = [](osc::u32 command, osc::u32 unit, CommandType type) {
+        SimCallbackEntry cb;
+        cb.func_name = osc::sim::kSetCommandTypeCallback;
+        cb.args["Command"] = static_cast<double>(command);
+        cb.args["Type"] = static_cast<double>(type);
+        cb.unit_ids = {unit};
+        return cb;
+    };
+    w.sim->set_source_army(1, 0);
+    w.sim->schedule_callback(
+        1, patrol(a.command_queue()[1].command_id, a.entity_id(), CommandType::Patrol));
+    w.sim->schedule_callback(
+        1, patrol(a.command_queue()[0].command_id, a.entity_id(), CommandType::Attack));
+    w.sim->schedule_callback(
+        1, patrol(theirs.command_queue()[0].command_id, theirs.entity_id(), CommandType::Patrol));
+    w.ticks(2);
+    CHECK(a.command_queue()[0].type == CommandType::Move);
+    CHECK(a.command_queue()[1].type == CommandType::Attack);
+    CHECK(theirs.command_queue()[0].type == CommandType::Move);
+}

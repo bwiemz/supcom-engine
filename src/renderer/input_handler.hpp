@@ -287,6 +287,15 @@ public:
     /// __osc_RemoveCommand for every unit of order `command_id`
     std::optional<sim::SimCallbackEntry> remove_order(sim::SimState& sim, u32 command_id);
 
+    /// CanRestartMoveCommandAsPatrol: the moves from waypoint `hovered` on
+    /// that a click makes a patrol; none if the selection's queues can't
+    std::vector<u32> moves_to_patrol(sim::SimState& sim, u32 hovered) const;
+    /// RestartMoveCommandAsPatrol: an __osc_SetCommandType for each of them
+    std::vector<sim::SimCallbackEntry> restart_as_patrol(sim::SimState& sim, u32 hovered);
+    /// Whether the waypoint under the cursor would start a patrol
+    /// (CUIWorldView's ShowConvertToPatrolCursor)
+    bool converts_to_patrol() const { return converts_to_patrol_; }
+
     /// The shown unit the cursor is on, as it is drawn: the nearest whose box
     /// (its blueprint's size, turned with it, standing on where it is drawn)
     /// the cursor's ray meets -- an aircraft where it flies, not the ground
@@ -365,6 +374,7 @@ private:
     std::array<sim::Vector3, 4> drag_quad_{};
     u32 hovered_ = 0;
     u32 hovered_command_ = 0;
+    bool converts_to_patrol_ = false;
     std::optional<OrderDrag> order_drag_;
     bool order_drag_moved_ = false;
     std::optional<OrderDrag> dropped_;
