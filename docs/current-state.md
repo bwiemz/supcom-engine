@@ -78,7 +78,7 @@ What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`do
 - **Multiplayer:** peers are not authenticated; two players dropping at once can leave the survivors disagreeing; FAF's ICE adapter and client are tested only through stand-ins.
 - **Smaller order gaps:** a repeating factory's queue shows an order split by its trip round the queue as two entries; the AI's influence maps take no false blips from jammers.
 - **Lobby options:** difficulty cheat multipliers are applied by FA's AI scripts, not the engine; `PrebuiltUnits` needs map data.
-- **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()`, `build_scene`, `init` and `create_pipelines` are still large.
+- **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()` is down from 756 lines to 143: the frame's CPU updates and each pass (normals, reflection, the scene, the screen's layers, submission) are their own functions. `build_scene`, `init` and `create_pipelines` are still large.
 
 ## Game modes and victory
 
