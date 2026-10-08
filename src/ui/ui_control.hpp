@@ -4,7 +4,9 @@
 
 #include "video/movie_player.hpp"
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -311,9 +313,21 @@ public:
     bool movie_on_screen() const { return movie_on_screen_; }
     void set_movie_on_screen(bool v) { movie_on_screen_ = v; }
 
-    // --- WorldMesh state ---
-    bool world_mesh_hidden() const { return world_mesh_hidden_; }
-    void set_world_mesh_hidden(bool h) { world_mesh_hidden_ = h; }
+    // --- WorldMesh state (Moho's CUIWorldMesh and its MeshInstance) ---
+    struct WorldMesh {
+        std::string mesh_name;
+        std::string blueprint_id;
+        std::string texture_name;
+        std::string shader_name;
+        f32 uniform_scale = 1.0f;
+        f32 lod_cutoff = 1000.0f;
+        f32 created_tick = 0.0f;
+        f32 lifetime = 0.0f;
+        std::array<f32, 3> position{};
+        bool hidden = true;
+    };
+    std::optional<WorldMesh>& world_mesh() { return world_mesh_; }
+    const std::optional<WorldMesh>& world_mesh() const { return world_mesh_; }
 
 private:
     u32 control_id_ = 0;
@@ -432,8 +446,7 @@ private:
     bool movie_stopped_ = false;
     bool movie_on_screen_ = true;
 
-    // WorldMesh state
-    bool world_mesh_hidden_ = false;
+    std::optional<WorldMesh> world_mesh_;
 };
 
 /// Registry of all live UI controls, analogous to EntityRegistry.

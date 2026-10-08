@@ -60,11 +60,13 @@ enum class MeshTechnique : u32 {
     // shrink to 0.7 or grow to 1.1 over their lifetime, over everything.
     CommandFeedback = 28,  ///< CommandFeedbackVS(0.7), CommandFeedbackPS0
     CommandFeedback2 = 29, ///< CommandFeedbackVS(1.1), CommandFeedbackPS0
+    RallyPoint = 30,       ///< CommandFeedbackVS(0.7), CommandFeedbackPS0 unfaded
 };
 
 /// The order marks' techniques, drawn by the feedback pipeline.
 inline bool is_feedback_technique(MeshTechnique t) {
-    return t == MeshTechnique::CommandFeedback || t == MeshTechnique::CommandFeedback2;
+    return t == MeshTechnique::CommandFeedback || t == MeshTechnique::CommandFeedback2 ||
+           t == MeshTechnique::RallyPoint;
 }
 
 /// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy

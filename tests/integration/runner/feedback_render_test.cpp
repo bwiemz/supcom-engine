@@ -7,6 +7,7 @@
 
 #include "renderer/renderer.hpp"
 #include "sim/sim_state.hpp"
+#include "ui/ui_control.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -99,6 +100,29 @@ void test_feedback_render(TestContext& ctx) {
     const size_t after = r.feedback_blips().blips().size();
     t.check(before == 3 && after == 3,
             fmt::format("Test 4: a 0.1 s mark is gone after 8 frames ({} -> {})", before, after));
+
+    ui::UIControlRegistry ui;
+    ui::UIControl& rally = *ui.get(ui.create());
+    ui::UIControl::WorldMesh flag_mesh;
+    flag_mesh.mesh_name = "/meshes/game/Rally_lod0.scm";
+    flag_mesh.texture_name = "/meshes/game/Rally_albedo.dds";
+    flag_mesh.shader_name = "RallyPoint";
+    flag_mesh.uniform_scale = 0.1f;
+    flag_mesh.lifetime = 10.0f;
+    flag_mesh.position = {flag.position.x, flag.position.y, flag.position.z};
+    rally.world_mesh() = flag_mesh;
+    shots.set_ui(&ui);
+    const Pixels hidden_flag = shot(2);
+    const u32 hidden_draws = r.mesh_draws(renderer::MeshTechnique::RallyPoint);
+    rally.world_mesh()->hidden = false;
+    const Pixels rally_shown = shot(2);
+    const u32 rally_draws = r.mesh_draws(renderer::MeshTechnique::RallyPoint);
+    const size_t rally_changed = changed_pixels(hidden_flag, rally_shown);
+    t.check(hidden_draws == 0 && rally_draws == 1 && rally_changed > 20,
+            fmt::format("Test 5: a WorldMesh draws as RallyPoint once shown ({} -> {} draws, {} "
+                        "pixels changed)",
+                        hidden_draws, rally_draws, rally_changed));
+    shots.set_ui(nullptr);
 
     spdlog::info("Feedback test: {}/{} passed", t.pass, t.pass + t.fail);
 }

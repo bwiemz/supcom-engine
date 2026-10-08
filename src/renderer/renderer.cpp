@@ -1240,18 +1240,22 @@ void Renderer::add_command_feedback_blip(FeedbackBlipSpec spec) {
     feedback_blips_.add(std::move(spec), std::floor(unit_renderer_.shader_time()));
 }
 
-void Renderer::inject_feedback_blips(lua_State* L) {
-    if (feedback_blips_.blips().empty()) return;
+void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDraw>& world_meshes) {
+    if (feedback_blips_.blips().empty() && world_meshes.empty()) {
+        return;
+    }
     sim::Vector3 eye;
     camera_.eye_position(eye.x, eye.y, eye.z);
     sim::Vector3 forward{camera_.focus_x() - eye.x, camera_.focus_y() - eye.y,
                          camera_.focus_z() - eye.z};
     const f32 length =
         std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
-    if (length <= 0.0f) return;
+    if (length <= 0.0f) {
+        return;
+    }
     forward = {forward.x / length, forward.y / length, forward.z / length};
-    for (const FeedbackBlip& blip : feedback_blips_.blips()) {
-        const FeedbackBlipSpec& spec = blip.spec;
+    const auto inject = [&](const FeedbackBlipSpec& spec, f32 created_tick, f32 parameter,
+                            f32 lod_cutoff) {
         // MeshName at its UniformScale, else the blueprint's LOD 0 mesh at
         // the blueprint's; the albedo and technique are the blip's either way.
         const MeshTechnique technique = osc::renderer::mesh_technique(spec.shader_name);
@@ -1260,23 +1264,39 @@ void Renderer::inject_feedback_blips(lua_State* L) {
         if (!spec.mesh_name.empty()) {
             mesh = mesh_cache_.get_file(spec.mesh_name, spec.texture_name, technique);
         } else if (!spec.blueprint_id.empty() && L) {
-            mesh = mesh_cache_.get_file(mesh_cache_.mesh_file(spec.blueprint_id, L),
-                                        spec.texture_name, technique);
+            mesh = spec.texture_name.empty()
+                       ? mesh_cache_.get(spec.blueprint_id, L)
+                       : mesh_cache_.get_file(mesh_cache_.mesh_file(spec.blueprint_id, L),
+                                              spec.texture_name, technique);
             scale = mesh_cache_.blueprint_scale(spec.blueprint_id, L);
         }
-        if (!mesh) continue;
+        if (!mesh) {
+            return;
+        }
         // Its one LOD, to a metric of 1000; CommandFeedbackVS grows it with
         // the metric so it reads the same size from afar.
         const f32 lod = lod_metric(spec.position, eye, forward, camera_.fov());
-        if (lod > kFeedbackLodCutoff) continue;
+        if (lod > lod_cutoff) {
+            return;
+        }
+        if (is_feedback_technique(mesh->technique)) {
+            scale *= feedback_distance_scale(lod);
+        }
         MeshInstance inst{};
-        const auto model = feedback_model(spec.position, scale * feedback_distance_scale(lod));
+        const auto model = feedback_model(spec.position, scale);
         std::copy(model.begin(), model.end(), inst.model);
         inst.r = inst.g = inst.b = inst.a = 1.0f;
-        inst.shader_time = blip.created_tick;
-        // The lifetime parameter, in ticks (material.y, PARAM_LIFETIME)
-        inst.parameter = spec.duration * 10.0f;
+        inst.shader_time = created_tick;
+        inst.parameter = parameter;
         unit_renderer_.inject_mesh(mesh, inst, &texture_cache_);
+    };
+    for (const FeedbackBlip& blip : feedback_blips_.blips()) {
+        // The lifetime parameter, in ticks (material.y, PARAM_LIFETIME)
+        inject(blip.spec, blip.created_tick, blip.spec.duration * 10.0f, kFeedbackLodCutoff);
+    }
+    for (const WorldMeshDraw& world_mesh : world_meshes) {
+        inject(world_mesh.spec, world_mesh.created_tick, world_mesh.lifetime,
+               world_mesh.lod_cutoff);
     }
 }
 
@@ -2468,6 +2488,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                        command_drag_held_,
                                    fi);
 
+    const std::vector<WorldMeshDraw> world_meshes =
+        ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
@@ -2478,7 +2500,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
             1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
             static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
             static_cast<u32>(formation_ghosts_.size()) +
-            static_cast<u32>(feedback_blips_.blips().size()));
+            static_cast<u32>(feedback_blips_.blips().size()) +
+            static_cast<u32>(world_meshes.size()));
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
     }
@@ -2538,7 +2561,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     }
     // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
     feedback_blips_.update(frame_dt_);
-    inject_feedback_blips(L);
+    inject_feedback_blips(L, world_meshes);
 
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
