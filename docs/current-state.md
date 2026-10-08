@@ -67,7 +67,13 @@ Each area, what is accepted and by what. "Last verified" names the validation re
 | `render-late`: 600 frames of tick 18,000 | | CPU p50 1.6 ms, p95 4.2 ms; GPU 0.75 ms |
 | `render-strategic`: the same, zoomed out to icons | | CPU p50 0.95 ms, p95 3.4 ms; GPU 0.34 ms |
 
-Moho pathing costs 1.4× the default's sim time in the early game and 2.0× in the late game. A late-game search expands about 340 cells; an early-game one about 200. The games differ with it (the AIs' units move otherwise), so the population isn't the same.
+Moho pathing costs 1.4× the default's sim time in the early game and 2.0× in the late game. A late-game search expands about 340 cells; an early-game one about 200.
+
+The games differ with it, because the AIs' units move otherwise. From tick 7,000 its ticks cost 2.0-2.3× the default's, for two reasons:
+- **More units.** From tick 8,000 it holds 30-40% more units: 1,220 against 870 at tick 10,000.
+- **The searches.** In a profile from tick 10,000 (400 samples), the path searches take 26% of its tick, and the navigator's checks along its path another 9%. Half the searches' time is the test for units in the way.
+
+Without those, a unit costs about the same as in the default game (7.6 against 7.0 µs a tick).
 
 Against the 2026-10-06 baselines (b167ab14):
 - The default games changed since. The parity and pathing work changed how the AIs play: the late game ends with 1,418 units against 1,666.
