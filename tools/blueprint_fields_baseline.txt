@@ -29,7 +29,6 @@ PrefersPrimaryWeaponTarget
 QuickSelectPriority
 RaisedPlatforms
 ReTargetOnMiss
-RebuildBonusIds
 RepairRate
 RotationalVelocity
 Scrolling

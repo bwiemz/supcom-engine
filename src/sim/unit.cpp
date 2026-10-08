@@ -508,7 +508,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (is_reclaiming() &&
             !(head &&
               (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
-               head->type == CommandType::Patrol || head->type == CommandType::AggressiveMove))) {
+               head->type == CommandType::Patrol || head->type == CommandType::AggressiveMove ||
+               (head->type == CommandType::BuildMobile && head->clearing_prop_id != 0)))) {
             stop_reclaiming(ctx.L, &ctx.registry);
             if (destroyed() || !in_registry()) {
                 return;
