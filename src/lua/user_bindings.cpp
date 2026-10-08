@@ -1152,6 +1152,12 @@ static int l_SelectUnits(lua_State* L) {
                     auto* entity = sim->entity_registry().find(eid);
                     if (entity && renderer::selectable(*entity)) {
                         new_sel.insert(eid);
+                    } else if (entity) {
+                        const auto* carrier =
+                            sim->entity_registry().find(renderer::carrier_of(*entity));
+                        if (carrier && renderer::selectable(*carrier)) {
+                            new_sel.insert(carrier->entity_id());
+                        }
                     }
                 } else {
                     new_sel.insert(eid);
