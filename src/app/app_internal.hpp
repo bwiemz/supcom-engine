@@ -162,6 +162,7 @@ extern std::ofstream* g_rng_trace;
 extern u32 g_rng_trace_from;
 extern u32 g_rng_trace_to;
 extern bool g_moho_pathing;
+extern bool g_moho_random;
 extern std::string g_record_path;
 bool write_recording(const sim::SimState& sim, const std::string& path);
 std::optional<sim::Replay> load_replay(const std::string& path);

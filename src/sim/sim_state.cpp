@@ -3016,7 +3016,7 @@ u32 SimState::ChecksumParts::total() const {
 
 SimState::ChecksumParts SimState::checksum_parts() const {
     ChecksumParts parts;
-    parts.rng = sim_random_.state();
+    parts.rng = sim_random_.digest();
     const auto mix_vec = [](Fnv& f, const Vector3& v) {
         f.mix_f32(v.x);
         f.mix_f32(v.y);
@@ -3518,7 +3518,7 @@ void SimState::trace_rng_draw(void* ctx, u64 value) {
 
 void SimState::write_entity_trace() const {
     const auto bits = [](f32 v) { return std::bit_cast<u32>(v); };
-    std::string out = fmt::format("T {} rng {:016x}\n", tick_count_, sim_random_.state());
+    std::string out = fmt::format("T {} rng {:016x}\n", tick_count_, sim_random_.digest());
     entity_registry_.for_each([&](const Entity& e) {
         const auto& p = e.position();
         const auto& q = e.orientation();

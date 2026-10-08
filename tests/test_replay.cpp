@@ -244,6 +244,7 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     r.setup.ai_armies = {1};
     r.setup.cheat_mult = 2.0;
     r.setup.mods = std::string("\x05\x01\x00\x00\x00mods", 9); // any bytes
+    r.setup.moho_random = true;
     r.checksum_from = 1;
     r.checksums = {0xdeadbeef, 0x12345678};
 
@@ -268,6 +269,7 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     CHECK(out.setup.ai_armies == std::vector<int>{1});
     CHECK(out.setup.cheat_mult == 2.0);
     CHECK(out.setup.mods == r.setup.mods); // the game's mods (version 10)
+    CHECK(out.setup.moho_random);
     CHECK(out.checksums == r.checksums);
 
     // Cut short anywhere, it is refused whole.

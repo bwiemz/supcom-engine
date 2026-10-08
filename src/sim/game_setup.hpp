@@ -104,6 +104,8 @@ struct GameSetup {
     std::string campaign_info;
     /// The tutorial operation (ScenarioInfo.tutorial).
     bool tutorial = false;
+    /// The sim draws from Moho's MT19937 stream (--moho-random).
+    bool moho_random = false;
 };
 
 /// The game's armies, by name, in order: a lobby's (`setup.slots`) each

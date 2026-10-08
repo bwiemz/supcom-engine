@@ -9,7 +9,7 @@ GPU, with what they drew (src/app/render_bench.cpp, M223b). This plays the
 pinned scenarios with them and compares the reports:
 
   Scenarios: early, late (the sim), early-moho, late-moho (the same with
-  --moho-pathing); render-battle, render-late,
+  --moho-pathing), early-mt, late-mt (with --moho-random); render-battle, render-late,
   render-strategic (the renderer: the pinned game saved at a tick, made once
   per machine beside the baselines, then the scene's camera path over it).
 
@@ -81,6 +81,9 @@ SCENARIOS: dict[str, list[str]] = {
 # by default until it is accepted): their reports also count the searches.
 SCENARIOS["early-moho"] = [*SCENARIOS["early"], "--moho-pathing"]
 SCENARIOS["late-moho"] = [*SCENARIOS["late"], "--moho-pathing"]
+# ... and with Moho's random stream (--moho-random).
+SCENARIOS["early-mt"] = [*SCENARIOS["early"], "--moho-random"]
+SCENARIOS["late-mt"] = [*SCENARIOS["late"], "--moho-random"]
 TIMEOUT_SECONDS = 3600
 
 # The render scenes (M223b): the pinned game saved at a tick (made once, with
