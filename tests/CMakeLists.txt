@@ -5,6 +5,7 @@ add_executable(osc_tests
     test_platform_crash.cpp
     test_game_install.cpp
     test_first_run.cpp
+    test_scripted_mouse.cpp
     test_logs.cpp
     test_bench.cpp
     test_render_bench.cpp

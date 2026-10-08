@@ -11,6 +11,7 @@
 #include "app/campaign_flow_test.hpp"
 #include "app/mods_flow_test.hpp"
 #include "app/render_bench.hpp"
+#include "app/scripted_mouse.hpp"
 #include "app/ui_clicks.hpp"
 #include "app/window_mode.hpp"
 #include "app/world_sounds.hpp"
@@ -76,6 +77,7 @@ private:
     void run_beats(double dt, u32 beat_tick0);
     /// The scripted flows' frame: replay, LAN, GPGNet, mods, load.
     void run_flows();
+    void drive_scripted_mouse();
     /// The UI's frame: the camera's input, events, the networks, the UI's
     /// threads and beats.
     void update_ui(double dt);
@@ -227,6 +229,7 @@ private:
     std::optional<osc::app::ModsFlowTest> mods_flow;
     std::optional<osc::app::CampaignFlowTest> campaign_flow; ///< (M209b)
     std::optional<osc::app::UiClicks> ui_clicks;
+    std::optional<osc::app::ScriptedMouse> scripted_mouse;
     /// The matchmaking client closed its link while no game plays: without
     /// it the game has nothing to do (M220a).
     bool gpgnet_done = false;

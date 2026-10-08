@@ -3215,6 +3215,17 @@ bool Renderer::should_close() const {
 }
 
 bool Renderer::is_key_pressed(int glfw_key) const {
+    if (scripted_pointer_) {
+        switch (glfw_key) {
+        case GLFW_KEY_LEFT_SHIFT:
+        case GLFW_KEY_RIGHT_SHIFT: return (scripted_pointer_->mods & GLFW_MOD_SHIFT) != 0;
+        case GLFW_KEY_LEFT_CONTROL:
+        case GLFW_KEY_RIGHT_CONTROL: return (scripted_pointer_->mods & GLFW_MOD_CONTROL) != 0;
+        case GLFW_KEY_LEFT_ALT:
+        case GLFW_KEY_RIGHT_ALT: return (scripted_pointer_->mods & GLFW_MOD_ALT) != 0;
+        default: break;
+        }
+    }
     return window_ && glfwGetKey(window_, glfw_key) == GLFW_PRESS;
 }
 
@@ -3223,6 +3234,11 @@ void Renderer::set_window_title(const char* title) {
 }
 
 void Renderer::mouse_position(f64& x, f64& y) const {
+    if (scripted_pointer_) {
+        x = scripted_pointer_->x;
+        y = scripted_pointer_->y;
+        return;
+    }
     x = 0;
     y = 0;
     if (!window_) return;
@@ -3374,6 +3390,10 @@ void Renderer::set_vsync(bool on) {
 }
 
 bool Renderer::is_mouse_pressed(int glfw_button) const {
+    if (scripted_pointer_) {
+        return glfw_button >= 0 && glfw_button < 32 &&
+               (scripted_pointer_->buttons & (1u << glfw_button)) != 0;
+    }
     return window_ && glfwGetMouseButton(window_, glfw_button) == GLFW_PRESS;
 }
 

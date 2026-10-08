@@ -33,6 +33,8 @@ private:
     std::set<std::string, std::less<>> given_; // the headless modes asked for
     bool interp_ = false;                      // --interp-test
     std::string render_dump_path_;             // --render-dump <file>
+    bool mouse_scene_ = false;                 // --mouse-scene
+    bool mouse_scene_spawned_ = false;
     InterpProbe interp_probe_;
     std::optional<RenderDumpProbe> render_dump_;
 };

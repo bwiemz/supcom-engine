@@ -17,4 +17,12 @@ inline std::array<f64, 2> to_framebuffer(f64 x, f64 y, i32 window_w, i32 window_
     return {x * sx, y * sy};
 }
 
+/// `buttons`: a bit per GLFW mouse button held; `mods`: the GLFW_MOD_* keys held
+struct ScriptedPointer {
+    f64 x = 0;
+    f64 y = 0;
+    u32 buttons = 0;
+    i32 mods = 0;
+};
+
 } // namespace osc::core

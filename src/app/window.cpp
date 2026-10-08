@@ -401,6 +401,10 @@ std::optional<int> App::Window::start_flows() {
     if (!opt.clicks.empty()) {
         ui_clicks.emplace(opt.clicks);
     }
+    if (!opt.mouse.empty()) {
+        scripted_mouse.emplace(opt.mouse);
+        renderer.set_scripted_pointer(scripted_mouse->pointer());
+    }
     return std::nullopt;
 }
 
@@ -485,6 +489,10 @@ std::optional<int> App::Window::finish() {
     }
     if (ui_clicks && !ui_clicks->done()) {
         spdlog::error("{}", ui_clicks->never_clicked());
+        return 1;
+    }
+    if (scripted_mouse && !scripted_mouse->done()) {
+        spdlog::error("{}", scripted_mouse->never_done());
         return 1;
     }
     if (!screenshot_path.empty() && osc::renderer::Renderer::validation_error_count() > 0) {

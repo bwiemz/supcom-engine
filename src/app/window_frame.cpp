@@ -299,8 +299,41 @@ void App::Window::run_flows() {
     if (ui_clicks) {
         ui_clicks->frame(ui_lua_state, renderer.ui_dispatch(), ui_registry);
     }
+    if (scripted_mouse) {
+        drive_scripted_mouse();
+    }
 
     load_flow_frame();
+}
+
+void App::Window::drive_scripted_mouse() {
+    auto& input = renderer.ui_dispatch();
+    MouseSink sink;
+    sink.cursor = [&](f64 x, f64 y) { input.on_cursor_pos(x, y); };
+    sink.button = [&](i32 button, i32 action, i32 mods) {
+        input.on_mouse_button(button, action, mods);
+    };
+    sink.key = [&](i32 key, i32 action, i32 mods) { input.on_key(key, action, mods); };
+    sink.world_to_screen = [&](f64 x, f64 z) -> std::optional<std::array<f64, 2>> {
+        if (!sim_state || !sim_state->terrain()) {
+            return std::nullopt;
+        }
+        const auto w = static_cast<f32>(renderer.width());
+        const auto h = static_cast<f32>(renderer.height());
+        const sim::Vector3 at{
+            static_cast<f32>(x),
+            sim_state->terrain()->get_surface_height(static_cast<f32>(x), static_cast<f32>(z)),
+            static_cast<f32>(z)};
+        const auto p =
+            renderer::screen_point(renderer.camera().view_proj(h > 0 ? w / h : 1.0f), at, w, h);
+        if (!p) {
+            return std::nullopt;
+        }
+        return std::array<f64, 2>{(*p)[0], (*p)[1]};
+    };
+    scripted_mouse->frame(sim_state ? std::optional<u32>(sim_state->tick_count()) : std::nullopt,
+                          sink);
+    renderer.set_scripted_pointer(scripted_mouse->pointer());
 }
 
 void App::Window::update_ui(double dt) {
