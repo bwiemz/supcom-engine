@@ -1,5 +1,7 @@
 #include "renderer/build_template.hpp"
 
+#include "sim/build_placement.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -56,6 +58,43 @@ generate_build_template(const std::vector<TemplateStructure>& structures) {
         e.z -= oz;
     }
     return t;
+}
+
+std::vector<TemplateSite> template_sites(const BuildTemplate& t, f32 x0, f32 z0, f32 x1, f32 z1,
+                                         bool drag, const FootprintOf& footprint) {
+    std::vector<TemplateSite> sites;
+    if (t.entries.empty()) return sites;
+    const auto foot = [&](const std::string& bp) {
+        const std::array<f32, 2> f = footprint ? footprint(bp) : std::array<f32, 2>{1, 1};
+        return std::array<f32, 2>{std::max(f[0], 1.0f), std::max(f[1], 1.0f)};
+    };
+    // The lead's corner cell at each end (SFootprint::ToCellPos)
+    const auto lead = foot(t.entries.front().blueprint_id);
+    const auto cell = [](f32 p, f32 size) { return static_cast<f32>(std::lrint(p - size * 0.5f)); };
+    const f32 sx = cell(x0, lead[0]);
+    const f32 sz = cell(z0, lead[1]);
+    const f32 dx = drag ? cell(x1, lead[0]) - sx : 0.0f;
+    const f32 dz = drag ? cell(z1, lead[1]) - sz : 0.0f;
+    const f32 longest = std::max(std::abs(dx), std::abs(dz));
+    const f32 span = std::abs(dx) > std::abs(dz) ? t.span_x : t.span_z;
+    // A span under a cell lays one copy (Moho seems to hold the spans as
+    // integers, where it would be 0), so no drag asks for millions.
+    const int copies =
+        longest > 0 && span >= 1 ? static_cast<int>(std::floor(longest / span)) + 1 : 1;
+    sites.reserve(static_cast<size_t>(copies) * t.entries.size());
+    for (int k = 0; k < copies; ++k) {
+        const f32 along = longest > 0 ? static_cast<f32>(k) * span / longest : 0.0f;
+        const f32 ax = static_cast<f32>(std::lrint(sx + dx * along)) + 0.5f;
+        const f32 az = static_cast<f32>(std::lrint(sz + dz * along)) + 0.5f;
+        for (const BuildTemplateEntry& e : t.entries) {
+            const auto f = foot(e.blueprint_id);
+            f32 x = ax + e.x;
+            f32 z = az + e.z;
+            sim::snap_structure_center(x, z, f[0], f[1]);
+            sites.push_back({e.blueprint_id, x, z});
+        }
+    }
+    return sites;
 }
 
 } // namespace osc::renderer
