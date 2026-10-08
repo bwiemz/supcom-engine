@@ -4,6 +4,7 @@
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "renderer/command_feedback.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/console.hpp"
@@ -99,6 +100,51 @@ TEST_CASE("Each control constructor runs the control's OnInit, as Moho's do", "[
         CHECK(lua_toboolean(L, -1));
         lua_pop(L, 1);
     }
+}
+
+TEST_CASE("A WorldMesh shows its mesh where its stance puts it once unhidden, until destroyed",
+          "[ui][lua]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    auto result = lua.do_string(R"(
+        flag = setmetatable({}, { __index = moho.world_mesh_methods })
+        InternalCreateWorldMesh(flag)
+        meshless_hidden = flag:IsHidden()
+        flag:SetMesh({
+            MeshName = '/meshes/game/Rally_lod0.scm',
+            TextureName = '/meshes/game/Rally_albedo.dds',
+            ShaderName = 'RallyPoint',
+            UniformScale = 0.10
+        })
+        flag:SetLifetimeParameter(10)
+        flag:SetStance({12, 3, 45})
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(osc::renderer::shown_world_meshes(registry).empty());
+    REQUIRE(lua.do_string("return meshless_hidden, flag:IsHidden()").ok());
+    CHECK_FALSE(lua_toboolean(lua.raw(), -2));
+    CHECK(lua_toboolean(lua.raw(), -1));
+    lua_pop(lua.raw(), 2);
+
+    REQUIRE(lua.do_string("flag:SetHidden(false)").ok());
+    const auto shown = osc::renderer::shown_world_meshes(registry);
+    REQUIRE(shown.size() == 1);
+    CHECK(shown[0].spec.mesh_name == "/meshes/game/Rally_lod0.scm");
+    CHECK(shown[0].spec.texture_name == "/meshes/game/Rally_albedo.dds");
+    CHECK(shown[0].spec.shader_name == "RallyPoint");
+    CHECK_THAT(shown[0].spec.uniform_scale, Catch::Matchers::WithinAbs(0.1, 1e-6));
+    CHECK(shown[0].lifetime == 10.0f);
+    CHECK(shown[0].spec.position.x == 12.0f);
+    CHECK(shown[0].spec.position.y == 3.0f);
+    CHECK(shown[0].spec.position.z == 45.0f);
+
+    REQUIRE(lua.do_string("flag:Destroy()").ok());
+    CHECK(osc::renderer::shown_world_meshes(registry).empty());
 }
 
 TEST_CASE("Destroying the root frame clears it but keeps it", "[ui][lua]") {

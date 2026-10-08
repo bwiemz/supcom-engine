@@ -220,6 +220,9 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "SeraphimPersonalShield") return MeshTechnique::SeraphimPersonalShield;
     if (shader_name == "CommandFeedback") return MeshTechnique::CommandFeedback;
     if (shader_name == "CommandFeedback2") return MeshTechnique::CommandFeedback2;
+    if (shader_name == "RallyPoint") {
+        return MeshTechnique::RallyPoint;
+    }
     return MeshTechnique::Unit;
 }
 

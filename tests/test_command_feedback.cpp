@@ -50,7 +50,9 @@ TEST_CASE("The marks' techniques: blended, after the water, no shadow", "[feedba
     using osc::renderer::MeshTechnique;
     CHECK(osc::renderer::mesh_technique("CommandFeedback") == MeshTechnique::CommandFeedback);
     CHECK(osc::renderer::mesh_technique("CommandFeedback2") == MeshTechnique::CommandFeedback2);
-    for (MeshTechnique t : {MeshTechnique::CommandFeedback, MeshTechnique::CommandFeedback2}) {
+    CHECK(osc::renderer::mesh_technique("RallyPoint") == MeshTechnique::RallyPoint);
+    for (MeshTechnique t : {MeshTechnique::CommandFeedback, MeshTechnique::CommandFeedback2,
+                            MeshTechnique::RallyPoint}) {
         CHECK(osc::renderer::is_feedback_technique(t));
         CHECK(osc::renderer::is_blended_technique(t));
         CHECK(osc::renderer::is_post_water_technique(t));

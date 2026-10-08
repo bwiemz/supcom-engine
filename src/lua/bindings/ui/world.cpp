@@ -129,35 +129,100 @@ const MethodEntry ui_map_preview_methods[] = {
 // clang-format on
 
 // ====================================================================
-// M75: WorldMesh (stub)
+// WorldMesh (faf-re CUIWorldMesh)
 // ====================================================================
 
 static int worldmesh_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->mark_destroyed();
+    if (ctrl) {
+        ctrl->world_mesh().reset();
+        ctrl->mark_destroyed();
+    }
     return 0;
 }
 
+static std::optional<std::string> worldmesh_field(lua_State* L, const char* name) {
+    lua_pushstring(L, name);
+    lua_gettable(L, 2);
+    std::optional<std::string> value;
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        value = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+    return value;
+}
+
+static std::optional<f32> worldmesh_number(lua_State* L, const char* name) {
+    lua_pushstring(L, name);
+    lua_gettable(L, 2);
+    std::optional<f32> value;
+    if (lua_isnumber(L, -1)) {
+        value = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_pop(L, 1);
+    return value;
+}
+
 static int worldmesh_SetMesh(lua_State* L) {
-    (void)L;
+    auto* ctrl = check_control(L);
+    if (!ctrl || !lua_istable(L, 2)) {
+        return 0;
+    }
+    ui::UIControl::WorldMesh mesh;
+    if (const auto scale = worldmesh_number(L, "UniformScale")) {
+        mesh.uniform_scale = *scale;
+    }
+    if (const auto cutoff = worldmesh_number(L, "LODCutoff")) {
+        mesh.lod_cutoff = *cutoff;
+    }
+    if (const auto name = worldmesh_field(L, "MeshName")) {
+        const auto shader = worldmesh_field(L, "ShaderName");
+        const auto texture = worldmesh_field(L, "TextureName");
+        if (!shader || !texture) {
+            spdlog::warn("WorldMesh:SetMesh - MeshName specified, but ShaderName or TextureName "
+                         "were not specified");
+            return 0;
+        }
+        mesh.mesh_name = *name;
+        mesh.shader_name = *shader;
+        mesh.texture_name = *texture;
+    } else if (const auto blueprint = worldmesh_field(L, "BlueprintID")) {
+        mesh.blueprint_id = *blueprint;
+    } else {
+        spdlog::warn("WorldMesh:SetMesh - no mesh specified");
+        return 0;
+    }
+    const sim::SimState* sim = get_sim(L);
+    mesh.created_tick = sim ? static_cast<f32>(sim->tick_count() % 36000) : 0.0f;
+    ctrl->world_mesh() = std::move(mesh);
     return 0;
 }
 
 static int worldmesh_SetStance(lua_State* L) {
-    (void)L;
+    auto* ctrl = check_control(L);
+    if (!ctrl || !ctrl->world_mesh() || !lua_istable(L, 2)) {
+        return 0;
+    }
+    for (int i = 0; i < 3; ++i) {
+        lua_rawgeti(L, 2, i + 1);
+        ctrl->world_mesh()->position[static_cast<size_t>(i)] =
+            static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
     return 0;
 }
 
 static int worldmesh_SetHidden(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl && lua_isboolean(L, 2))
-        ctrl->set_world_mesh_hidden(lua_toboolean(L, 2) != 0);
+    if (ctrl && ctrl->world_mesh()) {
+        ctrl->world_mesh()->hidden = lua_toboolean(L, 2) != 0;
+    }
     return 0;
 }
 
 static int worldmesh_IsHidden(lua_State* L) {
     auto* ctrl = check_control(L);
-    lua_pushboolean(L, ctrl ? ctrl->world_mesh_hidden() : 1);
+    lua_pushboolean(L, ctrl && ctrl->world_mesh() && ctrl->world_mesh()->hidden);
     return 1;
 }
 
@@ -187,7 +252,10 @@ static int worldmesh_SetFractionHealthParameter(lua_State* L) {
 }
 
 static int worldmesh_SetLifetimeParameter(lua_State* L) {
-    (void)L;
+    auto* ctrl = check_control(L);
+    if (ctrl && ctrl->world_mesh()) {
+        ctrl->world_mesh()->lifetime = static_cast<f32>(lua_tonumber(L, 2));
+    }
     return 0;
 }
 

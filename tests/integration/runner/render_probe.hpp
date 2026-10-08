@@ -90,6 +90,8 @@ public:
     /// ends, before recapture() can take them; a test adds its own).
     sim::WorldEvents& events() { return history_.events(); }
 
+    void set_ui(ui::UIControlRegistry* ui) { ui_ = ui; }
+
 private:
     ImageRGBA8 capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance, bool with_world);
 
@@ -97,6 +99,7 @@ private:
     renderer::Renderer renderer_;
     sim::WorldHistory history_;
     sim::WorldHistory empty_;
+    ui::UIControlRegistry* ui_ = nullptr;
     bool ok_ = false;
 };
 

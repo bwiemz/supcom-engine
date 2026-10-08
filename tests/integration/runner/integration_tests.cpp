@@ -17397,11 +17397,13 @@ void test_controls(TestContext& ctx) {
             "local wm = {}\n"
             "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
             "InternalCreateWorldMesh(wm)\n"
-            "wm:SetMesh({})\n"
             "wm:SetHidden(true)\n"
-            "local hidden = wm:IsHidden()\n"
+            "local meshless = wm:IsHidden()\n"
+            "wm:SetMesh({MeshName = '/meshes/game/Rally_lod0.scm', ShaderName = 'RallyPoint',\n"
+            "            TextureName = '/meshes/game/Rally_albedo.dds'})\n"
+            "local made = wm:IsHidden()\n"
             "wm:SetHidden(false)\n"
-            "return hidden == true and wm:IsHidden() == false\n");
+            "return meshless == false and made == true and wm:IsHidden() == false\n");
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 15: WorldMesh creation + SetHidden/IsHidden"); }

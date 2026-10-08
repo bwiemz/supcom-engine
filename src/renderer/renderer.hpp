@@ -693,8 +693,8 @@ private:
     UnitRenderer unit_renderer_;
     /// The UI's order marks now showing (AddCommandFeedbackBlip).
     CommandFeedbackBlips feedback_blips_;
-    /// This frame's marks, into the unit renderer's instances.
-    void inject_feedback_blips(lua_State* L);
+    /// This frame's marks and world meshes, into the unit renderer's instances.
+    void inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDraw>& world_meshes);
     /// FA's cursor as the window's own (Moho's hardware cursor): made from
     /// the UI cursor's image and hotspot, one per pair, while the window is
     /// the player's. An offscreen capture draws it with the UI instead.
