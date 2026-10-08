@@ -203,6 +203,26 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # The same two with Moho's random stream (--moho-random); the replay
+    # plays back without the flag, from its setup.
+    add_test(NAME data.determinism_moho_random
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/determinism.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1500
+                     --seed 4242 --moho-random)
+    set_tests_properties(data.determinism_moho_random PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+    add_test(NAME data.replay_roundtrip_moho_random
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/replay_roundtrip.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
+                     --seed 4242 --scripted-orders --moho-random)
+    set_tests_properties(data.replay_roundtrip_moho_random PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 
     # M208a: a saved game loads and plays on as the game did, and a game
     # saved after it was loaded loads too -- each save holding an order the
@@ -237,6 +257,17 @@ if(Python3_Interpreter_FOUND)
                      -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
                      --seed 4242 --scripted-orders --moho-pathing)
     set_tests_properties(data.save_load_moho_pathing PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
+    # With Moho's random stream (--moho-random), which each load takes from
+    # the save, not the command line.
+    add_test(NAME data.save_load_moho_random
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
+                     --seed 4242 --scripted-orders --moho-random)
+    set_tests_properties(data.save_load_moho_random PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)

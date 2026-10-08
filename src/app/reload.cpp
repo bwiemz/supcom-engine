@@ -34,6 +34,7 @@ osc::sim::GameSetup launch_setup(lua_State* uiL, const osc::sim::Replay* replay,
     }
     setup.scenario = scenario;
     setup.seed = seed;
+    setup.moho_random = g_moho_random;
     return setup;
 }
 
@@ -150,7 +151,8 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
     sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
     sim_state->set_moho_pathing(g_moho_pathing);
-    spdlog::info("Game seed {:#018x}", seed);
+    sim_state->set_moho_random(setup.moho_random);
+    spdlog::info("Game seed {:#018x}{}", seed, setup.moho_random ? ", Moho's random stream" : "");
 
     // 7. Audio (the application's engine, kept in the UI state), bone
     // cache, anim cache

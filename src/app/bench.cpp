@@ -119,6 +119,8 @@ bool BenchRecorder::write(const sim::SimState& sim) const {
           {"entities", sim.entity_registry().count()},
           {"units", units},
           {"moho_pathing", sim.moho_pathing()},
+          {"moho_random", sim.moho_random()},
+          {"random_words", sim.random().words_drawn()},
           {"path_searches", searches},
           {"path_expansions", expansions}}},
         {"peak_memory_mb", static_cast<double>(platform::peak_memory_bytes()) / (1024.0 * 1024.0)},

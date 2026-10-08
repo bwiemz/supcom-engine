@@ -110,6 +110,7 @@ std::optional<int> App::boot_engine() {
     }
     g_moho_pathing = parse_flag(argc, argv, "--moho-pathing");
     if (g_moho_pathing) spdlog::info("Moho pathing on (--moho-pathing)");
+    g_moho_random = parse_flag(argc, argv, "--moho-random");
     sound.set_sim_clocked(opt.headless);
     return std::nullopt;
 }
@@ -123,6 +124,7 @@ std::optional<int> App::boot_game() {
     } else {
         game_setup.scenario = opt.map_path;
         game_setup.seed = new_game_seed(opt.seed_arg, opt.reproducible_run);
+        game_setup.moho_random = g_moho_random;
         if (opt.ai_skirmish) {
             // Every army the AI's (--ai-armies of them); listed once they exist.
             game_setup.army_count = static_cast<int>(opt.ai_army_count);
@@ -145,7 +147,9 @@ std::optional<int> App::boot_game() {
         sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
         sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
         sim_state->set_moho_pathing(g_moho_pathing);
-        spdlog::info("Game seed {:#018x}", game_setup.seed);
+        sim_state->set_moho_random(game_setup.moho_random);
+        spdlog::info("Game seed {:#018x}{}", game_setup.seed,
+                     game_setup.moho_random ? ", Moho's random stream" : "");
 
         attach_sound(*sim_lua_state, *sim_state, &sound);
         // Only a drawn world needs its ticks captured.
