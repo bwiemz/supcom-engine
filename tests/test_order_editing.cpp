@@ -18,6 +18,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -651,5 +652,55 @@ TEST_CASE("A drag formation's scripts are formations.lua's air or surface ones",
     CHECK(osc::sim::formation_scripts(L, false) == std::vector<std::string>{"A", "B"});
     CHECK(osc::sim::formation_scripts(L, true) == std::vector<std::string>{"C"});
     CHECK(lua_gettop(L) == 0);
+    lua_close(L);
+}
+
+TEST_CASE("A settled drag formation shows each unit's ghost in its slot, facing the drag",
+          "[order_edit][input][formation]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(14, 10);
+    lua_State* L = lua_open();
+    const std::string chunk =
+        "function import(path) return { Line = function(units) return { { -1, 0 }, { 1, 0 } } "
+        "end } end";
+    REQUIRE(luaL_loadbuffer(L, chunk.data(), chunk.size(), "formations") == 0);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({a.entity_id(), b.entity_id()});
+    osc::renderer::CommandModeHooks hooks;
+    hooks.formation_scripts = [](bool) { return std::vector<std::string>{"Line"}; };
+    hooks.formation_slots = [&](const std::vector<osc::sim::FormationMember>& units,
+                                const std::string& script, const osc::sim::Vector3& at,
+                                osc::f32 facing) {
+        return osc::sim::plan_formation(
+            L, units,
+            [](lua_State* s, const osc::sim::FormationMember& u) { lua_pushnumber(s, u.id); },
+            nullptr, script, at, facing);
+    };
+    input.set_command_mode_hooks(hooks);
+    const auto sorted = [&](bool xs) {
+        std::vector<osc::f32> v;
+        for (const auto& g : input.formation_ghosts(*w.sim)) {
+            v.push_back(std::round(xs ? g.position.x : g.position.z));
+        }
+        std::sort(v.begin(), v.end());
+        return v;
+    };
+
+    input.right_press(*w.sim, 60, 60, false);
+    input.right_drag(std::array<osc::f32, 2>{60, 70}, 0.3);
+    CHECK(input.formation_ghosts(*w.sim).empty());
+    input.right_drag(std::array<osc::f32, 2>{70, 60}, 0.3);
+    REQUIRE(input.formation_ghosts(*w.sim).size() == 2);
+    CHECK(std::abs(input.formation_ghosts(*w.sim)[0].heading - 3.14159265f / 2) < 1e-4f);
+    CHECK(sorted(true) == std::vector<osc::f32>{60, 60});
+    CHECK(sorted(false) == std::vector<osc::f32>{57, 63});
+    input.right_drag(std::array<osc::f32, 2>{60, 50}, 0.1);
+    CHECK(sorted(true) == std::vector<osc::f32>{57, 63});
+    CHECK(sorted(false) == std::vector<osc::f32>{60, 60});
+    input.right_release(*w.sim);
+    CHECK(input.formation_ghosts(*w.sim).empty());
     lua_close(L);
 }

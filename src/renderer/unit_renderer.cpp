@@ -620,7 +620,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 }
 
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
-                                TextureCache* tex_cache) {
+                                TextureCache* tex_cache, f32 heading) {
     if (!mesh || !meshes_[fi_].mapped) return false;
 
     // Count total instances already used (update() left room for one more)
@@ -631,11 +631,9 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r,
     auto* instances = static_cast<MeshInstance*>(meshes_[fi_].mapped);
     auto& inst = instances[total];
 
-    // Identity rotation, uniform_scale from mesh
-    f32 s = mesh->uniform_scale;
-    std::memset(inst.model, 0, sizeof(inst.model));
-    inst.model[0] = s;  inst.model[5] = s;  inst.model[10] = s;  inst.model[15] = 1.0f;
-    inst.model[12] = x; inst.model[13] = y;  inst.model[14] = z;
+    const f32 s = mesh->uniform_scale;
+    build_model_matrix(inst.model, {x, y, z},
+                       {0.0f, std::sin(heading * 0.5f), 0.0f, std::cos(heading * 0.5f)}, s, s, s);
     inst.r = r;
     inst.g = g;
     inst.b = b;

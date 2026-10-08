@@ -2,6 +2,7 @@
 
 #include "sim/entity.hpp"
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,15 @@ struct FormationSlot {
     Vector3 position;
 };
 
+struct FormationMember {
+    u32 id = 0;
+    i32 army = -1;
+    Vector3 position;
+    f32 size = 1.0f; ///< its footprint's larger side
+    std::string blueprint_id;
+};
+using PushFormationMember = std::function<void(lua_State*, const FormationMember&)>;
+
 /// /lua/formations.lua's AirFormations, else its SurfaceFormations (FORMATION_GetScriptName)
 std::vector<std::string> formation_scripts(lua_State* L, bool air);
 
@@ -41,5 +51,10 @@ std::vector<FormationSlot> plan_formation(lua_State* L, const EntityRegistry& re
                                           const map::Terrain* terrain, std::vector<u32> unit_ids,
                                           const std::string& formation, const Vector3& target,
                                           std::optional<f32> facing);
+/// The same in any Lua state, `push` pushing a unit's object there
+std::vector<FormationSlot> plan_formation(lua_State* L, const std::vector<FormationMember>& units,
+                                          const PushFormationMember& push,
+                                          const map::Terrain* terrain, const std::string& formation,
+                                          const Vector3& target, std::optional<f32> facing);
 
 } // namespace osc::sim

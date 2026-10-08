@@ -931,6 +931,39 @@ std::vector<IssuedCommand> InputHandler::right_release(sim::SimState& sim) {
     return issued;
 }
 
+const std::vector<FormationGhost>& InputHandler::formation_ghosts(const sim::SimState& sim) {
+    if (!formation_ || !formation_->settled() || !mode_hooks_.formation_slots) {
+        formation_ghosts_.clear();
+        formation_ghosts_for_.reset();
+        return formation_ghosts_;
+    }
+    const std::pair<std::string, f32> key{formation_->script, formation_->facing};
+    if (formation_ghosts_for_ == key) {
+        return formation_ghosts_;
+    }
+    formation_ghosts_for_ = key;
+    formation_ghosts_.clear();
+    std::vector<sim::FormationMember> members;
+    for (const u32 id : formation_->units) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit() || e->parent_entity_id() != 0 ||
+            static_cast<const sim::Unit*>(e)->is_being_built()) {
+            continue;
+        }
+        members.push_back({id, e->army(), view_.position(*e),
+                           std::max(e->footprint_size_x(), e->footprint_size_z()),
+                           e->blueprint_id()});
+    }
+    for (const sim::FormationSlot& slot : mode_hooks_.formation_slots(
+             members, formation_->script, formation_->at, formation_->facing)) {
+        const sim::Entity* e = sim.entity_registry().find(slot.unit_id);
+        if (e) {
+            formation_ghosts_.push_back({e->blueprint_id(), slot.position, formation_->facing});
+        }
+    }
+    return formation_ghosts_;
+}
+
 bool InputHandler::cycle_formation() {
     if (!formation_ || formation_scripts_.size() < 2) {
         return false;

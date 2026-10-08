@@ -1617,6 +1617,19 @@ static int l_GetRolloverInfo(lua_State* L) {
     return 1;
 }
 
+std::vector<sim::FormationSlot> plan_ui_formation(lua_State* L,
+                                                  const std::vector<sim::FormationMember>& units,
+                                                  const map::Terrain* terrain,
+                                                  const std::string& script, const sim::Vector3& at,
+                                                  f32 facing) {
+    return sim::plan_formation(
+        L, units,
+        [](lua_State* state, const sim::FormationMember& u) {
+            push_user_unit(state, u.id, u.army);
+        },
+        terrain, script, at, facing);
+}
+
 void update_world_view_cursor(lua_State* L) {
     lua_pushstring(L, "__osc_world_view");
     lua_rawget(L, LUA_REGISTRYINDEX);
