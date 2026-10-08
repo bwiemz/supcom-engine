@@ -1866,6 +1866,42 @@ void test_capture(TestContext& ctx) {
         if math.abs(mine:GetHealth() - __osc_pgen_hp) > 0.01 then error('health ' .. mine:GetHealth()) end
         local lost = GetArmyBrain('ARMY_2'):GetArmyStat('Units_Killed', 0).Value
         if lost ~= __osc_lost_before then error('ARMY_2 counted it lost') end
+        __osc_mine = mine
+    )");
+
+    // Stopped mid-work, a repair or a capture ends with its order (Moho's
+    // task ends with its command): the unit is idle, and pays nothing more.
+    lua("setup: the commander repairs its hurt power generator", R"(
+        IssueRepair({__osc_acu}, __osc_mine)
+    )");
+    if (!run_until("__osc_acu:IsUnitState('Repairing')", 100)) {
+        osc::test_status::fail("[FAIL] Test 3: the commander never began repairing");
+        return;
+    }
+    lua("setup: stopped mid-repair", "IssueStop({__osc_acu})");
+    for (int t = 0; t < 2; ++t) ctx.sim.tick();
+    lua("Test 3: a stopped repair ends: not Repairing, idle, paying nothing", R"(
+        if __osc_acu:IsUnitState('Repairing') then error('still Repairing') end
+        if not __osc_acu:IsIdleState() then error('not idle') end
+        local e = __osc_acu:GetConsumptionPerSecondEnergy()
+        if e > 0 then error('still paying ' .. e .. ' energy a second') end
+    )");
+    lua("setup: the generator goes back to ARMY_2, and the commander captures it", R"(
+        __osc_enemy_pgen = ChangeUnitArmy(__osc_mine, 2)
+        IssueCapture({__osc_acu}, __osc_enemy_pgen)
+    )");
+    if (!run_until("__osc_acu:IsUnitState('Capturing')", 100)) {
+        osc::test_status::fail("[FAIL] Test 4: the commander never began capturing");
+        return;
+    }
+    lua("setup: stopped mid-capture", "IssueStop({__osc_acu})");
+    for (int t = 0; t < 2; ++t) ctx.sim.tick();
+    lua("Test 4: a stopped capture ends: not Capturing, idle, paying nothing", R"(
+        if __osc_acu:IsUnitState('Capturing') then error('still Capturing') end
+        if not __osc_acu:IsIdleState() then error('not idle') end
+        local e = __osc_acu:GetConsumptionPerSecondEnergy()
+        if e > 0 then error('still paying ' .. e .. ' energy a second') end
+        if __osc_enemy_pgen:IsDead() or __osc_enemy_pgen:GetArmy() ~= 2 then error('it was taken') end
     )");
 }
 

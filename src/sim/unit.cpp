@@ -511,6 +511,18 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 return;
             }
         }
+        // So does a repair (its order's, or a guard's help) and a capture:
+        // stopped or replaced, the unit had gone on Repairing or Capturing,
+        // never idle, its consumption paid each tick for no work.
+        if (is_repairing() &&
+            !(head && (head->type == CommandType::Repair || head->type == CommandType::Guard))) {
+            stop_repairing(ctx.L, ctx.registry);
+            if (destroyed() || !in_registry()) return;
+        }
+        if (is_capturing() && !(head && head->type == CommandType::Capture)) {
+            stop_capturing(ctx.L, ctx.registry, true);
+            if (destroyed() || !in_registry()) return;
+        }
     }
 
     // Paused units skip their orders, and what follows them, but still
