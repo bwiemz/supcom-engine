@@ -2,6 +2,7 @@
 
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
+#include "sim/entity.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -183,6 +184,7 @@ struct GPUMesh {
     AllocatedBuffer index_buf{};
     u32 index_count = 0;
     f32 uniform_scale = 1.0f;
+    sim::Vector3 bounds_min, bounds_max; ///< its vertices' box, unscaled
     std::string texture_path;   // VFS path to albedo DDS (empty = no texture)
     std::string specteam_path;  // VFS path to SpecTeam DDS (empty = no team color mask)
     std::string normal_path;    // VFS path to normal map DDS (empty = no normal map)

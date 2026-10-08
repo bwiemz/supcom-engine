@@ -20,25 +20,35 @@ class FrameView;
 namespace osc::renderer {
 
 class Camera;
+class MeshCache;
 class TextureCache;
 
-/// A unit's selection box on the ground, from its blueprint's
-/// SelectionSizeX/Z and SelectionCenterOffsetX/Z
+/// A unit's selection box, flattened to its four ground corners
 struct SelectionBox {
     sim::Vector3 center;
-    sim::Vector3 right;   ///< the unit's X axis on the ground, unit length
+    sim::Vector3 right;   ///< the unit's X axis, unit length
     sim::Vector3 forward; ///< its Z axis
     f32 half_x = 0, half_z = 0;
 };
 
-/// A bracket corner's side in world units: `thickness` (SelectionThickness)
-/// of the box's shorter half, but wide enough that the texture's stroke is
-/// `min_px` pixels of `px_world` each, and no more than that half
+struct SelectionBlueprint {
+    f32 size_x = 0, size_z = 0;
+    sim::Vector3 offset;
+    f32 thickness = 0;
+};
+
+/// The box Moho brackets (func_DrawSelectionBrackets): `mesh_min`/`mesh_max`
+/// are the unit's LOD 0 mesh bounds, scaled
+SelectionBox selection_box(const SelectionBlueprint& bp, const sim::Vector3& mesh_min,
+                           const sim::Vector3& mesh_max, const sim::Vector3& position,
+                           const sim::Quaternion& orientation);
+
+/// Half the side of a bracket tile in world units: `thickness` of the box's
+/// longer half, but at least `min_px` pixels of `px_world` each
 f32 bracket_corner(const SelectionBox& box, f32 thickness, f32 min_px, f32 px_world);
 
-/// The four corners of a selection box's brackets, each the quad of one
-/// quarter of the bracket texture: corner `i` (0 back-left, 1 back-right,
-/// 2 front-right, 3 front-left) as four points, its outer corner first
+/// The four bracket tiles centred on the box's corners (back-left, back-right,
+/// front-right, front-left), each from its own back-left corner
 std::array<std::array<sim::Vector3, 4>, 4> bracket_quads(const SelectionBox& box, f32 corner);
 
 /// Moho's selection indicators (ren_SelectBoxes): brackets round the
@@ -55,7 +65,7 @@ public:
     void update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
                 const std::unordered_set<u32>* selected, u32 hovered, i32 player_army,
                 const std::optional<std::array<sim::Vector3, 4>>& drag, TextureCache& tex_cache,
-                lua_State* L, u32 fi);
+                MeshCache& mesh_cache, lua_State* L, u32 fi);
 
     void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
                 u32 fi) const;
@@ -69,7 +79,7 @@ public:
         u32 unit = 0;
         std::string texture;
         SelectionBox box;
-        f32 corner = 0; ///< a corner's side, world units
+        f32 corner = 0; ///< half a tile's side, world units
     };
     const std::vector<Bracket>& brackets() const { return brackets_; }
     bool drew_drag_box() const { return drew_drag_box_; }
@@ -77,18 +87,13 @@ public:
     static constexpr u32 MAX_QUADS = 8192;
 
 private:
-    struct BoxBlueprint {
-        f32 size_x = 0, size_z = 0;
-        f32 offset_x = 0, offset_z = 0;
-        f32 thickness = 0;
-    };
-    const BoxBlueprint& box_blueprint(const std::string& id, lua_State* L);
+    const SelectionBlueprint& box_blueprint(const std::string& id, lua_State* L);
 
     WorldQuadBatch batch_;
     bool enabled_ = true;
     std::vector<Bracket> brackets_;
     bool drew_drag_box_ = false;
-    std::unordered_map<std::string, BoxBlueprint> box_blueprints_;
+    std::unordered_map<std::string, SelectionBlueprint> box_blueprints_;
 };
 
 } // namespace osc::renderer

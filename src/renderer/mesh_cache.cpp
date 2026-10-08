@@ -147,6 +147,14 @@ GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path) {
     result.vertex_buf = vert_buf;
     result.index_buf = idx_buf;
     result.index_count = static_cast<u32>(mesh->indices.size());
+    sim::Vector3& lo = result.bounds_min;
+    sim::Vector3& hi = result.bounds_max;
+    lo = {mesh->vertices[0].px, mesh->vertices[0].py, mesh->vertices[0].pz};
+    hi = lo;
+    for (const auto& v : mesh->vertices) {
+        lo = {std::min(lo.x, v.px), std::min(lo.y, v.py), std::min(lo.z, v.pz)};
+        hi = {std::max(hi.x, v.px), std::max(hi.y, v.py), std::max(hi.z, v.pz)};
+    }
 
     spdlog::debug("MeshCache: uploaded '{}' ({} verts, {} indices)",
                    mesh_path, mesh->vertices.size(), mesh->indices.size());
