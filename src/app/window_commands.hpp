@@ -6,6 +6,7 @@
 
 #include "app/window_mode.hpp"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@ namespace osc::core {
 class Preferences;
 }
 namespace osc::renderer {
+class RangeOverlays;
 class Renderer;
 }
 namespace osc::ui {
@@ -55,13 +57,26 @@ void publish_fidelity_options(lua_State* uL);
 /// the renderer the UI state was given ("__osc_renderer").
 void register_window_commands(ui::Console& console, core::Preferences& prefs, bool overridden);
 
+/// What the console variables were set to before there was a renderer
+/// (Moho's exist from startup; gamemain sets some before the window is up).
+class HeldConVars {
+public:
+    void hold(const std::string& name, std::string value) { values_[name] = std::move(value); }
+    const std::string* find(const std::string& name) const;
+    void replay(ui::Console& console, lua_State* L);
+
+private:
+    std::map<std::string, std::string> values_;
+};
+
 /// The options' console variables and commands (M217i), Moho's TConVars
 /// on the engine's tunables: cam_ZoomAmount, the ui_* pan and rotate speeds
 /// and scroll switches, ui_AlwaysRenderStrategicIcons, ren_bloom,
 /// ren_Skydome, graphics_Fidelity, shadow_Fidelity, ren_MipSkipLevels,
-/// SC_CameraScaleLOD; and SC_AntiAliasingSamples and SC_ToggleCursorClip.
-/// Without a renderer they read their defaults and set nothing.
-void register_option_commands(ui::Console& console);
+/// SC_CameraScaleLOD, the range_* convars; and SC_AntiAliasingSamples and
+/// SC_ToggleCursorClip. Without a renderer they keep their values in `held`.
+void register_option_commands(ui::Console& console, HeldConVars& held,
+                              renderer::RangeOverlays& overlays);
 
 /// OPTIONS_Apply: optionsLogic.Apply(true), each option's set at startup,
 /// as Moho runs it once the window is up.

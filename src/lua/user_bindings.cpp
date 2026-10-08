@@ -901,8 +901,7 @@ static int l_RenderOverlayEconomy(lua_State* L) {
     return 0;
 }
 
-/// The range overlays FA's UI sets up: the window's renderer's (a test's
-/// own), or none.
+/// The range overlays FA's UI sets up: the session's, or none.
 static renderer::RangeOverlays* get_range_overlays(lua_State* L) {
     lua_pushstring(L, "__osc_range_overlays");
     lua_rawget(L, LUA_REGISTRYINDEX);

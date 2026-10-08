@@ -1153,10 +1153,6 @@ void IntegrationModes::headless(Engine& e) {
         lua_pushstring(uL, "__osc_factory_queue");
         lua_pushlightuserdata(uL, &test_factory_queue);
         lua_rawset(uL, LUA_REGISTRYINDEX);
-        osc::renderer::RangeOverlays test_overlays; // SetOverlayFilter's
-        lua_pushstring(uL, "__osc_range_overlays");
-        lua_pushlightuserdata(uL, &test_overlays);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
         osc::u32 frames = 0;
         auto pump = [&](int n) {
             for (int i = 0; i < n; ++i) {
@@ -1228,9 +1224,6 @@ void IntegrationModes::headless(Engine& e) {
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
         lua_pushstring(uL, "__osc_factory_queue");
-        lua_pushnil(uL);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-        lua_pushstring(uL, "__osc_range_overlays");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
