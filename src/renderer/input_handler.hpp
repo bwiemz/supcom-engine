@@ -352,6 +352,8 @@ public:
         cursor_ray_ = ray;
         cursor_ray_ground_ = {wx, wz};
     }
+    /// The camera's target zoom, as update() takes it each frame (tests set it).
+    void set_camera_zoom(f32 zoom) { camera_zoom_ = zoom; }
     /// Select the player's units drawn inside the screen box (x0, y0)-(x1,
     /// y1) by the camera's `view_proj` on a `width` x `height` screen: those
     /// of the highest selection priority there, or with `shift` all of them
@@ -411,6 +413,7 @@ private:
     /// This frame's cursor ray, and the world point under it it was made for
     std::optional<PickRay> cursor_ray_;
     std::array<f32, 2> cursor_ray_ground_{};
+    f32 camera_zoom_ = 0.0f;
     f32 drag_start_x_ = 0, drag_start_y_ = 0;
     f32 drag_end_x_ = 0, drag_end_y_ = 0;
     f32 drag_world_x0_ = 0, drag_world_z0_ = 0;
@@ -460,7 +463,8 @@ private:
     /// What an order of `type` clicked at (wx, wz) targets: the unit under the
     /// cursor if the order takes it, else for Reclaim a prop there. 0 for none.
     u32 target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandType type) const;
-    /// The reclaimable prop (tree, rock, wreck) whose footprint holds (wx, wz), or 0.
+    /// The reclaimable prop (tree, rock, wreck) whose footprint holds (wx, wz), or 0;
+    /// none past zoom 150, where Moho's UpdateSelection collects only units.
     u32 prop_under(sim::SimState& sim, f32 wx, f32 wz) const;
     CommandModeHooks mode_hooks_;
 };

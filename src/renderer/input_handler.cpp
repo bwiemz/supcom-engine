@@ -174,6 +174,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     const bool mode_active = mode.mode == "build" || mode.mode == "order";
     cursor_world_.reset();
     cursor_ray_.reset();
+    camera_zoom_ = renderer.camera().zoom();
     hovered_ = 0;
     hovered_command_ = 0;
     if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
@@ -1367,6 +1368,9 @@ u32 InputHandler::target_under(sim::SimState& sim, f32 wx, f32 wz, sim::CommandT
 }
 
 u32 InputHandler::prop_under(sim::SimState& sim, f32 wx, f32 wz) const {
+    if (camera_zoom_ > 150.0f) {
+        return 0;
+    }
     u32 best_id = 0;
     f32 best = std::numeric_limits<f32>::max();
     for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, 16.0f)) {
