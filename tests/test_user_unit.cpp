@@ -21,6 +21,7 @@ extern "C" {
 
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <variant>
 
 namespace {
@@ -387,4 +388,53 @@ TEST_CASE("SelectUnits(nil) and SelectUnits({}) clear the selection", "[userunit
         CHECK(input.selected().empty());
         CHECK(input.take_selection_event());
     }
+}
+
+TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[selection]") {
+    osc::sim::Unit unit;
+    unit.set_motion_type("RULEUMT_Land");
+    CHECK(osc::renderer::selectable(unit));
+    unit.set_transport_id(7);
+    CHECK_FALSE(osc::renderer::selectable(unit));
+    unit.set_transport_id(0);
+    unit.set_parent(7, 0);
+    CHECK_FALSE(osc::renderer::selectable(unit));
+    unit.add_category("POD");
+    CHECK(osc::renderer::selectable(unit));
+
+    osc::sim::Unit structure;
+    structure.set_motion_type("RULEUMT_None");
+    structure.set_parent(7, 0);
+    CHECK(osc::renderer::selectable(structure));
+}
+
+TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][selection]") {
+    UiWorld w;
+    osc::lua::register_user_bindings(w.ui);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    auto transport = std::make_unique<osc::sim::Unit>();
+    transport->set_army(0);
+    transport->set_motion_type("RULEUMT_Air");
+    const osc::u32 transport_id = w.sim.entity_registry().register_entity(std::move(transport));
+    w.unit().set_motion_type("RULEUMT_Land");
+    w.unit().set_transport_id(transport_id);
+
+    REQUIRE(w.ui.do_string("SelectUnits(units)").ok());
+    CHECK(input.selected() == std::unordered_set<osc::u32>{transport_id});
+}
+
+TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    w.unit().set_motion_type("RULEUMT_Land");
+    input.set_selected({w.id});
+    input.deselect_aboard(w.sim.entity_registry());
+    REQUIRE(input.selected().size() == 1);
+    w.unit().set_transport_id(w.id + 1);
+    input.deselect_aboard(w.sim.entity_registry());
+    CHECK(input.selected().empty());
 }
