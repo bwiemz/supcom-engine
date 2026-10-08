@@ -2632,7 +2632,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     }
 
     selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
-                               drag_box_, texture_cache_, L, fi);
+                               drag_box_, texture_cache_, mesh_cache_, L, fi);
 
     // FA's range overlays (Moho's RangeRenderer), for the focus army
     {

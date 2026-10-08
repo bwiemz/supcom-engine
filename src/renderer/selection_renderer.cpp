@@ -1,6 +1,7 @@
 #include "renderer/selection_renderer.hpp"
 
 #include "renderer/camera.hpp"
+#include "renderer/mesh_cache.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
@@ -28,24 +29,18 @@ constexpr const char* kBracketsNeutral =
     "/textures/ui/common/game/selection/selection_brackets_neutral.dds";
 constexpr const char* kDragBox = "/textures/ui/common/game/selection/selection.dds";
 
-/// ren_SelectBracketSize (a blueprint without SelectionThickness),
-/// ren_SelectBracketMinPixelSize
-constexpr f32 kSelectBracketSize = 0.2f;
+/// /lua/RenderSelectParams.lua
+constexpr f32 kSelectionSizeFudge = 1.85f;
+constexpr f32 kSelectionHeightFudge = 0.12f;
+constexpr f32 kUnitSelectionScale = 0.75f;
 constexpr f32 kSelectBracketMinPixels = 3.0f;
-/// The bracket texture's stroke, of a corner's quarter (12 of 64 pixels)
-constexpr f32 kStrokeOfCorner = 12.0f / 64.0f;
+constexpr f32 kSelectBracketSize = 0.2f;
 
 Vector3 add(const Vector3& a, const Vector3& b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
 Vector3 scale(const Vector3& v, f32 s) {
     return {v.x * s, v.y * s, v.z * s};
-}
-
-/// `v` flattened onto the ground, unit length (`fallback` when vertical)
-Vector3 on_ground(const Vector3& v, const Vector3& fallback) {
-    const f32 len = std::sqrt(v.x * v.x + v.z * v.z);
-    return len > 1e-4f ? Vector3{v.x / len, 0.0f, v.z / len} : fallback;
 }
 
 f32 number_field(lua_State* L, int table, const char* key) {
@@ -58,23 +53,37 @@ f32 number_field(lua_State* L, int table, const char* key) {
 
 } // namespace
 
+SelectionBox selection_box(const SelectionBlueprint& bp, const Vector3& mesh_min,
+                           const Vector3& mesh_max, const Vector3& position,
+                           const sim::Quaternion& orientation) {
+    const Vector3 centre = sim::quat_rotate(orientation, scale(add(mesh_min, mesh_max), 0.5f));
+    const Vector3 offset = sim::quat_rotate(orientation, bp.offset);
+    SelectionBox box;
+    box.right = sim::quat_rotate(orientation, {1, 0, 0});
+    box.forward = sim::quat_rotate(orientation, {0, 0, 1});
+    box.half_x = bp.size_x > 0 ? bp.size_x * kUnitSelectionScale
+                               : kSelectionSizeFudge * 0.5f * (mesh_max.x - mesh_min.x);
+    box.half_z = bp.size_z > 0 ? bp.size_z * kUnitSelectionScale
+                               : kSelectionSizeFudge * 0.5f * (mesh_max.z - mesh_min.z);
+    box.center = {position.x + centre.x + offset.x, position.y + kSelectionHeightFudge + offset.y,
+                  position.z + centre.z + offset.z};
+    return box;
+}
+
 f32 bracket_corner(const SelectionBox& box, f32 thickness, f32 min_px, f32 px_world) {
-    const f32 half = std::min(box.half_x, box.half_z);
-    return std::min(std::max(thickness * half, min_px * px_world / kStrokeOfCorner), half);
+    return std::max(std::max(box.half_x, box.half_z) * thickness, min_px * px_world);
 }
 
 std::array<std::array<Vector3, 4>, 4> bracket_quads(const SelectionBox& box, f32 corner) {
     const std::array<std::array<f32, 2>, 4> signs = {{{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}};
     std::array<std::array<Vector3, 4>, 4> out{};
     for (size_t i = 0; i < 4; ++i) {
-        const f32 sx = signs[i][0];
-        const f32 sz = signs[i][1];
-        const Vector3 outer = add(box.center, add(scale(box.right, sx * box.half_x),
-                                                  scale(box.forward, sz * box.half_z)));
-        const Vector3 along_x = scale(box.right, -sx * corner);
-        const Vector3 along_z = scale(box.forward, -sz * corner);
-        out[i] = {outer, add(outer, along_x), add(add(outer, along_x), along_z),
-                  add(outer, along_z)};
+        const Vector3 at = add(box.center, add(scale(box.right, signs[i][0] * box.half_x),
+                                               scale(box.forward, signs[i][1] * box.half_z)));
+        for (size_t k = 0; k < 4; ++k) {
+            out[i][k] = add(at, add(scale(box.right, signs[k][0] * corner),
+                                    scale(box.forward, signs[k][1] * corner)));
+        }
     }
     return out;
 }
@@ -84,15 +93,14 @@ void SelectionRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPa
     batch_.init(device, allocator, render_pass, texture_ds_layout, MAX_QUADS, "SelectionRenderer");
 }
 
-const SelectionRenderer::BoxBlueprint& SelectionRenderer::box_blueprint(const std::string& id,
-                                                                        lua_State* L) {
+const SelectionBlueprint& SelectionRenderer::box_blueprint(const std::string& id, lua_State* L) {
     std::string key = id;
     std::transform(key.begin(), key.end(), key.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (auto it = box_blueprints_.find(key); it != box_blueprints_.end()) {
         return it->second;
     }
-    BoxBlueprint& out = box_blueprints_[key];
+    SelectionBlueprint& out = box_blueprints_[key];
     if (!L) {
         return out;
     }
@@ -106,8 +114,9 @@ const SelectionRenderer::BoxBlueprint& SelectionRenderer::box_blueprint(const st
             const int bp = lua_gettop(L);
             out.size_x = number_field(L, bp, "SelectionSizeX");
             out.size_z = number_field(L, bp, "SelectionSizeZ");
-            out.offset_x = number_field(L, bp, "SelectionCenterOffsetX");
-            out.offset_z = number_field(L, bp, "SelectionCenterOffsetZ");
+            out.offset = {number_field(L, bp, "SelectionCenterOffsetX"),
+                          number_field(L, bp, "SelectionCenterOffsetY"),
+                          number_field(L, bp, "SelectionCenterOffsetZ")};
             out.thickness = number_field(L, bp, "SelectionThickness");
         }
     }
@@ -118,7 +127,8 @@ const SelectionRenderer::BoxBlueprint& SelectionRenderer::box_blueprint(const st
 void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera, u32 viewport_h,
                                const std::unordered_set<u32>* selected, u32 hovered,
                                i32 player_army, const std::optional<std::array<Vector3, 4>>& drag,
-                               TextureCache& tex_cache, lua_State* L, u32 fi) {
+                               TextureCache& tex_cache, MeshCache& mesh_cache, lua_State* L,
+                               u32 fi) {
     brackets_.clear();
     drew_drag_box_ = false;
     std::vector<WorldQuadBatch::Quad> quads;
@@ -153,39 +163,43 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
         if (!e || !e->is_unit) {
             return;
         }
-        const BoxBlueprint& bp = box_blueprint(e->blueprint_id, L);
-        const sim::Quaternion q = view.orientation(*e);
-        SelectionBox box;
-        box.right = on_ground(sim::quat_rotate(q, {1, 0, 0}), {1, 0, 0});
-        box.forward = on_ground(sim::quat_rotate(q, {0, 0, 1}), {0, 0, 1});
-        box.half_x = bp.size_x > 0 ? bp.size_x : 1.0f;
-        box.half_z = bp.size_z > 0 ? bp.size_z : 1.0f;
-        box.center = add(view.position(*e),
-                         add(scale(box.right, bp.offset_x), scale(box.forward, bp.offset_z)));
+        const SelectionBlueprint& bp = box_blueprint(e->blueprint_id, L);
+        Vector3 mesh_min;
+        Vector3 mesh_max;
+        if (const GPUMesh* mesh = mesh_cache.get(e->blueprint_id, L)) {
+            const Vector3 s = {e->scale_x * mesh->uniform_scale, e->scale_y * mesh->uniform_scale,
+                               e->scale_z * mesh->uniform_scale};
+            mesh_min = {s.x * mesh->bounds_min.x, s.y * mesh->bounds_min.y,
+                        s.z * mesh->bounds_min.z};
+            mesh_max = {s.x * mesh->bounds_max.x, s.y * mesh->bounds_max.y,
+                        s.z * mesh->bounds_max.z};
+        }
+        const Vector3 position = view.position(*e);
+        const SelectionBox box =
+            selection_box(bp, mesh_min, mesh_max, position, view.orientation(*e));
         const char* texture = texture_for(*e, is_selected);
         const GPUTexture* tex = tex_cache.get(texture);
         if (!tex) {
             return;
         }
-        const f32 dx = box.center.x - ex;
-        const f32 dy = box.center.y - ey;
-        const f32 dz = box.center.z - ez;
+        const f32 dx = position.x - ex;
+        const f32 dy = position.y - ey;
+        const f32 dz = position.z - ez;
         const f32 px_world = per_px * std::sqrt(dx * dx + dy * dy + dz * dz);
-        const f32 corner = bracket_corner(box, bp.thickness > 0 ? bp.thickness : kSelectBracketSize,
-                                          kSelectBracketMinPixels, px_world);
+        const f32 thickness = std::abs(bp.thickness) >= 1e-5f ? bp.thickness : kSelectBracketSize;
+        const f32 corner = bracket_corner(box, thickness, kSelectBracketMinPixels, px_world);
         brackets_.push_back({id, texture, box, corner});
-        // Each corner takes one quarter of the texture, its outer corner at
-        // the texture's
-        const std::array<std::array<f32, 2>, 4> uv_outer = {{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};
-        const auto corners = bracket_quads(box, corner);
+        const std::array<std::array<f32, 2>, 4> quarter = {
+            {{0, 0}, {0.5f, 0}, {0.5f, 0.5f}, {0, 0.5f}}};
+        const auto tiles = bracket_quads(box, corner);
         for (size_t i = 0; i < 4; ++i) {
-            const f32 u0 = uv_outer[i][0];
-            const f32 v0 = uv_outer[i][1];
-            const auto& c = corners[i];
-            const auto a = vertex(c[0], u0, v0);
-            const auto b = vertex(c[1], 0.5f, v0);
-            const auto m = vertex(c[2], 0.5f, 0.5f);
-            const auto d = vertex(c[3], u0, 0.5f);
+            const f32 u = quarter[i][0];
+            const f32 v = quarter[i][1];
+            const auto& c = tiles[i];
+            const auto a = vertex(c[0], u, v);
+            const auto b = vertex(c[1], u + 0.5f, v);
+            const auto m = vertex(c[2], u + 0.5f, v + 0.5f);
+            const auto d = vertex(c[3], u, v + 0.5f);
             quads.push_back({tex->descriptor_set, {a, b, m, a, m, d}});
         }
     };
