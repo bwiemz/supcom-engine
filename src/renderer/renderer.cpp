@@ -2638,12 +2638,12 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     {
         PROFILE_ZONE("Render::range_update");
         const RangeScene scene = collect_range_scene(
-            range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
+            *range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
             ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
             ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
         const auto& rect = camera_.playable_rect();
         const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
-        range_renderer_.update(range_batches(range_overlays_, scene), range_overlays_.settings(),
+        range_renderer_.update(range_batches(*range_overlays_, scene), range_overlays_->settings(),
                                span, camera_.zoom() / camera_.max_zoom(), fi);
     }
 

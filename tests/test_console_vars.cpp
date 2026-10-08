@@ -4,7 +4,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "app/window_commands.hpp"
+#include "lua/lua_state.hpp"
+#include "renderer/renderer.hpp"
 #include "ui/console.hpp"
+
+extern "C" {
+#include <lua.h>
+}
 
 #include <string>
 #include <vector>
@@ -108,4 +115,30 @@ TEST_CASE("A console variable reads and writes through its binding (M217i)", "[c
     CHECK(fidelity == 2); // shown only
     CHECK(zoom == 0.8f);
     CHECK(bloom);
+}
+
+TEST_CASE("Console variables set before the renderer keep their values", "[console][convar]") {
+    osc::ui::Console console;
+    osc::app::HeldConVars held;
+    osc::renderer::RangeOverlays overlays;
+    osc::app::register_option_commands(console, held, overlays);
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    console.execute(L, "range_RenderSelected true; ui_RenderUnitBars false; cam_ZoomAmount 0.3");
+    console.execute(L, "range_RenderHighlighted; range_RenderBuild true");
+    console.execute(L, "range_RenderBuild tog; ren_SelectBoxes false; ren_SelectBoxes tog");
+    CHECK(overlays.settings().render_selected);
+    CHECK(overlays.settings().render_highlighted);
+    CHECK_FALSE(overlays.settings().render_build);
+
+    osc::renderer::Renderer r;
+    lua_pushstring(L, "__osc_renderer");
+    lua_pushlightuserdata(L, &r);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    r.set_unit_bars(true);
+    r.set_select_boxes(false);
+    held.replay(console, L);
+    CHECK_FALSE(r.unit_bars());
+    CHECK(r.select_boxes());
+    CHECK(r.camera().zoom_amount() == 0.3f);
 }

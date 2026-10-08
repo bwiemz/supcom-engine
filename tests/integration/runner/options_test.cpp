@@ -15,6 +15,7 @@
 #include "map/terrain.hpp"
 #include "render_probe.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/range_overlays.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "sim/entity_registry.hpp"
@@ -53,6 +54,21 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
         t.check(false, "the map and the UI state's console");
         return;
     }
+    {
+        lua_pushstring(L, "__osc_range_overlays");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        const auto* overlays = static_cast<const renderer::RangeOverlays*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const bool known = console->has("range_RenderSelected") &&
+                           console->has("UI_RenderUnitBars") && console->has("Cam_Free") &&
+                           console->has("ren_SelectBoxes");
+        t.check(known && overlays && overlays->profiles().size() == 12 &&
+                    overlays->settings().render_selected &&
+                    overlays->settings().render_highlighted && overlays->settings().render_build,
+                fmt::format("Test 0: the interface built before the window sets its convars and "
+                            "{} range profiles",
+                            overlays ? overlays->profiles().size() : 0));
+    }
     OffscreenShots shots(sim);
     if (!shots.ok()) {
         t.check(false, "renderer init (no Vulkan?)");
@@ -63,7 +79,8 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
     lua_pushstring(L, "__osc_renderer");
     lua_pushlightuserdata(L, &r);
     lua_rawset(L, LUA_REGISTRYINDEX);
-    app::register_option_commands(*console);
+    app::HeldConVars held;
+    app::register_option_commands(*console, held, r.range_overlays());
     const renderer::Camera& cam = r.camera();
 
     // Test 1: a profile's saved options apply as at startup

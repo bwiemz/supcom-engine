@@ -10,6 +10,7 @@
 #include "renderer/camera.hpp"
 #include "ui/console.hpp"
 
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -21,9 +22,11 @@ extern "C" {
 #include <cctype>
 #include <climits>
 #include <cstdlib>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace osc::app {
 
@@ -224,22 +227,73 @@ void register_window_commands(ui::Console& console, core::Preferences& prefs, bo
     });
 }
 
-void register_option_commands(ui::Console& console) {
+const std::string* HeldConVars::find(const std::string& name) const {
+    const auto it = values_.find(name);
+    return it == values_.end() ? nullptr : &it->second;
+}
+
+void HeldConVars::replay(ui::Console& console, lua_State* L) {
+    const auto values = std::move(values_);
+    values_.clear();
+    for (const auto& [name, value] : values) {
+        std::string line = name;
+        line += ' ';
+        line += value;
+        console.execute(L, line);
+    }
+}
+
+namespace {
+
+template <class T> T parse_held(const std::string& text) {
+    if constexpr (std::is_same_v<T, bool>) {
+        return text == "true";
+    } else if constexpr (std::is_same_v<T, int>) {
+        return static_cast<int>(std::strtol(text.c_str(), nullptr, 10));
+    } else {
+        return std::strtof(text.c_str(), nullptr);
+    }
+}
+
+template <class T>
+void renderer_var(ui::Console& console, HeldConVars& held, const std::string& name, T fallback,
+                  std::function<T(renderer::Renderer&)> get,
+                  std::function<void(renderer::Renderer&, T)> set) {
+    auto read = [&held, name, fallback, get = std::move(get)](lua_State* L) {
+        if (renderer::Renderer* r = renderer_of(L)) {
+            return get(*r);
+        }
+        const std::string* text = held.find(name);
+        return text ? parse_held<T>(*text) : fallback;
+    };
+    auto write = [&held, name, set = std::move(set)](lua_State* L, T v) {
+        if (renderer::Renderer* r = renderer_of(L)) {
+            set(*r, v);
+        } else {
+            held.hold(name, fmt::format("{}", v));
+        }
+    };
+    if constexpr (std::is_same_v<T, bool>) {
+        ui::add_bool_var(console, name, std::move(read), std::move(write));
+    } else if constexpr (std::is_same_v<T, int>) {
+        ui::add_int_var(console, name, std::move(read), std::move(write));
+    } else {
+        ui::add_float_var(console, name, std::move(read), std::move(write));
+    }
+}
+
+} // namespace
+
+void register_option_commands(ui::Console& console, HeldConVars& held,
+                              renderer::RangeOverlays& overlays) {
     using renderer::Camera;
     using renderer::RangeOverlays;
     using renderer::Renderer;
-    // A float on the camera
-    const auto camera_float = [&console](const char* name, f32 fallback, f32 (Camera::*get)() const,
-                                         void (Camera::*set)(f32)) {
-        ui::add_float_var(
-            console, name,
-            [fallback, get](lua_State* L) {
-                Renderer* r = renderer_of(L);
-                return r ? (r->camera().*get)() : fallback;
-            },
-            [set](lua_State* L, f32 v) {
-                if (Renderer* r = renderer_of(L)) (r->camera().*set)(v);
-            });
+    const auto camera_float = [&](const char* name, f32 fallback, f32 (Camera::*get)() const,
+                                  void (Camera::*set)(f32)) {
+        renderer_var<f32>(
+            console, held, name, fallback, [get](Renderer& r) { return (r.camera().*get)(); },
+            [set](Renderer& r, f32 v) { (r.camera().*set)(v); });
     };
     camera_float("cam_ZoomAmount", Camera::kZoomAmount, &Camera::zoom_amount,
                  &Camera::set_zoom_amount);
@@ -251,154 +305,98 @@ void register_option_commands(ui::Console& console) {
                  &Camera::keyboard_rotate_speed, &Camera::set_keyboard_rotate_speed);
     camera_float("ui_KeyboardRotateAccelerateMultiplier", Camera::kKeyboardRotateAccelerate,
                  &Camera::keyboard_rotate_accelerate, &Camera::set_keyboard_rotate_accelerate);
-    const auto camera_bool = [&console](const char* name, bool (Camera::*get)() const,
-                                        void (Camera::*set)(bool)) {
-        ui::add_bool_var(
-            console, name,
-            [get](lua_State* L) {
-                Renderer* r = renderer_of(L);
-                return r ? (r->camera().*get)() : true;
-            },
-            [set](lua_State* L, bool v) {
-                if (Renderer* r = renderer_of(L)) (r->camera().*set)(v);
-            });
+    const auto camera_bool = [&](const char* name, bool fallback, bool (Camera::*get)() const,
+                                 void (Camera::*set)(bool)) {
+        renderer_var<bool>(
+            console, held, name, fallback, [get](Renderer& r) { return (r.camera().*get)(); },
+            [set](Renderer& r, bool v) { (r.camera().*set)(v); });
     };
-    camera_bool("ui_ScreenEdgeScrollView", &Camera::edge_scroll, &Camera::set_edge_scroll);
-    camera_bool("ui_ArrowKeysScrollView", &Camera::arrow_scroll, &Camera::set_arrow_scroll);
+    camera_bool("ui_ScreenEdgeScrollView", true, &Camera::edge_scroll, &Camera::set_edge_scroll);
+    camera_bool("ui_ArrowKeysScrollView", true, &Camera::arrow_scroll, &Camera::set_arrow_scroll);
     // cam_Free: "Allow the camera to remain rotated" (off, as Moho starts)
-    ui::add_bool_var(
-        console, "cam_Free",
-        [](lua_State* L) {
-            Renderer* r = renderer_of(L);
-            return r && r->camera().free();
-        },
-        [](lua_State* L, bool v) {
-            if (Renderer* r = renderer_of(L)) r->camera().set_free(v);
-        });
-
-    ui::add_bool_var(
-        console, "ui_AlwaysRenderStrategicIcons",
-        [](lua_State* L) {
-            Renderer* r = renderer_of(L);
-            return r && r->icons_always();
-        },
-        [](lua_State* L, bool v) {
-            if (Renderer* r = renderer_of(L)) r->set_icons_always(v);
-        });
-    // What a campaign's NIS turns off and on again (gamemain.NISMode)
-    const auto renderer_bool = [&console](const char* name, bool (Renderer::*get)() const,
-                                          void (Renderer::*set)(bool)) {
-        ui::add_bool_var(
-            console, name,
-            [get](lua_State* L) {
-                Renderer* r = renderer_of(L);
-                return !r || (r->*get)();
-            },
-            [set](lua_State* L, bool v) {
-                if (Renderer* r = renderer_of(L)) (r->*set)(v);
-            });
+    camera_bool("cam_Free", false, &Camera::free, &Camera::set_free);
+    const auto renderer_bool = [&](const char* name, bool fallback, bool (Renderer::*get)() const,
+                                   void (Renderer::*set)(bool)) {
+        renderer_var<bool>(
+            console, held, name, fallback, [get](Renderer& r) { return (r.*get)(); },
+            [set](Renderer& r, bool v) { (r.*set)(v); });
     };
-    renderer_bool("ui_RenderUnitBars", &Renderer::unit_bars, &Renderer::set_unit_bars);
-    renderer_bool("ui_NisRenderIcons", &Renderer::nis_icons, &Renderer::set_nis_icons);
-    renderer_bool("ren_SelectBoxes", &Renderer::select_boxes, &Renderer::set_select_boxes);
-    ui::add_bool_var(
-        console, "ren_bloom",
-        [](lua_State* L) {
-            Renderer* r = renderer_of(L);
-            return !r || r->bloom_enabled();
-        },
-        [](lua_State* L, bool v) {
-            if (Renderer* r = renderer_of(L)) r->set_bloom_enabled(v);
-        });
+    renderer_bool("ui_AlwaysRenderStrategicIcons", false, &Renderer::icons_always,
+                  &Renderer::set_icons_always);
+    // What a campaign's NIS turns off and on again (gamemain.NISMode)
+    renderer_bool("ui_RenderUnitBars", true, &Renderer::unit_bars, &Renderer::set_unit_bars);
+    renderer_bool("ui_NisRenderIcons", true, &Renderer::nis_icons, &Renderer::set_nis_icons);
+    renderer_bool("ren_SelectBoxes", true, &Renderer::select_boxes, &Renderer::set_select_boxes);
+    renderer_bool("ren_bloom", true, &Renderer::bloom_enabled, &Renderer::set_bloom_enabled);
     // ren_ShadowBlur: the High lane's five-tap shadows at shadow fidelity 3
     // (Moho's default on, M211m)
-    ui::add_bool_var(
-        console, "ren_ShadowBlur",
-        [](lua_State* L) {
-            Renderer* r = renderer_of(L);
-            return !r || r->video_options().shadow_blur;
-        },
-        [](lua_State* L, bool v) {
-            if (Renderer* r = renderer_of(L)) r->video_options().shadow_blur = v;
-        });
-    ui::add_bool_var(
-        console, "ren_Skydome",
-        [](lua_State* L) {
-            Renderer* r = renderer_of(L);
-            return !r || r->video_options().skydome;
-        },
-        [](lua_State* L, bool v) {
-            if (Renderer* r = renderer_of(L)) r->video_options().skydome = v;
-        });
+    const auto video_bool = [&](const char* name, bool Renderer::VideoOptions::* field) {
+        renderer_var<bool>(
+            console, held, name, Renderer::VideoOptions{}.*field,
+            [field](Renderer& r) { return r.video_options().*field; },
+            [field](Renderer& r, bool v) { r.video_options().*field = v; });
+    };
+    video_bool("ren_ShadowBlur", &Renderer::VideoOptions::shadow_blur);
+    video_bool("ren_Skydome", &Renderer::VideoOptions::skydome);
     // The range overlays' (Moho's RangeRenderer convars; retail's UI sets
     // the first three from the player's prefs)
-    const auto range_bool = [&console](const char* name, bool RangeOverlays::Settings::* field) {
+    const auto range_bool = [&](const char* name, bool RangeOverlays::Settings::* field) {
         ui::add_bool_var(
-            console, name,
-            [field](lua_State* L) {
-                Renderer* r = renderer_of(L);
-                return r ? r->range_overlays().settings().*field : RangeOverlays::Settings{}.*field;
-            },
-            [field](lua_State* L, bool v) {
-                if (Renderer* r = renderer_of(L)) r->range_overlays().settings().*field = v;
-            });
+            console, name, [&overlays, field](lua_State*) { return overlays.settings().*field; },
+            [&overlays, field](lua_State*, bool v) { overlays.settings().*field = v; });
     };
     range_bool("range_RenderSelected", &RangeOverlays::Settings::render_selected);
     range_bool("range_RenderHighlighted", &RangeOverlays::Settings::render_highlighted);
     range_bool("range_RenderBuild", &RangeOverlays::Settings::render_build);
     range_bool("range_Fill", &RangeOverlays::Settings::fill);
     range_bool("ren_Ranges", &RangeOverlays::Settings::enabled);
-    const auto range_float = [&console](const char* name, f32 RangeOverlays::Settings::* field) {
+    const auto range_float = [&](const char* name, f32 RangeOverlays::Settings::* field) {
         ui::add_float_var(
-            console, name,
-            [field](lua_State* L) {
-                Renderer* r = renderer_of(L);
-                return r ? r->range_overlays().settings().*field : RangeOverlays::Settings{}.*field;
-            },
-            [field](lua_State* L, f32 v) {
-                if (Renderer* r = renderer_of(L)) r->range_overlays().settings().*field = v;
-            });
+            console, name, [&overlays, field](lua_State*) { return overlays.settings().*field; },
+            [&overlays, field](lua_State*, f32 v) { overlays.settings().*field = v; });
     };
     range_float("range_InnerThicknessCoeff", &RangeOverlays::Settings::inner_thickness_coeff);
     range_float("range_OuterThicknessCoeff", &RangeOverlays::Settings::outer_thickness_coeff);
     // The ints the renderer keeps
-    const auto video_int = [&console](const char* name, int Renderer::VideoOptions::* field) {
-        ui::add_int_var(
-            console, name,
-            [field](lua_State* L) {
-                Renderer* r = renderer_of(L);
-                return r ? r->video_options().*field : Renderer::VideoOptions{}.*field;
-            },
-            [field](lua_State* L, int v) {
-                if (Renderer* r = renderer_of(L)) r->video_options().*field = v;
-            });
+    const auto video_int = [&](const char* name, int Renderer::VideoOptions::* field) {
+        renderer_var<int>(
+            console, held, name, Renderer::VideoOptions{}.*field,
+            [field](Renderer& r) { return r.video_options().*field; },
+            [field](Renderer& r, int v) { r.video_options().*field = v; });
     };
     video_int("graphics_Fidelity", &Renderer::VideoOptions::graphics_fidelity);
     video_int("shadow_Fidelity", &Renderer::VideoOptions::shadow_fidelity);
     video_int("ren_MipSkipLevels", &Renderer::VideoOptions::mip_skip_levels);
-    ui::add_float_var(
-        console, "SC_CameraScaleLOD",
-        [](lua_State* L) {
-            Renderer* r = renderer_of(L);
-            return r ? r->video_options().camera_scale_lod : 1.0f;
-        },
-        [](lua_State* L, f32 v) {
-            if (Renderer* r = renderer_of(L)) r->video_options().camera_scale_lod = v;
-        });
+    renderer_var<f32>(
+        console, held, "SC_CameraScaleLOD", Renderer::VideoOptions{}.camera_scale_lod,
+        [](Renderer& r) { return r.video_options().camera_scale_lod; },
+        [](Renderer& r, f32 v) { r.video_options().camera_scale_lod = v; });
 
     using Args = std::vector<std::string>;
     // SC_AntiAliasingSamples <packed>: kept (no multisampling yet)
-    console.add("SC_AntiAliasingSamples", [](lua_State* L, const Args& args) {
-        if (args.size() != 2) return;
-        if (Renderer* r = renderer_of(L))
+    console.add("SC_AntiAliasingSamples", [&held](lua_State* L, const Args& args) {
+        if (args.size() != 2) {
+            return;
+        }
+        if (Renderer* r = renderer_of(L)) {
             r->video_options().antialiasing =
                 static_cast<int>(std::strtol(args[1].c_str(), nullptr, 10));
+        } else {
+            held.hold(args[0], args[1]);
+        }
     });
     // SC_ToggleCursorClip [0]: "0" lets the cursor go; anything else (or
     // nothing) holds it in a window
-    console.add("SC_ToggleCursorClip", [](lua_State* L, const Args& args) {
-        if (args.size() > 2) return;
-        if (Renderer* r = renderer_of(L)) r->set_cursor_clip(!(args.size() == 2 && args[1] == "0"));
+    console.add("SC_ToggleCursorClip", [&held](lua_State* L, const Args& args) {
+        if (args.size() > 2) {
+            return;
+        }
+        const bool clip = !(args.size() == 2 && args[1] == "0");
+        if (Renderer* r = renderer_of(L)) {
+            r->set_cursor_clip(clip);
+        } else {
+            held.hold(args[0], clip ? "1" : "0");
+        }
     });
 }
 

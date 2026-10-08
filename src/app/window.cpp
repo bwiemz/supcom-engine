@@ -59,6 +59,7 @@ std::optional<int> App::Window::set_up() {
     // swapchain's (review: the boot laid the front end out at 1600x900)
     root_width = renderer.width();
     root_height = renderer.height();
+    renderer.share_range_overlays(app.range_overlays);
     if (!offscreen_capture) {
         const std::vector<std::string> args(argv, argv + argc);
         const WindowMode mode = open_window(renderer, args, prefs);
@@ -67,7 +68,6 @@ std::optional<int> App::Window::set_up() {
         root_height = mode.size.height;
     }
     register_window_commands(console, prefs, adapter_overridden);
-    register_option_commands(console);
     for (const auto& m : renderer.display_modes()) display_modes.push_back({m[0], m[1], m[2]});
 
     // Build 3D scene if we have a sim state (--map was provided)
@@ -239,7 +239,6 @@ void App::Window::publish_window_objects() {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     };
     publish("__osc_renderer", &renderer);
-    publish("__osc_range_overlays", &renderer.range_overlays());
     publish("__osc_input_handler", &input_handler);
     publish("__osc_factory_queue", &factory_queue);
     publish("__osc_sim_callback_queue", &sim_callback_queue);
@@ -248,6 +247,7 @@ void App::Window::publish_window_objects() {
     size_root_frame(uL, root_width, root_height);
     publish_adapter_options(uL, display_modes, adapter_overridden);
     publish_fidelity_options(uL);
+    app.held_convars.replay(console, uL);
 }
 
 std::optional<int> App::Window::open_replay() {
