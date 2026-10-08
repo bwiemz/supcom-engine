@@ -759,3 +759,54 @@ TEST_CASE("The reclaim cursor and right-click pass over what is not RECLAIMABLE"
     rock(sim, 60.0f, 10.0f, 5.0f, 0.0f);
     CHECK(input.click_in_command_mode(sim, mode, 60.0f, 10.0f, false));
 }
+
+TEST_CASE("Capture targets the unit under the cursor, not one beside it", "[capture]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->add_command_cap("RULEUCC_Capture");
+    eng->add_command_cap("RULEUCC_Move");
+    Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eng->entity_id()});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Capture";
+    CHECK(input.right_button_order(sim, 40.3f, 10.0f) == CommandType::Capture);
+    CHECK(input.right_button_order(sim, 43.0f, 10.0f) == CommandType::Move);
+    CHECK_FALSE(input.click_in_command_mode(sim, mode, 43.0f, 10.0f, false));
+    const auto issued = input.click_in_command_mode(sim, mode, 40.3f, 10.0f, false);
+    REQUIRE(issued);
+    CHECK(issued->target_id == enemy->entity_id());
+}
+
+TEST_CASE("Capture is offered only on a capturable unit that rides nothing", "[capture]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->add_command_cap("RULEUCC_Capture");
+    eng->add_command_cap("RULEUCC_Move");
+    still(sim, 1, 40.0f, 10.0f)->set_capturable(false);
+    Unit* carried = still(sim, 1, 40.0f, 40.0f);
+    carried->set_parent(still(sim, 1, 70.0f, 70.0f)->entity_id(), 0);
+    Unit* scrap = still(sim, 1, 70.0f, 10.0f);
+    scrap->set_capturable(false);
+    scrap->add_category("RECLAIMABLE");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eng->entity_id()});
+    osc::renderer::CommandMode mode;
+    mode.mode = "order";
+    mode.name = "RULEUCC_Capture";
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Move);
+    CHECK(input.right_button_order(sim, 40.0f, 40.0f) == CommandType::Move);
+    CHECK_FALSE(input.click_in_command_mode(sim, mode, 40.0f, 10.0f, false));
+    CHECK_FALSE(input.click_in_command_mode(sim, mode, 40.0f, 40.0f, false));
+    eng->add_command_cap("RULEUCC_Reclaim");
+    CHECK(input.right_button_order(sim, 70.0f, 10.0f) == CommandType::Reclaim);
+}
