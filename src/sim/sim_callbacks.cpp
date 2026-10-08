@@ -17,9 +17,12 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace osc::sim {
 
@@ -242,74 +245,23 @@ void forget_target(UnitCommand& c) {
     c.patrol_claimed.clear();
 }
 
-/// Sim::SetCommandTarget / CUnitCommand::SetTarget: the order moves for all
-/// its units, a formation keeping its shape.
 void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     const auto* command = number_in(cb, "Command", 1, 4294967295.0);
     if (!command) {
         return;
     }
-    std::vector<std::pair<Unit*, UnitCommand*>> orders;
+    std::vector<SimState::CommandToRetarget> orders;
     for_each_unit(sim, cb, [&](Unit& u) {
         for (UnitCommand* c : u.commands_with_id(static_cast<u32>(*command))) {
-            orders.emplace_back(&u, c);
+            const bool front = !u.command_queue().empty() && &u.command_queue().front() == c;
+            orders.push_back({&u, c, front});
         }
     });
-    if (orders.empty() || !retargetable(orders.front().second->type)) {
-        return;
+    std::optional<std::pair<f32, f32>> footprint;
+    if (!orders.empty() && orders.front().command->type == CommandType::BuildMobile) {
+        footprint = footprint_of(L, orders.front().command->blueprint_id);
     }
-    const UnitCommand& order = *orders.front().second;
-    for (const auto& [u, c] : orders) {
-        if (c->type == CommandType::BuildMobile && u->build_target_id() != 0 &&
-            &u->command_queue().front() == c) {
-            return;
-        }
-    }
-    if (order.target_id != 0) {
-        const auto* target = number_in(cb, "Target", 1, 4294967295.0);
-        const Entity* old = sim.entity_registry().find(order.target_id);
-        const Entity* to = target ? sim.entity_registry().find(static_cast<u32>(*target)) : nullptr;
-        if (!old || old->destroyed() || !to || to->destroyed() || to->army() != old->army() ||
-            to->is_unit() != old->is_unit()) {
-            return;
-        }
-        for (const auto& [u, c] : orders) {
-            c->target_id = to->entity_id();
-            c->target_pos = to->position();
-            forget_target(*c);
-        }
-        return;
-    }
-    const auto* x = number_in(cb, "X", -1e6, 1e6);
-    const auto* z = number_in(cb, "Z", -1e6, 1e6);
-    if (!x || !z) {
-        return;
-    }
-    Vector3 point{static_cast<f32>(*x), 0.0f, static_cast<f32>(*z)};
-    if (order.type == CommandType::BuildMobile) {
-        const auto [fx, fz] = footprint_of(L, order.blueprint_id);
-        snap_structure_center(point.x, point.z, fx, fz);
-    }
-    Vector3 mean{0.0f, 0.0f, 0.0f};
-    for (const auto& [u, c] : orders) {
-        mean.x += c->target_pos.x / static_cast<f32>(orders.size());
-        mean.z += c->target_pos.z / static_cast<f32>(orders.size());
-    }
-    const bool no_rush = sim.no_rush_active();
-    for (const auto& [u, c] : orders) {
-        Vector3 to = point;
-        if (!c->formation.empty()) {
-            to.x = c->target_pos.x + point.x - mean.x;
-            to.z = c->target_pos.z + point.z - mean.z;
-        }
-        to = sim.clamp_to_playable(to, u->army());
-        if (no_rush && (c->type == CommandType::Move || c->type == CommandType::Attack)) {
-            to = sim.clamp_to_no_rush(*u, to);
-        }
-        to.y = sim.terrain() ? sim.terrain()->get_surface_height(to.x, to.z) : 0.0f;
-        c->target_pos = to;
-        forget_target(*c);
-    }
+    sim.retarget_command(cb, orders, footprint);
 }
 
 void remove_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
@@ -421,6 +373,66 @@ void post_load(SimState& sim, lua_State* L) {
 }
 
 } // namespace
+
+void SimState::retarget_command(const SimCallbackEntry& cb,
+                                const std::vector<CommandToRetarget>& orders,
+                                std::optional<std::pair<f32, f32>> footprint) const {
+    if (orders.empty() || !retargetable(orders.front().command->type)) {
+        return;
+    }
+    const UnitCommand& order = *orders.front().command;
+    for (const auto& o : orders) {
+        if (o.command->type == CommandType::BuildMobile && o.unit->build_target_id() != 0 &&
+            o.front) {
+            return;
+        }
+    }
+    if (order.target_id != 0) {
+        const auto* target = number_in(cb, "Target", 1, 4294967295.0);
+        const Entity* old = entity_registry_.find(order.target_id);
+        const Entity* to = target ? entity_registry_.find(static_cast<u32>(*target)) : nullptr;
+        if (!old || old->destroyed() || !to || to->destroyed() || to->army() != old->army() ||
+            to->is_unit() != old->is_unit()) {
+            return;
+        }
+        for (const auto& o : orders) {
+            o.command->target_id = to->entity_id();
+            o.command->target_pos = to->position();
+            forget_target(*o.command);
+        }
+        return;
+    }
+    const auto* x = number_in(cb, "X", -1e6, 1e6);
+    const auto* z = number_in(cb, "Z", -1e6, 1e6);
+    if (!x || !z) {
+        return;
+    }
+    Vector3 point{static_cast<f32>(*x), 0.0f, static_cast<f32>(*z)};
+    if (order.type == CommandType::BuildMobile && footprint) {
+        snap_structure_center(point.x, point.z, footprint->first, footprint->second);
+    }
+    Vector3 mean{0.0f, 0.0f, 0.0f};
+    for (const auto& o : orders) {
+        mean.x += o.command->target_pos.x / static_cast<f32>(orders.size());
+        mean.z += o.command->target_pos.z / static_cast<f32>(orders.size());
+    }
+    const bool no_rush = no_rush_active();
+    for (const auto& o : orders) {
+        UnitCommand* c = o.command;
+        Vector3 to = point;
+        if (!c->formation.empty()) {
+            to.x = c->target_pos.x + point.x - mean.x;
+            to.z = c->target_pos.z + point.z - mean.z;
+        }
+        to = clamp_to_playable(to, o.unit->army());
+        if (no_rush && (c->type == CommandType::Move || c->type == CommandType::Attack)) {
+            to = clamp_to_no_rush(*o.unit, to);
+        }
+        to.y = terrain() ? terrain()->get_surface_height(to.x, to.z) : 0.0f;
+        c->target_pos = to;
+        forget_target(*c);
+    }
+}
 
 void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     lua_State* L = L_;
