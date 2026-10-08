@@ -477,6 +477,36 @@ set_tests_properties(data.golden.map_select_paged PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
 
+# A held mouse, through the window's input (--mouse): the commander picked,
+# T1 walls picked from its construction panel, and the left button held in
+# a drag east, the wall's line drawn as ghosts
+add_test(NAME data.golden.build_drag
+         COMMAND opensupcom --map ${OSC_TEST_MAP} --camera 672,346,60
+                 --mouse "610 move 800,430" --mouse "612 press left" --mouse "614 release left"
+                 --mouse "620 move 940,812" --mouse "622 press left" --mouse "624 release left"
+                 --mouse "630 move w664,341" --mouse "632 press left"
+                 --mouse "636 move w668,341" --mouse "640 move w672,341"
+                 --mouse "644 move w676,341"
+                 --golden build_drag --screenshot-frame 700 --golden-tolerance 0.001)
+set_tests_properties(data.golden.build_drag PROPERTIES
+    LABELS "data;gate;golden"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
+
+# Six Strikers boxed with the left button, then the right held in a drag
+# east past the formation's settling: their ghosts stand in its slots
+add_test(NAME data.golden.formation_drag
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --camera 672,346,60 --mouse-scene
+                 --mouse "610 move w659,346" --mouse "612 press left"
+                 --mouse "614 move w671,353" --mouse "618 release left"
+                 --mouse "624 move w682,344" --mouse "626 press right"
+                 --mouse "630 move w684,344" --mouse "640 move w686,344"
+                 --golden formation_drag --screenshot-frame 700 --golden-tolerance 0.001)
+set_tests_properties(data.golden.formation_drag PROPERTIES
+    LABELS "data;gate;golden"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
+
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither
 # bound nor listed in the baseline. Baseline is for retail FA 3599; a machine

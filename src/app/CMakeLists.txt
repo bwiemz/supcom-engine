@@ -14,6 +14,7 @@ add_library(osc_app STATIC
     mods_flow_test.cpp
     campaign_flow_test.cpp
     reload.cpp
+    scripted_mouse.cpp
     session.cpp
     ui_clicks.cpp
     ui_globals.cpp

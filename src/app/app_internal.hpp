@@ -7,6 +7,7 @@
 #include "app/bench.hpp"
 #include "app/window_commands.hpp"
 #include "app/support.hpp"
+#include "app/scripted_mouse.hpp"
 #include "app/ui_clicks.hpp"
 #include "audio/sound_manager.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -89,6 +90,7 @@ struct Options {
     bool outro_flow_test = false;    ///< its outro route (campaign_flow_test is set too)
     bool mods_flow_lobby = false;
     std::vector<UiClick> clicks; ///< --click <label>, --click-at <x>,<y>, in order
+    std::vector<MouseStep> mouse; ///< --mouse, in order
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's
     /// LAN lobby played to a game by two processes, offscreen (M218c).
     bool lan_game_host = false;
