@@ -321,14 +321,74 @@ int uu_GetMissileInfo(lua_State* L) {
 
 // --- Orders and other units ----------------------------------------------
 
+const char* command_lexical(sim::CommandType type) {
+    switch (type) {
+    case sim::CommandType::Stop: return "Stop";
+    case sim::CommandType::Move: return "Move";
+    case sim::CommandType::Attack: return "Attack";
+    case sim::CommandType::Guard: return "Guard";
+    case sim::CommandType::Patrol: return "Patrol";
+    case sim::CommandType::BuildMobile: return "BuildMobile";
+    case sim::CommandType::BuildFactory: return "BuildFactory";
+    case sim::CommandType::Reclaim: return "Reclaim";
+    case sim::CommandType::Repair: return "Repair";
+    case sim::CommandType::Upgrade: return "Upgrade";
+    case sim::CommandType::Capture: return "Capture";
+    case sim::CommandType::Dive: return "Dive";
+    case sim::CommandType::Enhance: return "Script";
+    case sim::CommandType::TransportLoad: return "TransportLoadUnits";
+    case sim::CommandType::TransportUnload: return "TransportUnloadUnits";
+    case sim::CommandType::Nuke: return "Nuke";
+    case sim::CommandType::Tactical: return "Tactical";
+    case sim::CommandType::Overcharge: return "OverCharge";
+    case sim::CommandType::Sacrifice: return "Sacrifice";
+    case sim::CommandType::Teleport: return "Teleport";
+    case sim::CommandType::Ferry: return "Ferry";
+    case sim::CommandType::SiloBuildNuke: return "BuildSiloNuke";
+    case sim::CommandType::SiloBuildTactical: return "BuildSiloTactical";
+    case sim::CommandType::WaitForFerry: return "TransportLoadUnits";
+    case sim::CommandType::Dock: return "Dock";
+    case sim::CommandType::Script: return "Script";
+    case sim::CommandType::AggressiveMove: return "AggressiveMove";
+    }
+    return "None";
+}
+
+// Moho's rows ({ID, type, position}, faf-re cfunc_UserUnitGetCommandQueueL),
+// from a factory's factory command queue (SelectActiveQueue).
 int uu_GetCommandQueue(lua_State* L) {
     const auto* r = record(L);
     const sim::WorldSnapshot* world = r ? ui_world(L) : nullptr;
     lua_newtable(L);
-    if (!world) return 1;
+    if (!world) {
+        return 1;
+    }
+    const auto rally = world->rally_of(*r);
+    const auto queue = rally.empty() ? world->orders_of(*r) : rally;
     int n = 1;
-    for (const auto& c : world->orders_of(*r)) {
+    for (const auto& c : queue) {
         lua_newtable(L);
+        lua_pushstring(L, "ID");
+        lua_pushnumber(L, c.command_id);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "type");
+        lua_pushstring(L, command_lexical(c.type));
+        lua_rawset(L, -3);
+        sim::Vector3 at = c.target_pos;
+        if (c.target_id > 0) {
+            if (const sim::EntityRecord* target = world->find(c.target_id)) {
+                at = target->position;
+            }
+        }
+        lua_pushstring(L, "position");
+        lua_newtable(L);
+        lua_pushnumber(L, at.x);
+        lua_rawseti(L, -2, 1);
+        lua_pushnumber(L, at.y);
+        lua_rawseti(L, -2, 2);
+        lua_pushnumber(L, at.z);
+        lua_rawseti(L, -2, 3);
+        lua_rawset(L, -3);
         lua_pushstring(L, "commandType");
         lua_pushnumber(L, static_cast<int>(c.type));
         lua_rawset(L, -3);
