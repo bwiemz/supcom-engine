@@ -96,6 +96,27 @@ void test_ghost_render(TestContext& ctx) {
                         "{:.3f} b {:.3f}",
                         red.pixels, red.r, red.g, red.b));
 
+    // A build template's ghosts: each structure drawn as its own blueprint,
+    // not as the first's. A factory beside the generator draws otherwise
+    // than a second generator there would.
+    ghost.valid = true;
+    renderer::BuildGhost beside = ghost;
+    beside.x = spot->x + 3.0f;
+    beside.y = ctx.sim.terrain()->get_terrain_height(beside.x, spot->z);
+    renderer::BuildGhost two_gens = ghost;
+    two_gens.line = {beside};
+    beside.blueprint_id = "ueb0101";
+    renderer::BuildGhost gen_and_factory = ghost;
+    gen_and_factory.line = {beside};
+    const Pixels gens = shot(&two_gens);
+    const Tint factory = changed_tint(gens, shot(&gen_and_factory));
+    // (Two of one mesh are one instanced draw; two meshes, two.)
+    const u32 both = r.mesh_draws(renderer::MeshTechnique::UnitPlace);
+    t.check(both == 2 && factory.pixels > 100,
+            fmt::format("Test 4: a template's ghosts each draw their own blueprint ({} draws, a "
+                        "factory for a generator changes {} pixels)",
+                        both, factory.pixels));
+
     spdlog::info("Ghost test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

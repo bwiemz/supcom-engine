@@ -139,7 +139,8 @@ std::optional<int> App::Window::set_up() {
              lua_rawset(L, -3);
              lua_pushnumber(L, command);
              call_command_graph(L, "OnCommandDragEnd", 2);
-         }});
+         },
+         [this](const std::string& bp) { return ui_blueprint_footprint(ui_lua_state.raw(), bp); }});
     prev_time = std::chrono::high_resolution_clock::now();
 
     // --screenshot <png> [--screenshot-frame N]: render N frames on a

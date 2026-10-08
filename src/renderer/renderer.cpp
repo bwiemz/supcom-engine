@@ -1906,11 +1906,17 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         if (ghost_mesh) {
             unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
                                         &texture_cache_);
-            for (const BuildGhost& site : ghost->line) {
-                unit_renderer_.inject_ghost(ghost_mesh, site.x, site.y, site.z,
-                                            site.valid ? 0.2f : 1.0f, site.valid ? 0.9f : 0.2f,
-                                            site.valid ? 0.3f : 0.2f, &texture_cache_);
-            }
+        }
+        // A drag's other sites, or a build template's other structures, each
+        // its own blueprint's mesh
+        for (const BuildGhost& site : ghost->line) {
+            const GPUMesh* mesh = site.blueprint_id == ghost->blueprint_id
+                                      ? ghost_mesh
+                                      : mesh_cache_.get(site.blueprint_id, L);
+            if (!mesh) continue;
+            unit_renderer_.inject_ghost(mesh, site.x, site.y, site.z, site.valid ? 0.2f : 1.0f,
+                                        site.valid ? 0.9f : 0.2f, site.valid ? 0.3f : 0.2f,
+                                        &texture_cache_);
         }
     }
     for (const auto& site : command_graph_renderer_.planned_sites()) {
