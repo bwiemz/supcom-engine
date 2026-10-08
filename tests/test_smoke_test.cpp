@@ -492,8 +492,8 @@ TEST_CASE("A factory's rally orders are apart from its build orders", "[session]
     osc::sim::Unit* tank = find_unit(h, "test_tank");
     REQUIRE(f);
     REQUIRE(tank);
-    REQUIRE(f->rally_orders().size() == 1);
-    const auto& rally = f->rally_orders().front();
+    REQUIRE(f->rally_orders().size() == 2); // after its initial rally, as Moho's appends
+    const auto& rally = f->rally_orders().back();
     CHECK(rally.type == osc::sim::CommandType::Move);
     CHECK((rally.target_pos.x == 50.0f && rally.target_pos.z == 60.0f));
     CHECK(rally.command_id != 0);
@@ -533,10 +533,10 @@ TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[sessio
     REQUIRE(tank->command_queue().size() == 1);
     CHECK(tank->command_queue().front().type == osc::sim::CommandType::Guard);
     CHECK(tank->command_queue().front().command_id == guard.command_id);
-    CHECK(f->rally_orders().size() == 2); // the factory keeps them
+    CHECK(f->rally_orders().size() == 3); // the factory keeps them
 }
 
-TEST_CASE("A factory without rally orders rallies ahead of itself", "[session][rules]") {
+TEST_CASE("A factory is made with its initial rally, ahead of itself", "[session][rules]") {
     BuildRuleHarness h;
     REQUIRE(h.state.do_string("CreateUnit('test_factory', 1, 10, 0, 20)\n"
                               "CreateUnit('test_tank', 1, 30, 0, 20)\n"));
@@ -544,27 +544,35 @@ TEST_CASE("A factory without rally orders rallies ahead of itself", "[session][r
     osc::sim::Unit* tank = find_unit(h, "test_tank");
     REQUIRE(f);
     REQUIRE(tank);
-    // Asked where it rallies (unit:GetRallyPoint, which the UI's unit
-    // objects share), it answers without changing anything: its blueprint's
-    // InitialRallyX/Z, default 0 and 5, five ahead of it.
-    const auto checksum = h.sim.compute_sync_checksum();
+    REQUIRE(f->rally_orders().size() == 1);
+    const osc::sim::UnitCommand rally = f->rally_orders().front();
+    CHECK(rally.type == osc::sim::CommandType::Move);
+    CHECK(rally.target_pos.x == 10.0f);
+    CHECK(rally.target_pos.z == 25.0f);
+    CHECK(rally.command_id != 0);
     osc::sim::Vector3 point;
     REQUIRE(f->rally_point(h.state.raw(), point));
-    CHECK(point.x == 10.0f);
     CHECK(point.z == 25.0f);
-    CHECK(f->rally_orders().empty());
-    CHECK(h.sim.compute_sync_checksum() == checksum);
-    CHECK_FALSE(tank->rally_point(h.state.raw(), point)); // no factory
+    CHECK(tank->rally_orders().empty());
+    CHECK_FALSE(tank->rally_point(h.state.raw(), point));
+    CHECK(f->validated_rally_orders(h.state.raw(), &h.sim).size() == 1);
 
-    // The sim's own steps give it that rally as an order.
-    const auto& rally = f->validated_rally_orders(h.state.raw(), &h.sim);
-    REQUIRE(rally.size() == 1);
-    CHECK(rally.front().type == osc::sim::CommandType::Move);
-    CHECK(rally.front().target_pos.x == 10.0f);
-    CHECK(rally.front().target_pos.z == 25.0f);
-    CHECK(rally.front().command_id != 0);
-    CHECK(f->validated_rally_orders(h.state.raw(), &h.sim).size() == 1); // given once
-    CHECK(tank->validated_rally_orders(h.state.raw(), &h.sim).empty());  // no factory
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__osc_create_building_unit");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "test_factory");
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, 40);
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 20);
+    REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
+    const auto built_id = static_cast<osc::u32>(lua_tonumber(L, -2));
+    lua_pop(L, 2);
+    auto* built = static_cast<osc::sim::Unit*>(h.sim.entity_registry().find(built_id));
+    REQUIRE(built);
+    REQUIRE(built->rally_orders().size() == 1);
+    CHECK(built->rally_orders().front().target_pos.x == 40.0f);
+    CHECK(built->rally_orders().front().target_pos.z == 25.0f);
 }
 
 TEST_CASE("SimState generation increments on construction", "[m155]") {
