@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 30; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 31; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -55,7 +55,8 @@ constexpr u32 kVersion = 30; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 27: idle aircraft landing (AutoLandTime, the landing);
                              // 28: hovering aircraft's circling;
                              // 29: mobile units in the way (moved last tick, path owners);
-                             // 30: formation orders' slots (formation layers)
+                             // 30: formation orders' slots (formation layers);
+                             // 31: jammers' fakes known fake (latched)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -373,6 +374,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u64v(key);
         w.size(offsets.size());
         for (const Vector3& o : offsets) w.vec3(o);
+        const auto known = sim.jam_known_.find(key);
+        w.u64v(known == sim.jam_known_.end() ? 0 : known->second);
     }
     save_by_id(w, sim.blip_cache_, [&](const auto& snaps) {
         for (const BlipSnapshot& s : snaps) {
@@ -571,12 +574,14 @@ void StateIO::load(StateReader& r, SimState& sim) {
         sim.los_ever_[id] = r.u32v();
     }
     sim.jam_offsets_.clear();
-    const size_t jammed = r.size(12);
+    sim.jam_known_.clear();
+    const size_t jammed = r.size(20);
     for (size_t i = 0; i < jammed && r.ok(); ++i) {
         const u64 key = r.u64v();
         auto& offsets = sim.jam_offsets_[key];
         offsets.resize(r.size(12));
         for (Vector3& o : offsets) o = r.vec3();
+        if (const u64 known = r.u64v(); known != 0) sim.jam_known_[key] = known;
     }
     sim.blip_cache_.clear();
     const size_t blips = r.size(4 + 21 * SimState::MAX_VIS_ARMIES);

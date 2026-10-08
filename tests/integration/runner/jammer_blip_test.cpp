@@ -121,6 +121,24 @@ void test_jammer_blips(TestContext& ctx) {
                                                         std::to_string(fooled) + " -> " +
                                                         std::to_string(seen) + ")");
 
+    // The sight gone (its 5 seconds out), radar still holding the engineer:
+    // known fake once, known fake for good (Moho's UpdateBlip keeps
+    // RECON_KnownFake), so they show and add no threat as before.
+    run(30);
+    const sim::Entity* jammer = ctx.sim.entity_registry().find(engineer);
+    t.check(jammer &&
+                (ctx.sim.recon_of(*jammer, 0) &
+                 (sim::SimState::kReconLOS | sim::SimState::kReconOmni)) == 0 &&
+                (ctx.sim.recon_of(*jammer, 0) & sim::SimState::kReconRadar) != 0,
+            "the sight gone, the radar still on the engineer");
+    t.check(offsets() != nullptr && shown() == 0,
+            "out of sight again, the fakes stay known fake (" + std::to_string(shown()) +
+                " shown)");
+    run(31);
+    const f32 after = threat_about();
+    t.check(std::abs(after - seen) < 1e-3f, "and still add no threat (" + std::to_string(seen) +
+                                                " -> " + std::to_string(after) + ")");
+
     lua("__osc_jb_engineer:DisableIntel('Jammer')\n");
     run(3);
     t.check(!offsets() && shown() == 0, "the Jammer off, its fakes go");
