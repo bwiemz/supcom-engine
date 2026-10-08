@@ -3197,6 +3197,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         units.mix(static_cast<u64>(static_cast<u32>(u.tactical_silo_ammo())));
         units.mix(static_cast<u64>(static_cast<u32>(u.silo_build().weapon)));
         units.mix_f32(static_cast<f32>(u.silo_build().progress));
+        if (u.silo_blocks() != 0) {
+            units.mix(0x53424c4bu); // "SBLK"
+            units.mix(static_cast<u64>(static_cast<u32>(u.silo_blocks())));
+        }
         const auto& econ = u.economy();
         units.mix_f32(static_cast<f32>(econ.consumption_mass));
         units.mix_f32(static_cast<f32>(econ.consumption_energy));

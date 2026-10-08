@@ -141,6 +141,8 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
             {"acceleration multiplier", "units", [&] { u.set_accel_mult(0.5f); }},
             {"turn multiplier", "units", [&] { u.set_turn_mult(0.5f); }},
             {"veterancy", "units", [&] { u.set_vet_level(2); }},
+            {"a silo's blocks preset for its next missile", "units",
+             [&] { u.set_silo_blocks(1050); }},
             {"last attacker", "units", [&] { u.set_last_attacker_id(ids[1]); }},
             {"enhancement", "units", [&] { u.add_enhancement("Back", "Shield"); }},
             {"heading", "navigation", [&] { u.set_heading(1.25f); }},
