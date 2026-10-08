@@ -1862,229 +1862,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     auto vp = camera_.view_proj(aspect);
     Frustum frustum(vp);
 
-    // What the player's army sees this tick (everything, with the fog off)
-    recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
-    recon_.update(view, events.intel_flushes);
-    events.intel_flushes.clear();
-    // A playable rect the scripts synced since: what's outside it now hides
-    playable_rect_.apply(view);
-
-    // Before the meshes: its planned sites are ghosts among them
-    command_graph_renderer_.set_highlight(highlight_command_, hovered_);
-    command_graph_renderer_.update(view, camera_, selected_ids, player_army_, texture_cache_, L,
-                                   unit_renderer_.shader_time() / 10.0f, window_height_,
-                                   (!ui_keys_blocked_ && (is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                                                          is_key_pressed(GLFW_KEY_RIGHT_SHIFT))) ||
-                                       command_drag_held_,
-                                   fi);
-
-    // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
-    {
-        PROFILE_ZONE("Render::unit_update");
-        // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
-        // decides it below, from the same camera)
-        const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
-        unit_renderer_.set_ghost_slots(
-            1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
-            static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
-            static_cast<u32>(feedback_blips_.blips().size()));
-        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
-                              &frustum, meshes_drawn);
-    }
-    // A bone SSBO the update grew is a new buffer for this slot's set.
-    if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))
-        write_bone_descriptor(fi);
-
-    // Build preview ghost — a semi-transparent mesh where input places it
-    if (ghost && !ghost->blueprint_id.empty()) {
-        // Green = valid, Red = invalid
-        f32 gr = ghost->valid ? 0.2f : 1.0f;
-        f32 gg = ghost->valid ? 0.9f : 0.2f;
-        f32 gb = ghost->valid ? 0.3f : 0.2f;
-
-        const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
-        if (ghost_mesh) {
-            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
-                                        &texture_cache_);
-        }
-        // A drag's other sites, or a build template's other structures, each
-        // its own blueprint's mesh
-        for (const BuildGhost& site : ghost->line) {
-            const GPUMesh* mesh = site.blueprint_id == ghost->blueprint_id
-                                      ? ghost_mesh
-                                      : mesh_cache_.get(site.blueprint_id, L);
-            if (!mesh) continue;
-            unit_renderer_.inject_ghost(mesh, site.x, site.y, site.z, site.valid ? 0.2f : 1.0f,
-                                        site.valid ? 0.9f : 0.2f, site.valid ? 0.3f : 0.2f,
-                                        &texture_cache_);
-        }
-    }
-    for (const auto& site : command_graph_renderer_.planned_sites()) {
-        if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
-            unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
-                                        0.2f, 0.9f, 0.3f, &texture_cache_);
-        }
-    }
-
-    // The frame's step, which the particles and overlays run on, with or
-    // without a UI (an offscreen test has none).
-    {
-        const f64 now = glfwGetTime();
-        f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
-        last_frame_time_ = now;
-        if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
-        frame_dt_ = dt;
-        wave_clock_ += static_cast<f64>(dt);
-    }
-    // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
-    feedback_blips_.update(frame_dt_);
-    inject_feedback_blips(L);
-
-    // Update UI quads (walk control tree, read LazyVar positions)
-    if (ui_registry) {
-        PROFILE_ZONE("Render::ui_update");
-        const f32 dt = frame_dt_;
-        total_time_ += dt;
-        if (dt > 0.0f && dt < 1.0f) {
-            ui_renderer_.advance_animations(L, *ui_registry, dt);
-            ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
-        }
-        ui_dispatch_.dispatch_events(L, *ui_registry);
-        // FA's minimap WorldView shows the minimap, drawn with the UI.
-        WorldViewPainter minimap_painter;
-        if (!legacy_hud_active_) {
-            painted_minimap_.clear();
-            minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
-                const size_t first = out.size();
-                minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
-                                        window_width_, window_height_, out);
-                painted_minimap_.insert(painted_minimap_.end(),
-                                        out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
-            };
-        }
-        movie_textures_.prepare(*ui_registry, fi);
-        update_system_cursor(L);
-        ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
-                            window_width_, window_height_,
-                            static_cast<f32>(ui_dispatch_.mouse_x()),
-                            static_cast<f32>(ui_dispatch_.mouse_y()),
-                            minimap_painter);
-    }
-
-    // Stage fog of war data from visibility grid (CPU side)
-    if (fog_enabled_ && fog_renderer_.initialized() && view.cur()) {
-        if (player_army_ >= 0 && view.cur()->sight.army == player_army_)
-            fog_renderer_.stage(view.cur()->sight);
-        else fog_renderer_.stage_clear(); // an observer's: all visible
-    }
-
-    // Effects are made at the player's graphics fidelity (graphics_Fidelity).
-    beam_renderer_.set_fidelity(fidelity());
-    trail_renderer_.set_fidelity(fidelity());
-    particle_system_.set_fidelity(fidelity());
-    // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
-    beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
-                          unit_renderer_.shader_time(), fi);
-    // And its trails, which likewise leave their dots to them (M214b)
-    trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
-                           fi);
-    // And its particles, likewise; a new tick's emission, then this frame's quads (M214c)
-    {
-        PROFILE_ZONE("Render::particle_update");
-        // The waves in view emit on the system clock (M213c)
-        if (view.cur()) {
-            waves_emitted_.clear();
-            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
-            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
-        }
-        particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
-        particle_renderer_.update(particle_system_, texture_cache_, fi);
-    }
-
-    selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
-                               drag_box_, texture_cache_, L, fi);
-
-    // FA's range overlays (Moho's RangeRenderer), for the focus army
-    {
-        PROFILE_ZONE("Render::range_update");
-        const RangeScene scene = collect_range_scene(
-            range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
-            ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
-            ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
-        const auto& rect = camera_.playable_rect();
-        const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
-        range_renderer_.update(range_batches(range_overlays_, scene), range_overlays_.settings(),
-                               span, camera_.zoom() / camera_.max_zoom(), fi);
-    }
-
-    // Update game overlays (health bars, selection circles, game over)
-    {
-        PROFILE_ZONE("Render::overlay_update");
-        const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
-        overlay_renderer_.set_hovered(hovered_);
-        overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
-                                 window_width_, window_height_, game_result, frame_dt_, &frustum,
-                                 ghost);
-    }
-
-    // FA's water: this frame's camera and time (M213a)
-    water_renderer_.update(camera_, vp, unit_renderer_.shader_time(), fi);
-    // The sky: its time is the tick and the interpolant, unwrapped (M210b)
-    sky_renderer_.update(camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
-
-    // Scripts' decals and splats: this tick's, as the player's army sees
-    // them (M212c)
-    if (terrain_) {
-        PROFILE_ZONE("Render::runtime_decals");
-        f32 ex = 0;
-        f32 ey = 0;
-        f32 ez = 0;
-        camera_.eye_position(ex, ey, ez);
-        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
-                               terrain_mesh_, camera_.view(), {ex, ey, ez},
-                               camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi,
-                               fidelity());
-    }
-
-    // The terrain's Time (M212f): set when the terrain would re-tessellate,
-    // so TTerrainGlow's lava stands still under a still camera, as in FA.
-    if (const sim::WorldSnapshot* cur = view.cur()) {
-        const u64 decals = static_cast<u64>(runtime_decals_.decal_draws().size()) |
-                           (static_cast<u64>(runtime_decals_.splat_count()) << 32);
-        terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
-    }
-
-    // Update minimap (terrain bg, unit dots, camera frustum box)
-    if (legacy_hud_active_)
-        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
-                                  window_width_, window_height_);
-
-    // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
-    strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
-                                    window_height_, L);
-
-    if (legacy_hud_active_) {
-        // Update economy HUD
-        hud_renderer_.update(view, player_army_, font_cache_, texture_cache_,
-                              window_width_, window_height_);
-
-        // Update selection info panel
-        selection_info_renderer_.update(view, selected_ids, font_cache_, texture_cache_,
-                                        strategic_icon_renderer_.atlas_descriptor(),
-                                        window_width_, window_height_);
-    }
-
-    // Update profile overlay
-    profile_overlay_.update(font_cache_, texture_cache_,
-                             window_width_, window_height_);
+    update_frame_scene(fi, vp, frustum, view, events, ghost, L, ui_registry, selected_ids);
 
     // Record command buffer
-    vkResetCommandBuffer(cmd_buf_[fi], 0);
-
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
+    begin_commands(fi);
     gpu_queries_.begin(cmd_buf_[fi], fi, frame_sequence_ + 1);
     mesh_draws_.fill(0); // this frame's, for tests (M211k)
 
@@ -2099,41 +1880,65 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     record_shadow_pass(fi, vp);
 
     // ==================== NORMALS ====================
-    // Moho's DrawTerrainNormal (M212e): the terrain's normals into the
-    // normal target (its strata's in RG, the map's normal maps' in BA), then
-    // the normal decals blended into RG, which the scene then reads at each
-    // pixel. The scene's pass and depth draw it; the scene clears the depth
-    // again after.
     collect_frame_decals(frustum,
                          view.cur() ? static_cast<f32>(view.cur()->tick) + view.alpha() : 0.0f);
+    record_normal_pass(fi, vp);
+
+    // ==================== REFLECTION ====================
+    record_reflection_pass(fi, vp);
+
+    // ==================== MAIN PASS ====================
+    PROFILE_ZONE("Render::main_pass");
+
+    bool do_bloom = bloom_enabled_ && bloom_.ready();
+
+    record_main_pass(fi, vp);
+
+    // ==================== COMPOSITE + BLOOM ====================
+    // Scene always renders to offscreen HDR. End scene pass, optionally run
+    // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
+    vkCmdEndRenderPass(cmd_buf_[fi]);
+    const bool scene_capturing = record_scene_capture(cmd_buf_[fi]);
+
+    if (do_bloom)
+        bloom_.record(cmd_buf_[fi], kBloomGlowCopyScale, lighting_.bloom, kBloomBlurKernelScale,
+                      kBloomBlurCount);
+
+    // Begin swapchain render pass for composite + UI
+    begin_swapchain_pass(fi, image_index);
+
+    // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
+    bloom_.composite(cmd_buf_[fi], do_bloom);
+
+    record_screen_layers(fi);
+
+    vkCmdEndRenderPass(cmd_buf_[fi]);
+    gpu_queries_.end(cmd_buf_[fi], fi); // the frame's, not a capture's readback
+    const bool capturing = record_capture(cmd_buf_[fi], image_index);
+    submit_and_present(fi, image_index, true, capturing, scene_capturing);
+}
+
+void Renderer::record_normal_pass(u32 fi, const std::array<f32, 16>& vp) {
+    if (!frame_.terrain_normal_framebuffer() || !terrain_normal_pipeline_ || !terrain_tex_ds_ ||
+        !shadow_ds_[fi] || terrain_mesh_.index_count() == 0)
+        return;
+    PROFILE_ZONE("Render::normals");
+    std::array<VkClearValue, 2> cleared{};
+    cleared[0].color = {{0.5f, 0.5f, 0.5f, 0.5f}}; // no terrain: zero normals
+    cleared[1].depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    begin.renderPass = frame_.scene_pass();
+    begin.framebuffer = frame_.terrain_normal_framebuffer();
+    begin.renderArea.extent = {window_width_, window_height_};
+    begin.clearValueCount = static_cast<u32>(cleared.size());
+    begin.pClearValues = cleared.data();
+    vkCmdBeginRenderPass(cmd_buf_[fi], &begin, VK_SUBPASS_CONTENTS_INLINE);
+    set_window_viewport(cmd_buf_[fi]);
     // The low fidelity terrain draws no normals (its DrawTerrainNormal is
     // empty, M212h): the pass only clears the target then, which keeps it
     // readable for what samples it (a fidelity 0 decal's light).
-    const bool normal_pass = frame_.terrain_normal_framebuffer() && terrain_normal_pipeline_ &&
-                             terrain_tex_ds_ && shadow_ds_[fi] && terrain_mesh_.index_count() > 0;
-    if (normal_pass) {
-        PROFILE_ZONE("Render::normals");
-        std::array<VkClearValue, 2> cleared{};
-        cleared[0].color = {{0.5f, 0.5f, 0.5f, 0.5f}}; // no terrain: zero normals
-        cleared[1].depthStencil = {1.0f, 0};
-        VkRenderPassBeginInfo begin{};
-        begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        begin.renderPass = frame_.scene_pass();
-        begin.framebuffer = frame_.terrain_normal_framebuffer();
-        begin.renderArea.extent = {window_width_, window_height_};
-        begin.clearValueCount = static_cast<u32>(cleared.size());
-        begin.pClearValues = cleared.data();
-        vkCmdBeginRenderPass(cmd_buf_[fi], &begin, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport normal_vp{};
-        normal_vp.width = static_cast<f32>(window_width_);
-        normal_vp.height = static_cast<f32>(window_height_);
-        normal_vp.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &normal_vp);
-        VkRect2D normal_scissor{};
-        normal_scissor.extent = {window_width_, window_height_};
-        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &normal_scissor);
-    }
-    if (normal_pass && fidelity() > 0) {
+    if (fidelity() > 0) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
         struct TerrainPC {
             f32 viewProj[16];
@@ -2163,9 +1968,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         // The normal decals (OverDrawDecals: TDecalsNormals, ...Alpha).
         record_decals(cmd_buf_[fi], fi, DecalTechnique::Normals, decal_normal_pipeline_, vp);
     }
-    if (normal_pass) vkCmdEndRenderPass(cmd_buf_[fi]);
+    vkCmdEndRenderPass(cmd_buf_[fi]);
+}
 
-    // ==================== REFLECTION ====================
+void Renderer::record_reflection_pass(u32 fi, const std::array<f32, 16>& vp) {
     // Moho's RenderReflections (M213b): the units, mirrored in the water's
     // plane, into a target of their own cleared to transparent black, which
     // the water's surface reads. The scene's pass and pipelines draw it; the
@@ -2186,346 +1992,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         mirror.clearValueCount = static_cast<u32>(cleared.size());
         mirror.pClearValues = cleared.data();
         vkCmdBeginRenderPass(cmd_buf_[fi], &mirror, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport mirror_vp{};
-        mirror_vp.width = static_cast<f32>(window_width_);
-        mirror_vp.height = static_cast<f32>(window_height_);
-        mirror_vp.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &mirror_vp);
-        VkRect2D mirror_scissor{};
-        mirror_scissor.extent = {window_width_, window_height_};
-        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &mirror_scissor);
+        set_window_viewport(cmd_buf_[fi]);
         draw_meshes(cmd_buf_[fi], fi, mirrored_view_proj(vp, water_renderer_.water_elevation()),
                     MeshPass::Reflection);
         vkCmdEndRenderPass(cmd_buf_[fi]);
     }
-
-    // ==================== MAIN PASS ====================
-    PROFILE_ZONE("Render::main_pass");
-
-    bool do_bloom = bloom_enabled_ && bloom_.ready();
-
-    // Always render scene to offscreen HDR image (frame_.scene_pass()).
-    // Composite pass copies scene to swapchain, adding bloom when enabled.
-    std::array<VkClearValue, 2> clear_values{};
-    // Black, and no glow, as Moho clears the head; the sky dome draws over it
-    clear_values[0].color = {{clear_color_[0], clear_color_[1], clear_color_[2], clear_color_[3]}};
-    clear_values[1].depthStencil = {1.0f, 0};
-
-    // Split around the water on a map with it (M213a), and before the
-    // refracting particles on a frame with them (M214d), each for a copy of
-    // the frame. Below graphics fidelity 2 there is neither: the low
-    // fidelity water refracts nothing, and Moho draws no refracting effects
-    // (M213d).
-    const bool high_water = water_renderer_.has_water() && fidelity() >= 2;
-    const bool refracting = fidelity() >= 2 && particle_renderer_.refracting();
-    VkRenderPassBeginInfo rp_begin{};
-    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass = high_water || refracting ? frame_.first_pass() : frame_.scene_pass();
-    rp_begin.framebuffer = frame_.scene_framebuffer();
-    rp_begin.renderArea.extent = {window_width_, window_height_};
-    rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
-    rp_begin.pClearValues = clear_values.data();
-    vkCmdBeginRenderPass(cmd_buf_[fi], &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Dynamic viewport + scissor
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(window_width_);
-    viewport.height = static_cast<f32>(window_height_);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.extent = {window_width_, window_height_};
-    vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
-
-    // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b),
-    // unless ren_SkyDome is off (the render_skydome option): the clear shows
-    if (video_options_.skydome) sky_renderer_.record(cmd_buf_[fi], fi);
-
-    // 1. Draw terrain: at graphics fidelity 0 the low fidelity terrain
-    // (LowFidelityTerrain, M212h), else the map's own shader (Medium and
-    // High alike)
-    const bool low_terrain = fidelity() == 0 && terrain_low_pipeline_;
-    if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                           low_terrain ? terrain_low_pipeline_ : terrain_pipeline_);
-
-        // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
-        // pad(8) + eye(12) = 92B
-        struct TerrainPC {
-            f32 viewProj[16];
-            f32 mapWidth;
-            f32 mapHeight;
-            f32 terrainTime, _pad1;
-            f32 eyeX, eyeY, eyeZ;
-        } tpc{};
-        static_assert(sizeof(TerrainPC) == 92, "matches terrain_vert/frag's push block");
-        std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
-        tpc.mapWidth = terrain_map_width_;
-        tpc.mapHeight = terrain_map_height_;
-        tpc.terrainTime = terrain_time_.value();
-        camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
-
-        vkc::push_constants(cmd_buf_[fi], terrain_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                            sizeof(tpc), &tpc);
-
-        // Bind terrain texture descriptor set (set=0)
-        if (terrain_tex_ds_) {
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      terrain_layout_, 0, 1, &terrain_tex_ds_, 0, nullptr);
-        }
-        // Bind shadow descriptor set (set=1)
-        if (shadow_ds_[fi]) {
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      terrain_layout_, 1, 1, &shadow_ds_[fi], 0, nullptr);
-        }
-
-        VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
-                             VK_INDEX_TYPE_UINT32);
-        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
-    }
-
-    // 2. The decals, as HighFidelityTerrain's DrawNormals draws them: the
-    // glow masks, the Albedo and the AlbedoXP passes (DrawDecalPass), the
-    // splats (DrawSplatComposite), then the glowing decals
-    // (DrawGlowingDecals). Each pass the map's decals (M212b) and then the
-    // scripts' (M212c), faded by their LOD (GetLODAlpha). The normal decals
-    // drew in the normal pass (M212e).
-    // Medium and Low have no AlbedoXP pass; Low draws the water's albedo
-    // decals here, before the water (LowFidelityTerrain::DrawNormals, M212h).
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::GlowMask, decal_glow_mask_pipeline_, vp);
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::Albedo, decal_pipeline_, vp);
-    if (fidelity() >= 2)
-        record_decals(cmd_buf_[fi], fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
-    if (fidelity() == 0)
-        record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
-    if (decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi]) {
-        f32 ex = 0;
-        f32 ey = 0;
-        f32 ez = 0;
-        camera_.eye_position(ex, ey, ez);
-        runtime_decals_.draw_splats(cmd_buf_[fi], fi, vp, {ex, ey, ez},
-                                    static_cast<f32>(terrain_->map_width()),
-                                    static_cast<f32>(terrain_->map_height()), terrain_tex_ds_,
-                                    shadow_ds_[fi], fidelity() == 0);
-    }
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
-
-    // 2b. The range overlays, on the terrain before the meshes
-    // (WRenViewport::Render's RangeRenderer::Render)
-    range_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-
-    // 3. The meshes (real SCM models with GPU skinning): on a map with water,
-    // those Moho draws before it (M213b)
-    draw_meshes(cmd_buf_[fi], fi, vp,
-                water_renderer_.has_water() ? MeshPass::BeforeWater : MeshPass::All);
-
-    // 4. Draw cube fallback units (skip when strategic zoom active)
-    if (!strategic_icon_renderer_.is_strategic_zoom() &&
-        unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_pipeline_);
-
-        // Bind shadow descriptor set at set=0
-        if (shadow_ds_[fi]) {
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_layout_,
-                                      0, 1, &shadow_ds_[fi], 0, nullptr);
-        }
-
-        struct UnitPC {
-            f32 viewProj[16];
-            f32 eyeX, eyeY, eyeZ;
-        } upc{};
-        std::memcpy(upc.viewProj, vp.data(), sizeof(f32) * 16);
-        camera_.eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
-        vkc::push_constants(cmd_buf_[fi], unit_layout_,
-                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                            sizeof(upc), &upc);
-
-        VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
-                            unit_renderer_.cube_instance_buffer()};
-        VkDeviceSize offsets[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
-                             VK_INDEX_TYPE_UINT32);
-        vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
-                          unit_renderer_.cube_instance_count(), 0, 0, 0);
-    }
-
-    // 4b. FA's particles and trails under the water, a negative SortOrder's
-    // (M214b-c)
-    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
-    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
-
-    // 5. FA's water (M213a), as CWorldView draws it: its alpha mask (alpha 0
-    // over open water), a copy of the frame so far, then the surface, which
-    // refracts the copy, in a pass that goes on from the first (and, with
-    // refracting particles to come, ends as it does).
-    // Below graphics fidelity 2, Water_LowFidelity, with no mask and no copy
-    // (LowFidelityWater, M213d).
-    if (water_renderer_.has_water()) {
-        if (high_water) {
-            water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
-            copy_and_continue(cmd_buf_[fi],
-                              refracting ? frame_.middle_pass() : frame_.second_pass());
-            water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
-        } else {
-            water_renderer_.render_surface_low(cmd_buf_[fi], window_width_, window_height_, fi);
-        }
-        // The water's albedo decals on its surface (M212g), as the terrain
-        // draws them once the water is down (Medium and High; Low drew them).
-        if (fidelity() > 0)
-            record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
-        // The meshes Moho draws after the water (M213b), which writes no
-        // depth: over it, unrefracted.
-        draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
-    }
-
-    // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
-    // Moho's CWorldParticles::RenderEffects draws them
-    beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
-    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
-    // The last of the meshes, after the effects above the water: the
-    // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
-    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
-    // The order lines and waypoints, over the world (TCommand)
-    command_graph_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-    selection_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-
-    // 5c. FA's refracting particles (M214d), as WRenViewport's
-    // RenderRefractingEffects draws them: last, over a copy of the finished
-    // frame.
-    if (refracting) {
-        copy_and_continue(cmd_buf_[fi], frame_.second_pass());
-        particle_renderer_.render_refracting(cmd_buf_[fi], window_width_, window_height_, vp.data(),
-                                             fi);
-    }
-
-    // ==================== COMPOSITE + BLOOM ====================
-    // Scene always renders to offscreen HDR. End scene pass, optionally run
-    // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
-    vkCmdEndRenderPass(cmd_buf_[fi]);
-    const bool scene_capturing = record_scene_capture(cmd_buf_[fi]);
-
-    if (do_bloom)
-        bloom_.record(cmd_buf_[fi], kBloomGlowCopyScale, lighting_.bloom, kBloomBlurKernelScale,
-                      kBloomBlurCount);
-
-    // Begin swapchain render pass for composite + UI
-    std::array<VkClearValue, 2> swap_clear{};
-    swap_clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-    swap_clear[1].depthStencil = {1.0f, 0};
-
-    VkRenderPassBeginInfo swap_rp{};
-    swap_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    swap_rp.renderPass = render_pass_;
-    swap_rp.framebuffer = framebuffers_[image_index];
-    swap_rp.renderArea.extent = {window_width_, window_height_};
-    swap_rp.clearValueCount = static_cast<u32>(swap_clear.size());
-    swap_rp.pClearValues = swap_clear.data();
-    vkCmdBeginRenderPass(cmd_buf_[fi], &swap_rp, VK_SUBPASS_CONTENTS_INLINE);
-
-    vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
-    vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
-
-    // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
-    bloom_.composite(cmd_buf_[fi], do_bloom);
-
-    // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
-    if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        strategic_icon_renderer_.render(cmd_buf_[fi], ui_layout_,
-                                         window_width_, window_height_);
-    }
-
-    // 7. Draw game overlays (health bars, selection, command lines)
-    if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        overlay_renderer_.render(cmd_buf_[fi], ui_layout_,
-                                 window_width_, window_height_);
-    }
-
-    // 8. Draw minimap (terrain bg + unit dots + camera box)
-    if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
-                                  window_width_, window_height_);
-    }
-
-    // 9. Draw economy HUD (resource bars + text at top of screen)
-    if (legacy_hud_active_ && ui_pipeline_ && hud_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        hud_renderer_.render(cmd_buf_[fi], ui_layout_,
-                              window_width_, window_height_);
-    }
-
-    // 10. Draw selection info panel (bottom-center unit details)
-    if (legacy_hud_active_ && ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        selection_info_renderer_.render(cmd_buf_[fi], ui_layout_,
-                                         window_width_, window_height_);
-    }
-
-    // 11. Draw UI (screen-space 2D quads, last — always on top)
-    if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        ui_renderer_.render(cmd_buf_[fi], ui_layout_,
-                            window_width_, window_height_);
-    }
-
-    // 12. Draw profile overlay (topmost, after all other UI)
-    if (ui_pipeline_ && profile_overlay_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        profile_overlay_.render(cmd_buf_[fi], ui_layout_,
-                                window_width_, window_height_);
-    }
-
-    vkCmdEndRenderPass(cmd_buf_[fi]);
-    gpu_queries_.end(cmd_buf_[fi], fi); // the frame's, not a capture's readback
-    const bool capturing = record_capture(cmd_buf_[fi], image_index);
-    vkEndCommandBuffer(cmd_buf_[fi]);
-
-    // Submit
-    PROFILE_ZONE("Render::submit");
-    VkPipelineStageFlags wait_stage =
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.waitSemaphoreCount = 1;
-    submit.pWaitSemaphores = &present_semaphore_[fi];
-    submit.pWaitDstStageMask = &wait_stage;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd_buf_[fi];
-    submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_finished_[image_index];
-    VK_CHECK(vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]));
-    last_command_counts_ = take_command_counts();
-    ++frame_sequence_;
-
-    // Present
-    VkPresentInfoKHR present{};
-    present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &render_finished_[image_index];
-    present.swapchainCount = 1;
-    present.pSwapchains = &swapchain_;
-    present.pImageIndices = &image_index;
-    VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
-    if (capturing) deliver_capture();
-    if (scene_capturing) deliver_scene_capture();
-
-    if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
-        pres_result == VK_SUBOPTIMAL_KHR) {
-        recreate_swapchain();
-    }
-
-    // Advance frame index for next frame
-    frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
 // --- UI-only rendering (loading screen) ---
@@ -2934,41 +2405,13 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     }
 
     // Begin command buffer
-    vkResetCommandBuffer(cmd_buf_[fi], 0);
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
+    begin_commands(fi);
 
     // The movies' new frames (before the render pass).
     movie_textures_.record(cmd_buf_[fi]);
 
     // Begin swapchain render pass (NOT frame_.scene_pass())
-    // render_pass_ has 2 attachments: color + depth
-    std::array<VkClearValue, 2> clear{};
-    clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-    clear[1].depthStencil = {1.0f, 0};
-
-    VkRenderPassBeginInfo rp{};
-    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp.renderPass = render_pass_;
-    rp.framebuffer = framebuffers_[image_index];
-    rp.renderArea.extent = {window_width_, window_height_};
-    rp.clearValueCount = static_cast<u32>(clear.size());
-    rp.pClearValues = clear.data();
-    vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Set viewport and scissor (required for dynamic state pipelines)
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(window_width_);
-    viewport.height = static_cast<f32>(window_height_);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.extent = {window_width_, window_height_};
-    vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
+    begin_swapchain_pass(fi, image_index);
 
     if (ui_registry && L && ui_pipeline_ && ui_renderer_.quad_count() > 0) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
@@ -2977,9 +2420,519 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
 
     vkCmdEndRenderPass(cmd_buf_[fi]);
     const bool capturing = record_capture(cmd_buf_[fi], image_index);
+    submit_and_present(fi, image_index, false, capturing, false);
+}
+
+void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
+                                  const sim::FrameView& view, sim::WorldEvents& events,
+                                  const BuildGhost* ghost, lua_State* L,
+                                  ui::UIControlRegistry* ui_registry,
+                                  const std::unordered_set<u32>* selected_ids) {
+    // What the player's army sees this tick (everything, with the fog off)
+    recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
+    recon_.update(view, events.intel_flushes);
+    events.intel_flushes.clear();
+    // A playable rect the scripts synced since: what's outside it now hides
+    playable_rect_.apply(view);
+
+    // Before the meshes: its planned sites are ghosts among them
+    command_graph_renderer_.set_highlight(highlight_command_, hovered_);
+    command_graph_renderer_.update(view, camera_, selected_ids, player_army_, texture_cache_, L,
+                                   unit_renderer_.shader_time() / 10.0f, window_height_,
+                                   (!ui_keys_blocked_ && (is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                                                          is_key_pressed(GLFW_KEY_RIGHT_SHIFT))) ||
+                                       command_drag_held_,
+                                   fi);
+
+    // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
+    {
+        PROFILE_ZONE("Render::unit_update");
+        // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
+        // decides it below, from the same camera)
+        const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
+        unit_renderer_.set_ghost_slots(
+            1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
+            static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
+            static_cast<u32>(feedback_blips_.blips().size()));
+        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
+                              &frustum, meshes_drawn);
+    }
+    // A bone SSBO the update grew is a new buffer for this slot's set.
+    if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))
+        write_bone_descriptor(fi);
+
+    // Build preview ghost — a semi-transparent mesh where input places it
+    if (ghost && !ghost->blueprint_id.empty()) {
+        // Green = valid, Red = invalid
+        f32 gr = ghost->valid ? 0.2f : 1.0f;
+        f32 gg = ghost->valid ? 0.9f : 0.2f;
+        f32 gb = ghost->valid ? 0.3f : 0.2f;
+
+        const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
+        if (ghost_mesh) {
+            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
+                                        &texture_cache_);
+        }
+        // A drag's other sites, or a build template's other structures, each
+        // its own blueprint's mesh
+        for (const BuildGhost& site : ghost->line) {
+            const GPUMesh* mesh = site.blueprint_id == ghost->blueprint_id
+                                      ? ghost_mesh
+                                      : mesh_cache_.get(site.blueprint_id, L);
+            if (!mesh) continue;
+            unit_renderer_.inject_ghost(mesh, site.x, site.y, site.z, site.valid ? 0.2f : 1.0f,
+                                        site.valid ? 0.9f : 0.2f, site.valid ? 0.3f : 0.2f,
+                                        &texture_cache_);
+        }
+    }
+    for (const auto& site : command_graph_renderer_.planned_sites()) {
+        if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
+            unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
+                                        0.2f, 0.9f, 0.3f, &texture_cache_);
+        }
+    }
+
+    // The frame's step, which the particles and overlays run on, with or
+    // without a UI (an offscreen test has none).
+    {
+        const f64 now = glfwGetTime();
+        f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
+        last_frame_time_ = now;
+        if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
+        frame_dt_ = dt;
+        wave_clock_ += static_cast<f64>(dt);
+    }
+    // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
+    feedback_blips_.update(frame_dt_);
+    inject_feedback_blips(L);
+
+    // Update UI quads (walk control tree, read LazyVar positions)
+    if (ui_registry) {
+        PROFILE_ZONE("Render::ui_update");
+        const f32 dt = frame_dt_;
+        total_time_ += dt;
+        if (dt > 0.0f && dt < 1.0f) {
+            ui_renderer_.advance_animations(L, *ui_registry, dt);
+            ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
+        }
+        ui_dispatch_.dispatch_events(L, *ui_registry);
+        // FA's minimap WorldView shows the minimap, drawn with the UI.
+        WorldViewPainter minimap_painter;
+        if (!legacy_hud_active_) {
+            painted_minimap_.clear();
+            minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
+                const size_t first = out.size();
+                minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
+                                        window_width_, window_height_, out);
+                painted_minimap_.insert(painted_minimap_.end(),
+                                        out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
+            };
+        }
+        movie_textures_.prepare(*ui_registry, fi);
+        update_system_cursor(L);
+        ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
+                            window_width_, window_height_,
+                            static_cast<f32>(ui_dispatch_.mouse_x()),
+                            static_cast<f32>(ui_dispatch_.mouse_y()),
+                            minimap_painter);
+    }
+
+    // Stage fog of war data from visibility grid (CPU side)
+    if (fog_enabled_ && fog_renderer_.initialized() && view.cur()) {
+        if (player_army_ >= 0 && view.cur()->sight.army == player_army_)
+            fog_renderer_.stage(view.cur()->sight);
+        else fog_renderer_.stage_clear(); // an observer's: all visible
+    }
+
+    // Effects are made at the player's graphics fidelity (graphics_Fidelity).
+    beam_renderer_.set_fidelity(fidelity());
+    trail_renderer_.set_fidelity(fidelity());
+    particle_system_.set_fidelity(fidelity());
+    // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
+    beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
+                          unit_renderer_.shader_time(), fi);
+    // And its trails, which likewise leave their dots to them (M214b)
+    trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
+                           fi);
+    // And its particles, likewise; a new tick's emission, then this frame's quads (M214c)
+    {
+        PROFILE_ZONE("Render::particle_update");
+        // The waves in view emit on the system clock (M213c)
+        if (view.cur()) {
+            waves_emitted_.clear();
+            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
+            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
+        }
+        particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
+        particle_renderer_.update(particle_system_, texture_cache_, fi);
+    }
+
+    selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
+                               drag_box_, texture_cache_, L, fi);
+
+    // FA's range overlays (Moho's RangeRenderer), for the focus army
+    {
+        PROFILE_ZONE("Render::range_update");
+        const RangeScene scene = collect_range_scene(
+            range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
+            ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
+            ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
+        const auto& rect = camera_.playable_rect();
+        const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
+        range_renderer_.update(range_batches(range_overlays_, scene), range_overlays_.settings(),
+                               span, camera_.zoom() / camera_.max_zoom(), fi);
+    }
+
+    // Update game overlays (health bars, selection circles, game over)
+    {
+        PROFILE_ZONE("Render::overlay_update");
+        const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
+        overlay_renderer_.set_hovered(hovered_);
+        overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
+                                 window_width_, window_height_, game_result, frame_dt_, &frustum,
+                                 ghost);
+    }
+
+    // FA's water: this frame's camera and time (M213a)
+    water_renderer_.update(camera_, vp, unit_renderer_.shader_time(), fi);
+    // The sky: its time is the tick and the interpolant, unwrapped (M210b)
+    sky_renderer_.update(camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
+
+    // Scripts' decals and splats: this tick's, as the player's army sees
+    // them (M212c)
+    if (terrain_) {
+        PROFILE_ZONE("Render::runtime_decals");
+        f32 ex = 0;
+        f32 ey = 0;
+        f32 ez = 0;
+        camera_.eye_position(ex, ey, ez);
+        const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
+        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
+                               terrain_mesh_, camera_.view(), {ex, ey, ez},
+                               camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi,
+                               fidelity());
+    }
+
+    // The terrain's Time (M212f): set when the terrain would re-tessellate,
+    // so TTerrainGlow's lava stands still under a still camera, as in FA.
+    if (const sim::WorldSnapshot* cur = view.cur()) {
+        const u64 decals = static_cast<u64>(runtime_decals_.decal_draws().size()) |
+                           (static_cast<u64>(runtime_decals_.splat_count()) << 32);
+        terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
+    }
+
+    // Update minimap (terrain bg, unit dots, camera frustum box)
+    if (legacy_hud_active_)
+        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
+                                  window_width_, window_height_);
+
+    // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
+    strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
+                                    window_height_, L);
+
+    if (legacy_hud_active_) {
+        // Update economy HUD
+        hud_renderer_.update(view, player_army_, font_cache_, texture_cache_,
+                              window_width_, window_height_);
+
+        // Update selection info panel
+        selection_info_renderer_.update(view, selected_ids, font_cache_, texture_cache_,
+                                        strategic_icon_renderer_.atlas_descriptor(),
+                                        window_width_, window_height_);
+    }
+
+    // Update profile overlay
+    profile_overlay_.update(font_cache_, texture_cache_,
+                             window_width_, window_height_);
+}
+
+void Renderer::begin_commands(u32 fi) {
+    vkResetCommandBuffer(cmd_buf_[fi], 0);
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
+}
+
+void Renderer::set_window_viewport(VkCommandBuffer cmd) const {
+    VkViewport viewport{};
+    viewport.width = static_cast<f32>(window_width_);
+    viewport.height = static_cast<f32>(window_height_);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{};
+    scissor.extent = {window_width_, window_height_};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+}
+
+void Renderer::begin_swapchain_pass(u32 fi, u32 image_index) {
+    // render_pass_ has 2 attachments: color + depth
+    std::array<VkClearValue, 2> clear{};
+    clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clear[1].depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = render_pass_;
+    rp.framebuffer = framebuffers_[image_index];
+    rp.renderArea.extent = {window_width_, window_height_};
+    rp.clearValueCount = static_cast<u32>(clear.size());
+    rp.pClearValues = clear.data();
+    vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
+    set_window_viewport(cmd_buf_[fi]);
+}
+
+void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
+    // Always render scene to offscreen HDR image (frame_.scene_pass()).
+    // Composite pass copies scene to swapchain, adding bloom when enabled.
+    std::array<VkClearValue, 2> clear_values{};
+    // Black, and no glow, as Moho clears the head; the sky dome draws over it
+    clear_values[0].color = {{clear_color_[0], clear_color_[1], clear_color_[2], clear_color_[3]}};
+    clear_values[1].depthStencil = {1.0f, 0};
+
+    // Split around the water on a map with it (M213a), and before the
+    // refracting particles on a frame with them (M214d), each for a copy of
+    // the frame. Below graphics fidelity 2 there is neither: the low
+    // fidelity water refracts nothing, and Moho draws no refracting effects
+    // (M213d).
+    const bool high_water = water_renderer_.has_water() && fidelity() >= 2;
+    const bool refracting = fidelity() >= 2 && particle_renderer_.refracting();
+    VkRenderPassBeginInfo rp_begin{};
+    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp_begin.renderPass = high_water || refracting ? frame_.first_pass() : frame_.scene_pass();
+    rp_begin.framebuffer = frame_.scene_framebuffer();
+    rp_begin.renderArea.extent = {window_width_, window_height_};
+    rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
+    rp_begin.pClearValues = clear_values.data();
+    vkCmdBeginRenderPass(cmd_buf_[fi], &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Dynamic viewport + scissor
+    set_window_viewport(cmd_buf_[fi]);
+
+    // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b),
+    // unless ren_SkyDome is off (the render_skydome option): the clear shows
+    if (video_options_.skydome) sky_renderer_.record(cmd_buf_[fi], fi);
+
+    // 1. Draw terrain: at graphics fidelity 0 the low fidelity terrain
+    // (LowFidelityTerrain, M212h), else the map's own shader (Medium and
+    // High alike)
+    const bool low_terrain = fidelity() == 0 && terrain_low_pipeline_;
+    if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           low_terrain ? terrain_low_pipeline_ : terrain_pipeline_);
+
+        // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
+        // pad(8) + eye(12) = 92B
+        struct TerrainPC {
+            f32 viewProj[16];
+            f32 mapWidth;
+            f32 mapHeight;
+            f32 terrainTime, _pad1;
+            f32 eyeX, eyeY, eyeZ;
+        } tpc{};
+        static_assert(sizeof(TerrainPC) == 92, "matches terrain_vert/frag's push block");
+        std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
+        tpc.mapWidth = terrain_map_width_;
+        tpc.mapHeight = terrain_map_height_;
+        tpc.terrainTime = terrain_time_.value();
+        camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
+
+        vkc::push_constants(cmd_buf_[fi], terrain_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(tpc), &tpc);
+
+        // Bind terrain texture descriptor set (set=0)
+        if (terrain_tex_ds_) {
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      terrain_layout_, 0, 1, &terrain_tex_ds_, 0, nullptr);
+        }
+        // Bind shadow descriptor set (set=1)
+        if (shadow_ds_[fi]) {
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      terrain_layout_, 1, 1, &shadow_ds_[fi], 0, nullptr);
+        }
+
+        VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
+                             VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+    }
+
+    // 2. The decals, as HighFidelityTerrain's DrawNormals draws them: the
+    // glow masks, the Albedo and the AlbedoXP passes (DrawDecalPass), the
+    // splats (DrawSplatComposite), then the glowing decals
+    // (DrawGlowingDecals). Each pass the map's decals (M212b) and then the
+    // scripts' (M212c), faded by their LOD (GetLODAlpha). The normal decals
+    // drew in the normal pass (M212e).
+    // Medium and Low have no AlbedoXP pass; Low draws the water's albedo
+    // decals here, before the water (LowFidelityTerrain::DrawNormals, M212h).
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::GlowMask, decal_glow_mask_pipeline_, vp);
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::Albedo, decal_pipeline_, vp);
+    if (fidelity() >= 2)
+        record_decals(cmd_buf_[fi], fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
+    if (fidelity() == 0)
+        record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
+    if (decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi]) {
+        f32 ex = 0;
+        f32 ey = 0;
+        f32 ez = 0;
+        camera_.eye_position(ex, ey, ez);
+        runtime_decals_.draw_splats(cmd_buf_[fi], fi, vp, {ex, ey, ez},
+                                    static_cast<f32>(terrain_->map_width()),
+                                    static_cast<f32>(terrain_->map_height()), terrain_tex_ds_,
+                                    shadow_ds_[fi], fidelity() == 0);
+    }
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
+
+    // 2b. The range overlays, on the terrain before the meshes
+    // (WRenViewport::Render's RangeRenderer::Render)
+    range_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+
+    // 3. The meshes (real SCM models with GPU skinning): on a map with water,
+    // those Moho draws before it (M213b)
+    draw_meshes(cmd_buf_[fi], fi, vp,
+                water_renderer_.has_water() ? MeshPass::BeforeWater : MeshPass::All);
+
+    // 4. Draw cube fallback units (skip when strategic zoom active)
+    if (!strategic_icon_renderer_.is_strategic_zoom() &&
+        unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_pipeline_);
+
+        // Bind shadow descriptor set at set=0
+        if (shadow_ds_[fi]) {
+            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_layout_,
+                                      0, 1, &shadow_ds_[fi], 0, nullptr);
+        }
+
+        struct UnitPC {
+            f32 viewProj[16];
+            f32 eyeX, eyeY, eyeZ;
+        } upc{};
+        std::memcpy(upc.viewProj, vp.data(), sizeof(f32) * 16);
+        camera_.eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
+        vkc::push_constants(cmd_buf_[fi], unit_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(upc), &upc);
+
+        VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
+                            unit_renderer_.cube_instance_buffer()};
+        VkDeviceSize offsets[] = {0, 0};
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
+                             VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
+                          unit_renderer_.cube_instance_count(), 0, 0, 0);
+    }
+
+    // 4b. FA's particles and trails under the water, a negative SortOrder's
+    // (M214b-c)
+    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
+    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
+
+    // 5. FA's water (M213a), as CWorldView draws it: its alpha mask (alpha 0
+    // over open water), a copy of the frame so far, then the surface, which
+    // refracts the copy, in a pass that goes on from the first (and, with
+    // refracting particles to come, ends as it does).
+    // Below graphics fidelity 2, Water_LowFidelity, with no mask and no copy
+    // (LowFidelityWater, M213d).
+    if (water_renderer_.has_water()) {
+        if (high_water) {
+            water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
+            copy_and_continue(cmd_buf_[fi],
+                              refracting ? frame_.middle_pass() : frame_.second_pass());
+            water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
+        } else {
+            water_renderer_.render_surface_low(cmd_buf_[fi], window_width_, window_height_, fi);
+        }
+        // The water's albedo decals on its surface (M212g), as the terrain
+        // draws them once the water is down (Medium and High; Low drew them).
+        if (fidelity() > 0)
+            record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
+        // The meshes Moho draws after the water (M213b), which writes no
+        // depth: over it, unrefracted.
+        draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
+    }
+
+    // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
+    // Moho's CWorldParticles::RenderEffects draws them
+    beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
+    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
+    // The last of the meshes, after the effects above the water: the
+    // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
+    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
+    // The order lines and waypoints, over the world (TCommand)
+    command_graph_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+    selection_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+
+    // 5c. FA's refracting particles (M214d), as WRenViewport's
+    // RenderRefractingEffects draws them: last, over a copy of the finished
+    // frame.
+    if (refracting) {
+        copy_and_continue(cmd_buf_[fi], frame_.second_pass());
+        particle_renderer_.render_refracting(cmd_buf_[fi], window_width_, window_height_, vp.data(),
+                                             fi);
+    }
+}
+
+void Renderer::record_screen_layers(u32 fi) {
+    // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
+    if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        strategic_icon_renderer_.render(cmd_buf_[fi], ui_layout_,
+                                         window_width_, window_height_);
+    }
+
+    // 7. Draw game overlays (health bars, selection, command lines)
+    if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        overlay_renderer_.render(cmd_buf_[fi], ui_layout_,
+                                 window_width_, window_height_);
+    }
+
+    // 8. Draw minimap (terrain bg + unit dots + camera box)
+    if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
+                                  window_width_, window_height_);
+    }
+
+    // 9. Draw economy HUD (resource bars + text at top of screen)
+    if (legacy_hud_active_ && ui_pipeline_ && hud_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        hud_renderer_.render(cmd_buf_[fi], ui_layout_,
+                              window_width_, window_height_);
+    }
+
+    // 10. Draw selection info panel (bottom-center unit details)
+    if (legacy_hud_active_ && ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        selection_info_renderer_.render(cmd_buf_[fi], ui_layout_,
+                                         window_width_, window_height_);
+    }
+
+    // 11. Draw UI (screen-space 2D quads, last — always on top)
+    if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        ui_renderer_.render(cmd_buf_[fi], ui_layout_,
+                            window_width_, window_height_);
+    }
+
+    // 12. Draw profile overlay (topmost, after all other UI)
+    if (ui_pipeline_ && profile_overlay_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        profile_overlay_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
+    }
+}
+
+void Renderer::submit_and_present(u32 fi, u32 image_index, bool world, bool capturing,
+                                  bool scene_capturing) {
     vkEndCommandBuffer(cmd_buf_[fi]);
 
     // Submit
+    PROFILE_ZONE("Render::submit");
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2990,8 +2943,13 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     submit.pCommandBuffers = &cmd_buf_[fi];
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_finished_[image_index];
-    vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]);
-    (void)take_command_counts(); // a UI-only frame's aren't a world frame's
+    VK_CHECK(vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]));
+    if (world) {
+        last_command_counts_ = take_command_counts();
+        ++frame_sequence_;
+    } else {
+        (void)take_command_counts(); // a UI-only frame's aren't a world frame's
+    }
 
     // Present
     VkPresentInfoKHR present{};
@@ -3001,14 +2959,15 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &image_index;
-    VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
+    const VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
     if (capturing) deliver_capture();
+    if (scene_capturing) deliver_scene_capture();
 
-    if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
-        pres_result == VK_SUBOPTIMAL_KHR) {
+    if (pres_result == VK_ERROR_OUT_OF_DATE_KHR || pres_result == VK_SUBOPTIMAL_KHR) {
         recreate_swapchain();
     }
 
+    // Advance frame index for next frame
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
