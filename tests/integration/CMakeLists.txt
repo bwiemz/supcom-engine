@@ -142,6 +142,17 @@ endfunction()
 foreach(mode IN LISTS OSC_DATA_TESTS_GATE)
     osc_add_data_test(${mode} gate)
 endforeach()
+# The modes whose checks Moho's pathing changes (--moho-pathing, off by
+# default), again with it: each holds its expectations both ways until the
+# flag is the default.
+foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test)
+    add_test(NAME data.moho.${mode}
+             COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode} --moho-pathing)
+    set_tests_properties(data.moho.${mode} PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+endforeach()
 # M212f: the one TTerrainGlow map, Varga Pass
 add_test(NAME data.terrain-glow-test
          COMMAND osc_integration --map /maps/SCMP_023/SCMP_023_scenario.lua --terrain-glow-test)

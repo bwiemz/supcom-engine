@@ -23,8 +23,10 @@ namespace osc::test {
 u32 army_acu_id(sim::SimState& sim, i32 army);
 
 /// Lua helpers for the embedded test scripts, e.g. __osc_test_acu_id(army)
-/// (1-based army, mirroring the Lua convention) -> entity id or nil.
-void register_test_helpers(lua_State* L);
+/// (1-based army, mirroring the Lua convention) -> entity id or nil; and
+/// __osc_moho_pathing, whether the run has --moho-pathing, for the checks
+/// whose numbers Moho's pathing changes.
+void register_test_helpers(lua_State* L, bool moho_pathing);
 
 /// Dependencies shared across all integration tests.
 struct TestContext {
