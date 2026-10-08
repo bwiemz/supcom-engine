@@ -103,14 +103,22 @@ bool queued_build(const UnitCommand& c) {
            (c.type == CommandType::BuildMobile && !c.blueprint_id.empty());
 }
 
+/// The units an order still makes: a factory build's count, else one.
+int units_of(const UnitCommand& c) {
+    return c.type == CommandType::BuildFactory ? std::max(c.count, 1) : 1;
+}
+
 } // namespace
 
 std::vector<BuildQueueEntry> Unit::factory_queue() const {
+    // Moho's RebuildFactoryQueueDisplaySnapshot: a run of one blueprint's
+    // orders is one entry, their counts summed.
     std::vector<BuildQueueEntry> groups;
     for (const auto& c : command_queue_) {
         if (!queued_build(c)) continue;
-        if (!groups.empty() && groups.back().blueprint_id == c.blueprint_id) ++groups.back().count;
-        else groups.push_back({c.blueprint_id, 1});
+        if (!groups.empty() && groups.back().blueprint_id == c.blueprint_id)
+            groups.back().count += units_of(c);
+        else groups.push_back({c.blueprint_id, units_of(c)});
     }
     return groups;
 }
@@ -131,13 +139,21 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
         }
         if (g == index) group.push_back(i);
     }
-    // Newest first, so earlier positions stay valid.
+    // Newest first, so earlier positions stay valid; a factory build's
+    // count goes down first, the order with it at none.
     const bool in_progress = building_factory_order();
     bool cancel = false;
-    for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it, --count) {
+    for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it) {
+        UnitCommand& c = command_queue_[*it];
         // A structure a builder is at stays its work, as Stop leaves it
-        if (*it == 0 && command_queue_[0].type == CommandType::BuildMobile && build_target_id_) {
+        if (*it == 0 && c.type == CommandType::BuildMobile && build_target_id_) {
             break;
+        }
+        const int take = std::min(count, units_of(c));
+        count -= take;
+        if (c.type == CommandType::BuildFactory && c.count > take) {
+            c.count -= take; // (its high-water mark stays: Moho's DecreaseCount)
+            continue;
         }
         if (*it == 0 && in_progress) cancel = true;
         command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
@@ -187,15 +203,11 @@ void Unit::increase_build_count(int index, int count) {
         if (g == index) last = i;
     }
     if (!last || command_queue_[*last].type != CommandType::BuildFactory) return;
-    // More of the same order, as Moho counts one factory command up: the
-    // blueprint and the command it was issued as, none of the runtime state
-    // of the group's last order (which may be the one under way).
-    UnitCommand more;
-    more.type = CommandType::BuildFactory;
-    more.blueprint_id = command_queue_[*last].blueprint_id;
-    more.command_id = command_queue_[*last].command_id;
-    command_queue_.insert(command_queue_.begin() + static_cast<std::ptrdiff_t>(*last + 1),
-                          static_cast<size_t>(count), more);
+    // Moho's IncreaseBuildCountInQueue raises the group's newest order's
+    // count (CUnitCommand::IncreaseCount), its high-water mark with it.
+    UnitCommand& order = command_queue_[*last];
+    order.count = std::max(order.count, 1) + count;
+    order.max_count = std::max(order.max_count, order.count);
 }
 
 void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {

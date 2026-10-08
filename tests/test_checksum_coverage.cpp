@@ -206,6 +206,23 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
              }},
             {"a patrol's look-about clock", "orders",
              [&] { order([](UnitCommand& c) { c.patrol_scan = 4; }); }},
+            {"a raised factory build", "orders",
+             [&] {
+                 order([](UnitCommand& c) {
+                     c.type = CommandType::BuildFactory;
+                     c.blueprint_id = "tank";
+                 });
+                 UnitCommand c = u.command_queue().front();
+                 c.count = 3;
+                 c.max_count = 3;
+                 u.push_command(c, true);
+             }},
+            {"its count down, its most kept", "orders",
+             [&] {
+                 UnitCommand c = u.command_queue().front();
+                 c.count = 2;
+                 u.push_command(c, true);
+             }},
             {"a platoon", "armies", [&] { sim.get_army(0)->create_platoon("Label"); }},
             {"its unique name", "armies",
              [&] { sim.get_army(0)->platoon_at(0)->set_unique_name("KeepMe"); }},

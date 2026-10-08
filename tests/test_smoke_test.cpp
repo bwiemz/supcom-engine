@@ -403,6 +403,72 @@ TEST_CASE("A repeating factory drops a build that fails", "[session][rules]") {
     CHECK(f->is_building());
 }
 
+TEST_CASE("A raised factory order builds its count as one order, then goes", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->increase_build_count(1, 2); // IncreaseBuildCountInQueue: one order of three
+    REQUIRE(f->command_queue().size() == 1);
+    CHECK(factory_orders(*f) == "test_tank test_tank test_tank");
+    for (int i = 0; i < 200 && !f->factory_queue().empty(); ++i) h.sim.tick();
+    CHECK(finished_units(h) == 3);
+    CHECK(f->command_queue().empty());
+}
+
+TEST_CASE("A repeating factory's raised order goes round whole, its count back at its most",
+          "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                              "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_repeat_queue(true);
+    f->increase_build_count(1, 3); // four tanks, its most four
+    f->decrease_build_count(1, 2, h.sim.entity_registry(), h.state.raw()); // two left
+    REQUIRE(f->command_queue().size() == 2);
+    CHECK(f->command_queue().front().count == 2);
+    CHECK(f->command_queue().front().max_count == 4);
+    CHECK(factory_orders(*f) == "test_tank test_tank test_experimental");
+
+    // The first tank done, the next starts at once from the same order
+    // (Moho dispatches it again that tick).
+    for (int i = 0; i < 100 && f->command_queue().front().count == 2; ++i) h.sim.tick();
+    CHECK(f->command_queue().front().count == 1);
+    CHECK(f->is_building());
+    CHECK(finished_units(h) == 1);
+
+    // Both built, the order goes to the back whole, four again; not two
+    // orders of one, as a copy per unit would go.
+    for (int i = 0; i < 100 && f->command_queue().front().blueprint_id == "test_tank"; ++i)
+        h.sim.tick();
+    CHECK(finished_units(h) == 2);
+    REQUIRE(f->command_queue().size() == 2);
+    CHECK(f->command_queue().back().blueprint_id == "test_tank");
+    CHECK(f->command_queue().back().count == 4);
+    CHECK(factory_orders(*f) == "test_experimental test_tank test_tank test_tank test_tank");
+}
+
+TEST_CASE("A raised factory order whose build fails goes whole", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                              "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_repeat_queue(true);
+    f->increase_build_count(1, 2);
+    h.sim.tick();
+    REQUIRE(f->is_building());
+    // The tank on the factory's floor is destroyed: the order goes, its two
+    // still to make with it (Moho's dispatch removes a failed command).
+    h.sim.entity_registry().find(f->build_target_id())->mark_destroyed();
+    h.sim.tick();
+    CHECK(factory_orders(*f) == "test_experimental");
+}
+
 namespace {
 
 osc::sim::Unit* find_unit(const BuildRuleHarness& h, const std::string& bp) {

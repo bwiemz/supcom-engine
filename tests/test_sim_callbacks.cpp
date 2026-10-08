@@ -528,7 +528,7 @@ TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", 
     CHECK((q[0].blueprint_id == "a" && q[0].count == 4));
 }
 
-TEST_CASE("Increasing a factory's queue adds to one group, after its last order", "[simcallback]") {
+TEST_CASE("Increasing a factory's queue counts up one group's newest order", "[simcallback]") {
     CallbackSim w;
     const osc::u32 id = w.spawn();
     Unit& f = w.unit(id);
@@ -559,14 +559,15 @@ TEST_CASE("Increasing a factory's queue adds to one group, after its last order"
     CHECK((q[0].blueprint_id == "a" && q[0].count == 3));
     CHECK((q[1].blueprint_id == "b" && q[1].count == 5));
     CHECK((q[2].blueprint_id == "a" && q[2].count == 1));
-    // The new orders are the group's command, without its run state.
+    // Moho's IncreaseCount: the group's newest order makes more, its most
+    // with it; no order is added, and its run state stays as it was.
     const auto& orders = f.command_queue();
-    for (size_t i = 5; i < 8; ++i) {
-        CHECK(orders[i].blueprint_id == "b");
-        CHECK(orders[i].command_id == 12);
-        CHECK_FALSE(orders[i].approached);
-    }
-    CHECK(orders[4].approached); // the one under way is left as it was
+    REQUIRE(orders.size() == 6);
+    CHECK(orders[4].blueprint_id == "b");
+    CHECK(orders[4].count == 4);
+    CHECK(orders[4].max_count == 4);
+    CHECK(orders[4].approached);
+    CHECK(orders[3].count == 1);
 
     // The first group too.
     cb.args["Index"] = 1.0;
@@ -576,7 +577,12 @@ TEST_CASE("Increasing a factory's queue adds to one group, after its last order"
 
     // Past the queue, or nonsense: nothing changes. A count past 1,000 is
     // refused: the request comes over the network, and FA asks for 1 or 5.
-    const size_t before = f.command_queue().size();
+    const auto counts = [&] {
+        std::vector<int> c;
+        for (const auto& g : f.factory_queue()) c.push_back(g.count);
+        return c;
+    };
+    const auto before = counts();
     for (const auto& [index, count] :
          {std::pair{4.0, 1.0}, std::pair{0.0, 1.0}, std::pair{1.0, 0.0}, std::pair{1.0, 1001.0}}) {
         cb.args["Index"] = index;
@@ -586,7 +592,7 @@ TEST_CASE("Increasing a factory's queue adds to one group, after its last order"
     cb.args["Index"] = std::string("1");
     cb.args["Count"] = 1.0;
     w.sim.run_sim_callback(cb);
-    CHECK(f.command_queue().size() == before);
+    CHECK(counts() == before);
     cb.args["Index"] = 1.0;
     cb.args["Count"] = 1000.0;
     w.sim.run_sim_callback(cb);

@@ -91,6 +91,13 @@ struct UnitCommand {
     /// Which script task runs this order (runtime state; 0 until one
     /// starts): the unit's task serial.
     u32 task_serial = 0;
+    /// A factory build's units still to make, and the most it has been
+    /// raised to (Moho's CUnitCommand mCount and mMaxCount; BuildFactory
+    /// only). An issued order is one unit; only IncreaseBuildCountInQueue
+    /// raises one, and a repeating factory's order goes round the queue
+    /// whole, its count back at the most.
+    i32 count = 1;
+    i32 max_count = 1;
     /// A factory command (Moho's IssueFactoryCommand, M206k): it goes to the
     /// units' rally orders, not their queues, and a fresh one clears those.
     /// A player's move, patrol or transport call to a selected factory.
