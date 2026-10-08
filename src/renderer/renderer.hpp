@@ -477,6 +477,54 @@ private:
     bool begin_frame_slot(u32 fi, u32& image_index);
     void create_shadow_resources();
 
+    /// This frame's scene on the CPU, before any command is recorded: what
+    /// the focus army sees, the order graph, the meshes and the build ghost,
+    /// the UI's controls, the fog, the effects, the range overlays and
+    /// overlays, the water's, sky's and terrain's time, the scripts' decals,
+    /// the legacy HUD, the strategic icons and the profile overlay -- in that
+    /// order, into frame slot `fi`'s buffers.
+    void update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
+                            const sim::FrameView& view, sim::WorldEvents& events,
+                            const BuildGhost* ghost, lua_State* L,
+                            ui::UIControlRegistry* ui_registry,
+                            const std::unordered_set<u32>* selected_ids);
+
+    // A frame's command stages, in render()'s order (render_ui_only takes the
+    // first, the swapchain pass and the last).
+    /// Frame slot `fi`'s command buffer, reset and begun (one submission).
+    void begin_commands(u32 fi);
+    /// The window's viewport and scissor, on `cmd` (the pipelines' dynamic
+    /// state).
+    void set_window_viewport(VkCommandBuffer cmd) const;
+    /// The swapchain image's pass begun, cleared black, at the window's
+    /// viewport: the scene's composite and the screen's layers go into it.
+    void begin_swapchain_pass(u32 fi, u32 image_index);
+    /// Moho's DrawTerrainNormal (M212e): the terrain's normals into the
+    /// normal target (its strata's in RG, the map's normal maps' in BA),
+    /// then the normal decals blended into RG, which the scene then reads
+    /// at each pixel. The scene's pass and depth draw it; the scene clears
+    /// the depth again after.
+    void record_normal_pass(u32 fi, const std::array<f32, 16>& vp);
+    /// Moho's RenderReflections (M213b): the units mirrored in the water's
+    /// plane, for the high fidelity water.
+    void record_reflection_pass(u32 fi, const std::array<f32, 16>& vp);
+    /// The world's scene into the offscreen HDR target, as Moho's frame
+    /// draws it: the sky, the terrain and its decals, the range overlays,
+    /// the meshes either side of the water, the effects, the order lines and
+    /// selection, the refracting effects. Its pass is left open (the
+    /// composite ends it).
+    void record_main_pass(u32 fi, const std::array<f32, 16>& vp);
+    /// The screen's 2D layers over the composited scene: the strategic
+    /// icons, the overlays, the legacy HUD, FA's interface, then the profile
+    /// overlay on top.
+    void record_screen_layers(u32 fi);
+    /// End slot `fi`'s commands, submit them and present `image_index`,
+    /// delivering the captures recorded (`capturing`, `scene_capturing`)
+    /// once it is presented, and move on to the next slot. A `world` frame
+    /// counts its commands and its sequence (a UI-only frame's aren't one).
+    void submit_and_present(u32 fi, u32 image_index, bool world, bool capturing,
+                            bool scene_capturing);
+
     // GLFW
     GLFWwindow* window_ = nullptr;
     u32 window_width_ = 0;
