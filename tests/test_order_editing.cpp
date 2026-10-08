@@ -4,6 +4,7 @@
 #include "map/terrain.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/formation.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -557,4 +558,98 @@ TEST_CASE("A dragged waypoint draws its order's legs to where it is", "[order_ed
     CHECK(paths[1].chain[1].x == 90.0f);
     CHECK(paths[1].chain[1].z == 20.0f);
     CHECK(osc::renderer::command_graph_nodes(paths)[0].position.x == 80.0f);
+}
+
+namespace {
+
+osc::renderer::InputHandler formation_input(const std::vector<osc::u32>& selected) {
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({selected.begin(), selected.end()});
+    osc::renderer::CommandModeHooks hooks;
+    hooks.formation_scripts = [](bool) {
+        return std::vector<std::string>{"AttackFormation", "GrowthFormation"};
+    };
+    input.set_command_mode_hooks(hooks);
+    return input;
+}
+
+UnitCommand pending_order(const SimState& sim, osc::u32 unit) {
+    const auto queues = sim.queues_with_pending();
+    const auto it = queues.find(unit);
+    REQUIRE(it != queues.end());
+    REQUIRE_FALSE(it->second.orders.empty());
+    return it->second.orders.back();
+}
+
+} // namespace
+
+TEST_CASE("A right button held moves the selection in formation, facing the drag",
+          "[order_edit][input][formation]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(14, 10);
+    auto input = formation_input({a.entity_id(), b.entity_id()});
+    input.right_press(*w.sim, 60, 60, false);
+    CHECK(w.sim->queues_with_pending().empty());
+    input.right_drag(std::array<osc::f32, 2>{70, 60}, 0.3);
+    input.right_drag(std::array<osc::f32, 2>{70, 60}, 0.3);
+    REQUIRE(input.formation_drag());
+    CHECK(input.formation_drag()->settled());
+    input.right_release(*w.sim);
+    for (const Unit* u : {&a, &b}) {
+        const UnitCommand c = pending_order(*w.sim, u->entity_id());
+        CHECK(c.type == CommandType::Move);
+        CHECK(c.formation == "AttackFormation");
+        CHECK(c.has_facing);
+        CHECK(std::abs(c.facing - 3.14159265f / 2) < 1e-4f);
+        CHECK(c.target_pos.x == 60.0f);
+        CHECK(c.target_pos.z == 60.0f);
+    }
+    CHECK_FALSE(input.formation_drag());
+}
+
+TEST_CASE("A right click let go before the formation settles is a plain move",
+          "[order_edit][input][formation]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(14, 10);
+    auto input = formation_input({a.entity_id(), b.entity_id()});
+    input.right_press(*w.sim, 60, 60, false);
+    input.right_drag(std::array<osc::f32, 2>{70, 60}, 0.3);
+    input.right_release(*w.sim);
+    const UnitCommand c = pending_order(*w.sim, a.entity_id());
+    CHECK(c.type == CommandType::Move);
+    CHECK(c.formation.empty());
+    CHECK_FALSE(c.has_facing);
+}
+
+TEST_CASE("A left press in a drag formation takes the next script, from then on",
+          "[order_edit][input][formation]") {
+    World w;
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(14, 10);
+    auto input = formation_input({a.entity_id(), b.entity_id()});
+    input.right_press(*w.sim, 12, 60, false);
+    REQUIRE(input.cycle_formation());
+    input.right_release(*w.sim);
+    const UnitCommand c = pending_order(*w.sim, a.entity_id());
+    CHECK(c.formation == "GrowthFormation");
+    CHECK(c.has_facing);
+    CHECK(std::abs(c.facing) < 1e-4f);
+    input.right_press(*w.sim, 12, 60, false);
+    REQUIRE(input.formation_drag());
+    CHECK(input.formation_drag()->script == "GrowthFormation");
+}
+
+TEST_CASE("A drag formation's scripts are formations.lua's air or surface ones", "[formation]") {
+    lua_State* L = lua_open();
+    const std::string chunk = "function import(path) return { SurfaceFormations = { 'A', 'B' }, "
+                              "AirFormations = { 'C' } } end";
+    REQUIRE(luaL_loadbuffer(L, chunk.data(), chunk.size(), "formations") == 0);
+    REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    CHECK(osc::sim::formation_scripts(L, false) == std::vector<std::string>{"A", "B"});
+    CHECK(osc::sim::formation_scripts(L, true) == std::vector<std::string>{"C"});
+    CHECK(lua_gettop(L) == 0);
+    lua_close(L);
 }

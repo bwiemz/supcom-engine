@@ -8,6 +8,7 @@
 #include "app/window_commands.hpp"
 #include "lua/mp_net_state.hpp"
 #include "platform/paths.hpp"
+#include "sim/formation.hpp"
 #include "sim/lockstep_session.hpp"
 
 #include <algorithm>
@@ -140,7 +141,8 @@ std::optional<int> App::Window::set_up() {
              lua_pushnumber(L, command);
              call_command_graph(L, "OnCommandDragEnd", 2);
          },
-         [this](const std::string& bp) { return ui_blueprint_footprint(ui_lua_state.raw(), bp); }});
+         [this](const std::string& bp) { return ui_blueprint_footprint(ui_lua_state.raw(), bp); },
+         [this](bool air) { return osc::sim::formation_scripts(ui_lua_state.raw(), air); }});
     prev_time = std::chrono::high_resolution_clock::now();
 
     // --screenshot <png> [--screenshot-frame N]: render N frames on a

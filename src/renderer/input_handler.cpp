@@ -128,6 +128,10 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
         if (lmb_down) lmb_on_ui_ = over_ui;
         if (rmb_down) rmb_on_ui_ = over_ui;
     }
+    if (lmb_down && formation_) {
+        cycle_formation();
+        lmb_on_ui_ = true;
+    }
     lmb_raw_prev_ = lmb_raw;
     rmb_raw_prev_ = rmb_raw;
     bool lmb = lmb_raw && !lmb_on_ui_;
@@ -335,11 +339,18 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                             renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
     const bool ctrl_held = renderer.is_key_pressed(GLFW_KEY_LEFT_CONTROL) ||
                            renderer.is_key_pressed(GLFW_KEY_RIGHT_CONTROL);
-    if (!rmb && rmb_was_pressed_ && rmb_removes_) {
-        rmb_removes_ = false;
-        if (removes_order(hovered_command_, shift_held, ctrl_held)) {
-            remove_order(sim, hovered_command_);
+    if (!rmb && rmb_was_pressed_) {
+        if (rmb_removes_) {
+            rmb_removes_ = false;
+            if (removes_order(hovered_command_, shift_held, ctrl_held)) {
+                remove_order(sim, hovered_command_);
+            }
+        } else {
+            right_release(sim);
         }
+    }
+    if (rmb && rmb_was_pressed_) {
+        right_drag(cursor_world_, dt);
     }
     if (rmb && !rmb_was_pressed_) {
         if (!mode_active && removes_order(hovered_command_, shift_held, ctrl_held)) {
@@ -371,8 +382,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
         } else if (mode_active) {
             // Right-click leaves the command mode, as in FA.
             if (mode_hooks_.cancel) mode_hooks_.cancel();
-        } else {
-            handle_right_click(renderer, sim, mx, my);
+        } else if (!selected_.empty() && cursor_world_) {
+            right_press(sim, (*cursor_world_)[0], (*cursor_world_)[1], shift_held);
         }
     }
     rmb_was_pressed_ = rmb;
@@ -676,22 +687,6 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
                   sy0, sx1, sy1);
 }
 
-void InputHandler::handle_right_click(Renderer& renderer,
-                                      sim::SimState& sim,
-                                      f32 mx, f32 my) {
-    if (selected_.empty()) return;
-
-    f32 wx, wz;
-    if (!world_at(renderer, sim, mx, my, wx, wz)) return;
-
-    // Check if Shift is held (queue commands without clearing)
-    const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                       renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-    const auto issued = right_click_at(sim, wx, wz, shift);
-    spdlog::debug("Right-click: {} order(s) for {} units at ({:.0f},{:.0f})", issued.size(),
-                  selected_.size(), wx, wz);
-}
-
 std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
 InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
     auto& registry = sim.entity_registry();
@@ -807,8 +802,20 @@ std::optional<sim::CommandType> InputHandler::right_button_order(sim::SimState& 
 
 std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 wx, f32 wz,
                                                         bool shift) {
+    return issue_right_orders(sim, right_click_orders(sim, wx, wz), shift, nullptr);
+}
+
+std::vector<IssuedCommand> InputHandler::issue_right_orders(
+    sim::SimState& sim, const std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>& orders,
+    bool shift, const FormationDrag* formation) {
     std::vector<IssuedCommand> issued;
-    for (const auto& [cmd, units] : right_click_orders(sim, wx, wz)) {
+    for (const auto& [order, units] : orders) {
+        sim::UnitCommand cmd = order;
+        if (formation && cmd.type == sim::CommandType::Move && formation->units.size() > 1) {
+            cmd.formation = formation->script;
+            cmd.has_facing = true;
+            cmd.facing = formation->facing;
+        }
         // Player-issued: routed so it applies inside a tick (and a networked
         // match broadcasts it); a move goes to factories as their rally point.
         sim.set_human_input_active(true);
@@ -832,6 +839,106 @@ std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 
         issued.push_back(out);
     }
     return issued;
+}
+
+void InputHandler::right_press(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
+    formation_.reset();
+    pending_right_ = PendingRight{right_click_orders(sim, wx, wz), shift};
+    const auto move =
+        std::find_if(pending_right_->orders.begin(), pending_right_->orders.end(),
+                     [](const auto& order) { return order.first.type == sim::CommandType::Move; });
+    if (move == pending_right_->orders.end()) {
+        return;
+    }
+    FormationDrag drag;
+    drag.at = move->first.target_pos;
+    drag.mouse = drag.at;
+    bool flies = false;
+    bool walks = false;
+    f32 sx = 0;
+    f32 sz = 0;
+    for (const u32 id : move->second) {
+        const auto* e = sim.entity_registry().find(id);
+        if (!e || !e->is_unit()) {
+            continue;
+        }
+        const auto& u = static_cast<const sim::Unit&>(*e);
+        if (u.has_category("RALLYPOINT")) {
+            continue;
+        }
+        drag.units.push_back(id);
+        (u.can_fly() ? flies : walks) = true;
+        sim::Vector3 from = view_.position(u);
+        if (shift && !u.command_queue().empty()) {
+            from = u.command_queue().back().target_pos;
+        }
+        sx += from.x;
+        sz += from.z;
+    }
+    if (drag.units.empty()) {
+        return;
+    }
+    // Moho's mixed formations are its surface ones (FORMATION_GetScriptName)
+    const bool air = flies && !walks;
+    formation_scripts_ = mode_hooks_.formation_scripts ? mode_hooks_.formation_scripts(air)
+                                                       : std::vector<std::string>{};
+    if (formation_scripts_.empty()) {
+        return;
+    }
+    if (formation_index_ >= formation_scripts_.size()) {
+        formation_index_ = 0;
+    }
+    drag.script = formation_scripts_[formation_index_];
+    const f32 n = static_cast<f32>(drag.units.size());
+    const f32 dx = drag.at.x - sx / n;
+    const f32 dz = drag.at.z - sz / n;
+    if (dx * dx + dz * dz > 0) {
+        drag.facing = std::atan2(dx, dz);
+    }
+    formation_ = std::move(drag);
+}
+
+void InputHandler::right_drag(std::optional<std::array<f32, 2>> cursor, f64 dt) {
+    if (!formation_) {
+        return;
+    }
+    FormationDrag& drag = *formation_;
+    drag.wait = std::max(0.0f, drag.wait - static_cast<f32>(dt));
+    if (!drag.settled() || !cursor) {
+        return;
+    }
+    const f32 x = (*cursor)[0];
+    const f32 z = (*cursor)[1];
+    const auto far = [&](const sim::Vector3& p) {
+        return (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z) >= 0.0025f;
+    };
+    if (!far(drag.mouse) || !far(drag.at)) {
+        return;
+    }
+    drag.mouse = {x, drag.mouse.y, z};
+    drag.facing = std::atan2(x - drag.at.x, z - drag.at.z);
+}
+
+std::vector<IssuedCommand> InputHandler::right_release(sim::SimState& sim) {
+    std::vector<IssuedCommand> issued;
+    if (pending_right_) {
+        const FormationDrag* formation =
+            formation_ && formation_->settled() ? &*formation_ : nullptr;
+        issued = issue_right_orders(sim, pending_right_->orders, pending_right_->shift, formation);
+    }
+    pending_right_.reset();
+    formation_.reset();
+    return issued;
+}
+
+bool InputHandler::cycle_formation() {
+    if (!formation_ || formation_scripts_.size() < 2) {
+        return false;
+    }
+    formation_index_ = (formation_index_ + 1) % formation_scripts_.size();
+    formation_->script = formation_scripts_[formation_index_];
+    formation_->wait = 0;
+    return true;
 }
 
 namespace {
