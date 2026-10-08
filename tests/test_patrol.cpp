@@ -350,10 +350,10 @@ TEST_CASE("A patrolling engineer reclaims a RECLAIMABLE prop on its route once a
     two_armies(sim);
     Unit* eng = engineer(sim, 10.0f, 10.0f);
     rock(sim, 30.0f, 12.0f, 1.0f, 0.0f, false);
-    Prop* stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f);
+    const osc::u32 stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
     eng->push_command(patrol(90.0f, 10.0f, 1), true);
     const auto seen = break_offs(sim, *eng, CommandType::Reclaim, 400);
-    CHECK(seen == std::vector<osc::u32>{stone->entity_id()});
+    CHECK(seen == std::vector<osc::u32>{stone});
 }
 
 TEST_CASE("A patrolling engineer reclaims a still enemy at half its distance's weight",
@@ -554,7 +554,7 @@ TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol
     two_armies(sim);
     Unit* acu = engineer(sim, 10.0f, 10.0f);
     acu->add_category("COMMAND");
-    Prop* stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f);
+    const osc::u32 stone = rock(sim, 50.0f, 14.0f, 1.0f, 0.0f)->entity_id();
     osc::sim::UnitCommand go;
     go.type = CommandType::AggressiveMove;
     go.target_pos = {90.0f, 0.0f, 10.0f};
@@ -563,8 +563,7 @@ TEST_CASE("A commander on attack-move leaves the reclaiming to others; on patrol
     CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300).empty());
 
     acu->push_command(patrol(10.0f, 10.0f, 2), true);
-    CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300) ==
-          std::vector<osc::u32>{stone->entity_id()});
+    CHECK(break_offs(sim, *acu, CommandType::Reclaim, 300) == std::vector<osc::u32>{stone});
 }
 
 TEST_CASE("An Attack on bare ground attack-moves a mobile unit on ReturnFire, and not others",

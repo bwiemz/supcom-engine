@@ -1342,6 +1342,7 @@ private:
     /// (Moho's EvaluatePatrolReclaimAttack), or null.
     Entity* find_patrol_work(const UnitCommand& cmd, SimContext& ctx);
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A repair of a unit under construction (Moho's repair task builds it):

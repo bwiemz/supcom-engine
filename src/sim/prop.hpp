@@ -15,6 +15,7 @@ public:
     bool untargetable = false;
     /// Its blueprint is RECLAIMABLE: a Reclaim order may take it.
     bool reclaimable_category = false;
+    bool obstructs_building = false;
     /// Its blueprint's Economy.ReclaimMassMax and ReclaimEnergyMax.
     f32 reclaim_mass_max = 0;
     f32 reclaim_energy_max = 0;

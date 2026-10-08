@@ -123,6 +123,15 @@ struct UnitCommand {
     /// state; 0 until then).
     f32 site_skirt_x = 0;
     f32 site_skirt_z = 0;
+    /// A build's site has no prop left to reclaim first; the wreck it
+    /// rebuilds, and the start that gives (Moho's mPendingBuildEntity and
+    /// CBuildTaskHelper delta); the prop being reclaimed off it (Moho's
+    /// reclaim task under the build task, not an order). Runtime state.
+    bool site_cleared = false;
+    u32 rebuild_wreck_id = 0;
+    f32 rebuild_bonus = 0;
+    u32 clearing_prop_id = 0;
+    bool clearing_approached = false;
     /// A launch order's target is within its weapon's range band this tick:
     /// only then does the weapon take it, as Moho's fire-at task hands the
     /// weapon its target (runtime state).

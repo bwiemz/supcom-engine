@@ -111,6 +111,7 @@ void read_prop_blueprint(lua_State* L, Prop& prop) {
             collect_blueprint_categories(L, lua_gettop(L), categories);
             prop.untargetable = categories.count("UNTARGETABLE") > 0;
             prop.reclaimable_category = categories.count("RECLAIMABLE") > 0;
+            prop.obstructs_building = categories.count("OBSTRUCTSBUILDING") > 0;
             lua_pushstring(L, "Economy");
             lua_rawget(L, -2);
             if (lua_istable(L, -1)) {
