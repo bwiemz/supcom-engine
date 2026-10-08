@@ -559,6 +559,7 @@ public:
     bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
                           f32 efficiency = 1.0f);
     void stop_repairing(lua_State* L, EntityRegistry& registry);
+    bool shield_needs_repair(EntityRegistry& registry, lua_State* L);
 
     /// Capture helpers
     u32 capture_target_id() const { return capture_target_id_; }

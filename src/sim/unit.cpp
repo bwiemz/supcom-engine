@@ -1343,6 +1343,78 @@ BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_
     return out;
 }
 
+namespace {
+
+Entity* shield_focus(const Unit& unit, EntityRegistry& registry) {
+    if (unit.focus_entity_id() == 0 || !unit.has_category("SHIELD")) {
+        return nullptr;
+    }
+    Entity* focus = registry.find(unit.focus_entity_id());
+    return focus && !focus->destroyed() ? focus : nullptr;
+}
+
+bool script_bool(lua_State* L, const Entity& entity, const char* method) {
+    if (entity.lua_table_ref() < 0) {
+        return false;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, entity.lua_table_ref());
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    bool out = false;
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);
+        if (lua_pcall(L, 1, 1, 0) == 0) {
+            out = lua_toboolean(L, -1) != 0;
+        } else {
+            spdlog::warn("{} error: {}", method, lua_tostring(L, -1));
+        }
+    }
+    lua_pop(L, 2);
+    return out;
+}
+
+f32 script_number(lua_State* L, const Entity& entity, const char* field) {
+    if (entity.lua_table_ref() < 0) {
+        return 0.0f;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, entity.lua_table_ref());
+    lua_pushstring(L, field);
+    lua_gettable(L, -2);
+    const f32 out = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+    lua_pop(L, 2);
+    return out;
+}
+
+f32 blueprint_regen_assist_mult(lua_State* L, const std::string& blueprint_id) {
+    f32 out = 1.0f;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int base = lua_gettop(L);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, blueprint_id.c_str());
+        lua_gettable(L, -2);
+        for (const char* key : {"Defense", "Shield", "RegenAssistMult"}) {
+            if (!lua_istable(L, -1)) {
+                break;
+            }
+            lua_pushstring(L, key);
+            lua_gettable(L, -2);
+        }
+        if (lua_isnumber(L, -1)) {
+            out = static_cast<f32>(lua_tonumber(L, -1));
+        }
+    }
+    lua_settop(L, base - 1);
+    return out;
+}
+
+} // namespace
+
+bool Unit::shield_needs_repair(EntityRegistry& registry, lua_State* L) {
+    const Entity* bubble = shield_focus(*this, registry);
+    return bubble && bubble->health() < bubble->max_health() && script_bool(L, *this, "ShieldIsOn");
+}
+
 bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                         lua_State* L) {
     auto* target = registry.find(cmd.target_id);
@@ -1351,8 +1423,10 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
 
     // Don't repair units that are being built (use build-assist instead)
     if (target_unit->is_being_built()) return false;
-    // Don't repair units already at full health
-    if (target->health() >= target->max_health()) return false;
+    if (target->health() >= target->max_health() &&
+        !target_unit->shield_needs_repair(registry, L)) {
+        return false;
+    }
     if (build_rate_ <= 0) return false;
 
     // Its blueprint's BuildTime/BuildCostMass/BuildCostEnergy
@@ -1429,11 +1503,36 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     // heal_per_tick = (build_rate / build_time) * max_health * dt * efficiency
     f32 heal_rate = build_rate_ / static_cast<f32>(repair_build_time_);
     f32 heal_amount = heal_rate * target->max_health() * static_cast<f32>(dt) * efficiency;
+
+    // Moho's CBuildTaskHelper::UpdateWorkProgress: a SHIELD unit's focus entity is its bubble.
+    const bool damaged = target->health() < target->max_health();
+    auto& target_unit = static_cast<Unit&>(*target);
+    Entity* bubble = shield_focus(target_unit, registry);
+    if (bubble) {
+        if (!damaged && !script_bool(L, target_unit, "ShieldIsOn")) {
+            stop_repairing(L, registry);
+            return false;
+        }
+        if (bubble->health() < bubble->max_health()) {
+            f32 mult = blueprint_regen_assist_mult(L, target_unit.unit_id());
+            if (mult != 0.0f) {
+                if (damaged) {
+                    mult *= 2.0f;
+                    heal_amount *= 0.5f;
+                }
+                const f32 regen = script_number(L, *bubble, "RegenRate") * static_cast<f32>(dt);
+                bubble->set_health(
+                    std::min(bubble->max_health(), bubble->health() + regen * build_rate_ / mult));
+            }
+        }
+    }
+
     f32 new_health = std::min(target->max_health(),
                               target->health() + heal_amount);
     target->set_health(new_health);
 
-    if (new_health >= target->max_health()) {
+    if (new_health >= target->max_health() &&
+        (!bubble || bubble->health() >= bubble->max_health())) {
         spdlog::info("repair complete: entity #{} finished repairing #{}",
                      entity_id(), repair_target_id_);
         stop_repairing(L, registry);
