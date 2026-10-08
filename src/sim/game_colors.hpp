@@ -18,6 +18,8 @@ struct GameColors {
     /// UnidentifiedColor: a blip's icon before its unit has been seen
     /// (Moho's GetUnidentifiedColor; M215a).
     u32 unidentified_color = 0xFF808080u;
+    /// CivilianArmyColor: a civilian army's (Moho's GetCivilianArmyColor).
+    u32 civilian_army_color = 0xFFDEB887u;
 };
 
 /// Read GameColors through the state's import(); lists it can't read are
