@@ -790,3 +790,35 @@ TEST_CASE("A patrol's break-off isn't in its unit's orders before or after a new
     CHECK(types(history.cur().orders_of(*history.cur().find(id))) ==
           Types{osc::sim::CommandType::Patrol, osc::sim::CommandType::Move});
 }
+
+TEST_CASE("A player's order not yet run has its id, and is taken off by it", "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {20, 0, 10};
+    sim.set_human_input_active(true);
+    sim.route_player_command({id}, move, true);
+    move.target_pos = {30, 0, 10};
+    sim.route_player_command({id}, move, false);
+    sim.set_human_input_active(false);
+    WorldHistory history;
+    history.capture(sim);
+    history.refresh_pending(sim);
+    const auto shown = history.cur().orders_of(*history.cur().find(id));
+    REQUIRE(shown.size() == 2);
+    CHECK(shown[0].command_id != 0);
+    CHECK(shown[1].command_id != 0);
+    CHECK(shown[0].command_id != shown[1].command_id);
+
+    osc::sim::SimCallbackEntry remove;
+    remove.func_name = osc::sim::kRemoveCommandCallback;
+    remove.args["Command"] = static_cast<osc::f64>(shown[0].command_id);
+    remove.unit_ids = {id};
+    sim.schedule_callback(0, remove);
+    history.refresh_pending(sim);
+    const auto left = history.cur().orders_of(*history.cur().find(id));
+    REQUIRE(left.size() == 1);
+    CHECK(left[0].target_pos.x == 30.0f);
+}

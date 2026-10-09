@@ -456,6 +456,9 @@ public:
     /// command, or one no unit took.
     u32 route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                       bool clear_existing);
+    /// The source whose player's orders get ids from its own pool, as Moho's
+    /// ISSUE_Command packs the issuing source into the id it allocates.
+    void set_issuing_source(u32 source) { issuing_source_ = source; }
     /// Whether `unit` takes `command` as it is issued: Moho checks each unit
     /// of an order and leaves out one that can't carry it out
     /// (func_ProcessUnitCommand). Checked here for Guard and Reclaim so far.
@@ -724,6 +727,7 @@ public:
 
     /// Monotonically increasing command ID for IsCommandsActive tracking.
     u32 next_command_id() { return ++next_command_id_; }
+    u32 next_player_command_id() const;
 
     // VFX / IEffect registry
     /// Which armies see a decal or splat as it is made (M212c; Moho's
@@ -1068,6 +1072,8 @@ private:
     std::vector<TempVision> temp_visions_;
     std::map<u32, EntityIntel> entity_intel_; ///< by entity id: painted in id order
     u32 next_command_id_ = 0;
+    u32 issuing_source_ = 0;
+    u32 player_commands_issued_ = 0;
     bool game_ended_ = false;
     bool script_victory_ = false;
     std::string victory_condition_ = "demoralization";

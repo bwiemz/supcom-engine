@@ -446,12 +446,14 @@ TEST_CASE("The snapshot names an order by the sim's id, one for the units given 
         osc::sim::WorldSnapshot world;
         osc::sim::capture_world(sim, world);
         REQUIRE(world.pending_commands.size() == 2);
-        CHECK(world.pending_commands[0].command_id == 0);
+        const osc::u32 issued = world.pending_commands[0].command_id;
+        CHECK(issued != 0);
+        CHECK(world.pending_commands[1].command_id == issued);
 
         sim.tick();
         osc::sim::capture_world(sim, world);
         REQUIRE(world.commands.size() == 2);
-        CHECK(world.commands[0].command_id != 0);
+        CHECK(world.commands[0].command_id == issued);
         CHECK(world.commands[0].command_id == world.commands[1].command_id);
     }
     lua_close(L);
