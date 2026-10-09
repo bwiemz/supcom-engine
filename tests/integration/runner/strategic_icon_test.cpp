@@ -278,6 +278,62 @@ void test_strategic_icons(TestContext& ctx) {
     f = next();
     t.check(icons_at(f, tank).size() == 1, "Test 11: SetStrategicUnderlay('') takes it away");
 
+    r.camera().set_target(sx, sz + 42);
+    r.camera().set_eye_distance(110.0f);
+    f = next();
+    const f32 map_w = static_cast<f32>(ctx.sim.terrain()->map_width());
+    const f32 map_h = static_cast<f32>(ctx.sim.terrain()->map_height());
+    const f32 mm_size = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_SIZE);
+    const f32 mm_margin = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_MARGIN);
+    const renderer::MapArea area =
+        renderer::fit_map_area(mm_margin, static_cast<f32>(r.height()) - mm_size - mm_margin,
+                               mm_size, mm_size, map_w, map_h);
+    const auto minimap_icons_at = [&](u32 id) {
+        std::vector<const renderer::UIQuad*> found;
+        const sim::EntityRecord* e = seen.cur().find(id);
+        if (!e) {
+            return found;
+        }
+        const f32 x = std::floor(area.x + e->position.x / map_w * area.w);
+        const f32 y = std::floor(area.y + e->position.z / map_h * area.h);
+        for (const renderer::UIQuad& q : r.minimap().quads()) {
+            if (q.inst.rect[2] < 64.0f &&
+                std::abs(q.inst.rect[0] + q.inst.rect[2] * 0.5f - x) < 1.0f &&
+                std::abs(q.inst.rect[1] + q.inst.rect[3] * 0.5f - y) < 1.0f) {
+                found.push_back(&q);
+            }
+        }
+        return found;
+    };
+    const auto on_minimap = [&](u32 id, const std::string& texture,
+                                const std::array<f32, 3>& tint) {
+        const auto at = minimap_icons_at(id);
+        const renderer::GPUTexture* tex = r.texture_cache().get(texture);
+        if (at.empty() || !tex) {
+            return false;
+        }
+        const renderer::UIQuad& q = *at.front();
+        return q.texture_ds == tex->descriptor_set &&
+               q.inst.rect[2] == static_cast<f32>(tex->width & ~1u) &&
+               q.inst.rect[3] == static_cast<f32>(tex->height & ~1u) &&
+               std::abs(q.inst.color[0] - tint[0]) < 0.01f &&
+               std::abs(q.inst.color[1] - tint[1]) < 0.01f &&
+               std::abs(q.inst.color[2] - tint[2]) < 0.01f;
+    };
+    t.check(on_minimap(tank, icon_texture(ctx, "uel0201", "rest"), blue) &&
+                on_minimap(scout, icon_texture(ctx, "uea0101", "rest"), blue) &&
+                on_minimap(sacu, icon_texture(ctx, "uel0301", "rest"), blue),
+            fmt::format("Test 12: zoomed in, the minimap shows the tank's, scout's and support "
+                        "commander's icons at their textures' sizes ({} minimap quads)",
+                        r.minimap().quads().size()));
+    t.check(on_minimap(picked, icon_texture(ctx, "uel0201", "selected"), blue),
+            "Test 13: the selected tank's minimap icon is its selected one");
+    t.check(on_minimap(e_eng, dir + "icon_land_generic_rest.dds", grey) &&
+                on_minimap(e_gen, dir + "icon_structure_generic_rest.dds", grey),
+            "Test 14: never-seen blips' minimap icons are generic, unidentified");
+    t.check(minimap_icons_at(unbuilt).empty(),
+            "Test 15: the power generator being built has no minimap icon");
+
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

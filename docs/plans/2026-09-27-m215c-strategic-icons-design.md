@@ -80,4 +80,9 @@ blips have icons.
 - Blinking when a friendly unit is hit; the underlay texture; carriers'
   and transported units' icons; projectile icons; formation ghosts.
 - Icons on the minimap (it still draws dots).
+  *Done (2026-10-09): the minimap is a world view of its own, and Moho's
+  CUIWorldView::Render draws its icons through the same
+  RenderStrategicIcons, with its camera fully zoomed out: every unit's icon
+  at its texture's size, in UI points, under the same intel and selection.
+  `--strategic-icon-test` Tests 12-15.*
 - Meshes by their LODs' cutoffs rather than the engine's 250.

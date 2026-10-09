@@ -83,9 +83,9 @@ const Quad* quad_at(const std::vector<Quad>& quads, f32 x, f32 y, f32 w, f32 h);
 
 bool same_colour(const Quad& q, f32 r, f32 g, f32 b);
 
-/// The C++ HUD minimap's dot for a unit at world `p`, or null (the map
+/// The C++ HUD minimap's icon for a unit at world `p`, or null (the map
 /// `map_w` x `map_h`, drawn in `r`'s corner).
-const Quad* minimap_dot(const Frame& frame, renderer::Renderer& r, f32 map_w, f32 map_h,
-                        const sim::Vector3& p);
+const Quad* minimap_icon(const Frame& frame, renderer::Renderer& r, f32 map_w, f32 map_h,
+                         const sim::Vector3& p);
 
 } // namespace osc::test

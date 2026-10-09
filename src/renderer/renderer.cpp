@@ -457,7 +457,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     unit_renderer_.set_playable_rect(&playable_rect_);
     strategic_icon_renderer_.set_recon(&recon_);
     overlay_renderer_.set_recon(&recon_);
-    minimap_renderer_.set_recon(&recon_);
+    minimap_renderer_.set_icons(&strategic_icon_renderer_);
     particle_system_.set_recon(&recon_);
     overlay_renderer_.set_beams(&beam_renderer_);
     overlay_renderer_.set_trails(&trail_renderer_);
@@ -2589,7 +2589,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                      static_cast<i32>(terrain_->map_height())});
                 }
                 minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
-                                        window_width_, window_height_, out, resources);
+                                        window_width_, window_height_, selected_ids, L, out,
+                                        resources);
                 painted_minimap_.insert(painted_minimap_.end(),
                                         out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };
@@ -2687,10 +2688,11 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
     }
 
-    // Update minimap (terrain bg, unit dots, camera frustum box)
-    if (legacy_hud_active_)
-        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
-                                  window_width_, window_height_);
+    // Update minimap (terrain bg, units' icons, camera frustum box)
+    if (legacy_hud_active_) {
+        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids, window_width_,
+                                 window_height_, L);
+    }
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
@@ -2984,7 +2986,7 @@ void Renderer::record_screen_layers(u32 fi) {
                                  window_width_, window_height_);
     }
 
-    // 8. Draw minimap (terrain bg + unit dots + camera box)
+    // 8. Draw minimap (terrain bg + unit icons + camera box)
     if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         minimap_renderer_.render(cmd_buf_[fi], ui_layout_,

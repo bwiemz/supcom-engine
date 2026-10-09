@@ -2,6 +2,7 @@
 #include "renderer/vk_cmd.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/minimap_renderer.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
@@ -288,9 +289,8 @@ bool StrategicIconRenderer::world_to_screen(f32 wx, f32 wy, f32 wz,
     return true;
 }
 
-void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex,
-                                      f32 r, f32 g, f32 b) {
-    if (quad_count_ >= MAX_ICON_QUADS) return;
+UIInstance StrategicIconRenderer::icon_quad(f32 x, f32 y, const GPUTexture& tex, f32 r, f32 g,
+                                            f32 b) {
     // Centred at its own size (DrawStrategicIconQuad: the texture's width
     // and height, halved to radii).
     const f32 half_w = static_cast<f32>(tex.width >> 1);
@@ -308,7 +308,13 @@ void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, con
     inst.color[1] = g;
     inst.color[2] = b;
     inst.color[3] = -1.0f; // the UI shader's StrategicIconPS
-    quads_.push_back(inst);
+    return inst;
+}
+
+void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex,
+                                      f32 r, f32 g, f32 b) {
+    if (quad_count_ >= MAX_ICON_QUADS) return;
+    quads_.push_back(icon_quad(x, y, tex, r, g, b));
     quad_textures_.push_back(path);
     if (groups_.empty() || groups_.back().ds != tex.descriptor_set)
         groups_.push_back({tex.descriptor_set, quad_count_, 0});
@@ -441,45 +447,17 @@ void StrategicIconRenderer::preload(const std::vector<std::string>& blueprint_id
     }
 }
 
-bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& camera,
-                                   const std::array<f32, 16>& vp_matrix,
-                                   const std::unordered_set<u32>* selected_ids,
-                                   TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
-                                   lua_State* L) {
-    quads_.clear();
-    quad_textures_.clear();
-    groups_.clear();
-    quad_count_ = 0;
-    load_generic_icons(L);
-
-    const f32 cam_dist = camera.eye_distance();
-    strategic_zoom_active_ = cam_dist >= ZOOM_THRESHOLD;
-    if (!nis_icons_) return strategic_zoom_active_; // a NIS draws none
-    const f32 sw = static_cast<f32>(viewport_w);
-    const f32 sh = static_cast<f32>(viewport_h);
-    // An icon fades in with the camera out past its mesh's IconFadeInZoom
-    // (no further than 0.89 of the farthest zoom, as Moho caps it).
-    const f32 fade_cap = camera.max_zoom() * 0.89f;
-
-    struct Icon {
-        f32 x = 0, y = 0;
-        const std::string* path = nullptr;
-        const GPUTexture* tex = nullptr;
-        f32 r = 1, g = 1, b = 1;
-        bool stunned = false;
-        const std::string* underlay_path = nullptr;
-        const GPUTexture* underlay = nullptr;
-    };
-    // Moho's four runs, drawn in this order: ground, air, high-priority,
-    // selected.
-    std::array<std::vector<Icon>, 4> runs;
+template <class Place>
+StrategicIconRenderer::Runs
+StrategicIconRenderer::collect(const sim::FrameView& view,
+                               const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
+                               lua_State* L, bool fade, f32 cam_dist, f32 fade_cap, Place&& place) {
+    Runs runs;
 
     // One unit's icon, into its run: the world's units, then the
     // player's remembered structures gone from it unseen (M215d).
-    const auto collect = [&](const sim::EntityRecord& entity) {
-        if (!entity.is_unit || entity.is_being_built || entity.is_dying) {
-            return;
-        }
+    const auto one = [&](const sim::EntityRecord& entity) {
+        if (!entity.is_unit || entity.is_being_built || entity.is_dying) return;
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
         if (!shows_icon(sight)) return;
 
@@ -490,13 +468,11 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         // A drawn mesh keeps its icon until the camera is out past the
         // mesh's IconFadeInZoom; a blip, having none, shows its icon at
         // any zoom.
-        if (!always_ && shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) return;
+        if (fade && shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) return;
 
-        const sim::Vector3 pos = view.position(entity);
         f32 sx = 0;
         f32 sy = 0;
-        if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy)) return;
-        if (sx < -32.0f || sx > sw + 32.0f || sy < -32.0f || sy > sh + 32.0f) return;
+        if (!place(view.position(entity), sx, sy)) return;
 
         const bool selected = selected_ids && selected_ids->count(entity.id) > 0;
         const std::string* path = &bp.rest;
@@ -545,23 +521,61 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         }
         runs[run].push_back(icon);
     };
-    for (const sim::EntityRecord& entity : view.entities()) collect(entity);
+    for (const sim::EntityRecord& entity : view.entities()) one(entity);
     if (recon_) {
-        for (const sim::EntityRecord& ghost : recon_->ghosts()) collect(ghost);
-        for (const sim::EntityRecord& fake : recon_->fakes()) collect(fake); // jammers' (M215e)
+        for (const sim::EntityRecord& ghost : recon_->ghosts()) one(ghost);
+        for (const sim::EntityRecord& fake : recon_->fakes()) one(fake); // jammers' (M215e)
     }
+    return runs;
+}
 
+template <class Emit>
+void StrategicIconRenderer::emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit) {
     // The underlay at its own colour, the base icon tinted over it, the
     // stunned badge over that at its own colour (Moho's RenderUnitIcon).
     const GPUTexture* stunned = tex_cache.get(stunned_);
-    for (const auto& run : runs)
+    for (const auto& run : runs) {
         for (const Icon& icon : run) {
-            if (icon.underlay && icon.underlay->width > 0)
-                emit_icon(icon.x, icon.y, *icon.underlay_path, *icon.underlay, 1.0f, 1.0f, 1.0f);
-            emit_icon(icon.x, icon.y, *icon.path, *icon.tex, icon.r, icon.g, icon.b);
-            if (icon.stunned && stunned && stunned->width > 0)
-                emit_icon(icon.x, icon.y, stunned_, *stunned, 1.0f, 1.0f, 1.0f);
+            if (icon.underlay && icon.underlay->width > 0) {
+                emit(icon.x, icon.y, *icon.underlay_path, *icon.underlay, 1.0f, 1.0f, 1.0f);
+            }
+            emit(icon.x, icon.y, *icon.path, *icon.tex, icon.r, icon.g, icon.b);
+            if (icon.stunned && stunned && stunned->width > 0) {
+                emit(icon.x, icon.y, stunned_, *stunned, 1.0f, 1.0f, 1.0f);
+            }
         }
+    }
+}
+
+bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& camera,
+                                   const std::array<f32, 16>& vp_matrix,
+                                   const std::unordered_set<u32>* selected_ids,
+                                   TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
+                                   lua_State* L) {
+    quads_.clear();
+    quad_textures_.clear();
+    groups_.clear();
+    quad_count_ = 0;
+    load_generic_icons(L);
+
+    const f32 cam_dist = camera.eye_distance();
+    strategic_zoom_active_ = cam_dist >= ZOOM_THRESHOLD;
+    if (!nis_icons_) return strategic_zoom_active_; // a NIS draws none
+    const f32 sw = static_cast<f32>(viewport_w);
+    const f32 sh = static_cast<f32>(viewport_h);
+    // An icon fades in with the camera out past its mesh's IconFadeInZoom
+    // (no further than 0.89 of the farthest zoom, as Moho caps it).
+    const f32 fade_cap = camera.max_zoom() * 0.89f;
+
+    const Runs runs =
+        collect(view, selected_ids, tex_cache, L, !always_, cam_dist, fade_cap,
+                [&](const sim::Vector3& pos, f32& sx, f32& sy) {
+                    return world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy) &&
+                           sx >= -32.0f && sx <= sw + 32.0f && sy >= -32.0f && sy <= sh + 32.0f;
+                });
+    emit_runs(runs, tex_cache,
+              [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
+                  f32 b) { emit_icon(x, y, path, tex, r, g, b); });
 
     // Upload to GPU
     if (!quads_.empty() && instance_mapped_[fi_]) {
@@ -569,6 +583,31 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         std::memcpy(instance_mapped_[fi_], quads_.data(), count * sizeof(UIInstance));
     }
     return strategic_zoom_active_;
+}
+
+void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea& area, f32 map_w,
+                                      f32 map_h, const std::unordered_set<u32>* selected_ids,
+                                      TextureCache& tex_cache, lua_State* L,
+                                      std::vector<UIQuad>& out) {
+    load_generic_icons(L);
+    if (!nis_icons_ || map_w <= 0.0f || map_h <= 0.0f) {
+        return;
+    }
+    const Runs runs = collect(view, selected_ids, tex_cache, L, false, 0.0f, 0.0f,
+                              [&](const sim::Vector3& pos, f32& sx, f32& sy) {
+                                  const f32 nx = pos.x / map_w;
+                                  const f32 nz = pos.z / map_h;
+                                  sx = area.x + nx * area.w;
+                                  sy = area.y + nz * area.h;
+                                  return nx >= 0.0f && nx <= 1.0f && nz >= 0.0f && nz <= 1.0f;
+                              });
+    emit_runs(runs, tex_cache,
+              [&](f32 x, f32 y, const std::string&, const GPUTexture& tex, f32 r, f32 g, f32 b) {
+                  UIQuad q{};
+                  q.inst = icon_quad(x, y, tex, r, g, b);
+                  q.texture_ds = tex.descriptor_set;
+                  out.push_back(q);
+              });
 }
 
 void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,

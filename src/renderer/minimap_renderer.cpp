@@ -1,8 +1,6 @@
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/vk_cmd.hpp"
-#include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
-#include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "map/terrain.hpp"
 #include "map/heightmap.hpp"
@@ -13,26 +11,6 @@
 #include <cstring>
 
 namespace osc::renderer {
-
-static void get_army_color_simple(const sim::EntityRecord& entity, const sim::FrameView& view,
-                                   f32& r, f32& g, f32& b) {
-    i32 army = entity.army;
-    if (const sim::ArmyRecord* brain = view.cur() ? view.cur()->army(army) : nullptr) {
-        if (brain->has_color) {
-            r = brain->r / 255.0f;
-            g = brain->g / 255.0f;
-            b = brain->b / 255.0f;
-        } else if (army < 8) {
-            r = ARMY_COLORS[army][0];
-            g = ARMY_COLORS[army][1];
-            b = ARMY_COLORS[army][2];
-        } else {
-            r = g = b = 0.7f;
-        }
-    } else {
-        r = g = b = 0.5f; // neutral
-    }
-}
 
 void MinimapRenderer::init(VkDevice device, VmaAllocator allocator) {
     VkBufferCreateInfo buf_info{};
@@ -168,9 +146,8 @@ void MinimapRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
 }
 
 void MinimapRenderer::update(const sim::FrameView& view, const Camera& camera,
-                              TextureCache& tex_cache,
-                              const std::unordered_set<u32>* /*selected_ids*/,
-                              u32 viewport_w, u32 viewport_h) {
+                             TextureCache& tex_cache, const std::unordered_set<u32>* selected_ids,
+                             u32 viewport_w, u32 viewport_h, lua_State* L) {
     quads_.clear();
     draw_groups_.clear();
     quad_count_ = 0;
@@ -181,7 +158,10 @@ void MinimapRenderer::update(const sim::FrameView& view, const Camera& camera,
     const f32 margin = static_cast<f32>(MINIMAP_MARGIN);
     view_ = {margin, static_cast<f32>(viewport_h) - size - margin, size, size};
     area_ = fit_map_area(view_.x, view_.y, view_.w, view_.h, map_w_, map_h_);
-    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true);
+    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true, selected_ids, L);
+    if (quads_.size() > MAX_MINIMAP_QUADS) {
+        quads_.resize(MAX_MINIMAP_QUADS);
+    }
 
     // Batch consecutive quads by texture and upload
     for (u32 i = 0; i < quads_.size(); ++i) {
@@ -308,19 +288,22 @@ std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDe
 
 void MinimapRenderer::paint(const sim::FrameView& view, const Camera& camera,
                             TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h, u32 viewport_w,
-                            u32 viewport_h, std::vector<UIQuad>& out,
+                            u32 viewport_h, const std::unordered_set<u32>* selected_ids,
+                            lua_State* L, std::vector<UIQuad>& out,
                             const std::optional<PlayableRect>& resources) {
     quads_.clear();
     if (map_w_ <= 0 || map_h_ <= 0) return;
     view_ = {x, y, w, h};
     area_ = fit_map_area(x, y, w, h, map_w_, map_h_);
     if (area_.w <= 0 || area_.h <= 0) return;
-    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false, resources);
+    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false, selected_ids, L,
+          resources);
     out.insert(out.end(), quads_.begin(), quads_.end());
 }
 
 void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
                             TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, bool framed,
+                            const std::unordered_set<u32>* selected_ids, lua_State* L,
                             const std::optional<PlayableRect>& resources) {
     white_ds_ = tex_cache.fallback_descriptor();
     const f32 sw = static_cast<f32>(viewport_w);
@@ -352,45 +335,8 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
         }
     }
 
-    // --- Unit dots: the world's units, then the player's remembered
-    // structures gone from it unseen (MaybeDead, darkened; M215d) ---
-    const auto dot = [&](const sim::EntityRecord& entity) {
-        if (!entity.is_unit) return;
-        const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
-        if (!shows_icon(sight)) return;
-
-        auto pos = view.position(entity);
-        // Map world position to minimap pixel position
-        f32 nx = pos.x / map_w_; // normalized [0,1]
-        f32 nz = pos.z / map_h_;
-        if (nx < 0 || nx > 1 || nz < 0 || nz > 1) return;
-
-        f32 dot_x = ax + nx * aw;
-        f32 dot_y = ay + nz * ah;
-
-        f32 r, g, b;
-        if (sight == Sight::Blip) {
-            const auto [ur, ug, ub] = recon_->unidentified_rgb();
-            r = ur;
-            g = ug;
-            b = ub;
-        } else {
-            get_army_color_simple(entity, view, r, g, b);
-        }
-        if (recon_ && recon_->maybe_dead(entity.id)) {
-            r *= 0.5f;
-            g *= 0.5f;
-            b *= 0.5f;
-        }
-
-        constexpr f32 DOT_SIZE = 3.0f;
-        emit_quad(dot_x - DOT_SIZE * 0.5f, dot_y - DOT_SIZE * 0.5f,
-                  DOT_SIZE, DOT_SIZE, r, g, b, 1.0f, white_ds_);
-    };
-    for (const sim::EntityRecord& entity : view.entities()) dot(entity);
-    if (recon_) {
-        for (const sim::EntityRecord& ghost : recon_->ghosts()) dot(ghost);
-        for (const sim::EntityRecord& fake : recon_->fakes()) dot(fake); // jammers' (M215e)
+    if (icons_) {
+        icons_->paint_map(view, area_, map_w_, map_h_, selected_ids, tex_cache, L, quads_);
     }
 
     // --- Camera frustum box ---
