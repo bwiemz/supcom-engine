@@ -268,17 +268,21 @@ public:
     /// Where the cursor points on the ground, while over the world
     std::optional<std::array<f32, 2>> cursor_world() const { return cursor_world_; }
 
-    void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+    void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl = false);
     /// A left click on the world at (wx, wz) as the release of a click
     /// ends it: a double-click's second selects like units in view, any
-    /// other selects (or with Shift toggles) the unit there.
-    void world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
+    /// other selects (or with Shift toggles) the unit there, with Ctrl its
+    /// blueprint's units.
+    void world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl, bool double_click,
                      const std::array<f32, 16>& view_proj);
     /// A double-click on the player's unit at (wx, wz): every unit of its
     /// blueprint `view_proj` shows joins the selection (Moho's
     /// CWldSession::HandleDoubleClickSelection). Not on a wall.
     void select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
                                 const std::array<f32, 16>& view_proj);
+
+    /// Moho's CWldSession::ReleaseDrag with Ctrl held.
+    void select_blueprint_of(sim::SimState& sim, u32 picked, bool shift);
 
     /// Moho's UserUnit::UpdateUnitData: a unit that boards leaves the selection.
     void deselect_aboard(const sim::EntityRegistry& registry);

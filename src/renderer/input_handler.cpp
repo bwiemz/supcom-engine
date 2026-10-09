@@ -343,7 +343,10 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                 const f32 aspect = renderer.height() > 0 ? static_cast<f32>(renderer.width()) /
                                                                static_cast<f32>(renderer.height())
                                                          : 1.0f;
-                world_click(sim, wx, wz, shift, double_click, renderer.camera().view_proj(aspect));
+                const bool ctrl = renderer.is_key_pressed(GLFW_KEY_LEFT_CONTROL) ||
+                                  renderer.is_key_pressed(GLFW_KEY_RIGHT_CONTROL);
+                world_click(sim, wx, wz, shift, ctrl, double_click,
+                            renderer.camera().view_proj(aspect));
             }
             last_click_double_ = double_click;
             last_click_time_ = clock_;
@@ -672,11 +675,17 @@ void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimS
     snap_radius_ = sim::extract_snap_radius(2.0f * dist * std::tan(camera.fov() * 0.5f) / width);
 }
 
-void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift) {
+void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl) {
     const u32 picked = unit_under(sim, wx, wz, true);
 
-    if (!shift)
+    if (picked != 0 && ctrl) {
+        select_blueprint_of(sim, picked, shift);
+        return;
+    }
+
+    if (!shift && !ctrl) {
         selected_.clear();
+    }
 
     if (picked != 0) {
         if (shift && selected_.count(picked))
@@ -690,6 +699,35 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift)
                   selected_.size(), wx, wz);
 }
 
+void InputHandler::select_blueprint_of(sim::SimState& sim, u32 picked, bool shift) {
+    const sim::Entity* hovered = sim.entity_registry().find(picked);
+    if (!hovered || !hovered->is_unit()) {
+        return;
+    }
+    const std::string blueprint = static_cast<const sim::Unit&>(*hovered).blueprint_id();
+    const auto of_blueprint = [&](u32 id) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        return e && e->is_unit() && static_cast<const sim::Unit&>(*e).blueprint_id() == blueprint;
+    };
+    selection_event_ = true;
+    if (shift && selected_.count(picked)) {
+        std::erase_if(selected_, of_blueprint);
+        return;
+    }
+    if (!shift) {
+        selected_.clear();
+    }
+    sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
+        if (e.destroyed() || e.army() != player_army_ || !selectable(e)) {
+            return;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(e);
+        if (unit.blueprint_id() == blueprint && !unit.is_being_built()) {
+            selected_.insert(e.entity_id());
+        }
+    });
+}
+
 void InputHandler::deselect_aboard(const sim::EntityRegistry& registry) {
     std::erase_if(selected_, [&](u32 id) {
         const sim::Entity* e = registry.find(id);
@@ -697,13 +735,13 @@ void InputHandler::deselect_aboard(const sim::EntityRegistry& registry) {
     });
 }
 
-void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
-                               const std::array<f32, 16>& view_proj) {
+void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl,
+                               bool double_click, const std::array<f32, 16>& view_proj) {
     // A double-click's second press is no click of its own: Moho's world view
     // gets a ButtonDClick in its place, and it only adds the clicked unit's
     // like in view (with Shift held too: the first click's toggle stands).
     if (double_click) select_similar_in_view(sim, wx, wz, view_proj);
-    else left_click_at(sim, wx, wz, shift);
+    else left_click_at(sim, wx, wz, shift, ctrl);
 }
 
 void InputHandler::select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,

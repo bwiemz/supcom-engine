@@ -459,3 +459,39 @@ TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     input.deselect_aboard(w.sim.entity_registry());
     CHECK(input.selected().empty());
 }
+
+TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[selection]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim{lua.raw(), nullptr};
+    const auto add = [&](const char* bp, osc::i32 army, osc::f32 x, bool being_built = false) {
+        auto unit = std::make_unique<osc::sim::Unit>();
+        unit->set_army(army);
+        unit->set_blueprint_id(bp);
+        unit->set_size_xz(1.0f, 1.0f);
+        unit->set_size_y(1.0f);
+        unit->set_is_being_built(being_built);
+        const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+        sim.entity_registry().find(id)->set_position({x, 0.0f, 10.0f});
+        return id;
+    };
+    const osc::u32 tank = add("uel0201", 0, 10.0f);
+    const osc::u32 far_tank = add("uel0201", 0, 900.0f);
+    add("uel0201", 0, 500.0f, true);
+    add("uel0201", 1, 20.0f);
+    const osc::u32 engineer = add("uel0105", 0, 30.0f);
+    osc::renderer::InputHandler input;
+
+    input.left_click_at(sim, 10.0f, 10.0f, false, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{tank, far_tank});
+
+    input.set_selected({engineer});
+    input.left_click_at(sim, 200.0f, 10.0f, false, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+
+    input.left_click_at(sim, 10.0f, 10.0f, true, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer, tank, far_tank});
+
+    input.set_selected({engineer, tank, far_tank});
+    input.left_click_at(sim, 10.0f, 10.0f, true, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+}
