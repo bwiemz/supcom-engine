@@ -81,6 +81,10 @@ public:
     /// Log statistics about loaded blueprints.
     void log_statistics() const;
 
+    /// Swap each blueprint's table for a copy made as Moho's SCR_Copy makes
+    /// the one a sim or session state gets from the rules' state.
+    void copy_lua_tables(lua_State* L);
+
     /// Create the __blueprints Lua global table mapping bp IDs → bp tables.
     /// Must be called after all blueprints are registered.
     void expose_to_lua(lua_State* L) const;
