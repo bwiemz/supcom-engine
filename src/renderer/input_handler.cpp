@@ -4,6 +4,7 @@
 #include "renderer/recon_view.hpp"
 #include "renderer/renderer.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
@@ -16,7 +17,12 @@
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
 
+extern "C" {
+#include "lua.h"
+}
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -27,6 +33,57 @@ namespace {
 
 bool targetable_prop(const sim::Entity& e) {
     return e.is_prop() && !static_cast<const sim::Prop&>(e).untargetable;
+}
+
+std::string upgrades_from(const sim::SimState& sim, const std::string& blueprint_id) {
+    const auto* store = sim.blueprint_store();
+    lua_State* L = sim.lua_state();
+    const auto* entry = store && L ? store->find(blueprint_id) : nullptr;
+    if (!entry) {
+        return {};
+    }
+    std::string out;
+    store->push_lua_table(*entry, L);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "General");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "UpgradesFrom");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                out = lua_tostring(L, -1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return out;
+}
+
+bool same_id(const std::string& a, const std::string& b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) ==
+               std::tolower(static_cast<unsigned char>(y));
+    });
+}
+
+// Moho's world view hover: an unfinished unit whose creator is what it
+// upgrades from is that creator.
+const sim::Entity* hover_entity(const sim::SimState& sim, const sim::Entity* e) {
+    if (!e->is_unit() || e->parent_entity_id() != 0) {
+        return e;
+    }
+    const auto& unit = static_cast<const sim::Unit&>(*e);
+    if (!unit.is_being_built() || unit.creator_id() == 0) {
+        return e;
+    }
+    const sim::Entity* creator = sim.entity_registry().find(unit.creator_id());
+    if (!creator || creator->destroyed() || !creator->is_unit() ||
+        static_cast<const sim::Unit*>(creator)->is_dying()) {
+        return e;
+    }
+    return same_id(creator->blueprint_id(), upgrades_from(sim, unit.blueprint_id())) ? creator : e;
 }
 
 // Moho's func_GetRightMouseButtonAction: a unit riding another is busy.
@@ -1433,7 +1490,8 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
             static_cast<const sim::Unit&>(*e).is_dying()) {
             continue;
         }
-        if (own_only && (e->army() != player_army_ || !selectable(*e))) {
+        const sim::Entity& hovered = *hover_entity(sim, e);
+        if (own_only && (hovered.army() != player_army_ || !selectable(hovered))) {
             continue;
         }
         const auto& unit = static_cast<const sim::Unit&>(*e);
@@ -1475,7 +1533,7 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
         }
         if (*t < best_t) {
             best_t = *t;
-            best_id = id;
+            best_id = hovered.entity_id();
         }
     }
     return best_id;

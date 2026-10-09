@@ -1715,13 +1715,16 @@ static int l_GetRolloverInfo(lua_State* L) {
     push_unit_for_ui(L, unit);
     lua_rawset(L, -3);
 
-    // focus: if unit is building something, include a sub-table for the target
+    // focus: what the unit builds; "focusUpgrade" while it upgrades (faf-re
+    // cfunc_GetRolloverInfoL)
     u32 focus_id = unit->build_target_id();
     if (focus_id != 0) {
         auto* focus_entity = sim->entity_registry().find(focus_id);
         if (focus_entity && focus_entity->is_unit() && !focus_entity->destroyed()) {
             auto* focus_unit = static_cast<sim::Unit*>(focus_entity);
-            lua_pushstring(L, "focus");
+            const bool upgrading = !unit->command_queue().empty() &&
+                                   unit->command_queue().front().type == sim::CommandType::Upgrade;
+            lua_pushstring(L, upgrading ? "focusUpgrade" : "focus");
             lua_newtable(L); // focus sub-table
             lua_pushstring(L, "blueprintId");
             lua_pushstring(L, focus_unit->blueprint_id().c_str());
@@ -1729,6 +1732,8 @@ static int l_GetRolloverInfo(lua_State* L) {
             lua_pushstring(L, "entityId");
             sim::push_entity_id(L, focus_unit->entity_id());
             lua_rawset(L, -3);
+            set_num("health", static_cast<lua_Number>(focus_unit->health()));
+            set_num("maxHealth", static_cast<lua_Number>(focus_unit->max_health()));
             lua_rawset(L, -3); // result["focus"] = focus_sub_table
         }
     }

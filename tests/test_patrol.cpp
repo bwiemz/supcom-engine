@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "map/heightmap.hpp"
@@ -24,6 +25,7 @@ extern "C" {
 }
 
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -758,6 +760,42 @@ TEST_CASE("The reclaim cursor and right-click pass over what is not RECLAIMABLE"
     CHECK(orders.front().first.type == CommandType::Move);
     rock(sim, 60.0f, 10.0f, 5.0f, 0.0f);
     CHECK(input.click_in_command_mode(sim, mode, 60.0f, 10.0f, false));
+}
+
+TEST_CASE("An upgrade's unfinished unit is hovered as the structure upgrading", "[hover]") {
+    LuaGuard g;
+    osc::blueprints::BlueprintStore store(g.L);
+    for (const char* bp : {"return {BlueprintId = 'tier1', General = {UpgradesFrom = 'none'}}",
+                           "return {BlueprintId = 'tier2', General = {UpgradesFrom = 'tier1'}}"}) {
+        REQUIRE(luaL_loadbuffer(g.L, bp, std::strlen(bp), "bp") == 0);
+        REQUIRE(lua_pcall(g.L, 0, 1, 0) == 0);
+        store.register_blueprint(g.L, osc::blueprints::BlueprintType::Unit, lua_gettop(g.L));
+        lua_pop(g.L, 1);
+    }
+    SimState sim(g.L, &store);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->add_command_cap("RULEUCC_Repair");
+    eng->add_command_cap("RULEUCC_Guard");
+    eng->add_command_cap("RULEUCC_Move");
+    Unit* old = still(sim, 0, 40.0f, 40.0f);
+    old->set_blueprint_id("tier1");
+    old->set_size_xz(4.0f, 4.0f);
+    old->set_size_y(1.0f);
+    Unit* next = still(sim, 0, 40.0f, 40.0f);
+    next->set_blueprint_id("tier2");
+    next->set_size_xz(5.0f, 5.0f);
+    next->set_size_y(3.0f);
+    next->set_is_being_built(true);
+    next->set_creator_id(old->entity_id());
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eng->entity_id()});
+    const auto orders = input.right_click_orders(sim, 40.0f, 40.0f);
+    REQUIRE(orders.size() == 1);
+    CHECK(orders.front().first.type == CommandType::Guard);
+    CHECK(orders.front().first.target_id == old->entity_id());
 }
 
 TEST_CASE("Past zoom 150 the cursor passes over props", "[reclaim]") {
