@@ -148,6 +148,7 @@ TEST_CASE("Of the units being built, only a factory can be selected", "[selectio
     tank.set_is_being_built(true);
     CHECK_FALSE(osc::renderer::selectable(tank));
     Unit factory;
+    factory.add_category("SELECTABLE");
     factory.add_category("FACTORY");
     factory.set_is_being_built(true);
     CHECK(osc::renderer::selectable(factory));

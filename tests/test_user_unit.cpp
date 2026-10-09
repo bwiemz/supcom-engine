@@ -41,6 +41,7 @@ struct UiWorld {
         auto unit = std::make_unique<osc::sim::Unit>();
         unit->set_army(0);
         unit->set_blueprint_id("uel0001");
+        unit->add_category("SELECTABLE");
         id = sim.entity_registry().register_entity(std::move(unit));
         osc::lua::register_moho_bindings(ui, sim);
         lua_State* L = ui.raw();
@@ -439,8 +440,17 @@ TEST_CASE("SelectUnits(nil) and SelectUnits({}) clear the selection", "[userunit
     }
 }
 
+TEST_CASE("Only a SELECTABLE unit can be selected", "[selection]") {
+    osc::sim::Unit beacon;
+    beacon.set_motion_type("RULEUMT_None");
+    CHECK_FALSE(osc::renderer::selectable(beacon));
+    beacon.add_category("SELECTABLE");
+    CHECK(osc::renderer::selectable(beacon));
+}
+
 TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[selection]") {
     osc::sim::Unit unit;
+    unit.add_category("SELECTABLE");
     unit.set_motion_type("RULEUMT_Land");
     CHECK(osc::renderer::selectable(unit));
     unit.set_transport_id(7);
@@ -452,6 +462,7 @@ TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[sele
     CHECK(osc::renderer::selectable(unit));
 
     osc::sim::Unit structure;
+    structure.add_category("SELECTABLE");
     structure.set_motion_type("RULEUMT_None");
     structure.set_parent(7, 0);
     CHECK(osc::renderer::selectable(structure));
@@ -468,6 +479,7 @@ TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][select
     auto transport = std::make_unique<osc::sim::Unit>();
     transport->set_army(0);
     transport->set_motion_type("RULEUMT_Air");
+    transport->add_category("SELECTABLE");
     const osc::u32 transport_id = w.sim.entity_registry().register_entity(std::move(transport));
     w.unit().set_motion_type("RULEUMT_Land");
     w.unit().set_transport_id(transport_id);
@@ -510,6 +522,7 @@ TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[s
         auto unit = std::make_unique<osc::sim::Unit>();
         unit->set_army(army);
         unit->set_blueprint_id(bp);
+        unit->add_category("SELECTABLE");
         unit->set_size_xz(1.0f, 1.0f);
         unit->set_size_y(1.0f);
         unit->set_is_being_built(being_built);
