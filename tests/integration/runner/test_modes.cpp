@@ -12,6 +12,7 @@
 #include "options_test.hpp"
 #include "keymap_test.hpp"
 #include "movie_test.hpp"
+#include "combo_click_test.hpp"
 #include "edit_text_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
@@ -276,6 +277,7 @@ constexpr const char* kOwnModes[] = {
     "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
     "--options-test",         "--lan-screen-test",   "--edit-text-test",    "--focus-army-test",
+    "--combo-click-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -444,6 +446,7 @@ void IntegrationModes::print_usage() const {
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
+              << "  --combo-click-test A combo's list closes on a click outside; Cancel clicks\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -539,6 +542,14 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         }
         osc::test::run_movie_test(e);
         return finish_test_run("movie-test");
+    }
+    if (has("--combo-click-test")) {
+        if (!e.map_path.empty()) {
+            spdlog::error("--combo-click-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        osc::test::run_combo_click_test(e);
+        return finish_test_run("combo-click-test");
     }
     if (has("--edit-text-test")) {
         if (!e.map_path.empty()) {

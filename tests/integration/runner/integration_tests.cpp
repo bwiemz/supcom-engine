@@ -10916,6 +10916,43 @@ void test_range(TestContext& ctx) {
         end
     )");
 
+    lua_check("Test 12l: a land factory", R"(
+        __osc_burn = __osc_spawn('ueb0101', 'ARMY_1', 660.5, 180.5)
+        __osc_burn_id = tonumber(__osc_burn:GetEntityId())
+    )");
+    lua_getglobal(ctx.lua_state.raw(), "__osc_burn_id");
+    const auto burn_id = static_cast<osc::u32>(lua_tonumber(ctx.lua_state.raw(), -1));
+    lua_pop(ctx.lua_state.raw(), 1);
+    bool unit_templates = false;
+    const auto burning = [&](float ratio) {
+        const std::string set =
+            fmt::format("__osc_burn:SetHealth(nil, __osc_burn:GetMaxHealth() * {})", ratio);
+        (void)ctx.lua_state.do_string(set);
+        run(1);
+        int n = 0;
+        for (const auto& fx : ctx.sim.effect_registry().all()) {
+            if (!fx || fx->destroyed() || fx->entity_id() != burn_id ||
+                fx->blueprint_path().find("destruction_damaged_") == std::string::npos) {
+                continue;
+            }
+            ++n;
+            const std::string& path = fx->blueprint_path();
+            unit_templates = unit_templates || (path.find("_01_emit") != std::string::npos &&
+                                                path.find("sparks_01") == std::string::npos);
+        }
+        return n;
+    };
+    const int whole = burning(0.8f);
+    const int smoke = burning(0.6f);
+    const int fire_smoke = burning(0.4f);
+    const int fire = burning(0.2f);
+    const int repaired = burning(1.0f);
+    check(whole == 0 && smoke > 0 && fire_smoke > smoke && fire > fire_smoke && repaired == 0 &&
+              !unit_templates,
+          fmt::format("Test 12l: a factory's damage emitters below 3/4, 1/2 and 1/4 of its health: "
+                      "{}, {}, {} ({} above 3/4, {} once repaired); a unit's templates: {}",
+                      smoke, fire_smoke, fire, whole, repaired, unit_templates));
+
     lua_check("Test 12f: SetScale takes a scale for each axis", R"(
         __osc_scaled = __osc_spawn('uel0201', 'ARMY_1', 640.5, 100.5)
         __osc_scaled:SetScale(1, 0.2, 3)
@@ -11530,6 +11567,7 @@ void test_factory_rally(TestContext& ctx) {
         IssueBuildFactory({__osc_airf}, 'uea0101', 1)
         __osc_scout = false
         __osc_let_go = false
+        __osc_released = false
         __osc_climb = 0
         __osc_aside = 0
     )");
@@ -11543,6 +11581,13 @@ void test_factory_rally(TestContext& ctx) {
             if __osc_was and not __osc_scout:IsDead() and not __osc_scout:IsBeingBuilt() then
                 local p = __osc_scout:GetPosition()
                 __osc_let_go = __osc_let_go or __osc_was
+                if not __osc_released then
+                    local q = __osc_scout:GetOrientation()
+                    __osc_released = {
+                        fx = 2 * (q[1] * q[3] + q[4] * q[2]),
+                        fz = 1 - 2 * (q[1] * q[1] + q[2] * q[2]),
+                    }
+                end
                 if p[1] > __osc_let_go[1] - 30 then
                     __osc_climb = math.max(__osc_climb, p[2] - __osc_was[2])
                     __osc_aside = math.max(__osc_aside, math.abs(p[3] - __osc_let_go[3]))
@@ -11555,6 +11600,13 @@ void test_factory_rally(TestContext& ctx) {
         if __osc_climb > 1 or __osc_aside > 1 then
             error('climbed ' .. __osc_climb .. ' in a tick, flew ' .. __osc_aside ..
                   ' aside of its line west')
+        end
+    )");
+    lua_check("the scout is let go facing the roll-off point nearest the rally", R"(
+        local r = __osc_released
+        if not r then error('the scout was never finished') end
+        if r.fx > -0.9 then
+            error('faced ' .. r.fx .. ', ' .. r.fz .. ' when let go; west expected')
         end
     )");
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
