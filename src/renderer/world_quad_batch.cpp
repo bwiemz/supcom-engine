@@ -161,19 +161,12 @@ void WorldQuadBatch::upload(const std::vector<Quad>& quads, u32 fi) {
     }
 }
 
-void WorldQuadBatch::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                            const f32* view_proj, u32 fi) const {
+void WorldQuadBatch::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                            u32 fi) const {
     if (groups_.empty() || !pipeline_ || !vertex_buf_[fi].buffer) {
         return;
     }
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(viewport_w);
-    viewport.height = static_cast<f32>(viewport_h);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkc::set_area(cmd, area);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf_[fi].buffer, &offset);
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);

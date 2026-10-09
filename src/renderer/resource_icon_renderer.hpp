@@ -51,7 +51,7 @@ public:
 
     void update(std::span<const ResourceIcon> icons, TextureCache& tex_cache, u32 fi);
 
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, f32 time, u32 fi) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, f32 time, u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

@@ -76,9 +76,15 @@ public:
                 TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, i32 game_result = 0,
                 f32 dt = 0.0f, const Frustum* frustum = nullptr, const BuildGhost* ghost = nullptr);
 
+    struct Drawn {
+        u32 quads = 0;
+        u32 slot = 0;
+    };
+    Drawn drawn() const { return {quad_count_, fi_}; }
+
     /// Issue draw calls. Caller must have the UI pipeline bound.
-    void render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w, u32 viewport_h,
-                f32 scale = 1.0f);
+    void render(VkCommandBuffer cmd, VkPipelineLayout layout, const Drawn& drawn,
+                const VkRect2D& area, f32 scale = 1.0f) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

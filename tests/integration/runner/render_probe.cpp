@@ -95,7 +95,7 @@ void OffscreenShots::redraw(const std::unordered_set<u32>* selected,
     // The sight of the army the test watches (it may have changed since)
     history_.set_sight_army(renderer_.player_army(), &ctx_.sim);
     renderer_.render(sim::FrameView(&history_.prev(), &history_.cur(), 1.0f), history_.events(),
-                     ghost, ctx_.L, ui_, selected);
+                     ghost, ui_L_ ? ui_L_ : ctx_.L, ui_, selected);
     renderer_.poll_events(0.016);
 }
 

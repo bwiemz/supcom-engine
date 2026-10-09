@@ -36,7 +36,7 @@ public:
     void set_off() { drawn_ = false; }
 
     /// Into the open pass, which must have a stencil.
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj) const;
 
     /// Whether the last update() found a boundary to draw.
     bool drawn() const { return drawn_; }

@@ -1017,7 +1017,7 @@ void main() {
 
     // The frame behind, at this pixel.
     float oneOverW = 1.0 / fragScreenPos.w;
-    vec2 screenPos = fragScreenPos.xy * oneOverW * 0.5 + 0.5;
+    vec2 screenPos = gl_FragCoord.xy / vec2(textureSize(refractionMap, 0));
     vec4 background = texture(refractionMap, screenPos);
     float mask = clamp(background.a * 255.0, 0.0, 1.0);
     // Not water (its alpha test): drawn over by nothing.
@@ -2554,7 +2554,8 @@ void main() {
     vec2 rampUV = clamp(fragRamp, rampHalf, 1.0 - rampHalf);
     vec4 texel = texture(texParticle, uv);
     vec2 offset = 0.005 * (2.0 * texel.rg - 1.0);
-    outColor = vec4(texture(background, fragScreen + offset).rgb,
+    vec2 screen = gl_FragCoord.xy / vec2(textureSize(background, 0));
+    outColor = vec4(texture(background, screen + offset).rgb,
                     texel.a * texture(texRamp, rampUV).a);
 }
 )glsl";

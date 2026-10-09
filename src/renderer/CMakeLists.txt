@@ -14,6 +14,7 @@ add_library(osc_renderer STATIC
     dds_parser.cpp
     dds_decode.cpp
     camera.cpp
+    scene_views.cpp
     frustum.cpp
     shadow_camera.cpp
     shadow_map.cpp

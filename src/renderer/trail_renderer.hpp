@@ -51,8 +51,8 @@ public:
 
     /// Draw the trails under the water (negative SortOrder) or the others;
     /// the scene pass must be open.
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
-                bool under_water, u32 fi) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, bool under_water,
+                u32 fi) const;
 
     /// Forget every trail and segment (a new game).
     void clear();

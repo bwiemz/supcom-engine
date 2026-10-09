@@ -333,17 +333,10 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
     }
 }
 
-void BeamRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
+void BeamRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
                           u32 fi) const {
     if (groups_.empty() || !vertex_buf_[fi].buffer) return;
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(viewport_w);
-    viewport.height = static_cast<f32>(viewport_h);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkc::set_area(cmd, area);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf_[fi].buffer, &offset);
     i32 bound = -1;

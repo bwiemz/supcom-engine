@@ -225,9 +225,9 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
     batch_.upload(quads, fi);
 }
 
-void SelectionRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                               const f32* view_proj, u32 fi) const {
-    batch_.render(cmd, viewport_w, viewport_h, view_proj, fi);
+void SelectionRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                               u32 fi) const {
+    batch_.render(cmd, area, view_proj, fi);
 }
 
 void SelectionRenderer::destroy(VkDevice device, VmaAllocator allocator) {
