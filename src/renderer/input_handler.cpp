@@ -1392,10 +1392,13 @@ u32 InputHandler::prop_under(sim::SimState& sim, f32 wx, f32 wz) const {
     return best_id;
 }
 
+Sight InputHandler::sight(const sim::Entity& e) const {
+    const sim::EntityRecord* record = recon_ ? view_.find(e.entity_id()) : nullptr;
+    return record ? recon_->sight(*record) : Sight::Seen;
+}
+
 bool InputHandler::shown(const sim::Entity& e) const {
-    if (!recon_) return true;
-    const sim::EntityRecord* record = view_.find(e.entity_id());
-    return !record || shows_icon(recon_->sight(*record));
+    return shows_icon(sight(e));
 }
 
 std::array<f32, 2> InputHandler::footprint_of(const std::string& bp) const {
