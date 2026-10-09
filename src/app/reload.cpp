@@ -284,9 +284,6 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     // first, as a lobby gives the player the slot taken (its start spot)
     osc::lua::set_focus_army(sim_lua_state->raw(), uiL,
                              human_army(sim_lua_state->raw(), *sim_state));
-    lua_pushstring(uiL, "__osc_focus_army");
-    lua_pushnumber(uiL, 0);
-    lua_rawset(uiL, LUA_REGISTRYINDEX);
 
     // 17. Clear selection
     if (input_handler) input_handler->set_selected({});
