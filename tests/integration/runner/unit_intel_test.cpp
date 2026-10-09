@@ -565,7 +565,7 @@ void test_effect_intel(TestContext& ctx) {
     const auto lights = [&](sim::EffectType type) {
         size_t n = 0;
         for (const sim::EffectRecord& fx : seen.cur().effects) {
-            if (fx.type == type) {
+            if (fx.type == type && (fx.entity_id == seen_id || fx.entity_id == fog_id)) {
                 n += particles(fx.id);
             }
         }

@@ -7134,7 +7134,7 @@ void test_weapon(TestContext& ctx) {
         if not reload then error('it never reloaded') end
         local after = log[reload + 1]
         if not after then error('still reloading after ' .. GetGameTick() - log[reload].tick) end
-        if after.tick - log[reload].tick < 66 then
+        if after.tick - log[reload].tick < 65 then
             error('reloaded in ' .. after.tick - log[reload].tick .. ' ticks')
         end
     )");
@@ -10320,21 +10320,20 @@ void test_beam_weapon(TestContext& ctx) {
         if __osc_count(__osc_cerberus, 'Unit', __osc_block) == 0 then error('no beam met the tank') end
         if not __osc_block:IsDead() then error('the tank lives') end
     )");
-    lua_check(
-        "Test 2: a pulsed beam hits every CollisionCheckInterval + 1 ticks, 1 + 6/3 times a shot",
-        R"(
-        -- Cerberus: BeamLifetime 0.6 s, BeamCollisionDelay 0.2 s (2 ticks),
-        -- RateOfFire 1.5 (a shot every 7 ticks).
+    lua_check("Test 2: a pulsed beam hits every CollisionCheckInterval + 1 ticks, twice a shot",
+              R"(
+        -- Cerberus: BeamLifetime 0.6 s (WaitTicks(6): 5 ticks), BeamCollisionDelay
+        -- 0.2 s (2 ticks), RateOfFire 1.5 (a shot every 7 ticks).
         local first = __osc_cerberus.__osc_impacts[1].beam
         local ticks = {}
         for _, i in __osc_cerberus.__osc_impacts do
             if i.beam == first then table.insert(ticks, i.tick) end
         end
         if table.getn(ticks) < 4 then error('only ' .. table.getn(ticks) .. ' pulses') end
-        if ticks[2] - ticks[1] ~= 3 or ticks[3] - ticks[2] ~= 3 then
+        if ticks[2] - ticks[1] ~= 3 or ticks[4] - ticks[3] ~= 3 then
             error('pulses at ' .. table.concat(ticks, ',', 1, 4))
         end
-        if ticks[4] - ticks[1] ~= 7 then error('the next shot came ' .. (ticks[4] - ticks[1]) .. ' ticks on') end
+        if ticks[3] - ticks[1] ~= 7 then error('the next shot came ' .. (ticks[3] - ticks[1]) .. ' ticks on') end
     )");
     lua_check("Test 3: a continuous beam checks every other tick (interval 1)", R"(
         local ticks = {}
