@@ -63,7 +63,8 @@ f32 mean_abs_diff(const Pixels& a, const Pixels& b) {
     return sum / static_cast<f32>(a.size() * 3);
 }
 
-OffscreenShots::OffscreenShots(TestContext& ctx) : ctx_(ctx) {
+OffscreenShots::OffscreenShots(TestContext& ctx, f32 scale) : ctx_(ctx) {
+    renderer_.set_offscreen_scale(scale);
     ok_ = renderer_.init(800, 600, "Render Test", /*offscreen=*/true);
     if (!ok_) return;
     renderer_.set_bloom_enabled(false);

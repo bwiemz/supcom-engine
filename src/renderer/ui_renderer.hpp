@@ -67,6 +67,7 @@ class UIRenderer {
 public:
     /// Whether it draws the cursor (not while the window shows it as its own).
     void set_draw_cursor(bool on) { draw_cursor_ = on; }
+    void set_scale(f32 scale) { scale_ = scale; }
     void init(VkDevice device, VmaAllocator allocator);
 
     /// Walk all controls, read LazyVar positions from Lua, build quad list.
@@ -154,6 +155,7 @@ private:
         const ui::UIControl* movie = nullptr; ///< the movie whose frame this is
     };
     bool draw_cursor_ = true;
+    f32 scale_ = 1.0f;
     std::vector<QuadEntry> quads_;
     const WorldViewPainter* minimap_painter_ = nullptr; // during update()
     const MovieTextures* movies_ = nullptr;

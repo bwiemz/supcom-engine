@@ -16,6 +16,7 @@
 #include "combo_click_test.hpp"
 #include "command_sources_test.hpp"
 #include "edit_text_test.hpp"
+#include "hidpi_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -296,7 +297,7 @@ constexpr const char* kOwnModes[] = {
     "--stress-test",          "--full-smoke-test",      "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",        "--camera-moves-test", "--window-test",
     "--options-test",         "--lan-screen-test",      "--edit-text-test",    "--focus-army-test",
-    "--combo-click-test",     "--command-sources-test",
+    "--combo-click-test",     "--command-sources-test", "--hidpi-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -482,6 +483,7 @@ void IntegrationModes::print_usage() const {
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
               << "  --combo-click-test A combo's list closes on a click outside; Cancel clicks\n"
+              << "  --hidpi-test       The UI in points on a Retina frame, at twice the pixels\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -595,6 +597,14 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         }
         osc::test::run_edit_text_test(e);
         return finish_test_run("edit-text-test");
+    }
+    if (has("--hidpi-test")) {
+        if (!e.map_path.empty()) {
+            spdlog::error("--hidpi-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        osc::test::run_hidpi_test(e);
+        return finish_test_run("hidpi-test");
     }
     const auto& map_path = e.map_path;
     auto& ui_lua_state = e.ui_lua_state;

@@ -91,7 +91,9 @@ void test_window(TestContext& ui, TestContext& sim, const std::function<void(int
     const auto frames = [&](int n) {
         for (int i = 0; i < n; ++i) {
             shots.redraw();
-            if (r.take_resized()) app::size_root_frame(L, r.width(), r.height());
+            if (r.take_resized()) {
+                app::size_root_frame(L, r.ui_width(), r.ui_height());
+            }
             pump(1);
         }
     };

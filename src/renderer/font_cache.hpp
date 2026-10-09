@@ -5,6 +5,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -66,6 +68,10 @@ f32 place_glyphs(const FontAtlas& atlas, const std::string& text, f32 x, f32 y, 
     return cursor_x - x;
 }
 
+inline i32 raster_pointsize(i32 pointsize, f32 scale) {
+    return std::max(1, static_cast<i32>(std::lround(static_cast<f32>(pointsize) * scale)));
+}
+
 /// Caches rasterized font atlases keyed by (family, pointsize).
 class FontCache {
 public:
@@ -77,6 +83,10 @@ public:
     /// Get or lazily load a font atlas for a given family and pointsize.
     /// Returns nullptr if the font cannot be loaded.
     const FontAtlas* get(const std::string& family, i32 pointsize);
+
+    bool loaded(const std::string& family, i32 pointsize) const {
+        return cache_.contains(make_key(family, pointsize));
+    }
 
     /// Get the metrics for a font (loads if needed).
     const FontMetrics* get_metrics(const std::string& family, i32 pointsize);

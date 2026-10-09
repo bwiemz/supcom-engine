@@ -17,6 +17,7 @@ add_executable(osc_integration
     runner/combo_click_test.cpp
     runner/command_sources_test.cpp
     runner/edit_text_test.cpp
+    runner/hidpi_test.cpp
     runner/keymap_test.cpp
     runner/pathing_evidence_test.cpp
     runner/camera_moves_test.cpp

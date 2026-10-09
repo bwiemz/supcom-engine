@@ -244,12 +244,11 @@ void ProfileOverlay::update(FontCache& font_cache, TextureCache& tex_cache,
     }
 }
 
-void ProfileOverlay::render(VkCommandBuffer cmd, VkPipelineLayout layout,
-                              u32 viewport_w, u32 viewport_h) {
+void ProfileOverlay::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
+                            u32 viewport_h, f32 scale) {
     if (quad_count_ == 0 || groups_.empty()) return;
 
-    f32 vp[2] = {static_cast<f32>(viewport_w),
-                 static_cast<f32>(viewport_h)};
+    f32 vp[2] = {static_cast<f32>(viewport_w) / scale, static_cast<f32>(viewport_h) / scale};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     VkRect2D scissor{};

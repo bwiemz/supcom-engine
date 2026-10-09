@@ -57,6 +57,8 @@ void print_usage() {
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
               << "  --camera <x>,<z>,<zoom> Initial camera target and zoom\n"
+              << "  --capture-scale <s> Capture as a display at scale s draws it: the UI\n"
+              << "                     at the capture's size, its pixels s times it\n"
               << "  --legacy-hud       Draw the C++ HUD placeholders over FA's game interface\n"
               << "  --prefs <path>     Game.prefs to use (default: the user's config dir;\n"
               << "                     tests and captures keep preferences in memory)\n"

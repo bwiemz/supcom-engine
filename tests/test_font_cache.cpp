@@ -152,6 +152,13 @@ TEST_CASE("A font's text metrics are GDI's whole pixels, as Moho's Text and Edit
     }
 }
 
+TEST_CASE("Text on a scaled display is rasterised at its size in pixels", "[font]") {
+    CHECK(osc::renderer::raster_pointsize(12, 1.0f) == 12);
+    CHECK(osc::renderer::raster_pointsize(12, 2.0f) == 24);
+    CHECK(osc::renderer::raster_pointsize(14, 1.5f) == 21);
+    CHECK(osc::renderer::raster_pointsize(1, 0.25f) == 1);
+}
+
 TEST_CASE("UTF-8 text is read a character at a time and a stray byte stands for itself", "[font]") {
     const std::string text = "a\xD0\x96\xE2\x80\x94\xF0\x9F\x98\x80\xE9z\xD0";
     std::vector<osc::u32> read;

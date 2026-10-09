@@ -11,6 +11,7 @@
 #include <vk_mem_alloc.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <utility>
 
@@ -82,6 +83,30 @@ FontLine font_line(const ui::UIControl& ctrl, const FontAtlas& atlas) {
     return {atlas.metrics.ascent, atlas.metrics.descent};
 }
 
+struct GlyphRaster {
+    const FontAtlas* atlas = nullptr;
+    f32 shrink = 1.0f;
+};
+
+GlyphRaster glyph_raster(FontCache& cache, const ui::UIControl& ctrl, const FontAtlas& layout,
+                         f32 scale) {
+    const i32 size = ctrl.font_pointsize();
+    const i32 raster = raster_pointsize(size, scale);
+    if (raster == size) {
+        return {&layout, 1.0f};
+    }
+    const FontAtlas* atlas = cache.get(ctrl.font_family(), raster);
+    if (!atlas || atlas->descriptor_set == VK_NULL_HANDLE) {
+        return {&layout, 1.0f};
+    }
+    return {atlas, static_cast<f32>(size) / static_cast<f32>(raster)};
+}
+
+const GlyphInfo* raster_glyph(const GlyphRaster& raster, u32 codepoint) {
+    const auto it = raster.atlas->glyphs.find(codepoint);
+    return it != raster.atlas->glyphs.end() ? &it->second : nullptr;
+}
+
 } // namespace
 
 void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
@@ -119,11 +144,13 @@ void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
         cursor_x = left + (width - total_advance) * 0.5f;
     }
 
+    const GlyphRaster raster = glyph_raster(font_cache, *ctrl, *atlas, scale_);
     // Emit one quad per glyph
     for (size_t i = 0; i < text.size();) {
         if (quad_count_ >= MAX_UI_QUADS) break;
 
-        auto git = atlas->glyphs.find(next_codepoint(text, i));
+        const u32 codepoint = next_codepoint(text, i);
+        auto git = atlas->glyphs.find(codepoint);
         if (git == atlas->glyphs.end()) {
             // Unknown glyph — advance by space width
             auto space = atlas->glyphs.find(32);
@@ -135,26 +162,30 @@ void UIRenderer::emit_text_quads(ui::UIControl* ctrl, FontCache& font_cache,
         }
 
         const auto& gi = git->second;
+        const GlyphInfo* rg = raster_glyph(raster, codepoint);
 
         // Skip spaces (no visible glyph)
-        if (gi.width > 0 && gi.height > 0) {
+        if (rg && rg->width > 0 && rg->height > 0) {
             // Clip to control bounds
-            f32 gx = cursor_x + gi.x_offset;
-            f32 gy = baseline_y + gi.y_offset;
+            f32 gx = cursor_x + rg->x_offset * raster.shrink;
+            f32 gy = baseline_y + rg->y_offset * raster.shrink;
+            const f32 gw = rg->width * raster.shrink;
 
-            if (ctrl->clip_to_width() && gx + gi.width > left + width) break;
+            if (ctrl->clip_to_width() && gx + gw > left + width) {
+                break;
+            }
 
             QuadEntry entry{};
-            entry.texture_ds = atlas->descriptor_set;
+            entry.texture_ds = raster.atlas->descriptor_set;
             entry.clip = clip;
             entry.inst.rect[0] = gx;
             entry.inst.rect[1] = gy;
-            entry.inst.rect[2] = gi.width;
-            entry.inst.rect[3] = gi.height;
-            entry.inst.uv[0] = gi.u0;
-            entry.inst.uv[1] = gi.v0;
-            entry.inst.uv[2] = gi.u1;
-            entry.inst.uv[3] = gi.v1;
+            entry.inst.rect[2] = gw;
+            entry.inst.rect[3] = rg->height * raster.shrink;
+            entry.inst.uv[0] = rg->u0;
+            entry.inst.uv[1] = rg->v0;
+            entry.inst.uv[2] = rg->u1;
+            entry.inst.uv[3] = rg->v1;
             std::memcpy(entry.inst.color, color, sizeof(color));
             entry.depth = depth + 0.01f; // text slightly above background
 
@@ -317,10 +348,12 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
 
             f32 baseline_y = row_y + font_line(*ctrl, *atlas).ascent;
             f32 cursor_x = left + 2.0f;
+            const GlyphRaster raster = glyph_raster(font_cache, *ctrl, *atlas, scale_);
 
             for (size_t at = 0; at < items[i].size();) {
                 if (quad_count_ >= MAX_UI_QUADS) break;
-                auto git = atlas->glyphs.find(next_codepoint(items[i], at));
+                const u32 codepoint = next_codepoint(items[i], at);
+                auto git = atlas->glyphs.find(codepoint);
                 if (git == atlas->glyphs.end()) {
                     auto sp = atlas->glyphs.find(32);
                     cursor_x += sp != atlas->glyphs.end()
@@ -329,19 +362,26 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
                     continue;
                 }
                 const auto& gi = git->second;
-                if (gi.width > 0 && gi.height > 0) {
-                    f32 gx = cursor_x + gi.x_offset;
-                    f32 gy = baseline_y + gi.y_offset;
-                    if (gx + gi.width > left + width) break;
+                const GlyphInfo* rg = raster_glyph(raster, codepoint);
+                if (rg && rg->width > 0 && rg->height > 0) {
+                    f32 gx = cursor_x + rg->x_offset * raster.shrink;
+                    f32 gy = baseline_y + rg->y_offset * raster.shrink;
+                    const f32 gw = rg->width * raster.shrink;
+                    if (gx + gw > left + width) {
+                        break;
+                    }
 
                     QuadEntry glyph{};
-                    glyph.texture_ds = atlas->descriptor_set;
+                    glyph.texture_ds = raster.atlas->descriptor_set;
                     glyph.clip = clip;
                     glyph.depth = depth + 0.01f;
                     glyph.inst.rect[0] = gx; glyph.inst.rect[1] = gy;
-                    glyph.inst.rect[2] = gi.width; glyph.inst.rect[3] = gi.height;
-                    glyph.inst.uv[0] = gi.u0; glyph.inst.uv[1] = gi.v0;
-                    glyph.inst.uv[2] = gi.u1; glyph.inst.uv[3] = gi.v1;
+                    glyph.inst.rect[2] = gw;
+                    glyph.inst.rect[3] = rg->height * raster.shrink;
+                    glyph.inst.uv[0] = rg->u0;
+                    glyph.inst.uv[1] = rg->v0;
+                    glyph.inst.uv[2] = rg->u1;
+                    glyph.inst.uv[3] = rg->v1;
                     std::memcpy(glyph.inst.color, color, sizeof(color));
                     quads_.push_back(glyph);
                     quad_count_++;
@@ -782,6 +822,9 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
 
     for (u32 i = 0; i < count; i++) {
         dst[i] = quads_[i].inst;
+        for (f32& v : dst[i].rect) {
+            v *= scale_;
+        }
     }
 
     // Build draw groups — batch consecutive quads with same descriptor set AND clip rect
@@ -813,6 +856,11 @@ void UIRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     // Push viewport dimensions
     f32 push[2] = {static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 8, push);
+    const auto pixels = [this](i32 from, i32 to) {
+        const auto lo = static_cast<i32>(std::floor(static_cast<f32>(from) * scale_));
+        const auto hi = static_cast<i32>(std::ceil(static_cast<f32>(to) * scale_));
+        return std::pair{std::max(lo, 0), std::max(hi - lo, 0)};
+    };
 
     // Bind instance buffer at binding 0
     VkDeviceSize offset = 0;
@@ -825,13 +873,13 @@ void UIRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     for (const auto& group : groups_) {
         // Set scissor rect per group (clip children to parent bounds)
         if (group.clip != current_scissor) {
+            const auto [x, w] = pixels(group.clip.x, group.clip.x + group.clip.w);
+            const auto [y, h] = pixels(group.clip.y, group.clip.y + group.clip.h);
             VkRect2D scissor{};
-            scissor.offset.x = std::max(group.clip.x, 0);
-            scissor.offset.y = std::max(group.clip.y, 0);
-            scissor.extent.width = static_cast<u32>(
-                std::max(group.clip.w, 0));
-            scissor.extent.height = static_cast<u32>(
-                std::max(group.clip.h, 0));
+            scissor.offset.x = x;
+            scissor.offset.y = y;
+            scissor.extent.width = static_cast<u32>(w);
+            scissor.extent.height = static_cast<u32>(h);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             current_scissor = group.clip;
         }

@@ -272,7 +272,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     clock_ += dt;
     prune_selection(sim.entity_registry());
     f64 mx_d, my_d;
-    renderer.mouse_position(mx_d, my_d);
+    renderer.ui_mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
     f32 my = static_cast<f32>(my_d);
     measure_snap_radius(renderer, sim, mx, my);
@@ -309,7 +309,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     // The minimap takes clicks where it was drawn: the C++ HUD's corner, or
     // FA's minimap window while that is shown.
     f32 mm_wx = 0, mm_wz = 0;
-    bool on_minimap = renderer.minimap().hit_test(mx, my, renderer.width(), renderer.height(),
+    bool on_minimap = renderer.minimap().hit_test(mx, my, renderer.ui_width(), renderer.ui_height(),
                                                   map_w, map_h, mm_wx, mm_wz);
 
     // FA's command mode (a build icon or order button picked in the UI)
@@ -328,8 +328,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             cursor_world_ = std::array<f32, 2>{wx, wz};
             // The ray the cursor is on, for picking units where they are
             // drawn (an aircraft where it flies).
-            set_cursor_view(renderer.camera(), static_cast<f32>(renderer.width()),
-                            static_cast<f32>(renderer.height()), mx, my, wx, wz);
+            set_cursor_view(renderer.camera(), static_cast<f32>(renderer.ui_width()),
+                            static_cast<f32>(renderer.ui_height()), mx, my, wx, wz);
             if (!dragging_) {
                 hovered_ = unit_under(sim, wx, wz);
             }
@@ -341,8 +341,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
         if (graph_shown && !dragging_ && !order_drag_) {
             hovered_command_ =
                 waypoint_under_cursor(waypoints_on_screen(command_graph_nodes(), renderer.camera(),
-                                                          static_cast<f32>(renderer.width()),
-                                                          static_cast<f32>(renderer.height())),
+                                                          static_cast<f32>(renderer.ui_width()),
+                                                          static_cast<f32>(renderer.ui_height())),
                                       mx, my);
         }
     }
@@ -479,9 +479,10 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             if (world_at(renderer, sim, mx, my, wx, wz)) {
                 const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                                    renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-                const f32 aspect = renderer.height() > 0 ? static_cast<f32>(renderer.width()) /
-                                                               static_cast<f32>(renderer.height())
-                                                         : 1.0f;
+                const f32 aspect = renderer.ui_height() > 0
+                                       ? static_cast<f32>(renderer.ui_width()) /
+                                             static_cast<f32>(renderer.ui_height())
+                                       : 1.0f;
                 const bool ctrl = renderer.is_key_pressed(GLFW_KEY_LEFT_CONTROL) ||
                                   renderer.is_key_pressed(GLFW_KEY_RIGHT_CONTROL);
                 world_click(sim, wx, wz, shift, ctrl, double_click,
@@ -782,9 +783,9 @@ bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, 
     // Where the cursor's ray meets the ground, or the water over it (M217a):
     // clicks had met the plane y = 0, short of the cursor on high ground.
     f32 wy = 0.0f;
-    return renderer.camera().pick_ground(mx, my, static_cast<f32>(renderer.width()),
-                                         static_cast<f32>(renderer.height()), sim.terrain(), wx, wy,
-                                         wz);
+    return renderer.camera().pick_ground(mx, my, static_cast<f32>(renderer.ui_width()),
+                                         static_cast<f32>(renderer.ui_height()), sim.terrain(), wx,
+                                         wy, wz);
 }
 
 void InputHandler::snap_to_deposit(const sim::SimState& sim, const CommandMode& mode, f32& x,
@@ -803,7 +804,7 @@ void InputHandler::measure_snap_radius(const Renderer& renderer, const sim::SimS
                                        f32 my) {
     f32 wx = 0;
     f32 wz = 0;
-    const f32 width = static_cast<f32>(renderer.width());
+    const f32 width = static_cast<f32>(renderer.ui_width());
     if (width <= 0 || !world_at(renderer, sim, mx, my, wx, wz)) {
         return;
     }
@@ -937,8 +938,8 @@ void InputHandler::handle_drag_select(Renderer& renderer,
                                       sim::SimState& sim) {
     const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                        renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-    const f32 sw = static_cast<f32>(renderer.width());
-    const f32 sh = static_cast<f32>(renderer.height());
+    const f32 sw = static_cast<f32>(renderer.ui_width());
+    const f32 sh = static_cast<f32>(renderer.ui_height());
     select_in_box(sim, renderer.camera().view_proj(sh > 0 ? sw / sh : 1.0f), sw, sh, drag_start_x_,
                   drag_start_y_, drag_end_x_, drag_end_y_, shift);
 }
@@ -1842,7 +1843,7 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
 
     // The cursor on the ground, where the range overlays are drawn
     f64 mx = 0, my = 0;
-    renderer.mouse_position(mx, my);
+    renderer.ui_mouse_position(mx, my);
     f32 wx = 0, wz = 0;
     const bool on_ground =
         world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz);
