@@ -136,6 +136,31 @@ TEST_CASE("The adapter option lists the display's modes as Moho does (M217h)", "
     CHECK(overridden == "overridden");
 }
 
+TEST_CASE("A native full screen is one adapter state the option keeps", "[window]") {
+    CHECK(native_fullscreen_key("1920,1200,120") == "1920,1200,120");
+    CHECK(native_fullscreen_key("1024,768,60") == "1024,768,60");
+    CHECK(native_fullscreen_key("windowed") == "1024,768,60");
+    CHECK(native_fullscreen_key("overridden") == "1024,768,60");
+
+    auto [states, fallback] = native_adapter_states("1920,1200,120", false);
+    REQUIRE(states.size() == 2);
+    CHECK(states[0].key == "windowed");
+    CHECK(states[1].key == "1920,1200,120");
+    CHECK(states[1].text == "Full Screen");
+    CHECK(fallback == "1024,768,60");
+    auto [first, first_fallback] = native_adapter_states("windowed", false);
+    REQUIRE(first.size() == 2);
+    CHECK(first[1].key == "1024,768,60");
+    auto [only, overridden] = native_adapter_states("1920,1200,120", true);
+    REQUIRE(only.size() == 1);
+    CHECK(only[0].key == "overridden");
+    CHECK(overridden == "overridden");
+
+    CHECK(adapter_option_for(false, "1920,1200,120") == "windowed");
+    CHECK(adapter_option_for(true, "1920,1200,120") == "1920,1200,120");
+    CHECK(adapter_option_for(true, "windowed") == "1024,768,60");
+}
+
 TEST_CASE("A cursor in window units maps to framebuffer pixels (M217h)", "[window]") {
     // 150% scale: a 1000x600 window drawn at 1500x900
     const auto p = core::to_framebuffer(100.0, 200.0, 1000, 600, 1500, 900);
