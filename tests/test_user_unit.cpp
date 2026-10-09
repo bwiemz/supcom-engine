@@ -11,6 +11,7 @@
 #include "map/heightmap.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
@@ -480,7 +481,11 @@ TEST_CASE("The cursor's unit is one its view takes in, but a close OOB-tested on
     osc::renderer::InputHandler input;
     osc::f32 oob_zoom = 0.0f;
     osc::renderer::CommandModeHooks hooks;
-    hooks.oob_test_zoom = [&](const std::string&) { return oob_zoom; };
+    hooks.pick_blueprint = [&](const std::string&) {
+        osc::renderer::PickBlueprint bp;
+        bp.oob_test_zoom = oob_zoom;
+        return bp;
+    };
     input.set_command_mode_hooks(hooks);
     input.set_camera_zoom(400.0f);
     const auto under = [&](osc::f32 dx) {
@@ -499,6 +504,53 @@ TEST_CASE("The cursor's unit is one its view takes in, but a close OOB-tested on
     input.set_camera_zoom(150.0f);
     CHECK(under(5.0f) == 0);
     CHECK(under(0.0f) == w.id);
+}
+
+TEST_CASE("A unit is picked by its mesh's bounds, scaled by the model and its blueprint",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-2.5f, 0.0f, -2.5f}, {2.5f, 5.6f, 2.5f}};
+    w.unit().set_bone_data(&model);
+    osc::renderer::InputHandler input;
+    CHECK(input.unit_under(w.sim, 130.3f, 128.0f) == w.id);
+    CHECK(input.unit_under(w.sim, 130.7f, 128.0f) == 0);
+    model.model_scale = 0.5f;
+    CHECK(input.unit_under(w.sim, 129.2f, 128.0f) == w.id);
+    CHECK(input.unit_under(w.sim, 130.3f, 128.0f) == 0);
+
+    model.model_scale = 1.0f;
+    model.mesh_bounds = osc::sim::MeshBounds{{8.0f, 0.0f, -0.5f}, {15.0f, 2.0f, 0.5f}};
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(100.0f);
+    const auto at = osc::renderer::screen_point(camera.view_proj(1024.0f / 768.0f),
+                                                {142.0f, 10.5f, 128.0f}, 1024.0f, 768.0f);
+    REQUIRE(at);
+    osc::f32 scale_x = 1.0f;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.pick_blueprint = [&](const std::string&) {
+        osc::renderer::PickBlueprint bp;
+        bp.mesh_scale_x = scale_x;
+        return bp;
+    };
+    input.set_command_mode_hooks(hooks);
+    const auto under_cursor = [&] {
+        osc::f32 wx = 0;
+        osc::f32 wz = 0;
+        REQUIRE(camera.screen_to_world((*at)[0], (*at)[1], 1024.0f, 768.0f, 10.0f, wx, wz));
+        input.set_cursor_view(camera, 1024.0f, 768.0f, (*at)[0], (*at)[1], wx, wz);
+        return input.unit_under(w.sim, wx, wz);
+    };
+    CHECK(under_cursor() == w.id);
+    scale_x = 0.2f;
+    CHECK(under_cursor() == 0);
 }
 
 TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][selection]") {

@@ -47,6 +47,16 @@ struct PickRay {
     sim::Vector3 dir;
 };
 
+/// A unit blueprint's fields CUIWorldView::UpdateSelection picks by
+struct PickBlueprint {
+    f32 oob_test_zoom = 0.0f;
+    f32 y_offset = 0.5f;
+    f32 use_top_amount = 0.0f;
+    f32 mesh_scale_x = 1.0f;
+    f32 mesh_scale_z = 1.0f;
+};
+using PickBlueprintOf = std::function<PickBlueprint(const std::string& bp)>;
+
 /// What the camera sees through a square of the screen: four planes
 /// through the eye, their normals facing in.
 struct PickSolid {
@@ -121,8 +131,7 @@ struct CommandModeHooks {
     std::function<void(u32 command, f32 mx, f32 my)> drag_end;
     /// A blueprint's footprint, for a build template's structures (none: 1x1)
     FootprintOf footprint;
-    /// A blueprint's UseOOBTestZoom (none: 0)
-    std::function<f32(const std::string& bp)> oob_test_zoom;
+    PickBlueprintOf pick_blueprint;
     /// /lua/formations.lua's AirFormations for `air`, else SurfaceFormations
     std::function<std::vector<std::string>(bool air)> formation_scripts;
     std::function<std::vector<sim::FormationSlot>(const std::vector<sim::FormationMember>&,
@@ -360,7 +369,7 @@ public:
     bool converts_to_patrol() const { return converts_to_patrol_; }
 
     /// The shown unit the cursor is on, as it is drawn (an aircraft where it
-    /// flies): of those whose box (its blueprint's size, turned with it) the
+    /// flies): of those whose box (its mesh's bounds, turned with it) the
     /// view kSelectTolerance pixels about the cursor meets, or for a mobile
     /// unit closer than its UseOOBTestZoom the cursor's ray, the one drawn
     /// nearest the cursor (Moho's CUIWorldView::UpdateSelection). For a

@@ -157,7 +157,7 @@ void test_selection_render(TestContext& ctx) {
     seen.capture(ctx.sim);
     input.set_frame_view(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f));
     input.set_selected({builder});
-    const f32 click_x = fp.x + 1.8f;
+    const f32 click_x = fp.x + 2.3f;
     const u32 under = input.unit_under(ctx.sim, click_x, fp.z);
     input.left_click_at(ctx.sim, click_x, fp.z, false);
     const auto& now = input.selected();
@@ -224,7 +224,7 @@ void test_selection_render(TestContext& ctx) {
     const f32 ground = ctx.sim.terrain()->get_surface_height(ap.x, ap.z);
     sim::Vector3 eye{};
     r.camera().eye_position(eye.x, eye.y, eye.z);
-    sim::Vector3 dir{ap.x - eye.x, ap.y + 0.3f - eye.y, ap.z - eye.z};
+    sim::Vector3 dir{ap.x - eye.x, ap.y + 0.1f - eye.y, ap.z - eye.z};
     const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
     dir = {dir.x / len, dir.y / len, dir.z / len};
     // Where that ray meets the ground beyond the aircraft

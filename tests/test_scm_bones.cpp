@@ -128,3 +128,29 @@ TEST_CASE("SCM bones: the inverse bind reads as stored and undoes the bind pose"
                   Catch::Approx(i % 5 == 0 ? 1.0f : 0.0f).margin(1e-5));
     }
 }
+
+TEST_CASE("SCM bones: the model's bounds are its vertices' box", "[scm]") {
+    auto data = scm_with({{"root", 0, 0, 0, 1, 0, 0, 0, -1}});
+    const auto vert_offset = static_cast<unsigned>(data.size());
+    const std::vector<std::array<float, 3>> positions = {{-2.5f, 0.0f, 1.0f}, {2.0f, 5.5f, -3.0f}};
+    for (const auto& p : positions) {
+        std::array<char, 68> vertex{};
+        std::memcpy(vertex.data(), p.data(), sizeof(p));
+        data.insert(data.end(), vertex.begin(), vertex.end());
+    }
+    const auto count = static_cast<unsigned>(positions.size());
+    std::memcpy(data.data() + 16, &vert_offset, 4);
+    std::memcpy(data.data() + 24, &count, 4);
+
+    const auto parsed = osc::sim::parse_scm_bones(data);
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->mesh_bounds.has_value());
+    CHECK(parsed->mesh_bounds->lo.x == -2.5f);
+    CHECK(parsed->mesh_bounds->lo.y == 0.0f);
+    CHECK(parsed->mesh_bounds->lo.z == -3.0f);
+    CHECK(parsed->mesh_bounds->hi.x == 2.0f);
+    CHECK(parsed->mesh_bounds->hi.y == 5.5f);
+    CHECK(parsed->mesh_bounds->hi.z == 1.0f);
+    CHECK_FALSE(osc::sim::parse_scm_bones(scm_with({{"root", 0, 0, 0, 1, 0, 0, 0, -1}}))
+                    ->mesh_bounds.has_value());
+}

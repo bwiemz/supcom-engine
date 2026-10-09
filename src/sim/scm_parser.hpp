@@ -8,7 +8,7 @@
 namespace osc::sim {
 
 /// Parse bone data from an SCM (Supreme Commander Model) v5 file.
-/// Only reads header + bone names + bone entries; skips vertices/indices.
+/// Reads header, bone names and entries, and the vertices' box.
 /// Returns nullopt on parse failure.
 std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data);
 
