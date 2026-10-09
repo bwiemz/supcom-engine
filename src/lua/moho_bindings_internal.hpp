@@ -141,6 +141,7 @@ int sequence_count(lua_State* L, int table_idx);
 
 // lua/bindings/sim/unit.cpp
 bool unit_is_idle(const sim::Unit& u);
+bool unit_is_idle_but_orders(const sim::Unit& u);
 
 /// The classes' method tables (register_moho_bindings makes moho.* of them).
 extern const MethodEntry aibrain_methods[];
