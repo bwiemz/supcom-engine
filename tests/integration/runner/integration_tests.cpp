@@ -9214,7 +9214,6 @@ void test_crowd(TestContext& ctx) {
                 table.insert(__osc_subs, __osc_spawn('uas0203', 'ARMY_1', __osc_sea[1] + 0.1 * i,
                                                      __osc_sea[2], 0))
             end
-            IssueDive(__osc_subs)
         end
     )");
     run(200);
@@ -10066,10 +10065,9 @@ void test_defence(TestContext& ctx) {
         __osc_frigate = __osc_watch(float('uas0201', 'ARMY_2', 150, 300))
         -- The destroyer's own torpedoes would sink the sub before it fires.
         __osc_sub:SetCanTakeDamage(false)
-        IssueDive({__osc_sub})
     )");
     run(40);
-    // Dived where it stands (M206o): under the surface, it attacks.
+    // Made on deep water, it is under the surface; it attacks.
     lua_check("setup: the sub, dived, attacks", R"(
         if __osc_sub:GetCurrentLayer() ~= 'Sub' then error('the sub is on ' .. __osc_sub:GetCurrentLayer()) end
         local p = __osc_sub:GetPosition()
@@ -11657,9 +11655,18 @@ void test_naval_depth(TestContext& ctx) {
         end
     )");
     run(5);
+    lua_check("Test 0: made on deep water, it starts under, at its depth, on Sub", R"(
+        local t = __osc_trace[table.getn(__osc_trace)]
+        if t.layer ~= 'Sub' then error('it is on ' .. t.layer) end
+        if math.abs(t.y + 1.5) > 1e-3 then error('it is ' .. t.y .. ' under, not 1.5') end
+        IssueDive({__osc_sub})
+    )");
+    run(60);
     lua_check(
         "Test 1: told to dive where it stands, it sinks to its depth; its layer is Sub only there",
         R"(
+        if __osc_sub:GetCurrentLayer() ~= 'Water' then error('it never surfaced') end
+        __osc_events = {}
         __osc_trace = {}
         IssueDive({__osc_sub})
     )");
@@ -11798,7 +11805,6 @@ void test_naval_depth(TestContext& ctx) {
         local x, z = __osc_sea[1], __osc_sea[2]
         __osc_target = CreateUnitHPR('ues0203', 'ARMY_2', x, GetSurfaceHeight(x, z + 25), z + 25, 0, 0, 0)
         __osc_target:SetCanTakeDamage(false)
-        IssueDive({__osc_target})
     )");
     run(60);
     lua_check("setup: the target is under", R"(

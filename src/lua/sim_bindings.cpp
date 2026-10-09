@@ -1201,6 +1201,19 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             lua_pop(L, 2);
         }
 
+        if (unit->motion_type() == "RULEUMT_SurfacingSub") {
+            auto* sim = get_sim(L);
+            if (sim && sim->terrain() &&
+                std::strcmp(sim::starting_layer(unit->footprint().caps,
+                                                unit->has_category("EXPERIMENTAL"), *sim->terrain(),
+                                                x, z),
+                            "Sub") == 0) {
+                unit->start_submerged();
+                unit->set_position(
+                    {x, sim->terrain()->water_elevation() + unit->sub_elevation(), z});
+            }
+        }
+
         // Read Physics.Elevation for air units (target flight altitude)
         if (unit->is_air_unit()) {
             store->push_lua_table(*entry, L);

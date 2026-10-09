@@ -781,6 +781,12 @@ public:
     /// How far under the water's surface a sub is (M206o): 0 at the surface,
     /// down to its Physics.Elevation when dived.
     f32 sub_elevation() const { return sub_elevation_; }
+    /// Moho's CUnitMotion for a unit made on the Sub layer.
+    void start_submerged() {
+        set_layer("Sub");
+        sub_elevation_ = elevation_target_;
+        vert_event_ = "Bottom";
+    }
     /// Whether it is on its way down or up (Moho's MovingDown/MovingUp).
     bool diving() const { return vert_motion_ == VertMotion::Down; }
     bool surfacing() const { return vert_motion_ == VertMotion::Up; }
