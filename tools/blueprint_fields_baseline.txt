@@ -46,6 +46,5 @@ StayUpright
 StopOnPrimaryWeaponBusy
 StraddleWater
 StrategicIconSize
-UseOOBTestZoom
 WobbleFactor
 WobbleSpeed

@@ -8,6 +8,8 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
+#include "map/heightmap.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/input_handler.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -21,6 +23,7 @@ extern "C" {
 }
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <variant>
@@ -455,6 +458,47 @@ TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[sele
     structure.set_motion_type("RULEUMT_None");
     structure.set_parent(7, 0);
     CHECK(osc::renderer::selectable(structure));
+}
+
+TEST_CASE("The cursor's unit is one its view takes in, but a close OOB-tested one by its ray",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_motion_type("RULEUMT_Land");
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(400.0f);
+    const auto at = osc::renderer::screen_point(camera.view_proj(1024.0f / 768.0f),
+                                                {128.0f, 10.25f, 128.0f}, 1024.0f, 768.0f);
+    REQUIRE(at);
+
+    osc::renderer::InputHandler input;
+    osc::f32 oob_zoom = 0.0f;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.oob_test_zoom = [&](const std::string&) { return oob_zoom; };
+    input.set_command_mode_hooks(hooks);
+    input.set_camera_zoom(400.0f);
+    const auto under = [&](osc::f32 dx) {
+        osc::f32 wx = 0;
+        osc::f32 wz = 0;
+        REQUIRE(camera.screen_to_world((*at)[0] + dx, (*at)[1], 1024.0f, 768.0f, 10.0f, wx, wz));
+        input.set_cursor_view(camera, 1024.0f, 768.0f, (*at)[0] + dx, (*at)[1], wx, wz);
+        return input.unit_under(w.sim, wx, wz);
+    };
+    CHECK(under(5.0f) == w.id);
+    CHECK(under(-5.0f) == w.id);
+    CHECK(under(12.0f) == 0);
+
+    oob_zoom = 200.0f;
+    CHECK(under(5.0f) == w.id);
+    input.set_camera_zoom(150.0f);
+    CHECK(under(5.0f) == 0);
+    CHECK(under(0.0f) == w.id);
 }
 
 TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][selection]") {

@@ -47,6 +47,15 @@ struct PickRay {
     sim::Vector3 dir;
 };
 
+/// What the camera sees through a square of the screen: four planes
+/// through the eye, their normals facing in.
+struct PickSolid {
+    sim::Vector3 eye;
+    std::array<sim::Vector3, 4> inward;
+};
+
+bool solid_meets_box(const PickSolid& solid, const sim::Vector3& lo, const sim::Vector3& hi);
+
 /// How far along `ray` it first meets the box centred at `centre`, turned
 /// by `orient`, with half sizes `half` along its own axes; nothing if it
 /// misses (or the box is wholly behind it). From inside, 0.
@@ -112,6 +121,8 @@ struct CommandModeHooks {
     std::function<void(u32 command, f32 mx, f32 my)> drag_end;
     /// A blueprint's footprint, for a build template's structures (none: 1x1)
     FootprintOf footprint;
+    /// A blueprint's UseOOBTestZoom (none: 0)
+    std::function<f32(const std::string& bp)> oob_test_zoom;
     /// /lua/formations.lua's AirFormations for `air`, else SurfaceFormations
     std::function<std::vector<std::string>(bool air)> formation_scripts;
     std::function<std::vector<sim::FormationSlot>(const std::vector<sim::FormationMember>&,
@@ -348,17 +359,26 @@ public:
     /// (CUIWorldView's ShowConvertToPatrolCursor)
     bool converts_to_patrol() const { return converts_to_patrol_; }
 
-    /// The shown unit the cursor is on, as it is drawn: the nearest whose box
-    /// (its blueprint's size, turned with it, standing on where it is drawn)
-    /// the cursor's ray meets -- an aircraft where it flies, not the ground
-    /// under it. For a world point the cursor isn't on (a script's click),
-    /// the ray comes straight down onto (wx, wz). 0 for none.
+    /// The shown unit the cursor is on, as it is drawn (an aircraft where it
+    /// flies): of those whose box (its blueprint's size, turned with it) the
+    /// view kSelectTolerance pixels about the cursor meets, or for a mobile
+    /// unit closer than its UseOOBTestZoom the cursor's ray, the one drawn
+    /// nearest the cursor (Moho's CUIWorldView::UpdateSelection). For a
+    /// world point the cursor isn't on (a script's click), the nearest box a
+    /// ray straight down onto (wx, wz) meets. 0 for none.
     u32 unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only = false) const;
+    /// worldview.lua's WorldViewParams.ui_SelectTolerance
+    static constexpr f32 kSelectTolerance = 7.0f;
+    /// The cursor at (mx, my) on a `width` x `height` view of `camera`, and
+    /// the world point (wx, wz) it is on, as update() takes them each frame.
+    void set_cursor_view(const Camera& camera, f32 width, f32 height, f32 mx, f32 my, f32 wx,
+                         f32 wz);
     /// The cursor's ray and the world point it is on, as update() takes them
     /// each frame (tests set it).
     void set_cursor_ray(const PickRay& ray, f32 wx, f32 wz) {
         cursor_ray_ = ray;
         cursor_ray_ground_ = {wx, wz};
+        cursor_solid_.reset();
     }
     /// The camera's target zoom, as update() takes it each frame (tests set it).
     void set_camera_zoom(f32 zoom) { camera_zoom_ = zoom; }
@@ -421,6 +441,11 @@ private:
     /// This frame's cursor ray, and the world point under it it was made for
     std::optional<PickRay> cursor_ray_;
     std::array<f32, 2> cursor_ray_ground_{};
+    std::optional<PickSolid> cursor_solid_;
+    std::array<f32, 16> cursor_view_proj_{};
+    std::array<f32, 2> cursor_screen_{};
+    std::array<f32, 2> screen_size_{};
+    f32 cursor_reach_ = 0.0f; ///< the view's reach about the cursor's ground point
     f32 camera_zoom_ = 0.0f;
     f32 drag_start_x_ = 0, drag_start_y_ = 0;
     f32 drag_end_x_ = 0, drag_end_y_ = 0;

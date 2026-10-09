@@ -99,6 +99,18 @@ std::optional<f32> ray_box_distance(const PickRay& ray, const sim::Vector3& cent
     return std::max(t_in, 0.0f);
 }
 
+bool solid_meets_box(const PickSolid& solid, const sim::Vector3& lo, const sim::Vector3& hi) {
+    for (const sim::Vector3& n : solid.inward) {
+        const f32 x = n.x >= 0 ? hi.x : lo.x;
+        const f32 y = n.y >= 0 ? hi.y : lo.y;
+        const f32 z = n.z >= 0 ? hi.z : lo.z;
+        if (n.x * (x - solid.eye.x) + n.y * (y - solid.eye.y) + n.z * (z - solid.eye.z) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_proj,
                                                const sim::Vector3& p, f32 width, f32 height) {
     // As the overlays project: clip = VP * p, and our projection's y runs
@@ -185,13 +197,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             cursor_world_ = std::array<f32, 2>{wx, wz};
             // The ray the cursor is on, for picking units where they are
             // drawn (an aircraft where it flies).
-            f32 o[3];
-            f32 d[3];
-            if (renderer.camera().screen_ray(mx, my, static_cast<f32>(renderer.width()),
-                                             static_cast<f32>(renderer.height()), o, d)) {
-                cursor_ray_ = PickRay{{o[0], o[1], o[2]}, {d[0], d[1], d[2]}};
-                cursor_ray_ground_ = {wx, wz};
-            }
+            set_cursor_view(renderer.camera(), static_cast<f32>(renderer.width()),
+                            static_cast<f32>(renderer.height()), mx, my, wx, wz);
             if (!dragging_) {
                 hovered_ = unit_under(sim, wx, wz);
             }
@@ -1349,6 +1356,51 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     return issued;
 }
 
+void InputHandler::set_cursor_view(const Camera& camera, f32 width, f32 height, f32 mx, f32 my,
+                                   f32 wx, f32 wz) {
+    cursor_ray_.reset();
+    cursor_solid_.reset();
+    const auto ray_at = [&](f32 x, f32 y) -> std::optional<PickRay> {
+        f32 o[3];
+        f32 d[3];
+        if (!camera.screen_ray(x, y, width, height, o, d)) {
+            return std::nullopt;
+        }
+        return PickRay{{o[0], o[1], o[2]}, {d[0], d[1], d[2]}};
+    };
+    cursor_ray_ = ray_at(mx, my);
+    if (!cursor_ray_) {
+        return;
+    }
+    cursor_ray_ground_ = {wx, wz};
+    constexpr f32 t = kSelectTolerance;
+    const std::array<std::optional<PickRay>, 4> corners = {
+        ray_at(mx - t, my - t), ray_at(mx + t, my - t), ray_at(mx + t, my + t),
+        ray_at(mx - t, my + t)};
+    PickSolid solid{cursor_ray_->origin, {}};
+    const sim::Vector3& c = cursor_ray_->dir;
+    f32 spread = 0.0f;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!corners[i] || !corners[(i + 1) % 4]) {
+            return;
+        }
+        const sim::Vector3& a = corners[i]->dir;
+        const sim::Vector3& b = corners[(i + 1) % 4]->dir;
+        sim::Vector3 n{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+        if (n.x * c.x + n.y * c.y + n.z * c.z < 0) {
+            n = {-n.x, -n.y, -n.z};
+        }
+        solid.inward[i] = n;
+        spread = std::max(spread, std::hypot(a.x - c.x, a.y - c.y, a.z - c.z));
+    }
+    cursor_solid_ = solid;
+    const sim::Vector3& eye = cursor_ray_->origin;
+    cursor_reach_ = spread * std::hypot(wx - eye.x, eye.y, wz - eye.z);
+    cursor_view_proj_ = camera.view_proj(width / height);
+    cursor_screen_ = {mx, my};
+    screen_size_ = {width, height};
+}
+
 u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) const {
     // The cursor's ray if (wx, wz) is what it is on; else straight down.
     const bool on_cursor = cursor_ray_ && std::abs(cursor_ray_ground_[0] - wx) < 1e-3f &&
@@ -1369,11 +1421,13 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
         z0 = std::min(z0, hz);
         z1 = std::max(z1, hz);
     }
+    const bool tolerant = on_cursor && cursor_solid_;
     constexpr f32 kReach = 16.0f; // the widest unit's half size
+    const f32 reach = kReach + (tolerant ? cursor_reach_ : 0.0f);
     u32 best_id = 0;
     f32 best_t = std::numeric_limits<f32>::max();
-    for (u32 id : sim.entity_registry().collect_in_rect(x0 - kReach, z0 - kReach, x1 + kReach,
-                                                        z1 + kReach)) {
+    for (u32 id :
+         sim.entity_registry().collect_in_rect(x0 - reach, z0 - reach, x1 + reach, z1 + reach)) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit() || !shown(*e) ||
             static_cast<const sim::Unit&>(*e).is_dying()) {
@@ -1390,8 +1444,36 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
                                 std::max(unit.size_z(), 0.5f) * 0.5f};
         const sim::Vector3 up = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
         const sim::Vector3 centre{pos.x + up.x, pos.y + up.y, pos.z + up.z};
-        const std::optional<f32> t = ray_box_distance(ray, centre, orient, half);
-        if (t && *t < best_t) {
+        const bool by_ray =
+            !tolerant || (unit.is_mobile() && mode_hooks_.oob_test_zoom &&
+                          mode_hooks_.oob_test_zoom(unit.blueprint_id()) > camera_zoom_);
+        std::optional<f32> t;
+        if (by_ray) {
+            t = ray_box_distance(ray, centre, orient, half);
+        } else {
+            const sim::Vector3 ax = sim::quat_rotate(orient, {half.x, 0.0f, 0.0f});
+            const sim::Vector3 ay = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
+            const sim::Vector3 az = sim::quat_rotate(orient, {0.0f, 0.0f, half.z});
+            const sim::Vector3 ext{std::abs(ax.x) + std::abs(ay.x) + std::abs(az.x),
+                                   std::abs(ax.y) + std::abs(ay.y) + std::abs(az.y),
+                                   std::abs(ax.z) + std::abs(ay.z) + std::abs(az.z)};
+            if (solid_meets_box(*cursor_solid_,
+                                {centre.x - ext.x, centre.y - ext.y, centre.z - ext.z},
+                                {centre.x + ext.x, centre.y + ext.y, centre.z + ext.z})) {
+                t = 0.0f;
+            }
+        }
+        if (!t) {
+            continue;
+        }
+        if (tolerant) {
+            const auto at = screen_point(cursor_view_proj_, pos, screen_size_[0], screen_size_[1]);
+            if (!at) {
+                continue;
+            }
+            t = std::hypot((*at)[0] - cursor_screen_[0], (*at)[1] - cursor_screen_[1]);
+        }
+        if (*t < best_t) {
             best_t = *t;
             best_id = id;
         }

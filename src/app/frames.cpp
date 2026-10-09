@@ -54,6 +54,21 @@ std::array<osc::f32, 2> ui_blueprint_footprint(lua_State* uiL, const std::string
     return {fx > 0 ? fx : 1.0f, fz > 0 ? fz : 1.0f};
 }
 
+osc::f32 ui_blueprint_oob_test_zoom(lua_State* uiL, const std::string& bp_id) {
+    auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
+    auto* entry = store ? store->find(bp_id) : nullptr;
+    if (!entry) {
+        return 0.0f;
+    }
+    store->push_lua_table(*entry, uiL);
+    lua_pushstring(uiL, "UseOOBTestZoom");
+    lua_rawget(uiL, -2);
+    const osc::f32 zoom =
+        lua_isnumber(uiL, -1) ? static_cast<osc::f32>(lua_tonumber(uiL, -1)) : 0.0f;
+    lua_pop(uiL, 2);
+    return zoom;
+}
+
 /// The structure a build mode places, from the UI state's blueprint store:
 /// its footprint, and whether a drag lays a line of it (DRAGBUILD), its skirt
 /// apart.
