@@ -18445,6 +18445,23 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
         SelectUnits({__osc_test_acu})
     )");
+    sim_lua("IssueUpgrade({__osc_ui_mex}, 'ueb1202')");
+    play(2);
+    const std::string upgrade_rollover = fmt::format(R"(
+        SelectUnits({{{{EntityId = {}}}}})
+        local info = GetRolloverInfo()
+        SelectUnits({{__osc_test_acu}})
+        if info.focus then error('focus ' .. tostring(info.focus.blueprintId)) end
+        if not info.focusUpgrade or info.focusUpgrade.blueprintId ~= 'ueb1202' then
+            error('no focusUpgrade')
+        end
+        if not info.focusUpgrade.maxHealth or info.focusUpgrade.maxHealth <= 0 then
+            error('focusUpgrade without health')
+        end
+    )",
+                                                     mex_id);
+    lua_ok("Test 10g6: an upgrading extractor's rollover has its upgrade",
+           upgrade_rollover.c_str());
     sim_lua("__osc_ui_mex:Destroy()");
     play(2);
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
