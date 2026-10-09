@@ -360,14 +360,22 @@ void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr
     osc::core::call_note_game_over(uiL);
 }
 
-/// The world is loaded, as Moho's WLD_DoInitializing hands over: the sim's
-/// first sync reaches the UI (its OnSync: a campaign's Sync.CampaignMode,
-/// set as its armies are made), the loading dialog stops, then FA's game
-/// interface is built (gamemain.CreateUI), which reads what that sync
-/// brought: a campaign's interface stays up for its intro's NIS to hide, a
-/// skirmish's hides until the loading screen's fade slides it in.
+/// The world is loaded, as Moho's WLD_DoInitializing hands over: the UI
+/// starts again on cleared root frames (UI_StartGameUI), the sim's first
+/// sync reaches the UI (its OnSync: a campaign's Sync.CampaignMode, set as
+/// its armies are made), the loading dialog stops, then FA's game interface
+/// is built (gamemain.CreateUI), which reads what that sync brought: a
+/// campaign's interface stays up for its intro's NIS to hide, a skirmish's
+/// hides until the loading screen's fade slides it in.
 void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld, bool is_replay,
                      osc::lua::LuaState* sim_lua, osc::sim::SimState* sim) {
+    constexpr std::string_view kClearRoot = "GetFrame(0):Destroy()";
+    if (luaL_loadbuffer(uiL, kClearRoot.data(), kClearRoot.size(), "clear root frame") != 0 ||
+        lua_pcall(uiL, 0, 0, 0) != 0) {
+        spdlog::warn("Clearing the root frame: {}", lua_tostring(uiL, -1));
+        lua_pop(uiL, 1);
+    }
+    osc::core::call_start_game_ui(uiL);
     world_beat(sim_lua, sim, uiL);
     wld.stop_loading_dialog(uiL);
     wld.create_game_interface(uiL, is_replay);

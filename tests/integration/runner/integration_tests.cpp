@@ -17528,6 +17528,18 @@ static int count_descendants(const osc::ui::UIControl* root) {
     return n;
 }
 
+static int count_movies(const osc::ui::UIControl* root) {
+    int n = 0;
+    for (const auto* child : root->children()) {
+        if (!child->destroyed() &&
+            child->control_type() == osc::ui::UIControl::ControlType::Movie) {
+            ++n;
+        }
+        n += count_movies(child);
+    }
+    return n;
+}
+
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                  const std::function<void(int)>& play,
                  const std::function<bool(f32, f32, bool)>& click,
@@ -17592,6 +17604,30 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         int n = parent ? count_descendants(parent) : 0;
         if (n >= 100) spdlog::info("[PASS] Test 3: game UI has {} controls", n);
         else osc::test_status::fail("[FAIL] Test 3: game UI has {} controls (expected >= 100)", n);
+    }
+
+    // 3a. Moho's WLD_DoInitializing restarts the UI (UI_StartGameUI)
+    {
+        int movies = -1;
+        if (ctx.lua_state.do_string("__osc_test_root = GetFrame(0)")) {
+            lua_pushstring(L, "__osc_test_root");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                const auto* root = static_cast<const osc::ui::UIControl*>(lua_touserdata(L, -1));
+                if (root) {
+                    movies = count_movies(root);
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        if (movies == 0) {
+            spdlog::info("[PASS] Test 3a: no loading movie under the game interface");
+        } else {
+            osc::test_status::fail("[FAIL] Test 3a: {} movies under the game interface", movies);
+        }
     }
 
     // 3b. Retail's range overlays reach the renderer's profiles: its
