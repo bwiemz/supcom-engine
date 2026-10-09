@@ -752,3 +752,41 @@ TEST_CASE("An order moved or removed and not yet run is so in its unit's orders 
     CHECK(orders() == Shown{{8, 50.0f}});
     CHECK(unit(sim, id).command_queue().size() == 2);
 }
+
+TEST_CASE("A patrol's break-off isn't in its unit's orders before or after a new order",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 id = spawn_at(sim, {10, 0, 10});
+    osc::sim::UnitCommand patrol;
+    patrol.type = osc::sim::CommandType::Patrol;
+    patrol.target_pos = {20, 0, 10};
+    patrol.command_id = 7;
+    osc::sim::UnitCommand reclaim;
+    reclaim.type = osc::sim::CommandType::Reclaim;
+    reclaim.target_pos = {12, 0, 14};
+    reclaim.command_id = 7;
+    reclaim.from_patrol = true;
+    unit(sim, id).push_command(reclaim, true);
+    unit(sim, id).append_command(patrol);
+    WorldHistory history;
+    history.capture(sim);
+    const auto types = [&](std::span<const osc::sim::CommandRecord> orders) {
+        std::vector<osc::sim::CommandType> out;
+        for (const auto& c : orders) {
+            out.push_back(c.type);
+        }
+        return out;
+    };
+    const auto* r = history.cur().find(id);
+    using Types = std::vector<osc::sim::CommandType>;
+    CHECK(types(history.cur().commands_of(*r)) == Types{osc::sim::CommandType::Patrol});
+
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {30, 0, 10};
+    sim.schedule_command(0, {id}, move, false);
+    history.refresh_pending(sim);
+    CHECK(types(history.cur().orders_of(*history.cur().find(id))) ==
+          Types{osc::sim::CommandType::Patrol, osc::sim::CommandType::Move});
+}
