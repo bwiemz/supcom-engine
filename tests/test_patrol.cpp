@@ -832,3 +832,31 @@ TEST_CASE("Capture is offered only on a capturable unit that rides nothing", "[c
     eng->add_command_cap("RULEUCC_Reclaim");
     CHECK(input.right_button_order(sim, 70.0f, 10.0f) == CommandType::Reclaim);
 }
+
+TEST_CASE("An armed unit's right button on an enemy is Attack", "[capture]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    tank->add_command_cap("RULEUCC_Attack");
+    tank->add_command_cap("RULEUCC_Move");
+    Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    enemy->add_category("RECLAIMABLE");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({tank->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Attack);
+    CHECK(input.right_button_order(sim, 43.0f, 10.0f) == CommandType::Move);
+    const auto issued = input.right_click_at(sim, 40.0f, 10.0f, false);
+    REQUIRE(issued.size() == 1);
+    CHECK(issued.front().type == "Attack");
+    CHECK(issued.front().target_id == enemy->entity_id());
+
+    Unit* eng = engineer(sim, 10.0f, 20.0f);
+    eng->add_command_cap("RULEUCC_Capture");
+    eng->add_command_cap("RULEUCC_Reclaim");
+    eng->add_command_cap("RULEUCC_Move");
+    input.set_selected({eng->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Capture);
+}

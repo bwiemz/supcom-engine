@@ -14,6 +14,7 @@ add_executable(osc_integration
     runner/persist_test.cpp
     runner/wave_test.cpp
     runner/movie_test.cpp
+    runner/combo_click_test.cpp
     runner/edit_text_test.cpp
     runner/keymap_test.cpp
     runner/camera_moves_test.cpp
