@@ -46,7 +46,12 @@ void size_root_frame(lua_State* uL, u32 width, u32 height);
 
 /// SetupPrimaryAdapterSettings and SetupSecondaryAdapterSettings: the
 /// adapter options' states, through optionsLogic.SetCustomData.
-void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes, bool overridden);
+void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes, bool overridden,
+                             const std::string& primary_adapter);
+
+/// The primary_adapter option as a native full screen (macOS) was entered
+/// or left, the green button's too.
+void keep_adapter_option(lua_State* uL, core::Preferences& prefs, bool fullscreen);
 
 /// The fidelity options' states and defaults, as retail's executable sets
 /// them at startup: no Ultra preset, Medium by default, low shadows; and

@@ -108,6 +108,27 @@ WindowMode startup_window_mode(const std::vector<std::string>& args, const Windo
     return m;
 }
 
+std::string native_fullscreen_key(std::string_view primary_adapter) {
+    if (parse_resolution(primary_adapter)) {
+        return std::string(primary_adapter);
+    }
+    return std::string(kDefaultAdapterMode);
+}
+
+std::pair<std::vector<OptionState>, std::string>
+native_adapter_states(std::string_view primary_adapter, bool overridden) {
+    if (overridden) {
+        return adapter_states({}, true);
+    }
+    std::vector<OptionState> states{{"<LOC OPTIONS_0070>Windowed", "windowed"},
+                                    {"Full Screen", native_fullscreen_key(primary_adapter)}};
+    return {std::move(states), std::string(kDefaultAdapterMode)};
+}
+
+std::string adapter_option_for(bool fullscreen, std::string_view primary_adapter) {
+    return fullscreen ? native_fullscreen_key(primary_adapter) : std::string("windowed");
+}
+
 std::pair<std::vector<OptionState>, std::string>
 adapter_states(const std::vector<Resolution>& modes, bool overridden) {
     std::vector<OptionState> states;
@@ -125,7 +146,7 @@ adapter_states(const std::vector<Resolution>& modes, bool overridden) {
                           std::to_string(r.width) + "," + std::to_string(r.height) + "," +
                               std::to_string(r.rate)});
     }
-    return {std::move(states), "1024,768,60"};
+    return {std::move(states), std::string(kDefaultAdapterMode)};
 }
 
 } // namespace osc::app
