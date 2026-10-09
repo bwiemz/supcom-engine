@@ -13,6 +13,13 @@
 // 5. at half its health;
 // 6. which the engineer does not guard: it is idle once the old factory is
 //    gone, as in retail.
+// While the upgrade runs, the guarding engineer and one told to repair the
+// unfinished T2 help it as Moho's CUnitRepairTask does (Repairing, not
+// Building), while one guarding an engineer that builds a structure builds
+// it (Building).
+//
+// NotifyUpgrade had been a no-op: every upgrade lost its queue, rally,
+// platoon slot, repeat flag, damage and guards.
 
 #include "integration_tests.hpp"
 
@@ -81,9 +88,25 @@ void test_notify_upgrade(TestContext& ctx) {
         __up_t1:SetRepeatQueue(true)
         IssueUpgrade({__up_t1}, 'ueb0201')
         IssueBuildFactory({__up_t1}, 'uel0201', 2)
+        __up_fixer = CreateUnitHPR('uel0105', 'ARMY_1', fx - 6, GetTerrainHeight(fx - 6, fz), fz,
+                                   0, 0, 0)
+        local bx, bz = fx, fz - 25
+        __up_builder = CreateUnitHPR('uel0105', 'ARMY_1', bx, GetTerrainHeight(bx, bz), bz,
+                                     0, 0, 0)
+        __up_helper = CreateUnitHPR('uel0105', 'ARMY_1', bx + 4, GetTerrainHeight(bx + 4, bz), bz,
+                                    0, 0, 0)
+        IssueBuildMobile({__up_builder}, {bx + 8, GetTerrainHeight(bx + 8, bz - 8), bz - 8},
+                         'ueb1101', {})
+        IssueGuard({__up_helper}, __up_builder)
+        __up_states = {}
+        local function states(u)
+            return {u:IsUnitState('Guarding'), u:IsUnitState('Repairing'),
+                    u:IsUnitState('Building')}
+        end
         -- The T2 factory's class hears OnStartRepeatQueue (rawset: FA's
         -- classes refuse new fields once defined).
         __up_heard = 0
+        __up_fixing = false
         local cls = import('/units/UEB0201/UEB0201_script.lua').TypeClass
         local old = cls.OnStartRepeatQueue
         rawset(cls, 'OnStartRepeatQueue', function(self)
@@ -92,9 +115,24 @@ void test_notify_upgrade(TestContext& ctx) {
         end)
         -- The upgrade is the T1 factory's focus while it builds; once the
         -- T1 is gone, that is the T2.
+        function __up_poll_build()
+            if __up_helper:IsUnitState('Building') or __up_helper:IsUnitState('Repairing') then
+                __up_states.build = states(__up_helper)
+                return true
+            end
+            return false
+        end
         function __up_poll()
             if not __up_t1:BeenDestroyed() then
                 __up_t2 = __up_t1:GetFocusUnit() or __up_t2
+                if __up_t2 and not __up_fixing then
+                    __up_fixing = true
+                    IssueRepair({__up_fixer}, __up_t2)
+                end
+                if __up_t2 and __up_t2:GetFractionComplete() > 0.5 and not __up_states.guard then
+                    __up_states.guard = states(__up_eng)
+                    __up_states.repair = states(__up_fixer)
+                end
                 return false
             end
             __up_t2_id = __up_t2 and tonumber(__up_t2:GetEntityId()) or 0
@@ -155,6 +193,28 @@ void test_notify_upgrade(TestContext& ctx) {
         local n = table.getn(__up_eng:GetCommandQueue())
         if n ~= 0 then error('queue ' .. n) end
     )");
+
+    bool helped = false;
+    for (int i = 0; i < 1500 && !helped; ++i) {
+        auto r = ctx.lua_state.do_string("__up_done = __up_poll_build() and 1 or 0");
+        helped = r && global_number("__up_done") == 1.0;
+        if (!helped) {
+            ctx.sim.tick();
+        }
+    }
+    const auto states = [&](const char* name, const char* expect, const char* what) {
+        check(what, (std::string("local s, e = __up_states.") + name + ", '" + expect + "'\n" +
+                     R"(local got = s and (tostring(s[1]) .. '/' .. tostring(s[2]) .. '/' ..
+                                          tostring(s[3])) or 'never seen'
+                       if got ~= e then error('Guarding/Repairing/Building ' .. got) end)")
+                        .c_str());
+    };
+    states("guard", "true/true/false",
+           "Test 7: the guarding engineer helps the upgrade Repairing, not Building");
+    states("repair", "false/true/false",
+           "Test 8: an engineer told to repair the unfinished T2 is Repairing, not Building");
+    states("build", "true/false/true",
+           "Test 9: one guarding an engineer building a structure is Building");
 
     spdlog::info("Notify upgrade test: {}/{} passed", pass, pass + fail);
 }

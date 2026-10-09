@@ -10881,9 +10881,9 @@ void test_range(TestContext& ctx) {
         IssueGuard({__osc_helper}, a)
     )");
     run(300);
-    lua_check("Test 12e: the guard's help starts and stops as a repair's", R"(
+    lua_check("Test 12e: the guard builds the structure with it, as a mobile build", R"(
         local got = table.concat(__osc_helper_calls, ',')
-        if got ~= 'start Repair,stop' then error('calls: ' .. got) end
+        if got ~= 'start MobileBuild,stop' then error('calls: ' .. got) end
     )");
 
     lua_check("Test 12d: a tank's health falls by quarters", R"(

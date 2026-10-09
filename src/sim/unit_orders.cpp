@@ -1170,6 +1170,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         build_target_id_ = tid;
         build_command_id_ = cmd.command_id;
         build_released_with_order_ = true;
+        build_repairs_ = true;
         build_time_ = costs.time;
         build_cost_mass_ = costs.mass;
         build_cost_energy_ = costs.energy;
@@ -1626,6 +1627,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     build_target_id_ = target_build_id;
                     build_command_id_ = cmd.command_id;
                     build_released_with_order_ = true;
+                    build_repairs_ =
+                        target_unit->command_queue_.empty() ||
+                        target_unit->command_queue_.front().type != CommandType::BuildMobile;
                     build_time_ = target_unit->build_time();
                     build_cost_mass_ = target_unit->build_cost_mass();
                     build_cost_energy_ = target_unit->build_cost_energy();
@@ -1643,7 +1647,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                                  "building target #{}",
                                  entity_id(), cmd.target_id, target_build_id);
                     call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
-                                        "Repair");
+                                        build_repairs_ ? "Repair" : "MobileBuild");
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
                     }

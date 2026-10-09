@@ -216,7 +216,7 @@ static int unit_IsUnitState(lua_State* L) {
     bool result = false;
     if (u) {
         if (std::strcmp(state, "Building") == 0) {
-            result = u->is_building() ||
+            result = (u->is_building() && !u->build_repairs()) ||
                      (u->arm_awaited() && !u->command_queue().empty() &&
                       u->command_queue().front().type == sim::CommandType::BuildMobile);
         } else if (std::strcmp(state, "Moving") == 0) result = u->is_moving();
@@ -227,7 +227,7 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Reclaiming") == 0)
             result = u->is_reclaiming();
         else if (std::strcmp(state, "Repairing") == 0)
-            result = u->is_repairing();
+            result = u->is_repairing() || u->build_repairs();
         else if (std::strcmp(state, "Busy") == 0)
             result = u->busy();
         else if (std::strcmp(state, "BlockCommandQueue") == 0)

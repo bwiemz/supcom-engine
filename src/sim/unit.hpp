@@ -301,8 +301,14 @@ public:
 
     // Build state (builder side) — tracks what this unit is constructing
     u32 build_target_id() const { return build_target_id_; }
-    void set_build_target_id(u32 id) { build_target_id_ = id; }
+    void set_build_target_id(u32 id) {
+        build_target_id_ = id;
+        build_repairs_ = false;
+    }
     bool is_building() const { return build_target_id_ != 0; }
+    /// Its build is help to an unfinished unit, which Moho's CUnitRepairTask
+    /// runs: Repairing, not Building.
+    bool build_repairs() const { return build_target_id_ != 0 && build_repairs_; }
     /// This factory's build came from the queue of a factory it guards
     /// (M206h): the guard order runs it, and cancels it when it ends.
     bool factory_assist_build() const { return factory_assist_build_; }
@@ -1585,6 +1591,7 @@ private:
     /// by its own paths (stop_unit, end_guard_build), an upgrade by its own.
     u32 build_command_id_ = 0;
     bool build_released_with_order_ = false;
+    bool build_repairs_ = false;
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     std::unordered_set<std::string> unit_states_; // generic string-based states
     // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's
