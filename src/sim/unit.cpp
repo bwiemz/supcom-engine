@@ -808,6 +808,9 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         build_target_id_ = 0;
         return BuildStart::Failed;
     }
+    if (cmd.type == CommandType::Upgrade && target->is_unit()) {
+        static_cast<Unit*>(target)->set_unit_state("BeingUpgraded", true);
+    }
 
     // Read economy data from the target blueprint via the __blueprints global
     lua_pushstring(L, "__blueprints");
@@ -954,6 +957,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         if (target && target->is_unit() && static_cast<Unit*>(target)->is_being_built()) {
             auto* target_unit = static_cast<Unit*>(target);
             target_unit->set_is_being_built(false);
+            target_unit->set_unit_state("BeingUpgraded", false);
             target_unit->set_fraction_complete(1.0f);
             target_unit->set_health(target_unit->max_health());
 

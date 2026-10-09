@@ -92,11 +92,19 @@ void test_notify_upgrade(TestContext& ctx) {
             __up_heard = __up_heard + 1
             if old then return old(self) end
         end)
+        __up_marked = false
+        __up_old_marked = false
         -- The upgrade is the T1 factory's focus while it builds; once the
         -- T1 is gone, that is the T2.
         function __up_poll()
             if not __up_t1:BeenDestroyed() then
                 __up_t2 = __up_t1:GetFocusUnit() or __up_t2
+                if __up_t2 and not __up_t2:BeenDestroyed() and __up_t2:IsUnitState('BeingUpgraded') then
+                    __up_marked = true
+                end
+                if __up_t1:IsUnitState('BeingUpgraded') then
+                    __up_old_marked = true
+                end
                 return false
             end
             __up_t2_id = __up_t2 and tonumber(__up_t2:GetEntityId()) or 0
@@ -154,6 +162,11 @@ void test_notify_upgrade(TestContext& ctx) {
     )");
     check("Test 6: the engineer guards it", R"(
         if __up_eng:GetGuardedUnit() ~= __up_t2 then error('guards another') end
+    )");
+    check("Test 7: it was BeingUpgraded while built, and is no more", R"(
+        if not __up_marked then error('never BeingUpgraded') end
+        if __up_old_marked then error('the old factory was BeingUpgraded') end
+        if __up_t2:IsUnitState('BeingUpgraded') then error('still BeingUpgraded') end
     )");
 
     spdlog::info("Notify upgrade test: {}/{} passed", pass, pass + fail);
