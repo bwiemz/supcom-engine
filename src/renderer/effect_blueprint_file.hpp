@@ -43,4 +43,13 @@ constexpr bool fidelity_allows(u8 fidelity, int graphics_fidelity) {
            (fidelity & (1u << static_cast<u32>(graphics_fidelity))) != 0;
 }
 
+/// Moho's efx_ParticleWaterSurface and efx_WaterOffset: retail's emitters under the water
+/// have SortOrder -102 and below, its water-surface wakes -101 and above.
+constexpr f32 kParticleWaterSurface = -101.0f;
+constexpr f32 kParticleWaterOffset = 0.01f;
+
+constexpr bool draws_under_water(f32 sort_order) {
+    return sort_order < kParticleWaterSurface;
+}
+
 } // namespace osc::renderer
