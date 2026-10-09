@@ -9631,6 +9631,32 @@ void test_missile(TestContext& ctx) {
         local progress = __osc_a:GetWorkProgress()
         if math.abs(progress - 0.5) > 0.01 then error('A is ' .. progress .. ' done') end
     )");
+    lua_check("Test 2b: A's economy data asks for its missile's cost over its build time", R"(
+        -- 180 M and 3600 E over 30 s.
+        local e = __osc_a:GetEconData()
+        if math.abs(e.massRequested - 6) > 1e-3 or math.abs(e.energyRequested - 120) > 1e-3 or
+           math.abs(e.massConsumed - 6) > 1e-3 or math.abs(e.energyConsumed - 120) > 1e-3 then
+            error(string.format('A asks %g M, %g E and spends %g M, %g E a second',
+                                e.massRequested, e.energyRequested, e.massConsumed, e.energyConsumed))
+        end
+    )");
+    {
+        osc::sim::WorldSnapshot snap;
+        osc::sim::capture_world(ctx.sim, snap);
+        u32 a_id = 0;
+        if (ctx.lua_state.do_string("__osc_a_id = __osc_a:GetEntityId()")) {
+            lua_getglobal(ctx.L, "__osc_a_id");
+            a_id = static_cast<u32>(lua_tonumber(ctx.L, -1));
+            lua_pop(ctx.L, 1);
+        }
+        const osc::sim::EntityRecord* rec = snap.find(a_id);
+        check(rec && std::abs(rec->mass_requested - 6.0f) < 1e-3f &&
+                  std::abs(rec->energy_requested - 120.0f) < 1e-3f &&
+                  std::abs(rec->mass_consumed - 6.0f) < 1e-3f &&
+                  std::abs(rec->energy_consumed - 120.0f) < 1e-3f,
+              fmt::format("Test 2c: the UI's record of A asks {} M, {} E a second (6, 120)",
+                          rec ? rec->mass_requested : -1.0f, rec ? rec->energy_requested : -1.0f));
+    }
     run(450);
     lua_check("Test 3: the missile took its build time and cost", R"(
         local b = __osc_a.__osc.builds[1]
@@ -12054,10 +12080,12 @@ void test_transport_pickup(TestContext& ctx) {
     }
 
     f32 flown = -1, from_centre = -1, lifted = 0;
+    std::string ready_event;
     int ticks = 2;
     for (; ticks < 400; ++ticks) {
         ctx.sim.tick();
         if (flown < 0 && xport->pickup_ready()) {
+            ready_event = xport->vert_event();
             flown = std::hypot(xport->position().x - start.x, xport->position().z - start.z);
             from_centre =
                 std::hypot(xport->position().x - centre.x, xport->position().z - centre.z);
@@ -12078,6 +12106,8 @@ void test_transport_pickup(TestContext& ctx) {
                       flown, from_centre));
     check(std::abs(hover - 3.0f) < 0.3f,
           fmt::format("it hovers at its TransportHoverHeight of 3 ({:.2f})", hover));
+    check(ready_event == "Hover",
+          fmt::format("at the pickup its vertical event is Hover ({})", ready_event));
     check(lifted > 0.5f,
           fmt::format("a tank rose off the ground before it was aboard ({:.2f})", lifted));
     lua(R"(
@@ -12207,6 +12237,40 @@ void test_transport_pickup(TestContext& ctx) {
           fmt::format("scripts clearing their orders as the pickup ends are safe (aboard {}, "
                       "unit's orders {}, transport's {})",
                       number("__osc_solo_in"), number("__osc_solo_q"), number("__osc_x4_q")));
+
+    lua(R"(
+        __osc_rc = CreateUnitHPR('uea0107', 'ARMY_1', 430, GetTerrainHeight(430, 330), 330, 0, 0, 0)
+        __osc_rd = CreateUnitHPR('uea0107', 'ARMY_1', 430, GetTerrainHeight(430, 370), 370, 0, 0, 0)
+        __osc_r2 = {}
+        for i = 1, 2 do
+            __osc_r2[i] = CreateUnitHPR('uel0201', 'ARMY_1', 460 + 3 * i,
+                                        GetTerrainHeight(460, 350), 350, 0, 0, 0)
+        end
+        IssueTransportLoad(__osc_r2, __osc_rc)
+    )");
+    auto* rc = unit("__osc_rc");
+    auto* rd = unit("__osc_rd");
+    for (int i = 0; i < 600 && rc && rc->cargo_ids().size() < 2; ++i) {
+        ctx.sim.tick();
+    }
+    std::vector<osc::u32> aboard = rc ? rc->cargo_ids() : std::vector<osc::u32>{};
+    if (rd && aboard.size() == 2) {
+        osc::sim::UnitCommand load;
+        load.type = osc::sim::CommandType::TransportLoad;
+        load.target_id = rd->entity_id();
+        load.target_pos = rd->position();
+        ctx.sim.route_command(aboard, load, true);
+    }
+    std::size_t taken = 0;
+    for (const osc::u32 id : aboard) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        if (e && e->is_unit()) {
+            taken += static_cast<const osc::sim::Unit*>(e)->command_queue().size();
+        }
+    }
+    check(aboard.size() == 2 && taken == 0,
+          fmt::format("units aboard take no load order ({} aboard, {} orders taken)", aboard.size(),
+                      taken));
 
     spdlog::info("Transport pickup test: {} passed, {} failed", pass, fail);
 }
@@ -14029,8 +14093,6 @@ void test_transport_drop(TestContext& ctx) {
     // its hover height, each tank on the ground where it hung.
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     f32 dropped_at = -1, peak = 0;
-    // (Emptied, it starts to climb in the same tick: its height is taken
-    // before the tick that set them down.)
     for (int i = 0; i < 400 && dropped_at < 0; ++i) {
         const f32 before = altitude(*xport);
         ctx.sim.tick();
@@ -14057,10 +14119,11 @@ void test_transport_drop(TestContext& ctx) {
                       "apart at least, {:.1f} out at most)",
                       off_ground, nearest, farthest));
 
-    // Empty and idle, it climbs back to its flying height.
+    // Empty and idle, it lands as any aircraft does.
     for (int i = 0; i < 60; ++i) ctx.sim.tick();
-    check(altitude(*xport) > 6.0f,
-          fmt::format("empty, it climbs back up ({:.1f})", altitude(*xport)));
+    check(!xport->is_air_unit() && xport->vert_event() == "Bottom",
+          fmt::format("empty, it lands ({} {}, {:.1f} up)", xport->layer(), xport->vert_event(),
+                      altitude(*xport)));
 
     // Over deep water nothing fits: all 6 stay aboard, the order ends, and it
     // hovers low with them.
@@ -17528,6 +17591,18 @@ static int count_descendants(const osc::ui::UIControl* root) {
     return n;
 }
 
+static int count_movies(const osc::ui::UIControl* root) {
+    int n = 0;
+    for (const auto* child : root->children()) {
+        if (!child->destroyed() &&
+            child->control_type() == osc::ui::UIControl::ControlType::Movie) {
+            ++n;
+        }
+        n += count_movies(child);
+    }
+    return n;
+}
+
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                  const std::function<void(int)>& play,
                  const std::function<bool(f32, f32, bool)>& click,
@@ -17592,6 +17667,30 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         int n = parent ? count_descendants(parent) : 0;
         if (n >= 100) spdlog::info("[PASS] Test 3: game UI has {} controls", n);
         else osc::test_status::fail("[FAIL] Test 3: game UI has {} controls (expected >= 100)", n);
+    }
+
+    // 3a. Moho's WLD_DoInitializing restarts the UI (UI_StartGameUI)
+    {
+        int movies = -1;
+        if (ctx.lua_state.do_string("__osc_test_root = GetFrame(0)")) {
+            lua_pushstring(L, "__osc_test_root");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                const auto* root = static_cast<const osc::ui::UIControl*>(lua_touserdata(L, -1));
+                if (root) {
+                    movies = count_movies(root);
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        if (movies == 0) {
+            spdlog::info("[PASS] Test 3a: no loading movie under the game interface");
+        } else {
+            osc::test_status::fail("[FAIL] Test 3a: {} movies under the game interface", movies);
+        }
     }
 
     // 3b. Retail's range overlays reach the renderer's profiles: its
@@ -17987,11 +18086,11 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(2);
 
     // 10b3. Some units can't be selected: a Cybran build bot
-    //    (INSIGNIFICANTUNIT), and a factory still being built.
+    //    (INSIGNIFICANTUNIT), and a power generator still being built.
     sim_lua(R"(
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
         __osc_ui_bot = CreateUnitHPR('ura0001', 'ARMY_1', x + 6, GetTerrainHeight(x + 6, z) + 3, z + 6, 0, 0, 0)
-        __osc_ui_fac = CreateUnitHPR('ueb0101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
+        __osc_ui_fac = CreateUnitHPR('ueb1101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
     )");
     osc::u32 bot_id = 0;
     osc::u32 unbuilt_id = 0;
@@ -18001,7 +18100,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         }
         if (e.blueprint_id() == "ura0001") {
             bot_id = e.entity_id();
-        } else if (e.blueprint_id() == "ueb0101") {
+        } else if (e.blueprint_id() == "ueb1101") {
             unbuilt_id = e.entity_id();
             static_cast<osc::sim::Unit&>(e).set_is_being_built(true);
         }
@@ -18015,7 +18114,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if n ~= 0 then error(n .. ' selected') end
     )",
                                                         bot_id, unbuilt_id);
-    lua_ok("Test 10b3: a build bot and an unbuilt factory can't be selected",
+    lua_ok("Test 10b3: a build bot and an unbuilt power generator can't be selected",
            select_unselectable.c_str());
     sim_lua("__osc_ui_bot:Destroy() __osc_ui_fac:Destroy()");
     play(2);
@@ -18177,6 +18276,93 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         lua_ok("Test 10g0: a radar's intel toggle and a scout's dock order", check.c_str());
     }
     sim_lua("__osc_ui_radar:Destroy() __osc_ui_scout:Destroy()");
+    play(2);
+
+    // Test 10g0b: retail's UserDecal, the cursor's target decal, is a decal
+    // of the UI's: at its position less half its scale.
+    {
+        lua_ok("Test 10g0b: retail's UserDecal is made and placed", R"(
+            local UserDecal = import('/lua/user/UserDecal.lua').UserDecal
+            __osc_ud = UserDecal {}
+            __osc_ud:SetTexture('/textures/ui/common/game/AreaTargetDecal/nuke_icon_small.dds')
+            __osc_ud:SetScale({60, 1, 60})
+            __osc_ud:SetPosition({100, 20, 200})
+        )");
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const auto splats =
+            reg ? reg->user_decals().splats() : std::vector<const osc::ui::UserDecals::Decal*>{};
+        const bool placed =
+            splats.size() == 1 && splats[0]->corner[0] == 70.0f && splats[0]->corner[1] == 20.0f &&
+            splats[0]->corner[2] == 170.0f && splats[0]->scale[0] == 60.0f &&
+            splats[0]->texture == "/textures/ui/common/game/AreaTargetDecal/nuke_icon_small.dds";
+        const std::string where = splats.empty()
+                                      ? std::string()
+                                      : fmt::format(" at ({}, {}, {})", splats[0]->corner[0],
+                                                    splats[0]->corner[1], splats[0]->corner[2]);
+        const size_t made = splats.size();
+        lua_ok("Test 10g0b: and destroyed", "__osc_ud:Destroy() __osc_ud = nil");
+        const bool gone = reg && reg->user_decals().splats().empty();
+        if (placed && gone) {
+            spdlog::info("[PASS] Test 10g0b: a UserDecal lies at its position less half its scale");
+        } else {
+            osc::test_status::fail("[FAIL] Test 10g0b: {} UserDecal splats{}, {} once destroyed",
+                                   made, where, gone ? "none" : "some");
+        }
+    }
+
+    // Test 10g0c: in the nuke order's mode, retail's world view puts its
+    // reticle under the cursor, the launcher's AttackReticleSize across,
+    // and takes it away with the mode.
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_nuke = CreateUnitHPR('xsb2401', 'ARMY_1', x - 30, GetTerrainHeight(x - 30, z), z + 30, 0, 0, 0)
+    )");
+    play(2);
+    {
+        osc::u32 launcher = 0;
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "xsb2401") {
+                launcher = e.entity_id();
+            }
+        });
+        lua_ok("Test 10g0c: the nuke order's mode, the cursor updated", fmt::format(R"(
+            __osc_nuke_acu = GetSelectedUnits()[1]
+            SelectUnits({{{{EntityId = {}}}}})
+            import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {{name = 'RULEUCC_Nuke'}})
+            import('/lua/ui/game/worldview.lua').viewLeft:OnUpdateCursor()
+        )",
+                                                                                    launcher)
+                                                                            .c_str());
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const auto splats =
+            reg ? reg->user_decals().splats() : std::vector<const osc::ui::UserDecals::Decal*>{};
+        const bool reticle =
+            splats.size() == 1 &&
+            splats[0]->texture == "/textures/ui/common/game/AreaTargetDecal/nuke_icon_small.dds" &&
+            splats[0]->scale[0] == 90.0f && splats[0]->scale[2] == 90.0f;
+        const size_t during = splats.size();
+        lua_ok("Test 10g0c: the mode ended", R"(
+            import('/lua/ui/game/commandmode.lua').EndCommandMode(true)
+            import('/lua/ui/game/worldview.lua').viewLeft:OnUpdateCursor()
+            SelectUnits({__osc_nuke_acu})
+        )");
+        const bool ended = reg && reg->user_decals().splats().empty();
+        if (reticle && ended) {
+            spdlog::info("[PASS] Test 10g0c: the nuke order's reticle, 90 across, while its mode "
+                         "lasts");
+        } else {
+            osc::test_status::fail("[FAIL] Test 10g0c: {} reticle splats in the nuke order's "
+                                   "mode (one 90 across wanted), {} after it",
+                                   during, ended ? "none" : "some");
+        }
+    }
+    sim_lua("__osc_ui_nuke:Destroy()");
     play(2);
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())

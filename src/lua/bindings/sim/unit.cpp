@@ -2115,14 +2115,12 @@ static int unit_GetEconData(lua_State* L) {
         lua_pushnumber(L, v);
         lua_rawset(L, -3);
     };
-    const bool paying = econ.consumption_active && !u->is_paused();
-    set("massProduced", (econ.production_active ? econ.production_mass : 0.0) + econ.reclaim_mass);
-    set("energyProduced",
-        (econ.production_active ? econ.production_energy : 0.0) + econ.reclaim_energy);
-    set("massConsumed", paying ? econ.consumption_mass : 0.0);
-    set("energyConsumed", paying ? econ.consumption_energy : 0.0);
-    set("massRequested", econ.consumption_mass);
-    set("energyRequested", econ.consumption_energy);
+    set("massProduced", (u->producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
+    set("energyProduced", (u->producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
+    set("massConsumed", econ.mass_consumed(u->is_paused()));
+    set("energyConsumed", econ.energy_consumed(u->is_paused()));
+    set("massRequested", econ.mass_requested());
+    set("energyRequested", econ.energy_requested());
     return 1;
 }
 
@@ -2522,8 +2520,11 @@ static int unit_ProcessInfo(lua_State* L) {
 
 /// Same idle test as unit:IsIdleState().
 bool unit_is_idle(const sim::Unit& u) {
-    return u.command_queue().empty() && !u.is_building() && !u.is_being_built() &&
-           !u.is_repairing() && !u.is_capturing();
+    return u.command_queue().empty() && unit_is_idle_but_orders(u);
+}
+
+bool unit_is_idle_but_orders(const sim::Unit& u) {
+    return !u.is_building() && !u.is_being_built() && !u.is_repairing() && !u.is_capturing();
 }
 
 } // namespace osc::lua

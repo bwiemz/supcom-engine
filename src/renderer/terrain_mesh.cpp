@@ -80,6 +80,32 @@ void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
     grid_w_ = dw;
     grid_h_ = dh;
 
+    f32 min_height = hm.get_height_at_grid(0, 0);
+    for (u32 gz = 0; gz < gh; ++gz) {
+        for (u32 gx = 0; gx < gw; ++gx) {
+            min_height = std::min(min_height, hm.get_height_at_grid(gx, gz));
+        }
+    }
+    const auto skirt_edge = [&](u32 start, u32 step, u32 count) {
+        const auto first = static_cast<u32>(vertices.size());
+        for (u32 i = 0; i < count; ++i) {
+            TerrainVertex v = vertices[start + i * step];
+            v.y = min_height;
+            vertices.push_back(v);
+        }
+        for (u32 i = 1; i < count; ++i) {
+            const u32 top0 = start + (i - 1) * step;
+            const u32 top1 = start + i * step;
+            indices.insert(indices.end(),
+                           {first + i - 1, first + i, top1, first + i - 1, top1, top0});
+        }
+    };
+    skirt_edge(0, 1, dw);
+    skirt_edge(0, dw, dh);
+    skirt_edge(dw - 1, dw, dh);
+    skirt_edge((dh - 1) * dw, 1, dw);
+    skirt_index_count_ = static_cast<u32>(indices.size()) - index_count_;
+
     spdlog::info("Terrain mesh: {}x{} grid, {} vertices, {} indices",
                  dw, dh, vertices.size(), index_count_);
 
@@ -102,6 +128,7 @@ void TerrainMesh::destroy(VkDevice device, VmaAllocator allocator) {
     vertex_buf_ = {};
     index_buf_ = {};
     index_count_ = 0;
+    skirt_index_count_ = 0;
     grid_w_ = grid_h_ = 0;
 }
 

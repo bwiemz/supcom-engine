@@ -722,9 +722,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (unit->economy().production_mass > 0.0 ||
                     unit->economy().production_energy > 0.0)
                     unit->economy().production_active = true;
-                if (unit->economy().consumption_energy > 0.0 ||
-                    unit->economy().consumption_mass > 0.0)
-                    unit->economy().consumption_active = true;
             }
             lua_pop(L, 2);
         }
@@ -6516,7 +6513,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("GetArmyBrain", l_GetArmyBrain);
     state.register_function("IsGameOver", [](lua_State* L) -> int {
         auto* sim = get_sim(L);
-        lua_pushboolean(L, sim && sim->player_result() != 0);
+        lua_pushboolean(L, sim && sim->game_ended());
         return 1;
     });
 

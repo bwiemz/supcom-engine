@@ -45,7 +45,9 @@ Vector3 normalized(const Vector3& a) {
 bool draws_before(const EmitterBlueprintData& x, const EmitterBlueprintData& y) {
     const bool x_refracts = x.blendmode == kBlendRefract;
     if (x_refracts != (y.blendmode == kBlendRefract)) return !x_refracts;
-    if (!x_refracts && (x.sort_order < 0) != (y.sort_order < 0)) return x.sort_order < 0;
+    if (!x_refracts && draws_under_water(x.sort_order) != draws_under_water(y.sort_order)) {
+        return draws_under_water(x.sort_order);
+    }
     if (x.sort_order != y.sort_order) return x.sort_order < y.sort_order;
     if (x.texture != y.texture) return x.texture < y.texture;
     if (x.ramp_texture != y.ramp_texture) return x.ramp_texture < y.ramp_texture;
@@ -209,12 +211,15 @@ void ParticleSystem::emit(u32 id, Emitter& e, u32 ticks, u32 now_tick,
                             e.offset.z + value(kZPosition, phase) * e.scale};
         const Vector3 world = add(f.position, sim::quat_rotate(f.rotation, local));
         f32 y = world.y;
-        if (bp.snap_to_waterline)
-            y = bp.sort_order >= 0.0f ? std::max(water_y, world.y) : std::min(water_y, world.y);
+        if (bp.snap_to_waterline) {
+            y = draws_under_water(bp.sort_order)
+                    ? std::min(water_y - kParticleWaterOffset, world.y)
+                    : std::max(water_y + kParticleWaterOffset, world.y);
+        }
         if (bp.only_emit_on_water) {
             const f32 ground = terrain ? terrain->get_terrain_height(world.x, world.z) : 0.0f;
             if (ground > water_y) continue;
-            y = water_y;
+            y = water_y + kParticleWaterOffset;
         }
 
         Particle p;
@@ -583,7 +588,7 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
         std::copy(uv.begin(), uv.end(), inst.uv);
         inst.ramp[0] = t / p.lifetime;
         inst.ramp[1] = p.ramp_selection;
-        const bool under = bp.sort_order < 0 && bp.blendmode != kBlendRefract;
+        const bool under = draws_under_water(bp.sort_order) && bp.blendmode != kBlendRefract;
         const auto offset = static_cast<u32>(instances_.size());
         instances_.push_back(inst);
         const bool same =

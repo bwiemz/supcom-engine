@@ -81,6 +81,17 @@ struct UnitEconomy {
     /// aircraft is damaged.
     f64 dock_repair_mass = 0.0;
     f64 dock_repair_energy = 0.0;
+
+    /// Moho's mMaintainenceCost: a silo's missile under way asks through it
+    /// too (CAiSiloBuildImpl).
+    f64 mass_requested() const { return consumption_mass + silo_mass; }
+    f64 energy_requested() const { return consumption_energy + silo_energy; }
+    f64 mass_consumed(bool paused) const {
+        return (consumption_active && !paused ? consumption_mass : 0.0) + silo_mass;
+    }
+    f64 energy_consumed(bool paused) const {
+        return (consumption_active && !paused ? consumption_energy : 0.0) + silo_energy;
+    }
 };
 
 /// An air staging platform's service (its blueprint's AI.RefuelingMultiplier,
@@ -232,6 +243,7 @@ public:
 
     bool is_being_built() const { return is_being_built_; }
     void set_is_being_built(bool b) { is_being_built_ = b; }
+    bool producing() const { return economy_.production_active && !is_being_built_ && !dying_; }
 
     f32 max_speed() const { return max_speed_; }
     void set_max_speed(f32 s) { max_speed_ = s; }
@@ -1434,6 +1446,9 @@ private:
     void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
     /// Hold still at `altitude` over the ground, climbing or sinking to it.
     void hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude);
+    /// A transport down to its TransportHoverHeight as to a landing (Moho's
+    /// ShouldHoverInsteadOfLand): MovingDown, then the Hover event. True there.
+    bool hover_low(f64 dt, SimContext& ctx);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):

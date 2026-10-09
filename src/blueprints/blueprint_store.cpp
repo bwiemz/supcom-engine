@@ -13,6 +13,28 @@ extern "C" {
 
 namespace osc::blueprints {
 
+namespace {
+
+void push_fresh_copy(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) {
+        lua_pushvalue(L, idx);
+        return;
+    }
+    luaL_checkstack(L, 4, "blueprint nesting");
+    lua_newtable(L);
+    const int copy = lua_gettop(L);
+    lua_pushnil(L);
+    while (lua_next(L, idx) != 0) {
+        const int value = lua_gettop(L);
+        push_fresh_copy(L, value - 1);
+        push_fresh_copy(L, value);
+        lua_rawset(L, copy);
+        lua_pop(L, 1);
+    }
+}
+
+} // namespace
+
 const char* blueprint_type_name(BlueprintType type) {
     switch (type) {
     case BlueprintType::Unit: return "Unit";
@@ -509,6 +531,16 @@ void BlueprintStore::log_statistics() const {
     spdlog::info("  Trails:       {}",
                  count(BlueprintType::TrailEmitter));
     spdlog::info("  Total:        {}", total_count());
+}
+
+void BlueprintStore::copy_lua_tables(lua_State* L) {
+    for (auto& [id, entry] : blueprints_) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, entry.lua_ref);
+        push_fresh_copy(L, lua_gettop(L));
+        luaL_unref(L, LUA_REGISTRYINDEX, entry.lua_ref);
+        entry.lua_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        lua_pop(L, 1);
+    }
 }
 
 void BlueprintStore::expose_to_lua(lua_State* L) const {

@@ -222,14 +222,13 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.creator_id = u.creator_id();
     const auto& econ = u.economy();
     r.mass_produced =
-        static_cast<f32>((econ.production_active ? econ.production_mass : 0.0) + econ.reclaim_mass);
-    r.energy_produced = static_cast<f32>((econ.production_active ? econ.production_energy : 0.0) +
-                                         econ.reclaim_energy);
-    const bool paying = econ.consumption_active && !u.is_paused();
-    r.mass_consumed = static_cast<f32>(paying ? econ.consumption_mass : 0.0);
-    r.energy_consumed = static_cast<f32>(paying ? econ.consumption_energy : 0.0);
-    r.mass_requested = static_cast<f32>(econ.consumption_mass);
-    r.energy_requested = static_cast<f32>(econ.consumption_energy);
+        static_cast<f32>((u.producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
+    r.energy_produced =
+        static_cast<f32>((u.producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
+    r.mass_consumed = static_cast<f32>(econ.mass_consumed(u.is_paused()));
+    r.energy_consumed = static_cast<f32>(econ.energy_consumed(u.is_paused()));
+    r.mass_requested = static_cast<f32>(econ.mass_requested());
+    r.energy_requested = static_cast<f32>(econ.energy_requested());
     r.nuke_silo_max = u.silo_max_storage(true);
     r.tactical_silo_max = u.silo_max_storage(false);
     r.nuke_silo_builds = u.silo_build_count(true);
@@ -245,7 +244,9 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
 
     r.command_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.command_queue()) {
-        out.commands.push_back(command_record(c, false));
+        if (!c.from_patrol) {
+            out.commands.push_back(command_record(c, false));
+        }
     }
     r.command_count = static_cast<u32>(out.commands.size()) - r.command_offset;
     r.rally_offset = static_cast<u32>(out.commands.size());
@@ -519,10 +520,13 @@ void capture_pending(const SimState& sim, WorldSnapshot& out) {
     for (const auto& [id, queue] : sim.queues_with_pending()) {
         const auto offset = static_cast<u32>(out.pending_commands.size());
         for (size_t i = 0; i < queue.orders.size(); ++i) {
-            const bool pending = i >= queue.kept_from_queue;
-            out.pending_commands.push_back(command_record(queue.orders[i], pending));
+            if (!queue.orders[i].from_patrol) {
+                const bool pending = i >= queue.kept_from_queue;
+                out.pending_commands.push_back(command_record(queue.orders[i], pending));
+            }
         }
-        out.pending_queues.push_back({id, offset, static_cast<u32>(queue.orders.size())});
+        out.pending_queues.push_back(
+            {id, offset, static_cast<u32>(out.pending_commands.size()) - offset});
     }
 }
 

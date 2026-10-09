@@ -4,6 +4,7 @@
 
 #include "core/types.hpp"
 #include "renderer/build_template.hpp"
+#include "renderer/recon_view.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/formation.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -204,6 +205,8 @@ public:
     /// The player's intel: a click can't target a unit it doesn't show (a
     /// blip or a remembered structure it can; null: everything; M215b).
     void set_recon(const ReconView* recon) { recon_ = recon; }
+    /// How the player's army sees `e`: Seen without recon or a record of it.
+    Sight sight(const sim::Entity& e) const;
 
     void set_command_mode_hooks(CommandModeHooks hooks) { mode_hooks_ = std::move(hooks); }
 
@@ -268,11 +271,12 @@ public:
     /// Where the cursor points on the ground, while over the world
     std::optional<std::array<f32, 2>> cursor_world() const { return cursor_world_; }
 
-    void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+    void left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl = false);
     /// A left click on the world at (wx, wz) as the release of a click
     /// ends it: a double-click's second selects like units in view, any
-    /// other selects (or with Shift toggles) the unit there.
-    void world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool double_click,
+    /// other selects (or with Shift toggles) the unit there, with Ctrl its
+    /// blueprint's units.
+    void world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl, bool double_click,
                      const std::array<f32, 16>& view_proj);
     /// A double-click on the player's unit at (wx, wz): every unit of its
     /// blueprint `view_proj` shows joins the selection (Moho's
@@ -280,8 +284,12 @@ public:
     void select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
                                 const std::array<f32, 16>& view_proj);
 
-    /// Moho's UserUnit::UpdateUnitData: a unit that boards leaves the selection.
-    void deselect_aboard(const sim::EntityRegistry& registry);
+    /// Moho's CWldSession::ReleaseDrag with Ctrl held.
+    void select_blueprint_of(sim::SimState& sim, u32 picked, bool shift);
+
+    /// A unit that boards (Moho's UserUnit::UpdateUnitData) or dies (its
+    /// selection refresh keeps no dead unit) leaves the selection.
+    void prune_selection(const sim::EntityRegistry& registry);
 
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {

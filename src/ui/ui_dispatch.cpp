@@ -408,6 +408,16 @@ bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl, const UIEvent&
     return handle_event_of(L, ctrl->lua_table_ref(), ev);
 }
 
+void UIDispatch::post_event(lua_State* L, UIControl* ctrl, const UIEvent& ev) {
+    while (ctrl) {
+        UIControl* const parent = ctrl->parent();
+        if (fire_handle_event(L, ctrl, ev)) {
+            return;
+        }
+        ctrl = parent;
+    }
+}
+
 namespace {
 
 bool call_edit(lua_State* L, UIControl* edit, const char* method, int nargs,
@@ -635,14 +645,14 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             if (hover_control_ && !hover_control_->destroyed()) {
                 UIEvent exit_ev = ev;
                 exit_ev.type = UIEventType::MOUSE_EXIT;
-                fire_handle_event(L, hover_control_, exit_ev);
+                post_event(L, hover_control_, exit_ev);
             }
             // Re-validate target after exit callback (may have destroyed it)
             if (target && target->destroyed()) target = nullptr;
             if (target) {
                 UIEvent enter_ev = ev;
                 enter_ev.type = UIEventType::MOUSE_ENTER;
-                fire_handle_event(L, target, enter_ev);
+                post_event(L, target, enter_ev);
             }
             hover_control_ = target;
         }

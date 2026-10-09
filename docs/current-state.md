@@ -20,13 +20,13 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 
 | Metric | Value |
 | --- | --- |
-| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,242<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
-| Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->237<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below. |
+| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,268<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan and MSVC. |
+| Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->239<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below. |
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->7<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list, and a mouse held through the window's input (`--mouse`): a wall dragged out, and a drag formation settled. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->4<!-- /metric --> |
 | Architecture checks (`ctest -L arch`) | <!-- metric:arch_tests -->18<!-- /metric -->: no library cycle or layer reaching up; every serialized type's fields in its serializer; the blueprint-field, Lua-stub and retail-hook baselines; this document's metrics. |
 | Static analysis | clang-tidy ratchet at its baseline of <!-- metric:tidy_baseline -->31<!-- /metric --> triaged findings; changed lines follow `.clang-format`; CI builds first-party code with `-Werror`. |
-| Retail engine API still unbound | <!-- metric:unbound_globals -->15<!-- /metric --> globals and <!-- metric:unbound_methods -->7<!-- /metric --> methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`); 13 are not in retail's engine either, most of the rest are UI-only. |
+| Retail engine API still unbound | <!-- metric:unbound_globals -->14<!-- /metric --> globals and <!-- metric:unbound_methods -->7<!-- /metric --> methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`); 13 are not in retail's engine either, most of the rest are UI-only. |
 
 The counts are a Linux build's, written by `tools/status_metrics.py update --build-dir <build>`; `arch.status_metrics` fails when they are stale.
 
@@ -86,6 +86,7 @@ What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`do
 
 - **Pathing by footprint.** By default units still path as points on one 2-unit grid. Moho keeps passability per footprint class, so a big unit can't take a gap a small one can, and its pathing is now ported (#415–#418, `docs/plans/2026-10-07-per-class-pathing-design.md`). It stays behind `--moho-pathing` until games with it on have been watched: the four-AI late game runs 2.0× longer in sim time with it (184 s against 91 s: 162,748 searches, 55 M cells expanded; see *Benchmarks*), and the AIs play differently. Mobile units in the way and formation layers are #427's.
 - **Projectile flight.** As Moho's since #405 and #408, but for two things nothing in retail uses: bounce (no projectile has `Min/MaxBounceCount`), and retargeting on a miss, which Moho gates on `AutoInitiateAttackCommand` as well as `ReTargetOnMiss`, a pair no retail weapon has.
+- **Engine API:** the Lua calls, arguments, blueprint fields, categories, callbacks and behaviours that retail's scripts and data use and the engine doesn't support, or supports in part, with FAF's additions, each with its effect, evidence and status: `docs/engine-api-gaps.md`.
 - **Needs a person:** a listening pass of the audio; comparison with the original game's look (no reference captures exist here); the hardware cursor on a real display; Steam and the Steam Deck; external testers.
 - **Multiplayer:** peers are not authenticated; two players dropping at once can leave the survivors disagreeing; FAF's ICE adapter and client are tested only through stand-ins.
 - **Lobby options:** difficulty cheat multipliers are applied by FA's AI scripts, not the engine; `PrebuiltUnits` needs map data.

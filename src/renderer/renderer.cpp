@@ -457,7 +457,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     unit_renderer_.set_playable_rect(&playable_rect_);
     strategic_icon_renderer_.set_recon(&recon_);
     overlay_renderer_.set_recon(&recon_);
-    minimap_renderer_.set_recon(&recon_);
+    minimap_renderer_.set_icons(&strategic_icon_renderer_);
     particle_system_.set_recon(&recon_);
     overlay_renderer_.set_beams(&beam_renderer_);
     overlay_renderer_.set_trails(&trail_renderer_);
@@ -900,6 +900,17 @@ void Renderer::create_pipelines() {
             terrain_low_pipeline_ =
                 terrain_builder(low).build(device_, frame_.scene_pass(), &terrain_low_layout_);
             vkDestroyShaderModule(device_, low, nullptr);
+        }
+        VkShaderModule skirt =
+            compile_glsl(device_, shaders::terrain_skirt_frag, "terrain_skirt.frag", false);
+        if (skirt) {
+            terrain_skirt_pipeline_ =
+                terrain_builder(skirt)
+                    .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                    .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT)
+                    .build(device_, frame_.scene_pass(), &terrain_skirt_layout_);
+            vkDestroyShaderModule(device_, skirt, nullptr);
         }
     }
 
@@ -2589,7 +2600,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                      static_cast<i32>(terrain_->map_height())});
                 }
                 minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
-                                        window_width_, window_height_, out, resources);
+                                        window_width_, window_height_, selected_ids, L, out,
+                                        resources);
                 painted_minimap_.insert(painted_minimap_.end(),
                                         out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };
@@ -2676,7 +2688,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
                                terrain_mesh_, camera_.view(), {ex, ey, ez},
                                camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi,
-                               fidelity());
+                               fidelity(), ui_registry ? &ui_registry->user_decals() : nullptr);
     }
 
     // The terrain's Time (M212f): set when the terrain would re-tessellate,
@@ -2687,10 +2699,11 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
     }
 
-    // Update minimap (terrain bg, unit dots, camera frustum box)
-    if (legacy_hud_active_)
-        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
-                                  window_width_, window_height_);
+    // Update minimap (terrain bg, units' icons, camera frustum box)
+    if (legacy_hud_active_) {
+        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids, window_width_,
+                                 window_height_, L);
+    }
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
@@ -2876,6 +2889,20 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     }
     record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
 
+    // WRenViewport::RenderCompositeTerrain: DrawTerrainSkirt after DrawNormals
+    if (video_options_.skirt && terrain_skirt_pipeline_ && terrain_mesh_.skirt_index_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_skirt_pipeline_);
+        vkc::push_constants(cmd_buf_[fi], terrain_skirt_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(f32) * 16, vp.data());
+        VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.skirt_index_count(), 1,
+                          terrain_mesh_.skirt_first_index(), 0, 0);
+    }
+
     // 2b. The range overlays, on the terrain before the meshes
     // (WRenViewport::Render's RangeRenderer::Render)
     range_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
@@ -2984,7 +3011,7 @@ void Renderer::record_screen_layers(u32 fi) {
                                  window_width_, window_height_);
     }
 
-    // 8. Draw minimap (terrain bg + unit dots + camera box)
+    // 8. Draw minimap (terrain bg + unit icons + camera box)
     if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
@@ -3888,6 +3915,12 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
     if (terrain_low_pipeline_) vkDestroyPipeline(device_, terrain_low_pipeline_, nullptr);
     if (terrain_low_layout_) vkDestroyPipelineLayout(device_, terrain_low_layout_, nullptr);
+    if (terrain_skirt_pipeline_) {
+        vkDestroyPipeline(device_, terrain_skirt_pipeline_, nullptr);
+    }
+    if (terrain_skirt_layout_) {
+        vkDestroyPipelineLayout(device_, terrain_skirt_layout_, nullptr);
+    }
     vkDestroyPipeline(device_, unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, unit_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);

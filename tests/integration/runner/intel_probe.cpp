@@ -180,14 +180,20 @@ bool same_colour(const Quad& q, f32 r, f32 g, f32 b) {
     return std::abs(q.r - r) < 0.01f && std::abs(q.g - g) < 0.01f && std::abs(q.b - b) < 0.01f;
 }
 
-const Quad* minimap_dot(const Frame& frame, renderer::Renderer& r, f32 map_w, f32 map_h,
-                        const sim::Vector3& p) {
+const Quad* minimap_icon(const Frame& frame, renderer::Renderer& r, f32 map_w, f32 map_h,
+                         const sim::Vector3& p) {
     const f32 size = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_SIZE);
     const f32 margin = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_MARGIN);
     const renderer::MapArea area = renderer::fit_map_area(
         margin, static_cast<f32>(r.height()) - size - margin, size, size, map_w, map_h);
-    return quad_at(frame.minimap, area.x + p.x / map_w * area.w, area.y + p.z / map_h * area.h,
-                   3.0f, 3.0f);
+    const f32 x = std::floor(area.x + p.x / map_w * area.w);
+    const f32 y = std::floor(area.y + p.z / map_h * area.h);
+    for (const Quad& q : frame.minimap) {
+        if (q.w < 64.0f && std::abs(q.x - x) < 1.0f && std::abs(q.y - y) < 1.0f) {
+            return &q;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace osc::test

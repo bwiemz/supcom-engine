@@ -72,6 +72,7 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 unbuilt = spawn_unit(ctx, "__osc_ic_unbuilt", "ueb1101", "ARMY_1", {sx, sz + 24});
     const u32 picked = spawn_unit(ctx, "__osc_ic_picked", "uel0201", "ARMY_1", {sx, sz - 24});
     const u32 dazed = spawn_unit(ctx, "__osc_ic_dazed", "uel0201", "ARMY_1", {sx + 24, sz - 24});
+    const u32 dying = spawn_unit(ctx, "__osc_ic_dying", "uel0201", "ARMY_1", {sx - 24, sz - 24});
     (void)spawn_unit(ctx, "__osc_ic_radar", "ueb1101", "ARMY_1", {sx, sz + 60});
     // ARMY_2's, 24 beyond the radar (it reaches 60): an engineer, a power
     // generator, an air scout (none of them ever seen), and a tank to be
@@ -80,15 +81,19 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 e_gen = spawn_unit(ctx, "__osc_ic_egen", "ueb1101", "ARMY_2", {sx, sz + 84});
     const u32 e_air = spawn_unit(ctx, "__osc_ic_eair", "uea0101", "ARMY_2", {sx + 20, sz + 84});
     const u32 e_tank = spawn_unit(ctx, "__osc_ic_etank", "uel0201", "ARMY_2", {sx + 40, sz + 84});
-    run_lua(ctx, "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
-                 "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_radar} do\n"
-                 "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
-                 "end\n"
-                 "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
-                 "__osc_ic_radar:EnableIntel('Radar')\n"
-                 "__osc_ic_dazed:SetStunned(100)\n");
+    run_lua(ctx,
+            "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
+            "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar} do\n"
+            "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
+            "end\n"
+            "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
+            "__osc_ic_radar:EnableIntel('Radar')\n"
+            "__osc_ic_dazed:SetStunned(100)\n");
     if (auto* e = ctx.sim.entity_registry().find(unbuilt); e && e->is_unit())
         static_cast<sim::Unit*>(e)->set_is_being_built(true);
+    if (auto* e = ctx.sim.entity_registry().find(dying); e && e->is_unit()) {
+        static_cast<sim::Unit*>(e)->begin_dying();
+    }
     ctx.sim.tick();
 
     OffscreenShots shots(ctx);
@@ -159,8 +164,11 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(shows(f, picked, icon_texture(ctx, "uel0201", "selected"), blue),
             "Test 2: the selected tank shows its selected icon");
 
-    // Test 3: a unit being built has none.
-    t.check(icons_at(f, unbuilt).empty(), "Test 3: the power generator being built has no icon");
+    // Test 3: a unit being built or dying has none.
+    t.check(icons_at(f, unbuilt).empty() && icons_at(f, dying).empty(),
+            fmt::format("Test 3: the power generator being built ({}) and the dying tank ({}) "
+                        "have no icon",
+                        icons_at(f, unbuilt).size(), icons_at(f, dying).size()));
 
     // Test 4: ground, air, high-priority, selected.
     {
@@ -269,6 +277,62 @@ void test_strategic_icons(TestContext& ctx) {
     run_lua(ctx, "__osc_ic_tank:SetStrategicUnderlay('')\n");
     f = next();
     t.check(icons_at(f, tank).size() == 1, "Test 11: SetStrategicUnderlay('') takes it away");
+
+    r.camera().set_target(sx, sz + 42);
+    r.camera().set_eye_distance(110.0f);
+    f = next();
+    const f32 map_w = static_cast<f32>(ctx.sim.terrain()->map_width());
+    const f32 map_h = static_cast<f32>(ctx.sim.terrain()->map_height());
+    const f32 mm_size = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_SIZE);
+    const f32 mm_margin = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_MARGIN);
+    const renderer::MapArea area =
+        renderer::fit_map_area(mm_margin, static_cast<f32>(r.height()) - mm_size - mm_margin,
+                               mm_size, mm_size, map_w, map_h);
+    const auto minimap_icons_at = [&](u32 id) {
+        std::vector<const renderer::UIQuad*> found;
+        const sim::EntityRecord* e = seen.cur().find(id);
+        if (!e) {
+            return found;
+        }
+        const f32 x = std::floor(area.x + e->position.x / map_w * area.w);
+        const f32 y = std::floor(area.y + e->position.z / map_h * area.h);
+        for (const renderer::UIQuad& q : r.minimap().quads()) {
+            if (q.inst.rect[2] < 64.0f &&
+                std::abs(q.inst.rect[0] + q.inst.rect[2] * 0.5f - x) < 1.0f &&
+                std::abs(q.inst.rect[1] + q.inst.rect[3] * 0.5f - y) < 1.0f) {
+                found.push_back(&q);
+            }
+        }
+        return found;
+    };
+    const auto on_minimap = [&](u32 id, const std::string& texture,
+                                const std::array<f32, 3>& tint) {
+        const auto at = minimap_icons_at(id);
+        const renderer::GPUTexture* tex = r.texture_cache().get(texture);
+        if (at.empty() || !tex) {
+            return false;
+        }
+        const renderer::UIQuad& q = *at.front();
+        return q.texture_ds == tex->descriptor_set &&
+               q.inst.rect[2] == static_cast<f32>(tex->width & ~1u) &&
+               q.inst.rect[3] == static_cast<f32>(tex->height & ~1u) &&
+               std::abs(q.inst.color[0] - tint[0]) < 0.01f &&
+               std::abs(q.inst.color[1] - tint[1]) < 0.01f &&
+               std::abs(q.inst.color[2] - tint[2]) < 0.01f;
+    };
+    t.check(on_minimap(tank, icon_texture(ctx, "uel0201", "rest"), blue) &&
+                on_minimap(scout, icon_texture(ctx, "uea0101", "rest"), blue) &&
+                on_minimap(sacu, icon_texture(ctx, "uel0301", "rest"), blue),
+            fmt::format("Test 12: zoomed in, the minimap shows the tank's, scout's and support "
+                        "commander's icons at their textures' sizes ({} minimap quads)",
+                        r.minimap().quads().size()));
+    t.check(on_minimap(picked, icon_texture(ctx, "uel0201", "selected"), blue),
+            "Test 13: the selected tank's minimap icon is its selected one");
+    t.check(on_minimap(e_eng, dir + "icon_land_generic_rest.dds", grey) &&
+                on_minimap(e_gen, dir + "icon_structure_generic_rest.dds", grey),
+            "Test 14: never-seen blips' minimap icons are generic, unidentified");
+    t.check(minimap_icons_at(unbuilt).empty(),
+            "Test 15: the power generator being built has no minimap icon");
 
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }

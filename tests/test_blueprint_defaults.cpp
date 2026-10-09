@@ -183,3 +183,24 @@ TEST_CASE("A unit blueprint's omitted intel, cap cost and drive read as Moho's d
         assert(own.General.CapCost == 2 and own.Physics.MaxSpeedReverse == 1, 'own lost')
     )"));
 }
+
+TEST_CASE("Scripts iterate a blueprint's tables in the order of Moho's copy of it",
+          "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        RegisterUnitBlueprint({BlueprintId = 'uel0001', Enhancements = {Slots = {
+            Back = {name = '<LOC _Back>', x = 38, y = -10},
+            LCH = {name = '<LOC _LCH>', x = 105, y = 30},
+            RCH = {name = '<LOC _RCH>', x = -10, y = 30},
+        }}})
+    )"));
+    w.store.copy_lua_tables(w.state.raw());
+    w.store.expose_to_lua(w.state.raw());
+    CHECK(w.check(R"(
+        local order = ''
+        for slot in pairs(__blueprints.uel0001.Enhancements.Slots) do
+            order = order .. slot .. ' '
+        end
+        assert(order == 'RCH Back LCH ', order)
+    )"));
+}

@@ -21,7 +21,7 @@ struct TrailBlueprintData {
     f32 lifetime = 0.0f;     ///< ticks the emitter lives (negative: until its entity goes)
     f32 trail_length = 0.0f; ///< ticks a segment lasts
     f32 size = 0.0f;         ///< half the ribbon's width (Moho's StartSize)
-    f32 sort_order = 0.0f;   ///< below 0, drawn under the water
+    f32 sort_order = 0.0f;   ///< below kParticleWaterSurface, drawn under the water
     i32 blendmode = 0;       ///< particle.fx's TPolyTrail suffix (0: ALPHABLEND)
     f32 lod_cutoff = 100.0f; ///< emits within this of the camera (0: anywhere)
     u8 fidelity = 0b111;     ///< the graphics fidelities it is made at

@@ -855,6 +855,116 @@ static int l_GetMouseWorldPos(lua_State* L) {
     return 1;
 }
 
+// --- UserDecal (faf-re script/ScriptedDecal.cpp) ---
+
+static bool read_vector(lua_State* L, int idx, int n, f32* out) {
+    if (!lua_istable(L, idx)) {
+        return false;
+    }
+    static const char* const kNames[] = {"x", "y", "z"};
+    for (int i = 0; i < n; ++i) {
+        lua_rawgeti(L, idx, i + 1);
+        if (!lua_isnumber(L, -1)) {
+            lua_pop(L, 1);
+            lua_pushstring(L, kNames[i]);
+            lua_gettable(L, idx);
+        }
+        const bool ok = lua_isnumber(L, -1) != 0;
+        out[i] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        if (!ok) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static ui::UserDecals* user_decal(lua_State* L, u32& id) {
+    auto* reg = get_ui_registry(L);
+    if (!reg || !lua_istable(L, 1)) {
+        return nullptr;
+    }
+    lua_pushstring(L, "_c_user_decal");
+    lua_rawget(L, 1);
+    id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
+    return id ? &reg->user_decals() : nullptr;
+}
+
+static int l_c_CreateDecal(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg || !lua_istable(L, 1)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, "_c_user_decal");
+    lua_pushnumber(L, static_cast<lua_Number>(reg->user_decals().create()));
+    lua_rawset(L, 1);
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int userdecal_SetTexture(lua_State* L) {
+    u32 id = 0;
+    ui::UserDecals* decals = user_decal(L, id);
+    const char* path = luaL_checkstring(L, 2);
+    if (decals) {
+        decals->set_texture(id, path);
+    }
+    return 0;
+}
+
+static int userdecal_SetScale(lua_State* L) {
+    u32 id = 0;
+    ui::UserDecals* decals = user_decal(L, id);
+    f32 v[3] = {};
+    if (decals && read_vector(L, 2, 3, v)) {
+        decals->set_scale(id, v[0], v[1], v[2]);
+    }
+    return 0;
+}
+
+static int userdecal_SetPosition(lua_State* L) {
+    u32 id = 0;
+    ui::UserDecals* decals = user_decal(L, id);
+    f32 v[3] = {};
+    if (decals && read_vector(L, 2, 3, v)) {
+        decals->set_position(id, v[0], v[1], v[2]);
+    }
+    return 0;
+}
+
+static int userdecal_SetPositionByScreen(lua_State* L) {
+    u32 id = 0;
+    ui::UserDecals* decals = user_decal(L, id);
+    f32 v[2] = {};
+    if (!decals || !read_vector(L, 2, 2, v)) {
+        return 0;
+    }
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    f32 x = 0;
+    f32 y = 0;
+    f32 z = 0;
+    if (wv && wv->camera() && wv->get_mouse_world_pos(v[0], v[1], x, y, z)) {
+        decals->set_position(id, x, y, z);
+    }
+    return 0;
+}
+
+static int userdecal_Destroy(lua_State* L) {
+    u32 id = 0;
+    if (ui::UserDecals* decals = user_decal(L, id)) {
+        decals->destroy(id);
+        lua_pushstring(L, "_c_user_decal");
+        lua_pushnil(L);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
 // --- SyncPlayableRect global (M209) ---
 /// SyncPlayableRect(rect): the user side of the sim's playable rect (Moho's
 /// CWldSession::SyncPlayableRect), which usercamera.lua applies from the
@@ -1529,6 +1639,32 @@ static int l_GetRolloverInfo(lua_State* L) {
         lua_rawset(L, -3);
     };
 
+    // Moho's rollover of a blip (faf-re BuildUserUnitRolloverInfo): never
+    // seen, only its army; seen before, its blueprint without its stats.
+    const renderer::Sight sight = input ? input->sight(*unit) : renderer::Sight::Seen;
+    if (sight == renderer::Sight::Blip) {
+        lua_newtable(L);
+        set_str("blueprintId", "unknown");
+        set_num("armyIndex", static_cast<lua_Number>(unit->army()));
+        return 1;
+    }
+    if (sight != renderer::Sight::Seen) {
+        lua_newtable(L);
+        set_str("blueprintId", unit->blueprint_id().c_str());
+        set_num("armyIndex", static_cast<lua_Number>(unit->army()));
+        for (const char* key :
+             {"kills", "energyRequested", "massRequested", "tacticalSiloBuildCount",
+              "tacticalSiloStorageCount", "tacticalSiloMaxStorageCount", "nukeSiloBuildCount",
+              "nukeSiloStorageCount", "nukeSiloMaxStorageCount"}) {
+            set_num(key, 0);
+        }
+        for (const char* key : {"energyConsumed", "massConsumed", "energyProduced", "massProduced",
+                                "fuelRatio", "shieldRatio", "workProgress"}) {
+            set_num(key, -1);
+        }
+        return 1;
+    }
+
     // Fuel: -1 for units without any, which hides the unit view's fuel line
     // (it multiplies Physics.FuelUseTime by the ratio). Fuel use is not
     // simulated yet, so fuelled units report a full tank.
@@ -1561,11 +1697,11 @@ static int l_GetRolloverInfo(lua_State* L) {
 
     const auto& econ = unit->economy();
     set_num("massProduced", static_cast<lua_Number>(econ.production_mass));
-    set_num("massConsumed", static_cast<lua_Number>(econ.consumption_mass));
+    set_num("massConsumed", static_cast<lua_Number>(econ.mass_consumed(unit->is_paused())));
     set_num("energyProduced", static_cast<lua_Number>(econ.production_energy));
-    set_num("energyConsumed", static_cast<lua_Number>(econ.consumption_energy));
-    set_num("massRequested", static_cast<lua_Number>(econ.consumption_mass));
-    set_num("energyRequested", static_cast<lua_Number>(econ.consumption_energy));
+    set_num("energyConsumed", static_cast<lua_Number>(econ.energy_consumed(unit->is_paused())));
+    set_num("massRequested", static_cast<lua_Number>(econ.mass_requested()));
+    set_num("energyRequested", static_cast<lua_Number>(econ.energy_requested()));
 
     set_num("tacticalSiloStorageCount", static_cast<lua_Number>(unit->silo_ammo(false)));
     set_num("tacticalSiloMaxStorageCount", static_cast<lua_Number>(unit->silo_max_storage(false)));
@@ -1685,10 +1821,19 @@ void register_user_bindings(LuaState& state) {
     state.register_function("UIZoomTo", l_UIZoomTo);
     state.register_function("UISelectAndZoomTo", l_UISelectAndZoomTo);
     state.register_function("GetValidAttackingUnits", l_GetValidAttackingUnits);
+    state.register_function("_c_CreateDecal", l_c_CreateDecal);
     state.register_function("GetRolloverInfo", l_GetRolloverInfo);
 
     // Methods of the classes register_moho_bindings made: before any UI
     // script builds its classes from them.
+    add_class_methods(L, "userDecal_methods",
+                      {
+                          {"SetTexture", userdecal_SetTexture},
+                          {"SetScale", userdecal_SetScale},
+                          {"SetPosition", userdecal_SetPosition},
+                          {"SetPositionByScreen", userdecal_SetPositionByScreen},
+                          {"Destroy", userdecal_Destroy},
+                      });
     add_class_methods(L, "ui_map_preview_methods",
                       {
                           {"SetTextureFromMap", mappreview_SetTextureFromMap},

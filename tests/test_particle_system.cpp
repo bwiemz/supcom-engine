@@ -6,6 +6,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/effect_blueprint_file.hpp"
@@ -491,4 +493,63 @@ TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, ble
         if (id == 4 || id == 5) alike.push_back(id);
     REQUIRE(alike.size() >= 4);
     for (size_t i = 0; i < alike.size(); ++i) CHECK(alike[i] == (i % 2 == 0 ? 4u : 5u));
+}
+
+TEST_CASE("Only a SortOrder below efx_ParticleWaterSurface snaps under the water",
+          "[renderer][emitter]") {
+    const fs::path root = fs::temp_directory_path() / "osc_particle_water_test";
+    fs::remove_all(root);
+    const fs::path dir = root / "effects" / "Emitters";
+    fs::create_directories(dir);
+    const auto emitter_bp = [&](const char* name, const char* sort_order) {
+        std::ofstream(dir / (std::string(name) + "_emit.bp"))
+            << "EmitterBlueprint {\n    Lifetime = -1,\n    Repeattime = 10,\n"
+            << "    InterpolateEmission = false,\n    EmitIfVisible = false,\n"
+            << "    SnapToWaterline = true,\n    SortOrder = " << sort_order << ",\n"
+            << "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+            << "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n}\n";
+    };
+    emitter_bp("glow", "-10");
+    emitter_bp("deep", "-102");
+
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+    osc::lua::LuaState lua;
+    osc::renderer::EmitterBlueprintCache cache;
+    cache.set_vfs(&vfs);
+    osc::renderer::Camera camera;
+    osc::renderer::ParticleSystem ps;
+    std::vector<osc::u16> heights(65 * 65, 0);
+    const osc::map::Terrain terrain(osc::map::Heightmap(64, 64, 1.0f / 128.0f, std::move(heights)),
+                                    20.0f, true);
+    const auto emitter = [](osc::u32 id, const char* name, osc::f32 y) {
+        osc::sim::EffectRecord fx;
+        fx.id = id;
+        fx.type = osc::sim::EffectType::EMITTER_AT_ENTITY;
+        fx.blueprint_path = std::string("/effects/emitters/") + name + "_emit.bp";
+        fx.framed = true;
+        fx.frame_position = {10, y, 30};
+        return fx;
+    };
+    osc::sim::WorldSnapshot tick;
+    tick.tick = 1;
+    tick.effects = {emitter(1, "glow", 100.0f), emitter(2, "glow", 5.0f),
+                    emitter(3, "deep", 100.0f)};
+    ps.update(osc::sim::FrameView(&tick, &tick, 1.0f), camera, nullptr, cache, lua.raw(), &terrain);
+
+    const auto drawn = [&](osc::u32 id) {
+        for (const auto& d : ps.drawn()) {
+            if (d.effect_id == id) {
+                return d;
+            }
+        }
+        FAIL("effect " << id << " drew nothing");
+        return osc::renderer::ParticleSystem::Drawn{};
+    };
+    CHECK(drawn(1).center.y == 100.0f);
+    CHECK_FALSE(drawn(1).under_water);
+    CHECK(drawn(2).center.y == 20.0f + osc::renderer::kParticleWaterOffset);
+    CHECK_FALSE(drawn(2).under_water);
+    CHECK(drawn(3).center.y == 20.0f - osc::renderer::kParticleWaterOffset);
+    CHECK(drawn(3).under_water);
 }

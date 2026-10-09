@@ -168,7 +168,7 @@ void test_counter_intel(TestContext& ctx) {
                                gen_at.z};
     r.camera().set_eye_distance(300.0f);
     f = next();
-    // Its icon and minimap dot in ARMY_2's colour halved.
+    // Its icon and minimap icon in ARMY_2's colour halved.
     const sim::ArmyRecord* a = seen.cur().army(1);
     const std::array<f32, 3> army =
         a && a->has_color
@@ -182,13 +182,16 @@ void test_counter_intel(TestContext& ctx) {
                 std::abs(q.y - std::floor((*at)[1])) < 1.5f &&
                 same_colour(q, army[0] * 0.5f, army[1] * 0.5f, army[2] * 0.5f))
                 dark_icon = true;
-    const Quad* dot = minimap_dot(f, r, static_cast<f32>(ctx.sim.terrain()->map_width()),
-                                  static_cast<f32>(ctx.sim.terrain()->map_height()), gen_pos);
-    const bool dark_dot = dot && same_colour(*dot, army[0] * 0.5f, army[1] * 0.5f, army[2] * 0.5f);
-    t.check(gone_from_world && still_drawn && dark_icon && dark_dot && r.recon().maybe_dead(gen),
+    const Quad* on_minimap =
+        minimap_icon(f, r, static_cast<f32>(ctx.sim.terrain()->map_width()),
+                     static_cast<f32>(ctx.sim.terrain()->map_height()), gen_pos);
+    const bool dark_minimap =
+        on_minimap && same_colour(*on_minimap, army[0] * 0.5f, army[1] * 0.5f, army[2] * 0.5f);
+    t.check(gone_from_world && still_drawn && dark_icon && dark_minimap &&
+                r.recon().maybe_dead(gen),
             fmt::format("Test 6: dead unseen, the power generator stays (gone from the world: "
-                        "{}, drawn: {}, darkened icon: {}, darkened dot: {})",
-                        gone_from_world, still_drawn, dark_icon, dark_dot));
+                        "{}, drawn: {}, darkened icon: {}, darkened on the minimap: {})",
+                        gone_from_world, still_drawn, dark_icon, dark_minimap));
 
     // Test 7: seen, the spot is empty: it's gone.
     r.camera().set_eye_distance(110.0f);

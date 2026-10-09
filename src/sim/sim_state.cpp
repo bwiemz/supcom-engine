@@ -774,10 +774,17 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
+    if (unit.is_being_built() && !unit.has_category("FACTORY")) {
+        return false;
+    }
     if (command.type == CommandType::Reclaim) {
         const Entity* target =
             command.target_id ? entity_registry_.find(command.target_id) : nullptr;
         return !target || reclaim_target_valid(*target);
+    }
+    if (command.type == CommandType::TransportLoad || command.type == CommandType::Dock ||
+        command.type == CommandType::WaitForFerry) {
+        return unit.transport_id() == 0;
     }
     if (command.type != CommandType::Guard) return true;
     // A pod, or a unit a carrier holds, guards nothing; nor does a unit
@@ -3556,8 +3563,20 @@ u32 SimState::compute_sync_checksum() const {
     return checksum_parts().total();
 }
 
+i32 SimState::focus_army() const {
+    if (!L_) {
+        return 0;
+    }
+    lua_pushstring(L_, "__osc_focus_army");
+    lua_rawget(L_, LUA_REGISTRYINDEX);
+    const i32 army = lua_isnumber(L_, -1) ? static_cast<i32>(lua_tonumber(L_, -1)) : 0;
+    lua_pop(L_, 1);
+    return army;
+}
+
 i32 SimState::player_result() const {
-    const ArmyBrain* player = army_at(0);
+    const i32 focus = focus_army();
+    const ArmyBrain* player = focus >= 0 ? army_at(static_cast<size_t>(focus)) : nullptr;
     if (!player) return game_ended_ ? 3 : 0;
 
     // A decisive brain state set by update_victory (or by an external caller)
@@ -3575,8 +3594,12 @@ i32 SimState::player_result() const {
     bool has_enemy = false;
     for (size_t i = 0; i < army_count(); ++i) {
         const auto* b = army_at(i);
-        if (!b || b->is_civilian() || static_cast<i32>(i) == 0) continue;
-        if (player->is_ally(static_cast<i32>(i))) continue;
+        if (!b || b->is_civilian() || static_cast<i32>(i) == focus) {
+            continue;
+        }
+        if (player->is_ally(static_cast<i32>(i))) {
+            continue;
+        }
         has_enemy = true;
         if (!b->is_defeated()) {
             all_enemies_dead = false;

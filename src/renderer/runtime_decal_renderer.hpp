@@ -16,6 +16,9 @@ class Terrain;
 namespace osc::sim {
 struct WorldSnapshot;
 }
+namespace osc::ui {
+class UserDecals;
+}
 
 namespace osc::renderer {
 
@@ -45,7 +48,8 @@ public:
     void update(const sim::WorldSnapshot* snap, i32 focus_army, const map::Terrain& terrain,
                 const TerrainMesh& mesh, const std::array<f32, 16>& view,
                 const std::array<f32, 3>& eye, f32 half_width, const Frustum& frustum,
-                TextureCache& textures, u32 fi, int graphics_fidelity = 2);
+                TextureCache& textures, u32 fi, int graphics_fidelity = 2,
+                const ui::UserDecals* user_decals = nullptr);
 
     /// A runtime decal this frame draws, over the terrain's vertices with
     /// index_buffer(), in its technique's pass.
@@ -98,7 +102,8 @@ private:
     void upload_indices(u32 fi);
     void build_splats(const map::Terrain& terrain, const std::array<f32, 16>& view,
                       const std::array<f32, 3>& eye, f32 half_width, const Frustum& frustum,
-                      TextureCache& textures, u32 fi, int graphics_fidelity);
+                      TextureCache& textures, u32 fi, int graphics_fidelity,
+                      const ui::UserDecals* user_decals);
 
     VkDevice device_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = nullptr;

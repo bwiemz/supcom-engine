@@ -207,9 +207,11 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         if (!unit.is_dying()) cap_used += unit.cap_cost();
         const auto& econ = unit.economy();
 
-        if (econ.production_active) {
+        if (unit.producing()) {
             mass_income += econ.production_mass;
             energy_income += econ.production_energy;
+            total_storage_mass += econ.storage_mass;
+            total_storage_energy += econ.storage_energy;
         }
 
         mass_income += econ.reclaim_mass;
@@ -227,10 +229,6 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0) {
             energy_consumption += econ.energy_maintenance_override;
         }
-
-        // Storage contribution always counted
-        total_storage_mass += econ.storage_mass;
-        total_storage_energy += econ.storage_energy;
     });
 
     // Its economy events' requests (M206d).

@@ -14,6 +14,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
+#include "ui/ui_control.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -229,6 +230,33 @@ TEST_CASE("GetCommandQueue holds the orders given and not yet run", "[userunit]"
     CHECK(queued() == 2.0);
     CHECK(w.unit().command_queue().empty());
     osc::lua::set_ui_world_source(L, nullptr);
+}
+
+TEST_CASE("GetIdleEngineers counts the orders given and not yet run", "[userunit]") {
+    UiWorld w;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_ui_bindings(w.ui, registry);
+    w.unit().add_category("ENGINEER");
+    const auto idle = [&] {
+        auto result =
+            w.ui.do_string("local e = GetIdleEngineers() return e and table.getn(e) or 0");
+        INFO((result.ok() ? std::string() : result.error().message));
+        REQUIRE(result.ok());
+        const double n = lua_tonumber(w.ui.raw(), -1);
+        lua_pop(w.ui.raw(), 1);
+        return n;
+    };
+    CHECK(idle() == 1.0);
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    w.sim.schedule_command(0, {w.id}, move, true);
+    CHECK(idle() == 0.0);
+
+    w.unit().push_command(move, true);
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    w.sim.schedule_command(0, {w.id}, stop, true);
+    CHECK(idle() == 1.0);
 }
 
 TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[userunit]") {
@@ -453,9 +481,60 @@ TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     osc::renderer::InputHandler input;
     w.unit().set_motion_type("RULEUMT_Land");
     input.set_selected({w.id});
-    input.deselect_aboard(w.sim.entity_registry());
+    input.prune_selection(w.sim.entity_registry());
     REQUIRE(input.selected().size() == 1);
     w.unit().set_transport_id(w.id + 1);
-    input.deselect_aboard(w.sim.entity_registry());
+    input.prune_selection(w.sim.entity_registry());
     CHECK(input.selected().empty());
+}
+
+TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    w.unit().set_motion_type("RULEUMT_Land");
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.selected().size() == 1);
+    REQUIRE(input.unit_under(w.sim, 0.0f, 0.0f) == w.id);
+    w.unit().begin_dying();
+    input.prune_selection(w.sim.entity_registry());
+    CHECK(input.selected().empty());
+    CHECK_FALSE(osc::renderer::selectable(w.unit()));
+    CHECK(input.unit_under(w.sim, 0.0f, 0.0f) == 0);
+}
+
+TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[selection]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim{lua.raw(), nullptr};
+    const auto add = [&](const char* bp, osc::i32 army, osc::f32 x, bool being_built = false) {
+        auto unit = std::make_unique<osc::sim::Unit>();
+        unit->set_army(army);
+        unit->set_blueprint_id(bp);
+        unit->set_size_xz(1.0f, 1.0f);
+        unit->set_size_y(1.0f);
+        unit->set_is_being_built(being_built);
+        const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
+        sim.entity_registry().find(id)->set_position({x, 0.0f, 10.0f});
+        return id;
+    };
+    const osc::u32 tank = add("uel0201", 0, 10.0f);
+    const osc::u32 far_tank = add("uel0201", 0, 900.0f);
+    add("uel0201", 0, 500.0f, true);
+    add("uel0201", 1, 20.0f);
+    const osc::u32 engineer = add("uel0105", 0, 30.0f);
+    osc::renderer::InputHandler input;
+
+    input.left_click_at(sim, 10.0f, 10.0f, false, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{tank, far_tank});
+
+    input.set_selected({engineer});
+    input.left_click_at(sim, 200.0f, 10.0f, false, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+
+    input.left_click_at(sim, 10.0f, 10.0f, true, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer, tank, far_tank});
+
+    input.set_selected({engineer, tank, far_tank});
+    input.left_click_at(sim, 10.0f, 10.0f, true, true);
+    CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
 }
