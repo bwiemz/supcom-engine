@@ -5,7 +5,8 @@
 // 2. made, it stands on the Sub layer;
 // 3. the Cybran naval factory (URB0103, MinWaterDepth 1.5) needs that depth;
 // 4. a power generator (UEB1101) won't fit across a slope that a wall
-//    (UEB5101, MaxGroundVariation 50) takes.
+//    (UEB5101, MaxGroundVariation 50) takes;
+// 5. an experimental aircraft (XSA0402, UAA0310) is placed as a mobile unit.
 //
 // Before, only LAYER_Land/Water/Seabed were read, so the HARMS could be
 // built nowhere; water structures went in any depth, and slope was judged
@@ -95,6 +96,11 @@ void test_placement_layers(TestContext& ctx) {
     t.check(can_build("urb0103", deep->x, deep->z) && !can_build("urb0103", shallow->x, shallow->z),
             "Test 3: the naval factory goes in deep water, not in water shallower than its "
             "MinWaterDepth");
+
+    t.check(can_build("xsa0402", land->x, land->z) && can_build("xsa0402", deep->x, deep->z) &&
+                can_build("uaa0310", land->x, land->z),
+            "Test 5: an experimental aircraft (BuildOnLayerCaps Air alone) goes on land and over "
+            "water");
 
     run_lua(ctx, fmt::format("__osc_pl_harms = CreateUnitHPR('xrb2308', 'ARMY_1', {0}, "
                              "GetSurfaceHeight({0}, {1}), {1}, 0, 0, 0)",

@@ -7,6 +7,7 @@
 // the army's units already has an order for must count as taken -- otherwise
 // every call returns the same spot.
 
+#include "blueprints/footprint.hpp"
 #include "core/types.hpp"
 
 #include <cmath>
@@ -50,6 +51,9 @@ struct PlacementRules {
     /// Footprint.MinWaterDepth: water this deep over the skirt, at least,
     /// for a structure afloat, under the surface or on the seabed.
     f32 min_water_depth = 0.0f;
+    /// A mobile unit's footprint (Physics.MotionType other than None): Moho's
+    /// OCCUPY_Check places it by OCCUPY_MobileCheck, not BuildOnLayerCaps.
+    std::optional<blueprints::Footprint> mobile;
 };
 
 /// The layers a structure is placed on (Moho's ELayer bits).
@@ -136,6 +140,7 @@ public:
 private:
     /// `layers`: the placement_layer bits occupy_layers allows there.
     bool terrain_allows(const StructureSite& site, u8 layers) const;
+    bool in_playable(const StructureSite& site) const;
     bool structure_overlaps(const StructureSite& site) const;
     bool on_deposit(const PlacementRules& r, f32 x, f32 z) const;
 
