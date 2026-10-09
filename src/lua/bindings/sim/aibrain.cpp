@@ -1127,7 +1127,8 @@ static int brain_GetPlatoonsList(lua_State* L) {
 }
 
 // Placement rules for a structure blueprint, read from __blueprints.
-static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& bp_id) {
+static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState& sim,
+                                              const std::string& bp_id) {
     sim::PlacementRules r;
     const int top = lua_gettop(L);
     lua_pushstring(L, "__blueprints");
@@ -1146,6 +1147,13 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         r.size_x = fx;
         r.size_z = fz;
     }
+    const auto cells = [](f32 size) {
+        return static_cast<u8>(std::clamp(std::lround(size), 0L, 255L));
+    };
+    blueprints::Footprint own;
+    own.size_x = cells(r.size_x);
+    own.size_z = cells(r.size_z);
+    std::string motion;
     lua_pushstring(L, "Footprint");
     lua_rawget(L, bp);
     if (lua_istable(L, -1)) {
@@ -1153,8 +1161,21 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         lua_rawget(L, -2);
         if (lua_isnumber(L, -1)) r.min_water_depth = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        lua_pushstring(L, "MaxSlope");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) {
+            own.max_slope = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "MaxWaterDepth");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) {
+            own.max_water_depth = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
     }
     lua_pop(L, 1);
+    own.min_water_depth = r.min_water_depth;
 
     lua_pushstring(L, "Physics");
     lua_rawget(L, bp);
@@ -1196,6 +1217,12 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         lua_rawget(L, phys);
         r.flatten_skirt = lua_toboolean(L, -1) != 0;
         lua_pop(L, 1);
+        lua_pushstring(L, "MotionType");
+        lua_rawget(L, phys);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            motion = lua_tostring(L, -1);
+        }
+        lua_pop(L, 1);
         lua_pushstring(L, "BuildRestriction");
         lua_rawget(L, phys);
         if (lua_type(L, -1) == LUA_TSTRING) {
@@ -1208,12 +1235,17 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
         lua_pop(L, 1);
     }
     lua_settop(L, top);
+    if (!motion.empty() && motion != "RULEUMT_None" && sim.blueprint_store()) {
+        r.mobile = blueprints::resolve_unit_footprints(sim.blueprint_store()->footprint_classes(),
+                                                       own, motion, {}, 0)
+                       .main;
+    }
     return r;
 }
 
 const sim::PlacementRules& structure_rules(lua_State* L, const sim::SimState& sim,
                                            const std::string& bp_id) {
-    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, bp_id); });
+    return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, sim, bp_id); });
 }
 
 static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim, i32 army,

@@ -3,6 +3,7 @@
 
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
+#include "sim/occupancy.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -149,6 +150,10 @@ const PlacementRules& StructurePlacement::rules(const std::string& bp_id) const 
 
 u8 occupy_layers(const map::Terrain& terrain, const PlacementRules& r, f32 x, f32 z) {
     namespace layer = placement_layer;
+    if (r.mobile) {
+        const OccupancyRect at = footprint_rect(*r.mobile, x, z);
+        return map_caps(*r.mobile, terrain, at.x0, at.z0);
+    }
     u8 caps = static_cast<u8>((r.on_land ? layer::Land : 0) | (r.on_seabed ? layer::Seabed : 0) |
                               (r.on_sub ? layer::Sub : 0) | (r.on_water ? layer::Water : 0));
     // The skirt (RUnitBlueprint::GetSkirtRect): from the footprint's corner
@@ -223,7 +228,17 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
     const u8 layers = sim_.terrain() ? occupy_layers(*sim_.terrain(), r, x, z)
                                      : static_cast<u8>(r.on_land ? placement_layer::Land : 0);
     if (layers == 0) return false;
-    if (!terrain_allows(StructureSite::of(x, z, r.size_x, r.size_z), layers)) return false;
+    const StructureSite footprint = StructureSite::of(x, z, r.size_x, r.size_z);
+    if (r.mobile) {
+        if (sim_.terrain() && sim_.footprint_fits_at(*r.mobile, x, z) == 0) {
+            return false;
+        }
+        if (!in_playable(footprint)) {
+            return false;
+        }
+    } else if (!terrain_allows(footprint, layers)) {
+        return false;
+    }
     const StructureSite site = StructureSite::of(r, x, z);
     if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
     for (const auto& pending : reserved())
@@ -235,10 +250,9 @@ bool StructurePlacement::terrain_allows(const StructureSite& site, u8 layers) co
     namespace layer = placement_layer;
     const f32 x0 = site.x0, x1 = site.x1;
     const f32 z0 = site.z0, z1 = site.z1;
-    if (sim_.has_playable_rect() &&
-        (x0 < sim_.playable_x0() || x1 > sim_.playable_x1() ||
-         z0 < sim_.playable_z0() || z1 > sim_.playable_z1()))
+    if (!in_playable(site)) {
         return false;
+    }
 
     const auto* grid = sim_.pathfinding_grid();
     if (!grid) return true; // no terrain data: nothing to check against
@@ -285,6 +299,12 @@ bool StructurePlacement::terrain_allows(const StructureSite& site, u8 layers) co
         }
     }
     return true;
+}
+
+bool StructurePlacement::in_playable(const StructureSite& site) const {
+    return !sim_.has_playable_rect() ||
+           (site.x0 >= sim_.playable_x0() && site.x1 <= sim_.playable_x1() &&
+            site.z0 >= sim_.playable_z0() && site.z1 <= sim_.playable_z1());
 }
 
 bool StructurePlacement::structure_overlaps(const StructureSite& site) const {
