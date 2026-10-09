@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 
+#include "ui/user_decals.hpp"
 #include "video/movie_player.hpp"
 
 #include <array>
@@ -497,8 +498,12 @@ public:
     UIControl* input_capture();
     void clear_input_capture() { input_capture_.clear(); }
 
+    UserDecals& user_decals() { return user_decals_; }
+    const UserDecals& user_decals() const { return user_decals_; }
+
 private:
     std::vector<std::unique_ptr<UIControl>> controls_;
+    UserDecals user_decals_;
     u32 next_id_ = 1;
     UIControl* keyboard_focus_ = nullptr;
     bool focus_blocks_key_down_ = true;

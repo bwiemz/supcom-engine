@@ -9,12 +9,14 @@
 #include "renderer/terrain_mesh.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
+#include "ui/user_decals.hpp"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace osc::renderer {
 
@@ -128,7 +130,8 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
                                   const map::Terrain& terrain, const TerrainMesh& mesh,
                                   const std::array<f32, 16>& view, const std::array<f32, 3>& eye,
                                   f32 half_width, const Frustum& frustum, TextureCache& textures,
-                                  u32 fi, int graphics_fidelity) {
+                                  u32 fi, int graphics_fidelity,
+                                  const ui::UserDecals* user_decals) {
     decal_draws_.clear();
     runs_.clear();
     splat_count_ = 0;
@@ -162,7 +165,8 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
         decal_draws_.push_back(draw);
     }
 
-    build_splats(terrain, view, eye, half_width, frustum, textures, fi, graphics_fidelity);
+    build_splats(terrain, view, eye, half_width, frustum, textures, fi, graphics_fidelity,
+                 user_decals);
 }
 
 void RuntimeDecalRenderer::gather(const TerrainMesh& mesh, TextureCache& textures) {
@@ -217,12 +221,31 @@ void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
                                         const std::array<f32, 16>& view,
                                         const std::array<f32, 3>& eye, f32 half_width,
                                         const Frustum& frustum, TextureCache& textures, u32 fi,
-                                        int graphics_fidelity) {
+                                        int graphics_fidelity, const ui::UserDecals* user_decals) {
     auto* out = static_cast<SplatVertex*>(splat_mapped_[fi]);
     if (!out || !splat_pipeline_) return;
+    std::vector<RuntimeDecals::Decal> user;
+    if (user_decals) {
+        for (const ui::UserDecals::Decal* d : user_decals->splats()) {
+            RuntimeDecals::Decal& s = user.emplace_back();
+            s.splat = true;
+            s.fidelity = 0;
+            s.info.texture_path = d->texture;
+            s.info.position_x = d->corner[0];
+            s.info.position_y = d->corner[1];
+            s.info.position_z = d->corner[2];
+            s.info.scale_x = d->scale[0];
+            s.info.scale_y = d->scale[1];
+            s.info.scale_z = d->scale[2];
+            s.info.cut_off_lod = std::numeric_limits<f32>::max();
+            s.info.near_cut_off_lod = 0.0f;
+        }
+    }
     u32 budget = 0;
     u32 written = 0;
-    for (const RuntimeDecals::Decal& s : decals_.splats()) {
+    const auto& splats = decals_.splats();
+    for (size_t i = 0; i < splats.size() + user.size(); ++i) {
+        const RuntimeDecals::Decal& s = i < splats.size() ? splats[i] : user[i - splats.size()];
         if (graphics_fidelity == 0 && s.fidelity > 0) continue; // Low draws fidelity 0 alone
         // CWldSplat::UpdateVertices: its corners on the terrain, once.
         constexpr std::array<std::array<f32, 2>, 4> kLocal = {{{0, 0}, {1, 0}, {1, 1}, {0, 1}}};

@@ -2676,7 +2676,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
                                terrain_mesh_, camera_.view(), {ex, ey, ez},
                                camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi,
-                               fidelity());
+                               fidelity(), ui_registry ? &ui_registry->user_decals() : nullptr);
     }
 
     // The terrain's Time (M212f): set when the terrain would re-tessellate,

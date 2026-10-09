@@ -20,6 +20,7 @@
 #include "renderer/renderer.hpp"
 #include "sim/decal.hpp"
 #include "sim/sim_state.hpp"
+#include "ui/ui_control.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -424,6 +425,39 @@ void test_runtime_decal(TestContext& ctx) {
                             after - before));
     }
     forget();
+
+    // Test 11b: the UI's decals (UserDecal) lie among the splats, at the
+    // position less half their scale, and follow it from frame to frame.
+    {
+        forget();
+        (void)shoot(fill);
+        ui::UIControlRegistry ui_reg;
+        shots.set_ui(&ui_reg);
+        ui::UserDecals& user = ui_reg.user_decals();
+        const u32 id = user.create();
+        user.set_texture(id, fmt::format("{}/red.dds", kRoot));
+        user.set_scale(id, 8, 1, 8);
+        user.set_position(id, 24, 0, 32);
+        (void)shots.grab();
+        const ImageRGBA8 first = shots.grab();
+        const f32 there = redness(pixel_at(r, first, {25, 0, 32}));
+        const f32 beside = redness(pixel_at(r, first, {29, 0, 32}));
+        const u32 drawn = r.runtime_decals().splat_count();
+        user.set_position(id, 40, 0, 32);
+        const ImageRGBA8 moved = shots.grab();
+        const f32 left = redness(pixel_at(r, moved, {25, 0, 32}));
+        const f32 arrived = redness(pixel_at(r, moved, {39, 0, 32}));
+        user.destroy(id);
+        (void)shots.grab();
+        const u32 after = r.runtime_decals().splat_count();
+        shots.set_ui(nullptr);
+        t.check(drawn == 1 && there > 0.5f && beside < 0.05f && left < 0.05f && arrived > 0.5f &&
+                    after == 0,
+                fmt::format("Test 11b: a UserDecal: {} splat, {:.2f} red at its place, {:.2f} past "
+                            "its half scale; moved, {:.2f} left behind, {:.2f} where it went; "
+                            "destroyed, {} splats",
+                            drawn, there, beside, left, arrived, after));
+    }
 
     // Test 12 (M212h): the decals by graphics fidelity. At Medium (1) there
     // is no AlbedoXP pass. At Low (0) the terrain draws only decals and
