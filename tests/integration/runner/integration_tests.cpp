@@ -12208,6 +12208,40 @@ void test_transport_pickup(TestContext& ctx) {
                       "unit's orders {}, transport's {})",
                       number("__osc_solo_in"), number("__osc_solo_q"), number("__osc_x4_q")));
 
+    lua(R"(
+        __osc_rc = CreateUnitHPR('uea0107', 'ARMY_1', 430, GetTerrainHeight(430, 330), 330, 0, 0, 0)
+        __osc_rd = CreateUnitHPR('uea0107', 'ARMY_1', 430, GetTerrainHeight(430, 370), 370, 0, 0, 0)
+        __osc_r2 = {}
+        for i = 1, 2 do
+            __osc_r2[i] = CreateUnitHPR('uel0201', 'ARMY_1', 460 + 3 * i,
+                                        GetTerrainHeight(460, 350), 350, 0, 0, 0)
+        end
+        IssueTransportLoad(__osc_r2, __osc_rc)
+    )");
+    auto* rc = unit("__osc_rc");
+    auto* rd = unit("__osc_rd");
+    for (int i = 0; i < 600 && rc && rc->cargo_ids().size() < 2; ++i) {
+        ctx.sim.tick();
+    }
+    std::vector<osc::u32> aboard = rc ? rc->cargo_ids() : std::vector<osc::u32>{};
+    if (rd && aboard.size() == 2) {
+        osc::sim::UnitCommand load;
+        load.type = osc::sim::CommandType::TransportLoad;
+        load.target_id = rd->entity_id();
+        load.target_pos = rd->position();
+        ctx.sim.route_command(aboard, load, true);
+    }
+    std::size_t taken = 0;
+    for (const osc::u32 id : aboard) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        if (e && e->is_unit()) {
+            taken += static_cast<const osc::sim::Unit*>(e)->command_queue().size();
+        }
+    }
+    check(aboard.size() == 2 && taken == 0,
+          fmt::format("units aboard take no load order ({} aboard, {} orders taken)", aboard.size(),
+                      taken));
+
     spdlog::info("Transport pickup test: {} passed, {} failed", pass, fail);
 }
 
