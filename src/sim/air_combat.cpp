@@ -257,6 +257,9 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
 /// turns); its height toward steer.altitude at its climb rate.
 void fly_airframe(Unit& unit, const AirSteer& steer, SimState& sim, const map::Terrain* terrain,
                   f32 dt) {
+    if (!unit.take_air_step()) {
+        return;
+    }
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
     const Vector3 pos = unit.position();
@@ -436,6 +439,9 @@ CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrai
 
 void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
                   const map::Terrain* terrain, f32 dt) {
+    if (!unit.take_air_step()) {
+        return;
+    }
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
     const Vector3 pos = unit.position();
