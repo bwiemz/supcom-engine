@@ -46,7 +46,8 @@ bool selectable(const sim::Entity& e) {
         return false;
     }
     const auto& unit = static_cast<const sim::Unit&>(e);
-    return !aboard(unit) && !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
+    return !aboard(unit) && (!unit.is_being_built() || unit.has_category("FACTORY")) &&
+           !unit.has_category("INSIGNIFICANTUNIT");
 }
 
 u32 carrier_of(const sim::Entity& e) {

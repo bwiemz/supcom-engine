@@ -210,6 +210,7 @@ TEST_CASE("GiveStorage survives the per-tick storage recount", "[army][economy]"
     auto unit = std::make_unique<osc::sim::Unit>();
     unit->set_army(0);
     unit->economy().storage_energy = 4000.0;
+    unit->economy().production_active = true;
     registry.register_entity(std::move(unit));
 
     brain.update_economy(registry, 0.1);

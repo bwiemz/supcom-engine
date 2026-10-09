@@ -232,6 +232,7 @@ public:
 
     bool is_being_built() const { return is_being_built_; }
     void set_is_being_built(bool b) { is_being_built_ = b; }
+    bool producing() const { return economy_.production_active && !is_being_built_ && !dying_; }
 
     f32 max_speed() const { return max_speed_; }
     void set_max_speed(f32 s) { max_speed_ = s; }

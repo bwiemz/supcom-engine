@@ -17987,11 +17987,11 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(2);
 
     // 10b3. Some units can't be selected: a Cybran build bot
-    //    (INSIGNIFICANTUNIT), and a factory still being built.
+    //    (INSIGNIFICANTUNIT), and a power generator still being built.
     sim_lua(R"(
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
         __osc_ui_bot = CreateUnitHPR('ura0001', 'ARMY_1', x + 6, GetTerrainHeight(x + 6, z) + 3, z + 6, 0, 0, 0)
-        __osc_ui_fac = CreateUnitHPR('ueb0101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
+        __osc_ui_fac = CreateUnitHPR('ueb1101', 'ARMY_1', x - 14, GetTerrainHeight(x - 14, z), z - 14, 0, 0, 0)
     )");
     osc::u32 bot_id = 0;
     osc::u32 unbuilt_id = 0;
@@ -18001,7 +18001,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         }
         if (e.blueprint_id() == "ura0001") {
             bot_id = e.entity_id();
-        } else if (e.blueprint_id() == "ueb0101") {
+        } else if (e.blueprint_id() == "ueb1101") {
             unbuilt_id = e.entity_id();
             static_cast<osc::sim::Unit&>(e).set_is_being_built(true);
         }
@@ -18015,7 +18015,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if n ~= 0 then error(n .. ' selected') end
     )",
                                                         bot_id, unbuilt_id);
-    lua_ok("Test 10b3: a build bot and an unbuilt factory can't be selected",
+    lua_ok("Test 10b3: a build bot and an unbuilt power generator can't be selected",
            select_unselectable.c_str());
     sim_lua("__osc_ui_bot:Destroy() __osc_ui_fac:Destroy()");
     play(2);

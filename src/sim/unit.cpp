@@ -534,7 +534,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
     // Paused units skip their orders, and what follows them, but still
     // update weapons.
     if (!paused_) {
-        if (!tick_orders(dt, ctx, econ_eff)) return;
+        if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
+            return;
+        }
         if (!tick_after_orders(dt, ctx)) return;
     }
     tick_upkeep(dt, ctx, econ_eff, was_assisting_silo);
@@ -705,7 +707,7 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
     }
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
-    if (regen_rate() > 0 && health() > 0 && health() < max_health()) {
+    if (!is_being_built() && regen_rate() > 0 && health() > 0 && health() < max_health()) {
         f32 new_hp = std::min(max_health(), health() + regen_rate() * static_cast<f32>(dt));
         set_health(new_hp);
     }
