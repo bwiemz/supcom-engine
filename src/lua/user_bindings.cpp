@@ -1529,6 +1529,32 @@ static int l_GetRolloverInfo(lua_State* L) {
         lua_rawset(L, -3);
     };
 
+    // Moho's rollover of a blip (faf-re BuildUserUnitRolloverInfo): never
+    // seen, only its army; seen before, its blueprint without its stats.
+    const renderer::Sight sight = input ? input->sight(*unit) : renderer::Sight::Seen;
+    if (sight == renderer::Sight::Blip) {
+        lua_newtable(L);
+        set_str("blueprintId", "unknown");
+        set_num("armyIndex", static_cast<lua_Number>(unit->army()));
+        return 1;
+    }
+    if (sight != renderer::Sight::Seen) {
+        lua_newtable(L);
+        set_str("blueprintId", unit->blueprint_id().c_str());
+        set_num("armyIndex", static_cast<lua_Number>(unit->army()));
+        for (const char* key :
+             {"kills", "energyRequested", "massRequested", "tacticalSiloBuildCount",
+              "tacticalSiloStorageCount", "tacticalSiloMaxStorageCount", "nukeSiloBuildCount",
+              "nukeSiloStorageCount", "nukeSiloMaxStorageCount"}) {
+            set_num(key, 0);
+        }
+        for (const char* key : {"energyConsumed", "massConsumed", "energyProduced", "massProduced",
+                                "fuelRatio", "shieldRatio", "workProgress"}) {
+            set_num(key, -1);
+        }
+        return 1;
+    }
+
     // Fuel: -1 for units without any, which hides the unit view's fuel line
     // (it multiplies Physics.FuelUseTime by the ratio). Fuel use is not
     // simulated yet, so fuelled units report a full tank.

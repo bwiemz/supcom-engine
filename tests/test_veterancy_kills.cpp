@@ -6,8 +6,10 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "renderer/input_handler.hpp"
+#include "renderer/recon_view.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/world_snapshot.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -132,4 +134,57 @@ TEST_CASE("GetRolloverInfo reports the unit's KILLS", "[veterancy][ui]") {
     REQUIRE(w.check("killer = CreateUnit('tank', 1, 0, 0, 0) killer:SetStat('KILLS', 4)"));
     input.set_selected({w.unit("killer")->entity_id()});
     CHECK(w.check("assert(GetRolloverInfo().kills == 4, 'kills ' .. GetRolloverInfo().kills)"));
+}
+
+TEST_CASE("GetRolloverInfo tells only a blip's army, and a seen one's blueprint but no stats",
+          "[veterancy][ui]") {
+    KillWorld w;
+    osc::lua::register_user_bindings(w.state);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(w.check("enemy = CreateUnit('tank', 2, 0, 0, 0) enemy:SetStat('KILLS', 4)"));
+    const osc::u32 id = w.unit("enemy")->entity_id();
+
+    osc::sim::WorldSnapshot snap;
+    snap.armies.resize(2);
+    snap.sight.army = 0;
+    osc::sim::EntityRecord& record = snap.entities.emplace_back();
+    record.id = id;
+    record.army = 1;
+    record.is_unit = true;
+    record.is_mobile = true;
+    osc::renderer::ReconView recon;
+    recon.set_focus_army(0);
+    const auto tick = [&](osc::u32 los, osc::u32 detected) {
+        ++snap.tick;
+        snap.entities.front().los_now = los;
+        snap.entities.front().detected = detected;
+        recon.update(osc::sim::FrameView(&snap, &snap, 1.0f));
+    };
+    input.set_frame_view(osc::sim::FrameView(&snap, &snap, 1.0f));
+    input.set_recon(&recon);
+    input.set_selected({id});
+
+    tick(0, 1);
+    CHECK(w.check(R"(
+        local info = GetRolloverInfo()
+        assert(info.blueprintId == 'unknown', info.blueprintId)
+        assert(info.armyIndex == 1 and info.kills == nil and info.health == nil)
+    )"));
+    tick(1, 1);
+    CHECK(w.check(R"(
+        local info = GetRolloverInfo()
+        assert(info.kills == 4 and info.health == 100 and info.userUnit)
+    )"));
+    tick(0, 1);
+    CHECK(w.check(R"(
+        local info = GetRolloverInfo()
+        assert(info.blueprintId == 'tank', info.blueprintId)
+        assert(info.kills == 0, 'kills ' .. tostring(info.kills))
+        assert(info.health == nil and info.userUnit == nil and info.entityId == nil)
+        assert(info.massProduced == -1 and info.shieldRatio == -1 and info.fuelRatio == -1)
+    )"));
 }

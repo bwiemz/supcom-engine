@@ -4,6 +4,7 @@
 
 #include "core/types.hpp"
 #include "renderer/build_template.hpp"
+#include "renderer/recon_view.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/formation.hpp"
 #include "sim/sim_callback_queue.hpp"
@@ -204,6 +205,8 @@ public:
     /// The player's intel: a click can't target a unit it doesn't show (a
     /// blip or a remembered structure it can; null: everything; M215b).
     void set_recon(const ReconView* recon) { recon_ = recon; }
+    /// How the player's army sees `e`: Seen without recon or a record of it.
+    Sight sight(const sim::Entity& e) const;
 
     void set_command_mode_hooks(CommandModeHooks hooks) { mode_hooks_ = std::move(hooks); }
 
