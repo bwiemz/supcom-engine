@@ -115,6 +115,7 @@ void test_notify_upgrade(TestContext& ctx) {
         end)
         __up_marked = false
         __up_old_marked = false
+        __up_created_by_t1 = false
         -- The upgrade is the T1 factory's focus while it builds; once the
         -- T1 is gone, that is the T2.
         function __up_poll_build()
@@ -140,6 +141,9 @@ void test_notify_upgrade(TestContext& ctx) {
                 end
                 if __up_t1:IsUnitState('BeingUpgraded') then
                     __up_old_marked = true
+                end
+                if __up_t2 and not __up_t2:BeenDestroyed() and __up_t2:GetCreator() == __up_t1 then
+                    __up_created_by_t1 = true
                 end
                 return false
             end
@@ -228,6 +232,9 @@ void test_notify_upgrade(TestContext& ctx) {
            "Test 8: an engineer told to repair the unfinished T2 is Repairing, not Building");
     states("build", "true/false/true",
            "Test 9: one guarding an engineer building a structure is Building");
+    check("Test 11: the T1 factory was its creator", R"(
+        if not __up_created_by_t1 then error('no creator') end
+    )");
 
     spdlog::info("Notify upgrade test: {}/{} passed", pass, pass + fail);
 }
