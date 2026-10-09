@@ -73,6 +73,10 @@ struct UnitCommand {
     /// east 90: the engine's heading). Unset: from the group to the target.
     bool has_facing = false;
     f32 facing = 0;
+    /// The formation moves as one, at its slowest unit's pace (Moho's
+    /// FormMove); false: Moho's Move given a formation, each unit to its
+    /// slot at its own pace.
+    bool form_move = true;
     /// Held to this speed (a formation keeps its slowest unit's pace); 0:
     /// the unit's own. Set when a formation order is laid out.
     f32 speed_cap = 0;

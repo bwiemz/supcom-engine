@@ -346,6 +346,7 @@ TEST_CASE("A formation order round-trips; a version 4 command loads without one"
     c.command.formation = "AttackFormation";
     c.command.has_facing = true;
     c.command.facing = 1.5f;
+    c.command.form_move = false;
     c.unit_ids = {3, 4};
     r.commands.push_back(c);
     Replay out;
@@ -354,6 +355,7 @@ TEST_CASE("A formation order round-trips; a version 4 command loads without one"
     CHECK(out.commands[0].command.formation == "AttackFormation");
     CHECK(out.commands[0].command.has_facing);
     CHECK(out.commands[0].command.facing == 1.5f);
+    CHECK_FALSE(out.commands[0].command.form_move);
     CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3, 4});
 
     // Version 4 wrote no formation fields.

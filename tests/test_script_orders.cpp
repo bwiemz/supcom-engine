@@ -365,8 +365,16 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
     const size_t at =
         bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
+    c.command.form_move = false;
+    std::vector<osc::u8> paced;
+    osc::sim::ByteWriter wf(paced);
+    osc::sim::write_command(wf, c);
+    const auto form = std::mismatch(marked.begin(), marked.end(), paced.begin());
+    const size_t form_move_at =
+        bytes.size() - plain.size() + static_cast<size_t>(form.first - marked.begin());
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(at),
                 bytes.begin() + static_cast<std::ptrdiff_t>(at) + 4);
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(form_move_at));
     const osc::u32 v10 = 10;
     std::memcpy(bytes.data() + 4, &v10, 4); // after "OSCR"
     osc::sim::Replay back;

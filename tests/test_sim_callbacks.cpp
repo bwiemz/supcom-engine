@@ -312,6 +312,7 @@ TEST_CASE("A callback's one value survives the codec; older replays have none",
 TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][replay]") {
     std::vector<osc::u8> bytes;
     size_t script_at = 0; // where the command's Script table sits in the file
+    size_t form_move_at = 0;
     {
         CallbackSim rec;
         const osc::u32 unit = rec.spawn();
@@ -331,6 +332,13 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
         osc::sim::write_command(wm, c);
         const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
         script_at = bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
+        c.command.form_move = !c.command.form_move;
+        std::vector<osc::u8> paced;
+        osc::sim::ByteWriter wf(paced);
+        osc::sim::write_command(wf, c);
+        const auto form = std::mismatch(marked.begin(), marked.end(), paced.begin());
+        form_move_at =
+            bytes.size() - plain.size() + static_cast<size_t>(form.first - marked.begin());
     }
     // The callback is the last command, its "no value" and "no Lua args"
     // bytes the file's last: v7 wrote neither, nor its (empty) Script table
@@ -340,6 +348,7 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
     bytes.pop_back();
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(script_at),
                 bytes.begin() + static_cast<std::ptrdiff_t>(script_at) + 4);
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(form_move_at));
     const osc::u32 v7 = 7;
     std::memcpy(bytes.data() + 4, &v7, 4); // after "OSCR"
     Replay back;
