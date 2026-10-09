@@ -1124,16 +1124,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             }
             lua_pop(L, 2);
         }
-        // A structure that can stand only under the surface (the Cybran
-        // HARMS: BuildOnLayerCaps Sub alone) is on the Sub layer, as Moho
-        // gives it the layer its placement allows.
-        if (!unit->is_mobile()) {
-            if (auto* sim = get_sim(L)) {
-                const sim::PlacementRules& rules = structure_rules(L, *sim, unit->unit_id());
-                if (rules.on_sub && !rules.on_land && !rules.on_water && !rules.on_seabed)
-                    unit->set_layer("Sub");
-            }
-        }
 
         // Its footprints, as Moho resolves them (RUnitBlueprintPhysics::
         // ComputeDerivedQuantities): its own Footprint, then for a mobile
@@ -1180,6 +1170,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                                   (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
             unit->set_footprints(blueprints::resolve_unit_footprints(
                 store->footprint_classes(), own, unit->motion_type(), alt_motion, build_caps));
+            if (!unit->is_mobile() && sim->terrain()) {
+                unit->set_layer(sim::starting_layer(unit->footprint().caps,
+                                                    unit->has_category("EXPERIMENTAL"),
+                                                    *sim->terrain(), x, z));
+            }
         }
 
         // Read Physics.Elevation for naval units (negative = draft below water surface)

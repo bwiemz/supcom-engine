@@ -32,14 +32,17 @@ void test_yaw_only(TestContext& ctx) {
         for (i32 z = 40; z < h - 40 && !sea; z += 8)
             for (i32 x = 40; x < w - 140 && !sea; x += 8)
                 if (terrain->get_terrain_height(static_cast<f32>(x), static_cast<f32>(z)) <
-                    terrain->water_elevation() - 8)
+                        terrain->water_elevation() - 8 &&
+                    terrain->get_terrain_height(static_cast<f32>(x + 100), static_cast<f32>(z)) >
+                        terrain->water_elevation() + 1) {
                     sea = Spot{static_cast<f32>(x), static_cast<f32>(z)};
+                }
     }
     if (!sea) {
-        t.check(false, "deep water on the map");
+        t.check(false, "deep water with land 100 east on the map");
         return;
     }
-    // The Torrent, and an enemy power generator 100 to its side (its racks
+    // The Torrent, and an enemy power generator ashore 100 to its side (its racks
     // reach 25-200, each over 165 degrees either side of its own centre).
     const u32 torrent = spawn_unit(ctx, "__osc_yo_torrent", "xas0306", "ARMY_1", *sea);
     spawn_unit(ctx, "__osc_yo_target", "ueb1101", "ARMY_2", {sea->x + 100, sea->z});
