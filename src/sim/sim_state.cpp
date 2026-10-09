@@ -774,6 +774,9 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
+    if (unit.is_being_built() && !unit.has_category("FACTORY")) {
+        return false;
+    }
     if (command.type == CommandType::Reclaim) {
         const Entity* target =
             command.target_id ? entity_registry_.find(command.target_id) : nullptr;

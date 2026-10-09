@@ -2116,9 +2116,8 @@ static int unit_GetEconData(lua_State* L) {
         lua_rawset(L, -3);
     };
     const bool paying = econ.consumption_active && !u->is_paused();
-    set("massProduced", (econ.production_active ? econ.production_mass : 0.0) + econ.reclaim_mass);
-    set("energyProduced",
-        (econ.production_active ? econ.production_energy : 0.0) + econ.reclaim_energy);
+    set("massProduced", (u->producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
+    set("energyProduced", (u->producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
     set("massConsumed", paying ? econ.consumption_mass : 0.0);
     set("energyConsumed", paying ? econ.consumption_energy : 0.0);
     set("massRequested", econ.consumption_mass);

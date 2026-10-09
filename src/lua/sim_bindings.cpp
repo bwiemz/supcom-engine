@@ -722,9 +722,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (unit->economy().production_mass > 0.0 ||
                     unit->economy().production_energy > 0.0)
                     unit->economy().production_active = true;
-                if (unit->economy().consumption_energy > 0.0 ||
-                    unit->economy().consumption_mass > 0.0)
-                    unit->economy().consumption_active = true;
             }
             lua_pop(L, 2);
         }

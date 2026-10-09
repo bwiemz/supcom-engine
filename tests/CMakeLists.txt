@@ -121,6 +121,7 @@ add_executable(osc_tests
     test_smoke_test.cpp
     test_smoke_harness.cpp
     test_army_stats.cpp
+    test_unfinished_units.cpp
     test_air_combat.cpp
     test_victory.cpp
     test_fow.cpp
