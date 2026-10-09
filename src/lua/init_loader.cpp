@@ -259,6 +259,7 @@ Result<void> InitLoader::load_blueprints(
     }
 
     // Expose __blueprints global to Lua (needed by shield.lua, game.lua, etc.)
+    store.copy_lua_tables(state.raw());
     store.expose_to_lua(state.raw());
 
     // Log results
