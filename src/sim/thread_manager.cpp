@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <iterator>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -270,9 +271,17 @@ void ThreadManager::kill_thread(int ref, u64 serial) {
 void ThreadManager::resume_all(u32 current_tick) {
     resuming_ = true;
 
-    // Use index-based loop since pending_threads_ may grow via fork_thread,
-    // but threads_ itself won't be modified during this loop.
-    for (size_t i = 0; i < threads_.size(); i++) {
+    // A thread forked here runs this tick after the rest: Moho's
+    // CTaskStage::UserFrame runs its list to the end, where ForkThread adds.
+    bool again = false;
+    for (size_t i = 0;; i += again ? 0 : 1) {
+        again = false;
+        threads_.insert(threads_.end(), std::make_move_iterator(pending_threads_.begin()),
+                        std::make_move_iterator(pending_threads_.end()));
+        pending_threads_.clear();
+        if (i >= threads_.size()) {
+            break;
+        }
         auto& t = threads_[i];
         if (t.dead || t.wait_until_tick > static_cast<i32>(current_tick))
             continue;
@@ -320,9 +329,15 @@ void ThreadManager::resume_all(u32 current_tick) {
                 i32 wait_ticks = 1;
                 if (lua_gettop(t.coroutine) > 0) {
                     if (lua_type(t.coroutine, -1) == LUA_TNUMBER) {
-                        wait_ticks = std::max(
-                            1,
-                            static_cast<i32>(lua_tonumber(t.coroutine, -1)));
+                        // Moho's CTaskThread keeps n - 1 pending frames for a
+                        // yield of n, and runs a yield of 0 again at once.
+                        const auto n = static_cast<i32>(lua_tonumber(t.coroutine, -1));
+                        if (n == 0) {
+                            lua_settop(t.coroutine, 0);
+                            again = true;
+                            continue;
+                        }
+                        wait_ticks = std::max(1, n - 1);
                     } else if (lua_type(t.coroutine, -1) == LUA_TLIGHTUSERDATA) {
                         // WaitFor(waitable) — store thread ref on
                         // waitable, sleep until it completes
@@ -356,14 +371,6 @@ void ThreadManager::resume_all(u32 current_tick) {
     }
 
     resuming_ = false;
-
-    // Merge any threads that were forked during this tick
-    if (!pending_threads_.empty()) {
-        threads_.insert(threads_.end(), pending_threads_.begin(),
-                        pending_threads_.end());
-        pending_threads_.clear();
-    }
-
     cleanup_dead_threads();
 }
 
