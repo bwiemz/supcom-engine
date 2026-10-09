@@ -354,7 +354,6 @@ public:
     bool fullscreen() const;
     /// The primary display's modes (width, height, refresh), as it lists them.
     std::vector<std::array<u32, 3>> display_modes() const;
-    std::optional<std::array<u32, 3>> desktop_mode() const;
     /// The window's place and size while windowed (Moho's Windows.Main.*);
     /// nothing while full screen or without a window.
     struct WindowGeometry {
@@ -722,6 +721,15 @@ private:
     f32 resource_icon_time_ = 0.0f;
     VideoOptions video_options_;
     bool cursor_clipped_ = false;
+    struct WindowedPlace {
+        u32 width = 0, height = 0;
+        std::optional<std::array<i32, 2>> position;
+        bool maximized = false;
+    };
+    void apply_windowed(const WindowedPlace& place);
+    void settle_native_fullscreen();
+    std::optional<bool> native_fullscreen_request_;
+    std::optional<WindowedPlace> windowed_pending_;
     HudRenderer hud_renderer_;
     SelectionInfoRenderer selection_info_renderer_;
     ProfileOverlay profile_overlay_;

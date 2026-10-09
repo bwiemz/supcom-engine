@@ -60,17 +60,6 @@ struct WindowPrefs {
 /// mode full screen.
 WindowMode startup_window_mode(const std::vector<std::string>& args, const WindowPrefs& prefs);
 
-#ifdef __APPLE__
-inline constexpr bool kFullscreenKeepsDesktopMode = true;
-#else
-inline constexpr bool kFullscreenKeepsDesktopMode = false;
-#endif
-
-/// The display mode a full screen at `requested` sets: the desktop's own
-/// where a mode change would rearrange the desktop (macOS).
-Resolution fullscreen_mode(const Resolution& requested, const std::optional<Resolution>& desktop,
-                           bool keep_desktop = kFullscreenKeepsDesktopMode);
-
 /// One of an option's states, as options.lua lists them.
 struct OptionState {
     std::string text;

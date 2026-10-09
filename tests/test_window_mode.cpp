@@ -6,6 +6,7 @@
 
 #include "app/window_mode.hpp"
 #include "core/cursor.hpp"
+#include "core/fullscreen.hpp"
 
 #include <string>
 #include <vector>
@@ -90,14 +91,23 @@ TEST_CASE("The command line overrides the options, with Moho's prefixes (M217h)"
         startup_window_mode({"--map", "/maps/SCMP_009/SCMP_009_scenario.lua"}, prefs).overridden);
 }
 
-TEST_CASE("Full screen keeps the desktop's mode where asked to", "[window]") {
-    const Resolution desktop{1512, 982, 120};
-    CHECK(fullscreen_mode({1024, 768, 60}, desktop, true) == desktop);
-    CHECK(fullscreen_mode({2560, 1440, 60}, desktop, true) == desktop);
-    CHECK(fullscreen_mode({1024, 768, 60}, std::nullopt, true) == Resolution{1024, 768, 60});
-    CHECK(fullscreen_mode({1024, 768, 60}, desktop, false) == Resolution{1024, 768, 60});
+TEST_CASE("A native full screen settles before it toggles or resizes", "[window]") {
+    using core::native_fullscreen_step;
+    using Step = core::NativeFullscreenStep;
+    CHECK(native_fullscreen_step(true, false, false, false) == Step{.toggle = true});
+    CHECK(native_fullscreen_step(true, false, true, false) == Step{});
+    CHECK(native_fullscreen_step(true, true, false, false) == Step{.settled = true});
+    CHECK(native_fullscreen_step(false, true, false, true) == Step{.toggle = true});
+    CHECK(native_fullscreen_step(false, true, true, true) == Step{});
+    CHECK(native_fullscreen_step(false, false, true, true) == Step{});
+    CHECK(native_fullscreen_step(false, false, false, true) ==
+          Step{.apply_windowed = true, .settled = true});
+    CHECK(native_fullscreen_step(std::nullopt, false, false, false) == Step{.settled = true});
+    CHECK(native_fullscreen_step(std::nullopt, true, false, false) == Step{.settled = true});
 #ifdef __APPLE__
-    CHECK(fullscreen_mode({1024, 768, 60}, desktop) == desktop);
+    CHECK(core::kNativeFullscreen);
+#else
+    CHECK_FALSE(core::kNativeFullscreen);
 #endif
 }
 
