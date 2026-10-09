@@ -72,6 +72,7 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 unbuilt = spawn_unit(ctx, "__osc_ic_unbuilt", "ueb1101", "ARMY_1", {sx, sz + 24});
     const u32 picked = spawn_unit(ctx, "__osc_ic_picked", "uel0201", "ARMY_1", {sx, sz - 24});
     const u32 dazed = spawn_unit(ctx, "__osc_ic_dazed", "uel0201", "ARMY_1", {sx + 24, sz - 24});
+    const u32 dying = spawn_unit(ctx, "__osc_ic_dying", "uel0201", "ARMY_1", {sx - 24, sz - 24});
     (void)spawn_unit(ctx, "__osc_ic_radar", "ueb1101", "ARMY_1", {sx, sz + 60});
     // ARMY_2's, 24 beyond the radar (it reaches 60): an engineer, a power
     // generator, an air scout (none of them ever seen), and a tank to be
@@ -80,15 +81,19 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 e_gen = spawn_unit(ctx, "__osc_ic_egen", "ueb1101", "ARMY_2", {sx, sz + 84});
     const u32 e_air = spawn_unit(ctx, "__osc_ic_eair", "uea0101", "ARMY_2", {sx + 20, sz + 84});
     const u32 e_tank = spawn_unit(ctx, "__osc_ic_etank", "uel0201", "ARMY_2", {sx + 40, sz + 84});
-    run_lua(ctx, "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
-                 "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_radar} do\n"
-                 "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
-                 "end\n"
-                 "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
-                 "__osc_ic_radar:EnableIntel('Radar')\n"
-                 "__osc_ic_dazed:SetStunned(100)\n");
+    run_lua(ctx,
+            "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
+            "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar} do\n"
+            "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
+            "end\n"
+            "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
+            "__osc_ic_radar:EnableIntel('Radar')\n"
+            "__osc_ic_dazed:SetStunned(100)\n");
     if (auto* e = ctx.sim.entity_registry().find(unbuilt); e && e->is_unit())
         static_cast<sim::Unit*>(e)->set_is_being_built(true);
+    if (auto* e = ctx.sim.entity_registry().find(dying); e && e->is_unit()) {
+        static_cast<sim::Unit*>(e)->begin_dying();
+    }
     ctx.sim.tick();
 
     OffscreenShots shots(ctx);
@@ -159,8 +164,11 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(shows(f, picked, icon_texture(ctx, "uel0201", "selected"), blue),
             "Test 2: the selected tank shows its selected icon");
 
-    // Test 3: a unit being built has none.
-    t.check(icons_at(f, unbuilt).empty(), "Test 3: the power generator being built has no icon");
+    // Test 3: a unit being built or dying has none.
+    t.check(icons_at(f, unbuilt).empty() && icons_at(f, dying).empty(),
+            fmt::format("Test 3: the power generator being built ({}) and the dying tank ({}) "
+                        "have no icon",
+                        icons_at(f, unbuilt).size(), icons_at(f, dying).size()));
 
     // Test 4: ground, air, high-priority, selected.
     {

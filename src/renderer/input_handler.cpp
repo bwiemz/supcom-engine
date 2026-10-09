@@ -46,7 +46,8 @@ bool selectable(const sim::Entity& e) {
         return false;
     }
     const auto& unit = static_cast<const sim::Unit&>(e);
-    return !aboard(unit) && !unit.is_being_built() && !unit.has_category("INSIGNIFICANTUNIT");
+    return !aboard(unit) && !unit.is_being_built() && !unit.is_dying() &&
+           !unit.has_category("INSIGNIFICANTUNIT");
 }
 
 u32 carrier_of(const sim::Entity& e) {
@@ -126,7 +127,7 @@ std::vector<u32> highest_selection_priority(const std::vector<std::pair<u32, int
 void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                           const std::function<bool()>& mouse_over_ui) {
     clock_ += dt;
-    deselect_aboard(sim.entity_registry());
+    prune_selection(sim.entity_registry());
     f64 mx_d, my_d;
     renderer.mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
@@ -690,10 +691,14 @@ void InputHandler::left_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift)
                   selected_.size(), wx, wz);
 }
 
-void InputHandler::deselect_aboard(const sim::EntityRegistry& registry) {
+void InputHandler::prune_selection(const sim::EntityRegistry& registry) {
     std::erase_if(selected_, [&](u32 id) {
         const sim::Entity* e = registry.find(id);
-        return e && e->is_unit() && !e->destroyed() && aboard(static_cast<const sim::Unit&>(*e));
+        if (!e || !e->is_unit() || e->destroyed()) {
+            return false;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(*e);
+        return aboard(unit) || unit.is_dying();
     });
 }
 
@@ -1332,7 +1337,8 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
     for (u32 id : sim.entity_registry().collect_in_rect(x0 - kReach, z0 - kReach, x1 + kReach,
                                                         z1 + kReach)) {
         const auto* e = sim.entity_registry().find(id);
-        if (!e || e->destroyed() || !e->is_unit() || !shown(*e)) {
+        if (!e || e->destroyed() || !e->is_unit() || !shown(*e) ||
+            static_cast<const sim::Unit&>(*e).is_dying()) {
             continue;
         }
         if (own_only && (e->army() != player_army_ || !selectable(*e))) {

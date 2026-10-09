@@ -280,8 +280,9 @@ public:
     void select_similar_in_view(sim::SimState& sim, f32 wx, f32 wz,
                                 const std::array<f32, 16>& view_proj);
 
-    /// Moho's UserUnit::UpdateUnitData: a unit that boards leaves the selection.
-    void deselect_aboard(const sim::EntityRegistry& registry);
+    /// A unit that boards (Moho's UserUnit::UpdateUnitData) or dies (its
+    /// selection refresh keeps no dead unit) leaves the selection.
+    void prune_selection(const sim::EntityRegistry& registry);
 
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {
