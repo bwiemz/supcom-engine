@@ -42,6 +42,11 @@ MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h);
 bool minimap_to_world(const MapArea& view, const MapArea& area, f32 mx, f32 my,
                       f32 map_w, f32 map_h, f32& out_wx, f32& out_wz);
 
+/// The camera's ground corners on a minimap view, drawn as Moho's
+/// WRenViewport::RenderCameraOutline draws them (TYellow), clipped to the view.
+std::vector<UIInstance> camera_outline(const std::array<std::array<f32, 2>, 4>& corners,
+                                       const MapArea& view);
+
 std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDeposit> deposits,
                                                  const MapArea& area, f32 map_w, f32 map_h,
                                                  const PlayableRect& playable);
