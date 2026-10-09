@@ -10297,8 +10297,8 @@ void test_beam_weapon(TestContext& ctx) {
         end
     )");
     lua_check("setup: a Cerberus, a Monkeylord and a zapper, each with a target", R"(
-        __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 470, 60))
-        __osc_block = __osc_spawn('uel0201', 'ARMY_2', 490, 60)
+        __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 530, 70))
+        __osc_block = __osc_spawn('uel0201', 'ARMY_2', 550, 70)
         __osc_block:SetFireState(1)
         __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', 620, 250))
         __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', 642, 250)
@@ -11756,6 +11756,26 @@ void test_naval_depth(TestContext& ctx) {
     )");
     run(150);
     lua_check("Test 5: they reach a dived sub too", "__osc_check_shots('the dived sub')");
+
+    lua_check("setup: a torpedo launcher by the sub", R"(
+        IssueClearCommands({__osc_sub})
+        __osc_target:Destroy()
+        local x, z = __osc_sea[1], __osc_sea[2]
+        __osc_launcher = CreateUnitHPR('ueb2109', 'ARMY_2', x + 12, GetSurfaceHeight(x + 12, z), z, 0, 0, 0)
+        __osc_launcher:SetCanTakeDamage(false)
+        __osc_launcher:SetWeaponEnabledByLabel('Turret01', false)
+    )");
+    run(20);
+    lua_check("Test 5b: a torpedo launcher floats on the Water layer, a sub's torpedoes' target",
+              R"(
+        if __osc_launcher:GetCurrentLayer() ~= 'Water' then
+            error('it is on ' .. __osc_launcher:GetCurrentLayer())
+        end
+        if __osc_sub:GetWeaponByLabel('Torpedo01'):GetCurrentTarget() ~= __osc_launcher then
+            error('the torpedoes are not on it')
+        end
+        __osc_launcher:Destroy()
+    )");
 
     // A torpedo above the water isn't held to it: dropped 8 over the sea it
     // falls, and only under the surface does it stay under.

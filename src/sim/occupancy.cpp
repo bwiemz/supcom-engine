@@ -128,4 +128,17 @@ u8 footprint_fits(const blueprints::Footprint& fp, const map::Terrain& terrain,
     return caps;
 }
 
+const char* starting_layer(u8 caps, bool experimental, const map::Terrain& terrain, f32 x, f32 z) {
+    if (!terrain.has_water() || terrain.water_elevation() <= terrain.get_terrain_height(x, z)) {
+        return "Land";
+    }
+    if ((caps & oc::kSub) != 0 && !experimental) {
+        return "Sub";
+    }
+    if ((caps & oc::kWater) != 0) {
+        return "Water";
+    }
+    return "Seabed";
+}
+
 } // namespace osc::sim

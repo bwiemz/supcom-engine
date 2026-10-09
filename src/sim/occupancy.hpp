@@ -82,6 +82,11 @@ constexpr u8 kAnyCaps = 0xFF;
 u8 footprint_fits(const blueprints::Footprint& fp, const map::Terrain& terrain,
                   const OccupancyGrid& grid, i32 x0, i32 z0, u8 caps = kAnyCaps);
 
+/// Moho's Entity::GetStartingLayer, for a footprint without AIR, with no
+/// layer asked for: the layer a unit whose footprint has `caps` is made on
+/// at (x, z).
+const char* starting_layer(u8 caps, bool experimental, const map::Terrain& terrain, f32 x, f32 z);
+
 /// What one entity occupies: its caps and rects (a footprint, or a
 /// blueprint's Physics.OccupyRects).
 struct GroundOccupant {
