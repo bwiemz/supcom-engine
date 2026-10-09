@@ -356,6 +356,7 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
     };
     video_bool("ren_ShadowBlur", &Renderer::VideoOptions::shadow_blur);
     video_bool("ren_Skydome", &Renderer::VideoOptions::skydome);
+    video_bool("ren_Skirt", &Renderer::VideoOptions::skirt);
     // The range overlays' (Moho's RangeRenderer convars; retail's UI sets
     // the first three from the player's prefs)
     const auto range_bool = [&](const char* name, bool RangeOverlays::Settings::* field) {

@@ -162,6 +162,7 @@ constexpr Mode kModesBefore[] = {
     {"--particle-render-test", test_particle_render, false},
     {"--water-render-test", test_water_render, false},
     {"--sky-test", test_sky, false},
+    {"--skirt-render-test", test_skirt_render, false},
     {"--water-reflection-test", test_water_reflection, false},
     {"--refract-render-test", test_refract_render, false},
     {"--decal-render-test", test_decal_render, false},
@@ -374,6 +375,7 @@ void IntegrationModes::print_usage() const {
               << "  --particle-render-test FA's particles: emission, motion, quads, water, intel\n"
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"
               << "  --sky-test         FA's sky dome: the map's block, atmosphere, cull, decals, cirrus\n"
+              << "  --skirt-render-test The terrain's skirt below the map's edges (TTerrainSkirt)\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
               << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"
               << "  --decal-render-test The map's decals: projected by the corner, lit, masked, faded\n"
