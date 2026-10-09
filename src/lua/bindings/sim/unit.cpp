@@ -2522,8 +2522,11 @@ static int unit_ProcessInfo(lua_State* L) {
 
 /// Same idle test as unit:IsIdleState().
 bool unit_is_idle(const sim::Unit& u) {
-    return u.command_queue().empty() && !u.is_building() && !u.is_being_built() &&
-           !u.is_repairing() && !u.is_capturing();
+    return u.command_queue().empty() && unit_is_idle_but_orders(u);
+}
+
+bool unit_is_idle_but_orders(const sim::Unit& u) {
+    return !u.is_building() && !u.is_being_built() && !u.is_repairing() && !u.is_capturing();
 }
 
 } // namespace osc::lua

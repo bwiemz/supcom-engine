@@ -2135,6 +2135,21 @@ void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
     }
 }
 
+template <typename Pred>
+static std::vector<sim::Entity*> idle_focus_army_units(lua_State* L, Pred pred) {
+    auto* sim = get_sim(L);
+    const auto pending = sim && !sim->playback() ? sim->queues_with_pending()
+                                                 : std::map<u32, sim::SimState::QueueWithPending>();
+    return focus_army_units(L, [&](const sim::Unit& u) {
+        if (!pred(u)) {
+            return false;
+        }
+        const auto it = pending.find(u.entity_id());
+        return it == pending.end() ? unit_is_idle(u)
+                                   : it->second.orders.empty() && unit_is_idle_but_orders(u);
+    });
+}
+
 /// GetArmyAvatars() -> the focus army's commander units (the avatars the
 /// game UI shows and zooms to at game start), or nil when it has none (an
 /// observer has none): retail's gamemain and avatars.lua test for nil, as for
@@ -2148,18 +2163,21 @@ static int l_GetArmyAvatars(lua_State* L) {
 /// GetIdleEngineers() -> the focus army's idle engineers (commanders are
 /// avatars, not engineers), or nil if there are none.
 static int l_GetIdleEngineers(lua_State* L) {
-    push_ui_unit_array(L, focus_army_units(L, [](const sim::Unit& u) {
-        return u.has_category("ENGINEER") && !u.has_category("COMMAND") &&
-               unit_is_idle(u);
-    }), true);
+    push_ui_unit_array(L,
+                       idle_focus_army_units(L,
+                                             [](const sim::Unit& u) {
+                                                 return u.has_category("ENGINEER") &&
+                                                        !u.has_category("COMMAND");
+                                             }),
+                       true);
     return 1;
 }
 
 /// GetIdleFactories() -> the focus army's idle factories, or nil.
 static int l_GetIdleFactories(lua_State* L) {
-    push_ui_unit_array(L, focus_army_units(L, [](const sim::Unit& u) {
-        return u.has_category("FACTORY") && unit_is_idle(u);
-    }), true);
+    push_ui_unit_array(
+        L, idle_focus_army_units(L, [](const sim::Unit& u) { return u.has_category("FACTORY"); }),
+        true);
     return 1;
 }
 

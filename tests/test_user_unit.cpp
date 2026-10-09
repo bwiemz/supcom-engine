@@ -14,6 +14,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
+#include "ui/ui_control.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -229,6 +230,33 @@ TEST_CASE("GetCommandQueue holds the orders given and not yet run", "[userunit]"
     CHECK(queued() == 2.0);
     CHECK(w.unit().command_queue().empty());
     osc::lua::set_ui_world_source(L, nullptr);
+}
+
+TEST_CASE("GetIdleEngineers counts the orders given and not yet run", "[userunit]") {
+    UiWorld w;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_ui_bindings(w.ui, registry);
+    w.unit().add_category("ENGINEER");
+    const auto idle = [&] {
+        auto result =
+            w.ui.do_string("local e = GetIdleEngineers() return e and table.getn(e) or 0");
+        INFO((result.ok() ? std::string() : result.error().message));
+        REQUIRE(result.ok());
+        const double n = lua_tonumber(w.ui.raw(), -1);
+        lua_pop(w.ui.raw(), 1);
+        return n;
+    };
+    CHECK(idle() == 1.0);
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    w.sim.schedule_command(0, {w.id}, move, true);
+    CHECK(idle() == 0.0);
+
+    w.unit().push_command(move, true);
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    w.sim.schedule_command(0, {w.id}, stop, true);
+    CHECK(idle() == 1.0);
 }
 
 TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[userunit]") {
