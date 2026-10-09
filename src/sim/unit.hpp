@@ -488,18 +488,6 @@ public:
     /// `cmd` at the back of the queue as it is (NotifyUpgrade's copy of an
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
-    /// A unit guarding `from` (its current order a Guard of it, or a fight
-    /// for that Guard) guards `to`.
-    void retarget_guard(u32 from, u32 to) {
-        for (UnitCommand& c : command_queue_) {
-            if (c.from_guard) {
-                if (c.leash_anchor_id == from) c.leash_anchor_id = to;
-                continue;
-            }
-            if (c.type == CommandType::Guard && c.target_id == from) c.target_id = to;
-            return;
-        }
-    }
     void clear_commands(const char* source = "?");
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;

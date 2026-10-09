@@ -11,10 +11,8 @@
 // 3. which stands in the old one's place in the platoon, in its squad;
 // 4. which repeats its queue, its script told OnStartRepeatQueue;
 // 5. at half its health;
-// 6. which the engineer now guards.
-//
-// NotifyUpgrade had been a no-op: every upgrade lost its queue, rally,
-// platoon slot, repeat flag, damage and guards.
+// 6. which the engineer does not guard: it is idle once the old factory is
+//    gone, as in retail.
 
 #include "integration_tests.hpp"
 
@@ -152,8 +150,10 @@ void test_notify_upgrade(TestContext& ctx) {
         local share = __up_t2:GetHealth() / __up_t2:GetMaxHealth()
         if math.abs(share - 0.5) > 0.01 then error('share ' .. share) end
     )");
-    check("Test 6: the engineer guards it", R"(
-        if __up_eng:GetGuardedUnit() ~= __up_t2 then error('guards another') end
+    check("Test 6: the engineer is idle once the old factory is gone", R"(
+        if __up_eng:GetGuardedUnit() then error('still guards') end
+        local n = table.getn(__up_eng:GetCommandQueue())
+        if n ~= 0 then error('queue ' .. n) end
     )");
 
     spdlog::info("Notify upgrade test: {}/{} passed", pass, pass + fail);
