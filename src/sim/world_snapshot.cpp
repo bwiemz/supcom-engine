@@ -245,7 +245,9 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
 
     r.command_offset = static_cast<u32>(out.commands.size());
     for (const auto& c : u.command_queue()) {
-        out.commands.push_back(command_record(c, false));
+        if (!c.from_patrol) {
+            out.commands.push_back(command_record(c, false));
+        }
     }
     r.command_count = static_cast<u32>(out.commands.size()) - r.command_offset;
     r.rally_offset = static_cast<u32>(out.commands.size());
@@ -519,10 +521,13 @@ void capture_pending(const SimState& sim, WorldSnapshot& out) {
     for (const auto& [id, queue] : sim.queues_with_pending()) {
         const auto offset = static_cast<u32>(out.pending_commands.size());
         for (size_t i = 0; i < queue.orders.size(); ++i) {
-            const bool pending = i >= queue.kept_from_queue;
-            out.pending_commands.push_back(command_record(queue.orders[i], pending));
+            if (!queue.orders[i].from_patrol) {
+                const bool pending = i >= queue.kept_from_queue;
+                out.pending_commands.push_back(command_record(queue.orders[i], pending));
+            }
         }
-        out.pending_queues.push_back({id, offset, static_cast<u32>(queue.orders.size())});
+        out.pending_queues.push_back(
+            {id, offset, static_cast<u32>(out.pending_commands.size()) - offset});
     }
 }
 
