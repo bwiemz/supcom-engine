@@ -24,6 +24,7 @@ LockstepSession::LockstepSession(SimState& sim, INetTransport& transport, u32 lo
     for (u32 s : all_sources) sim_.command_scheduler().add_source(s);
     sim_.command_scheduler().add_source(local_source);
     sim_.set_pause_holds(true); // until a peer resumes it
+    sim_.set_issuing_source(local_source);
 }
 
 void LockstepSession::request_pause() {

@@ -739,8 +739,16 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
     // Either way a replay can record it.
     if (human_input_active_) {
         if (playback_) return 0; // a replay plays only what it recorded
-        if (local_command_sink_) local_command_sink_(unit_ids, command, clear_existing);
-        else schedule_command(0, unit_ids, command, clear_existing);
+        UnitCommand issued = command;
+        issued.command_id = 0;
+        if (!issued.factory && issued.type != CommandType::Stop) {
+            issued.command_id = next_player_command_id();
+        }
+        if (local_command_sink_) {
+            local_command_sink_(unit_ids, issued, clear_existing);
+        } else {
+            schedule_command(0, unit_ids, issued, clear_existing);
+        }
         return 0;
     }
     // An AI or script order, issued inside a tick: apply now. (AI runs
@@ -818,6 +826,17 @@ bool SimState::command_queued(u32 command_id) const {
             }
     });
     return found;
+}
+
+u32 SimState::next_player_command_id() const {
+    const auto pending = command_scheduler_.pending();
+    for (u32 n = player_commands_issued_ + 1;; ++n) {
+        const u32 id = ((issuing_source_ + 1) << 24) | (n & 0xFFFFFFu);
+        if (std::none_of(pending.begin(), pending.end(),
+                         [&](const auto& c) { return c.command.command_id == id; })) {
+            return id;
+        }
+    }
 }
 
 namespace {
@@ -1140,11 +1159,13 @@ void SimState::dispatch_due_commands() {
             run_sim_callback(*sc.callback);
             return;
         }
-        // Command ids come from the sim's counter here, inside the tick, so
-        // every peer (and a replay) numbers an order the same way; the id it
-        // arrived with was the issuer's.
         UnitCommand base = sc.command;
-        base.command_id = next_command_id();
+        if (base.command_id == 0) {
+            base.command_id = next_command_id();
+        } else if (base.command_id >> 24 != 0) {
+            player_commands_issued_ =
+                std::max(player_commands_issued_, base.command_id & 0xFFFFFFu);
+        }
         if (base.factory) {
             apply_factory_command(sc.unit_ids, base, sc.clear_existing);
             return;
