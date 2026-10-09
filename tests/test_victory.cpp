@@ -7,7 +7,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/session_manager.hpp"
+#include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
@@ -626,4 +629,42 @@ TEST_CASE("The scripts decide the game when retail's or FAF's victory check is l
                            "['/lua/sim/victorycondition/victoryconditionsingleton.lua'] = {} }")
                 .ok());
     CHECK(decide());
+}
+
+TEST_CASE("The player's result is the focus army's; IsGameOver is the session's", "[victory]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    sim.set_victory_condition("demoralization");
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.add_army("ARMY_3", "ARMY_3");
+    sim.add_army("ARMY_4", "ARMY_4");
+    osc::lua::set_focus_army(lua.raw(), nullptr, 1);
+
+    const osc::u32 ai_acu = spawn(sim, 0, {"COMMAND"});
+    const osc::u32 player_acu = spawn(sim, 1, {"COMMAND"});
+    spawn(sim, 2, {"COMMAND"});
+    spawn(sim, 3, {"COMMAND"});
+    const auto game_over = [&] {
+        REQUIRE(lua.do_string("__over = IsGameOver()").ok());
+        lua_getglobal(lua.raw(), "__over");
+        const bool over = lua_toboolean(lua.raw(), -1) != 0;
+        lua_pop(lua.raw(), 1);
+        return over;
+    };
+
+    tick_n(sim, kPastGrace);
+    destroy(sim, ai_acu);
+    tick_n(sim, 2);
+    CHECK(sim.get_army(0)->state() == BrainState::Defeat);
+    CHECK(sim.player_result() == 0);
+    CHECK_FALSE(game_over());
+
+    destroy(sim, player_acu);
+    tick_n(sim, 2);
+    CHECK(sim.player_result() == 2);
+    CHECK_FALSE(sim.game_ended());
+    CHECK_FALSE(game_over());
 }

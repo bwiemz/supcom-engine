@@ -3556,8 +3556,20 @@ u32 SimState::compute_sync_checksum() const {
     return checksum_parts().total();
 }
 
+i32 SimState::focus_army() const {
+    if (!L_) {
+        return 0;
+    }
+    lua_pushstring(L_, "__osc_focus_army");
+    lua_rawget(L_, LUA_REGISTRYINDEX);
+    const i32 army = lua_isnumber(L_, -1) ? static_cast<i32>(lua_tonumber(L_, -1)) : 0;
+    lua_pop(L_, 1);
+    return army;
+}
+
 i32 SimState::player_result() const {
-    const ArmyBrain* player = army_at(0);
+    const i32 focus = focus_army();
+    const ArmyBrain* player = focus >= 0 ? army_at(static_cast<size_t>(focus)) : nullptr;
     if (!player) return game_ended_ ? 3 : 0;
 
     // A decisive brain state set by update_victory (or by an external caller)
@@ -3575,8 +3587,12 @@ i32 SimState::player_result() const {
     bool has_enemy = false;
     for (size_t i = 0; i < army_count(); ++i) {
         const auto* b = army_at(i);
-        if (!b || b->is_civilian() || static_cast<i32>(i) == 0) continue;
-        if (player->is_ally(static_cast<i32>(i))) continue;
+        if (!b || b->is_civilian() || static_cast<i32>(i) == focus) {
+            continue;
+        }
+        if (player->is_ally(static_cast<i32>(i))) {
+            continue;
+        }
         has_enemy = true;
         if (!b->is_defeated()) {
             all_enemies_dead = false;

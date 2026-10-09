@@ -112,7 +112,7 @@ int App::run_headless() {
 
             // Every army is an AI: the game ends when the game does (the
             // victory script's EndGame, or one team left), not when army 1
-            // falls (player_result is army 1's own result).
+            // falls (player_result is the focus army's own result).
             if (sim_state->game_ended()) {
                 result = 1;
                 spdlog::info("=== Game Over at tick {} ({:.1f}s): {} ===", ticks_run,

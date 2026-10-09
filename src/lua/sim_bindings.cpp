@@ -6516,7 +6516,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("GetArmyBrain", l_GetArmyBrain);
     state.register_function("IsGameOver", [](lua_State* L) -> int {
         auto* sim = get_sim(L);
-        lua_pushboolean(L, sim && sim->player_result() != 0);
+        lua_pushboolean(L, sim && sim->game_ended());
         return 1;
     });
 
