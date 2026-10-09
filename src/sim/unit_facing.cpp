@@ -48,10 +48,11 @@ bool Unit::rotate_yaw_toward(f32 want, f32 max_step) {
 
 void Unit::face_weapons_work(f64 dt, const EntityRegistry& registry) {
     turned_in_place_ = false;
-    // Aircraft fly their own way; a unit being built, dying, carried or
-    // attached, or rising to a transport, is turned by none of this.
-    if (is_air_unit() || is_being_built() || dying_ || parent_entity_id() != 0 ||
-        beam_up_ticks_ > 0 || has_unit_state("Attached"))
+    // Aircraft, flying or landed, move by CalcMoveAir alone; a unit being
+    // built, dying, carried or attached, or rising to a transport, is turned
+    // by none of this.
+    if (can_fly() || is_being_built() || dying_ || parent_entity_id() != 0 || beam_up_ticks_ > 0 ||
+        has_unit_state("Attached"))
         return;
     // Driven along a path, it faces the path; a new goal overwrites a parked
     // attack's facing (Moho's SetTarget, mFormationVec). Held still or
