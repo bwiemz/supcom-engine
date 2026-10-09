@@ -1765,10 +1765,11 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
 
 /// Internal: create a unit in "being built" state.
 /// Called from C++ build processing via Lua registry.
-/// Args: (bp_id, army_1based, x, y, z[, capped]); y nil: where the structure
-/// stands at (x, z) -- on the ground, the water or the seabed, as Moho
-/// places it. capped (default true): held to the army's unit cap, its brain
-/// told when over it (an upgrade passes false: Moho makes those uncapped).
+/// Args: (bp_id, army_1based, x, y, z[, capped[, builder_id]]); y nil: where
+/// the structure stands at (x, z) -- on the ground, the water or the seabed,
+/// as Moho places it. capped (default true): held to the army's unit cap, its
+/// brain told when over it (an upgrade passes false: Moho makes those
+/// uncapped). builder_id: its creator.
 /// Returns: entity_id, lua_table (2 values); nil, nil -- or nil, "cap" when
 /// the army is at its cap.
 static int l_create_building_unit(lua_State* L) {
@@ -1795,7 +1796,13 @@ static int l_create_building_unit(lua_State* L) {
 
     // Lua table on top of stack
     int tbl = lua_gettop(L);
-    if (auto* sim = get_sim(L)) tell_initial_auto_mode(L, *sim, id, tbl);
+    if (auto* sim = get_sim(L)) {
+        auto* built = sim->entity_registry().find(id);
+        if (lua_isnumber(L, 7) && built && built->is_unit()) {
+            static_cast<sim::Unit*>(built)->set_creator_id(static_cast<u32>(lua_tonumber(L, 7)));
+        }
+        tell_initial_auto_mode(L, *sim, id, tbl);
+    }
 
     // OnPreCreate
     lua_pushstring(L, "OnPreCreate");
