@@ -188,6 +188,7 @@ private:
     int fps_frames = 0;
     double display_fps = 0.0;
     std::unordered_set<osc::u32> prev_selection;
+    std::vector<std::pair<osc::u32, osc::u32>> prev_selection_upgrades;
     /// --screenshot <png> [--screenshot-frame N]: render N frames on a
     /// fixed 60 Hz clock (so frame N is identical run to run), capture the
     /// presented image, write it, and exit. Used for golden-image tests and

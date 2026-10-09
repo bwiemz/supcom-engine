@@ -63,6 +63,11 @@ void finish_world_ui(lua_State* uiL, ui::WldUIProvider& wld, bool is_replay, lua
 /// The UI's OnSelectionChanged, when the selection changed.
 void dispatch_selection_change(lua_State* uL, std::unordered_set<u32>& prev,
                                const std::unordered_set<u32>& cur, bool action);
+/// And when a selected unit's upgrade orders changed (Moho's RequestRefreshUI).
+void dispatch_selection_change(lua_State* uL, std::unordered_set<u32>& prev,
+                               std::vector<std::pair<u32, u32>>& prev_upgrades,
+                               const sim::SimState& sim, const std::unordered_set<u32>& cur,
+                               bool action);
 /// FA's command mode (commandmode.lua), as world clicks read it.
 renderer::CommandMode read_command_mode(lua_State* uiL);
 /// A blueprint's footprint (SizeX, SizeZ) from the UI state's blueprint

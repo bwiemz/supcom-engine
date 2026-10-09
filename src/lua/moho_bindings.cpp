@@ -2465,9 +2465,18 @@ static int l_SetFocusArmy(lua_State* L) {
 /// A unit blueprint's Economy.BuildableCategory strings ("BUILTBYCOMMANDER
 /// UEF", ...), read from the blueprint store.
 static std::vector<std::string> buildable_category_strings(lua_State* L,
-                                                           const sim::Unit* u) {
+                                                           const std::string& blueprint_id) {
     std::vector<std::string> out;
-    if (!push_entity_blueprint(L, u)) return out;
+    auto* store = LuaState::get_blueprint_store(L);
+    const auto* entry = store ? store->find(blueprint_id) : nullptr;
+    if (!entry) {
+        return out;
+    }
+    store->push_lua_table(*entry, L);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return out;
+    }
     lua_pushstring(L, "Economy");
     lua_rawget(L, -2);
     if (lua_istable(L, -1)) {
@@ -2705,8 +2714,24 @@ static int l_GetUnitCommandData(lua_State* L) {
             continue;
         }
         auto* unit = static_cast<sim::Unit*>(entity);
-        buildable.push_back({buildable_category_strings(L, unit),
-                             unit_build_restriction(*sim, *unit, army_restrictions)});
+        const sim::UnitCommand* upgrade = nullptr;
+        for (const sim::UnitCommand& c : unit->command_queue()) {
+            if (c.type == sim::CommandType::Upgrade) {
+                upgrade = &c;
+            }
+        }
+        sim::CategoryExpr restriction = unit_build_restriction(*sim, *unit, army_restrictions);
+        if (upgrade) {
+            sim::CategoryExpr target = sim::CategoryExpr::name(upgrade->blueprint_id);
+            restriction =
+                restriction.empty()
+                    ? std::move(target)
+                    : sim::CategoryExpr::combine(sim::CategoryExpr::Op::Union,
+                                                 std::move(restriction), std::move(target));
+        }
+        buildable.push_back(
+            {buildable_category_strings(L, upgrade ? upgrade->blueprint_id : unit->blueprint_id()),
+             std::move(restriction)});
 
         if (first_unit) {
             for (const char** cap = all_caps; *cap; ++cap) {
