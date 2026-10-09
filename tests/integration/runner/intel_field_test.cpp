@@ -120,7 +120,6 @@ void test_intel_fields(TestContext& ctx) {
         __osc_if_frigate = CreateUnitHPR('ues0103', 'ARMY_1', x + 12, GetSurfaceHeight(x + 12, z), z,
                                          0, 0, 0)
         __osc_if_frigate:SetImmobile(true)
-        IssueDive({__osc_if_sub})
         __osc_if_ids = {tonumber(__osc_if_sub:GetEntityId()), tonumber(__osc_if_frigate:GetEntityId())}
     )");
     lua_State* L = ctx.L;
