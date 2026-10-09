@@ -6,6 +6,7 @@
 
 #include "app/window_mode.hpp"
 #include "core/cursor.hpp"
+#include "core/fullscreen.hpp"
 
 #include <string>
 #include <vector>
@@ -90,6 +91,26 @@ TEST_CASE("The command line overrides the options, with Moho's prefixes (M217h)"
         startup_window_mode({"--map", "/maps/SCMP_009/SCMP_009_scenario.lua"}, prefs).overridden);
 }
 
+TEST_CASE("A native full screen settles before it toggles or resizes", "[window]") {
+    using core::native_fullscreen_step;
+    using Step = core::NativeFullscreenStep;
+    CHECK(native_fullscreen_step(true, false, false, false) == Step{.toggle = true});
+    CHECK(native_fullscreen_step(true, false, true, false) == Step{});
+    CHECK(native_fullscreen_step(true, true, false, false) == Step{.settled = true});
+    CHECK(native_fullscreen_step(false, true, false, true) == Step{.toggle = true});
+    CHECK(native_fullscreen_step(false, true, true, true) == Step{});
+    CHECK(native_fullscreen_step(false, false, true, true) == Step{});
+    CHECK(native_fullscreen_step(false, false, false, true) ==
+          Step{.apply_windowed = true, .settled = true});
+    CHECK(native_fullscreen_step(std::nullopt, false, false, false) == Step{.settled = true});
+    CHECK(native_fullscreen_step(std::nullopt, true, false, false) == Step{.settled = true});
+#ifdef __APPLE__
+    CHECK(core::kNativeFullscreen);
+#else
+    CHECK_FALSE(core::kNativeFullscreen);
+#endif
+}
+
 TEST_CASE("The adapter option lists the display's modes as Moho does (M217h)", "[window]") {
     const std::vector<Resolution> modes = {{800, 600, 60},    {1024, 768, 60}, {1920, 1080, 60},
                                            {1920, 1080, 144}, {1024, 768, 60}, {1280, 720, 60},
@@ -113,6 +134,31 @@ TEST_CASE("The adapter option lists the display's modes as Moho does (M217h)", "
     CHECK(only[0].key == "overridden");
     CHECK(only[0].text == "<LOC _Command_Line_Override>");
     CHECK(overridden == "overridden");
+}
+
+TEST_CASE("A native full screen is one adapter state the option keeps", "[window]") {
+    CHECK(native_fullscreen_key("1920,1200,120") == "1920,1200,120");
+    CHECK(native_fullscreen_key("1024,768,60") == "1024,768,60");
+    CHECK(native_fullscreen_key("windowed") == "1024,768,60");
+    CHECK(native_fullscreen_key("overridden") == "1024,768,60");
+
+    auto [states, fallback] = native_adapter_states("1920,1200,120", false);
+    REQUIRE(states.size() == 2);
+    CHECK(states[0].key == "windowed");
+    CHECK(states[1].key == "1920,1200,120");
+    CHECK(states[1].text == "Full Screen");
+    CHECK(fallback == "1024,768,60");
+    auto [first, first_fallback] = native_adapter_states("windowed", false);
+    REQUIRE(first.size() == 2);
+    CHECK(first[1].key == "1024,768,60");
+    auto [only, overridden] = native_adapter_states("1920,1200,120", true);
+    REQUIRE(only.size() == 1);
+    CHECK(only[0].key == "overridden");
+    CHECK(overridden == "overridden");
+
+    CHECK(adapter_option_for(false, "1920,1200,120") == "windowed");
+    CHECK(adapter_option_for(true, "1920,1200,120") == "1920,1200,120");
+    CHECK(adapter_option_for(true, "windowed") == "1024,768,60");
 }
 
 TEST_CASE("A cursor in window units maps to framebuffer pixels (M217h)", "[window]") {

@@ -21,6 +21,7 @@ inline constexpr u32 kDefaultWidth = 1024;
 inline constexpr u32 kDefaultHeight = 768;
 inline constexpr u32 kMinCmdLineWidth = 1024;
 inline constexpr u32 kMinCmdLineHeight = 720;
+inline constexpr std::string_view kDefaultAdapterMode = "1024,768,60";
 
 /// A display mode, or a primary_adapter option's "w,h,fps".
 struct Resolution {
@@ -48,7 +49,7 @@ struct WindowMode {
 /// option (as prefs.lua's GetOption gives it: the profile's, else the
 /// default) and the windowed geometry Moho saves (Windows.Main.*).
 struct WindowPrefs {
-    std::string primary_adapter = "1024,768,60";
+    std::string primary_adapter{kDefaultAdapterMode};
     std::optional<u32> width, height;
     std::optional<i32> x, y;
     bool maximized = false;
@@ -73,5 +74,12 @@ struct OptionState {
 /// command line chose the window, the override alone.
 std::pair<std::vector<OptionState>, std::string>
 adapter_states(const std::vector<Resolution>& modes, bool overridden);
+
+/// macOS's full screen keeps the desktop's mode, so the option has one
+/// full-screen state, keyed as the option holds it.
+std::string native_fullscreen_key(std::string_view primary_adapter);
+std::pair<std::vector<OptionState>, std::string>
+native_adapter_states(std::string_view primary_adapter, bool overridden);
+std::string adapter_option_for(bool fullscreen, std::string_view primary_adapter);
 
 } // namespace osc::app
