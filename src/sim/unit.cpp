@@ -799,6 +799,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
     build_target_id_ = static_cast<u32>(lua_tonumber(L, -2));
     build_command_id_ = cmd.command_id;
     build_released_with_order_ = cmd.type == CommandType::BuildMobile;
+    build_repairs_ = false;
     int target_tbl = lua_gettop(L); // target Lua table
 
     // Read BuildTime, BuildCostMass, BuildCostEnergy from target's blueprint
