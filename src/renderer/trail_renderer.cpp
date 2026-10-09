@@ -365,7 +365,7 @@ void TrailRenderer::update(const sim::FrameView& view, const Camera& camera, con
         const Vertex b = vertex(sub(s.end, s1), t1, 1.0f, s.u_end);
         const Vertex c = vertex(add(s.end, s1), t1, 0.0f, s.u_end);
         const Vertex d = vertex(add(s.start, s0), t0, 0.0f, s.u_start);
-        const bool under = bp.sort_order < 0;
+        const bool under = draws_under_water(bp.sort_order);
         ribbons.push_back({under,
                            bp.sort_order,
                            bp.blendmode,

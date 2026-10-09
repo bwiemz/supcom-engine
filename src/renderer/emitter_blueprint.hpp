@@ -103,7 +103,7 @@ struct EmitterBlueprintData {
     i32 blendmode = 0;        ///< particle.fx's TRamp suffix (5: REFRACT)
     f32 lod_cutoff = 100.0f;  ///< emits within this of the camera
     u8 fidelity = 0b111;      ///< the graphics fidelities it is made at (blueprint_fidelity)
-    f32 sort_order = 0.0f;    ///< below 0, drawn under the water
+    f32 sort_order = 0.0f;    ///< below kParticleWaterSurface, drawn under the water
     bool local_velocity = true;
     bool local_acceleration = false;
     bool gravity = false;

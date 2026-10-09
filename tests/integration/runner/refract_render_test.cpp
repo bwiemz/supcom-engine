@@ -148,7 +148,7 @@ void test_refract_render(TestContext& ctx) {
     };
     emitter_bp("bend.bp", "bend.dds", "");
     emitter_bp("half.bp", "bend_half.dds", "", "white_half.dds");
-    emitter_bp("under.bp", "bend.dds", "    SortOrder = -1,\n");
+    emitter_bp("under.bp", "bend.dds", "    SortOrder = -102,\n");
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
 
     // The backdrop: a prop plate over the spot, the line along z at x0.
@@ -243,7 +243,7 @@ void test_refract_render(TestContext& ctx) {
                             n, alpha, m.displaced, m.unmoved));
     }
 
-    // Test 3: a negative SortOrder, which puts other particles under the
+    // Test 3: a SortOrder below -101, which puts other particles under the
     // water, refracts the same: Moho draws them all apart, none in the pass
     // under the water.
     {
@@ -258,7 +258,7 @@ void test_refract_render(TestContext& ctx) {
             return p.effect_id == id && p.under_water;
         });
         t.check(m.displaced < 0.01f && m.unmoved > 0.04f && under == 0,
-                fmt::format("Test 3: at SortOrder -1, off by {:.4f}; unmoved it differs {:.3f}; "
+                fmt::format("Test 3: at SortOrder -102, off by {:.4f}; unmoved it differs {:.3f}; "
                             "{} under the water",
                             m.displaced, m.unmoved, under));
     }

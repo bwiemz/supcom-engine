@@ -7,7 +7,7 @@
 // flat on the world or along its motion, its texture (animated: frames and
 // strips) times its ramp by age, blended by its TRamp technique. Emitters
 // follow their bone (attached) or stay where they were made (At-); a
-// negative SortOrder's draw under the water; EmitIfVisible ones emit only
+// SortOrder below -101's draw under the water; EmitIfVisible ones emit only
 // where the player could see them, catching up after. On dry ground away
 // from the starts, ARMY_1's engineers hang 3 above the ground carrying the
 // test's emitters and move as the test warps them.
@@ -17,6 +17,7 @@
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
+#include "renderer/effect_blueprint_file.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/entity.hpp"
@@ -151,7 +152,7 @@ void test_particle_render(TestContext& ctx) {
                               curve("RampSelectionCurve", 0.75f));
     emitter_bp("snap.bp", "    SnapToWaterline = true,\n" + curve("EmitRateCurve", 1) +
                               curve("LifetimeCurve", 20));
-    emitter_bp("snapunder.bp", "    SnapToWaterline = true, SortOrder = -1,\n" +
+    emitter_bp("snapunder.bp", "    SnapToWaterline = true, SortOrder = -102,\n" +
                                    curve("EmitRateCurve", 1) + curve("LifetimeCurve", 20));
     emitter_bp("onwater.bp", "    OnlyEmitOnWater = true,\n" + curve("EmitRateCurve", 1) +
                                  curve("LifetimeCurve", 20));
@@ -165,7 +166,7 @@ void test_particle_render(TestContext& ctx) {
                             curve("StartSizeCurve", 3) + curve("EndSizeCurve", 3);
     emitter_bp("add.bp", "    Blendmode = 3,\n" + big, "ramp");
     emitter_bp("mod.bp", "    Blendmode = 1,\n" + big);
-    emitter_bp("under.bp", "    Blendmode = 3, SortOrder = -1,\n" + big, "red");
+    emitter_bp("under.bp", "    Blendmode = 3, SortOrder = -102,\n" + big, "red");
     emitter_bp("over.bp", "    Blendmode = 3,\n" + big, "red");
     emitter_bp("lowoff.bp", "    LowFidelity = false,\n" + curve("EmitRateCurve", 1) +
                                 curve("LifetimeCurve", 20));
@@ -441,7 +442,7 @@ void test_particle_render(TestContext& ctx) {
     }
 
     // Test 8: on the water, particles snap up to it from below (down to it
-    // from above, a negative SortOrder's); OnlyEmitOnWater emits over water,
+    // from above, a SortOrder below -101's); OnlyEmitOnWater emits over water,
     // on it, and nothing over land.
     std::optional<Spot> wet;
     {
@@ -473,8 +474,9 @@ void test_particle_render(TestContext& ctx) {
             const auto ps = particles_of(r, fx);
             return ps.empty() ? -1e9f : ps.front().center.y;
         };
-        t.check(near(first_y(below), water) && near(first_y(above), water) &&
-                    near(first_y(on_water), water) && particles_of(r, on_land).empty(),
+        const f32 off = renderer::kParticleWaterOffset;
+        t.check(near(first_y(below), water + off) && near(first_y(above), water - off) &&
+                    near(first_y(on_water), water + off) && particles_of(r, on_land).empty(),
                 fmt::format("Test 8: water at {:.2f}: snapped up {:.2f}, down {:.2f}, on it "
                             "{:.2f}; over land {}",
                             water, first_y(below), first_y(above), first_y(on_water),
@@ -527,7 +529,7 @@ void test_particle_render(TestContext& ctx) {
 
     // Test 10: in the frame, G's additive emitter (a 3-wide quad, its ramp
     // red while young, blue old) adds red then blue; H's MODULATEINVERSE one
-    // darkens; over the water a SortOrder −1 one is covered by the water, a
+    // darkens; over the water a SortOrder −102 one is covered by the water, a
     // SortOrder 0 one isn't.
     {
         look_at(g0.x, (g0.z + h0.z) / 2, 50.0f);
@@ -593,7 +595,7 @@ void test_particle_render(TestContext& ctx) {
             const f32 under = red_at(wet->z - 6);
             const f32 over = red_at(wet->z + 6);
             t.check(under > 0.02f && over > under + 0.1f,
-                    fmt::format("Test 10: over the water, SortOrder -1 adds {:+.2f}, 0 {:+.2f}",
+                    fmt::format("Test 10: over the water, SortOrder -102 adds {:+.2f}, 0 {:+.2f}",
                                 under, over));
         }
     }

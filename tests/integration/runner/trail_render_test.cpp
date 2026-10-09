@@ -6,7 +6,7 @@
 // outlive the trail for TrailLength ticks, each end aging from 0 to 1, and
 // are drawn as a ribbon facing the camera, Size either side: the ramp
 // texture by age, the repeat texture by distance, blended by a TPolyTrail
-// technique, a negative SortOrder's under the water. On dry ground away
+// technique, a SortOrder below -101's under the water. On dry ground away
 // from the starts, ARMY_1's engineers hang 3 above the ground carrying
 // trails of the test's blueprints and move as the test warps them;
 // ARMY_2's moves in the fog; a retail shell carries retail's.
@@ -620,7 +620,7 @@ void test_trail_render(TestContext& ctx) {
                             behind, beyond));
     }
 
-    // Test 9: a negative SortOrder's trail draws under the water: where
+    // Test 9: a SortOrder below -101's trail draws under the water: where
     // there's water, water covers it, and not a SortOrder 0 one beside it.
     {
         const map::Terrain& terrain = *ctx.sim.terrain();
