@@ -18516,6 +18516,27 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
         SelectUnits({__osc_test_acu})
     )");
+    const std::string reselect_mex = fmt::format("SelectUnits({{{{EntityId = {}}}}})", mex_id);
+    lua_ok("Test 10g5 setup: the extractor selected", reselect_mex.c_str());
+    play(2);
+    sim_lua("IssueUpgrade({__osc_ui_mex}, 'ueb1202')");
+    play(2);
+    lua_ok("Test 10g5: with its upgrade queued, the panel shows the upgrade's options", R"(
+        local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        local list = EntityCategoryGetUnitList(buildable)
+        SelectUnits({__osc_test_acu})
+        if table.getn(list) ~= 1 or list[1] ~= 'ueb1302' then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, ' .. tostring(list[1]))
+        end
+        local ids = {}
+        for _, item in shown do
+            if item.id then table.insert(ids, item.id) end
+        end
+        if table.getn(ids) ~= 1 or ids[1] ~= 'ueb1302' then
+            error('shown: ' .. table.concat(ids, ' '))
+        end
+    )");
     sim_lua("__osc_ui_mex:Destroy()");
     play(2);
     // UserUnit:ProcessInfo reaches the sim through its input: the UI asks

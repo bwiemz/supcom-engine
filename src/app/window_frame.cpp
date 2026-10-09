@@ -428,7 +428,8 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
     // Selections are a game's: at the front end (after a return to the
     // lobby cleared the selection) there is no game UI to tell.
     if (sim_state && interface_up) {
-        dispatch_selection_change(ui_lua_state.raw(), prev_selection, input_handler.selected(),
+        dispatch_selection_change(ui_lua_state.raw(), prev_selection, prev_selection_upgrades,
+                                  *sim_state, input_handler.selected(),
                                   input_handler.take_selection_event());
     } else {
         (void)input_handler.take_selection_event();

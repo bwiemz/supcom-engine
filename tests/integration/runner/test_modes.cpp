@@ -1203,6 +1203,7 @@ void IntegrationModes::headless(Engine& e) {
         // select units (SelectUnits) and drive the selection UI.
         osc::renderer::InputHandler headless_input;
         std::unordered_set<osc::u32> prev_sel;
+        std::vector<std::pair<osc::u32, osc::u32>> prev_sel_upgrades;
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushlightuserdata(uL, &headless_input);
@@ -1220,7 +1221,8 @@ void IntegrationModes::headless(Engine& e) {
             for (int i = 0; i < n; ++i) {
                 pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager, beat_registry,
                                              ui_registry, 1, frames);
-                dispatch_selection_change(uL, prev_sel, headless_input.selected(),
+                dispatch_selection_change(uL, prev_sel, prev_sel_upgrades, *sim_state,
+                                          headless_input.selected(),
                                           headless_input.take_selection_event());
             }
         };
