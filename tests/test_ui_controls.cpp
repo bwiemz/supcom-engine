@@ -612,6 +612,21 @@ TEST_CASE("A press no control eats reaches each control under the mouse once", "
     CHECK(f.check("whos('ButtonPress') == 'label,item'"));
 }
 
+TEST_CASE("The mouse entering or leaving a control is told up its parents until one takes it",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run("button = box('button', GetFrame(0), 0, 0, 100, 40, 1) button.eats = true "
+          "label = box('label', button, 20, 10, 80, 30, 2)");
+    f.dispatch.on_cursor_pos(50, 20);
+    f.deliver();
+    CHECK(f.check("whos('MouseEnter') == 'label,button'"));
+
+    f.run("handled = {}");
+    f.dispatch.on_cursor_pos(5, 5);
+    f.deliver();
+    CHECK(f.check("whos('MouseExit') == 'label,button' and whos('MouseEnter') == 'button'"));
+}
+
 TEST_CASE("DisableHitTest(true) lets the mouse through a control's children too",
           "[ui][lua][input]") {
     InputFixture f;
