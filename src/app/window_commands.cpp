@@ -5,6 +5,7 @@
 
 #include "app/window_commands.hpp"
 
+#include "core/fullscreen.hpp"
 #include "core/preferences.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/camera.hpp"
@@ -154,8 +155,11 @@ void size_root_frame(lua_State* uL, u32 width, u32 height) {
         "sizing the root frame");
 }
 
-void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes, bool overridden) {
-    const auto [states, fallback] = adapter_states(modes, overridden);
+void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes, bool overridden,
+                             const std::string& primary_adapter) {
+    const auto [states, fallback] = core::kNativeFullscreen
+                                        ? native_adapter_states(primary_adapter, overridden)
+                                        : adapter_states(modes, overridden);
     set_custom_data(uL, "primary_adapter", states, fallback);
     // One display: the secondary adapter is disabled, or overridden
     if (overridden) {
@@ -164,6 +168,20 @@ void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes
     } else {
         set_custom_data(uL, "secondary_adapter", {{"<LOC _Disabled>", "disabled"}}, "disabled");
     }
+}
+
+void keep_adapter_option(lua_State* uL, core::Preferences& prefs, bool fullscreen) {
+    const std::string key = option_key(prefs, "primary_adapter");
+    if (key.empty()) {
+        return;
+    }
+    const std::string held = prefs.get_string(key, std::string(kDefaultAdapterMode));
+    const std::string now = adapter_option_for(fullscreen, held);
+    if (now == held) {
+        return;
+    }
+    prefs.set_string(key, now);
+    publish_adapter_options(uL, {}, false, now);
 }
 
 void publish_fidelity_options(lua_State* uL) {
