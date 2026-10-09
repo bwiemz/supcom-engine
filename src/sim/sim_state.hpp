@@ -575,7 +575,11 @@ public:
     /// active. Returns the (possibly clamped) position.
     Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
 
-    /// Check if player army (index 0) won, lost, or game still in progress.
+    /// The army the player plays and watches (SetFocusArmy; -1 an observer):
+    /// Moho's sync filter's focus army.
+    i32 focus_army() const;
+
+    /// Whether the focus army won, lost, or the game is still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
     i32 player_result() const;
 
