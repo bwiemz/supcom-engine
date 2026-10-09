@@ -5,6 +5,7 @@
 #include "app/window_commands.hpp"
 #include "app/world_sounds.hpp"
 #include "core/fixed_step.hpp"
+#include "core/fullscreen.hpp"
 #include "core/profiler.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
@@ -72,6 +73,11 @@ double App::Window::begin_frame() {
         root_width = renderer.width();
         root_height = renderer.height();
         size_root_frame(ui_lua_state.raw(), root_width, root_height);
+    }
+    if (osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
+        renderer.fullscreen() != shown_fullscreen) {
+        shown_fullscreen = renderer.fullscreen();
+        keep_adapter_option(ui_lua_state.raw(), prefs, shown_fullscreen);
     }
     auto now = std::chrono::high_resolution_clock::now();
     double dt = std::chrono::duration<double>(now - prev_time).count();

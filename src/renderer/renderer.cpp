@@ -2,6 +2,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "core/cursor.hpp"
+#include "core/fullscreen.hpp"
 #include "core/ui_registry_keys.hpp"
 
 extern "C" {
@@ -11,6 +12,7 @@ extern "C" {
 #include "renderer/dds_decode.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "renderer/dds_parser.hpp"
+#include "platform/native_fullscreen.hpp"
 #include "platform/paths.hpp"
 #include "core/profiler.hpp"
 #include "renderer/pipeline_builder.hpp"
@@ -3257,6 +3259,12 @@ void Renderer::mouse_position(f64& x, f64& y) const {
 
 void Renderer::set_fullscreen(u32 width, u32 height, u32 rate) {
     if (!window_) return;
+    if constexpr (core::kNativeFullscreen) {
+        native_fullscreen_request_ = true;
+        windowed_pending_.reset();
+        settle_native_fullscreen();
+        return;
+    }
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
     if (!monitor) return;
     glfwSetWindowMonitor(window_, monitor, 0, 0, static_cast<int>(width), static_cast<int>(height),
@@ -3266,11 +3274,43 @@ void Renderer::set_fullscreen(u32 width, u32 height, u32 rate) {
 void Renderer::set_windowed(u32 width, u32 height, std::optional<std::array<i32, 2>> position,
                             bool maximized) {
     if (!window_) return;
+    const WindowedPlace place{width, height, position, maximized};
+    if constexpr (core::kNativeFullscreen) {
+        native_fullscreen_request_ = false;
+        windowed_pending_ = place;
+        settle_native_fullscreen();
+        return;
+    }
+    apply_windowed(place);
+}
+
+void Renderer::settle_native_fullscreen() {
+#ifdef __APPLE__
+    const auto step = core::native_fullscreen_step(
+        native_fullscreen_request_, platform::native_fullscreen(window_),
+        platform::native_fullscreen_moving(window_), windowed_pending_.has_value());
+    if (step.toggle) {
+        platform::toggle_native_fullscreen(window_);
+    }
+    if (step.settled) {
+        native_fullscreen_request_.reset();
+    }
+    if (step.apply_windowed) {
+        const WindowedPlace place = *windowed_pending_;
+        windowed_pending_.reset();
+        apply_windowed(place);
+    }
+#endif
+}
+
+void Renderer::apply_windowed(const WindowedPlace& place) {
+    const u32 width = place.width;
+    const u32 height = place.height;
     int x = 0;
     int y = 0;
-    if (position) {
-        x = (*position)[0];
-        y = (*position)[1];
+    if (place.position) {
+        x = (*place.position)[0];
+        y = (*place.position)[1];
     } else if (glfwGetWindowMonitor(window_)) {
         // Out of full screen with no place: the middle of the display
         if (const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor())) {
@@ -3284,11 +3324,16 @@ void Renderer::set_windowed(u32 width, u32 height, std::optional<std::array<i32,
     glfwSetWindowMonitor(window_, nullptr, x, y, static_cast<int>(width), static_cast<int>(height),
                          GLFW_DONT_CARE);
     glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_TRUE);
-    if (maximized) glfwMaximizeWindow(window_);
+    if (place.maximized) glfwMaximizeWindow(window_);
 }
 
 bool Renderer::fullscreen() const {
+#ifdef __APPLE__
+    return window_ && (windowed_pending_ ||
+                       native_fullscreen_request_.value_or(platform::native_fullscreen(window_)));
+#else
     return window_ && glfwGetWindowMonitor(window_) != nullptr;
+#endif
 }
 
 std::vector<std::array<u32, 3>> Renderer::display_modes() const {
@@ -3305,7 +3350,7 @@ std::vector<std::array<u32, 3>> Renderer::display_modes() const {
 }
 
 std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
-    if (!window_ || glfwGetWindowMonitor(window_)) return std::nullopt;
+    if (!window_ || fullscreen()) return std::nullopt;
     WindowGeometry g;
     int w = 0;
     int h = 0;
@@ -3400,6 +3445,7 @@ bool Renderer::is_mouse_pressed(int glfw_button) const {
 void Renderer::poll_events(f64 dt) {
     if (!window_) return;
     glfwPollEvents();
+    settle_native_fullscreen();
 
     // The world view's camera, before input picks this frame: its moves,
     // then its basis (a pan has moved the target)

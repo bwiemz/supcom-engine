@@ -10,6 +10,7 @@
 #include "window_test.hpp"
 
 #include "app/window_commands.hpp"
+#include "core/fullscreen.hpp"
 #include "core/image.hpp"
 #include "core/preferences.hpp"
 #include "integration_tests.hpp"
@@ -156,8 +157,11 @@ void test_window(TestContext& ui, TestContext& sim, const std::function<void(int
     {
         std::vector<app::Resolution> modes;
         for (const auto& m : r.display_modes()) modes.push_back({m[0], m[1], m[2]});
-        app::publish_adapter_options(L, modes, false);
-        const auto [want, fallback] = app::adapter_states(modes, false);
+        const std::string held(app::kDefaultAdapterMode);
+        app::publish_adapter_options(L, modes, false, held);
+        const auto [want, fallback] = core::kNativeFullscreen
+                                          ? app::native_adapter_states(held, false)
+                                          : app::adapter_states(modes, false);
         const std::string find =
             "(function() for _, s in import('/lua/options/optionsLogic.lua').GetOptionsData() do "
             "for _, i in s.items do if i.key == '{}' then return i end end end end)()";

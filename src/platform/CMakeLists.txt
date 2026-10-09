@@ -26,6 +26,12 @@ target_link_libraries(osc_platform PRIVATE osc::warnings Threads::Threads
 find_path(OSC_PFD_INCLUDE_DIR portable-file-dialogs.h REQUIRED)
 target_include_directories(osc_platform SYSTEM PRIVATE ${OSC_PFD_INCLUDE_DIR})
 
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(osc_platform PRIVATE native_fullscreen.mm)
+    target_link_libraries(osc_platform PRIVATE glfw "-framework AppKit")
+endif()
+
 if(WIN32)
     target_link_libraries(osc_platform PRIVATE shell32 ole32 advapi32 comdlg32 user32 bcrypt)
 endif()

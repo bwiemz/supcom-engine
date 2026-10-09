@@ -64,6 +64,7 @@ std::optional<int> App::Window::set_up() {
         const std::vector<std::string> args(argv, argv + argc);
         const WindowMode mode = open_window(renderer, args, prefs);
         adapter_overridden = mode.overridden;
+        shown_fullscreen = renderer.fullscreen();
         root_width = mode.size.width;
         root_height = mode.size.height;
     }
@@ -245,7 +246,8 @@ void App::Window::publish_window_objects() {
     // The UI's root frame is the window's, and the options screen
     // lists the display's modes (M217h)
     size_root_frame(uL, root_width, root_height);
-    publish_adapter_options(uL, display_modes, adapter_overridden);
+    publish_adapter_options(uL, display_modes, adapter_overridden,
+                            read_window_prefs(prefs).primary_adapter);
     publish_fidelity_options(uL);
     app.held_convars.replay(console, uL);
 }
