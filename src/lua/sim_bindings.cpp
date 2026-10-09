@@ -5745,7 +5745,8 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
 /// 4. The repeat flag carries over, `to` told OnStartRepeatQueue or
 ///    OnStopRepeatQueue as it turns on or off.
 /// 5. `to` keeps `from`'s share of health.
-/// 6. Units guarding `from` guard `to`.
+/// Units guarding `from` do not guard `to`: their orders name `from`, which
+/// dies right after (retail: they go idle as the upgrade finishes).
 /// (Moho also queues the pair for the allies' UI; the engine's selection
 /// follows an upgrade on its own.)
 static int l_NotifyUpgrade(lua_State* L) {
@@ -5817,10 +5818,6 @@ static int l_NotifyUpgrade(lua_State* L) {
         const f32 health = to->max_health() * (from->health() / from->max_health());
         if (health != to->health()) to->set_health(health);
     }
-    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
-        if (!e.destroyed() && e.is_unit())
-            static_cast<sim::Unit&>(e).retarget_guard(from_id, to_id);
-    });
     return 0;
 }
 
