@@ -22,6 +22,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -388,4 +389,27 @@ TEST_CASE("A transport unloading comes down to its hover height as to a landing:
     CHECK(dropped < 300);
     CHECK(down_seen);
     CHECK(at_drop == "Hover");
+}
+
+TEST_CASE("An aircraft flies one step a tick as it passes from one move to the next",
+          "[air_landing]") {
+    World w;
+    Unit& plane = *w.make("drone", 30.0f, 30.0f);
+    World::move(plane, 60.0f, 30.0f);
+    osc::sim::UnitCommand next;
+    next.type = osc::sim::CommandType::Move;
+    next.target_pos = {60.0f, 20.0f, 80.0f};
+    plane.push_command(next, false);
+    f32 longest = 0.0f;
+    int flew = 0;
+    for (; flew < 400 && !plane.command_queue().empty(); ++flew) {
+        const auto before = plane.position();
+        w.sim.tick();
+        const f32 dx = plane.position().x - before.x;
+        const f32 dz = plane.position().z - before.z;
+        longest = std::max(longest, std::sqrt(dx * dx + dz * dz));
+    }
+    CHECK(flew < 400);
+    CHECK(plane.position().z > 70.0f);
+    CHECK(longest <= 10.0f * 0.1f + 1e-3f);
 }

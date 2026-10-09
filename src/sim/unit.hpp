@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim { class Manipulator; }
@@ -768,6 +769,7 @@ public:
     void set_bank_angle(f32 b) { bank_angle_ = b; }
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
+    bool take_air_step() { return !std::exchange(air_stepped_, true); }
     f32 current_altitude() const { return current_altitude_; }
     void set_current_altitude(f32 a) { current_altitude_ = a; }
     f32 max_airspeed() const { return max_airspeed_; }
@@ -1754,6 +1756,7 @@ private:
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
+    bool air_stepped_ = false;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)

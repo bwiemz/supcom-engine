@@ -407,8 +407,12 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
 }
 
 bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
-    if (is_air_unit())
+    if (is_air_unit()) {
+        if (!take_air_step()) {
+            return navigator_.is_moving();
+        }
         return navigator_.update_air(*this, dt, terrain);
+    }
     const f32 speed = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
     bool result = navigator_.update(*this, speed, dt, terrain);
 
@@ -424,6 +428,7 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
 }
 
 void Unit::update(f64 dt, SimContext& ctx) {
+    air_stepped_ = false;
     if (!tick_lifecycle(dt, ctx)) return;
 
     // A landed aircraft given an order goes back to the air before it
