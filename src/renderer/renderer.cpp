@@ -3101,8 +3101,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
             const PlayableRect whole{0, 0, static_cast<i32>(terrain.map_width()),
                                      static_cast<i32>(terrain.map_height())};
             icons = renderer::resource_icons(
-                view.cur()->deposits, camera_, static_cast<f32>(ui_width()),
-                static_cast<f32>(ui_height()), playable_rect_.rect().value_or(whole),
+                view.cur()->deposits, camera_, static_cast<f32>(window_width_),
+                static_cast<f32>(window_height_), playable_rect_.rect().value_or(whole),
                 [&](f32 x, f32 z) { return terrain.get_terrain_height(x, z); });
         }
         resource_icon_renderer_.update(icons, texture_cache_, fi);
@@ -3384,7 +3384,7 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
 }
 
 void Renderer::record_view_drawing(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp) {
-    resource_icon_renderer_.render(cmd, ui_width(), ui_height(), resource_icon_time_, fi);
+    resource_icon_renderer_.render(cmd, window_width_, window_height_, resource_icon_time_, fi);
     projectile_icon_renderer_.render(cmd, ui_width(), ui_height(), fi);
     // FAF's world drawing, at the end of the world view's own drawing
     // (DrawFunc.cpp's hook at CUIWorldView::Render's end)

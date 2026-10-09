@@ -656,8 +656,8 @@ void test_strategic_icons(TestContext& ctx) {
                         bool same = true;
                         for (const auto& [dx, dy] :
                              {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
-                            same = same && std::equal(at(px, py), at(px, py) + 3,
-                                                      at(px + dx, py + dy));
+                            same = same &&
+                                   std::equal(at(px, py), at(px, py) + 3, at(px + dx, py + dy));
                         }
                         ++blocks;
                         blended += same ? 0 : 1;
