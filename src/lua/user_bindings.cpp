@@ -1697,11 +1697,11 @@ static int l_GetRolloverInfo(lua_State* L) {
 
     const auto& econ = unit->economy();
     set_num("massProduced", static_cast<lua_Number>(econ.production_mass));
-    set_num("massConsumed", static_cast<lua_Number>(econ.consumption_mass));
+    set_num("massConsumed", static_cast<lua_Number>(econ.mass_consumed(unit->is_paused())));
     set_num("energyProduced", static_cast<lua_Number>(econ.production_energy));
-    set_num("energyConsumed", static_cast<lua_Number>(econ.consumption_energy));
-    set_num("massRequested", static_cast<lua_Number>(econ.consumption_mass));
-    set_num("energyRequested", static_cast<lua_Number>(econ.consumption_energy));
+    set_num("energyConsumed", static_cast<lua_Number>(econ.energy_consumed(unit->is_paused())));
+    set_num("massRequested", static_cast<lua_Number>(econ.mass_requested()));
+    set_num("energyRequested", static_cast<lua_Number>(econ.energy_requested()));
 
     set_num("tacticalSiloStorageCount", static_cast<lua_Number>(unit->silo_ammo(false)));
     set_num("tacticalSiloMaxStorageCount", static_cast<lua_Number>(unit->silo_max_storage(false)));

@@ -81,6 +81,17 @@ struct UnitEconomy {
     /// aircraft is damaged.
     f64 dock_repair_mass = 0.0;
     f64 dock_repair_energy = 0.0;
+
+    /// Moho's mMaintainenceCost: a silo's missile under way asks through it
+    /// too (CAiSiloBuildImpl).
+    f64 mass_requested() const { return consumption_mass + silo_mass; }
+    f64 energy_requested() const { return consumption_energy + silo_energy; }
+    f64 mass_consumed(bool paused) const {
+        return (consumption_active && !paused ? consumption_mass : 0.0) + silo_mass;
+    }
+    f64 energy_consumed(bool paused) const {
+        return (consumption_active && !paused ? consumption_energy : 0.0) + silo_energy;
+    }
 };
 
 /// An air staging platform's service (its blueprint's AI.RefuelingMultiplier,

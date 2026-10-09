@@ -9631,6 +9631,32 @@ void test_missile(TestContext& ctx) {
         local progress = __osc_a:GetWorkProgress()
         if math.abs(progress - 0.5) > 0.01 then error('A is ' .. progress .. ' done') end
     )");
+    lua_check("Test 2b: A's economy data asks for its missile's cost over its build time", R"(
+        -- 180 M and 3600 E over 30 s.
+        local e = __osc_a:GetEconData()
+        if math.abs(e.massRequested - 6) > 1e-3 or math.abs(e.energyRequested - 120) > 1e-3 or
+           math.abs(e.massConsumed - 6) > 1e-3 or math.abs(e.energyConsumed - 120) > 1e-3 then
+            error(string.format('A asks %g M, %g E and spends %g M, %g E a second',
+                                e.massRequested, e.energyRequested, e.massConsumed, e.energyConsumed))
+        end
+    )");
+    {
+        osc::sim::WorldSnapshot snap;
+        osc::sim::capture_world(ctx.sim, snap);
+        u32 a_id = 0;
+        if (ctx.lua_state.do_string("__osc_a_id = __osc_a:GetEntityId()")) {
+            lua_getglobal(ctx.L, "__osc_a_id");
+            a_id = static_cast<u32>(lua_tonumber(ctx.L, -1));
+            lua_pop(ctx.L, 1);
+        }
+        const osc::sim::EntityRecord* rec = snap.find(a_id);
+        check(rec && std::abs(rec->mass_requested - 6.0f) < 1e-3f &&
+                  std::abs(rec->energy_requested - 120.0f) < 1e-3f &&
+                  std::abs(rec->mass_consumed - 6.0f) < 1e-3f &&
+                  std::abs(rec->energy_consumed - 120.0f) < 1e-3f,
+              fmt::format("Test 2c: the UI's record of A asks {} M, {} E a second (6, 120)",
+                          rec ? rec->mass_requested : -1.0f, rec ? rec->energy_requested : -1.0f));
+    }
     run(450);
     lua_check("Test 3: the missile took its build time and cost", R"(
         local b = __osc_a.__osc.builds[1]

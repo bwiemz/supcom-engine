@@ -2115,13 +2115,12 @@ static int unit_GetEconData(lua_State* L) {
         lua_pushnumber(L, v);
         lua_rawset(L, -3);
     };
-    const bool paying = econ.consumption_active && !u->is_paused();
     set("massProduced", (u->producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
     set("energyProduced", (u->producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
-    set("massConsumed", paying ? econ.consumption_mass : 0.0);
-    set("energyConsumed", paying ? econ.consumption_energy : 0.0);
-    set("massRequested", econ.consumption_mass);
-    set("energyRequested", econ.consumption_energy);
+    set("massConsumed", econ.mass_consumed(u->is_paused()));
+    set("energyConsumed", econ.energy_consumed(u->is_paused()));
+    set("massRequested", econ.mass_requested());
+    set("energyRequested", econ.energy_requested());
     return 1;
 }
 
