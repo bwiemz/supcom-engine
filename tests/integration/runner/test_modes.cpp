@@ -24,6 +24,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/scenario_loader.hpp"
 #include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
@@ -273,7 +274,7 @@ constexpr const char* kOwnModes[] = {
     "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
     "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
-    "--options-test",         "--lan-screen-test",   "--edit-text-test",
+    "--options-test",         "--lan-screen-test",   "--edit-text-test",    "--focus-army-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -437,6 +438,7 @@ void IntegrationModes::print_usage() const {
               << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
               << "  --mouse-scene      Six Strikers of army 1 beside its commander, for --mouse goldens\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
+              << "  --focus-army-test  A launch's player in the second slot plays and watches it\n"
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
@@ -782,6 +784,51 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
     const bool draw_test = has("--draw-test");
     const bool stress_test = has("--stress-test");
     const bool full_smoke_test = has("--full-smoke-test");
+    if (has("--focus-army-test") && !map_path.empty()) {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_focus_army_test_map");
+        lua_pushstring(uL, map_path.c_str());
+        lua_rawset(uL, LUA_GLOBALSINDEX);
+        if (auto r = ui_lua_state.do_string(R"(
+                local scenario = rawget(_G, '__osc_focus_army_test_map')
+                LaunchSinglePlayerSession({
+                    GameOptions = { ScenarioFile = scenario },
+                    PlayerOptions = {
+                        [1] = { Human = false, PlayerName = 'AI', AIPersonality = 'adaptive',
+                                Faction = 2, Team = 2, StartSpot = 1 },
+                        [2] = { Human = true, PlayerName = 'Player', Faction = 1, Team = 1,
+                                StartSpot = 2 },
+                    },
+                })
+            )");
+            !r) {
+            osc::test_status::fail("focus-army-test: launching: {}", r.error().message);
+            return finish_test_run("focus-army-test");
+        }
+        double accumulator = 0.0;
+        if (!execute_reload_sequence(
+                sim_lua_state, sim_state, ui_lua_state, vfs, store, loader, config, scenario_meta,
+                game_state_mgr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                new_game_seed(seed_arg, /*reproducible=*/true), accumulator, map_path)) {
+            osc::test_status::fail("focus-army-test: the launch's reload failed");
+            return finish_test_run("focus-army-test");
+        }
+        uL = ui_lua_state.raw();
+        const osc::i32 focus = osc::lua::focus_army(uL);
+        const auto* army = sim_state->get_army(focus);
+        const std::string name = army ? army->name() : "none";
+        if (name != "ARMY_2") {
+            osc::test_status::fail("focus-army-test: the UI's focus army is {} ({}), not ARMY_2",
+                                   focus, name);
+        }
+        const osc::i32 sim_focus = osc::lua::focus_army(sim_lua_state->raw());
+        if (sim_focus != focus) {
+            osc::test_status::fail("focus-army-test: the sim's focus army is {}, the UI's {}",
+                                   sim_focus, focus);
+        }
+        return finish_test_run("focus-army-test");
+    }
+
     // === Full Smoke Test: 5-phase game lifecycle ===
     if (full_smoke_test && !map_path.empty()) {
         // Static so the harness outlives ui_lua_state — interceptor closures
