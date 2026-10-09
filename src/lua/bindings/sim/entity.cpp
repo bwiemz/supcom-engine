@@ -949,6 +949,17 @@ static int entity_AttachBoneToEntityBone(lua_State* L) {
     return 1;
 }
 
+static void released(sim::Entity& e, lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!e.is_unit() || !sim) {
+        return;
+    }
+    auto& unit = static_cast<sim::Unit&>(e);
+    if (unit.is_air_unit()) {
+        unit.fly_on_from_here(sim->terrain());
+    }
+}
+
 static int entity_DetachFrom(lua_State* L) {
     auto* self = check_entity(L); if (!self) return 0;
     if (self->parent_entity_id()) {
@@ -958,6 +969,7 @@ static int entity_DetachFrom(lua_State* L) {
             if (parent) parent->remove_child(self->entity_id());
         }
         self->clear_parent();
+        released(*self, L);
     }
     return 0;
 }
@@ -978,7 +990,10 @@ static int entity_DetachAll(lua_State* L) {
     for (auto& c : children_copy) {
         if (bone >= 0 && c.bone != bone) continue;
         auto* child = sim->entity_registry().find(c.entity_id);
-        if (child) child->clear_parent();
+        if (child) {
+            child->clear_parent();
+            released(*child, L);
+        }
         self->remove_child(c.entity_id);
     }
     return 0;

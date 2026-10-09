@@ -11523,6 +11523,40 @@ void test_factory_rally(TestContext& ctx) {
         end
         if __osc_strayed > 0.5 then error('strayed ' .. __osc_strayed .. ' from its line') end
     )");
+    lua_check("a UEF air factory builds a scout, rallied west", R"(
+        __osc_airf = __osc_spawn('ueb0102', 1, 700, 180)
+        IssueClearFactoryCommands({__osc_airf})
+        IssueFactoryRallyPoint({__osc_airf}, {620, GetTerrainHeight(620, 180), 180})
+        IssueBuildFactory({__osc_airf}, 'uea0101', 1)
+        __osc_scout = false
+        __osc_let_go = false
+        __osc_climb = 0
+        __osc_aside = 0
+    )");
+    for (int i = 0; i < 600; ++i) {
+        (void)ctx.lua_state.do_string(R"(
+            __osc_scout = __osc_scout or __osc_building(__osc_airf) or false
+            __osc_was = __osc_scout and not __osc_scout:IsDead() and __osc_scout:GetPosition()
+        )");
+        run(1);
+        (void)ctx.lua_state.do_string(R"(
+            if __osc_was and not __osc_scout:IsDead() and not __osc_scout:IsBeingBuilt() then
+                local p = __osc_scout:GetPosition()
+                __osc_let_go = __osc_let_go or __osc_was
+                if p[1] > __osc_let_go[1] - 30 then
+                    __osc_climb = math.max(__osc_climb, p[2] - __osc_was[2])
+                    __osc_aside = math.max(__osc_aside, math.abs(p[3] - __osc_let_go[3]))
+                end
+            end
+        )");
+    }
+    lua_check("the scout climbs from the factory and flies straight west", R"(
+        if not __osc_let_go then error('the scout was never finished') end
+        if __osc_climb > 1 or __osc_aside > 1 then
+            error('climbed ' .. __osc_climb .. ' in a tick, flew ' .. __osc_aside ..
+                  ' aside of its line west')
+        end
+    )");
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
 }
 
