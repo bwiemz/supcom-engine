@@ -18,7 +18,6 @@
 #include "map/terrain.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/input_handler.hpp"
-#include "renderer/minimap_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/recon_view.hpp"
 #include "sim/entity.hpp"
@@ -168,18 +167,13 @@ void test_unit_intel(TestContext& ctx) {
                 return true;
         return false;
     };
-    // The minimap's dot for unit `id`, or null.
-    const auto dot_of = [&](const Frame& frame, u32 id) -> const Quad* {
+    const auto minimap_of = [&](const Frame& frame, u32 id) -> const Quad* {
         const sim::EntityRecord* e = seen.cur().find(id);
-        if (!e) return nullptr;
-        const f32 size = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_SIZE);
-        const f32 margin = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_MARGIN);
-        const f32 map_w = static_cast<f32>(ctx.sim.terrain()->map_width());
-        const f32 map_h = static_cast<f32>(ctx.sim.terrain()->map_height());
-        const renderer::MapArea area = renderer::fit_map_area(
-            margin, static_cast<f32>(r.height()) - size - margin, size, size, map_w, map_h);
-        return quad_at(frame.minimap, area.x + e->position.x / map_w * area.w,
-                       area.y + e->position.z / map_h * area.h, 3.0f, 3.0f);
+        if (!e) {
+            return nullptr;
+        }
+        return minimap_icon(frame, r, static_cast<f32>(ctx.sim.terrain()->map_width()),
+                            static_cast<f32>(ctx.sim.terrain()->map_height()), e->position);
     };
     const auto unidentified = [&](const Quad* i) {
         const auto [ur, ug, ub] = r.recon().unidentified_rgb();
@@ -202,16 +196,16 @@ void test_unit_intel(TestContext& ctx) {
     t.check(!mesh_at(f, near_at.x, near_at.z) && !mesh_at(f, far_at.x, far_at.z) &&
                 !mesh_at(f, pgen_at.x, pgen_at.z) && !icon_of(f, near_id) && !icon_of(f, far_id) &&
                 !icon_of(f, pgen_id) && !has_bar(f, near_id) && !has_bar(f, far_id) &&
-                !dot_of(f, near_id) && !dot_of(f, far_id) && !dot_of(f, pgen_id),
+                !minimap_of(f, near_id) && !minimap_of(f, far_id) && !minimap_of(f, pgen_id),
             fmt::format("Test 1: ARMY_2's in the fog draw nothing: mesh, icon, health bar or "
-                        "minimap dot (near {}, far {}, power generator {})",
+                        "minimap icon (near {}, far {}, power generator {})",
                         name(sight(near_id)), name(sight(far_id)), name(sight(pgen_id))));
 
     // Test 2: ARMY_3's engineer draws, an ally's, and so, in its sight (the
     // sim shares an ally's), does ARMY_2's beside it. ARMY_3's shell draws
     // where no one sees: an ally's shows anywhere.
     t.check(mesh_at(f, ally_at.x, ally_at.z) && mesh_at(f, shared_at.x, shared_at.z) &&
-                dot_of(f, ally_id) && dot_of(f, shared_id) &&
+                minimap_of(f, ally_id) && minimap_of(f, shared_id) &&
                 mesh_at(f, ally_shell_at.x, ally_shell_at.z),
             fmt::format("Test 2: the ally's engineer and shell draw, and the enemy's engineer "
                         "in its sight (ally {}, shared {}, shell {})",
@@ -225,9 +219,9 @@ void test_unit_intel(TestContext& ctx) {
     const Drawn* pgen_seen = mesh_at(f, pgen_at.x, pgen_at.z);
     t.check(mesh_at(f, near_at.x, near_at.z) && pgen_seen && !mesh_at(f, far_at.x, far_at.z) &&
                 !icon_of(f, near_id) && !icon_of(f, far_id) && has_bar(f, near_id) &&
-                !has_bar(f, far_id) && dot_of(f, near_id) && !dot_of(f, far_id),
+                !has_bar(f, far_id) && minimap_of(f, near_id) && !minimap_of(f, far_id),
             fmt::format("Test 3: in sight, ARMY_2's draw, with the damaged engineer's health "
-                        "bar and a minimap dot (near {}, power generator {}), beyond it not "
+                        "bar and a minimap icon (near {}, power generator {}), beyond it not "
                         "(far {})",
                         name(sight(near_id)), name(sight(pgen_id)), name(sight(far_id))));
 
@@ -254,9 +248,9 @@ void test_unit_intel(TestContext& ctx) {
         const Quad* far_icon = icon_of(f, far_id);
         t.check(!mesh_at(f, near_at.x, near_at.z) && !mesh_at(f, far_at.x, far_at.z) && near_icon &&
                     !unidentified(near_icon) && unidentified(far_icon) && !has_bar(f, near_id) &&
-                    !has_bar(f, far_id) && dot_of(f, near_id) &&
-                    !unidentified(dot_of(f, near_id)) && unidentified(dot_of(f, far_id)),
-                fmt::format("Test 5: on radar, blips, icon and minimap dot, without health "
+                    !has_bar(f, far_id) && minimap_of(f, near_id) &&
+                    !unidentified(minimap_of(f, near_id)) && unidentified(minimap_of(f, far_id)),
+                fmt::format("Test 5: on radar, blips, icon and minimap icon, without health "
                             "bars: the seen one in its colour ({}), the other unidentified ({})",
                             colour(near_icon), colour(far_icon)));
     }

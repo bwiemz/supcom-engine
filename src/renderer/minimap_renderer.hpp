@@ -4,6 +4,7 @@
 #include "renderer/ui_renderer.hpp" // UIInstance
 #include "renderer/playable_rect.hpp"
 #include "renderer/resource_icon_renderer.hpp"
+#include "renderer/strategic_icon_renderer.hpp"
 #include "core/types.hpp"
 
 #include <array>
@@ -23,7 +24,6 @@ class FrameView;
 namespace osc::renderer {
 
 class Camera;
-class ReconView;
 class TextureCache;
 
 /// Screen rect of the drawn map, in pixels.
@@ -46,8 +46,8 @@ std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDe
                                                  const MapArea& area, f32 map_w, f32 map_h,
                                                  const PlayableRect& playable);
 
-/// Renders the minimap: terrain, unit dots and the camera's view. The C++
-/// HUD shows it in the bottom-left corner (update + render); FA's game UI
+/// Renders the minimap: terrain, units' strategic icons and the camera's
+/// view. The C++ HUD shows it in the bottom-left corner (update + render); FA's game UI
 /// shows it in its minimap WorldView, drawn with the UI (paint). Clicks
 /// land on it where it was drawn last (hit_test).
 class MinimapRenderer {
@@ -79,15 +79,15 @@ public:
     }
 
     /// Build the C++ HUD's corner minimap and upload it for render().
-    void update(const sim::FrameView& view, const Camera& camera,
-                TextureCache& tex_cache,
-                const std::unordered_set<u32>* selected_ids,
-                u32 viewport_w, u32 viewport_h);
+    void update(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache,
+                const std::unordered_set<u32>* selected_ids, u32 viewport_w, u32 viewport_h,
+                lua_State* L);
 
     /// Draw the minimap into the view rect (x, y, w, h): its quads are
     /// appended to `out`, for the UI renderer to draw at the view's depth.
     void paint(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache, f32 x,
-               f32 y, f32 w, f32 h, u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out,
+               f32 y, f32 w, f32 h, u32 viewport_w, u32 viewport_h,
+               const std::unordered_set<u32>* selected_ids, lua_State* L, std::vector<UIQuad>& out,
                const std::optional<PlayableRect>& resources = std::nullopt);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
@@ -98,9 +98,7 @@ public:
 
     void set_frame_index(u32 fi) { fi_ = fi; }
 
-    /// The player's intel: a dot for each unit it shows, a never-seen blip's
-    /// in UnidentifiedColor (null: everything seen; M215a).
-    void set_recon(const ReconView* recon) { recon_ = recon; }
+    void set_icons(StrategicIconRenderer* icons) { icons_ = icons; }
 
     /// This frame's quads from update() (the legacy HUD's minimap).
     const std::vector<UIQuad>& quads() const { return quads_; }
@@ -123,6 +121,7 @@ private:
     /// Build the map's quads into quads_ for the map drawn at area_.
     void build(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache,
                u32 viewport_w, u32 viewport_h, bool framed,
+               const std::unordered_set<u32>* selected_ids, lua_State* L,
                const std::optional<PlayableRect>& resources = std::nullopt);
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
@@ -132,7 +131,7 @@ private:
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
     u32 fi_ = 0;
-    const ReconView* recon_ = nullptr;
+    StrategicIconRenderer* icons_ = nullptr;
 
     std::vector<UIQuad> quads_;
     u32 quad_count_ = 0; // quads uploaded for render()

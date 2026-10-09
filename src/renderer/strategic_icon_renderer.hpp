@@ -22,6 +22,8 @@ namespace osc::renderer {
 class Camera;
 class ReconView;
 class TextureCache;
+struct GPUTexture;
+struct MapArea;
 
 /// Icon types derived from unit categories.
 enum class StrategicIconType : u8 {
@@ -60,6 +62,12 @@ public:
     bool update(const sim::FrameView& view, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, lua_State* L = nullptr);
+
+    /// A minimap's icons, the map drawn at `area`: its own world view through
+    /// the same pass (faf-re CUIWorldView::Render), fully zoomed out.
+    void paint_map(const sim::FrameView& view, const MapArea& area, f32 map_w, f32 map_h,
+                   const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
+                   lua_State* L, std::vector<UIQuad>& out);
 
     /// Forget what the last game's blueprints and strategicIcons.lua said:
     /// the next game's may differ (a scene rebuilt for it).
@@ -124,8 +132,27 @@ private:
                                 f32 sh, f32& out_x, f32& out_y);
 
     /// A texture's quad centred at (x, y), at its own size, tinted.
-    void emit_icon(f32 x, f32 y, const std::string& path, const struct GPUTexture& tex, f32 r,
-                   f32 g, f32 b);
+    static UIInstance icon_quad(f32 x, f32 y, const GPUTexture& tex, f32 r, f32 g, f32 b);
+    void emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
+                   f32 b);
+
+    struct Icon {
+        f32 x = 0, y = 0;
+        const std::string* path = nullptr;
+        const GPUTexture* tex = nullptr;
+        f32 r = 1, g = 1, b = 1;
+        bool stunned = false;
+        const std::string* underlay_path = nullptr;
+        const GPUTexture* underlay = nullptr;
+    };
+    /// Moho's four runs, drawn in this order: ground, air, high-priority,
+    /// selected.
+    using Runs = std::array<std::vector<Icon>, 4>;
+    template <class Place>
+    Runs collect(const sim::FrameView& view, const std::unordered_set<u32>* selected_ids,
+                 TextureCache& tex_cache, lua_State* L, bool fade, f32 cam_dist, f32 fade_cap,
+                 Place&& place);
+    template <class Emit> void emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit);
 
     /// What a blueprint's icon draws with (Moho's REntityBlueprint fields).
     struct IconBlueprint {
