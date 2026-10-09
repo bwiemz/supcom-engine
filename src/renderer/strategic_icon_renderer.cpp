@@ -477,7 +477,9 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     // One unit's icon, into its run: the world's units, then the
     // player's remembered structures gone from it unseen (M215d).
     const auto collect = [&](const sim::EntityRecord& entity) {
-        if (!entity.is_unit || entity.is_being_built) return;
+        if (!entity.is_unit || entity.is_being_built || entity.is_dying) {
+            return;
+        }
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
         if (!shows_icon(sight)) return;
 

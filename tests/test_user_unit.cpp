@@ -453,9 +453,24 @@ TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     osc::renderer::InputHandler input;
     w.unit().set_motion_type("RULEUMT_Land");
     input.set_selected({w.id});
-    input.deselect_aboard(w.sim.entity_registry());
+    input.prune_selection(w.sim.entity_registry());
     REQUIRE(input.selected().size() == 1);
     w.unit().set_transport_id(w.id + 1);
-    input.deselect_aboard(w.sim.entity_registry());
+    input.prune_selection(w.sim.entity_registry());
     CHECK(input.selected().empty());
+}
+
+TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    w.unit().set_motion_type("RULEUMT_Land");
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.selected().size() == 1);
+    REQUIRE(input.unit_under(w.sim, 0.0f, 0.0f) == w.id);
+    w.unit().begin_dying();
+    input.prune_selection(w.sim.entity_registry());
+    CHECK(input.selected().empty());
+    CHECK_FALSE(osc::renderer::selectable(w.unit()));
+    CHECK(input.unit_under(w.sim, 0.0f, 0.0f) == 0);
 }
