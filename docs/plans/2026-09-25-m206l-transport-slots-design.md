@@ -113,7 +113,7 @@ Moho's `CUnitUnloadUnits` moves an aircraft to its drop onto the land layer, so 
   2. It sets down the cargo (the order's units, or all of it) whose footprint fits the ground under it: every cell passable for a land unit (`Unit::footprint_fits`).
   3. The rest stays aboard, and the order ends.
 - **Set down on the ground.** `detach_cargo` puts each unit on the surface where it hung, level. (Before, only the crowd-separation pass did that, and only for units near others.)
-- **Idle.** A transport with cargo aboard hovers at its hover height, and an empty one climbs back to its flying height (`ShouldHoverInsteadOfLand`). This applies only to units with a hover height, so other aircraft are untouched.
+- **Idle.** A transport with cargo aboard hovers at its hover height, and an empty one lands as any idle aircraft does (`ShouldHoverInsteadOfLand`). *Done (2026-10-09): an empty one had climbed back to its flying height and never landed; the hover now raises `Down`, then `Hover`.* This applies only to units with a hover height, so other aircraft are untouched.
 - **A ferry whose cargo never fits at its drop** (over deep water, say) keeps flying its route with the cargo aboard. Moho's `CUnitFerryTask::HasNextUnitToLoad` sends a ferry that still has loaded units out along the route again, so this matches.
 - **Proof:** `data.transport-drop-test` (retail).
   - A UEF T1 transport with 6 tanks flies up to 10, comes down to 3, and only then sets them down, on the ground and spread under it. Empty, it climbs back to 10.

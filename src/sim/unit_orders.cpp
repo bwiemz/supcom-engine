@@ -2030,9 +2030,10 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
     }
     // Over the centre, it comes down to its hover height; only then is it at
     // the pickup (Moho's move there is onto the land layer).
-    hold_altitude(dt, ctx.terrain, transport_hover_height_);
+    const bool low = hover_low(dt, ctx);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
     if (pickup_phase_ == PickupPhase::Landing) {
-        if (is_air_unit() && current_altitude_ != transport_hover_height_) return OrderStep::Hold;
+        if (!low) return OrderStep::Hold;
         pickup_phase_ = PickupPhase::Waiting;
     }
     // At the pickup: hover while the units come aboard, as long as the wait
@@ -2087,6 +2088,26 @@ void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
     Vector3 at = position();
     at.y = air_floor(terrain, at.x, at.z) + alt;
     set_position(at);
+}
+
+bool Unit::hover_low(f64 dt, SimContext& ctx) {
+    if (!is_air_unit()) {
+        return true;
+    }
+    if (current_altitude_ > transport_hover_height_) {
+        set_unit_state("MovingDown", true);
+        set_vert_event("Down", ctx.L);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+    }
+    hold_altitude(dt, ctx.terrain, transport_hover_height_);
+    if (current_altitude_ != transport_hover_height_) {
+        return false;
+    }
+    set_unit_state("MovingDown", false);
+    set_vert_event("Hover", ctx.L);
+    return !destroyed() && in_registry();
 }
 
 OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) {
@@ -2308,8 +2329,8 @@ OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
 }
 
 bool Unit::unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids) {
-    if (is_air_unit() && current_altitude_ != transport_hover_height_) {
-        hold_altitude(dt, ctx.terrain, transport_hover_height_);
+    if (is_air_unit() && vert_event_ != "Hover") {
+        hover_low(dt, ctx);
         return false;
     }
     // Those whose footprint fits the ground where they hang; the rest stay
