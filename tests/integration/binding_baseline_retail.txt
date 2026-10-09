@@ -25,7 +25,6 @@ G RemoveProfileDirectories
 G SetQueueGrid              # not Moho's
 G SetQueueState             # not Moho's
 G SetUIControlsAlpha
-G _c_CreateDecal
 G _c_CreatePathDebugger
 G errro                     # not Moho's: a retail typo (error)
 M AddOnKilledCallback       # not Moho's

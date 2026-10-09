@@ -18251,6 +18251,93 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     }
     sim_lua("__osc_ui_radar:Destroy() __osc_ui_scout:Destroy()");
     play(2);
+
+    // Test 10g0b: retail's UserDecal, the cursor's target decal, is a decal
+    // of the UI's: at its position less half its scale.
+    {
+        lua_ok("Test 10g0b: retail's UserDecal is made and placed", R"(
+            local UserDecal = import('/lua/user/UserDecal.lua').UserDecal
+            __osc_ud = UserDecal {}
+            __osc_ud:SetTexture('/textures/ui/common/game/AreaTargetDecal/nuke_icon_small.dds')
+            __osc_ud:SetScale({60, 1, 60})
+            __osc_ud:SetPosition({100, 20, 200})
+        )");
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const auto splats =
+            reg ? reg->user_decals().splats() : std::vector<const osc::ui::UserDecals::Decal*>{};
+        const bool placed =
+            splats.size() == 1 && splats[0]->corner[0] == 70.0f && splats[0]->corner[1] == 20.0f &&
+            splats[0]->corner[2] == 170.0f && splats[0]->scale[0] == 60.0f &&
+            splats[0]->texture == "/textures/ui/common/game/AreaTargetDecal/nuke_icon_small.dds";
+        const std::string where = splats.empty()
+                                      ? std::string()
+                                      : fmt::format(" at ({}, {}, {})", splats[0]->corner[0],
+                                                    splats[0]->corner[1], splats[0]->corner[2]);
+        const size_t made = splats.size();
+        lua_ok("Test 10g0b: and destroyed", "__osc_ud:Destroy() __osc_ud = nil");
+        const bool gone = reg && reg->user_decals().splats().empty();
+        if (placed && gone) {
+            spdlog::info("[PASS] Test 10g0b: a UserDecal lies at its position less half its scale");
+        } else {
+            osc::test_status::fail("[FAIL] Test 10g0b: {} UserDecal splats{}, {} once destroyed",
+                                   made, where, gone ? "none" : "some");
+        }
+    }
+
+    // Test 10g0c: in the nuke order's mode, retail's world view puts its
+    // reticle under the cursor, the launcher's AttackReticleSize across,
+    // and takes it away with the mode.
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_nuke = CreateUnitHPR('xsb2401', 'ARMY_1', x - 30, GetTerrainHeight(x - 30, z), z + 30, 0, 0, 0)
+    )");
+    play(2);
+    {
+        osc::u32 launcher = 0;
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "xsb2401") {
+                launcher = e.entity_id();
+            }
+        });
+        lua_ok("Test 10g0c: the nuke order's mode, the cursor updated", fmt::format(R"(
+            __osc_nuke_acu = GetSelectedUnits()[1]
+            SelectUnits({{{{EntityId = {}}}}})
+            import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {{name = 'RULEUCC_Nuke'}})
+            import('/lua/ui/game/worldview.lua').viewLeft:OnUpdateCursor()
+        )",
+                                                                                    launcher)
+                                                                            .c_str());
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const auto splats =
+            reg ? reg->user_decals().splats() : std::vector<const osc::ui::UserDecals::Decal*>{};
+        const bool reticle =
+            splats.size() == 1 &&
+            splats[0]->texture == "/textures/ui/common/game/AreaTargetDecal/nuke_icon_small.dds" &&
+            splats[0]->scale[0] == 90.0f && splats[0]->scale[2] == 90.0f;
+        const size_t during = splats.size();
+        lua_ok("Test 10g0c: the mode ended", R"(
+            import('/lua/ui/game/commandmode.lua').EndCommandMode(true)
+            import('/lua/ui/game/worldview.lua').viewLeft:OnUpdateCursor()
+            SelectUnits({__osc_nuke_acu})
+        )");
+        const bool ended = reg && reg->user_decals().splats().empty();
+        if (reticle && ended) {
+            spdlog::info("[PASS] Test 10g0c: the nuke order's reticle, 90 across, while its mode "
+                         "lasts");
+        } else {
+            osc::test_status::fail("[FAIL] Test 10g0c: {} reticle splats in the nuke order's "
+                                   "mode (one 90 across wanted), {} after it",
+                                   during, ended ? "none" : "some");
+        }
+    }
+    sim_lua("__osc_ui_nuke:Destroy()");
+    play(2);
     lua_ok("Test 10g: the commander's build options", R"(
         local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
         local list = EntityCategoryGetUnitList(buildable)
