@@ -194,7 +194,7 @@ void test_selection_render(TestContext& ctx) {
     // toggle the tank back off: it is a double-click, not a click.
     input.set_selected({});
     input.left_click_at(ctx.sim, tp.x, tp.z, true);
-    input.world_click(ctx.sim, tp.x, tp.z, true, true, r.camera().view_proj(aspect));
+    input.world_click(ctx.sim, tp.x, tp.z, true, false, true, r.camera().view_proj(aspect));
     const auto& shifted = input.selected();
     t.check(shifted.size() == 2 && shifted.count(tank) == 1 && shifted.count(tank2) == 1,
             fmt::format("Test 10: a Shift double-click keeps the tank and adds its like: {} "
