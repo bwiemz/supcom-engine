@@ -64,7 +64,7 @@ constexpr u32 kVersion = 39; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
                              // 37: builders' arm on target, and orders waiting for it;
                              // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
-                             // 39: the player's command ids issued
+                             // 39: the player's command ids issued, a formation's Move or FormMove
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

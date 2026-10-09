@@ -931,6 +931,7 @@ std::vector<IssuedCommand> InputHandler::issue_right_orders(
             cmd.formation = formation->script;
             cmd.has_facing = true;
             cmd.facing = formation->facing;
+            cmd.form_move = formation->settled();
         }
         // Player-issued: routed so it applies inside a tick (and a networked
         // match broadcasts it); a move goes to factories as their rally point.
@@ -1038,9 +1039,8 @@ void InputHandler::right_drag(std::optional<std::array<f32, 2>> cursor, f64 dt) 
 std::vector<IssuedCommand> InputHandler::right_release(sim::SimState& sim) {
     std::vector<IssuedCommand> issued;
     if (pending_right_) {
-        const FormationDrag* formation =
-            formation_ && formation_->settled() ? &*formation_ : nullptr;
-        issued = issue_right_orders(sim, pending_right_->orders, pending_right_->shift, formation);
+        issued = issue_right_orders(sim, pending_right_->orders, pending_right_->shift,
+                                    formation_ ? &*formation_ : nullptr);
     }
     pending_right_.reset();
     formation_.reset();

@@ -306,6 +306,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.str(c.formation);
     w.b(c.has_facing);
     w.f32v(c.facing);
+    w.b(c.form_move);
     w.f32v(c.speed_cap);
     w.b(c.formed);
     save_ids(w, c.unload_ids);
@@ -356,6 +357,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.formation = r.str();
     c.has_facing = r.b();
     c.facing = r.f32v();
+    c.form_move = r.b();
     c.speed_cap = r.f32v();
     c.formed = r.b();
     c.unload_ids = load_ids(r);
