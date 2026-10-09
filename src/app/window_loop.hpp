@@ -161,6 +161,7 @@ private:
     /// A player's window opens as FA's command line and options say
     /// (M217h); captures and scripted checks keep their fixed 1600x900.
     bool adapter_overridden = false;
+    bool shown_fullscreen = false;
     /// The UI's root frame: the size the window was asked for, until its
     /// swapchain has it (the resize lands a frame or more later), then the
     /// swapchain's (review: the boot laid the front end out at 1600x900).
