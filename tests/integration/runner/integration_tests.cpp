@@ -12054,10 +12054,12 @@ void test_transport_pickup(TestContext& ctx) {
     }
 
     f32 flown = -1, from_centre = -1, lifted = 0;
+    std::string ready_event;
     int ticks = 2;
     for (; ticks < 400; ++ticks) {
         ctx.sim.tick();
         if (flown < 0 && xport->pickup_ready()) {
+            ready_event = xport->vert_event();
             flown = std::hypot(xport->position().x - start.x, xport->position().z - start.z);
             from_centre =
                 std::hypot(xport->position().x - centre.x, xport->position().z - centre.z);
@@ -12078,6 +12080,8 @@ void test_transport_pickup(TestContext& ctx) {
                       flown, from_centre));
     check(std::abs(hover - 3.0f) < 0.3f,
           fmt::format("it hovers at its TransportHoverHeight of 3 ({:.2f})", hover));
+    check(ready_event == "Hover",
+          fmt::format("at the pickup its vertical event is Hover ({})", ready_event));
     check(lifted > 0.5f,
           fmt::format("a tank rose off the ground before it was aboard ({:.2f})", lifted));
     lua(R"(
@@ -14029,8 +14033,6 @@ void test_transport_drop(TestContext& ctx) {
     // its hover height, each tank on the ground where it hung.
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     f32 dropped_at = -1, peak = 0;
-    // (Emptied, it starts to climb in the same tick: its height is taken
-    // before the tick that set them down.)
     for (int i = 0; i < 400 && dropped_at < 0; ++i) {
         const f32 before = altitude(*xport);
         ctx.sim.tick();
@@ -14057,10 +14059,11 @@ void test_transport_drop(TestContext& ctx) {
                       "apart at least, {:.1f} out at most)",
                       off_ground, nearest, farthest));
 
-    // Empty and idle, it climbs back to its flying height.
+    // Empty and idle, it lands as any aircraft does.
     for (int i = 0; i < 60; ++i) ctx.sim.tick();
-    check(altitude(*xport) > 6.0f,
-          fmt::format("empty, it climbs back up ({:.1f})", altitude(*xport)));
+    check(!xport->is_air_unit() && xport->vert_event() == "Bottom",
+          fmt::format("empty, it lands ({} {}, {:.1f} up)", xport->layer(), xport->vert_event(),
+                      altitude(*xport)));
 
     // Over deep water nothing fits: all 6 stay aboard, the order ends, and it
     // hovers low with them.

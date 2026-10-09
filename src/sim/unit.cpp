@@ -636,12 +636,11 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     tick_idle_landing(dt, ctx);
     if (destroyed() || !in_registry()) return false;
 
-    // An idle transport hovers low with cargo aboard, and climbs back to its
-    // flying height without (Moho's ShouldHoverInsteadOfLand; M206n).
-    if (transport_hover_height_ > 0 && is_air_unit() && !dying_ && command_queue_.empty() &&
-        !navigator_.is_moving())
-        hold_altitude(dt, ctx.terrain,
-                      cargo_ids_.empty() ? elevation_target_ : transport_hover_height_);
+    if (is_air_unit() && vert_event_ == "Hover" && current_altitude_ > transport_hover_height_) {
+        set_unit_state("MovingUp", true);
+        set_vert_event("Up", L);
+        if (destroyed() || !in_registry()) return false;
+    }
 
     // Over water, the layer it is on (Moho's UpdateCurrentLayer).
     update_current_layer(ctx.terrain, L);
@@ -2725,8 +2724,10 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
     if (!land.descending) {
         const auto wait = static_cast<i32>(auto_land_time_ * 10.0f);
         if (wait <= 0 || now <= land.idle_since + static_cast<u32>(wait)) return;
-        // A transport with cargo hovers instead (ShouldHoverInsteadOfLand).
-        if (transport_hover_height_ > 0 && !cargo_ids_.empty()) return;
+        if (transport_hover_height_ > 0 && !cargo_ids_.empty()) {
+            hover_low(dt, ctx);
+            return;
+        }
         // Its last goal, if it is near it; else where it hangs.
         Vector3 target = navigator_.goal();
         const f32 gx = target.x - pos.x;

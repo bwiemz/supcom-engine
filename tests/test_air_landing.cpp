@@ -72,6 +72,15 @@ struct World {
                  " Footprint = {SizeX = 2, SizeZ = 2},"
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 0},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'ferry', Categories = {'AIR', 'MOBILE', 'TRANSPORTATION'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = 5,"
+                 " TransportHoverHeight = 3},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                 " Physics = {MotionType = 'RULEUMT_Land'}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -84,7 +93,7 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"plane", "drone"}) {
+        for (const char* id : {"plane", "drone", "ferry", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -292,4 +301,91 @@ TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs 
     w.run_until([&] { return plane.command_queue().empty(); }, 400);
     CHECK(plane.position().x > 90.0f);
     CHECK(plane.current_altitude() > low);
+}
+
+TEST_CASE("An idle empty transport lands as any aircraft does", "[air_landing][transport]") {
+    World w;
+    Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
+    const int landed = w.run_until([&] { return !ferry.is_air_unit(); }, 300);
+    CHECK(landed < 300);
+    CHECK(ferry.layer() == "Land");
+    CHECK(ferry.vert_event() == "Bottom");
+}
+
+TEST_CASE("An idle transport with cargo comes down to its TransportHoverHeight and hovers there, "
+          "refuelling",
+          "[air_landing][transport]") {
+    World w;
+    Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
+    Unit& tank = *w.make("tank", 44.0f, 40.0f);
+    tank.attach_to_transport(&ferry, w.sim.entity_registry(), w.state.raw());
+    REQUIRE(ferry.cargo_ids().size() == 1);
+    ferry.set_fuel_use_time(100.0f);
+    ferry.set_fuel_recharge_rate(10.0f);
+    ferry.set_fuel_ratio(0.5f);
+    bool down_seen = false;
+    const int hovering = w.run_until(
+        [&] {
+            down_seen =
+                down_seen || (ferry.vert_event() == "Down" && ferry.has_unit_state("MovingDown"));
+            return ferry.vert_event() == "Hover";
+        },
+        300);
+    CHECK(hovering < 300);
+    CHECK(down_seen);
+    CHECK_FALSE(ferry.has_unit_state("MovingDown"));
+    CHECK(ferry.is_air_unit());
+    CHECK(std::abs(ferry.current_altitude() - 3.0f) < 1e-4f);
+    const f32 low = ferry.fuel_ratio();
+    for (int i = 0; i < 10; ++i) w.sim.tick();
+    CHECK(ferry.fuel_ratio() > low);
+    CHECK(ferry.vert_event() == "Hover");
+}
+
+TEST_CASE("A transport given an order out of its hover climbs away: Up, then Top",
+          "[air_landing][transport]") {
+    World w;
+    Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
+    Unit& tank = *w.make("tank", 44.0f, 40.0f);
+    tank.attach_to_transport(&ferry, w.sim.entity_registry(), w.state.raw());
+    w.run_until([&] { return ferry.vert_event() == "Hover"; }, 300);
+    REQUIRE(ferry.vert_event() == "Hover");
+    World::move(ferry, 100.0f, 40.0f);
+    bool up_seen = false;
+    const int top = w.run_until(
+        [&] {
+            up_seen = up_seen || (ferry.vert_event() == "Up" && ferry.has_unit_state("MovingUp"));
+            return ferry.vert_event() == "Top";
+        },
+        300);
+    CHECK(top < 300);
+    CHECK(up_seen);
+    CHECK_FALSE(ferry.has_unit_state("MovingUp"));
+}
+
+TEST_CASE("A transport unloading comes down to its hover height as to a landing: Down, then Hover",
+          "[air_landing][transport]") {
+    World w;
+    Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
+    Unit& tank = *w.make("tank", 44.0f, 40.0f);
+    tank.attach_to_transport(&ferry, w.sim.entity_registry(), w.state.raw());
+    osc::sim::UnitCommand drop;
+    drop.type = osc::sim::CommandType::TransportUnload;
+    drop.target_pos = ferry.position();
+    ferry.push_command(drop, true);
+    bool down_seen = false;
+    std::string at_drop;
+    const int dropped = w.run_until(
+        [&] {
+            down_seen = down_seen || ferry.vert_event() == "Down";
+            if (ferry.cargo_ids().empty()) {
+                at_drop = ferry.vert_event();
+                return true;
+            }
+            return false;
+        },
+        300);
+    CHECK(dropped < 300);
+    CHECK(down_seen);
+    CHECK(at_drop == "Hover");
 }

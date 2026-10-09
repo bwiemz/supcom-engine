@@ -1435,6 +1435,9 @@ private:
     void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
     /// Hold still at `altitude` over the ground, climbing or sinking to it.
     void hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude);
+    /// A transport down to its TransportHoverHeight as to a landing (Moho's
+    /// ShouldHoverInsteadOfLand): MovingDown, then the Hover event. True there.
+    bool hover_low(f64 dt, SimContext& ctx);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
