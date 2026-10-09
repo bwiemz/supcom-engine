@@ -67,6 +67,16 @@ void main() {
 }
 )glsl";
 
+const char* terrain_skirt_frag = R"glsl(
+#version 450
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = vec4(0.1, 0.1, 0.1, 0.0);
+}
+)glsl";
+
 namespace {
 
 // The terrain's surface (M212b): its bindings, its normal, and FA's

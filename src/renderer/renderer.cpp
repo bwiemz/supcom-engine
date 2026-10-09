@@ -901,6 +901,17 @@ void Renderer::create_pipelines() {
                 terrain_builder(low).build(device_, frame_.scene_pass(), &terrain_low_layout_);
             vkDestroyShaderModule(device_, low, nullptr);
         }
+        VkShaderModule skirt =
+            compile_glsl(device_, shaders::terrain_skirt_frag, "terrain_skirt.frag", false);
+        if (skirt) {
+            terrain_skirt_pipeline_ =
+                terrain_builder(skirt)
+                    .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                    .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT)
+                    .build(device_, frame_.scene_pass(), &terrain_skirt_layout_);
+            vkDestroyShaderModule(device_, skirt, nullptr);
+        }
     }
 
     // --- The terrain in the normal pass (M212e): its normals into the
@@ -2878,6 +2889,20 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     }
     record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
 
+    // WRenViewport::RenderCompositeTerrain: DrawTerrainSkirt after DrawNormals
+    if (video_options_.skirt && terrain_skirt_pipeline_ && terrain_mesh_.skirt_index_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_skirt_pipeline_);
+        vkc::push_constants(cmd_buf_[fi], terrain_skirt_layout_,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(f32) * 16, vp.data());
+        VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.skirt_index_count(), 1,
+                          terrain_mesh_.skirt_first_index(), 0, 0);
+    }
+
     // 2b. The range overlays, on the terrain before the meshes
     // (WRenViewport::Render's RangeRenderer::Render)
     range_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
@@ -3890,6 +3915,12 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
     if (terrain_low_pipeline_) vkDestroyPipeline(device_, terrain_low_pipeline_, nullptr);
     if (terrain_low_layout_) vkDestroyPipelineLayout(device_, terrain_low_layout_, nullptr);
+    if (terrain_skirt_pipeline_) {
+        vkDestroyPipeline(device_, terrain_skirt_pipeline_, nullptr);
+    }
+    if (terrain_skirt_layout_) {
+        vkDestroyPipelineLayout(device_, terrain_skirt_layout_, nullptr);
+    }
     vkDestroyPipeline(device_, unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, unit_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);

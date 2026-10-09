@@ -77,7 +77,7 @@ private:
 /// The options' console variables and commands (M217i), Moho's TConVars
 /// on the engine's tunables: cam_ZoomAmount, the ui_* pan and rotate speeds
 /// and scroll switches, ui_AlwaysRenderStrategicIcons, ren_bloom,
-/// ren_Skydome, graphics_Fidelity, shadow_Fidelity, ren_MipSkipLevels,
+/// ren_Skydome, ren_Skirt, graphics_Fidelity, shadow_Fidelity, ren_MipSkipLevels,
 /// SC_CameraScaleLOD, the range_* convars; and SC_AntiAliasingSamples and
 /// SC_ToggleCursorClip. Without a renderer they keep their values in `held`.
 void register_option_commands(ui::Console& console, HeldConVars& held,

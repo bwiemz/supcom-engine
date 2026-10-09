@@ -14,6 +14,7 @@ VkShaderModule compile_glsl(VkDevice device, const char* source,
 /// All embedded shader sources.
 namespace shaders {
 extern const char* terrain_vert;
+extern const char* terrain_skirt_frag; ///< TerrainSkirtPS
 /// The terrain's fragment shader, built around its shared surface (M212b).
 const char* terrain_frag();
 /// The low fidelity terrain: unlit strata 0-3 times the normal maps' light (M212h).

@@ -28,6 +28,10 @@ public:
     VkBuffer vertex_buffer() const { return vertex_buf_.buffer; }
     VkBuffer index_buffer() const { return index_buf_.buffer; }
     u32 index_count() const { return index_count_; }
+    /// Moho's TTerrainSkirt walls from the map's edges down to its lowest
+    /// height (CTesselator::TesselateData), after the terrain's indices.
+    u32 skirt_first_index() const { return index_count_; }
+    u32 skirt_index_count() const { return skirt_index_count_; }
 
     /// Append the indices of its quads (two triangles each, as it draws
     /// them) that lie in the world rectangle [min_x, max_x] x [min_z,
@@ -42,6 +46,7 @@ private:
     AllocatedBuffer vertex_buf_{};
     AllocatedBuffer index_buf_{};
     u32 index_count_ = 0;
+    u32 skirt_index_count_ = 0;
     u32 grid_w_ = 0, grid_h_ = 0; ///< its vertices across and down
 };
 

@@ -288,6 +288,7 @@ public:
     /// SC_CameraScaleLOD, SC_AntiAliasingSamples.
     struct VideoOptions {
         bool skydome = true;
+        bool skirt = true;
         int graphics_fidelity = 2;
         int shadow_fidelity = 3;
         bool shadow_blur = true; ///< ren_ShadowBlur (M211m)
@@ -612,6 +613,8 @@ private:
     // The low fidelity terrain (M212h): terrain_layout_'s sets and push block
     VkPipeline terrain_low_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout terrain_low_layout_ = VK_NULL_HANDLE;
+    VkPipeline terrain_skirt_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout terrain_skirt_layout_ = VK_NULL_HANDLE;
     VkPipeline unit_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout unit_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE;
