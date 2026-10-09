@@ -316,6 +316,22 @@ TEST_CASE("Held still or stunned it turns; an aircraft doesn't", "[hull-facing]"
     CHECK(std::abs(heading_deg(*plane)) < 0.01f);
 }
 
+TEST_CASE("A landed aircraft doesn't turn to its slaved weapon's target", "[hull-facing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* plane = hull(sim, 64.0f, 40.0f, "RULEUMT_Air");
+    plane->set_layer("Land");
+    REQUIRE_FALSE(plane->is_air_unit());
+    gun(*plane).slaved_to_body = true;
+    gun(*plane).slaved_arc_range = 50.0f;
+    Unit* foe = dummy(sim, 0, 0);
+    foe->set_position(at_bearing(*plane, 120.0f, 20.0f));
+    gun(*plane).set_target_entity(foe->entity_id());
+    ticks(sim, 20);
+    CHECK(std::abs(heading_deg(*plane)) < 0.01f);
+}
+
 TEST_CASE("A turn in place is a move: Cruise, then Stopping, then Stopped", "[hull-facing]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
