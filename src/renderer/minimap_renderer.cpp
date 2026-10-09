@@ -197,6 +197,97 @@ void MinimapRenderer::update(const sim::FrameView& view, const Camera& camera,
     }
 }
 
+std::vector<UIInstance> camera_outline(const std::array<std::array<f32, 2>, 4>& corners,
+                                       const MapArea& view) {
+    std::vector<UIInstance> runs;
+    const f32 lo_x = std::floor(view.x);
+    const f32 lo_y = std::floor(view.y);
+    const f32 hi_x = std::ceil(view.x + view.w) - 1.0f;
+    const f32 hi_y = std::ceil(view.y + view.h) - 1.0f;
+    if (hi_x < lo_x || hi_y < lo_y) {
+        return runs;
+    }
+    const auto emit = [&](f32 x, f32 y, f32 w, f32 h) {
+        UIInstance q{};
+        q.rect[0] = x;
+        q.rect[1] = y;
+        q.rect[2] = w;
+        q.rect[3] = h;
+        q.uv[2] = 1.0f;
+        q.uv[3] = 1.0f;
+        q.color[0] = 1.0f;
+        q.color[1] = 1.0f;
+        q.color[2] = 0.0f;
+        q.color[3] = 1.0f;
+        runs.push_back(q);
+    };
+    for (size_t i = 0; i < corners.size(); ++i) {
+        const auto [x0, y0] = corners[i];
+        const auto [x1, y1] = corners[(i + 1) % corners.size()];
+        if (!std::isfinite(x0) || !std::isfinite(y0) || !std::isfinite(x1) || !std::isfinite(y1)) {
+            continue;
+        }
+        const f32 dx = x1 - x0;
+        const f32 dy = y1 - y0;
+        f32 t0 = 0.0f;
+        f32 t1 = 1.0f;
+        const auto inside = [&](f32 p, f32 q) {
+            if (p == 0.0f) {
+                return q >= 0.0f;
+            }
+            const f32 r = q / p;
+            if (p < 0.0f) {
+                t0 = std::max(t0, r);
+            } else {
+                t1 = std::min(t1, r);
+            }
+            return t0 <= t1;
+        };
+        if (!inside(-dx, x0 - view.x) || !inside(dx, view.x + view.w - x0) ||
+            !inside(-dy, y0 - view.y) || !inside(dy, view.y + view.h - y0)) {
+            continue;
+        }
+        const f32 sx = x0 + t0 * dx;
+        const f32 sy = y0 + t0 * dy;
+        const f32 ex = (t1 - t0) * dx;
+        const f32 ey = (t1 - t0) * dy;
+        const bool along_x = std::abs(ex) >= std::abs(ey);
+        const int steps =
+            std::max(1, static_cast<int>(std::ceil(std::max(std::abs(ex), std::abs(ey)))));
+        f32 run_x = 0.0f;
+        f32 run_y = 0.0f;
+        f32 run_end = 0.0f;
+        bool open = false;
+        const auto finish = [&] {
+            if (along_x) {
+                emit(std::min(run_x, run_end), run_y, std::abs(run_end - run_x) + 1.0f, 1.0f);
+            } else {
+                emit(run_x, std::min(run_y, run_end), 1.0f, std::abs(run_end - run_y) + 1.0f);
+            }
+        };
+        for (int k = 0; k <= steps; ++k) {
+            const f32 t = static_cast<f32>(k) / static_cast<f32>(steps);
+            const f32 px = std::clamp(std::floor(sx + t * ex), lo_x, hi_x);
+            const f32 py = std::clamp(std::floor(sy + t * ey), lo_y, hi_y);
+            if (open && (along_x ? py == run_y : px == run_x)) {
+                run_end = along_x ? px : py;
+                continue;
+            }
+            if (open) {
+                finish();
+            }
+            run_x = px;
+            run_y = py;
+            run_end = along_x ? px : py;
+            open = true;
+        }
+        if (open) {
+            finish();
+        }
+    }
+    return runs;
+}
+
 std::vector<ResourceIcon> minimap_resource_icons(std::span<const sim::ResourceDeposit> deposits,
                                                  const MapArea& area, f32 map_w, f32 map_h,
                                                  const PlayableRect& playable) {
@@ -322,28 +413,13 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
     }
 
     if (all_valid) {
-        // Draw 4 line segments connecting the frustum corners on the minimap
-        constexpr f32 LINE_THICK = 1.5f;
-        for (int i = 0; i < 4; i++) {
-            int j = (i + 1) % 4;
-
-            f32 x0 = ax + std::clamp(corners_x[i] / map_w_, 0.0f, 1.0f) * aw;
-            f32 y0 = ay + std::clamp(corners_z[i] / map_h_, 0.0f, 1.0f) * ah;
-            f32 x1 = ax + std::clamp(corners_x[j] / map_w_, 0.0f, 1.0f) * aw;
-            f32 y1 = ay + std::clamp(corners_z[j] / map_h_, 0.0f, 1.0f) * ah;
-
-            // AABB of the line segment
-            f32 min_x = std::min(x0, x1) - LINE_THICK * 0.5f;
-            f32 min_y = std::min(y0, y1) - LINE_THICK * 0.5f;
-            f32 max_x = std::max(x0, x1) + LINE_THICK * 0.5f;
-            f32 max_y = std::max(y0, y1) + LINE_THICK * 0.5f;
-
-            // Ensure minimum size
-            if (max_x - min_x < LINE_THICK) max_x = min_x + LINE_THICK;
-            if (max_y - min_y < LINE_THICK) max_y = min_y + LINE_THICK;
-
-            emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                      1.0f, 1.0f, 1.0f, 0.8f, white_ds_);
+        std::array<std::array<f32, 2>, 4> corners{};
+        for (int i = 0; i < 4; ++i) {
+            corners[i] = {ax + corners_x[i] / map_w_ * aw, ay + corners_z[i] / map_h_ * ah};
+        }
+        for (const UIInstance& run : camera_outline(corners, view_)) {
+            emit_quad(run.rect[0], run.rect[1], run.rect[2], run.rect[3], run.color[0],
+                      run.color[1], run.color[2], run.color[3], white_ds_);
         }
     }
 }
