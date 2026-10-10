@@ -278,6 +278,12 @@ public:
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
     void set_weapons_yellow(bool on) { strategic_icon_renderer_.set_weapons_yellow(on); }
     bool weapons_yellow() const { return strategic_icon_renderer_.weapons_yellow(); }
+    void set_team_color_mode(bool on) { strategic_icon_renderer_.set_team_color_mode(on); }
+    bool team_color_mode() const { return strategic_icon_renderer_.team_color_mode(); }
+    void set_team_palette(std::vector<u32> palette) {
+        strategic_icon_renderer_.set_team_palette(std::move(palette));
+    }
+    const std::vector<u32>& team_palette() const { return strategic_icon_renderer_.team_palette(); }
     void set_select_boxes(bool on) {
         overlay_renderer_.set_select_boxes(on);
         selection_renderer_.set_enabled(on);

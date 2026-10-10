@@ -3,8 +3,10 @@
 #include "renderer/vk_types.hpp"
 #include "renderer/ui_renderer.hpp" // UIInstance, UIDrawGroup
 #include "core/types.hpp"
+#include "sim/game_colors.hpp"
 
 #include <array>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -107,6 +109,13 @@ public:
     /// UI_forceWeaponsToYellow
     void set_weapons_yellow(bool on) { weapons_yellow_ = on; }
     bool weapons_yellow() const { return weapons_yellow_; }
+    /// TeamColorMode, as Moho's RenderUnitIcon reads it.
+    void set_team_color_mode(bool on) { team_color_mode_ = on; }
+    void set_focus_army(i32 army) { focus_army_ = army; }
+    bool team_color_mode() const { return team_color_mode_; }
+    void set_team_colors(const sim::TeamColors& colors) { team_colors_ = colors; }
+    void set_team_palette(std::vector<u32> palette) { team_palette_ = std::move(palette); }
+    const std::vector<u32>& team_palette() const { return team_palette_; }
     VkDescriptorSet atlas_descriptor() const { return atlas_ds_; }
 
     /// Camera distance past which meshes give way to icons altogether.
@@ -179,6 +188,8 @@ private:
     /// strategicIcons.lua's GenericIcons and StunnedIcons, read once.
     void load_generic_icons(lua_State* L);
 
+    std::optional<u32> team_color(const sim::FrameView& view, i32 army) const;
+
     /// Generate a single icon shape into pixel buffer.
     static void draw_icon_shape(u8* pixels, u32 atlas_w,
                                 u32 cell_x, u32 cell_y, u32 cell_size,
@@ -208,6 +219,10 @@ private:
     bool nis_icons_ = true;
     bool weapons_yellow_ = true;
     bool always_ = false;
+    bool team_color_mode_ = false;
+    i32 focus_army_ = -1;
+    sim::TeamColors team_colors_;
+    std::vector<u32> team_palette_;
     const ReconView* recon_ = nullptr;
 };
 

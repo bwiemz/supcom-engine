@@ -1368,6 +1368,8 @@ void Renderer::clear_scene() {
     trail_renderer_.clear();
     trail_bp_cache_.clear();
     strategic_icon_renderer_.forget_blueprints(); // likewise the icons' (M215c)
+    strategic_icon_renderer_.set_team_color_mode(false);
+    strategic_icon_renderer_.set_team_palette({});
 
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
@@ -1477,6 +1479,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     if (L) {
         sim::GameColors colors = sim::read_game_colors(L);
         recon_.set_unidentified_color(colors.unidentified_color);
+        strategic_icon_renderer_.set_team_colors(colors.team_colors);
         unit_renderer_.set_game_colors(std::move(colors));
     }
     // The cubes and lookups meshes shade with (M211a/b), once the texture
@@ -2491,6 +2494,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                   const std::unordered_set<u32>* selected_ids) {
     // What the player's army sees this tick (everything, with the fog off)
     recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
+    strategic_icon_renderer_.set_focus_army(player_army_);
     recon_.update(view, events.intel_flushes);
     events.intel_flushes.clear();
     // A playable rect the scripts synced since: what's outside it now hides

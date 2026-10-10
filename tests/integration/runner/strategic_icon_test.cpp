@@ -17,6 +17,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/texture_cache.hpp"
+#include "sim/game_colors.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
@@ -402,6 +403,42 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(bolt_squares(f).empty() && r.camera().zoom() < 128.0f,
             fmt::format("Test 19: at zoom {:.0f}, the bolt has no square ({} there)",
                         r.camera().zoom(), bolt_squares(f).size()));
+    const sim::TeamColors team = sim::read_game_colors(ctx.L).team_colors;
+    const auto rgb = [](u32 argb) -> std::array<f32, 3> {
+        return {static_cast<f32>(argb >> 16 & 0xFFu) / 255.0f,
+                static_cast<f32>(argb >> 8 & 0xFFu) / 255.0f,
+                static_cast<f32>(argb & 0xFFu) / 255.0f};
+    };
+    const std::string tank_icon = icon_texture(ctx, "uel0201", "rest");
+    (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+    scry.push_back({sx + 40, sz + 84});
+    (void)next();
+    scry.clear();
+    r.set_team_color_mode(true);
+    f = next();
+    t.check(shows(f, tank, tank_icon, rgb(team.self)) &&
+                shows(f, e_tank, tank_icon, rgb(team.enemy)) &&
+                shows(f, e_eng, dir + "icon_land_generic_rest.dds", grey) &&
+                on_minimap(tank, tank_icon, rgb(team.self)),
+            "Test 20: TeamColorMode: the player's tank in Self, the enemy's in Enemy, a blip "
+            "unidentified, the minimap's in Self");
+    run_lua(ctx, "SetAlliance(1, 2, 'Neutral')\n");
+    f = next();
+    const bool neutral = shows(f, e_tank, tank_icon, rgb(team.neutral));
+    run_lua(ctx, "SetAlliance(1, 2, 'Ally')\n");
+    f = next();
+    t.check(neutral && shows(f, e_tank, tank_icon, rgb(team.ally)),
+            "Test 21: TeamColorMode: a neutral army's tank in Neutral, an ally's in Ally");
+    r.set_team_palette({0xFF00FF00u, 0xFFFF00FFu});
+    f = next();
+    t.check(shows(f, tank, tank_icon, rgb(0xFF00FF00u)) &&
+                shows(f, e_tank, tank_icon, rgb(0xFFFF00FFu)),
+            "Test 22: FAF's palette colours each army's icons by its index");
+    r.set_team_palette({});
+    r.set_team_color_mode(false);
+    f = next();
+    t.check(shows(f, tank, tank_icon, blue) && shows(f, e_tank, tank_icon, army_tint(1)),
+            "Test 23: TeamColorMode off: the armies' own colours again");
 
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }

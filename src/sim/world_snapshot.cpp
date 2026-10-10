@@ -495,8 +495,16 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
                     econ.energy.requested};
         a.mass_efficiency = brain->mass_efficiency();
         a.energy_efficiency = brain->energy_efficiency();
-        for (i32 j = 0; j < static_cast<i32>(sim.army_count()) && j < 32; ++j)
-            if (j != static_cast<i32>(i) && brain->is_ally(j)) a.allies |= 1u << j;
+        for (i32 j = 0; j < static_cast<i32>(sim.army_count()) && j < 32; ++j) {
+            if (j == static_cast<i32>(i)) {
+                continue;
+            }
+            if (brain->is_ally(j)) {
+                a.allies |= 1u << j;
+            } else if (brain->is_enemy(j)) {
+                a.enemies |= 1u << j;
+            }
+        }
         a.start_x = brain->start_position().x;
         a.start_z = brain->start_position().z;
     }

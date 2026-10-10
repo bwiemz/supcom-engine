@@ -67,6 +67,15 @@ GameColors read_game_colors(lua_State* L) {
                 lua_pop(L, 1);
                 read_color(L, "UnidentifiedColor", out.unidentified_color);
                 read_color(L, "CivilianArmyColor", out.civilian_army_color);
+                lua_pushstring(L, "TeamColorMode");
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    read_color(L, "Self", out.team_colors.self);
+                    read_color(L, "Ally", out.team_colors.ally);
+                    read_color(L, "Enemy", out.team_colors.enemy);
+                    read_color(L, "Neutral", out.team_colors.neutral);
+                }
+                lua_pop(L, 1);
             }
         } else {
             spdlog::warn("GameColors: {}",

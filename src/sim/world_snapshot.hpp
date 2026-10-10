@@ -209,6 +209,7 @@ struct ArmyRecord {
     ResourceRecord mass, energy;
     f64 mass_efficiency = 1, energy_efficiency = 1;
     u32 allies = 0; ///< bit j: allied with army j (its intel shares; M215a)
+    u32 enemies = 0;              ///< bit j: at war with army j
     f32 start_x = 0, start_z = 0; ///< its start position (the no-rush zone's centre)
 };
 

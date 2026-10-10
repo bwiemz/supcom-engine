@@ -466,6 +466,27 @@ void StrategicIconRenderer::preload(const std::vector<std::string>& blueprint_id
     }
 }
 
+std::optional<u32> StrategicIconRenderer::team_color(const sim::FrameView& view, i32 army) const {
+    const i32 focus = focus_army_;
+    const sim::ArmyRecord* me = view.cur() && focus >= 0 ? view.cur()->army(focus) : nullptr;
+    if (!team_color_mode_ || !me || !me->valid || army < 0) {
+        return std::nullopt;
+    }
+    if (static_cast<size_t>(army) < team_palette_.size()) {
+        return team_palette_[static_cast<size_t>(army)];
+    }
+    if (army == focus) {
+        return team_colors_.self;
+    }
+    if (army < 32 && (me->allies >> army & 1u) != 0) {
+        return team_colors_.ally;
+    }
+    if (army < 32 && (me->enemies >> army & 1u) != 0) {
+        return team_colors_.enemy;
+    }
+    return team_colors_.neutral;
+}
+
 template <class Place>
 StrategicIconRenderer::Runs
 StrategicIconRenderer::collect(const sim::FrameView& view,
@@ -519,7 +540,11 @@ StrategicIconRenderer::collect(const sim::FrameView& view,
             icon.underlay_path = &underlay_texture(entity.strategic_underlay);
             icon.underlay = tex_cache.get(*icon.underlay_path);
         }
-        if (identified) {
+        if (const auto team = identified ? team_color(view, entity.army) : std::nullopt) {
+            icon.r = static_cast<f32>(*team >> 16 & 0xFFu) / 255.0f;
+            icon.g = static_cast<f32>(*team >> 8 & 0xFFu) / 255.0f;
+            icon.b = static_cast<f32>(*team & 0xFFu) / 255.0f;
+        } else if (identified) {
             get_army_color(entity, view, icon.r, icon.g, icon.b);
         } else {
             const auto [ur, ug, ub] = recon_->unidentified_rgb();
