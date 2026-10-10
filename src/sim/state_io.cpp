@@ -73,6 +73,7 @@ constexpr u32 kVersion = 41; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 41: aircraft's spin, facing, KRoll and BankForward
                              // 39: NeedToFaceTargetToBuild
                              // 39: walk animators' motion scaling
+                             // 39: trees' fall motors
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
