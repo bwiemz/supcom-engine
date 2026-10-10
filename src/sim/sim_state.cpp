@@ -785,6 +785,18 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const
     if (unit.is_being_built() && !unit.has_category("FACTORY")) {
         return false;
     }
+    if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
+        return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
+               unit.has_category("NEEDMOBILEBUILD") || unit.has_category("POD");
+    }
+    const char* needs = command.type == CommandType::Reclaim   ? "RECLAIM"
+                        : command.type == CommandType::Capture ? "CAPTURE"
+                        : command.type == CommandType::Repair  ? "REPAIR"
+                                                               : nullptr;
+    if (needs &&
+        (!unit.has_category(needs) || (unit.transport_id() != 0 && unit.has_category("POD")))) {
+        return false;
+    }
     if (command.type == CommandType::Reclaim) {
         const Entity* target =
             command.target_id ? entity_registry_.find(command.target_id) : nullptr;

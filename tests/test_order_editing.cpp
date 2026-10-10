@@ -455,6 +455,7 @@ TEST_CASE("A build dropped where it can't stand is not sent; elsewhere it snaps"
           "[order_edit][input]") {
     World w;
     Unit& a = w.walker(10, 10);
+    a.add_category("ENGINEER");
     UnitCommand build;
     build.type = CommandType::BuildMobile;
     build.blueprint_id = "pgen";
