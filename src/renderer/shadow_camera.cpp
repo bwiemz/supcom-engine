@@ -47,44 +47,65 @@ constexpr f32 kTopRaise = 8.0f;
 
 HeightBounds::HeightBounds(const map::Heightmap& heightmap)
     : cells_x_(heightmap.map_width()), cells_z_(heightmap.map_height()) {
+    levels_.emplace_back(static_cast<size_t>(cells_x_) * cells_z_);
+    widths_.push_back(cells_x_);
+    heights_.push_back(cells_z_);
+    // Each level above: a 2 by 2 block of the one below (fewer at its edge).
+    while (widths_.back() > 1 || heights_.back() > 1) {
+        const u32 nw = (widths_.back() + 1) / 2;
+        const u32 nh = (heights_.back() + 1) / 2;
+        levels_.emplace_back(static_cast<size_t>(nw) * nh);
+        widths_.push_back(nw);
+        heights_.push_back(nh);
+    }
+    update(heightmap, 0, 0, cells_x_, cells_z_);
+}
+
+void HeightBounds::update(const map::Heightmap& heightmap, u32 x0, u32 z0, u32 x1, u32 z1) {
+    x1 = std::min(x1, cells_x_);
+    z1 = std::min(z1, cells_z_);
+    if (x0 >= x1 || z0 >= z1) {
+        return;
+    }
     // Level 0: a cell's four corners.
-    std::vector<Range> cells(static_cast<size_t>(cells_x_) * cells_z_);
-    for (u32 z = 0; z < cells_z_; ++z)
-        for (u32 x = 0; x < cells_x_; ++x) {
+    std::vector<Range>& cells = levels_[0];
+    for (u32 z = z0; z < z1; ++z) {
+        for (u32 x = x0; x < x1; ++x) {
             const f32 h[4] = {
                 heightmap.get_height_at_grid(x, z), heightmap.get_height_at_grid(x + 1, z),
                 heightmap.get_height_at_grid(x, z + 1), heightmap.get_height_at_grid(x + 1, z + 1)};
             cells[static_cast<size_t>(z) * cells_x_ + x] = {*std::min_element(h, h + 4),
                                                             *std::max_element(h, h + 4)};
         }
-    levels_.push_back(std::move(cells));
-    widths_.push_back(cells_x_);
-    heights_.push_back(cells_z_);
-    // Each level above: a 2 by 2 block of the one below (fewer at its edge).
-    while (widths_.back() > 1 || heights_.back() > 1) {
-        const u32 w = widths_.back();
-        const u32 h = heights_.back();
-        const u32 nw = (w + 1) / 2;
-        const u32 nh = (h + 1) / 2;
-        const std::vector<Range>& below = levels_.back();
-        std::vector<Range> above(static_cast<size_t>(nw) * nh);
-        for (u32 z = 0; z < nh; ++z)
-            for (u32 x = 0; x < nw; ++x) {
+    }
+    for (size_t level = 1; level < levels_.size(); ++level) {
+        const u32 w = widths_[level - 1];
+        const u32 h = heights_[level - 1];
+        const u32 nw = widths_[level];
+        const std::vector<Range>& below = levels_[level - 1];
+        std::vector<Range>& above = levels_[level];
+        x0 /= 2;
+        z0 /= 2;
+        x1 = (x1 + 1) / 2;
+        z1 = (z1 + 1) / 2;
+        for (u32 z = z0; z < z1; ++z) {
+            for (u32 x = x0; x < x1; ++x) {
                 Range r{std::numeric_limits<f32>::max(), std::numeric_limits<f32>::lowest()};
-                for (u32 dz = 0; dz < 2; ++dz)
+                for (u32 dz = 0; dz < 2; ++dz) {
                     for (u32 dx = 0; dx < 2; ++dx) {
                         const u32 cx = x * 2 + dx;
                         const u32 cz = z * 2 + dz;
-                        if (cx >= w || cz >= h) continue;
+                        if (cx >= w || cz >= h) {
+                            continue;
+                        }
                         const Range& c = below[static_cast<size_t>(cz) * w + cx];
                         r.lo = std::min(r.lo, c.lo);
                         r.hi = std::max(r.hi, c.hi);
                     }
+                }
                 above[static_cast<size_t>(z) * nw + x] = r;
             }
-        levels_.push_back(std::move(above));
-        widths_.push_back(nw);
-        heights_.push_back(nh);
+        }
     }
 }
 

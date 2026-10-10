@@ -31,6 +31,7 @@ add_executable(osc_tests
     test_target_points.cpp
     test_footprint_classes.cpp
     test_occupancy.cpp
+    test_flatten_map_rect.cpp
     test_path_clusters.cpp
     test_path_search.cpp
     test_path_navigator.cpp

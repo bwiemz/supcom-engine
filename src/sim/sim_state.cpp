@@ -519,6 +519,41 @@ void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
     ground_occupants_.clear();
 }
 
+bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevation) {
+    if (!terrain_) {
+        return false;
+    }
+    const auto flat = terrain_->flatten(x, z, size_x, size_z, elevation);
+    if (!flat) {
+        return false;
+    }
+    const i32 lo_x = std::max(0, x - 1);
+    const i32 lo_z = std::max(0, z - 1);
+    if (path_tables_) {
+        path_tables_->dirty({lo_x, lo_z, flat->x1, flat->z1});
+    }
+    const f32 mid_x = static_cast<f32>(lo_x + flat->x1) * 0.5f;
+    const f32 mid_z = static_cast<f32>(lo_z + flat->z1) * 0.5f;
+    const auto reach_x = static_cast<f32>(flat->x1 - lo_x);
+    const auto reach_z = static_cast<f32>(flat->z1 - lo_z);
+    entity_registry_.for_each_unit([&](Entity& e) {
+        auto& unit = static_cast<Unit&>(e);
+        if (unit.destroyed() || unit.is_dying() || !unit.is_mobile()) {
+            return;
+        }
+        if (unit.layer() != "Land" && unit.layer() != "Seabed") {
+            return;
+        }
+        Vector3 p = unit.position();
+        if (std::abs(p.x - mid_x) > reach_x || std::abs(p.z - mid_z) > reach_z) {
+            return;
+        }
+        p.y = unit.ground_y(terrain_.get(), p.x, p.z);
+        unit.set_position(p);
+    });
+    return true;
+}
+
 void SimState::set_sound_manager(audio::SoundManager* mgr) {
     sound_manager_ = mgr;
 }

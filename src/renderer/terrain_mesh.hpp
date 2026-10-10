@@ -6,6 +6,7 @@
 #include <vector>
 
 namespace osc::map {
+class Heightmap;
 class Terrain;
 }
 
@@ -24,6 +25,9 @@ public:
                VmaAllocator allocator, VkCommandPool cmd_pool, VkQueue queue);
 
     void destroy(VkDevice device, VmaAllocator allocator);
+
+    void record_update(VkCommandBuffer cmd, const osc::map::Heightmap& hm, i32 x0, i32 z0, i32 x1,
+                       i32 z1);
 
     VkBuffer vertex_buffer() const { return vertex_buf_.buffer; }
     VkBuffer index_buffer() const { return index_buf_.buffer; }

@@ -163,6 +163,8 @@ public:
     // Terrain & Pathfinding
     void set_terrain(std::unique_ptr<map::Terrain> terrain);
     map::Terrain* terrain() const { return terrain_.get(); }
+    /// Moho's Sim::FlattenMapRect.
+    bool flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevation);
     void build_pathfinding_grid();
     /// The footprint classes' path clusters, made again for the map and
     /// the ground's claims, every cluster dirty (a new map, a load).

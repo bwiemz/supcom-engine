@@ -6,7 +6,8 @@
 // 3. the Cybran naval factory (URB0103, MinWaterDepth 1.5) needs that depth;
 // 4. a power generator (UEB1101) won't fit across a slope that a wall
 //    (UEB5101, MaxGroundVariation 50) takes;
-// 5. an experimental aircraft (XSA0402, UAA0310) is placed as a mobile unit.
+// 5. an experimental aircraft (XSA0402, UAA0310) is placed as a mobile unit;
+// 6. a power generator (FlattenSkirt) made on a slope levels its skirt.
 //
 // Before, only LAYER_Land/Water/Seabed were read, so the HARMS could be
 // built nowhere; water structures went in any depth, and slope was judged
@@ -123,6 +124,41 @@ void test_placement_layers(TestContext& ctx) {
         }
     }
     t.check(found, "Test 4: a slope a wall takes and a power generator doesn't");
+
+    std::optional<Spot> sloped;
+    for (i32 iz = 30; iz < h - 30 && !sloped; iz += 6) {
+        for (i32 ix = 30; ix < w - 30 && !sloped; ix += 6) {
+            const auto x = static_cast<f32>(ix);
+            const auto z = static_cast<f32>(iz);
+            if (terrain->get_terrain_height(x, z) < terrain->water_elevation() + 1) {
+                continue;
+            }
+            const f32 rise = std::abs(terrain->get_terrain_height(x - 1, z - 1) -
+                                      terrain->get_terrain_height(x + 1, z + 1));
+            if (rise > 0.2f && can_build("ueb1101", x, z)) {
+                sloped = Spot{x, z};
+            }
+        }
+    }
+    if (!sloped) {
+        t.check(false, "Test 6: a sloped spot a power generator fits");
+    } else {
+        run_lua(ctx, fmt::format("__osc_pl_pgen = CreateUnitHPR('ueb1101', 'ARMY_1', {0}, "
+                                 "GetTerrainHeight({0}, {1}), {1}, 0, 0, 0)",
+                                 sloped->x, sloped->z));
+        t.check(lua_bool("local u = __osc_pl_pgen\n"
+                         "local y = u:GetPosition()[2]\n"
+                         "local x0, z0, x1, z1 = u:GetSkirtRect()\n"
+                         "__osc_pl = 'true'\n"
+                         "for x = math.floor(x0), math.ceil(x1) do\n"
+                         "  for z = math.floor(z0), math.ceil(z1) do\n"
+                         "    if math.abs(GetTerrainHeight(x, z) - y) > 1 / 128 then\n"
+                         "      __osc_pl = 'false'\n"
+                         "    end\n"
+                         "  end\n"
+                         "end") == "true",
+                "Test 6: a power generator made on a slope levels the ground under its skirt");
+    }
 
     spdlog::info("=== PLACEMENT LAYERS TEST: {} passed, {} failed ===", t.pass, t.fail);
 }

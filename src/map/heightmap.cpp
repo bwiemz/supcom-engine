@@ -22,6 +22,54 @@ f32 Heightmap::get_height_at_grid(u32 gx, u32 gz) const {
     return static_cast<f32>(data_[gz * grid_width_ + gx]) * scale_;
 }
 
+void Heightmap::set_rect(i32 x0, i32 z0, i32 x1, i32 z1, f32 elevation) {
+    x0 = std::max(x0, 0);
+    z0 = std::max(z0, 0);
+    x1 = std::min(x1, static_cast<i32>(grid_width_));
+    z1 = std::min(z1, static_cast<i32>(grid_height_));
+    if (x0 >= x1 || z0 >= z1) {
+        return;
+    }
+    if (original_.empty()) {
+        original_ = data_;
+    }
+    const f32 raw = std::clamp(elevation / scale_, 0.0f, 65535.0f);
+    const auto value = static_cast<u16>(raw);
+    for (i32 z = z0; z < z1; ++z) {
+        const auto row = data_.begin() + static_cast<std::ptrdiff_t>(z) * grid_width_;
+        std::fill(row + x0, row + x1, value);
+    }
+    max_height_ = std::max(max_height_, static_cast<f32>(value) * scale_);
+}
+
+void Heightmap::copy_rect(const Heightmap& from, i32 x0, i32 z0, i32 x1, i32 z1) {
+    if (from.grid_width_ != grid_width_ || from.grid_height_ != grid_height_) {
+        return;
+    }
+    x0 = std::max(x0, 0);
+    z0 = std::max(z0, 0);
+    x1 = std::min(x1, static_cast<i32>(grid_width_));
+    z1 = std::min(z1, static_cast<i32>(grid_height_));
+    if (x0 >= x1) {
+        return;
+    }
+    for (i32 z = z0; z < z1; ++z) {
+        const auto offset = static_cast<std::ptrdiff_t>(z) * grid_width_;
+        std::copy(from.data_.begin() + offset + x0, from.data_.begin() + offset + x1,
+                  data_.begin() + offset + x0);
+    }
+    max_height_ = std::max(max_height_, from.max_height_);
+}
+
+void Heightmap::reset() {
+    if (original_.empty()) {
+        return;
+    }
+    data_ = std::move(original_);
+    original_.clear();
+    max_height_ = static_cast<f32>(*std::max_element(data_.begin(), data_.end())) * scale_;
+}
+
 f32 Heightmap::get_height(f32 x, f32 z) const {
     // Clamp to valid world range
     f32 max_x = static_cast<f32>(grid_width_ - 1);

@@ -10923,6 +10923,7 @@ void test_range(TestContext& ctx) {
         IssueRepair({__osc_far.mender}, __osc_far.hurt)
         __osc_far.reclaimer = __osc_spawn('uel0105', 'ARMY_1', 595.5, 145.5)
         __osc_far.scrap = __osc_spawn('ueb2101', 'ARMY_1', 625.5, 145.5)
+        __osc_far.scrap:SetFireState(1)
         IssueReclaim({__osc_far.reclaimer}, __osc_far.scrap)
         __osc_far.taker = __osc_spawn('uel0105', 'ARMY_1', 595.5, 150.5)
         __osc_far.prize = __osc_spawn('uel0201', 'ARMY_2', 625.5, 150.5)

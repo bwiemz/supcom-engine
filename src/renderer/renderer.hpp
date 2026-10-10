@@ -848,6 +848,9 @@ private:
     };
     /// The scene's ground, for the camera's focus (M217a).
     std::optional<map::Heightmap> ground_;
+    size_t ground_flattenings_ = 0;
+    u32 ground_resets_ = 0;
+    void record_terrain_sync(VkCommandBuffer cmd);
     /// The last frame's view of the world, whose entities the camera's
     /// targets follow (M217g): the app's history outlives it; a test drawing
     /// from its own snapshots must keep them while it polls.

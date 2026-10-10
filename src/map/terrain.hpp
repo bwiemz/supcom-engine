@@ -4,6 +4,7 @@
 #include "map/scmap_parser.hpp"
 
 #include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,6 +46,11 @@ struct DecalInfo {
     f32 near_cut_off_lod = 0.0f;
 };
 
+struct Flattening {
+    i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    f32 elevation = 0.0f;
+};
+
 /// Terrain system combining heightmap and water data.
 /// Provides the queries used by simulation code (GetTerrainHeight, GetSurfaceHeight).
 class Terrain {
@@ -66,6 +72,12 @@ public:
     f32 water_ratio() const;
 
     const Heightmap& heightmap() const { return heightmap_; }
+
+    /// Moho's Sim::FlattenMapRect.
+    std::optional<Flattening> flatten(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevation);
+    const std::vector<Flattening>& flattenings() const { return flattenings_; }
+    void set_flattenings(std::vector<Flattening> flattenings);
+    u32 flattenings_resets() const { return flattenings_resets_; }
     u32 map_width() const { return heightmap_.map_width(); }
     u32 map_height() const { return heightmap_.map_height(); }
 
@@ -136,6 +148,8 @@ public:
 
 private:
     Heightmap heightmap_;
+    std::vector<Flattening> flattenings_;
+    u32 flattenings_resets_ = 0;
     f32 water_elevation_;
     bool has_water_;
     std::vector<StratumInfo> strata_;

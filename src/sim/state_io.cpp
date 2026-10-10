@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 39; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -63,7 +63,8 @@ constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 35: reclaims' ticks before their first share;
                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
                              // 37: builders' arm on target, and orders waiting for it;
-                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks
+                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
+                             // 39: the heightfield's flattenings (FlattenMapRect)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -249,6 +250,16 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(client);
         w.i32v(left);
     }
+    const std::vector<map::Flattening> none;
+    const auto& flattenings = sim.terrain_ ? sim.terrain_->flattenings() : none;
+    w.size(flattenings.size());
+    for (const map::Flattening& f : flattenings) {
+        w.i32v(f.x0);
+        w.i32v(f.z0);
+        w.i32v(f.x1);
+        w.i32v(f.z1);
+        w.f32v(f.elevation);
+    }
     // pause_holds_: the host's; terrain_: the map's; pathfinding_grid_ and
     // pathfinder_: the map's, with occupied_footprints_ marked
     save_by_id(w, sim.occupied_footprints_, [&](const SimState::Footprint& f) {
@@ -427,6 +438,17 @@ void StateIO::load(StateReader& r, SimState& sim) {
     for (size_t i = 0; i < timeouts; ++i) {
         const u32 client = r.u32v();
         sim.pause_timeouts_[client] = r.i32v();
+    }
+    std::vector<map::Flattening> flattenings(r.size(20));
+    for (map::Flattening& f : flattenings) {
+        f.x0 = r.i32v();
+        f.z0 = r.i32v();
+        f.x1 = r.i32v();
+        f.z1 = r.i32v();
+        f.elevation = r.f32v();
+    }
+    if (sim.terrain_) {
+        sim.terrain_->set_flattenings(std::move(flattenings));
     }
     // The boot's structures come off the pathfinding grid, the saved
     // game's go on.

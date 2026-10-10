@@ -36,6 +36,9 @@ class HeightBounds {
 public:
     explicit HeightBounds(const map::Heightmap& heightmap);
 
+    /// Moho's CHeightField::UpdateBounds.
+    void update(const map::Heightmap& heightmap, u32 x0, u32 z0, u32 x1, u32 z1);
+
     /// STIMap::ConvexIntersection: the box of the heightfield cells inside
     /// the convex solid the planes bound. A node wholly inside is taken whole;
     /// one the solid's boundary crosses is split down to single cells, each

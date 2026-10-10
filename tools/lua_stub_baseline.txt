@@ -14,7 +14,6 @@ DrawCircle stub_noop
 DrawLine stub_noop
 DrawLinePop stub_noop
 EndLoggingStats l_EndLoggingStats
-FlattenMapRect stub_noop
 FlushEvents l_FlushEvents
 GetCurrentCommandSource stub_zero
 InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService

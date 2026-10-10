@@ -17,6 +17,30 @@ f32 Terrain::get_surface_height(f32 x, f32 z) const {
     return std::max(heightmap_.get_height(x, z), water_elevation_);
 }
 
+std::optional<Flattening> Terrain::flatten(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevation) {
+    Flattening f;
+    f.x0 = std::max(x, 0);
+    f.z0 = std::max(z, 0);
+    f.x1 = std::min(static_cast<i32>(heightmap_.grid_width()) - 1, x + size_x + 1);
+    f.z1 = std::min(static_cast<i32>(heightmap_.grid_height()) - 1, z + size_z + 1);
+    f.elevation = elevation;
+    if (x >= f.x1 || z >= f.z1) {
+        return std::nullopt;
+    }
+    heightmap_.set_rect(f.x0, f.z0, f.x1, f.z1, elevation);
+    flattenings_.push_back(f);
+    return f;
+}
+
+void Terrain::set_flattenings(std::vector<Flattening> flattenings) {
+    heightmap_.reset();
+    ++flattenings_resets_;
+    flattenings_ = std::move(flattenings);
+    for (const Flattening& f : flattenings_) {
+        heightmap_.set_rect(f.x0, f.z0, f.x1, f.z1, f.elevation);
+    }
+}
+
 f32 Terrain::water_ratio() const {
     // Moho's CalculateMapWaterRatio: with W heightfield vertices across, the
     // columns 8, 16, ... up to 8 * (((W - 1) >> 3) - 2), likewise the rows.
