@@ -1158,6 +1158,7 @@ static int unit_AddToggleCap(lua_State* L) {
     auto* u = check_unit(L);
     if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->add_toggle_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
     }
     return 0;
 }
@@ -1167,6 +1168,15 @@ static int unit_RemoveToggleCap(lua_State* L) {
     auto* u = check_unit(L);
     if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->remove_toggle_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
+    }
+    return 0;
+}
+
+static int unit_RestoreToggleCaps(lua_State* L) {
+    if (auto* u = check_unit(L)) {
+        u->restore_toggle_caps();
+        u->request_ui_refresh();
     }
     return 0;
 }
@@ -1897,21 +1907,27 @@ static int unit_SetBuildingUnit(lua_State* L) {
 
 static int unit_AddCommandCap(lua_State* L) {
     auto* u = check_unit(L);
-    if (u && lua_type(L, 2) == LUA_TSTRING)
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->add_command_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RemoveCommandCap(lua_State* L) {
     auto* u = check_unit(L);
-    if (u && lua_type(L, 2) == LUA_TSTRING)
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->remove_command_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RestoreCommandCaps(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->restore_command_caps();
+    if (auto* u = check_unit(L)) {
+        u->restore_command_caps();
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
@@ -1925,20 +1941,26 @@ static sim::CategoryExpr restriction_arg(lua_State* L, int index) {
 }
 
 static int unit_AddBuildRestriction(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->add_build_restriction(restriction_arg(L, 2));
+    if (auto* u = check_unit(L)) {
+        u->add_build_restriction(restriction_arg(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RemoveBuildRestriction(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->remove_build_restriction(restriction_arg(L, 2));
+    if (auto* u = check_unit(L)) {
+        u->remove_build_restriction(restriction_arg(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RestoreBuildRestrictions(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->restore_build_restrictions();
+    if (auto* u = check_unit(L)) {
+        u->restore_build_restrictions();
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
@@ -2472,6 +2494,7 @@ const MethodEntry unit_methods[] = {
     {"ResetSpeedAndAccel",          unit_ResetSpeedAndAccel},
     {"AddToggleCap",                unit_AddToggleCap},
     {"RemoveToggleCap",             unit_RemoveToggleCap},
+    {"RestoreToggleCaps",           unit_RestoreToggleCaps},
     {"TestCommandCaps",             unit_TestCommandCaps},
     {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},

@@ -321,10 +321,16 @@ public:
 
     // Pause state
     bool is_paused() const { return paused_; }
-    void set_paused(bool p) { paused_ = p; }
+    void set_paused(bool p) {
+        paused_ = p;
+        request_ui_refresh();
+    }
     /// Pause or resume the unit's work, as unit:SetPaused does. Moho's paused
     /// unit keeps producing; its army pays for none of its work meanwhile.
-    void pause(bool p) { paused_ = p; }
+    void pause(bool p) {
+        paused_ = p;
+        request_ui_refresh();
+    }
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }
@@ -352,7 +358,12 @@ public:
     void set_block_command_queue(bool b) { block_command_queue_ = b; }
 
     i32 fire_state() const { return fire_state_; }
-    void set_fire_state(i32 s) { fire_state_ = s; }
+    void set_fire_state(i32 s) {
+        if (fire_state_ != s) {
+            fire_state_ = s;
+            request_ui_refresh();
+        }
+    }
 
     // Script bits (9 toggles, bits 0-8)
     u16 script_bits() const { return script_bits_; }
@@ -363,13 +374,15 @@ public:
         return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
     }
     void set_script_bit(i32 bit, bool value) {
-        if (bit < 0 || bit > 8) return;
-        if (value) script_bits_ |= static_cast<u16>(1u << bit);
-        else       script_bits_ &= static_cast<u16>(~(1u << bit));
+        if (get_script_bit(bit) != value) {
+            toggle_script_bit(bit);
+        }
     }
     void toggle_script_bit(i32 bit) {
-        if (bit >= 0 && bit <= 8)
+        if (bit >= 0 && bit <= 8) {
             script_bits_ ^= static_cast<u16>(1u << bit);
+            request_ui_refresh();
+        }
     }
 
     // Toggle caps (which RULEUTC_* toggles this unit supports)
@@ -378,6 +391,8 @@ public:
     }
     void add_toggle_cap(const std::string& cap) { toggle_caps_.insert(cap); }
     void remove_toggle_cap(const std::string& cap) { toggle_caps_.erase(cap); }
+    void restore_toggle_caps() { toggle_caps_ = original_toggle_caps_; }
+    void snapshot_toggle_caps() { original_toggle_caps_ = toggle_caps_; }
 
     // Layer change with Lua OnLayerChange(new, old) callback
     void set_layer_with_callback(const std::string& new_layer, lua_State* L);
@@ -501,6 +516,9 @@ public:
         }
     }
     void clear_commands(const char* source = "?");
+    /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
+    /// taken off the queue sets the unit's UI refresh flag.
+    void note_queue_head();
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {
@@ -894,7 +912,10 @@ public:
     /// (order_build_in_place), and one taken from a guarded factory goes to
     /// the back of that factory's (order_guard).
     bool repeat_queue() const { return repeat_queue_; }
-    void set_repeat_queue(bool v) { repeat_queue_ = v; }
+    void set_repeat_queue(bool v) {
+        repeat_queue_ = v;
+        request_ui_refresh();
+    }
     /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
     /// do not surface by themselves yet.
     bool auto_surface_mode() const { return auto_surface_mode_; }
@@ -1524,6 +1545,7 @@ private:
     std::unordered_set<std::string> categories_;
     CategoryBits category_bits_; // categories_, as ids
     std::deque<UnitCommand> command_queue_;
+    std::optional<std::pair<u32, CommandType>> noted_head_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
     std::vector<UnitCommand> rally_orders_; // see rally_orders()
     u32 build_target_id_ = 0;     // entity ID of unit being built
@@ -1567,6 +1589,7 @@ private:
     u16 script_bits_ = 0;        // 9 toggle bits (0-8)
     u32 creation_tick_ = 0;      // the tick it was made (Moho's mCreationTick)
     std::unordered_set<std::string> toggle_caps_; // RULEUTC_* toggle capabilities
+    std::unordered_set<std::string> original_toggle_caps_;
     f32 surface_threat_ = 0;
     f32 air_threat_ = 0;
     f32 sub_threat_ = 0;

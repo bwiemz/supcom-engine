@@ -223,6 +223,8 @@ public:
 
     const std::string& custom_name() const { return custom_name_; }
     void set_custom_name(const std::string& name) { custom_name_ = name; }
+    u32 ui_refresh_requests() const { return ui_refresh_requests_; }
+    void request_ui_refresh() { ++ui_refresh_requests_; }
 
     /// The strategic icon underlay a script set (Unit:SetStrategicUnderlay):
     /// an icon's name under the strategic icons' directory, drawn beneath
@@ -380,6 +382,7 @@ private:
     bool do_not_target_ = false;
     bool reclaimable_ = true;
     std::string custom_name_;
+    u32 ui_refresh_requests_ = 0;
     std::string strategic_underlay_;
     f32 scale_x_ = 1.0f;
     f32 scale_y_ = 1.0f;

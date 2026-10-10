@@ -22,7 +22,6 @@ IssuePause stub_noop
 MetaImpact stub_noop
 RefreshSteamGames l_RefreshSteamGames
 RemoveScroller stub_noop
-RequestRefreshUI stub_noop
 SessionIsReplay stub_false
 SetActiveBuildTemplate l_SetActiveBuildTemplate
 SetArmyShowScore stub_noop

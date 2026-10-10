@@ -738,6 +738,20 @@ void InputHandler::prune_selection(const sim::EntityRegistry& registry) {
         const auto& unit = static_cast<const sim::Unit&>(*e);
         return aboard(unit) || unit.is_dying();
     });
+    std::unordered_map<u32, u32> requests;
+    for (const u32 id : selected_) {
+        const sim::Entity* e = registry.find(id);
+        if (!e) {
+            continue;
+        }
+        const u32 count = e->ui_refresh_requests();
+        if (const auto seen = refresh_requests_.find(id);
+            seen != refresh_requests_.end() && seen->second != count) {
+            selection_event_ = true;
+        }
+        requests.emplace(id, count);
+    }
+    refresh_requests_ = std::move(requests);
 }
 
 void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl,
