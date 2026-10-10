@@ -286,6 +286,10 @@ public:
     /// roll-off move its script gives it. Only an immobile FACTORY keeps
     /// them.
     bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    // FAF's CQUEMOV: FA-Binary-Patches hooks/BuildUnit.cpp, section/SelectUnit.cpp
+    bool takes_orders_unfinished() const {
+        return has_category("FACTORY") || has_category("CQUEMOV");
+    }
     const std::vector<UnitCommand>& rally_orders() const { return rally_orders_; }
     void add_rally_order(const UnitCommand& cmd) { rally_orders_.push_back(cmd); }
     void clear_rally_orders() { rally_orders_.clear(); }

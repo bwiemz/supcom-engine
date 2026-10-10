@@ -153,6 +153,22 @@ TEST_CASE("Of the units being built, only a factory can be selected", "[selectio
     CHECK(osc::renderer::selectable(factory));
 }
 
+TEST_CASE("FAF: a CQUEMOV unit being built takes orders and can be selected",
+          "[sim][orders][selection]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* extractor = walker(sim, 10.0f, 10.0f);
+    extractor->add_category("SELECTABLE");
+    extractor->add_category("CQUEMOV");
+    extractor->set_is_being_built(true);
+
+    CHECK(osc::renderer::selectable(*extractor));
+    CHECK(sim.route_command({extractor->entity_id()}, move_to(60.0f, 10.0f), true) != 0);
+    CHECK(extractor->command_queue().size() == 1);
+}
+
 TEST_CASE("A unit is made with its consumption off, for its script to switch on",
           "[sim][economy]") {
     osc::lua::LuaState state;
