@@ -9,6 +9,7 @@ add_library(osc_sim STATIC
     game_colors.cpp
     bone_cache.cpp
     bone_data.cpp
+    bounded_props.cpp
     collision.cpp
     collision_beam.cpp
     emitter_params.cpp

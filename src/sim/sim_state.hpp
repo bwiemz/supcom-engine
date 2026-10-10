@@ -2,6 +2,7 @@
 
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/bounded_props.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
@@ -143,6 +144,8 @@ public:
 
     EntityRegistry& entity_registry() { return entity_registry_; }
     const EntityRegistry& entity_registry() const { return entity_registry_; }
+
+    BoundedProps& bounded_props() { return bounded_props_; }
 
     ThreadManager& thread_manager() { return thread_manager_; }
 
@@ -987,6 +990,7 @@ private:
     SimRandom sim_random_;                    // deterministic, seeded per game
     u64 seed_ = SimRandom::kDefaultSeed;      // what set_seed was given
     EntityRegistry entity_registry_;
+    BoundedProps bounded_props_;
     ThreadManager thread_manager_;
     blueprints::BlueprintStore* blueprint_store_;
     std::unordered_map<std::string, std::shared_ptr<const ProjectileBlueprintInfo>>

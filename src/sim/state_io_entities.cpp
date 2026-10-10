@@ -1823,6 +1823,9 @@ void StateIO::save(StateWriter& w, const Prop& p) {
     w.size(p.pose.size());
     for (const auto& m : p.pose)
         for (f32 v : m) w.f32v(v);
+    w.i32v(p.bounded_priority);
+    w.i32v(p.bounded_tick);
+    w.b(p.bounded_handle != -1);
 }
 
 void StateIO::load(StateReader& r, Prop& p) {
@@ -1838,6 +1841,9 @@ void StateIO::load(StateReader& r, Prop& p) {
     p.pose.resize(r.size(64));
     for (auto& m : p.pose)
         for (f32& v : m) v = r.f32v();
+    p.bounded_priority = r.i32v();
+    p.bounded_tick = r.i32v();
+    p.bounded_handle = r.b() ? 0 : -1;
 }
 
 void StateIO::save(StateWriter& w, const Shield& s) {

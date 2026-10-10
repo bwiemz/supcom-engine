@@ -83,8 +83,6 @@ namespace osc::lua {
 
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 
-static int (*const stub_return_nil)(lua_State*) = lua_stubs::return_nil;
-
 /// entity:PlaySound(sound) -- a one-shot at the entity
 static int entity_RequestRefreshUI(lua_State* L) {
     if (auto* e = check_entity(L)) {
@@ -1328,6 +1326,56 @@ const MethodEntry motor_falldown_methods[] = {
 };
 // clang-format on
 
+// faf-re cfunc_PropAddBoundedPropL and EntityDB::AddBoundedProp.
+static int prop_AddBoundedProp(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 2) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d", "Prop:AddBoundedProp(priority)",
+                          2, n);
+    }
+    auto* e = check_entity(L);
+    if (!e || !e->is_prop()) {
+        return luaL_error(L, "Incorrect type of game object.  (Did you call with '.' instead of "
+                             "':'?)");
+    }
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        luaL_typerror(L, 2, "number");
+    }
+    auto* sim = get_sim(L);
+    if (!sim) {
+        return 0;
+    }
+    auto* prop = static_cast<sim::Prop*>(e);
+    auto& bounded = sim->bounded_props();
+    if (prop->bounded_handle != -1) {
+        bounded.remove(prop->bounded_handle);
+        prop->bounded_handle = -1;
+    }
+    prop->bounded_priority = static_cast<i32>(std::ceil(static_cast<f32>(lua_tonumber(L, 2))));
+    prop->bounded_tick = static_cast<i32>(sim->tick_count());
+    while (bounded.size() >= sim::BoundedProps::kLimit) {
+        sim::Prop* evicted = bounded.lowest();
+        bounded.pop_lowest();
+        evicted->bounded_handle = -1;
+        if (evicted->destroyed()) {
+            continue;
+        }
+        if (evicted->lua_table_ref() >= 0) {
+            lua_pushcfunction(L, entity_Destroy);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, evicted->lua_table_ref());
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("Destroy error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            evicted->mark_destroyed();
+            sim->entity_registry().unregister_entity(evicted->entity_id());
+        }
+    }
+    prop->bounded_handle = bounded.insert(prop->bounded_priority, prop->bounded_tick, prop);
+    return 0;
+}
+
 // clang-format off
 const MethodEntry prop_methods[] = {
     {"GetMaxHealth",                entity_GetMaxHealth},
@@ -1344,7 +1392,7 @@ const MethodEntry prop_methods[] = {
     {"SetOrientation",              entity_SetOrientation},
     {"Destroy",                     entity_Destroy},
     {"BeenDestroyed",               entity_BeenDestroyed},
-    {"AddBoundedProp",              stub_return_nil},
+    {"AddBoundedProp",              prop_AddBoundedProp},
     {"SetCollisionShape",           entity_SetCollisionShape},
     {"GetCollisionExtents",         entity_GetCollisionExtents},
     {"SetMesh",                     entity_SetMesh},

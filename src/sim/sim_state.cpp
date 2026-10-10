@@ -1457,7 +1457,16 @@ void SimState::tick() {
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe,
     // their Lua handles cut first.
-    entity_registry_.collect_garbage([this](Entity& e) { release_script_handle(e); });
+    entity_registry_.collect_garbage([this](Entity& e) {
+        if (e.is_prop()) {
+            auto& prop = static_cast<Prop&>(e);
+            if (prop.bounded_handle != -1) {
+                bounded_props_.remove(prop.bounded_handle);
+                prop.bounded_handle = -1;
+            }
+        }
+        release_script_handle(e);
+    });
 
     if (tick_observer_) {
         PROFILE_ZONE("Sim::observer");

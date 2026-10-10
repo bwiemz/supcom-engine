@@ -74,6 +74,8 @@ constexpr u32 kVersion = 41; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 39: NeedToFaceTargetToBuild
                              // 39: walk animators' motion scaling
                              // 39: trees' fall motors
+                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks
+                             // 39: props' bounded priority (AddBoundedProp)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -240,6 +242,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.u64v(sim.sim_random_.state());
     w.u64v(sim.seed_);
     save(w, sim.entity_registry_);
+    // bounded_props_: made again from the props, in id order, as Moho's load
     save(w, sim.thread_manager_);
     // blueprint_store_: the host's; projectile_info_: a cache
     save_ids(w, sim.collision_beams_);
@@ -420,6 +423,17 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.seed_ = r.u64v();
     sim.projectile_info_.clear(); // (the projectiles fill it again as they load)
     load(r, sim.entity_registry_, sim);
+    sim.bounded_props_.clear();
+    sim.entity_registry_.for_each([&](Entity& e) {
+        if (!e.is_prop()) {
+            return;
+        }
+        auto& prop = static_cast<Prop&>(e);
+        if (prop.bounded_handle != -1) {
+            prop.bounded_handle =
+                sim.bounded_props_.insert(prop.bounded_priority, prop.bounded_tick, &prop);
+        }
+    });
     load(r, sim.thread_manager_);
     sim.collision_beams_ = load_ids(r);
     sim.ferry_beacons_ = load_ids(r);

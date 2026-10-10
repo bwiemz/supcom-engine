@@ -44,6 +44,7 @@ add_executable(osc_tests
     test_hull_facing.cpp
     test_reclaim.cpp
     test_build_assist.cpp
+    test_bounded_props.cpp
     test_build_on_wreck.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp

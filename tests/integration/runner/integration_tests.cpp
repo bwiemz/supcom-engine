@@ -15840,19 +15840,19 @@ void test_medstub(TestContext& ctx) {
     }
 
     // --- AddBoundedProp test ---
-    // Test 5: AddBoundedProp on a prop entity returns nil, no crash
-    // AddBoundedProp is in prop_methods, so call it via moho.prop_methods
+    // Test 5: AddBoundedProp without its priority is an error
     {
         auto r = ctx.lua_state.do_string(
             "local fn = moho.prop_methods.AddBoundedProp\n"
-            "if not fn then error('moho.prop_methods.AddBoundedProp is nil') end\n"
-            "local e = GetEntityById(__osc_test_acu_id(1))\n"  // entity #1 is a prop
-            "local result = fn(e)\n"
-            "if result ~= nil then error('expected nil, got ' .. tostring(result)) end\n");
+            "local e = GetEntityById(__osc_test_acu_id(1))\n"
+            "local ok, err = pcall(fn, e)\n"
+            "if ok or not string.find(tostring(err), 'expected 2 args') then\n"
+            "    error('expected an error, got ' .. tostring(err))\n"
+            "end\n");
         bool ok = !!r;
         if (ok) {
             pass++;
-            spdlog::info("[PASS] Test 5: AddBoundedProp returns nil");
+            spdlog::info("[PASS] Test 5: AddBoundedProp without a priority is an error");
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 5: AddBoundedProp — {}", r.error().message);

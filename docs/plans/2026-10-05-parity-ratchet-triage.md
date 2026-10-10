@@ -294,7 +294,7 @@ Retail evidence came from `command grep -a` over S/allscd, run after the Unit.lu
 | Group | Items | Severity | Why (one line) | Suggested PR scope (size) |
 |---|---|---|---|---|
 | Upgrade state hand-off | NotifyUpgrade | HIGH | Every completed structure upgrade loses its queue, repeat flag, assisting guards, AI platoon slot and damage ratio | Port cfunc_NotifyUpgradeL into C++ (S-M) |
-| Wreck cap | AddBoundedProp | MEDIUM | Retail caps wrecks at 1000 and destroys the lowest-mass one. The engine keeps every wreck, so reclaim and perf differ in big games | Bounded min-heap of wrecks in EntityRegistry (S) |
+| Wreck cap | AddBoundedProp | MEDIUM | Retail caps wrecks at 1000 and destroys the lowest-mass one. The engine keeps every wreck, so reclaim and perf differ in big games | Bounded min-heap of wrecks in EntityRegistry (S). *Done (2026-10-10): a min-heap on the sim, as Moho's EntityDB; the 1001st wreck destroys the cheapest, oldest one.* |
 | Mesh UV scrollers | AddThreadScroller, AddPingPongScroller, AddManualScroller | MEDIUM | 36 retail tank treads (plus 1 air unit) never scroll | CTextureScroller per entity, plus scroll1/scroll2 in the mesh shader (M) |
 | Order feedback blips | AddCommandFeedbackBlip | MEDIUM | No flag/crosshair marker at the click point for any issued order | Transient mesh-instance list with CommandFeedback shaders (M) |
 | Strategic resource icons | EnableResourceRendering | MEDIUM | No mass/hydro icons in the world view or minimap, and the Resources toggle does nothing | Per-WorldView flag (default true) and a TResourceIcon pass (M). *Done (2026-10-06): the world view and minimap draw them; `--resource-icon-render-test`* |
