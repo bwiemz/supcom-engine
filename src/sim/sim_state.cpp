@@ -1848,7 +1848,12 @@ void SimState::separate_ground_units() {
             footprint_fits_at(u.footprint(), u.position().x, u.position().z) != 0)
             continue;
         // On the surface as it drives; a submarine keeps its depth.
-        if (terrain_ && !bodies[i].sub) p.y = u.ground_y(terrain_.get(), p.x, p.z);
+        if (terrain_ && !bodies[i].sub) {
+            const Unit::GroundStance stance =
+                u.ground_stance(terrain_.get(), p.x, p.z, u.orientation());
+            p.y = stance.y;
+            u.set_orientation(stance.orientation);
+        }
         u.set_position(clamp_to_playable(p, u.army()));
         u.set_jostled(true);
     }
