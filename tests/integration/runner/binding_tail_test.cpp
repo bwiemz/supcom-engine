@@ -215,6 +215,41 @@ void test_binding_tail(TestContext& ctx) {
         end
     )");
 
+    (void)spawn_unit(ctx, "__osc_bt_factory", "ueb0101", "ARMY_1", {sx - 30, sz - 20});
+    check("a factory builds a tank", R"(
+        IssueBuildFactory({__osc_bt_factory}, 'uel0201', 1)
+    )");
+    run(20);
+    check("GetListOfUnits(category, needToBeIdle, requireBuilt = true)", R"(
+        local brain = ArmyBrains[1]
+        local function has(list, unit)
+            for _, u in list do
+                if u == unit then return true end
+            end
+            return false
+        end
+        local tank = __osc_bt_factory:GetFocusUnit()
+        if not tank or not tank:IsBeingBuilt() then error('no tank being built') end
+        if has(brain:GetListOfUnits(categories.uel0201, false), tank) then
+            error('an unfinished unit is listed by default')
+        end
+        if has(brain:GetListOfUnits(categories.uel0201, false, true), tank) then
+            error('an unfinished unit is listed as built')
+        end
+        if not has(brain:GetListOfUnits(categories.uel0201, false, false), tank) then
+            error('an unfinished unit is not listed when allowed')
+        end
+        if has(brain:GetListOfUnits(categories.ueb0101, true), __osc_bt_factory) then
+            error('a busy factory is listed as idle')
+        end
+        if not has(brain:GetListOfUnits(categories.ueb0101, false), __osc_bt_factory) then
+            error('a busy factory is not listed')
+        end
+        if not has(brain:GetListOfUnits(categories.uea0107, true), __osc_bt_idle) then
+            error('an idle transport is not listed as idle')
+        end
+    )");
+
     spdlog::info("=== BINDING TAIL TEST: {} passed, {} failed ===", t.pass, t.fail);
 }
 
