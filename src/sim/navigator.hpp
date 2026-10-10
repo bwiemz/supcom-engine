@@ -54,6 +54,13 @@ public:
     bool update_air(Unit& unit, f64 dt,
                     const map::Terrain* terrain = nullptr);
 
+    /// Moho's CUnitMotion target once a move is done; none after an abort.
+    const Vector3* air_hold() const { return air_hold_set_ ? &air_hold_ : nullptr; }
+    void set_air_hold(const Vector3& at) {
+        air_hold_ = at;
+        air_hold_set_ = true;
+    }
+
     bool speed_through_goal() const { return speed_through_goal_; }
     void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
 
@@ -149,6 +156,8 @@ private:
     Vector3 goal_;
     Status status_ = Status::Idle;
     bool speed_through_goal_ = false;
+    Vector3 air_hold_{};
+    bool air_hold_set_ = false;
     std::vector<Vector3> waypoints_;
     size_t waypoint_index_ = 0;
     // Progress toward the goal, for arriving in a crowd (see CROWD_TICKS).

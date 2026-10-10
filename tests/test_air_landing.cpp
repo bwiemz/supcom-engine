@@ -379,9 +379,9 @@ TEST_CASE("A transport unloading comes down to its hover height as to a landing:
         [&] {
             down_seen = down_seen || ferry.vert_event() == "Down";
             if (ferry.cargo_ids().empty()) {
-                at_drop = ferry.vert_event();
                 return true;
             }
+            at_drop = ferry.vert_event();
             return false;
         },
         300);

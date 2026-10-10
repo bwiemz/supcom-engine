@@ -404,6 +404,8 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.vec3(n.goal_);
     enum8(w, n.status_);
     w.b(n.speed_through_goal_);
+    w.vec3(n.air_hold_);
+    w.b(n.air_hold_set_);
     w.size(n.waypoints_.size());
     for (const Vector3& p : n.waypoints_) w.vec3(p);
     w.u64v(n.waypoint_index_);
@@ -438,6 +440,8 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.goal_ = r.vec3();
     n.status_ = enum8<Navigator::Status>(r);
     n.speed_through_goal_ = r.b();
+    n.air_hold_ = r.vec3();
+    n.air_hold_set_ = r.b();
     n.waypoints_.resize(r.size(12));
     for (Vector3& p : n.waypoints_) p = r.vec3();
     n.waypoint_index_ = static_cast<size_t>(r.u64v());
@@ -1232,23 +1236,23 @@ void StateIO::save(StateWriter& w, const Unit& u) {
                         ar.break_off_distance})
         w.f32v(v);
     w.b(ar.break_off_if_near_new_target);
-    for (const f32 v :
-         {ar.random_break_off_distance_mult, ar.random_min_change_combat_state_time,
-          ar.random_max_change_combat_state_time, ar.predict_ahead_for_bomb_drop,
-          ar.attack_elevation, ar.k_turn, ar.k_turn_damping, ar.k_move, ar.k_move_damping})
+    for (const f32 v : {ar.random_break_off_distance_mult, ar.random_min_change_combat_state_time,
+                        ar.random_max_change_combat_state_time, ar.predict_ahead_for_bomb_drop,
+                        ar.attack_elevation, ar.k_turn, ar.k_turn_damping, ar.k_move,
+                        ar.k_move_damping, ar.k_lift, ar.k_lift_damping, ar.lift_factor})
         w.f32v(v);
     w.b(ar.hover_over_attack);
     w.b(ar.circling_dir_change);
-    for (const f32 v : {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
-                        ar.circling_radius_max, ar.circling_radius_vs_air_mult,
-                        ar.circling_elevation_ratio, ar.circling_change_frequency, ar.bank_factor})
+    for (const f32 v :
+         {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
+          ar.circling_radius_max, ar.circling_radius_vs_air_mult, ar.circling_elevation_ratio,
+          ar.circling_change_frequency, ar.bank_factor, ar.k_roll, ar.k_roll_damping})
         w.f32v(v);
+    w.b(ar.bank_forward);
     const AirCombatState& ac = u.air_combat_;
     w.u8v(ac.state);
     w.u32v(ac.timeout_tick);
     w.i32v(ac.sustained_turn_ticks);
-    w.f32v(ac.yaw_rate);
-    w.vec3(ac.velocity);
     w.b(ac.flying);
     w.b(ac.circle_reverse);
     w.f32v(ac.circle_elevation);
@@ -1263,6 +1267,14 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.turn_rate_rad_);
     w.f32v(u.accel_rate_);
     w.f32v(u.climb_rate_);
+    w.f32v(u.lift_velocity_);
+    w.f32v(u.lift_ground_);
+    w.b(u.lift_ground_set_);
+    w.u32v(u.lift_tick_);
+    w.vec3(u.air_velocity_);
+    w.vec3(u.air_dv_);
+    w.vec3(u.air_spin_);
+    w.vec3(u.air_facing_);
     w.f32v(u.elevation_target_);
     w.b(u.fly_in_water_);
     enum8(w, u.vert_motion_);
@@ -1602,23 +1614,23 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
                    &ar.break_off_distance})
         *v = r.f32v();
     ar.break_off_if_near_new_target = r.b();
-    for (f32* v :
-         {&ar.random_break_off_distance_mult, &ar.random_min_change_combat_state_time,
-          &ar.random_max_change_combat_state_time, &ar.predict_ahead_for_bomb_drop,
-          &ar.attack_elevation, &ar.k_turn, &ar.k_turn_damping, &ar.k_move, &ar.k_move_damping})
+    for (f32* v : {&ar.random_break_off_distance_mult, &ar.random_min_change_combat_state_time,
+                   &ar.random_max_change_combat_state_time, &ar.predict_ahead_for_bomb_drop,
+                   &ar.attack_elevation, &ar.k_turn, &ar.k_turn_damping, &ar.k_move,
+                   &ar.k_move_damping, &ar.k_lift, &ar.k_lift_damping, &ar.lift_factor})
         *v = r.f32v();
     ar.hover_over_attack = r.b();
     ar.circling_dir_change = r.b();
-    for (f32* v : {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
-                   &ar.circling_radius_max, &ar.circling_radius_vs_air_mult,
-                   &ar.circling_elevation_ratio, &ar.circling_change_frequency, &ar.bank_factor})
+    for (f32* v :
+         {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
+          &ar.circling_radius_max, &ar.circling_radius_vs_air_mult, &ar.circling_elevation_ratio,
+          &ar.circling_change_frequency, &ar.bank_factor, &ar.k_roll, &ar.k_roll_damping})
         *v = r.f32v();
+    ar.bank_forward = r.b();
     AirCombatState& ac = u.air_combat_;
     ac.state = r.u8v();
     ac.timeout_tick = r.u32v();
     ac.sustained_turn_ticks = r.i32v();
-    ac.yaw_rate = r.f32v();
-    ac.velocity = r.vec3();
     ac.flying = r.b();
     ac.circle_reverse = r.b();
     ac.circle_elevation = r.f32v();
@@ -1633,6 +1645,14 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.turn_rate_rad_ = r.f32v();
     u.accel_rate_ = r.f32v();
     u.climb_rate_ = r.f32v();
+    u.lift_velocity_ = r.f32v();
+    u.lift_ground_ = r.f32v();
+    u.lift_ground_set_ = r.b();
+    u.lift_tick_ = r.u32v();
+    u.air_velocity_ = r.vec3();
+    u.air_dv_ = r.vec3();
+    u.air_spin_ = r.vec3();
+    u.air_facing_ = r.vec3();
     u.elevation_target_ = r.f32v();
     u.fly_in_water_ = r.b();
     u.vert_motion_ = enum8<Unit::VertMotion>(r);

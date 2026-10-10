@@ -33,20 +33,6 @@ enum class AirCombatMode : u8 {
     ReturnToMap = 7,
 };
 
-/// What a run asks of the airframe this tick.
-struct AirSteer {
-    f32 heading = 0.0f;       ///< the way to fly, atan2(x, z)
-    f32 speed = 0.0f;         ///< units a second
-    f32 turn_clamp = 0.0f;    ///< how far the nose may be led, radians
-    f32 turn_gain = 0.0f;     ///< KTurn, raised in a run and a combat turn
-    f32 altitude = 0.0f;      ///< the height to hold, absolute
-    bool full_thrust = false; ///< past NormalTurn: thrust doesn't wait for the nose
-    bool making_attack_run = false;
-    /// The most of the speed its thrust may take (a guard's slowing within
-    /// StartTurnDistance; 1 otherwise)
-    f32 thrust_cap = 1.0f;
-};
-
 /// The geometry a tactics step looks at (so the rules can be tested alone).
 struct AirTacticsInput {
     Vector3 position;   ///< the aircraft's
@@ -87,21 +73,15 @@ bool bomb_release_ok(const Vector3& position, f32 heading, const Vector3& releas
 /// will be in `seconds` at its last tick's velocity.
 Vector3 predict_ahead(const Entity& target, f32 seconds);
 
-/// A winged aircraft attacking `target` this tick: its tactics, then its
-/// flight in the run (the airframe's lag, its height over the target's
-/// ground). Sets or clears its MakingAttackRun state.
+/// A winged aircraft attacking `target` this tick: its tactics, the velocity
+/// they ask (ComputeAirCombatTactics), and the air controller toward it as
+/// in any flight (ComputeAirControl, CalcWingedOrientation in its combat
+/// state). Sets or clears its MakingAttackRun state.
 void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::Terrain* terrain,
                     f32 dt);
 /// The same at a point on the ground: a ground attack order's runs.
 void fly_attack_run(Unit& unit, const Vector3& at, SimState& sim, const map::Terrain* terrain,
                     f32 dt);
-
-/// One tick of a flight that has the airframe (an attack run, a guard's
-/// winged flight): the nose and velocity follow `steer` with Moho's lag
-/// (KTurn, KTurnDamping, KMove), the height its climb rate toward
-/// steer.altitude.
-void fly_airframe(Unit& unit, const AirSteer& steer, SimState& sim, const map::Terrain* terrain,
-                  f32 dt);
 
 /// The run ended: its combat state goes back to None, and the airframe to
 /// the plain flight, at the speed it had.
@@ -119,15 +99,23 @@ bool circles(const Unit& unit);
 /// Reclaim and capture don't count. HoverOverAttack doesn't spare it.
 bool flies_winged_on_guard(const Unit& unit);
 
-/// Its flight then (CalcWingedOrientation, no combat state, guarding): the
-/// nose turned toward `goal`, the thrust along the nose at the lesser of
-/// the distance and its top speed, scaled by how well the nose points
-/// (at least half), and within StartTurnDistance by at most
-/// distance / StartTurnDistance, never past half -- so it slows onto its
-/// goal and comes to rest there (CalcMoveAir's Stopping and Stopped, with
-/// no combat state). It never circles.
+/// Its flight then: fly_air_move toward `goal` with CalcWingedOrientation,
+/// guarding. It never circles.
 void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
                    f32 dt);
+
+/// Moho's CUnitMotion target out of combat.
+struct AirMove {
+    Vector3 target{};
+    f32 elevation = 0.0f;
+    bool top_speed = false;
+    bool landing = false;
+    bool winged = false; ///< a hovering one's winged flight on guard
+};
+
+/// One tick of Moho's CalcMoveAir out of combat.
+void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Terrain* terrain,
+                  f32 dt);
 
 /// Moho's re-pick in CalcCirclingOrientation, once `tick` is past the
 /// state's timeout. In order, it draws:
@@ -154,6 +142,7 @@ struct CirclingInput {
 struct CirclingSteer {
     Vector3 aim;       ///< the point on the circle it makes for
     Vector3 velocity;  ///< per second: to the aim, at most MaxAirspeed
+    Vector3 toward;    ///< the way to the centre, flat
     f32 facing = 0.0f; ///< its nose, at the centre: atan2(x, z)
 };
 
@@ -176,9 +165,8 @@ struct CircleAround {
 };
 
 /// One tick of a hovering aircraft circling: the re-pick, the aim, and the
-/// airframe after it with Moho's lag. The nose turns to the centre under
-/// KTurn x CirclingTurnMult, and the velocity eases under KMove and the
-/// damping. It leans into its change of velocity by BankFactor.
+/// air controller toward it, its nose to the centre (CalcHoverOrientation)
+/// under KTurn x CirclingTurnMult.
 void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
                   const map::Terrain* terrain, f32 dt);
 

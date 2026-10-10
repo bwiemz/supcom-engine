@@ -17,6 +17,11 @@ f32 Terrain::get_surface_height(f32 x, f32 z) const {
     return std::max(heightmap_.get_height(x, z), water_elevation_);
 }
 
+f32 Terrain::look_ahead_for_max_terrain(f32 x, f32 z, bool fly_in_water, f32 look_ahead) const {
+    const f32 ground = heightmap_.look_ahead_max(x, z, look_ahead);
+    return fly_in_water ? ground : std::max(ground, water_elevation_);
+}
+
 f32 Terrain::water_ratio() const {
     // Moho's CalculateMapWaterRatio: with W heightfield vertices across, the
     // columns 8, 16, ... up to 8 * (((W - 1) >> 3) - 2), likewise the rows.

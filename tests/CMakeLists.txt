@@ -36,6 +36,8 @@ add_executable(osc_tests
     test_path_navigator.cpp
     test_moho_pathing.cpp
     test_air_landing.cpp
+    test_air_lift.cpp
+    test_air_motion.cpp
     test_air_circling.cpp
     test_unit_blocking.cpp
     test_hull_facing.cpp

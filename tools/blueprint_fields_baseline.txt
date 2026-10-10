@@ -1,6 +1,5 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 AimsStraightOnDisable
-BankForward
 BankingSlope
 BounceVelDamp
 CameraFollowTimeout
@@ -11,13 +10,8 @@ DirectionY
 DirectionZ
 GroundCollisionOffset
 IgnoreIfDisabled
-KLift
-KLiftDamping
-KRoll
-KRollDamping
 LAYER_Air
 LayerTransitionDuration
-LiftFactor
 MaxBounceCount
 MaxSteerForce
 MinBounceCount
