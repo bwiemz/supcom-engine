@@ -106,6 +106,64 @@ sim::MeshBounds mesh_box(const sim::Unit& unit) {
     return {{s.x * m.lo.x, s.y * m.lo.y, s.z * m.lo.z}, {s.x * m.hi.x, s.y * m.hi.y, s.z * m.hi.z}};
 }
 
+std::optional<sim::CommandType> friendly_mode(sim::SimState& sim,
+                                              const std::unordered_set<u32>& selected,
+                                              i32 player_army, const sim::Unit& target) {
+    std::vector<const sim::Unit*> units;
+    for (const u32 id : selected) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) {
+            units.push_back(static_cast<const sim::Unit*>(e));
+        }
+    }
+    const auto any = [&](const auto& pred) {
+        return std::any_of(units.begin(), units.end(), pred);
+    };
+    const auto has = [&](const char* cap) {
+        return any([&](const sim::Unit* u) { return u->has_command_cap(cap); });
+    };
+    if (target.has_category("RECLAIMFRIENDLY") && target.parent_entity_id() == 0 &&
+        sim::reclaim_target_valid(target) && has("RULEUCC_Reclaim")) {
+        return sim::CommandType::Reclaim;
+    }
+    if (target.army() == player_army && has("RULEUCC_CallTransport") && !target.is_being_built() &&
+        target.layer() != "Seabed") {
+        const bool takes_commander =
+            target.has_category("CANTRANSPORTCOMMANDER") || target.has_category("FERRYBEACON");
+        const bool lifts = target.has_category("TRANSPORTATION") ||
+                           target.has_category("TELEPORTATION") ||
+                           target.has_category("FERRYBEACON");
+        const bool stages = target.has_category("AIRSTAGINGPLATFORM");
+        const bool boards = any([&](const sim::Unit* u) {
+            if (u->is_being_built() || (!takes_commander && u->has_category("COMMAND"))) {
+                return false;
+            }
+            if (lifts) {
+                return !u->can_fly();
+            }
+            return stages && u->can_fly() && !u->has_category("CANNOTUSEAIRSTAGING");
+        });
+        if (boards) {
+            return target.has_category("FERRYBEACON") ? sim::CommandType::WaitForFerry
+                                                      : sim::CommandType::TransportLoad;
+        }
+    }
+    if (target.is_being_built() && has("RULEUCC_Repair") &&
+        (target.is_mobile() || (!target.has_category("FACTORY") && !target.has_category("SILO")))) {
+        return sim::CommandType::Repair;
+    }
+    const bool only_target =
+        std::all_of(units.begin(), units.end(), [&](const sim::Unit* u) { return u == &target; });
+    if (has("RULEUCC_Guard") && !target.has_category("CAMPAIGNGATE") && !only_target) {
+        return sim::CommandType::Guard;
+    }
+    if (has("RULEUCC_Repair") &&
+        (target.health() < target.max_health() || target.has_unit_state("Upgrading"))) {
+        return sim::CommandType::Repair;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 bool aboard(const sim::Unit& unit) {
@@ -1028,49 +1086,29 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
         }
     } else if (on == On::Wreck && t && selection_has("RULEUCC_Reclaim")) {
         mode = sim::CommandType::Reclaim;
+    } else if (on == On::Ally && tu) {
+        mode = friendly_mode(sim, selected_, player_army_, *tu);
     }
-    // Each unit's default order there.
-    const auto order_for = [&](const sim::Unit& u) {
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::Move;
-        cmd.target_pos = {wx, wy, wz};
-        const auto aim = [&](sim::CommandType type) {
-            cmd.type = type;
-            cmd.target_id = target;
-            cmd.target_pos = view_.position(*t);
-        };
-        if (mode) {
-            aim(*mode);
-        } else if (on == On::Ally && tu) {
-            // An aircraft, flying or landed.
-            if (tu->has_category("AIRSTAGINGPLATFORM") && u.has_command_cap("RULEUCC_Dock") &&
-                u.can_fly())
-                aim(sim::CommandType::Dock);
-            else if (tu->has_category("TRANSPORTATION") &&
-                     u.has_command_cap("RULEUCC_CallTransport") && !u.can_fly())
-                aim(sim::CommandType::TransportLoad);
-            else if (tu->is_being_built() && u.has_command_cap("RULEUCC_Repair"))
-                aim(sim::CommandType::Repair);
-            else if (u.has_command_cap("RULEUCC_Guard")) aim(sim::CommandType::Guard);
-        }
-        return cmd;
-    };
 
-    // One order per kind (and target), in id order, each routed to its units.
     std::vector<u32> ids;
-    for (u32 id : selected_)
-        if (const sim::Entity* e = live(id); e && e->is_unit() && id != target) ids.push_back(id);
-    std::sort(ids.begin(), ids.end());
-    std::vector<std::pair<sim::UnitCommand, std::vector<u32>>> groups;
-    for (u32 id : ids) {
-        const sim::UnitCommand cmd = order_for(static_cast<const sim::Unit&>(*live(id)));
-        auto it = std::find_if(groups.begin(), groups.end(), [&](const auto& g) {
-            return g.first.type == cmd.type && g.first.target_id == cmd.target_id;
-        });
-        if (it == groups.end()) groups.push_back({cmd, {id}});
-        else it->second.push_back(id);
+    for (const u32 id : selected_) {
+        if (const sim::Entity* e = live(id); e && e->is_unit() && (!mode || id != target)) {
+            ids.push_back(id);
+        }
     }
-    return groups;
+    if (ids.empty()) {
+        return {};
+    }
+    std::sort(ids.begin(), ids.end());
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Move;
+    cmd.target_pos = {wx, wy, wz};
+    if (mode) {
+        cmd.type = *mode;
+        cmd.target_id = target;
+        cmd.target_pos = view_.position(*t);
+    }
+    return {{cmd, std::move(ids)}};
 }
 
 bool InputHandler::right_click_invalid(sim::SimState& sim, f32 wx, f32 wz) const {
@@ -1125,7 +1163,8 @@ std::vector<IssuedCommand> InputHandler::issue_right_orders(
         case sim::CommandType::Capture: out.type = "Capture"; break;
         case sim::CommandType::Guard: out.type = "Guard"; break;
         case sim::CommandType::Repair: out.type = "Repair"; break;
-        case sim::CommandType::TransportLoad: out.type = "TransportLoadUnits"; break;
+        case sim::CommandType::TransportLoad:
+        case sim::CommandType::WaitForFerry: out.type = "TransportLoadUnits"; break;
         case sim::CommandType::Dock: out.type = "Dock"; break;
         case sim::CommandType::Reclaim: out.type = "Reclaim"; break;
         default: out.type = "Move"; break;
