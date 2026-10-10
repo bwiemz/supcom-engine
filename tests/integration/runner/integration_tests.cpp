@@ -10482,6 +10482,7 @@ void test_charge(TestContext& ctx) {
     // Teleports: an engineer's costs 91 energy over 0.91 s.
     lua_check("setup: a teleport with a move queued behind it", R"(
         __osc_porter = __osc_spawn('uel0105', 'ARMY_1', 560, 180)
+        __osc_porter:AddCommandCap('RULEUCC_Teleport')
         __osc_home = __osc_porter:GetPosition()
         __osc_there = __osc_at(620, 180)
         IssueTeleport({__osc_porter}, __osc_there)
@@ -10505,6 +10506,7 @@ void test_charge(TestContext& ctx) {
     )");
     lua_check("setup: a teleport called off while charging", R"(
         __osc_failer = __osc_spawn('uel0105', 'ARMY_1', 560, 220)
+        __osc_failer:AddCommandCap('RULEUCC_Teleport')
         __osc_failed = 0
         local failed = __osc_failer.OnFailedTeleport
         __osc_failer.OnFailedTeleport = function(self)
@@ -11016,7 +11018,7 @@ void test_factory_assist(TestContext& ctx) {
         __osc_b = __osc_spawn('ueb0101', 1, 630, 100)
         if not __osc_a or not __osc_b then error('no factories') end
         IssueBuildFactory({__osc_a}, 'uel0201', 3)
-        IssueGuard({__osc_b}, __osc_a)
+        IssueFactoryAssist({__osc_b}, __osc_a)
     )");
     run(20);
 
@@ -11088,7 +11090,7 @@ void test_factory_assist(TestContext& ctx) {
         IssueClearCommands({__osc_a})
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
         __osc_b:SetRepeatQueue(true)
-        IssueGuard({__osc_b}, __osc_a)
+        IssueFactoryAssist({__osc_b}, __osc_a)
     )");
     run(20);
     lua_check("so both build, and the order stays", R"(
@@ -11126,7 +11128,7 @@ void test_factory_assist(TestContext& ctx) {
         if __osc_building(__osc_b) then error('B still builds') end
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
         IssueBuildFactory({__osc_a}, 'uel0105', 1)
-        IssueGuard({__osc_b}, __osc_a)
+        IssueFactoryAssist({__osc_b}, __osc_a)
     )");
     run(20);
     lua_check("and builds nothing from it", R"(
@@ -11171,7 +11173,7 @@ void test_factory_assist(TestContext& ctx) {
         osc::test_status::fail("[FAIL] the raised order: {} orders, count {}",
                                a_unit ? a_unit->command_queue().size() : 0, a_count());
     }
-    lua_check("B guards A", "IssueGuard({__osc_b}, __osc_a)");
+    lua_check("B guards A", "IssueFactoryAssist({__osc_b}, __osc_a)");
     run(20);
     lua_check("B builds one of A's three while A builds another", R"(
         if not __osc_building(__osc_a) then error('A is not building') end
@@ -11230,7 +11232,7 @@ void test_factory_assist(TestContext& ctx) {
         __osc_a2 = __osc_spawn('ueb0101', 1, 610, 140)
         __osc_c = __osc_spawn('ueb0101', 1, 630, 140)
         IssueBuildFactory({__osc_a2}, 'uel0201', 3)
-        IssueGuard({__osc_c}, __osc_a2)
+        IssueFactoryAssist({__osc_c}, __osc_a2)
         IssueBuildFactory({__osc_c}, 'uel0101', 1)
     )");
     run(20);
@@ -11332,7 +11334,7 @@ void test_factory_rally(TestContext& ctx) {
         if VDist2(p[1], p[3], 610, 140) > 0.01 then error('A rallies elsewhere') end
         IssueClearFactoryCommands({__osc_b})
         IssueFactoryRallyPoint({__osc_b}, {650, GetTerrainHeight(650, 140), 140})
-        IssueGuard({__osc_b}, __osc_a)
+        IssueFactoryAssist({__osc_b}, __osc_a)
     )");
     run(20);
     lua_check("A and B each build a tank", R"(
@@ -23290,6 +23292,8 @@ void test_commands(TestContext& ctx) {
              ")\n"
              "if not u then error('no entity') end\n"
              "IssueClearCommands({u})\n"
+             "u:AddCommandCap('RULEUCC_Nuke')\n"
+             "u:AddCommandCap('RULEUCC_Tactical')\n"
              "u:GiveNukeSiloAmmo(3)\n"
              "u:GiveTacticalSiloAmmo(5)\n"
              "IssueNuke({u}, {u:GetPosition()[1] + 50, u:GetPosition()[2], u:GetPosition()[3]})\n"
@@ -23372,11 +23376,12 @@ void test_commands(TestContext& ctx) {
     // (an energy drain sized from the unit's cost) and warps at the end, so
     // use a cheap unit and give it a few ticks.
     {
-        auto r = ctx.lua_state.do_string(
-            "local u = CreateUnitHPR('uel0105', 1, 150, 25, 150, 0, 0, 0)\n"
-            "if not u then error('no engineer') end\n"
-            "rawset(_G, '_cmd5_unit', u)\n"
-            "IssueTeleport({u}, {200, 25, 300})\n");
+        auto r =
+            ctx.lua_state.do_string("local u = CreateUnitHPR('uel0105', 1, 150, 25, 150, 0, 0, 0)\n"
+                                    "if not u then error('no engineer') end\n"
+                                    "rawset(_G, '_cmd5_unit', u)\n"
+                                    "u:AddCommandCap('RULEUCC_Teleport')\n"
+                                    "IssueTeleport({u}, {200, 25, 300})\n");
         if (r) {
             for (int t = 0; t < 40; ++t) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
