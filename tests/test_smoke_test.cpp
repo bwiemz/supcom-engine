@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "blueprints/blueprint_store.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
@@ -11,6 +12,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/weapon.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/platoon.hpp"
 #include "sim/projectile.hpp"
 #include "sim/entity_registry.hpp"
 
@@ -1318,4 +1320,88 @@ TEST_CASE("A stopped upgrade takes its unfinished unit with it", "[session][rule
     lua_gettable(L, LUA_GLOBALSINDEX);
     CHECK(std::string(lua_tostring(L, -1)) == "failed frame stop Upgrade true");
     lua_pop(L, 1);
+}
+
+TEST_CASE("Every way of clearing the queue cancels the build or upgrade under way",
+          "[session][rules]") {
+    const auto [type, order] =
+        GENERATE(std::pair{osc::sim::CommandType::BuildFactory, std::string("FactoryBuild")},
+                 std::pair{osc::sim::CommandType::Upgrade, std::string("Upgrade")});
+    const std::string path = GENERATE("IssueStop", "IssueClearCommands({__f})", "__f:Stop()",
+                                      "IssueToUnitClearCommands(__f)", "IssueToUnitStop(__f)",
+                                      "platoon:Stop()", "a new order");
+    CAPTURE(order, path);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    const auto run = [&](const std::string& code) {
+        const auto r = h.state.do_string(code);
+        INFO((r.ok() ? std::string() : r.error().message));
+        REQUIRE(r.ok());
+    };
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    run("__unit_class = {__index = function(_, k)\n"
+        "  return moho.unit_methods[k] or moho.entity_methods[k]\n"
+        "end}\n"
+        "setmetatable(__f, __unit_class)");
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnFailedToBuild() __heard = __heard .. 'failed ' end\n"
+                           "function __f:OnStopBuild(u, order)\n"
+                           "  __heard = __heard .. 'stop ' .. order .. ' ' ..\n"
+                           "            tostring(u == __frame)\n"
+                           "end")
+                .ok());
+    h.queue(type, type == osc::sim::CommandType::Upgrade ? "f2" : "t2");
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 frame = h.factory->build_target_id();
+    lua_pushstring(L, "__frame");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.sim.entity_registry().find(frame)->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("function __frame:OnFailedToBeBuilt()\n"
+                           "  __heard = __heard .. 'frame '\n"
+                           "  if not IsDestroyed(self) then self:Destroy() end\n"
+                           "end")
+                .ok());
+
+    if (path == "IssueStop") {
+        osc::sim::UnitCommand stop;
+        stop.type = osc::sim::CommandType::Stop;
+        h.sim.route_command({h.factory->entity_id()}, stop, true);
+    } else if (path == "a new order") {
+        osc::sim::UnitCommand next;
+        next.type = osc::sim::CommandType::BuildFactory;
+        next.blueprint_id = "t1";
+        h.sim.route_command({h.factory->entity_id()}, next, true);
+    } else if (path == "platoon:Stop()") {
+        osc::sim::Platoon* platoon = h.sim.army_at(0)->create_platoon("");
+        platoon->add_unit(h.factory->entity_id());
+        lua_pushstring(L, "__p");
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, platoon);
+        lua_rawset(L, -3);
+        lua_settable(L, LUA_GLOBALSINDEX);
+        run("moho.platoon_methods.Stop(__p)");
+    } else {
+        run(path);
+    }
+
+    const osc::sim::Entity* left = h.sim.entity_registry().find(frame);
+    CHECK((!left || left->destroyed()));
+    CHECK_FALSE(h.factory->destroyed());
+    CHECK(h.factory->build_target_id() == 0);
+    CHECK_FALSE(h.factory->economy().consumption_active);
+    CHECK(h.factory->work_progress() == 0.0f);
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) == "failed frame stop " + order + " true");
+    lua_pop(L, 1);
+
+    h.sim.tick();
+    CHECK(h.factory->build_target_id() != frame);
 }

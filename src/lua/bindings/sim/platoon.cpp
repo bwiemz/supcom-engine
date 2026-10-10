@@ -295,10 +295,12 @@ static int platoon_Stop(lua_State* L) {
     auto* sim = get_sim(L);
     if (!platoon || !sim) return 0;
 
-    for (u32 id : platoon->unit_ids()) {
+    const std::vector<u32> ids = platoon->unit_ids();
+    for (u32 id : ids) {
         auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->is_unit())
-            static_cast<sim::Unit*>(e)->clear_commands();
+        if (e && !e->destroyed() && e->is_unit()) {
+            static_cast<sim::Unit*>(e)->clear_commands(sim->entity_registry(), L);
+        }
     }
     return 0;
 }

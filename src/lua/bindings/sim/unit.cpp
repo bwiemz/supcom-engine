@@ -1362,7 +1362,10 @@ static int unit_SetShieldRatio(lua_State* L) {
 // unit:Stop() — clear command queue
 static int unit_Stop(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->clear_commands();
+    auto* sim = get_sim(L);
+    if (u && sim) {
+        u->clear_commands(sim->entity_registry(), L);
+    }
     return 0;
 }
 
