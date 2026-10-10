@@ -291,8 +291,8 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
     for (i32 i = scroll_top; i < end_row && quad_count_ < MAX_UI_QUADS; i++) {
         f32 row_y = top + static_cast<f32>(i - scroll_top) * row_height;
 
-        // Selection highlight row
-        if (i == ctrl->selection() && ctrl->show_selection()) {
+        const ui::ItemRowColors colors = ui::item_list_row_colors(*ctrl, i);
+        if (colors.has_bg) {
             if (quad_count_ < MAX_UI_QUADS) {
                 QuadEntry sel{};
                 sel.texture_ds = tex_cache.fallback_descriptor();
@@ -301,7 +301,7 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
                 sel.inst.rect[0] = left; sel.inst.rect[1] = row_y;
                 sel.inst.rect[2] = width; sel.inst.rect[3] = row_height;
                 std::memcpy(sel.inst.uv, full_uv, sizeof(full_uv));
-                argb_to_rgba(ctrl->item_sel_bg_color(), sel.inst.color);
+                argb_to_rgba(colors.bg, sel.inst.color);
                 sel.inst.color[3] *= alpha;
                 quads_.push_back(sel);
                 quad_count_++;
@@ -310,8 +310,7 @@ void UIRenderer::emit_itemlist_quads(ui::UIControl* ctrl,
 
         // Row text — emit glyphs directly
         if (!items[i].empty() && atlas && atlas->descriptor_set != VK_NULL_HANDLE) {
-            u32 text_color = (i == ctrl->selection() && ctrl->show_selection())
-                ? ctrl->item_sel_fg_color() : ctrl->item_fg_color();
+            const u32 text_color = colors.fg;
             f32 color[4];
             argb_to_rgba(text_color, color);
             color[3] *= alpha;

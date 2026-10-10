@@ -1121,12 +1121,26 @@ static int l_InternalCreateDragger(lua_State* L) {
 /// Registers a dragger to receive mouse events until release/cancel.
 /// For now, we just store the dragger ref so Lua side can call OnMove/OnRelease/OnCancel.
 static int l_PostDragger(lua_State* L) {
-    // Args: originFrame (table), keycode (number), dragger (table)
-    // Store dragger in registry key for the UI dispatch to find
-    if (!lua_istable(L, 3)) return 0;
-
+    int key = 0;
+    if (lua_type(L, 2) == LUA_TNUMBER) {
+        key = static_cast<int>(lua_tonumber(L, 2));
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        const std::string_view name = lua_tostring(L, 2);
+        key = name == "LBUTTON" ? 1 : name == "MBUTTON" ? 2 : name == "RBUTTON" ? 3 : 0;
+    }
+    if (key < 1 || key > 3) {
+        return luaL_error(L, "Invalid key specified. Must be LBUTTON or RBUTTON or MBUTTON");
+    }
+    const bool posted = lua_istable(L, 3);
     lua_pushstring(L, "__osc_active_dragger");
-    lua_pushvalue(L, 3);
+    if (posted) {
+        lua_pushvalue(L, 3);
+    } else {
+        lua_pushnil(L);
+    }
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "__osc_active_dragger_key");
+    lua_pushnumber(L, posted ? key : 0);
     lua_rawset(L, LUA_REGISTRYINDEX);
     return 0;
 }
@@ -3737,6 +3751,19 @@ static int l_ConExecute(lua_State* L) {
     return 0;
 }
 
+static int l_ConTextMatches(lua_State* L) {
+    const char* prefix = luaL_checkstring(L, 1);
+    lua_newtable(L);
+    if (auto* console = get_console(L)) {
+        int i = 0;
+        for (const std::string& name : console->matches(prefix)) {
+            lua_pushstring(L, name.c_str());
+            lua_rawseti(L, -2, ++i);
+        }
+    }
+    return 1;
+}
+
 /// Call `module`'s function `fn` with string arguments, in the UI state,
 /// warning if it fails.
 static void call_module_function(lua_State* L, const char* module, const char* fn,
@@ -4776,6 +4803,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SetGameSpeed", l_SetGameSpeed);
     state.register_function("GetGameSpeed", l_GetGameSpeed);
     state.register_function("ConExecute", l_ConExecute);
+    state.register_function("ConTextMatches", l_ConTextMatches);
     state.register_function("ConExecuteSave", l_ConExecute);
     state.register_function("SessionRequestPause", l_SessionRequestPause);
     state.register_function("SessionResume", l_SessionResume);

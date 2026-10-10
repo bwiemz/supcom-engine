@@ -26,7 +26,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->4<!-- /metric --> |
 | Architecture checks (`ctest -L arch`) | <!-- metric:arch_tests -->18<!-- /metric -->: no library cycle or layer reaching up; every serialized type's fields in its serializer; the blueprint-field, Lua-stub and retail-hook baselines; this document's metrics. |
 | Static analysis | clang-tidy ratchet at its baseline of <!-- metric:tidy_baseline -->31<!-- /metric --> triaged findings; changed lines follow `.clang-format`; CI builds first-party code with `-Werror`. |
-| Retail engine API still unbound | <!-- metric:unbound_globals -->14<!-- /metric --> globals and <!-- metric:unbound_methods -->7<!-- /metric --> methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`); 13 are not in retail's engine either, most of the rest are UI-only. |
+| Retail engine API still unbound | <!-- metric:unbound_globals -->12<!-- /metric --> globals and <!-- metric:unbound_methods -->7<!-- /metric --> methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`); 13 are not in retail's engine either, most of the rest are UI-only. |
 
 The counts are a Linux build's, written by `tools/status_metrics.py update --build-dir <build>`; `arch.status_metrics` fails when they are stale.
 
