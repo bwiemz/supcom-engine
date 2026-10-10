@@ -1338,6 +1338,8 @@ private:
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
     void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    void tend_unfinished(SimContext& ctx);
+    void decay(lua_State* L);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
