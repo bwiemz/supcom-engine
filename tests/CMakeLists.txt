@@ -31,6 +31,7 @@ add_executable(osc_tests
     test_seabed_layer.cpp
     test_raised_platforms.cpp
     test_favors_water.cpp
+    test_ground_snap.cpp
     test_target_points.cpp
     test_footprint_classes.cpp
     test_occupancy.cpp

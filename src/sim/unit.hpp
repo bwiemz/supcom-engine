@@ -885,9 +885,13 @@ public:
     bool walks_seabed() const {
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_Land";
     }
-    /// The height it stands at on the ground at (x, z): the terrain, under
-    /// the water too, for one that walks the seabed; else the surface.
+    /// The height it stands at with its centre at (x, z).
     f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const;
+    /// Physics.StandUpright and Physics.SinkLower.
+    void set_ground_snap_flags(bool stand_upright, bool sink_lower) {
+        stand_upright_ = stand_upright;
+        sink_lower_ = sink_lower;
+    }
     /// Physics.RaisedPlatforms: quads of four (x, z, height) corners.
     void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
     /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
@@ -1589,6 +1593,8 @@ private:
     std::string motion_type_;       // raw MotionType from blueprint
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
     std::vector<f32> raised_platforms_;
+    bool stand_upright_ = false;
+    bool sink_lower_ = false;
     blueprints::UnitFootprints footprints_;
     bool using_alt_footprint_ = false;
     bool force_alt_footprint_ = false;

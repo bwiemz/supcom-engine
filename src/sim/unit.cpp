@@ -2816,12 +2816,37 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     set_position(p);
 }
 
+// Moho's CUnitMotion::SnapToGround (from CalcMoveHover and CalcMoveLand).
 f32 Unit::ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
     if (!terrain) return position().y;
-    const f32 ground =
-        walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
     const Unit* platform = raised_platform();
-    return platform ? ground + platform->raised_platform_height(x, z) : ground;
+    const bool hover = is_hover();
+    if (!hover && layer_ != "Land" && layer_ != "Seabed") {
+        const f32 ground =
+            walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+        return platform ? ground + platform->raised_platform_height(x, z) : ground;
+    }
+    const auto sample = [&](f32 dx, f32 dz) {
+        const Vector3 d = quat_rotate(orientation(), {dx, 0, dz});
+        const f32 cx = x + d.x;
+        const f32 cz = z + d.z;
+        f32 h = terrain->get_terrain_height(cx, cz);
+        if (hover && terrain->has_water()) {
+            h = std::max(h, terrain->water_elevation());
+        }
+        return platform ? h + platform->raised_platform_height(cx, cz) : h;
+    };
+    const f32 hx = size_x_ * 0.5f;
+    const f32 hz = size_z_ * 0.5f;
+    const std::array<f32, 4> corners = {sample(hx, hz), sample(-hx, hz), sample(-hx, -hz),
+                                        sample(hx, -hz)};
+    f32 y = (corners[3] + corners[2] + corners[1] + corners[0]) * 0.25f;
+    if (stand_upright_ || sink_lower_) {
+        const f32 centre = terrain->get_terrain_height(x, z);
+        const auto [lo, hi] = std::minmax_element(corners.begin(), corners.end());
+        y -= (std::max(*hi, centre) - std::min(*lo, centre)) * 0.25f;
+    }
+    return y;
 }
 
 // Moho's CUnitMotion::FindIntersectingRaisedPlatform, over the units its box
