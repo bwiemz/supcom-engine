@@ -11148,14 +11148,14 @@ void test_factory_assist(TestContext& ctx) {
         if not __osc_b_second:IsDead() then error('its tank is still there') end
     )");
 
-    // A queue whose only order A is building: B, repeating, takes it too
-    // (Moho's CUnitGuardTask: a lone order may go to a repeating assister,
-    // its count back at its most and sent round, here to where it was), so
-    // both build one, and the order stays.
-    lua_check("B, repeating, takes A's only order too", R"(
+    // A queue whose only order A is building: with A repeating, B takes it
+    // too (Moho's CUnitGuardTask: a repeating factory's lone order may go to
+    // its assister, its count back at its most and sent round, here to where
+    // it was), so both build one, and the order stays.
+    lua_check("A repeating, B takes A's only order too", R"(
         IssueClearCommands({__osc_a})
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
-        __osc_b:SetRepeatQueue(true)
+        __osc_a:SetRepeatQueue(true)
         IssueGuard({__osc_b}, __osc_a)
     )");
     run(20);
@@ -11167,9 +11167,9 @@ void test_factory_assist(TestContext& ctx) {
         end
     )");
 
-    // Given a second order, the repeating B takes it and sends it to the
-    // back of A's queue rather than removing it.
-    lua_check("B, repeating, takes A's next order", R"(
+    // Given a second order, B takes it and sends it to the back of the
+    // repeating A's queue rather than removing it.
+    lua_check("B takes the repeating A's next order", R"(
         IssueBuildFactory({__osc_a}, 'uel0201', 1)
     )");
     run(20);
@@ -11182,12 +11182,12 @@ void test_factory_assist(TestContext& ctx) {
 
     // An order the lobby forbids is taken and dropped, as Moho's build task
     // fails after the take (and as A would drop it), rather than left for B
-    // to find again every tick -- even with B repeating, which would
+    // to find again every tick -- even with A repeating, which would
     // otherwise send it round A's queue for good.
     lua_check("A and B are cleared", R"(
         AddBuildRestriction(1, categories.ENGINEER)
         IssueClearCommands({__osc_a, __osc_b})
-        if not __osc_b:IsRepeatQueue() then error('B is not repeating') end
+        if not __osc_a:IsRepeatQueue() then error('A is not repeating') end
     )");
     run(2);
     lua_check("B takes an order the lobby forbids", R"(
@@ -11198,7 +11198,7 @@ void test_factory_assist(TestContext& ctx) {
     )");
     run(20);
     lua_check("and builds nothing from it", R"(
-        -- (A's lone tank order it may take, repeating: Moho's rule above)
+        -- (A's lone tank order it may take, A repeating: Moho's rule above)
         local b = __osc_building(__osc_b)
         if b and b:GetBlueprint().BlueprintId == 'uel0105' then error('B builds the engineer') end
         if __osc_queue(__osc_a) ~= 1 then

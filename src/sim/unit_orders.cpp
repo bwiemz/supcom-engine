@@ -1530,13 +1530,14 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
         const u32 guarded_factory = cmd.target_id;
         auto& queue = target_unit->command_queue_;
+        const bool repeats = target_unit->repeat_queue_;
         for (size_t i = 0; i < queue.size() && L; ++i) {
             if (queue[i].type != CommandType::BuildFactory) continue;
             // Not the guarded factory's own build, unless it has more to make
-            // than the one under way, or is all there is and this factory
-            // repeats (Moho's CUnitGuardTask).
+            // than the one under way, or is all there is and the guarded
+            // factory repeats (Moho's CUnitGuardTask).
             const bool spare = queue[i].count > 1;
-            if (i == 0 && !spare && !(queue.size() == 1 && repeat_queue_)) continue;
+            if (i == 0 && !spare && !(queue.size() == 1 && repeats)) continue;
             if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
             UnitCommand build;
             build.type = CommandType::BuildFactory;
@@ -1550,9 +1551,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             // fails after the take; such an order is dropped, repeating or
             // not, as the guarded factory drops it when it comes to it.
             if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
-            // A repeating assister sends the order round, its count back at
-            // its most (Moho's MoveCommandToBackOfQueue)
-            if (repeat_queue_ && !spare) {
+            // A repeating guarded factory has the order sent round, its count
+            // back at its most (Moho's MoveCommandToBackOfQueue)
+            if (repeats && !spare) {
                 UnitCommand round = taken;
                 round.count = std::max(round.max_count, 1);
                 queue.push_back(std::move(round));
@@ -1579,9 +1580,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                                 break;
                             }
                     } else {
-                        if (repeat_queue_ && !its.empty() &&
-                            its.back().command_id == taken.command_id)
+                        if (repeats && !its.empty() && its.back().command_id == taken.command_id) {
                             its.pop_back();
+                        }
                         its.insert(its.begin() +
                                        static_cast<std::ptrdiff_t>(std::min(i, its.size())),
                                    taken);
