@@ -281,7 +281,10 @@ public:
     /// The orders a right-click at (wx, wz) would give the selection, each
     /// with its units, unissued
     std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
-    right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const;
+    right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* invalid = nullptr) const;
+
+    /// Moho's RULEUCC_Invalid: on an enemy no selected unit can hit, no order
+    bool right_click_invalid(sim::SimState& sim, f32 wx, f32 wz) const;
 
     /// What the right button would order at (wx, wz), as the world view's
     /// GetRightMouseButtonOrder asks at the cursor: the first order not a

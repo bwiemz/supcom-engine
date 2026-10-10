@@ -86,7 +86,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| Retail's right click on an enemy is an attack only if a selected unit can hit it (`OVERLAYANTIAIR`, `OVERLAYDIRECTFIRE`, `OVERLAYANTINAVY`, then each weapon's layers and categories); the engine makes it an attack whenever a unit has the Attack cap | Right-clicking an enemy no selected weapon can hit (tanks on a bomber) gives an Attack order | faf-re `UserUnit::CanAttackTarget`, `func_GetRightMouseButtonAction`; engine `input_handler.cpp` | Open |
 
 ### Where the engine does retail's way and FAF's exe differs
 
@@ -101,6 +100,7 @@ How to read it:
 | Item | PR |
 |---|---|
 | `GetBoneDirection(bone)` returns three numbers, not a vector table: retail's Lua destructures `v.x, v.y, v.z = GetBoneDirection(b)`, so the Scathis's `CreateProjectileAtMuzzle` errored in `GetAngleInBetween` and the weapon never fired | pending |
+| A right click on an enemy is an attack only if a selected unit can hit it (`UserUnit:CanAttackTarget`); on one none can, the cursor is `RULEUCC_Invalid` and no order is given (tanks on a bomber) | [#531](https://github.com/bwiemz/supcom-engine/pull/531) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
