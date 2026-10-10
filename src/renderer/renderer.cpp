@@ -1839,6 +1839,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // take (its moves and basis run in poll_events); the world it follows
     camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
     camera_view_ = view;
+    for (const auto& follow : events.camera_follows) {
+        camera_.camera_follow(follow.source, follow.projectile, follow.timeout);
+    }
+    events.camera_follows.clear();
     camera_game_time_ =
         view.cur() ? (static_cast<f64>(view.cur()->tick) + view.alpha()) * 0.1 : 0.0;
     // FA's own game interface replaces the C++ HUD placeholders.

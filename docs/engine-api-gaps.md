@@ -40,7 +40,6 @@ How to read it:
 |---|---|---|---|
 | Projectile `Physics.LeadTarget` defaults to true in retail; the engine's default is false | Homing projectiles fly at where their target is, not ahead of it: 82 of retail's 102 `TrackTarget` projectiles leave the field unset | faf-re `RProjectileBlueprint` constructor (`LeadTarget(1)`), `Projectile.cpp`; engine `projectile.hpp` lead_target | Open |
 | `PrefersPrimaryWeaponTarget` makes a weapon take the primary's target when it can hit it; `StopOnPrimaryWeaponBusy` makes one drop its target while the primary has one. The engine targets each weapon alone | A unit's other weapons don't share its primary's target: 73 weapons on 36 units (ships, gunships, ASF, Fatboy, Monkeylord); Janus and Notha keep firing their second weapon | faf-re `CAcquireTargetTask`; engine `weapon.cpp` | Open |
-| `CameraFollowsProjectile`, `CameraFollowTimeout`: retail moves a camera tracking a unit onto such a shot for the timeout | With the camera tracking a unit, its nukes, missiles, shells and bombs (90 retail projectiles) don't take the camera along | faf-re `Projectile.cpp` (constructor), `CameraImpl`; engine: no reader | Open |
 
 ## Categories
 
@@ -97,6 +96,7 @@ How to read it:
 | `FAVORSWATER`: the Salem paths on its water footprint while it and its order's destinations are on water | [#565](https://github.com/bwiemz/supcom-engine/pull/565) |
 | FAF: `Unit:ForceAltFootprint(bool)` holds a unit to its alt footprint (the Salem's amphibious toggle) | [#565](https://github.com/bwiemz/supcom-engine/pull/565) |
 | `CreateThrustController` turns its engine bone toward the unit's thrust within `SetThrustingParam`'s caps, and an animator plays on top of the manipulators before it (retail UEA0104, UEA0107, XEA0306; FAF's UEA0203, UEA0305) | [#567](https://github.com/bwiemz/supcom-engine/pull/567) |
+| `CameraFollowsProjectile`, `CameraFollowTimeout`: a camera following a unit goes on to such a shot of it, and back to the unit the timeout after the shot is gone (nukes, tactical missiles, artillery shells, bombs) | [#568](https://github.com/bwiemz/supcom-engine/pull/568) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

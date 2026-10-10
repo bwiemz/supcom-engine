@@ -304,6 +304,17 @@ void Camera::target_nothing() {
     target_time_left_ = 0.0f;
 }
 
+void Camera::camera_follow(u32 source, u32 target, f32 seconds) {
+    CameraEntityPose pose;
+    if (!target_pose(pose) || target_ids_[active_target_] != source || !entity_lookup_ ||
+        !entity_lookup_(target, pose)) {
+        return;
+    }
+    target_ids_.push_back(target);
+    active_target_ = target_ids_.size() - 1;
+    target_time_left_ = seconds;
+}
+
 void Camera::spin_rates(f32 heading_rate, f32 zoom_rate) {
     heading_rate_ = heading_rate;
     zoom_rate_ = zoom_rate;

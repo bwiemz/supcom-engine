@@ -107,15 +107,23 @@ void push_projectile_class(lua_State* L, const std::string& bp_id) {
 
 } // namespace
 
-void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, bool push) {
+void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, bool push,
+                              u32 source) {
     if (!L) return;
     const int top = lua_gettop(L);
     // Its categories first: its own OnCreate may test them.
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* sim_of_registry = static_cast<SimState*>(lua_touserdata(L, -1));
-    if (sim_of_registry)
-        proj.set_blueprint_info(sim_of_registry->projectile_blueprint_info(proj.blueprint_id()));
+    if (sim_of_registry) {
+        auto info = sim_of_registry->projectile_blueprint_info(proj.blueprint_id());
+        const u32 from = source != 0 ? source : proj.launcher_id;
+        if (info->camera_follows && from != 0) {
+            sim_of_registry->add_camera_follow(
+                {from, proj.entity_id(), info->camera_follow_timeout});
+        }
+        proj.set_blueprint_info(std::move(info));
+    }
     lua_settop(L, top);
     lua_newtable(L);
     const int obj = lua_gettop(L);

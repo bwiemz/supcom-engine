@@ -445,7 +445,8 @@ static int proj_CreateChildProjectile(lua_State* L) {
         sim->entity_registry().find(child_id));
 
     // Its script object, as for every projectile (OnCreate runs).
-    sim::create_projectile_object(L, *child_ptr, under_water(sim, child_ptr->position()), true);
+    sim::create_projectile_object(L, *child_ptr, under_water(sim, child_ptr->position()), true,
+                                  parent->entity_id());
     return 1;
 }
 

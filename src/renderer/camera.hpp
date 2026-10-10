@@ -168,6 +168,9 @@ public:
                          f32 transition);
     /// TargetNothing: a location, followed no more.
     void target_nothing();
+    /// CameraFollow: following `source`, it goes on to `target`, and back
+    /// `seconds` after that is gone.
+    void camera_follow(u32 source, u32 target, f32 seconds);
     /// GetTargetEntity: the entity it follows (0: none).
     u32 target_entity() const {
         return target_type_ == CameraTarget::Entity && active_target_ < target_ids_.size()
