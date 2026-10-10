@@ -149,7 +149,7 @@ TEST_CASE("An unfinished unit no one builds decays from its second tick to OnDec
     CHECK(decayed(g.L) == 1);
 }
 
-TEST_CASE("A builder on an unfinished unit keeps it from decaying, paused too", "[sim][build]") {
+TEST_CASE("A repairer on an unfinished unit keeps it from decaying, paused too", "[sim][build]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     flat(sim);
@@ -167,6 +167,24 @@ TEST_CASE("A builder on an unfinished unit keeps it from decaying, paused too", 
     CHECK(u->health() == 50.0f);
     sim.tick();
     CHECK(u->health() < 50.0f);
+}
+
+TEST_CASE("A paused unit moves as an unpaused one", "[sim][orders][pause]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* paused = walker(sim, 10.0f, 10.0f);
+    Unit* ctl = walker(sim, 10.0f, 30.0f);
+    paused->set_paused(true);
+    paused->push_command(move_to(60.0f, 10.0f), true);
+    ctl->push_command(move_to(60.0f, 30.0f), true);
+    for (int i = 0; i < 20; ++i) {
+        sim.tick();
+    }
+    CHECK(paused->position().x > 10.0f);
+    CHECK(paused->position().x == ctl->position().x);
+    CHECK(paused->command_queue().size() == 1);
 }
 
 TEST_CASE("A unit being built holds its orders until it is finished", "[sim][orders]") {

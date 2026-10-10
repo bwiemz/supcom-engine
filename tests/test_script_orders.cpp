@@ -410,3 +410,26 @@ TEST_CASE("IsUnitState reads the states a script sets", "[script_orders][lua]") 
     )");
     if (!r) FAIL(r.error().message);
 }
+
+TEST_CASE("An engineer whose build waits at its site is Building", "[script_orders][lua][pause]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    Unit unit;
+    osc::sim::UnitCommand build;
+    build.type = CommandType::BuildMobile;
+    build.task_wait = 10;
+    unit.push_command(build, true);
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &unit);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "unit");
+    const auto r = lua.do_string(R"(
+        if not moho.unit_methods.IsUnitState(unit, 'Building') then error('not building') end
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
+}
