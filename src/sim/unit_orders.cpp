@@ -275,6 +275,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (!running) end_attack_run(*this);
     }
     while (!command_queue_.empty()) {
+        note_queue_head();
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the tick ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;

@@ -1073,6 +1073,7 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
 void SimState::stop_unit(Unit& unit) {
     const bool factory_build = unit.building_factory_order();
     unit.clear_commands();
+    unit.request_ui_refresh();
     // The order it was working on goes too: a factory's unit under
     // construction, or an enhancement under way.
     if (factory_build) unit.cancel_factory_build(entity_registry_, L_);
@@ -1728,6 +1729,7 @@ void SimState::update_entities() {
             const u32 snaps = e->snap_serial();
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
             if (auto* moved = entity_registry_.find(id); moved && !moved->destroyed()) {
+                static_cast<Unit*>(moved)->note_queue_head();
                 // A teleport or a boarding jumps: no speed to lead by.
                 const Vector3 after = moved->position();
                 const auto per_second = static_cast<f32>(1.0 / SECONDS_PER_TICK);

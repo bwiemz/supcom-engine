@@ -21,6 +21,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <array>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -575,6 +576,123 @@ TEST_CASE("RestoreToggleCaps returns a unit to the toggles it started with", "[s
                 .ok());
     CHECK(w.unit().has_toggle_cap("RULEUTC_ShieldToggle"));
     CHECK_FALSE(w.unit().has_toggle_cap("RULEUTC_CloakToggle"));
+}
+
+TEST_CASE("A selected unit's settings, Stop and its army's build restrictions report the "
+          "selection again",
+          "[selection]") {
+    osc::lua::LuaState lua;
+    osc::blueprints::BlueprintStore store{lua.raw()};
+    osc::sim::SimState sim{lua.raw(), &store};
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    lua_State* S = lua.raw();
+    std::array<osc::u32, 2> ids{};
+    for (const auto& [name, army] : {std::pair{"unit", 0}, std::pair{"enemy", 1}}) {
+        auto u = std::make_unique<osc::sim::Unit>();
+        u->set_army(army);
+        const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+        ids[static_cast<size_t>(army)] = id;
+        lua_newtable(S);
+        lua_pushstring(S, "_c_object");
+        lua_pushlightuserdata(S, sim.entity_registry().find(id));
+        lua_rawset(S, -3);
+        lua_setglobal(S, name);
+    }
+    osc::renderer::InputHandler mine;
+    osc::renderer::InputHandler theirs;
+    mine.set_selected({ids[0]});
+    theirs.set_selected({ids[1]});
+    for (auto* input : {&mine, &theirs}) {
+        input->prune_selection(sim.entity_registry());
+        REQUIRE(input->take_selection_event());
+    }
+
+    for (const char* trigger : {
+             "M.SetPaused(unit, true)",
+             "M.SetRepeatQueue(unit, true)",
+             "M.SetFireState(unit, 1)",
+             "M.SetScriptBit(unit, 'RULEUTC_ShieldToggle', true)",
+             "M.ToggleScriptBit(unit, 'RULEUTC_ShieldToggle')",
+             "IssueStop({unit})",
+             "AddBuildRestriction(1, 'TECH1')",
+             "RemoveBuildRestriction(1, 'TECH1')",
+         }) {
+        INFO(trigger);
+        mine.prune_selection(sim.entity_registry());
+        REQUIRE_FALSE(mine.take_selection_event());
+        REQUIRE(lua.do_string(std::string("local M = moho.unit_methods ") + trigger).ok());
+        mine.prune_selection(sim.entity_registry());
+        CHECK(mine.take_selection_event());
+        theirs.prune_selection(sim.entity_registry());
+        CHECK_FALSE(theirs.take_selection_event());
+    }
+}
+
+TEST_CASE("A selected unit's head order of a refreshing type, taken off, reports the selection "
+          "again",
+          "[selection]") {
+    using osc::sim::CommandType;
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+    osc::u32 next_id = 1;
+    for (const auto& [type, refreshes] : {
+             std::pair{CommandType::BuildFactory, true},
+             std::pair{CommandType::Reclaim, true},
+             std::pair{CommandType::Repair, true},
+             std::pair{CommandType::Capture, true},
+             std::pair{CommandType::TransportLoad, true},
+             std::pair{CommandType::TransportUnload, true},
+             std::pair{CommandType::WaitForFerry, true},
+             std::pair{CommandType::Upgrade, true},
+             std::pair{CommandType::Dock, true},
+             std::pair{CommandType::Move, false},
+             std::pair{CommandType::BuildMobile, false},
+             std::pair{CommandType::Attack, false},
+         }) {
+        INFO(static_cast<int>(type));
+        osc::sim::UnitCommand head;
+        head.type = type;
+        head.command_id = next_id++;
+        osc::sim::UnitCommand next;
+        next.type = CommandType::Move;
+        next.command_id = next_id++;
+        w.unit().push_command(head, true);
+        w.unit().push_command(next, false);
+        w.unit().note_queue_head();
+        input.prune_selection(w.sim.entity_registry());
+        REQUIRE_FALSE(input.take_selection_event());
+        w.unit().remove_command(head.command_id, w.sim.entity_registry(), w.sim_lua.raw());
+        w.unit().note_queue_head();
+        input.prune_selection(w.sim.entity_registry());
+        CHECK(input.take_selection_event() == refreshes);
+        w.unit().clear_commands();
+        w.unit().note_queue_head();
+        input.prune_selection(w.sim.entity_registry());
+        input.take_selection_event();
+    }
+}
+
+TEST_CASE("A repair given and finished in one tick reports the selection again", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    input.set_selected({w.id});
+    osc::sim::UnitCommand repair;
+    repair.type = osc::sim::CommandType::Repair;
+    repair.command_id = 1;
+    repair.target_id = 9999;
+    w.unit().push_command(repair, true);
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+    w.sim.tick();
+    REQUIRE(w.unit().command_queue().empty());
+    input.prune_selection(w.sim.entity_registry());
+    CHECK(input.take_selection_event());
 }
 
 TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", "[selection]") {
