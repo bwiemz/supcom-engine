@@ -163,7 +163,7 @@ Quaternion conjugate(const Quaternion& q) {
 } // namespace
 
 AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f32 start_turn,
-                    f32 turn_speed, f32 bank_factor, f32 elevation_scale) {
+                    f32 turn_speed, f32 bank_factor, f32 elevation_scale, bool normal_turn) {
     constexpr f32 kPi = 3.1415927f;
     constexpr f32 kTwoPi = 6.2831855f;
     const bool near = start_turn > limited;
@@ -184,7 +184,13 @@ AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f
     Vector3 turned{nose.x * c + nose.z * s, selected.y, nose.z * c - nose.x * s};
     normalize(turned);
     const f32 turn_scale = std::min(limited / start_turn, near ? 0.5f : 1.0f);
-    const f32 align = std::max(dot(planar, nose), 0.0f);
+    f32 align = dot(planar, nose);
+    if (normal_turn) {
+        const f32 sq = align * align;
+        align = sq * sq * sq * sq;
+        bank_factor *= 10.0f;
+    }
+    align = std::max(align, 0.0f);
     const f32 bias = elevation_scale * (1.0f - align) * bank_factor * turn_scale * sign;
     const f32 back = turned.y * turn_scale;
     const Vector3 wing = quarter_turn(turned);
@@ -193,6 +199,7 @@ AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f
               bias * wing.z - planar.z * back};
     normalize(out.up);
     out.nose = turned;
+    out.wing_blend = 1.0f - align;
     return out;
 }
 

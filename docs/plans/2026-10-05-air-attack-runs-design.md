@@ -118,7 +118,7 @@ Outputs by state (`switch` at :3721-3806) [read]:
 
 | State | MakingAttackRun | Desired direction | Speed | Turn-time effects |
 |---|---|---|---|---|
-| Combat (1), NormalTurn (2) | **set** (:3724) | At the target. If the target is mobile, at `PredictAheadBomb(precision)`, where precision = `Air.PredictAheadForBombDrop` if > 0 and the target is not air, else 1.0 (:3726-3746) | `maxAirSpeed`. NormalTurn against a *stationary* air target uses `max(MinAirspeed, targetDist)` (:3750-3757) | Turn gain `+= wingBlend` (CalcWingedOrientation :3256-3257) |
+| Combat (1), NormalTurn (2) | **set** (:3724) | At the target. If the target is mobile, at `PredictAheadBomb(precision)`, where precision = `Air.PredictAheadForBombDrop` if > 0 and the target is not air, else 1.0 (:3726-3746) | `maxAirSpeed`. NormalTurn against a *moving* air target uses `max(MinAirspeed, targetDist)` (:3750-3757; faf-re's text reads it the other way; a retail probe's interceptor trails a bomber at its distance) | Turn gain `+= wingBlend` (CalcWingedOrientation :3256-3257) |
 | CombatTurn (3), CombatTurnB (4) | – | At the target | `Air.MinAirspeed` (not multiplied by moveSpeedMult) (:3761-3770) | `++mSustainedTurnTicks`. **CombatTurn only**: yaw clamp is `CombatTurnSpeed` (:3161) and turn gain `+= TightTurnMultiplier·wingBlend` (:3254-3255) |
 | Realign (5) | – | At the target | `maxAirSpeed` (:3772-3780) | `++mSustainedTurnTicks` |
 | BreakOff (6) | **set** (:3783) | **Straight on** (current heading) | `maxAirSpeed` (:3782-3790) | `mSustainedTurnTicks = 0` |
@@ -436,6 +436,8 @@ update_air then calls `fly_air_step(dir to waypoint, max_airspeed·speed_mult, t
 - velocity relaxes toward the nose: `v += (KMove·s·f·nose − KMove·v)·dt`.
 
 Without this, the Appendix A model never sets up a second bomb run for UEA0103: 1 salvo in 90 s against 2 to 5 with the lag. Keeping it combat-only leaves `--air-turn-test` and all move orders untouched. This step is [inferred]: it approximates `ComputeAirControl`, it is not a port of it.
+
+*Done (2026-10-10): replaced by `ComputeAirControl` itself. Attack runs and circling drive the attitude controller of ordinary flight; a retail probe's interceptor and bomber runs match tick by tick up to their first random draw.*
 
 ### 6.4 `order_attack` (EN sim/unit_orders.cpp:332-371)
 

@@ -3188,9 +3188,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             units.mix(0x4149524300000000ull | ac.state); // "AIRC"
             units.mix(ac.timeout_tick);
             units.mix(static_cast<u64>(static_cast<u32>(ac.sustained_turn_ticks)));
-            units.mix_f32(ac.yaw_rate);
-            // The airframe's own velocity, while it has the unit.
-            if (ac.flying) mix_vec(units, ac.velocity);
+            if (ac.flying) {
+                mix_vec(units, u.air_velocity());
+            }
             // A hovering aircraft's circle, once drawn, and where it is
             // drawn about.
             const Vector3& around = ac.circle_anchor;

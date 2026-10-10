@@ -1263,8 +1263,6 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u8v(ac.state);
     w.u32v(ac.timeout_tick);
     w.i32v(ac.sustained_turn_ticks);
-    w.f32v(ac.yaw_rate);
-    w.vec3(ac.velocity);
     w.b(ac.flying);
     w.b(ac.circle_reverse);
     w.f32v(ac.circle_elevation);
@@ -1646,8 +1644,6 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ac.state = r.u8v();
     ac.timeout_tick = r.u32v();
     ac.sustained_turn_ticks = r.i32v();
-    ac.yaw_rate = r.f32v();
-    ac.velocity = r.vec3();
     ac.flying = r.b();
     ac.circle_reverse = r.b();
     ac.circle_elevation = r.f32v();

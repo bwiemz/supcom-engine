@@ -65,12 +65,14 @@ AirMoveStep air_move_step(const Vector3& velocity, const Vector3& force, f32 k_m
 struct AirAxes {
     Vector3 up{};
     Vector3 nose{};
+    f32 wing_blend = 0.0f;
 };
 
-/// CalcWingedOrientation out of combat: the nose `nose` turned toward
-/// `selected` by at most TurnSpeed x 0.1, ten times over, banked into the turn.
+/// CalcWingedOrientation: the nose `nose` turned toward `selected` by at most
+/// `turn_speed` x 0.1, ten times over, banked into the turn; in a NormalTurn
+/// ten times harder, its alignment to the eighth.
 AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f32 start_turn,
-                    f32 turn_speed, f32 bank_factor, f32 elevation_scale);
+                    f32 turn_speed, f32 bank_factor, f32 elevation_scale, bool normal_turn = false);
 
 /// CalcHoverOrientation: up leaning into the last tick's change of velocity
 /// `dv`, its forward part dropped unless BankForward; the nose along `facing`.
