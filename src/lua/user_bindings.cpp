@@ -40,11 +40,13 @@
 #include <unordered_set>
 #include <optional>
 #include <cctype>
+#include <charconv>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -1011,6 +1013,38 @@ static int l_RenderOverlayEconomy(lua_State* L) {
     return 0;
 }
 
+/// Moho's cfunc_TeamColorModeL; the string of per-army colours is FAF's
+/// (FA-Binary-Patches section/TeamColorMode.cpp).
+static int l_TeamColorMode(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return luaL_error(L, "TeamColorMode(bool)\n  expected 1 args, but got %d", lua_gettop(L));
+    }
+    auto* r = get_renderer(L);
+    if (!r) {
+        return 0;
+    }
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        std::vector<u32> palette;
+        const std::string_view text(lua_tostring(L, 1), lua_strlen(L, 1));
+        size_t start = 0;
+        while (start < text.size()) {
+            const size_t end = std::min(text.find(',', start), text.size());
+            u32 color = 0;
+            const auto digits = text.substr(start, end - start);
+            std::from_chars(digits.data(), digits.data() + digits.size(), color, 16);
+            palette.push_back(color);
+            start = end + 1;
+        }
+        r->set_team_palette(std::move(palette));
+        return 0;
+    }
+    if (!lua_isboolean(L, 1)) {
+        return luaL_typerror(L, 1, "bool");
+    }
+    r->set_team_color_mode(lua_toboolean(L, 1) != 0);
+    return 0;
+}
+
 /// The range overlays FA's UI sets up: the session's, or none.
 static renderer::RangeOverlays* get_range_overlays(lua_State* L) {
     lua_pushstring(L, "__osc_range_overlays");
@@ -1801,6 +1835,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
     state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
+    state.register_function("TeamColorMode", l_TeamColorMode);
     state.register_function("SetOverlayFilter", l_SetOverlayFilter);
     state.register_function("SetOverlayFilters", l_SetOverlayFilters);
     state.register_function("GenerateBuildTemplateFromSelection",

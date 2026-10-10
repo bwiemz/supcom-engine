@@ -273,6 +273,12 @@ public:
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
+    void set_team_color_mode(bool on) { strategic_icon_renderer_.set_team_color_mode(on); }
+    bool team_color_mode() const { return strategic_icon_renderer_.team_color_mode(); }
+    void set_team_palette(std::vector<u32> palette) {
+        strategic_icon_renderer_.set_team_palette(std::move(palette));
+    }
+    const std::vector<u32>& team_palette() const { return strategic_icon_renderer_.team_palette(); }
     void set_select_boxes(bool on) {
         overlay_renderer_.set_select_boxes(on);
         selection_renderer_.set_enabled(on);
