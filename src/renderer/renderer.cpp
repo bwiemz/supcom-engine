@@ -451,6 +451,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     // Strategic icon renderer
     strategic_icon_renderer_.init(device_, allocator_);
+    economy_overlay_renderer_.init(device_, allocator_);
 
     // What the player's intel shows, for everything that draws units (M215a)
     unit_renderer_.set_recon(&recon_);
@@ -1370,6 +1371,8 @@ void Renderer::clear_scene() {
     strategic_icon_renderer_.forget_blueprints(); // likewise the icons' (M215c)
     strategic_icon_renderer_.set_team_color_mode(false);
     strategic_icon_renderer_.set_team_palette({});
+    economy_overlay_renderer_.forget_params();
+    economy_overlay_renderer_.set_enabled(false);
 
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
@@ -1894,6 +1897,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     minimap_renderer_.set_frame_index(fi);
     minimap_renderer_.begin_frame();
     strategic_icon_renderer_.set_frame_index(fi);
+    economy_overlay_renderer_.set_frame_index(fi);
     hud_renderer_.set_frame_index(fi);
     selection_info_renderer_.set_frame_index(fi);
     fog_renderer_.set_frame_index(fi);
@@ -2713,6 +2717,10 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
                                     window_height_, L);
+    economy_overlay_renderer_.update(
+        view, camera_, vp, player_army_,
+        [&](const std::string& id) { return strategic_icon_renderer_.fade_in_zoom(id, L); },
+        texture_cache_, font_cache_, window_width_, window_height_, L);
 
     {
         bool resources = !camera_.free();
@@ -3014,6 +3022,10 @@ void Renderer::record_screen_layers(u32 fi) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         overlay_renderer_.render(cmd_buf_[fi], ui_layout_,
                                  window_width_, window_height_);
+    }
+    if (ui_pipeline_ && economy_overlay_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        economy_overlay_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
     }
 
     // 8. Draw minimap (terrain bg + unit icons + camera box)
@@ -3895,6 +3907,7 @@ void Renderer::shutdown() {
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
     strategic_icon_renderer_.destroy(device_, allocator_);
+    economy_overlay_renderer_.destroy(device_, allocator_);
     hud_renderer_.destroy(device_, allocator_);
     selection_info_renderer_.destroy(device_, allocator_);
     profile_overlay_.destroy(device_, allocator_);

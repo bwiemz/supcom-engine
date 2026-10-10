@@ -73,6 +73,10 @@ public:
 
     /// Forget what the last game's blueprints and strategicIcons.lua said:
     /// the next game's may differ (a scene rebuilt for it).
+    f32 fade_in_zoom(const std::string& blueprint_id, lua_State* L) {
+        return icon_blueprint(blueprint_id, L).fade_in_zoom;
+    }
+
     void forget_blueprints() {
         icon_blueprints_.clear();
         underlay_textures_.clear();

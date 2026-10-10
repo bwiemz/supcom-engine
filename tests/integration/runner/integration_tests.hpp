@@ -117,6 +117,8 @@ void test_shadow_map(TestContext& ctx);
 /// unit_intel_test.cpp.
 void test_unit_intel(TestContext& ctx);
 void test_effect_intel(TestContext& ctx);
+/// --economy-overlay-test, in economy_overlay_test.cpp.
+void test_economy_overlay(TestContext& ctx);
 /// --strategic-icon-test (M215c), in strategic_icon_test.cpp.
 void test_strategic_icons(TestContext& ctx);
 /// --resource-icon-render-test, in resource_icon_render_test.cpp.

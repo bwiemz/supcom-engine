@@ -36,6 +36,7 @@ add_executable(osc_integration
     runner/unit_intel_test.cpp
     runner/intel_probe.cpp
     runner/strategic_icon_test.cpp
+    runner/economy_overlay_test.cpp
     runner/resource_icon_render_test.cpp
     runner/counter_intel_test.cpp
     runner/binding_tail_test.cpp
