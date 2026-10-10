@@ -1,9 +1,6 @@
 # Lua bindings that do nothing yet, "<Lua name> <C++ function>" (tools/check_lua_stubs.py)
 AITarget l_AITarget
 AddBoundedProp stub_return_nil
-AddManualScroller stub_noop
-AddPingPongScroller stub_noop
-AddThreadScroller stub_noop
 BeginLoggingStats l_BeginLoggingStats
 BlueprintLoaderUpdateProgress l_BlueprintLoaderUpdateProgress
 BlueprintLoaderUpdateProgress stub_noop
@@ -21,7 +18,6 @@ InternalStartSteamDiscoveryService l_InternalStartSteamDiscoveryService
 IssuePause stub_noop
 MetaImpact stub_noop
 RefreshSteamGames l_RefreshSteamGames
-RemoveScroller stub_noop
 RequestRefreshUI stub_noop
 SessionIsReplay stub_false
 SetActiveBuildTemplate l_SetActiveBuildTemplate

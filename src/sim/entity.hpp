@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -124,6 +125,38 @@ struct CollisionShape {
 struct ChildAttachment {
     u32 entity_id = 0;
     i32 bone = -1; // which bone of parent the child is attached to
+};
+
+/// Moho's EScrollType.
+enum class ScrollType : u8 { None, PingPong, Manual, MotionDerived };
+
+/// A texture offset in u: `u` for the vertices with v above 0.95, `v` for
+/// those above 0.90.
+struct Scroll {
+    f32 u = 0, v = 0;
+};
+
+/// Moho's SScroller, as the Add*Scroller bindings fill it.
+struct ScrollerSpec {
+    ScrollType type = ScrollType::None;
+    Scroll rate;
+    f32 ping_seconds[2] = {};
+    f32 pong_seconds[2] = {};
+    Scroll ping, pong;
+    f32 side_dist = 1.0f;
+    f32 scroll_mult = 1.0f;
+};
+
+/// Moho's CTextureScroller.
+struct TextureScroller {
+    ScrollerSpec spec;
+    bool in_ping[2] = {};
+    i32 countdown[2] = {};
+    Vector3 last_position;
+    Quaternion last_orientation;
+
+    void set(const ScrollerSpec& s, Scroll& start, Scroll& end);
+    void tick(const Vector3& position, const Quaternion& orientation, Scroll& start, Scroll& end);
 };
 
 struct BoneData; // forward decl
@@ -358,6 +391,17 @@ public:
     BeamSetup& beam_setup() { return beam_setup_; }
     const BeamSetup& beam_setup() const { return beam_setup_; }
 
+    const std::optional<TextureScroller>& scroller() const { return scroller_; }
+    void change_scroller(const ScrollerSpec& spec);
+    void tick_scroller() {
+        if (scroller_) {
+            scroller_->tick(position_, orientation_, scroll_start_, scroll_end_);
+        }
+    }
+    /// Moho's mScrollBeatStart and mScrollBeatEnd: a frame draws between them.
+    const Scroll& scroll_start() const { return scroll_start_; }
+    const Scroll& scroll_end() const { return scroll_end_; }
+
 private:
     u32 entity_id_ = 0;
     i32 army_ = -1;
@@ -412,6 +456,9 @@ private:
     u32 beam_launcher_id_ = 0;
     int beam_fx_ref_ = -2; // LUA_NOREF — stored IEffect Lua table ref
     BeamSetup beam_setup_;
+    std::optional<TextureScroller> scroller_;
+    Scroll scroll_start_;
+    Scroll scroll_end_;
 };
 
 } // namespace osc::sim

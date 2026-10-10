@@ -23,6 +23,7 @@ add_executable(osc_integration
     runner/render_probe.cpp
     runner/strata_test.cpp
     runner/meshless_test.cpp
+    runner/scroll_render_test.cpp
     runner/camera_test.cpp
     runner/material_test.cpp
     runner/bloom_test.cpp

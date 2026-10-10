@@ -276,6 +276,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
         gpu.sort_order = sort_order;
+        gpu.scrolling = read_lod_flag(mesh_bp_id, lod_index, "Scrolling", L);
 
         f32 cutoff = read_lod_cutoff(mesh_bp_id, lod_index, L);
 
@@ -319,6 +320,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
         gpu.sort_order = sort_order;
+        gpu.scrolling = read_lod_flag(mesh_bp_id, 1, "Scrolling", L);
 
         LODEntry entry;
         entry.mesh = std::move(gpu);
@@ -347,39 +349,57 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
 // LOD field readers
 // ---------------------------------------------------------------------------
 
+int MeshCache::push_lod_field(const std::string& mesh_bp_id, i32 lod_index, const char* field_name,
+                              lua_State* L) {
+    if (!L) {
+        return 0;
+    }
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    lua_pushstring(L, mesh_bp_id.c_str());
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 2);
+        return 0;
+    }
+    lua_pushstring(L, "LODs");
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 3);
+        return 0;
+    }
+    lua_rawgeti(L, -1, lod_index);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 4);
+        return 0;
+    }
+    lua_pushstring(L, field_name);
+    lua_rawget(L, -2);
+    return 5;
+}
+
 std::string MeshCache::read_lod_string_field(const std::string& mesh_bp_id,
                                               i32 lod_index,
                                               const char* field_name,
                                               lua_State* L) {
-    if (!L) return {};
-
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
-    int bps = lua_gettop(L);
-
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, bps);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); return {}; }
-    int mbp = lua_gettop(L);
-
-    lua_pushstring(L, "LODs");
-    lua_rawget(L, mbp);
-    if (!lua_istable(L, -1)) { lua_pop(L, 3); return {}; }
-    int lods = lua_gettop(L);
-
-    lua_rawgeti(L, lods, lod_index);
-    if (!lua_istable(L, -1)) { lua_pop(L, 4); return {}; }
-    int lod_table = lua_gettop(L);
-
-    lua_pushstring(L, field_name);
-    lua_rawget(L, lod_table);
+    const int pushed = push_lod_field(mesh_bp_id, lod_index, field_name, L);
     std::string result;
-    if (lua_type(L, -1) == LUA_TSTRING) {
+    if (pushed > 0 && lua_type(L, -1) == LUA_TSTRING) {
         result = lua_tostring(L, -1);
     }
-    lua_pop(L, 5); // field + lod_table + lods + mbp + bps
+    lua_pop(L, pushed);
+    return result;
+}
 
+bool MeshCache::read_lod_flag(const std::string& mesh_bp_id, i32 lod_index, const char* field_name,
+                              lua_State* L) {
+    const int pushed = push_lod_field(mesh_bp_id, lod_index, field_name, L);
+    const bool result = pushed > 0 && lua_toboolean(L, -1) != 0;
+    lua_pop(L, pushed);
     return result;
 }
 

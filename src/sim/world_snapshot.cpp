@@ -404,6 +404,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.orientation = e.orientation();
         r.beam_end = e.beam_endpoint();
         r.snap_serial = e.snap_serial();
+        r.scroll_start = e.scroll_start();
+        r.scroll_end = e.scroll_end();
         r.is_unit = e.is_unit();
         r.is_prop = e.is_prop();
         r.is_projectile = e.is_projectile();
@@ -638,6 +640,11 @@ Quaternion FrameView::orientation(const EntityRecord& e) const {
 Vector3 FrameView::beam_end(const EntityRecord& e) const {
     const Pair p = pair_for(e);
     return p.from ? lerp(p.from->beam_end, e.beam_end, alpha_) : e.beam_end;
+}
+
+Scroll FrameView::scroll(const EntityRecord& e) const {
+    return {e.scroll_start.u + (e.scroll_end.u - e.scroll_start.u) * alpha_,
+            e.scroll_start.v + (e.scroll_end.v - e.scroll_start.v) * alpha_};
 }
 
 Vector3 FrameView::position(const Entity& e) const {

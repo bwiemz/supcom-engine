@@ -984,15 +984,15 @@ void Renderer::create_pipelines() {
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
         // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup + time +
-        // parameter = 92 bytes)
+        // parameter + scroll = 100 bytes)
         bindings[1].binding = 1;
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 15 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
+        // 16 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
         // bone_weights(9), tangent(10), binormal(11), colour lookup(12), instance time(13),
-        // parameter(14)
-        std::array<VkVertexInputAttributeDescription, 15> attrs{};
+        // parameter(14), scroll(15)
+        std::array<VkVertexInputAttributeDescription, 16> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -1009,6 +1009,7 @@ void Renderer::create_pipelines() {
         attrs[12] = {12, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, color_lookup)};
         attrs[13] = {13, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, shader_time)};
         attrs[14] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
+        attrs[15] = {15, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshInstance, scroll_u)};
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
         // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) + uint

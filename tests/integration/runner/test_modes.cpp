@@ -138,6 +138,7 @@ constexpr Mode kModesBefore[] = {
     {"--wave-test", test_waves, false},
     {"--strata-test", test_strata, false},
     {"--meshless-test", test_meshless, false},
+    {"--scroll-render-test", test_scroll_render, false},
     {"--camera-test", test_camera, false},
     {"--material-test", test_material, false},
     {"--bloom-test", test_bloom, false},
@@ -351,6 +352,7 @@ void IntegrationModes::print_usage() const {
               << "  --wave-test        The shoreline's waves (M213c)\n"
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
+              << "  --scroll-render-test Texture scrollers: tank treads scroll as they drive\n"
               << "  --camera-test      The camera focuses on the ground; clicks pick the ground under the cursor\n"
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
               << "  --bloom-test       FA's bloom, from the glow in the frame's alpha\n"

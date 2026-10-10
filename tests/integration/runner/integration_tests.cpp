@@ -15707,14 +15707,14 @@ void test_lowstub(TestContext& ctx) {
 
     // Test 7: Visual stubs no-op (AddPingPongScroller, PlayCommanderWarpInEffect, PlayFxRollOffEnd)
     {
-        auto r = ctx.lua_state.do_string(
-            "local e = GetEntityById(" + id_str + ")\n"
-            "if not e then error('entity not found') end\n"
-            "e:AddPingPongScroller(0.1, 0, 0, 0, 0, 0)\n"
-            "e:PlayCommanderWarpInEffect()\n"
-            "e:PlayFxRollOffEnd()\n"
-            "e:RemoveScroller()\n"
-            "e:RequestRefreshUI()\n");
+        auto r = ctx.lua_state.do_string("local e = GetEntityById(" + id_str +
+                                         ")\n"
+                                         "if not e then error('entity not found') end\n"
+                                         "e:AddPingPongScroller(0.1, 0, 0, 0, 0, 0, 0, 0)\n"
+                                         "e:PlayCommanderWarpInEffect()\n"
+                                         "e:PlayFxRollOffEnd()\n"
+                                         "e:RemoveScroller()\n"
+                                         "e:RequestRefreshUI()\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Visual stubs no-op (scrollers, warp, rolloff)"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 7: Visual stubs — {}", r.error().message); }

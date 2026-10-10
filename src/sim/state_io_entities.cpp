@@ -228,6 +228,31 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.u32v(e.beam_setup_.check_clock);
     w.f32v(e.beam_setup_.length);
     w.f32v(e.beam_setup_.reached);
+    w.b(e.scroller_.has_value());
+    if (e.scroller_) {
+        const TextureScroller& s = *e.scroller_;
+        enum8(w, s.spec.type);
+        w.f32v(s.spec.rate.u);
+        w.f32v(s.spec.rate.v);
+        for (int lane = 0; lane < 2; ++lane) {
+            w.f32v(s.spec.ping_seconds[lane]);
+            w.f32v(s.spec.pong_seconds[lane]);
+            w.b(s.in_ping[lane]);
+            w.i32v(s.countdown[lane]);
+        }
+        w.f32v(s.spec.ping.u);
+        w.f32v(s.spec.ping.v);
+        w.f32v(s.spec.pong.u);
+        w.f32v(s.spec.pong.v);
+        w.f32v(s.spec.side_dist);
+        w.f32v(s.spec.scroll_mult);
+        w.vec3(s.last_position);
+        w.quat(s.last_orientation);
+    }
+    w.f32v(e.scroll_start_.u);
+    w.f32v(e.scroll_start_.v);
+    w.f32v(e.scroll_end_.u);
+    w.f32v(e.scroll_end_.v);
 }
 
 void StateIO::load(StateReader& r, Entity& e) {
@@ -293,6 +318,31 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.beam_setup_.check_clock = r.u32v();
     e.beam_setup_.length = r.f32v();
     e.beam_setup_.reached = r.f32v();
+    e.scroller_.reset();
+    if (r.b()) {
+        TextureScroller& s = e.scroller_.emplace();
+        s.spec.type = enum8<ScrollType>(r);
+        s.spec.rate.u = r.f32v();
+        s.spec.rate.v = r.f32v();
+        for (int lane = 0; lane < 2; ++lane) {
+            s.spec.ping_seconds[lane] = r.f32v();
+            s.spec.pong_seconds[lane] = r.f32v();
+            s.in_ping[lane] = r.b();
+            s.countdown[lane] = r.i32v();
+        }
+        s.spec.ping.u = r.f32v();
+        s.spec.ping.v = r.f32v();
+        s.spec.pong.u = r.f32v();
+        s.spec.pong.v = r.f32v();
+        s.spec.side_dist = r.f32v();
+        s.spec.scroll_mult = r.f32v();
+        s.last_position = r.vec3();
+        s.last_orientation = r.quat();
+    }
+    e.scroll_start_.u = r.f32v();
+    e.scroll_start_.v = r.f32v();
+    e.scroll_end_.u = r.f32v();
+    e.scroll_end_.v = r.f32v();
 }
 
 // --------------------------------------------------------------- Commands

@@ -95,6 +95,8 @@ void test_waves(TestContext& ctx);
 void test_strata(TestContext& ctx);
 /// --meshless-test, in meshless_test.cpp.
 void test_meshless(TestContext& ctx);
+/// --scroll-render-test, in scroll_render_test.cpp.
+void test_scroll_render(TestContext& ctx);
 /// --camera-test (M217a), in camera_test.cpp.
 void test_camera(TestContext& ctx);
 /// --material-test (M211a), in material_test.cpp.

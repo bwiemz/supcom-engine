@@ -739,6 +739,72 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     return 1;
 }
 
+static sim::Entity* scroller_entity(lua_State* L, const char* help, int args) {
+    const int n = lua_gettop(L);
+    if (n != args) {
+        luaL_error(L, "%s\n  expected %d args, but got %d", help, args, n);
+    }
+    return check_entity(L);
+}
+
+static f32 scroller_arg(lua_State* L, int i) {
+    return static_cast<f32>(luaL_checknumber(L, i));
+}
+
+static int entity_AddManualScroller(lua_State* L) {
+    auto* e = scroller_entity(L, "Entity:AddManualScroller(scrollSpeed1, scrollSpeed2)", 3);
+    if (!e) {
+        return 0;
+    }
+    sim::ScrollerSpec spec;
+    spec.type = sim::ScrollType::Manual;
+    spec.rate = {scroller_arg(L, 2), scroller_arg(L, 3)};
+    e->change_scroller(spec);
+    return 0;
+}
+
+static int entity_AddThreadScroller(lua_State* L) {
+    auto* e = scroller_entity(L, "Entity:AddThreadScroller(sideDist, scrollMult)", 3);
+    if (!e) {
+        return 0;
+    }
+    sim::ScrollerSpec spec;
+    spec.type = sim::ScrollType::MotionDerived;
+    spec.side_dist = scroller_arg(L, 2);
+    spec.scroll_mult = scroller_arg(L, 3);
+    e->change_scroller(spec);
+    return 0;
+}
+
+static int entity_AddPingPongScroller(lua_State* L) {
+    auto* e = scroller_entity(L,
+                              "Entity:AddPingPongScroller(ping1, pingSpeed1, pong1, pongSpeed1, "
+                              "ping2, pingSpeed2, pong2, pongSpeed2)",
+                              9);
+    if (!e) {
+        return 0;
+    }
+    sim::ScrollerSpec spec;
+    spec.type = sim::ScrollType::PingPong;
+    spec.ping = {scroller_arg(L, 2), scroller_arg(L, 6)};
+    spec.pong = {scroller_arg(L, 4), scroller_arg(L, 8)};
+    spec.ping_seconds[0] = scroller_arg(L, 3);
+    spec.pong_seconds[0] = scroller_arg(L, 5);
+    spec.ping_seconds[1] = scroller_arg(L, 7);
+    spec.pong_seconds[1] = scroller_arg(L, 9);
+    e->change_scroller(spec);
+    return 0;
+}
+
+static int entity_RemoveScroller(lua_State* L) {
+    auto* e = scroller_entity(L, "Entity:RemoveScroller()", 1);
+    if (!e) {
+        return 0;
+    }
+    e->change_scroller({});
+    return 0;
+}
+
 // unit:SetCustomName(name). The UI's (UserUnit's: the rename dialog, the
 // commander named for its player) goes to the sim as a ProcessInfo pair, as
 // Moho's does, so every lockstep peer and a replay name the unit at the same
@@ -1102,10 +1168,10 @@ const MethodEntry entity_methods[] = {
     {"CreateProjectileAtBone",  entity_CreateProjectileAtBone},
     {"PlaySound",               entity_PlaySound},
     {"SetFractionComplete",     entity_SetFractionComplete},
-    {"AddManualScroller",       stub_noop},
-    {"AddPingPongScroller",     stub_noop},
-    {"AddThreadScroller",       stub_noop},
-    {"RemoveScroller",          stub_noop},
+    {"AddManualScroller",       entity_AddManualScroller},
+    {"AddPingPongScroller",     entity_AddPingPongScroller},
+    {"AddThreadScroller",       entity_AddThreadScroller},
+    {"RemoveScroller",          entity_RemoveScroller},
     {"RequestRefreshUI",        stub_noop},
     {"SetCustomName",           entity_SetCustomName},
     {nullptr, nullptr},

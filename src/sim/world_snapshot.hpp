@@ -64,6 +64,7 @@ struct EntityRecord {
     Quaternion orientation;
     Vector3 beam_end;     ///< collision beams' far end (unused otherwise)
     u32 snap_serial = 0;  ///< changes when the entity teleports (see Entity::note_snap)
+    Scroll scroll_start, scroll_end;
     u32 bone_offset = 0;  ///< into WorldSnapshot::bones
     u32 bone_count = 0;   ///< 0 = no animated pose
     u64 hidden_bones = 0; ///< a unit's hidden bones (Unit:HideBone), bit i bone i, i < 64
@@ -425,6 +426,7 @@ public:
     Vector3 position(const EntityRecord& e) const;
     Quaternion orientation(const EntityRecord& e) const;
     Vector3 beam_end(const EntityRecord& e) const;
+    Scroll scroll(const EntityRecord& e) const;
 
     Vector3 position(const Entity& e) const;
     Quaternion orientation(const Entity& e) const;

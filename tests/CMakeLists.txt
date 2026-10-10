@@ -76,6 +76,7 @@ add_executable(osc_tests
     test_resource_icons.cpp
     test_ui_controls.cpp
     test_texture_alpha.cpp
+    test_texture_scroller.cpp
     test_key_codes.cpp
     test_movie_player.cpp
     test_console_keymap.cpp

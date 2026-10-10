@@ -1723,6 +1723,7 @@ void SimState::update_entities() {
     for (u32 id : ids) {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
+        e->tick_scroller();
         if (e->is_unit()) {
             const Vector3 before = e->position();
             const u32 snaps = e->snap_serial();
