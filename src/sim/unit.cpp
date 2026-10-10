@@ -4,6 +4,7 @@
 #include "core/test_status.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/air_combat.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -99,8 +101,36 @@ void Unit::clear_commands(const char*) {
 namespace {
 
 bool queued_build(const UnitCommand& c) {
-    return c.type == CommandType::BuildFactory ||
+    return c.type == CommandType::BuildFactory || c.type == CommandType::Upgrade ||
            (c.type == CommandType::BuildMobile && !c.blueprint_id.empty());
+}
+
+bool upgrades_to(lua_State* L, const std::string& from, const std::string& to) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    std::string next;
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, from.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "General");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "UpgradesTo");
+                lua_rawget(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING) {
+                    next = lua_tostring(L, -1);
+                }
+            }
+        }
+    }
+    lua_settop(L, top);
+    return next.size() == to.size() &&
+           std::equal(next.begin(), next.end(), to.begin(), [](char a, char b) {
+               return std::tolower(static_cast<unsigned char>(a)) ==
+                      std::tolower(static_cast<unsigned char>(b));
+           });
 }
 
 /// The units an order still makes: a factory build's count, else one.
@@ -141,8 +171,11 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     }
     // Newest first, so earlier positions stay valid; a factory build's
     // count goes down first, the order with it at none.
-    const bool in_progress = building_factory_order();
+    const bool in_progress =
+        building_factory_order() || (build_target_id_ != 0 && !command_queue_.empty() &&
+                                     command_queue_.front().type == CommandType::Upgrade);
     bool cancel = false;
+    bool upgrade_gone = false;
     for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it) {
         UnitCommand& c = command_queue_[*it];
         // A structure a builder is at stays its work, as Stop leaves it
@@ -156,9 +189,31 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
             continue;
         }
         if (*it == 0 && in_progress) cancel = true;
+        upgrade_gone = upgrade_gone || c.type == CommandType::Upgrade;
         command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
     }
     if (cancel) cancel_factory_build(registry, L);
+    if (upgrade_gone && !destroyed()) {
+        prune_upgrade_chain(L);
+    }
+}
+
+void Unit::prune_upgrade_chain(lua_State* L) {
+    std::vector<std::string> stages{blueprint_id()};
+    for (auto it = command_queue_.begin(); it != command_queue_.end();) {
+        bool keep = true;
+        if (it->type == CommandType::Upgrade) {
+            keep = upgrades_to(L, stages.back(), it->blueprint_id);
+            if (keep) {
+                stages.push_back(it->blueprint_id);
+            }
+        } else if (queued_build(*it)) {
+            keep = std::any_of(stages.begin(), stages.end(), [&](const std::string& bp) {
+                return blueprint_can_build(L, bp, it->blueprint_id);
+            });
+        }
+        it = keep ? std::next(it) : command_queue_.erase(it);
+    }
 }
 
 void Unit::remove_command(u32 id, EntityRegistry& registry, lua_State* L) {
