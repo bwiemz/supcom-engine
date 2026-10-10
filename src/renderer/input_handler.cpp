@@ -984,6 +984,9 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
             return;
         }
         const auto& unit = static_cast<const sim::Unit&>(e);
+        if (!shift && !unit.is_mobile() && unit.has_unit_state("BeingUpgraded")) {
+            return;
+        }
         const auto [lo, hi] = mesh_box(unit);
         const sim::Vector3 pos = view_.position(e);
         const sim::Quaternion orient = view_.orientation(e);
@@ -1016,8 +1019,15 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
         boxed.emplace_back(e.entity_id(), unit.selection_priority());
     });
     if (shift) {
+        const bool all_selected = std::all_of(boxed.begin(), boxed.end(), [&](const auto& unit) {
+            return selected_.count(unit.first) > 0;
+        });
         for (const auto& unit : boxed) {
-            selected_.insert(unit.first);
+            if (all_selected) {
+                selected_.erase(unit.first);
+            } else {
+                selected_.insert(unit.first);
+            }
         }
     } else {
         for (u32 id : highest_selection_priority(boxed)) {

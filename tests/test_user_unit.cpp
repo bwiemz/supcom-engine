@@ -610,6 +610,55 @@ TEST_CASE("A drag box takes a unit whose mesh box it meets, scaled by its bluepr
     CHECK(boxed({133.0f, 10.0f, 128.0f}, true));
 }
 
+TEST_CASE("A drag box skips an upgrade's frame without Shift and deselects with Shift",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-1.0f, 0.0f, -1.0f}, {1.0f, 2.0f, 1.0f}};
+    w.unit().set_bone_data(&model);
+    auto other_unit = std::make_unique<osc::sim::Unit>();
+    other_unit->set_army(0);
+    other_unit->set_position({160.0f, 10.0f, 128.0f});
+    other_unit->set_bone_data(&model);
+    const osc::u32 other = w.sim.entity_registry().register_entity(std::move(other_unit));
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(100.0f);
+    const auto vp = camera.view_proj(1024.0f / 768.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    const auto box = [&](const std::unordered_set<osc::u32>& before, bool shift) {
+        const auto at = osc::renderer::screen_point(vp, {128.0f, 11.0f, 128.0f}, 1024.0f, 768.0f);
+        REQUIRE(at);
+        input.set_selected(before);
+        input.select_in_box(w.sim, vp, 1024.0f, 768.0f, (*at)[0] - 3, (*at)[1] - 3, (*at)[0] + 3,
+                            (*at)[1] + 3, shift);
+        return input.selected();
+    };
+    using Ids = std::unordered_set<osc::u32>;
+
+    w.unit().set_motion_type("RULEUMT_None");
+    w.unit().set_unit_state("BeingUpgraded", true);
+    CHECK(box({}, false).empty());
+    CHECK(box({}, true) == Ids{w.id});
+    w.unit().set_motion_type("RULEUMT_Land");
+    CHECK(box({}, false) == Ids{w.id});
+    w.unit().set_unit_state("BeingUpgraded", false);
+    w.unit().set_motion_type("RULEUMT_None");
+    CHECK(box({}, false) == Ids{w.id});
+
+    CHECK(box({w.id, other}, true) == Ids{other});
+    CHECK(box({w.id}, true).empty());
+    CHECK(box({other}, true) == Ids{w.id, other});
+    CHECK(box({w.id, other}, false) == Ids{w.id});
+}
+
 TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][selection]") {
     UiWorld w;
     osc::lua::register_user_bindings(w.ui);
