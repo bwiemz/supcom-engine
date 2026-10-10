@@ -1798,10 +1798,7 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
     target_unit->set_being_captured(true);
     work_progress_ = 0.0f;
 
-    // Set economy: energy-only drain (zero mass to clear any stale value)
-    economy_.consumption_mass = 0;
-    economy_.consumption_energy = capture_energy_cost_ / capture_time_;
-    economy_.consumption_active = true;
+    economy_.capture_energy = capture_energy_cost_ / capture_time_;
 
     spdlog::info("start_capture: entity #{} capturing #{} "
                  "(BuildTime={:.0f} BuildRate={:.1f} captureTime={:.1f}s energy={:.0f})",
@@ -1897,9 +1894,7 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
         capture_target_id_ = 0;
         capture_time_ = 0;
         capture_energy_cost_ = 0;
-        economy_.consumption_mass = 0;
-        economy_.consumption_energy = 0;
-        economy_.consumption_active = false;
+        economy_.capture_energy = 0;
         work_progress_ = 0.0f;
 
         spdlog::info("capture complete: entity #{} captured #{}",
@@ -1964,11 +1959,7 @@ void Unit::stop_capturing(lua_State* L, EntityRegistry& registry, bool failed) {
     capture_target_id_ = 0;
     capture_time_ = 0;
     capture_energy_cost_ = 0;
-
-    // Clear economy drain
-    economy_.consumption_mass = 0;
-    economy_.consumption_energy = 0;
-    economy_.consumption_active = false;
+    economy_.capture_energy = 0;
     work_progress_ = 0.0f;
 
     if (target_id == 0) return;
