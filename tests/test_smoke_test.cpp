@@ -486,6 +486,35 @@ TEST_CASE("A raised factory order whose build fails goes whole", "[session][rule
     CHECK(factory_orders(*f) == "test_experimental");
 }
 
+TEST_CASE("A factory guarding a factory sends the order it takes round as the guarded one repeats",
+          "[session][rules]") {
+    for (const bool guarded_repeats : {true, false}) {
+        CAPTURE(guarded_repeats);
+        BuildRuleHarness h;
+        REQUIRE(h.state.do_string(
+            "__blueprints.test_factory.Economy.BuildableCategory = {'MOBILE LAND'}\n"
+            "__blueprints.test_factory.General.CommandCaps.RULEUCC_Guard = true\n"
+            "__osc_a = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+            "IssueBuildFactory({__osc_a}, 'test_tank', 1)\n"
+            "IssueBuildFactory({__osc_a}, 'test_experimental', 1)\n"));
+        osc::sim::Unit* a = find_factory(h);
+        REQUIRE(a);
+        a->set_repeat_queue(guarded_repeats);
+        REQUIRE(h.state.do_string(std::string("local b = CreateUnit('test_factory', 1, 10, 0, 0)\n"
+                                              "moho.unit_methods.SetRepeatQueue(b, ") +
+                                  (guarded_repeats ? "false" : "true") +
+                                  ")\n"
+                                  "IssueGuard({b}, __osc_a)\n"
+                                  "__osc_b = b\n"));
+        h.sim.tick();
+        h.sim.tick();
+        REQUIRE(h.state.do_string(
+            "if not moho.unit_methods.IsUnitState(__osc_b, 'Building') then error('B idle') end"));
+        CHECK(factory_orders(*a) ==
+              (guarded_repeats ? "test_tank test_experimental" : "test_tank"));
+    }
+}
+
 namespace {
 
 osc::sim::Unit* find_unit(const BuildRuleHarness& h, const std::string& bp) {
