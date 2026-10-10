@@ -16,6 +16,7 @@
 #include "renderer/ui_renderer.hpp"
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/minimap_renderer.hpp"
+#include "renderer/economy_overlay_renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/resource_icon_renderer.hpp"
 #include "renderer/hud_renderer.hpp"
@@ -260,9 +261,11 @@ public:
     bool decals_enabled() const { return decals_enabled_; }
     /// The session's economy overlay flag (Moho's DisplayEconomyOverlay,
     /// RenderOverlayEconomy): the MFD's economy toggle, off during a NIS.
-    /// Nothing draws the overlay yet.
-    void set_economy_overlay(bool on) { economy_overlay_ = on; }
-    bool economy_overlay() const { return economy_overlay_; }
+    void set_economy_overlay(bool on) { economy_overlay_renderer_.set_enabled(on); }
+    bool economy_overlay() const { return economy_overlay_renderer_.enabled(); }
+    const EconomyOverlayRenderer& economy_overlay_renderer() const {
+        return economy_overlay_renderer_;
+    }
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     /// ui_AlwaysRenderStrategicIcons (M217i).
     void set_icons_always(bool on) { strategic_icon_renderer_.set_always(on); }
@@ -720,6 +723,7 @@ private:
     MinimapRenderer minimap_renderer_;
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
+    EconomyOverlayRenderer economy_overlay_renderer_;
     ResourceIconRenderer resource_icon_renderer_;
     f32 resource_icon_time_ = 0.0f;
     VideoOptions video_options_;
@@ -752,7 +756,6 @@ private:
     UserPlayableRect playable_rect_;
     bool fog_enabled_ = true;
     bool decals_enabled_ = true;
-    bool economy_overlay_ = false;
 
     // The map's decals, projected and lit (M212b): each draws the terrain's
     // own triangles under it, a range of decal_indices_ over the terrain's
