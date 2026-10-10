@@ -1000,6 +1000,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.silo_energy);
     w.f64v(ec.dock_repair_mass);
     w.f64v(ec.dock_repair_energy);
+    w.f64v(ec.capture_energy);
     save_strings(w, u.categories_);
     // category_bits_: interned from categories_ (the ids are this process's)
     w.size(u.command_queue_.size());
@@ -1360,6 +1361,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.silo_energy = r.f64v();
     ec.dock_repair_mass = r.f64v();
     ec.dock_repair_energy = r.f64v();
+    ec.capture_energy = r.f64v();
     u.categories_ = load_strings<std::unordered_set<std::string>>(r);
     u.category_bits_ = {};
     for (const std::string& c : u.categories_) u.category_bits_.set(CategoryIds::intern(c));

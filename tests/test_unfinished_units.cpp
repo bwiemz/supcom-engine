@@ -187,6 +187,41 @@ TEST_CASE("A paused unit moves as an unpaused one", "[sim][orders][pause]") {
     CHECK(paused->command_queue().size() == 1);
 }
 
+TEST_CASE("A paused unit's capture costs energy as an unpaused one's", "[sim][orders][pause]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    const char* code = "__blueprints = {prize = {Economy = {BuildTime = 100,"
+                       " BuildCostEnergy = 500}}}";
+    REQUIRE(luaL_loadbuffer(g.L, code, std::strlen(code), "prize") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 0, 0) == 0);
+    Unit* captor = walker(sim, 10.0f, 10.0f);
+    captor->set_build_rate(10.0f);
+    captor->set_paused(true);
+    Unit* prize = walker(sim, 11.0f, 10.0f);
+    prize->set_army(1);
+    prize->set_unit_id("prize");
+    osc::sim::UnitCommand capture;
+    capture.type = CommandType::Capture;
+    capture.target_id = prize->entity_id();
+    capture.target_pos = prize->position();
+    captor->push_command(capture, true);
+    for (int i = 0; i < 5; ++i) {
+        sim.tick();
+    }
+    REQUIRE(captor->is_capturing());
+    CHECK(sim.get_army(0)->economy().energy.requested == Catch::Approx(100.0));
+    CHECK(captor->economy().energy_requested() == Catch::Approx(100.0));
+
+    captor->economy().consumption_energy = 0.0;
+    captor->economy().consumption_active = false;
+    captor->set_paused(false);
+    sim.tick();
+    CHECK(sim.get_army(0)->economy().energy.requested == Catch::Approx(100.0));
+}
+
 TEST_CASE("A unit being built holds its orders until it is finished", "[sim][orders]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
