@@ -415,12 +415,35 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// ThrustManipulator — air unit thrust visual controller
+// ThrustManipulator — turns an engine bone toward its unit's thrust
+// (CreateThrustController: UEF transports' engines; faf-re CThrustManipulator)
 // ---------------------------------------------------------------------------
 class ThrustManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    void tick(f32 /*dt*/) override {} // visual only
+    /// `rest`: the bone's forward (+Z) in its bind pose, relative to its parent.
+    void set_rest(const Vector3& rest);
+    void set_thrusting_param(const Vector3& cap_min, const Vector3& cap_max, f32 turn_force_mult,
+                             f32 turn_speed);
+
+    /// The force the unit flies by: its mass times its change of velocity
+    /// against gravity.
+    void tick(f32 dt) override;
     bool is_at_goal() const override { return true; }
+    void apply_pose(PoseLocals& pose) override;
+
+private:
+    Quaternion turn_toward(const Vector3& local_force);
+
+    Vector3 cap_min_{-100.0f, -100.0f, -100.0f};
+    Vector3 cap_max_{100.0f, 100.0f, 100.0f};
+    f32 turn_force_mult_ = 1.0f;
+    f32 turn_speed_ = 0.3f;
+    Vector3 rest_{0, 0, 1};
+    Quaternion orientation_{};
+    Vector3 force_{};
+    Vector3 last_velocity_{};
+    bool has_last_velocity_ = false;
 };
 
 } // namespace osc::sim

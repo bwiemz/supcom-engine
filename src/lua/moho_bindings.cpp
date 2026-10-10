@@ -236,13 +236,6 @@ void push_vector3(lua_State* L, const sim::Vector3& v) {
 }
 
 // ====================================================================
-// Stub helpers
-// ====================================================================
-
-// Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
-#include "lua/lua_stubs.hpp"
-static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
-// ====================================================================
 // Threat helper
 // ====================================================================
 
@@ -458,13 +451,31 @@ static const MethodEntry collision_manipulator_methods[] = {
 };
 // clang-format on
 
+static int thrust_SetThrustingParam(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 9) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "ThrustManipulator:SetThrustingParam(xCapMin, xCapMax, yCapMin, "
+                          "yCapMax, zCapMin, zCapMax, turnForceMult, turnSpeed)",
+                          9, n);
+    }
+    auto* m = check_manip_base(L);
+    if (!m) {
+        return 0;
+    }
+    f32 v[8] = {};
+    for (int arg = 9; arg >= 2; --arg) {
+        v[arg - 2] = static_cast<f32>(luaL_checknumber(L, arg));
+    }
+    static_cast<sim::ThrustManipulator*>(m)->set_thrusting_param({v[0], v[2], v[4]},
+                                                                 {v[1], v[3], v[5]}, v[6], v[7]);
+    return 0;
+}
+
 // Minimal entries for other classes
-// A thrust controller turns an aircraft's engines with its motion
-// (UEA0107 sets their arcs). It only moves bones on screen, which our air
-// movement doesn't drive yet, so its arcs change nothing.
 // clang-format off
 static const MethodEntry thrust_manipulator_methods[] = {
-    {"SetThrustingParam", stub_noop},
+    {"SetThrustingParam", thrust_SetThrustingParam},
     {nullptr, nullptr},
 };
 // clang-format on

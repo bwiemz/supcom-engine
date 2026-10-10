@@ -35,7 +35,6 @@ SetFractionHealthParameter worldmesh_SetFractionHealthParameter
 SetGreaterOf brain_SetGreaterOf
 SetScale worldmesh_SetScale
 SetTargetHead frame_SetTargetHead
-SetThrustingParam stub_noop
 SimConExecute stub_noop
 SpecFootprints stub_noop
 SubmitXMLArmyStats stub_noop
