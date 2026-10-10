@@ -1216,49 +1216,49 @@ static int prop_CreatePropAtBone(lua_State* L) {
 // until the script destroys it.
 static int prop_SinkAway(lua_State* L) {
     auto* e = check_entity(L);
-    if (e && e->is_prop()) static_cast<sim::Prop*>(e)->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
+    if (e && e->is_prop()) {
+        auto* prop = static_cast<sim::Prop*>(e);
+        prop->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
+        prop->fall_motor = false;
+    }
     return 0;
 }
 
-// motor:Whack(nx, ny, nz, depth, dotrunk): the tree falls over away from
-// the push, once. (Moho simulates the fall; it lands the same way.)
+// motor:Whack(nx, ny, nz, force, dobreak) -> motor
 static int falldown_Whack(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
-    lua_pushstring(L, "_c_fallen");
-    lua_rawget(L, 1);
-    const bool fallen = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
     lua_pushstring(L, "_c_prop_id");
     lua_rawget(L, 1);
     const auto id = static_cast<u32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     auto* sim = get_sim(L);
     sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
-    if (fallen || !e || e->destroyed()) return 0;
-    f32 dx = static_cast<f32>(lua_tonumber(L, 2));
-    f32 dz = static_cast<f32>(lua_tonumber(L, 4));
-    const f32 len = std::sqrt(dx * dx + dz * dz);
-    if (len < 1e-4f) {
-        dx = 1.0f; // no horizontal push: any way will do
-        dz = 0.0f;
-    } else {
-        dx /= len;
-        dz /= len;
+    if (e && !e->destroyed() && e->is_prop()) {
+        static_cast<sim::Prop*>(e)->whack(
+            static_cast<f32>(lua_tonumber(L, 2)), static_cast<f32>(lua_tonumber(L, 4)),
+            static_cast<f32>(lua_tonumber(L, 5)), lua_toboolean(L, 6) != 0);
     }
-    // A quarter turn about (dz, 0, -dx) carries up (+Y) onto the push.
-    const f32 s = 0.70710678f;
-    const sim::Quaternion fall{dz * s, 0.0f, -dx * s, s};
-    e->set_orientation(sim::quat_multiply(fall, e->orientation()));
-    lua_pushstring(L, "_c_fallen");
-    lua_pushboolean(L, 1);
-    lua_rawset(L, 1);
-    return 0;
+    lua_settop(L, 1);
+    return 1;
 }
 
 // prop:FallDown() -> motor: whacking it topples the tree. The motor is a
 // moho.MotorFallDown, as Moho's is.
 static int prop_FallDown(lua_State* L) {
     auto* e = check_entity(L);
+    if (e && e->is_prop()) {
+        lua_pushstring(L, "Blueprint");
+        lua_rawget(L, 1);
+        f32 size_x = 0;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SizeX");
+            lua_rawget(L, -2);
+            size_x = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        static_cast<sim::Prop*>(e)->fall_down(size_x);
+    }
     lua_newtable(L);
     lua_pushstring(L, "_c_prop_id");
     lua_pushnumber(L, e ? static_cast<lua_Number>(e->entity_id()) : 0);

@@ -6286,15 +6286,24 @@ void test_prop(TestContext& ctx) {
         end
         if trees == 0 then error('no trees where the group stood (' .. before .. ' props before)') end
     )");
-    lua_check("Test 9: Force damage fells a tree, away from the blast", R"(
+    lua_check("Test 9: Force damage fells a tree, away from the blast, as its motor runs", R"(
         local t = __osc_tree:GetPosition()
         Damage(nil, {t[1] - 1, t[2], t[3]}, __osc_tree, 1, 'Force')
         local q = __osc_tree:GetOrientation()
         -- A quaternion as Moho hands it out, with the vector metatable.
         if getmetatable(q) ~= getmetatable(Vector2(0, 0)) then error('no vector metatable') end
-        -- The tree's up axis after the fall: 1 - 2(x^2 + z^2) is its height.
+        -- The tree's up axis: 1 - 2(x^2 + z^2) is its height.
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
-        if math.abs(up_y) > 0.05 then error('still upright: up.y ' .. up_y) end
+        if up_y < 0.999 then error('fell before its motor ran: up.y ' .. up_y) end
+    )");
+    for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    lua_check("Test 9b: three ticks later it lies flat", R"(
+        local q = __osc_tree:GetOrientation()
+        local up_x = 2 * (q[1] * q[2] - q[4] * q[3])
+        local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
+        if math.abs(up_y) > 0.05 or up_x < 0.95 then
+            error('not flat away from the blast: up ' .. up_x .. ', ' .. up_y)
+        end
     )");
     lua_check("Test 10: Kill destroys a prop through its script", R"(
         local p = __osc_rock:GetPosition()

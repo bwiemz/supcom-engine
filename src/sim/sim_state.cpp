@@ -1743,6 +1743,7 @@ void SimState::update_entities() {
         } else if (e->is_prop()) {
             // A fallen tree sinking away (SinkAway) before its script destroys it.
             auto* prop = static_cast<Prop*>(e);
+            prop->step_fall(terrain_.get());
             if (prop->sink_rate != 0) {
                 Vector3 p = prop->position();
                 p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
