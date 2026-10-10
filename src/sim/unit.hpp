@@ -471,6 +471,9 @@ public:
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
     /// the order in progress cancels it (cancel_factory_build).
     void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// Moho's CUnitCommand::DecreaseCount, an upgrade order gone: the builds
+    /// and upgrades queued after it that no upgrade still leads to go too.
+    void prune_upgrade_chain(lua_State* L);
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
     void remove_command(u32 id, EntityRegistry& registry, lua_State* L);

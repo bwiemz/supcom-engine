@@ -1334,3 +1334,109 @@ TEST_CASE("An enhancing unit is Upgrading, so its OnUnpaused resumes paying",
     h.sim.tick();
     CHECK(h.sim.get_army(0)->economy().energy.requested > 0.0);
 }
+
+namespace {
+
+struct UpgradeHarness {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+    osc::sim::Unit* factory = nullptr;
+
+    UpgradeHarness() {
+        osc::lua::register_moho_bindings(state, sim);
+        osc::lua::register_sim_bindings(state, sim);
+        sim.add_army("ARMY_1", "ARMY_1");
+        lua_State* L = state.raw();
+        for (const char* bp : {
+                 "return {BlueprintId = 'f1', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
+                 " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
+                 " BuildCostEnergy = 10, BuildableCategory = {'MOBILE TECH1', 'f2'}},"
+                 " General = {UpgradesTo = 'f2'}, Defense = {MaxHealth = 100}}",
+                 "return {BlueprintId = 'f2', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
+                 " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
+                 " BuildCostEnergy = 10, BuildableCategory = {'MOBILE', 'f3'}},"
+                 " General = {UpgradesFrom = 'f1', UpgradesTo = 'f3'}, Defense = {MaxHealth = "
+                 "100}}",
+                 "return {BlueprintId = 'f3', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
+                 " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
+                 " BuildCostEnergy = 10, BuildableCategory = {'MOBILE'}},"
+                 " General = {UpgradesFrom = 'f2'}, Defense = {MaxHealth = 100}}",
+                 "return {BlueprintId = 't1', CategoriesHash = {MOBILE = true, TECH1 = true},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1},"
+                 " Defense = {MaxHealth = 10}}",
+                 "return {BlueprintId = 't2', CategoriesHash = {MOBILE = true, TECH2 = true},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1},"
+                 " Defense = {MaxHealth = 10}}",
+             }) {
+            REQUIRE(state.do_string(bp).ok());
+            store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+            lua_pop(L, 1);
+        }
+        store.expose_to_lua(L);
+        REQUIRE(state.do_string("CreateUnit('f1', 1, 0, 0, 0)").ok());
+        sim.entity_registry().for_each_unit(
+            [&](osc::sim::Entity& e) { factory = static_cast<osc::sim::Unit*>(&e); });
+        REQUIRE(factory);
+        factory->economy().production_mass = 100.0;
+        factory->economy().production_energy = 100.0;
+        factory->economy().production_active = true;
+    }
+
+    void queue(osc::sim::CommandType type, const char* bp) {
+        osc::sim::UnitCommand c;
+        c.type = type;
+        c.blueprint_id = bp;
+        factory->push_command(c, false);
+    }
+
+    std::string shown() const {
+        std::string s;
+        for (const auto& g : factory->factory_queue()) {
+            s += (s.empty() ? "" : " ") + g.blueprint_id + "x" + std::to_string(g.count);
+        }
+        return s;
+    }
+};
+
+} // namespace
+
+TEST_CASE("A factory's queue shows its upgrade orders", "[session][rules]") {
+    using osc::sim::CommandType;
+    UpgradeHarness h;
+    h.queue(CommandType::BuildFactory, "t1");
+    h.queue(CommandType::Upgrade, "f2");
+    h.queue(CommandType::BuildFactory, "t2");
+    CHECK(h.shown() == "t1x1 f2x1 t2x1");
+}
+
+TEST_CASE("Taking a queued upgrade off the factory's queue drops what only it led to",
+          "[session][rules]") {
+    using osc::sim::CommandType;
+    UpgradeHarness h;
+    h.queue(CommandType::BuildFactory, "t1");
+    h.queue(CommandType::Upgrade, "f2");
+    h.queue(CommandType::BuildFactory, "t2");
+    h.queue(CommandType::Upgrade, "f3");
+    h.queue(CommandType::BuildFactory, "t1");
+    REQUIRE(h.shown() == "t1x1 f2x1 t2x1 f3x1 t1x1");
+
+    h.factory->decrease_build_count(2, 1, h.sim.entity_registry(), h.state.raw());
+    CHECK(h.shown() == "t1x2");
+    CHECK(h.factory->command_queue().size() == 2);
+}
+
+TEST_CASE("Taking an upgrade under way off the factory's queue ends it", "[session][rules]") {
+    UpgradeHarness h;
+    h.queue(osc::sim::CommandType::Upgrade, "f2");
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 upgrade = h.factory->build_target_id();
+    REQUIRE(h.shown() == "f2x1");
+
+    h.factory->decrease_build_count(1, 1, h.sim.entity_registry(), h.state.raw());
+    CHECK(h.factory->command_queue().empty());
+    CHECK_FALSE(h.factory->is_building());
+    const osc::sim::Entity* left = h.sim.entity_registry().find(upgrade);
+    CHECK((!left || left->destroyed()));
+}
