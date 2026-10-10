@@ -126,6 +126,8 @@ public:
     /// velocity is against its facing; the Megalith's walk).
     void set_directional(bool on) { directional_ = on; }
     bool directional() const { return directional_; }
+    void set_motion_scaled(bool on) { motion_scaled_ = on; }
+    bool motion_scaled() const { return motion_scaled_; }
     void set_animation_fraction(f32 frac) { fraction_ = frac; finished_ = false; }
     f32 animation_fraction() const { return fraction_; }
     f32 animation_duration() const { return duration_; }
@@ -154,6 +156,7 @@ private:
     f32 duration_ = 1.0f;     // default (no .sca parsing yet)
     bool looping_ = false;
     bool directional_ = false;
+    bool motion_scaled_ = false;
     bool finished_ = false;
 
     const SCAData* sca_data_ = nullptr;

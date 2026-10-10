@@ -698,6 +698,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.f32v(x.duration_);
         w.b(x.looping_);
         w.b(x.directional_);
+        w.b(x.motion_scaled_);
         w.b(x.finished_);
         // sca_data_: from the animation cache, if the play found it
         w.b(x.sca_data_ != nullptr);
@@ -828,6 +829,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->duration_ = r.f32v();
         x->looping_ = r.b();
         x->directional_ = r.b();
+        x->motion_scaled_ = r.b();
         x->finished_ = r.b();
         if (r.b()) {
             x->sca_data_ = sim.anim_cache() ? sim.anim_cache()->get(x->current_anim_) : nullptr;
@@ -1276,6 +1278,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.crash_spin_rate_);
     w.u32v(u.creator_id_);
     w.vec3(u.tick_position_);
+    w.quat(u.tick_orientation_);
     w.b(u.tick_position_set_);
     w.b(u.moved_last_tick_);
     w.b(u.auto_overcharge_);
@@ -1646,6 +1649,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.crash_spin_rate_ = r.f32v();
     u.creator_id_ = r.u32v();
     u.tick_position_ = r.vec3();
+    u.tick_orientation_ = r.quat();
     u.tick_position_set_ = r.b();
     u.moved_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();

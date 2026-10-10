@@ -874,8 +874,11 @@ public:
             tick_position_set_ &&
             (p.x != tick_position_.x || p.y != tick_position_.y || p.z != tick_position_.z);
         tick_position_ = p;
+        tick_orientation_ = orientation();
         tick_position_set_ = true;
     }
+    /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
+    f32 anim_motion_scale(f32 dt) const;
     void set_creator_id(u32 id) { creator_id_ = id; }
     bool auto_overcharge() const { return auto_overcharge_; }
     void set_auto_overcharge(bool b) { auto_overcharge_ = b; }
@@ -1776,6 +1779,7 @@ private:
     // Misc flags
     u32 creator_id_ = 0;
     Vector3 tick_position_{};        // where it stood as this tick began
+    Quaternion tick_orientation_{};
     bool tick_position_set_ = false; // (none before its first tick)
     bool moved_last_tick_ = false;
     bool auto_overcharge_ = false;

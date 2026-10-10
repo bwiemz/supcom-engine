@@ -3132,6 +3132,27 @@ void Unit::aim_builder_arms(const Vector3* at, lua_State* L) {
     }
 }
 
+f32 Unit::anim_motion_scale(f32 dt) const {
+    if (max_speed_ <= 0 || dt <= 0) {
+        return 1.0f;
+    }
+    if (!tick_position_set_) {
+        return 0.0f;
+    }
+    const Vector3& p = position();
+    const f32 dx = p.x - tick_position_.x;
+    const f32 dy = p.y - tick_position_.y;
+    const f32 dz = p.z - tick_position_.z;
+    const f32 scale = std::sqrt(dx * dx + dy * dy + dz * dz) / dt / max_speed_;
+    const Quaternion& q = orientation();
+    const Quaternion& q0 = tick_orientation_;
+    const bool turning = q.x != q0.x || q.y != q0.y || q.z != q0.z || q.w != q0.w;
+    if (turning && scale <= 0.25f) {
+        return 0.25f;
+    }
+    return scale;
+}
+
 void Unit::tick_manipulators(f32 dt, lua_State* L) {
     // Reset bone matrices to identity before manipulators write their bones.
     // Each animator/rotator/slider writes only the bones it owns; unowned bones
