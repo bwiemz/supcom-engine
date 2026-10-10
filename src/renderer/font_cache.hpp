@@ -19,7 +19,7 @@ namespace osc::renderer {
 struct GlyphInfo {
     f32 u0, v0, u1, v1;  // UV coords in atlas
     f32 x_offset;         // left bearing in pixels
-    f32 y_offset;         // top bearing in pixels (from baseline)
+    f32 y_offset;         // baseline to the bitmap's top, negative above it (stb_truetype's yoff)
     f32 width;            // glyph bitmap width in pixels
     f32 height;           // glyph bitmap height in pixels
     f32 x_advance;        // horizontal advance in pixels
@@ -42,6 +42,29 @@ struct FontAtlas {
     u32 atlas_width = 0;
     u32 atlas_height = 0;
 };
+
+/// One line of single-byte text with its top at y: emit(x, y, glyph) per drawn glyph's top-left.
+template <typename Emit>
+f32 place_glyphs(const FontAtlas& atlas, const std::string& text, f32 x, f32 y, Emit&& emit) {
+    f32 cursor_x = x;
+    const f32 baseline_y = y + atlas.metrics.ascent;
+    for (char c : text) {
+        auto it = atlas.glyphs.find(static_cast<u32>(static_cast<u8>(c)));
+        if (it == atlas.glyphs.end()) {
+            auto sp = atlas.glyphs.find(32);
+            if (sp != atlas.glyphs.end()) {
+                cursor_x += sp->second.x_advance;
+            }
+            continue;
+        }
+        const GlyphInfo& gi = it->second;
+        if (gi.width > 0 && gi.height > 0) {
+            emit(cursor_x + gi.x_offset, baseline_y + gi.y_offset, gi);
+        }
+        cursor_x += gi.x_advance;
+    }
+    return cursor_x - x;
+}
 
 /// Caches rasterized font atlases keyed by (family, pointsize).
 class FontCache {

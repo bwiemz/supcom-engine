@@ -103,6 +103,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| The engine's own HUD text (`--legacy-hud`'s economy bar and selection panel, the profiler overlay) stands on its font's baseline | [#575](https://github.com/bwiemz/supcom-engine/pull/575) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
