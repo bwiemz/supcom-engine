@@ -25,7 +25,6 @@ NeedPrep
 NeedToFaceTargetToBuild
 PlaceholderMeshName
 PositionY
-PrefersPrimaryWeaponTarget
 QuickSelectPriority
 RaisedPlatforms
 ReTargetOnMiss
@@ -43,7 +42,6 @@ SinkLower
 SpawnRandomRotation
 StandUpright
 StayUpright
-StopOnPrimaryWeaponBusy
 StraddleWater
 StrategicIconSize
 UseOOBTestZoom

@@ -125,6 +125,8 @@ public:
     bool yaw_only_on_target = false;       // YawOnlyOnTarget: its aim controllers ignore the pitch
     bool above_water_fire_only = false;    // AboveWaterFireOnly
     bool always_recheck_target = true;     // AlwaysRecheckTarget
+    bool prefers_primary_weapon_target = false; // PrefersPrimaryWeaponTarget
+    bool stop_on_primary_weapon_busy = false;   // StopOnPrimaryWeaponBusy
     u32 target_check_period = 30;          // TargetCheckInterval, in ticks
     bool cannot_attack_ground = false;     // CannotAttackGround
     /// AttackGroundTries: shots at a ground attack's point before the order
@@ -260,6 +262,9 @@ public:
                     bool in_reach = true) const;
     /// can_target, wherever the target is.
     bool can_pick(const Unit& owner, const Entity& target, const SimState* sim) const;
+    /// Moho's UnitWeapon::CanAttackTarget(holder's target, this).
+    bool can_attack_target_of(const Unit& owner, const Weapon& holder,
+                              const EntityRegistry& registry, const SimState* sim) const;
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.

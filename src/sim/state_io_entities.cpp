@@ -544,6 +544,8 @@ void StateIO::save(StateWriter& w, const Weapon& wp) {
     w.b(wp.yaw_only_on_target);
     w.b(wp.above_water_fire_only);
     w.b(wp.always_recheck_target);
+    w.b(wp.prefers_primary_weapon_target);
+    w.b(wp.stop_on_primary_weapon_busy);
     w.u32v(wp.target_check_period);
     w.b(wp.cannot_attack_ground);
     w.i32v(wp.attack_ground_tries);
@@ -627,6 +629,8 @@ void StateIO::load(StateReader& r, Weapon& wp) {
     wp.yaw_only_on_target = r.b();
     wp.above_water_fire_only = r.b();
     wp.always_recheck_target = r.b();
+    wp.prefers_primary_weapon_target = r.b();
+    wp.stop_on_primary_weapon_busy = r.b();
     wp.target_check_period = r.u32v();
     wp.cannot_attack_ground = r.b();
     wp.attack_ground_tries = r.i32v();

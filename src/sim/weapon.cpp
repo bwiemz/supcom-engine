@@ -187,6 +187,15 @@ std::vector<u32> target_candidates(const EntityRegistry& registry, bool projecti
     return ids;
 }
 
+const Weapon* primary_weapon(const Unit& owner) {
+    for (const auto& w : owner.weapons()) {
+        if (w->weapon_index == 0) {
+            return w.get();
+        }
+    }
+    return nullptr;
+}
+
 /// The unit an attack order at the head of the queue names, or 0.
 u32 attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
@@ -461,6 +470,16 @@ bool Weapon::can_target(const Unit& owner, const Entity& target, const SimState*
     return true;
 }
 
+bool Weapon::can_attack_target_of(const Unit& owner, const Weapon& holder,
+                                  const EntityRegistry& registry, const SimState* sim) const {
+    if (holder.target_entity_id != 0) {
+        const Entity* target = registry.find(holder.target_entity_id);
+        return target && can_pick(owner, *target, sim);
+    }
+    return holder.has_ground_target &&
+           can_attack_ground(holder.ground_target, sim ? sim->terrain() : nullptr);
+}
+
 int Weapon::priority_of(const Entity& target) const {
     if (target_priorities.empty()) return 0;
     const auto& categories = target_categories(target);
@@ -479,6 +498,29 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     if (owner.need_unpack() && (head == CommandType::Move || head == CommandType::TransportLoad ||
                                 head == CommandType::WaitForFerry))
         return;
+    // Moho's CAcquireTargetTask checks these before the attacker's desired target.
+    if (const Weapon* primary = primary_weapon(owner);
+        primary && primary != this && primary->has_target()) {
+        if (stop_on_primary_weapon_busy &&
+            primary->can_attack_target_of(owner, *primary, registry, sim)) {
+            set_target_entity(0);
+            return;
+        }
+        if (prefers_primary_weapon_target && can_attack_target_of(owner, *primary, registry, sim)) {
+            const std::optional<Vector3> at = primary->target_point(registry);
+            if (at && in_firing_range(owner, *at) && in_heading_arc(owner, *at) &&
+                (max_height_diff <= 0 ||
+                 std::fabs(at->y - owner.position().y) <= max_height_diff)) {
+                if (primary->target_entity_id != 0) {
+                    set_target_entity(primary->target_entity_id);
+                } else {
+                    set_target_ground(primary->ground_target);
+                    ground_from_order = true;
+                }
+                return;
+            }
+        }
+    }
     const bool flier = owner.layer() == "Air";
     // A ground attack order, once its unit is in reach (Moho's attack task
     // has set the attacker's desired target): each weapon that can hit the
