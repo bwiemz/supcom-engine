@@ -7,8 +7,17 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/blueprint_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "sim/projectile.hpp"
+#include "sim/projectile_script.hpp"
+#include "sim/sim_state.hpp"
 
+extern "C" {
+#include <lua.h>
+}
+
+#include <memory>
 #include <string>
 
 TEST_CASE("A projectile's omitted Physics spreads read as Moho's defaults", "[blueprints]") {
@@ -60,4 +69,49 @@ TEST_CASE("A projectile takes its blueprint's CollideSurface and CollideEntity",
     (void)shell.apply_blueprint_physics(state.raw());
     CHECK(shell.collide_entity);
     CHECK(shell.collide_surface);
+}
+
+TEST_CASE("A projectile the camera follows tells it, with what made it", "[blueprints]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    REQUIRE(lua.do_string(R"(
+        __blueprints = {
+            nuke = {Display = {CameraFollowsProjectile = true, CameraFollowTimeout = 5}},
+            bomb = {Display = {CameraFollowsProjectile = true}},
+            shell = {Display = {}},
+        }
+    )")
+                .ok());
+    auto launcher = std::make_unique<osc::sim::Entity>();
+    const osc::u32 launcher_id = sim.entity_registry().register_entity(std::move(launcher));
+    const auto launch = [&](const char* bp) {
+        auto p = std::make_unique<osc::sim::Projectile>();
+        p->set_blueprint_id(bp);
+        p->launcher_id = launcher_id;
+        const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
+        osc::sim::create_projectile_object(
+            lua.raw(), *static_cast<osc::sim::Projectile*>(sim.entity_registry().find(id)), false,
+            true);
+        return id;
+    };
+
+    const osc::u32 nuke = launch("nuke");
+    lua_setglobal(lua.raw(), "nuke");
+    lua_settop(lua.raw(), 0);
+    launch("shell");
+    lua_settop(lua.raw(), 0);
+    const osc::u32 bomb = launch("bomb");
+    lua_settop(lua.raw(), 0);
+    REQUIRE(lua.do_string("moho.projectile_methods.CreateChildProjectile(nuke, 'bomb')").ok());
+
+    const auto& follows = sim.camera_follow_events();
+    REQUIRE(follows.size() == 3);
+    CHECK(follows[0].source == launcher_id);
+    CHECK(follows[0].projectile == nuke);
+    CHECK(follows[0].timeout == 5.0f);
+    CHECK(follows[1].projectile == bomb);
+    CHECK(follows[1].timeout == 1.0f);
+    CHECK(follows[2].source == nuke);
 }

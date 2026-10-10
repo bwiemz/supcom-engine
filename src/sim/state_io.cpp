@@ -350,8 +350,9 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.f32v(sim.no_rush_radius_);
     w.b(sim.common_army_);
     w.b(sim.team_share_overflow_);
-    // camera_shake_events_, death_events_, intel_flush_events_,
-    // sound_requests_: the renderer's and the audio's, emptied each tick
+    // camera_shake_events_, camera_follow_events_, death_events_,
+    // intel_flush_events_, sound_requests_: the renderer's and the audio's,
+    // emptied each tick
     w.size(sim.resource_deposits_.size());
     for (const ResourceDeposit& d : sim.resource_deposits_) {
         w.f32v(d.x);
@@ -551,6 +552,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.common_army_ = r.b();
     sim.team_share_overflow_ = r.b();
     sim.camera_shake_events_.clear();
+    sim.camera_follow_events_.clear();
     sim.death_events_.clear();
     sim.intel_flush_events_.clear();
     sim.sound_requests_.clear();

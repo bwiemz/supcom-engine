@@ -333,3 +333,39 @@ TEST_CASE("RevertRotation makes the target a place, unless it follows one (M217g
     cam.revert_rotation();
     CHECK(cam.target_type() == CameraTarget::Entity);
 }
+
+TEST_CASE("A camera following a launcher goes on to its shot, and back after the timeout",
+          "[camera][moves]") {
+    // Moho's CameraImpl::CameraFollow, then UpdateTargets' countdown
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    std::map<u32, CameraEntityPose> world;
+    world[7].pos = {90.0f, kGround, 90.0f};
+    world[8].pos = {150.0f, kGround, 150.0f};
+    world[20].pos = {100.0f, kGround, 100.0f};
+    cam.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
+        const auto it = world.find(id);
+        if (it == world.end()) return false;
+        out = it->second;
+        return true;
+    });
+    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.camera_follow(8, 20, 2.0f);
+    CHECK(cam.target_entity() == 7);
+
+    cam.camera_follow(7, 20, 2.0f);
+    CHECK(cam.target_entity() == 20);
+    world[20].pos = {120.0f, kGround, 110.0f};
+    cam.frame(0.5);
+    CHECK_THAT(cam.target_x(), WithinAbs(120.0, 1e-3));
+
+    world.erase(20);
+    cam.frame(0.5);
+    CHECK(cam.target_type() == CameraTarget::Location);
+    cam.frame(1.0);
+    CHECK(cam.target_type() == CameraTarget::Location);
+    cam.frame(1.0);
+    CHECK(cam.target_entity() == 7);
+    cam.frame(0.5);
+    CHECK_THAT(cam.target_x(), WithinAbs(90.0, 1e-3));
+}

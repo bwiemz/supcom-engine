@@ -342,6 +342,11 @@ struct ShakeEventRecord {
     f32 max_shake = 1;
     f32 min_shake = 0;
 };
+struct CameraFollowRecord {
+    u32 source = 0;
+    u32 projectile = 0;
+    f32 timeout = 1.0f;
+};
 /// A FlushIntelInRect (SimState::IntelFlushEvent): the rect, and each unit
 /// whose blips were lost, with a bit per army that lost one, in id order.
 struct IntelFlushRecord {
@@ -361,11 +366,13 @@ struct SoundEventRecord {
 struct WorldEvents {
     std::vector<DeathEventRecord> deaths;
     std::vector<ShakeEventRecord> shakes;
+    std::vector<CameraFollowRecord> camera_follows;
     std::vector<IntelFlushRecord> intel_flushes;
     std::vector<SoundEventRecord> sounds;
     void clear() {
         deaths.clear();
         shakes.clear();
+        camera_follows.clear();
         intel_flushes.clear();
         sounds.clear();
     }

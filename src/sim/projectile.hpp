@@ -25,6 +25,8 @@ struct ProjectileBlueprintInfo {
     /// DesiredShooterCap: at most this many weapons shoot at it at once (0:
     /// no cap).
     u32 desired_shooter_cap = 0;
+    bool camera_follows = false;
+    f32 camera_follow_timeout = 1.0f;
 };
 
 class Projectile : public Entity {

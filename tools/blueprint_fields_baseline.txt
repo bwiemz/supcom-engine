@@ -3,8 +3,6 @@ AimsStraightOnDisable
 BankForward
 BankingSlope
 BounceVelDamp
-CameraFollowTimeout
-CameraFollowsProjectile
 CatchUpAcc
 DirectionX
 DirectionY

@@ -1063,6 +1063,19 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
             lua_rawget(L_, bp);
             if (lua_type(L_, -1) == LUA_TNUMBER && lua_tonumber(L_, -1) > 0)
                 info->desired_shooter_cap = static_cast<u32>(lua_tonumber(L_, -1));
+            lua_pushstring(L_, "Display");
+            lua_rawget(L_, bp);
+            if (lua_istable(L_, -1)) {
+                const int display = lua_gettop(L_);
+                lua_pushstring(L_, "CameraFollowsProjectile");
+                lua_rawget(L_, display);
+                info->camera_follows = lua_toboolean(L_, -1) != 0;
+                lua_pushstring(L_, "CameraFollowTimeout");
+                lua_rawget(L_, display);
+                if (lua_type(L_, -1) == LUA_TNUMBER) {
+                    info->camera_follow_timeout = static_cast<f32>(lua_tonumber(L_, -1));
+                }
+            }
         }
         lua_settop(L_, top);
     }
@@ -1444,6 +1457,7 @@ void SimState::tick() {
     // next one).
     death_events_.clear();
     camera_shake_events_.clear();
+    camera_follow_events_.clear();
     sound_requests_.clear();
     intel_flush_events_.clear();
     // A loaded game has caught up: the player's orders count from here.

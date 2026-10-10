@@ -108,6 +108,14 @@ struct CameraShakeEvent {
     f32 duration = 0.5f;     // seconds
 };
 
+/// A projectile whose blueprint has Display.CameraFollowsProjectile: a
+/// camera following `source` goes on to it (Moho's SCamFollowParams).
+struct CameraFollowEvent {
+    u32 source = 0;
+    u32 projectile = 0;
+    f32 timeout = 1.0f;
+};
+
 /// Per-army resource efficiency (pre-computed per tick).
 struct ArmyEfficiency {
     f64 mass = 1.0;
@@ -746,6 +754,10 @@ public:
     void add_camera_shake(const CameraShakeEvent& e) { camera_shake_events_.push_back(e); }
     const std::vector<CameraShakeEvent>& camera_shake_events() const { return camera_shake_events_; }
     void clear_camera_shake_events() { camera_shake_events_.clear(); }
+    void add_camera_follow(const CameraFollowEvent& e) { camera_follow_events_.push_back(e); }
+    const std::vector<CameraFollowEvent>& camera_follow_events() const {
+        return camera_follow_events_;
+    }
 
     // Death events (consumed by renderer for explosion VFX)
     struct DeathEvent {
@@ -1080,6 +1092,7 @@ private:
     bool common_army_ = false;     // pool allied economies when true
     bool team_share_overflow_ = false; // route wasted overflow to allies
     std::vector<CameraShakeEvent> camera_shake_events_;
+    std::vector<CameraFollowEvent> camera_follow_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;
     std::vector<SoundRequest> sound_requests_;
