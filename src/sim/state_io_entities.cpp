@@ -257,6 +257,7 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.do_not_target_ = r.b();
     e.reclaimable_ = r.b();
     e.custom_name_ = r.str();
+    // ui_refresh_requests_ isn't saved: the selection's refresh only looks for a change in it
     e.strategic_underlay_ = r.str();
     e.scale_x_ = r.f32v();
     e.scale_y_ = r.f32v();
