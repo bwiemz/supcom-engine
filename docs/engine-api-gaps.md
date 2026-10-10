@@ -102,7 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
-| Platoon orders take their squad argument (`MoveToLocation`, `MoveToTarget`, `AggressiveMoveToLocation`, `Patrol`, `AttackTarget`, `GuardTarget`, `Stop`); with none they go to squads Attack to Scout (`AttackTarget`, `GuardTarget`: Attack and Artillery), and with a formation override to the whole platoon (campaign base transports' routes go to the transports only) | [#534](https://github.com/bwiemz/supcom-engine/pull/534) |
+| Platoon orders take their squad argument (`MoveToLocation`, `MoveToTarget`, `AggressiveMoveToLocation`, `Patrol`, `AttackTarget`, `GuardTarget`, `Stop`); with none they go to squads Attack to Scout (`AttackTarget`, `GuardTarget`: Attack and Artillery), and with a formation override to the whole platoon (campaign base transports' routes go to the transports only) | [#535](https://github.com/bwiemz/supcom-engine/pull/535) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
