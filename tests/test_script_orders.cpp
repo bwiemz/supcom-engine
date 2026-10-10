@@ -402,3 +402,33 @@ TEST_CASE("IsUnitState reads the states a script sets", "[script_orders][lua]") 
     )");
     if (!r) FAIL(r.error().message);
 }
+
+TEST_CASE("An unfinished unit with an upgrade queued is not Upgrading", "[script_orders][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    auto owned = std::make_unique<Unit>();
+    Unit* unit = owned.get();
+    unit->set_army(0);
+    unit->add_category("FACTORY");
+    unit->set_is_being_built(true);
+    sim.entity_registry().register_entity(std::move(owned));
+    osc::sim::UnitCommand upgrade;
+    upgrade.type = osc::sim::CommandType::Upgrade;
+    upgrade.blueprint_id = "ueb0201";
+    unit->push_command(upgrade, false);
+    sim.tick();
+    REQUIRE(unit->command_queue().size() == 1);
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, static_cast<osc::sim::Entity*>(unit));
+    lua_rawset(L, -3);
+    lua_setglobal(L, "unit");
+    const auto r = lua.do_string(R"(
+        if moho.unit_methods.IsUnitState(unit, 'Upgrading') then error('Upgrading') end
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
+}
