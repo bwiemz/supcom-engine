@@ -1,6 +1,6 @@
 # Engine API gaps
 
-Engine API that retail's Lua and data use and the engine doesn't support, or supports in part, with what FAF adds on top. Found by audits of the bindings' optional and flag arguments, the callbacks' return values, the data's flags and categories, the parity-ratchet baselines and FAF's executable patches, and by play. Checked against main at be5c57c (2026-10-09).
+Engine API that retail's Lua and data use and the engine doesn't support, or supports in part, with what FAF adds on top. Found by audits of the bindings' optional and flag arguments, the callbacks' return values, the data's flags and categories, the parity-ratchet baselines and FAF's executable patches, and by play. Checked against main at 6570e4c6 (2026-10-09).
 
 How to read it:
 - Each group lists retail's gaps first, ranked by how visible they are in play, then FAF's additions.
@@ -13,7 +13,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `GetBoneDirection(bone)` returns three numbers `x, y, z` in retail; the engine returns a vector table | The Scathis never fires: its `CreateProjectileAtMuzzle` reads the three numbers, errors in `GetAngleInBetween` before the shell is made, and the weapon's thread dies | faf-re `cfunc_EntityGetBoneDirection` (`entity/Entity.cpp`); retail `/units/URL0401/URL0401_Script.lua` CreateProjectileAtMuzzle; engine `entity.cpp` entity_GetBoneDirection | Open |
 | `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield in retail; the engine's is a no-op | Terrain under structures with a FlattenSkirt (219 retail blueprints) isn't levelled; buildings stand on the slope | faf-re `cfunc_FlattenMapRect` (`sim/Sim.cpp`); retail `/lua/defaultunits.lua` OnCreate; engine `sim_bindings.cpp` stub_noop | Open |
 | Scrollers (`AddThreadScroller`, `AddPingPongScroller`, `AddManualScroller`, `RemoveScroller`) are no-ops; the renderer ignores the mesh LOD's `Scrolling` | Tank tracks don't move (37 blueprints with `Treads.ScrollTreads`); UEA0102's ping-pong scroll doesn't run | faf-re `AddThreadScroller` (`entity/Entity.cpp`); retail `/lua/sim/Unit.lua` CreateTreads, `/lua/defaultunits.lua`; engine `entity.cpp` stub_noop | Open |
 | `CreateAnimator(unit, true)` ties the animation's rate to the unit's speed in retail (step × speed / MaxSpeed); the engine ignores the second argument | Walk cycles play at a fixed rate, so feet slide when a walker is slower than its MaxSpeed | faf-re `cfunc_CreateAnimator`, `CAnimationManipulator` (`animation/CAnimationManipulator.cpp`); retail `/lua/defaultunits.lua`; engine `sim_bindings.cpp` l_CreateAnimator, `sim/manipulator.cpp` | Open |
@@ -103,6 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| `GetBoneDirection(bone)` returns three numbers, not a vector table: retail's Lua destructures `v.x, v.y, v.z = GetBoneDirection(b)`, so the Scathis's `CreateProjectileAtMuzzle` errored in `GetAngleInBetween` and the weapon never fired | pending |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

@@ -171,14 +171,21 @@ int entity_IsValidBone(lua_State* L) {
 }
 
 int entity_GetBoneDirection(lua_State* L) {
+    // Retail returns three numbers, not a vector table: the Scathis's
+    // CreateProjectileAtMuzzle destructures `v.x, v.y, v.z = GetBoneDirection(b)`
+    // (retail /units/URL0401/URL0401_Script.lua), and GetAngleInBetween then
+    // errors on the nils, so the weapon never fires.
     auto* e = check_entity(L);
-    if (!e) { push_vector3(L, {0, 0, 1}); return 1; }
+    if (!e) {
+        push_direction(L, {0, 0, 1});
+        return 3;
+    }
     auto* bd = e->bone_data();
     if (!bd || lua_gettop(L) < 2) {
         // No bone data or no bone arg: return entity forward direction
         auto fwd = sim::quat_rotate(e->orientation(), {0, 0, 1});
-        push_vector3(L, fwd);
-        return 1;
+        push_direction(L, fwd);
+        return 3;
     }
     // The bone's forward (+Z) in the world: a unit's as posed (turrets,
     // rotators), anything else's in bind pose.
@@ -188,8 +195,8 @@ int entity_GetBoneDirection(lua_State* L) {
                      : bd->bones[static_cast<size_t>(idx)].world_rotation;
     auto bone_world_rot = sim::quat_multiply(e->orientation(), model_rot);
     auto dir = sim::quat_rotate(bone_world_rot, {0, 0, 1});
-    push_vector3(L, dir);
-    return 1;
+    push_direction(L, dir);
+    return 3;
 }
 
 // ====================================================================
