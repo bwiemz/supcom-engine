@@ -19022,13 +19022,33 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             osc::test_status::fail("[FAIL] Test 10x4: {} orders, the last to #{}", q.size(),
                                    q.empty() ? 0 : q.back().target_id);
     }
+    sim_lua(R"(
+        for _, u in ArmyBrains[1]:GetListOfUnits(categories.AIRSTAGINGPLATFORM, false) do
+            u:Destroy()
+        end
+        __osc_vo = {}
+        ArmyBrains[1].OnPlayNoStagingPlatformsVO = function(self)
+            table.insert(__osc_vo, 'none')
+        end
+    )");
+    play(1);
+    lua_ok("Test 10x5: Dock with no pad", R"(
+        SelectUnits({GetUnitById(__osc_dock_planes[1])})
+        IssueDockCommand(true)
+    )");
+    play(1);
+    if (sim_lua("if table.getn(__osc_vo) ~= 1 then error('heard ' .. table.getn(__osc_vo)) end")) {
+        spdlog::info("[PASS] Test 10x6: Dock with no pad plays OnPlayNoStagingPlatformsVO");
+    } else {
+        osc::test_status::fail("[FAIL] Test 10x6: Dock with no pad: the brain heard no voice");
+    }
     // Gone again, the commander selected, for the tests that follow.
     sim_lua(R"(
-        for _, u in ArmyBrains[1]:GetListOfUnits(categories.AIRSTAGINGPLATFORM + categories.uea0102, false) do
+        for _, u in ArmyBrains[1]:GetListOfUnits(categories.uea0102, false) do
             u:Destroy()
         end
     )");
-    lua_ok("Test 10x5: reselect the commander", "SelectUnits(GetArmyAvatars())");
+    lua_ok("Test 10x7: reselect the commander", "SelectUnits(GetArmyAvatars())");
     play(1);
     // UnProject: this test's views have no camera (no renderer), so it can
     // find no ground and gives NaNs, which retail's ping drag checks for

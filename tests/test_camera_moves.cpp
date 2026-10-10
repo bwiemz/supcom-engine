@@ -275,6 +275,58 @@ TEST_CASE("A tracked entity is followed, and let go when gone (M217g)", "[camera
     CHECK(cam.target_entity() == 0);
 }
 
+TEST_CASE("The camera tells its tracking as it starts and stops following", "[camera][moves]") {
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    std::map<u32, CameraEntityPose> world;
+    world[7].pos = {90.0f, kGround, 90.0f};
+    world[8].pos = {150.0f, kGround, 150.0f};
+    cam.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
+        const auto it = world.find(id);
+        if (it == world.end()) {
+            return false;
+        }
+        out = it->second;
+        return true;
+    });
+    std::vector<bool> told;
+    cam.set_tracking_listener([&](bool tracking) { told.push_back(tracking); });
+
+    cam.target_entities({7}, false, 50.0f, 0.0f);
+    cam.target_nothing();
+    CHECK(told.empty());
+
+    cam.target_entities({7}, true, 50.0f, 0.0f);
+    CHECK(told == std::vector<bool>{true});
+    cam.target_nothing();
+    CHECK(told == std::vector<bool>{true, false});
+    cam.target_nothing();
+    CHECK(told == std::vector<bool>{true, false});
+
+    told.clear();
+    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.target_box({0.0f, 0.0f, 0.0f}, {10.0f, 0.0f, 10.0f}, 0.0f);
+    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.target_manual(10.0f, kGround, 10.0f, 0.0f, 1.0f, 60.0f);
+    cam.target_entities({7}, true, 50.0f, 0.0f);
+    cam.target_entities({7}, false, 50.0f, 0.0f);
+    CHECK(told == std::vector<bool>{true, false, true, false, true, false});
+
+    told.clear();
+    cam.target_entities({7}, true, 50.0f, 0.0f);
+    world.erase(7);
+    cam.frame(1.0 / 60.0);
+    CHECK(told == std::vector<bool>{true, false});
+
+    told.clear();
+    world[7].pos = {90.0f, kGround, 90.0f};
+    cam.target_entities({7, 8}, true, 50.0f, 0.0f);
+    world.erase(7);
+    cam.frame(1.0 / 60.0);
+    cam.frame(1.0 / 60.0);
+    CHECK(told == std::vector<bool>{true, true});
+}
+
 TEST_CASE("The nose camera looks along its entity (M217g)", "[camera][moves]") {
     const map::Heightmap ground = flat();
     Camera cam = camera_over(ground);

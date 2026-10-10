@@ -364,6 +364,15 @@ void App::Window::update_ui(double dt) {
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
     renderer.poll_events(dt);
+    if (renderer.should_close() && !renderer.iconified() &&
+        osc::core::call_show_escape_dialog(ui_lua_state.raw())) {
+        renderer.keep_open();
+    }
+    const bool graph_held = sim_state && renderer.command_graph_held();
+    if (graph_held != command_graph_shown) {
+        command_graph_shown = graph_held;
+        osc::core::call_on_command_graph_show(ui_lua_state.raw(), graph_held);
+    }
 
     // The lobbies' networks: what has come, into their callbacks
     // (M218a)
@@ -379,6 +388,7 @@ void App::Window::update_ui(double dt) {
         osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
         osc::lua::pump_pause_state(ui_lua_state.raw());       // M218f
         osc::lua::pump_speed_changes(ui_lua_state.raw());     // M218i
+        osc::lua::pump_desyncs(ui_lua_state.raw());
     }
 
     // Resume UI coroutines

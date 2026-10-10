@@ -144,6 +144,12 @@ void process_info(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     } else if (name == "CustomName") {
         // UserUnit:SetCustomName (Moho's ProcessInfoPair "CustomName").
         if (text) for_each_unit(sim, cb, [&](Unit& u) { u.set_custom_name(*text); });
+    } else if (name == "PlayNoStagingPlatformsVO") {
+        for_each_unit(sim, cb,
+                      [&](Unit& u) { sim.brain_hears(u.army(), "OnPlayNoStagingPlatformsVO"); });
+    } else if (name == "PlayBusyStagingPlatformsVO") {
+        for_each_unit(sim, cb,
+                      [&](Unit& u) { sim.brain_hears(u.army(), "OnPlayBusyStagingPlatformsVO"); });
     } else {
         spdlog::warn("ProcessInfo: unsupported action '{}'", name);
     }

@@ -1486,10 +1486,12 @@ static int l_IssueDockCommand(lua_State* L) {
     };
     static const sim::CategoryName kStaging{"AIRSTAGINGPLATFORM"};
     std::vector<Pad> pads;
+    bool any_pad = false;
     registry.for_each_unit([&](sim::Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != focus) return;
         const auto& pad = static_cast<const sim::Unit&>(e);
         if (pad.is_being_built() || pad.is_dying() || !pad.has_category(kStaging)) return;
+        any_pad = true;
         if (pad.layer() == "Sub" || pad.layer() == "Seabed" || !pad.command_queue().empty()) return;
         const i32 room = pad.storage_slots() != 0
                              ? pad.storage_slots() - static_cast<i32>(pad.stored_ids().size())
@@ -1499,7 +1501,18 @@ static int l_IssueDockCommand(lua_State* L) {
         const f32 dz = pad.position().z - cz;
         pads.push_back({&pad, dz * dz + dx * dx, room});
     });
-    if (pads.empty()) return 0;
+    if (pads.empty()) {
+        if (auto* queue = get_callback_queue(L)) {
+            sim::SimCallbackEntry entry;
+            entry.func_name = sim::kProcessInfoCallback;
+            entry.args["Action"] =
+                std::string(any_pad ? "PlayBusyStagingPlatformsVO" : "PlayNoStagingPlatformsVO");
+            entry.args["Value"] = std::string("play");
+            entry.unit_ids.push_back(selected_unit_ids(L).front());
+            queue->push(std::move(entry));
+        }
+        return 0;
+    }
     std::sort(pads.begin(), pads.end(), [](const Pad& a, const Pad& b) {
         if (a.d2 != b.d2) return a.d2 < b.d2;
         return a.unit->entity_id() < b.unit->entity_id();

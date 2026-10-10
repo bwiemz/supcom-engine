@@ -537,6 +537,29 @@ TEST_CASE("ProcessInfo's CustomName names the unit at the tick", "[simcallback]"
     CHECK(w.hooks().empty()); // a name, no script hook
 }
 
+TEST_CASE("ProcessInfo's staging platform voices reach the unit's brain", "[simcallback]") {
+    CallbackSim w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    const char* code = "return {OnPlayNoStagingPlatformsVO = function(self) "
+                       "table.insert(hooks, 'NoStaging') end, "
+                       "OnPlayBusyStagingPlatformsVO = function(self) "
+                       "table.insert(hooks, 'BusyStaging') end}";
+    REQUIRE(luaL_loadbuffer(w.L, code, std::strlen(code), "brain") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+    w.sim.army_at(0)->set_lua_table_ref(luaL_ref(w.L, LUA_REGISTRYINDEX));
+    const osc::u32 id = w.spawn();
+    for (const char* action : {"PlayNoStagingPlatformsVO", "PlayBusyStagingPlatformsVO"}) {
+        SimCallbackEntry cb;
+        cb.func_name = osc::sim::kProcessInfoCallback;
+        cb.args["Action"] = std::string(action);
+        cb.args["Value"] = std::string("play");
+        cb.unit_ids = {id};
+        w.sim.submit_callback(cb);
+    }
+    w.sim.tick();
+    CHECK(w.hooks() == "NoStaging,BusyStaging");
+}
+
 TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
     CallbackSim a, b;
     const osc::u32 ua = a.spawn();

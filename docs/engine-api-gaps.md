@@ -64,11 +64,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `ShowEscapeDialog`: retail calls it when the window is closed | Closing the window quits at once; retail asks for confirmation | retail `/lua/ui/uimain.lua` ShowEscapeDialog, `/lua/ui/dialogs/eschandler.lua`; engine `app/window.cpp` | Open |
-| `ShowDesyncDialog`: retail shows a dialog naming the desynced players | A desync is detected but not shown to the player | retail `/lua/ui/uimain.lua` ShowDesyncDialog, `/lua/ui/dialogs/desync.lua`; engine `gpgnet_session.cpp` report_desync | Open |
-| `OnCommandGraphShow`: retail calls it while Shift is held | With Shift held, map-marker pings don't show their name panel and can't be dragged or Ctrl+right-click deleted | faf-re `UICommandGraph`; retail `/lua/ui/game/commandgraph.lua` → `/lua/ui/controls/worldview.lua` ShowPings | Open |
-| `OnPlayNoStagingPlatformsVO` / `OnPlayBusyStagingPlatformsVO`: retail's Dock plays a voice when there is no air staging platform or all are full | Dock silently does nothing in those cases | faf-re `IssueDockCommand`; retail `/lua/aibrain.lua` OnPlayNoStagingPlatformsVO; engine `user_bindings.cpp` IssueDockCommand | Open |
-| `OnTrackUnit`: retail calls it while the camera tracks a unit | No tracking mode text | retail `/lua/ui/game/tracking.lua` OnTrackUnit; engine `user_bindings.cpp` UI_TrackUnit | Open |
 
 ## Behaviour
 
@@ -172,5 +167,10 @@ How to read it:
 | `PostDragger(origin, keycode, dragger)`: a drag ends only on the release of the button that started it (sliders, window moves and resizes, map-marker drags) | [#545](https://github.com/bwiemz/supcom-engine/pull/545) |
 | `ItemList:ShowMouseoverItem` defaults to false; while set, the hovered row is drawn in the mouseover colours (map-select, profile and combo-box lists) | [#545](https://github.com/bwiemz/supcom-engine/pull/545) |
 | `ConTextMatches` (the console's completions) and `RemoveProfileDirectories` (a deleted profile's replays and saves) | [#545](https://github.com/bwiemz/supcom-engine/pull/545) |
+| `ShowEscapeDialog`: closing the window asks uimain's `ShowEscapeDialog(true)` ("Are you sure you'd like to quit?") instead of quitting at once | [#547](https://github.com/bwiemz/supcom-engine/pull/547) |
+| `ShowDesyncDialog(beat, names)`: a desync shows retail's dialog naming the players whose checksums differed | [#547](https://github.com/bwiemz/supcom-engine/pull/547) |
+| `OnCommandGraphShow`: Shift held shows the map-marker pings' name panels, drag and Ctrl+right-click delete | [#547](https://github.com/bwiemz/supcom-engine/pull/547) |
+| `OnPlayNoStagingPlatformsVO` / `OnPlayBusyStagingPlatformsVO`: Dock with no air staging platform, or none free, plays the brain's voice | [#547](https://github.com/bwiemz/supcom-engine/pull/547) |
+| `OnTrackUnit`: the world camera tells `tracking.lua` as it starts and stops following a unit (the "Tracking" mode text) | [#547](https://github.com/bwiemz/supcom-engine/pull/547) |
 
 Not gaps, checked: `CanWeaponFire`, `TaskTick` returning nil, `VerifyScriptCommand`, `IsScrollable`, `SetIgnoreArmyCap`, `GetTerrainTypeOffset`, `INSIGNIFICANTUNIT`, `HYDROCARBON`, `ReTargetOnMiss`, `RecoilImpulse` (no retail blueprint sets `ShipRock`). No difference on retail's data: `OnDamageBy` and `OnNukeArmed` (no retail blueprint has the voice keys they read), `GetCaptureCosts` (the engine's formula is retail `Unit.lua`'s, and nothing overrides it), `NeedPrep`, `DetachFrom`'s flag (every retail call passes true), `IssueFormPatrol` (no shipped map reaches its caller).
