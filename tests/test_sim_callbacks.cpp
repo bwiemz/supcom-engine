@@ -107,6 +107,7 @@ struct CallbackSim {
     osc::u32 spawn() {
         auto u = std::make_unique<Unit>();
         u->set_army(0);
+        u->add_command_cap("RULEUCC_Pause");
         // its script object, as the sim gives every unit
         lua_pushstring(L, "make_unit");
         lua_rawget(L, LUA_GLOBALSINDEX);
@@ -508,6 +509,42 @@ TEST_CASE("ProcessInfo's pause and auto mode call the same hooks", "[simcallback
     CHECK(w.unit(id).auto_mode());
     CHECK(w.unit(id).repeat_queue());
     CHECK(w.hooks() == "OnPaused,OnAutoModeOn");
+}
+
+TEST_CASE("The UI pauses only a unit with RULEUCC_Pause or RULEUTC_GenericToggle",
+          "[simcallback]") {
+    CallbackSim w;
+    struct Case {
+        const char* command_cap;
+        const char* toggle_cap;
+        bool paused;
+    };
+    for (const Case c : {Case{nullptr, nullptr, false}, Case{"RULEUCC_Pause", nullptr, true},
+                         Case{nullptr, "RULEUTC_GenericToggle", true},
+                         Case{"RULEUCC_Stop", "RULEUTC_ProductionToggle", false}}) {
+        const osc::u32 by_setting = w.spawn();
+        const osc::u32 by_info = w.spawn();
+        for (const osc::u32 id : {by_setting, by_info}) {
+            w.unit(id).remove_command_cap("RULEUCC_Pause");
+            if (c.command_cap) {
+                w.unit(id).add_command_cap(c.command_cap);
+            }
+            if (c.toggle_cap) {
+                w.unit(id).add_toggle_cap(c.toggle_cap);
+            }
+        }
+        w.sim.submit_callback(setting("Paused", true, by_setting));
+        SimCallbackEntry info;
+        info.func_name = osc::sim::kProcessInfoCallback;
+        info.args["Action"] = std::string("SetPaused");
+        info.args["Value"] = std::string("true");
+        info.unit_ids = {by_info};
+        w.sim.submit_callback(info);
+        w.sim.tick();
+        CHECK(w.unit(by_setting).is_paused() == c.paused);
+        CHECK(w.unit(by_info).is_paused() == c.paused);
+    }
+    CHECK(w.hooks() == "OnPaused,OnPaused,OnPaused,OnPaused");
 }
 
 TEST_CASE("ProcessInfo's CustomName names the unit at the tick", "[simcallback]") {

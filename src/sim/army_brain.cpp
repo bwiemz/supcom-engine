@@ -217,14 +217,14 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         mass_income += econ.reclaim_mass;
         energy_income += econ.reclaim_energy;
 
-        if (econ.consumption_active && !unit.is_paused()) {
+        if (econ.consumption_active) {
             mass_consumption += econ.consumption_mass;
             energy_consumption += econ.consumption_energy;
         }
         // A silo's missile under way (M206), and a repair on a staging
         // platform (M206r).
         mass_consumption += econ.silo_mass + econ.dock_repair_mass;
-        energy_consumption += econ.silo_energy + econ.dock_repair_energy;
+        energy_consumption += econ.silo_energy + econ.dock_repair_energy + econ.capture_energy;
 
         if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0) {
             energy_consumption += econ.energy_maintenance_override;

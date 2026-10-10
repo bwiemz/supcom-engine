@@ -2317,6 +2317,49 @@ void test_enhance(TestContext& ctx) {
     if (!result) osc::test_status::fail("[FAIL] Enhance test: {}", result.error().message);
     else spdlog::info("ENHANCE TEST: ALL PASSED");
 
+    result = ctx.lua_state.do_string(R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        local p = acu:GetPosition()
+        __osc_sacu = CreateUnitHPR('uel0301', 'ARMY_1', p[1] + 10, p[2], p[3], 0, 0, 0)
+        __osc_sacu:CreateEnhancement('Shield')
+        __osc_sacu:SetPaused(true)
+    )");
+    for (int i = 0; i < 3; ++i) {
+        ctx.sim.tick();
+    }
+    if (result) {
+        result = ctx.lua_state.do_string(R"(
+            local asked = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY')
+            if __osc_sacu:GetConsumptionPerSecondEnergy() ~= 500 or asked < 50 then
+                error('Test 6: the paused SACU asks ' .. __osc_sacu:GetConsumptionPerSecondEnergy() ..
+                      ', its army ' .. asked .. ' a tick')
+            end
+            __osc_sacu:Destroy()
+            local acu = GetEntityById(__osc_test_acu_id(1))
+            acu:SetPaused(true)
+            IssueScript({acu}, {TaskName = 'EnhanceTask', Enhancement = 'Shield'})
+        )");
+    }
+    for (int i = 0; i < 20; ++i) {
+        ctx.sim.tick();
+    }
+    if (result) {
+        result = ctx.lua_state.do_string(R"(
+            local acu = GetEntityById(__osc_test_acu_id(1))
+            local asked = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY')
+            if not acu:IsUnitState('Enhancing') or acu:GetWorkProgress() ~= 0 or asked <= 0 then
+                error('Test 7: the paused enhancement made ' .. acu:GetWorkProgress() ..
+                      ', its army asks ' .. asked)
+            end
+        )");
+    }
+    if (!result) {
+        osc::test_status::fail("[FAIL] Enhance test, paused: {}", result.error().message);
+    } else {
+        spdlog::info("[PASS] Enhance test 6-7: a paused unit's upkeep, and an enhancement begun "
+                     "paused, cost");
+    }
+
     spdlog::info("Enhancement test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
@@ -9749,11 +9792,36 @@ void test_missile(TestContext& ctx) {
         local spent = __osc_consumed(__osc_b, 'Energy') - __osc_paused.spent
         if spent > 1e-6 then error('B and its engineers spent ' .. spent) end
     )");
-    lua_check("setup: B resumes; C gets its missile", R"(
+    lua_check("setup: B resumes, its engineers paused; C gets its missile", R"(
         __osc_b:SetPaused(false)
+        for _, e in __osc_engineers do
+            e:SetPaused(true)
+        end
         __osc_c:GiveTacticalSiloAmmo(1)
     )");
-    run(289);
+    run(1);
+    lua_check("setup: B's progress with its engineers paused", R"(
+        __osc_alone = __osc_b:GetWorkProgress()
+    )");
+    run(5);
+    lua_check("setup: B's engineers unpaused", R"(
+        __osc_alone = __osc_b:GetWorkProgress() - __osc_alone
+        __osc_helped = __osc_b:GetWorkProgress()
+        __osc_paused_use = 0
+        for _, e in __osc_engineers do
+            __osc_paused_use = __osc_paused_use + e:GetEconData().energyConsumed
+            e:SetPaused(false)
+        end
+    )");
+    run(5);
+    lua_check("Test 9b: paused engineers add nothing to the silo they help, and pay nothing", R"(
+        if __osc_paused_use ~= 0 then error('the paused engineers asked ' .. __osc_paused_use) end
+        local helped = __osc_b:GetWorkProgress() - __osc_helped
+        if not (__osc_alone > 0 and helped > 1.1 * __osc_alone) then
+            error(string.format('B made %g alone and %g helped', __osc_alone, helped))
+        end
+    )");
+    run(278);
     lua_check("Test 10: auto mode filled A's storage and stopped", R"(
         if __osc_a:GetTacticalSiloAmmoCount() ~= 12 then
             error('A has ' .. __osc_a:GetTacticalSiloAmmoCount())

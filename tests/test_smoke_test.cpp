@@ -261,6 +261,8 @@ struct BuildRuleHarness {
             state, store, "test_experimental",
             {"MOBILE", "LAND", "EXPERIMENTAL"}, 1);
         store.expose_to_lua(state.raw());
+        REQUIRE(state.do_string(
+            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
     }
 };
 
@@ -1163,4 +1165,170 @@ TEST_CASE("A patrol whose point a unit stands on doesn't spin", "[session][rules
     h.sim.tick();
     REQUIRE(tank->command_queue().size() == 1);
     CHECK(tank->command_queue().front().type == osc::sim::CommandType::Patrol);
+}
+
+TEST_CASE("A paused factory holds its build without work, and the unit doesn't decay",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(f->is_building());
+    const osc::sim::Entity* tank = h.sim.entity_registry().find(f->build_target_id());
+    const osc::f32 frac = tank->fraction_complete();
+    f->set_paused(true);
+    for (int i = 0; i < 20; ++i) {
+        h.sim.tick();
+    }
+    CHECK(f->is_building());
+    CHECK(tank->fraction_complete() == frac);
+    f->set_paused(false);
+    h.sim.tick();
+    CHECK(tank->fraction_complete() > frac);
+}
+
+TEST_CASE("A factory paused before it starts makes its unit only on a retry after unpause",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_paused(true);
+    for (int i = 0; i < 15; ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.sim.entity_registry().count() == 1);
+    f->set_paused(false);
+    for (int i = 0; i < 5; ++i) {
+        h.sim.tick();
+        CHECK(h.sim.entity_registry().count() == 1);
+    }
+    h.sim.tick();
+    CHECK(h.sim.entity_registry().count() == 2);
+}
+
+TEST_CASE("A paused unit's enhancement waits", "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string(
+        "__blueprints.test_factory.Enhancements = {Gun = {BuildTime = 100, BuildCostMass = 1,"
+        " BuildCostEnergy = 1}}\n"
+        "CreateUnit('test_factory', 1, 0, 0, 0)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    osc::sim::UnitCommand enhance;
+    enhance.type = osc::sim::CommandType::Enhance;
+    enhance.blueprint_id = "Gun";
+    f->push_command(enhance, true);
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(f->is_enhancing());
+    const osc::f32 work = f->work_progress();
+    REQUIRE(work > 0.0f);
+    f->set_paused(true);
+    for (int i = 0; i < 5; ++i) {
+        h.sim.tick();
+    }
+    CHECK(f->is_enhancing());
+    CHECK(f->work_progress() == work);
+    f->set_paused(false);
+    h.sim.tick();
+    CHECK(f->work_progress() > work);
+}
+
+TEST_CASE("unit:SetPaused calls OnPaused, and a paused unit pays what its script leaves on",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local M = moho.unit_methods\n"
+                              "local function unit(maintenance)\n"
+                              "  local u = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "  u.Maintenance = maintenance\n"
+                              "  M.SetConsumptionPerSecondEnergy(u, maintenance + 20)\n"
+                              "  M.SetConsumptionActive(u, true)\n"
+                              "  u.OnPaused = function(self)\n"
+                              "    M.SetConsumptionPerSecondEnergy(self, self.Maintenance)\n"
+                              "    M.SetConsumptionActive(self, self.Maintenance > 0)\n"
+                              "  end\n"
+                              "  return u\n"
+                              "end\n"
+                              "local shield, builder = unit(5), unit(0)\n"
+                              "M.SetPaused(shield, true)\n"
+                              "M.SetPaused(builder, true)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(5.0));
+}
+
+TEST_CASE("unit:SetPaused pauses only a unit with RULEUCC_Pause or RULEUTC_GenericToggle",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(
+        h.state.do_string("local M = moho.unit_methods\n"
+                          "local function paused(command, toggle)\n"
+                          "  local u = CreateUnit('test_tank', 1, 0, 0, 0)\n"
+                          "  if command then M.AddCommandCap(u, command) end\n"
+                          "  if toggle then M.AddToggleCap(u, toggle) end\n"
+                          "  M.SetPaused(u, true)\n"
+                          "  return M.IsPaused(u)\n"
+                          "end\n"
+                          "__osc_paused = tostring(paused()) .. ','\n"
+                          "  .. tostring(paused('RULEUCC_Pause')) .. ','\n"
+                          "  .. tostring(paused(nil, 'RULEUTC_GenericToggle')) .. ','\n"
+                          "  .. tostring(paused('RULEUCC_Stop', 'RULEUTC_ProductionToggle'))\n"));
+    lua_State* L = h.state.raw();
+    lua_getglobal(L, "__osc_paused");
+    CHECK(std::string(lua_tostring(L, -1)) == "false,true,true,false");
+    lua_pop(L, 1);
+}
+
+namespace {
+
+osc::sim::Unit* enhancing_factory(BuildRuleHarness& h) {
+    REQUIRE(h.state.do_string(
+        "__blueprints.test_factory.Enhancements = {Gun = {BuildTime = 100, BuildCostMass = 1,"
+        " BuildCostEnergy = 1}}\n"
+        "__osc_factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+        "local M = moho.unit_methods\n"
+        "__osc_factory.OnPaused = function(self) M.SetConsumptionActive(self, false) end\n"
+        "__osc_factory.OnUnpaused = function(self)\n"
+        "  if M.IsUnitState(self, 'Upgrading') then M.SetConsumptionActive(self, true) end\n"
+        "end\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    osc::sim::UnitCommand enhance;
+    enhance.type = osc::sim::CommandType::Enhance;
+    enhance.blueprint_id = "Gun";
+    f->push_command(enhance, true);
+    return f;
+}
+
+} // namespace
+
+TEST_CASE("An enhancement begun while paused pays without progress", "[session][rules][pause]") {
+    BuildRuleHarness h;
+    osc::sim::Unit* f = enhancing_factory(h);
+    f->set_paused(true);
+    for (int i = 0; i < 3; ++i) {
+        h.sim.tick();
+    }
+    REQUIRE(f->is_enhancing());
+    CHECK(f->work_progress() == 0.0f);
+    const double rate = f->build_rate() / 100.0;
+    CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(rate));
+}
+
+TEST_CASE("An enhancing unit is Upgrading, so its OnUnpaused resumes paying",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    osc::sim::Unit* f = enhancing_factory(h);
+    h.sim.tick();
+    REQUIRE(f->is_enhancing());
+    REQUIRE(h.state.do_string("moho.unit_methods.SetPaused(__osc_factory, true)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested == 0.0);
+    REQUIRE(h.state.do_string("moho.unit_methods.SetPaused(__osc_factory, false)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested > 0.0);
 }

@@ -74,6 +74,7 @@ struct WreckSite {
         auto* self = static_cast<WreckSite*>(lua_touserdata(L, lua_upvalueindex(1)));
         auto u = std::make_unique<Unit>();
         u->set_blueprint_id(lua_tostring(L, 1));
+        u->set_unit_id(lua_tostring(L, 1));
         u->set_position({static_cast<osc::f32>(lua_tonumber(L, 3)), 0.0f,
                          static_cast<osc::f32>(lua_tonumber(L, 5))});
         u->set_max_health(100.0f);
@@ -195,4 +196,56 @@ TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[buil
     }
     REQUIRE(w.built());
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
+}
+
+TEST_CASE("A paused engineer clears its site, then makes its frame only on a retry after unpause",
+          "[build][wreck][pause]") {
+    WreckSite w;
+    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    w.engineer->set_paused(true);
+    w.build("uab1103");
+    for (int i = 0; i < 40 && w.sim.entity_registry().find(wreck); ++i) {
+        w.sim.tick();
+    }
+    CHECK(w.sim.entity_registry().find(wreck) == nullptr);
+    for (int i = 0; i < 15; ++i) {
+        w.sim.tick();
+    }
+    CHECK_FALSE(w.built());
+    REQUIRE(w.engineer->command_queue().size() == 1);
+    w.engineer->set_paused(false);
+    int ticks = 0;
+    while (!w.built() && ticks < 20) {
+        w.sim.tick();
+        ++ticks;
+    }
+    CHECK(ticks <= 10);
+}
+
+TEST_CASE("A paused engineer's frame decays while it holds it, and builds on after a retry",
+          "[build][pause]") {
+    WreckSite w;
+    w.build("ueb1103");
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.built());
+    const osc::f32 frac = w.built()->fraction_complete();
+    const osc::f32 work = w.engineer->work_progress();
+    w.engineer->set_paused(true);
+    for (int i = 0; i < 15; ++i) {
+        w.sim.tick();
+    }
+    CHECK(w.engineer->is_building());
+    CHECK(w.engineer->command_queue().size() == 1);
+    CHECK(w.engineer->work_progress() == work);
+    CHECK(w.built()->fraction_complete() == Catch::Approx(frac - 14 * 0.1f / 360.0f));
+    w.engineer->set_paused(false);
+    osc::f32 last = w.built()->fraction_complete();
+    w.sim.tick();
+    CHECK(w.built()->fraction_complete() < last);
+    for (int i = 0; i < 10; ++i) {
+        w.sim.tick();
+    }
+    CHECK(w.built()->fraction_complete() > last);
 }

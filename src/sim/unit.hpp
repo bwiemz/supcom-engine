@@ -81,16 +81,16 @@ struct UnitEconomy {
     /// aircraft is damaged.
     f64 dock_repair_mass = 0.0;
     f64 dock_repair_energy = 0.0;
+    /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's.
+    f64 capture_energy = 0.0;
 
     /// Moho's mMaintainenceCost: a silo's missile under way asks through it
     /// too (CAiSiloBuildImpl).
     f64 mass_requested() const { return consumption_mass + silo_mass; }
-    f64 energy_requested() const { return consumption_energy + silo_energy; }
-    f64 mass_consumed(bool paused) const {
-        return (consumption_active && !paused ? consumption_mass : 0.0) + silo_mass;
-    }
-    f64 energy_consumed(bool paused) const {
-        return (consumption_active && !paused ? consumption_energy : 0.0) + silo_energy;
+    f64 energy_requested() const { return consumption_energy + silo_energy + capture_energy; }
+    f64 mass_consumed() const { return (consumption_active ? consumption_mass : 0.0) + silo_mass; }
+    f64 energy_consumed() const {
+        return (consumption_active ? consumption_energy : 0.0) + silo_energy + capture_energy;
     }
 };
 
@@ -322,9 +322,10 @@ public:
     // Pause state
     bool is_paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
-    /// Pause or resume the unit's work, as unit:SetPaused does. Moho's paused
-    /// unit keeps producing; its army pays for none of its work meanwhile.
-    void pause(bool p) { paused_ = p; }
+    /// Pause or resume the unit's work, as unit:SetPaused does: only a unit with
+    /// RULEUCC_Pause or RULEUTC_GenericToggle; its script hears OnPaused or
+    /// OnUnpaused on a change.
+    void pause(lua_State* L, bool p);
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }
@@ -1318,6 +1319,8 @@ private:
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
     void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    void tend_unfinished(SimContext& ctx);
+    void decay(lua_State* L);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -1339,11 +1342,13 @@ private:
     /// Whether a factory whose unit is built still holds for the roll-off,
     /// counting `wait` down (see the definition).
     bool holds_for_rolloff(i32& wait) const;
-    /// Whether a build its army's unit cap stopped still waits, counting
-    /// its cap_wait down (it tries again once that runs out).
-    static bool waits_out_unit_cap(UnitCommand& cmd);
+    /// Whether a task the unit cap or a pause stopped still waits, counting
+    /// its task_wait down (it tries again once that runs out).
+    static bool waits_out_task(UnitCommand& cmd);
+    /// Whether the unit is paused, `cmd` then waiting kTaskRetryTicks.
+    bool waits_paused(UnitCommand& cmd) const;
     /// A build its army's unit cap stopped: the order `command_id` (if
-    /// still at the head -- the brain's scripts ran) waits kCapRetryTicks.
+    /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
     OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);

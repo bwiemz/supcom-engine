@@ -328,7 +328,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.u32v(c.beacon_id);
     w.u32v(c.assigned_id);
     w.i32v(c.rolloff_wait);
-    w.i32v(c.cap_wait);
+    w.i32v(c.task_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
     save_ids(w, c.launch_queue);
@@ -378,7 +378,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.beacon_id = r.u32v();
     c.assigned_id = r.u32v();
     c.rolloff_wait = r.i32v();
-    c.cap_wait = r.i32v();
+    c.task_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
     c.launch_queue = load_ids(r);
@@ -1000,6 +1000,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.silo_energy);
     w.f64v(ec.dock_repair_mass);
     w.f64v(ec.dock_repair_energy);
+    w.f64v(ec.capture_energy);
     save_strings(w, u.categories_);
     // category_bits_: interned from categories_ (the ids are this process's)
     w.size(u.command_queue_.size());
@@ -1360,6 +1361,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.silo_energy = r.f64v();
     ec.dock_repair_mass = r.f64v();
     ec.dock_repair_energy = r.f64v();
+    ec.capture_energy = r.f64v();
     u.categories_ = load_strings<std::unordered_set<std::string>>(r);
     u.category_bits_ = {};
     for (const std::string& c : u.categories_) u.category_bits_.set(CategoryIds::intern(c));

@@ -3327,10 +3327,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.count)) << 32 |
                            static_cast<u32>(cmd.max_count));
             }
-            // A build waiting out its army's unit cap, only then.
-            if (cmd.cap_wait != 0) {
+            // A task waiting out its army's unit cap or a pause, only then.
+            if (cmd.task_wait != 0) {
                 orders.mix(0x43415057u); // "CAPW"
-                orders.mix(static_cast<u64>(static_cast<u32>(cmd.cap_wait)));
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.task_wait)));
             }
             // A refuel under way (M206r), only once it has a slot or waits.
             if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {
