@@ -857,13 +857,22 @@ public:
     /// Its footprints as Moho resolves them from its blueprint (roadmap item
     /// 4): a mobile unit's is the footprint class nearest its size for its
     /// motion type's caps, a structure's its own with the layers it may be
-    /// built on. The alt one is for its AltMotionType.
-    const blueprints::Footprint& footprint() const { return footprints_.main; }
+    /// built on. The alt one is for its AltMotionType, and is the one it has
+    /// while it uses it (Moho's Entity::GetFootprint).
+    const blueprints::Footprint& footprint() const {
+        return uses_alt_footprint() ? footprints_.alt : footprints_.main;
+    }
     const blueprints::Footprint& alt_footprint() const { return footprints_.alt; }
     /// The footprint class it paths as (-1: none, as a structure or a flier).
-    i32 footprint_class() const { return footprints_.main_class; }
+    i32 footprint_class() const {
+        return uses_alt_footprint() ? footprints_.alt_class : footprints_.main_class;
+    }
     i32 alt_footprint_class() const { return footprints_.alt_class; }
     void set_footprints(const blueprints::UnitFootprints& f) { footprints_ = f; }
+    bool uses_alt_footprint() const { return using_alt_footprint_ || force_alt_footprint_; }
+    void set_force_alt_footprint(bool on) { force_alt_footprint_ = on; }
+    /// Moho's CAiPathNavigator::RequestPath.
+    void set_path_goal(const Vector3& goal, const SimContext& ctx);
     f32 naval_draft() const { return naval_draft_; }
     void set_naval_draft(f32 d) { naval_draft_ = d; }
     bool is_amphibious() const {
@@ -1581,6 +1590,8 @@ private:
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
     std::vector<f32> raised_platforms_;
     blueprints::UnitFootprints footprints_;
+    bool using_alt_footprint_ = false;
+    bool force_alt_footprint_ = false;
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
     f32 jam_radius_min_ = 0, jam_radius_max_ = 0; // Intel.JamRadius
