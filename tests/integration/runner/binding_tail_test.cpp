@@ -165,6 +165,41 @@ void test_binding_tail(TestContext& ctx) {
         local far = __osc_bt_far:GetBlip(1)
         if not far or not far:IsSeenEver(1) then error('the far generator forgotten') end
     )");
+    check("GetUnitsAroundPoint finds any army's units the brain knows of",
+          fmt::format(R"(
+        local brain = ArmyBrains[1]
+        local function has(list, unit)
+            for _, u in list do
+                if u == unit then return true end
+            end
+            return false
+        end
+        local remembered, forgotten = {{{0}, 0, {1}}}, {{{2}, 0, {1}}}
+        if not has(brain:GetUnitsAroundPoint(categories.STRUCTURE, remembered, 10), __osc_bt_far) then
+            error('a remembered enemy is not found')
+        end
+        if not has(brain:GetUnitsAroundPoint(categories.STRUCTURE, remembered, 10, 'Enemy'), __osc_bt_far) then
+            error('a remembered enemy is not an enemy')
+        end
+        if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, remembered, 10, 'Ally')) ~= 0 then
+            error('an enemy is an ally')
+        end
+        if brain:GetNumUnitsAroundPoint(categories.STRUCTURE, remembered, 10) ~= 1 then
+            error('a remembered enemy is not counted')
+        end
+        for _, alliance in {{'Enemy', 'Neutral'}} do
+            if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, forgotten, 10, alliance)) ~= 0 then
+                error('a forgotten ' .. alliance .. ' is found')
+            end
+        end
+        if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, forgotten, 10)) ~= 0 then
+            error('a forgotten enemy is found')
+        end
+        if not has(brain:GetUnitsAroundPoint(categories.MOBILE, {{{3}, 0, {4}}}, 4), __osc_bt_idle) then
+            error('its own unit is not found')
+        end
+    )",
+                      sx - 20, sz + 60, sx + 40, sx - 8, sz));
     check("FlushIntelInRect takes four numbers", R"(
         if pcall(FlushIntelInRect, 1, 2, 3) then error('three taken') end
         if pcall(FlushIntelInRect, 1, 2, 3, 'x') then error('a string taken') end
