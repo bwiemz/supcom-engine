@@ -774,7 +774,13 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
         if (cmd.type == CommandType::Stop) {
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd)) {
-            unit->push_command(cmd, clear_existing);
+            if (clear_existing) {
+                unit->clear_commands(entity_registry_, L_);
+                if (unit->destroyed()) {
+                    continue;
+                }
+            }
+            unit->push_command(cmd, false);
             queued = true;
         }
     }
@@ -1162,17 +1168,8 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
 }
 
 void SimState::stop_unit(Unit& unit) {
-    const bool factory_build = unit.building_factory_order();
-    const bool upgrade = unit.upgrading();
-    unit.clear_commands();
+    unit.clear_commands(entity_registry_, L_);
     unit.request_ui_refresh();
-    // The order it was working on goes too: a factory's unit under
-    // construction, an upgrade's, or an enhancement under way.
-    if (factory_build) unit.cancel_factory_build(entity_registry_, L_);
-    if (upgrade) {
-        unit.cancel_upgrade(entity_registry_, L_);
-    }
-    if (!unit.destroyed() && unit.is_enhancing()) unit.cancel_enhance(L_);
 }
 
 void SimState::request_pause(u32 source) {
@@ -1273,7 +1270,13 @@ void SimState::dispatch_due_commands() {
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
             if (!takes_command(*unit, cmd)) continue;
-            unit->push_command(cmd, sc.clear_existing);
+            if (sc.clear_existing) {
+                unit->clear_commands(entity_registry_, L_);
+                if (unit->destroyed()) {
+                    continue;
+                }
+            }
+            unit->push_command(cmd, false);
         }
     });
 }

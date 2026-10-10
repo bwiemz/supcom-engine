@@ -5633,14 +5633,20 @@ static sim::Unit* extract_unit(lua_State* L, int idx) {
 // IssueToUnitClearCommands(unit)
 static int l_IssueToUnitClearCommands(lua_State* L) {
     auto* u = extract_unit(L, 1);
-    if (u) u->clear_commands();
+    auto* sim = get_sim(L);
+    if (u && sim) {
+        u->clear_commands(sim->entity_registry(), L);
+    }
     return 0;
 }
 
 // IssueToUnitStop(unit)
 static int l_IssueToUnitStop(lua_State* L) {
     auto* u = extract_unit(L, 1);
-    if (u) u->clear_commands();
+    auto* sim = get_sim(L);
+    if (u && sim) {
+        u->clear_commands(sim->entity_registry(), L);
+    }
     return 0;
 }
 

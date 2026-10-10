@@ -132,6 +132,21 @@ void Unit::note_queue_head() {
     }
 }
 
+void Unit::clear_commands(EntityRegistry& registry, lua_State* L) {
+    const bool factory_build = building_factory_order();
+    const bool upgrade = upgrading();
+    clear_commands();
+    if (factory_build) {
+        cancel_factory_build(registry, L);
+    }
+    if (upgrade) {
+        cancel_upgrade(registry, L);
+    }
+    if (!destroyed() && is_enhancing()) {
+        cancel_enhance(L);
+    }
+}
+
 namespace {
 
 bool queued_build(const UnitCommand& c) {
@@ -321,25 +336,8 @@ void destroy_unfinished(EntityRegistry& registry, lua_State* L, u32 target_id) {
     }
 }
 
-} // namespace
-
-void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
-    const u32 target_id = build_target_id_;
-    if (target_id == 0) return;
-    finish_build(registry, L, false); // OnFailedToBuild; the factory's work ends
-    destroy_unfinished(registry, L, target_id);
-}
-
-void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
-    const u32 frame_id = build_target_id_;
-    if (frame_id == 0) {
-        return;
-    }
-    const Entity* frame = registry.find(frame_id);
-    const int frame_ref = frame ? frame->lua_table_ref() : -1;
-    destroy_unfinished(registry, L, frame_id);
-    finish_build(registry, L, false);
-    if (destroyed() || lua_table_ref() < 0) {
+void tell_build_failed(const Unit& builder, lua_State* L, int frame_ref, const char* order) {
+    if (builder.destroyed() || builder.lua_table_ref() < 0) {
         return;
     }
     const int top = lua_gettop(L);
@@ -360,20 +358,48 @@ void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
         }
         lua_settop(L, frame_tbl);
     }
-    if (!destroyed()) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    if (!builder.destroyed()) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, builder.lua_table_ref());
         lua_pushstring(L, "OnStopBuild");
         lua_gettable(L, -2);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, -2);
             lua_pushvalue(L, frame_tbl);
-            lua_pushstring(L, "Upgrade");
+            lua_pushstring(L, order);
             if (lua_pcall(L, 3, 0, 0) != 0) {
                 spdlog::warn("OnStopBuild error: {}", lua_tostring(L, -1));
             }
         }
     }
     lua_settop(L, top);
+}
+
+int lua_ref_of(const EntityRegistry& registry, u32 id) {
+    const Entity* e = registry.find(id);
+    return e ? e->lua_table_ref() : -1;
+}
+
+} // namespace
+
+void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
+    const u32 target_id = build_target_id_;
+    if (target_id == 0) {
+        return;
+    }
+    const int frame_ref = lua_ref_of(registry, target_id);
+    finish_build(registry, L, false);
+    tell_build_failed(*this, L, frame_ref, "FactoryBuild");
+}
+
+void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
+    const u32 frame_id = build_target_id_;
+    if (frame_id == 0) {
+        return;
+    }
+    const int frame_ref = lua_ref_of(registry, frame_id);
+    destroy_unfinished(registry, L, frame_id);
+    finish_build(registry, L, false);
+    tell_build_failed(*this, L, frame_ref, "Upgrade");
 }
 
 // --- Adjacency helpers ---

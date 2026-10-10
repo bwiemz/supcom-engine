@@ -96,6 +96,10 @@ struct CallbackSim {
                         table.insert(hooks, bit and (hook .. bit) or hook)
                     end
                 end
+                u.OnFailedToBeBuilt = function(self)
+                    table.insert(hooks, 'OnFailedToBeBuilt')
+                    self:Destroy()
+                end
                 return u
             end
         )";
@@ -804,13 +808,11 @@ TEST_CASE("Cancelling a factory's build under way destroys the unit it was build
     CHECK(w.hooks().empty());
 
     // Taking the last one off cancels it: the factory fails the build and
-    // the partial unit is destroyed through its own Destroy.
+    // the partial unit's script destroys it.
     w.sim.run_sim_callback(cb);
     CHECK(f.factory_queue().empty());
     CHECK(f.build_target_id() == 0);
-    CHECK(w.hooks() == "OnFailedToBuild,Destroy");
-    auto* gone = w.sim.entity_registry().find(partial);
-    CHECK((gone == nullptr || gone->destroyed()));
+    CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
 TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simcallback]") {
@@ -836,7 +838,7 @@ TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simca
     REQUIRE(f.command_queue().size() == 1);
     CHECK(f.command_queue().front().command_id == 5);
     CHECK(f.build_target_id() == 0);
-    CHECK(w.hooks() == "OnFailedToBuild,Destroy");
+    CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
 TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallback][drop]") {
