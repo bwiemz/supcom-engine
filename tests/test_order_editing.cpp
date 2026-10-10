@@ -11,6 +11,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
 
 extern "C" {
@@ -623,6 +624,7 @@ TEST_CASE("A queue with more than moves, or not holding the waypoint, starts no 
 TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[order_edit][patrol]") {
     World w;
     Unit& a = w.walker(10, 10);
+    a.add_weapon(std::make_unique<osc::sim::Weapon>());
     Unit& theirs = w.walker(10, 20, 1);
     w.order({a.entity_id()}, CommandType::Move, 60, 10);
     w.order({a.entity_id()}, CommandType::Attack, 60, 60, false);

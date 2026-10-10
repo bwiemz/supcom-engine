@@ -991,6 +991,30 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
             return e && e->is_unit() &&
                    sim::can_attack_target(static_cast<const sim::Unit&>(*e), *tu, true);
         });
+    const auto selection_has = [&](const char* cap) {
+        return std::any_of(selected_.begin(), selected_.end(), [&](u32 id) {
+            const sim::Entity* e = live(id);
+            return e && e->is_unit() && static_cast<const sim::Unit&>(*e).has_command_cap(cap);
+        });
+    };
+    std::optional<sim::CommandType> mode;
+    if (on == On::Enemy) {
+        if (hits && selection_has("RULEUCC_Attack")) {
+            mode = sim::CommandType::Attack;
+        } else if (tu && capture_target(*tu) && selection_has("RULEUCC_Capture")) {
+            mode = sim::CommandType::Capture;
+        } else if (tu && tu->parent_entity_id() == 0 && sim::reclaim_target_valid(*tu) &&
+                   selection_has("RULEUCC_Reclaim")) {
+            mode = sim::CommandType::Reclaim;
+        } else if (selection_has("RULEUCC_Attack")) {
+            if (invalid) {
+                *invalid = true;
+            }
+            return {};
+        }
+    } else if (on == On::Wreck && t && selection_has("RULEUCC_Reclaim")) {
+        mode = sim::CommandType::Reclaim;
+    }
     // Each unit's default order there.
     const auto order_for = [&](const sim::Unit& u) {
         sim::UnitCommand cmd;
@@ -1001,17 +1025,8 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
             cmd.target_id = target;
             cmd.target_pos = view_.position(*t);
         };
-        if (on == On::Enemy) {
-            if (hits && u.has_command_cap("RULEUCC_Attack")) {
-                aim(sim::CommandType::Attack);
-            } else if (u.has_command_cap("RULEUCC_Capture") && tu && capture_target(*tu)) {
-                aim(sim::CommandType::Capture);
-            } else if (u.has_command_cap("RULEUCC_Reclaim") && tu && tu->parent_entity_id() == 0 &&
-                       sim::reclaim_target_valid(*tu)) {
-                aim(sim::CommandType::Reclaim);
-            } else if (u.has_command_cap("RULEUCC_Attack")) {
-                cmd.type = sim::CommandType::Stop;
-            }
+        if (mode) {
+            aim(*mode);
         } else if (on == On::Ally && tu) {
             // An aircraft, flying or landed.
             if (tu->has_category("AIRSTAGINGPLATFORM") && u.has_command_cap("RULEUCC_Dock") &&
@@ -1023,8 +1038,6 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
             else if (tu->is_being_built() && u.has_command_cap("RULEUCC_Repair"))
                 aim(sim::CommandType::Repair);
             else if (u.has_command_cap("RULEUCC_Guard")) aim(sim::CommandType::Guard);
-        } else if (on == On::Wreck && t) {
-            if (u.has_command_cap("RULEUCC_Reclaim")) aim(sim::CommandType::Reclaim);
         }
         return cmd;
     };
@@ -1035,28 +1048,13 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* inval
         if (const sim::Entity* e = live(id); e && e->is_unit() && id != target) ids.push_back(id);
     std::sort(ids.begin(), ids.end());
     std::vector<std::pair<sim::UnitCommand, std::vector<u32>>> groups;
-    bool unaimed = false;
     for (u32 id : ids) {
         const sim::UnitCommand cmd = order_for(static_cast<const sim::Unit&>(*live(id)));
-        if (cmd.type == sim::CommandType::Stop) {
-            unaimed = true;
-            continue;
-        }
         auto it = std::find_if(groups.begin(), groups.end(), [&](const auto& g) {
             return g.first.type == cmd.type && g.first.target_id == cmd.target_id;
         });
         if (it == groups.end()) groups.push_back({cmd, {id}});
         else it->second.push_back(id);
-    }
-    const bool claims = std::any_of(groups.begin(), groups.end(), [](const auto& g) {
-        return g.first.type == sim::CommandType::Capture ||
-               g.first.type == sim::CommandType::Reclaim;
-    });
-    if (on == On::Enemy && !hits && !claims && unaimed) {
-        groups.clear();
-        if (invalid) {
-            *invalid = true;
-        }
     }
     return groups;
 }

@@ -17,6 +17,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
 #include "ui/ui_control.hpp"
 
@@ -689,4 +690,25 @@ TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[s
     input.set_selected({engineer, tank, far_tank});
     input.left_click_at(sim, 10.0f, 10.0f, true, true);
     CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+}
+
+TEST_CASE("UserUnit:CanAttackTarget holds a structure to its weapon's reach", "[userunit]") {
+    UiWorld w;
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 10.0f;
+    gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
+    w.unit().add_weapon(std::move(gun));
+    auto target = std::make_unique<osc::sim::Unit>();
+    target->set_army(1);
+    target->set_position({30.0f, 0.0f, 0.0f});
+    const osc::u32 target_id = w.sim.entity_registry().register_entity(std::move(target));
+    lua_State* L = w.ui.raw();
+    osc::lua::push_units_for_ui(L, {target_id});
+    lua_setglobal(L, "far");
+    auto result = w.ui.do_string(R"(
+        if units[1]:CanAttackTarget(far[1], true) then error('in reach with the range check') end
+        if not units[1]:CanAttackTarget(far[1], false) then error('out of reach without it') end
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    CHECK(result.ok());
 }

@@ -797,6 +797,17 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const
         (!unit.has_category(needs) || (unit.transport_id() != 0 && unit.has_category("POD")))) {
         return false;
     }
+    if (command.type == CommandType::Attack) {
+        if (!unit.is_mobile() && std::all_of(unit.weapons().begin(), unit.weapons().end(),
+                                             [](const auto& w) { return w->dummy; })) {
+            return false;
+        }
+        const Entity* target =
+            command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+        const ArmyBrain* brain =
+            unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+        return !target || target->army() < 0 || !brain || !brain->is_ally(target->army());
+    }
     if (command.type == CommandType::Reclaim) {
         const Entity* target =
             command.target_id ? entity_registry_.find(command.target_id) : nullptr;
