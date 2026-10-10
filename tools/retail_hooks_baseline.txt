@@ -7,7 +7,6 @@ method OnBeingBuiltProgress
 method OnBuildProgress
 method OnCollision
 method OnDamageBy
-method OnFailedToBeBuilt
 method OnIconsVisible
 method OnNukeArmed
 method OnSpecialAction

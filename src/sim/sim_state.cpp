@@ -1163,11 +1163,15 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
 
 void SimState::stop_unit(Unit& unit) {
     const bool factory_build = unit.building_factory_order();
+    const bool upgrade = unit.upgrading();
     unit.clear_commands();
     unit.request_ui_refresh();
     // The order it was working on goes too: a factory's unit under
-    // construction, or an enhancement under way.
+    // construction, an upgrade's, or an enhancement under way.
     if (factory_build) unit.cancel_factory_build(entity_registry_, L_);
+    if (upgrade) {
+        unit.cancel_upgrade(entity_registry_, L_);
+    }
     if (!unit.destroyed() && unit.is_enhancing()) unit.cancel_enhance(L_);
 }
 

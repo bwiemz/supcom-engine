@@ -484,10 +484,16 @@ public:
     /// A factory's build under way is cancelled: the factory hears
     /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
+    /// An upgrade under way is cancelled, as Moho's ~CUnitUpgradeTask ends it unfinished.
+    void cancel_upgrade(EntityRegistry& registry, lua_State* L);
     /// True while a factory order is under way.
     bool building_factory_order() const {
         return build_target_id_ != 0 && !command_queue_.empty() &&
                command_queue_.front().type == CommandType::BuildFactory;
+    }
+    bool upgrading() const {
+        return build_target_id_ != 0 && !command_queue_.empty() &&
+               command_queue_.front().type == CommandType::Upgrade;
     }
 
     // Command queue
