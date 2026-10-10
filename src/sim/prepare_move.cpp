@@ -19,9 +19,14 @@ blueprints::Footprint move_footprint(const Unit& unit, const map::Terrain& map,
     const u8 side = std::max<u8>(std::max(fp.size_x, fp.size_z), 1);
     fp.size_x = side;
     fp.size_z = side;
-    if (unit.has_category("CANLANDONWATER") && map.has_water() &&
-        map.water_elevation() > map.get_terrain_height(dest.x, dest.z))
+    // Retail Moho tests TRANSPORTATION; FAF's patched one CANLANDONWATER
+    // (FA-Binary-Patches #20), which its blueprints-units.lua gives air transports and gunships.
+    const bool lands_on_water =
+        unit.has_category("TRANSPORTATION") || unit.has_category("CANLANDONWATER");
+    if (lands_on_water && map.has_water() &&
+        map.water_elevation() > map.get_terrain_height(dest.x, dest.z)) {
         fp.caps = static_cast<u8>(fp.caps | oc::kWater);
+    }
     return fp;
 }
 

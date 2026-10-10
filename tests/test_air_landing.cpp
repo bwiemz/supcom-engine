@@ -37,10 +37,10 @@ namespace oc = osc::blueprints::occupancy;
 
 namespace {
 
-std::unique_ptr<osc::map::Terrain> flat_terrain(u32 size) {
+std::unique_ptr<osc::map::Terrain> flat_terrain(u32 size, f32 water) {
     std::vector<osc::u16> heights(static_cast<size_t>(size + 1) * (size + 1), 1280);
     osc::map::Heightmap hm(size, size, 1.0f / 128.0f, std::move(heights));
-    return std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false);
+    return std::make_unique<osc::map::Terrain>(std::move(hm), water, water > 0.0f);
 }
 
 /// A sim on a flat map with a 2x2 aircraft that lands a second after its
@@ -50,13 +50,13 @@ struct World {
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    explicit World(u32 size = 128) {
+    explicit World(u32 size = 128, f32 water = 0.0f) {
         osc::sim::GameSetup game;
         game.scenario = "/maps/test/test_scenario.lua";
         game.seed = 3;
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
-        sim.set_terrain(flat_terrain(size));
+        sim.set_terrain(flat_terrain(size, water));
         sim.build_pathfinding_grid();
         sim.add_army("ARMY_1", "ARMY_1");
         sim.set_game_setup(game);
@@ -79,6 +79,12 @@ struct World {
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = 5,"
                  " TransportHoverHeight = 3},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'pod', Categories = {'AIR', 'MOBILE', 'CANLANDONWATER'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
+                 "5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
                  " Physics = {MotionType = 'RULEUMT_Land'}}",
@@ -94,7 +100,7 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"plane", "drone", "ferry", "tank"}) {
+        for (const char* id : {"plane", "drone", "ferry", "pod", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -311,6 +317,22 @@ TEST_CASE("An idle empty transport lands as any aircraft does", "[air_landing][t
     CHECK(landed < 300);
     CHECK(ferry.layer() == "Land");
     CHECK(ferry.vert_event() == "Bottom");
+}
+
+TEST_CASE("Over deep water a TRANSPORTATION or CANLANDONWATER aircraft lands on the water; "
+          "another finds no place",
+          "[air_landing][transport]") {
+    World w(64, 20.0f);
+    Unit& ferry = *w.make("ferry", 20.0f, 20.0f);
+    Unit& pod = *w.make("pod", 44.0f, 44.0f);
+    Unit& plane = *w.make("plane", 20.0f, 44.0f);
+    w.run_until([&] { return !ferry.is_air_unit() && !pod.is_air_unit(); }, 300);
+    CHECK(ferry.layer() == "Water");
+    CHECK(std::abs(ferry.position().x - 20.0f) < 1.0f);
+    CHECK(std::abs(ferry.position().z - 20.0f) < 1.0f);
+    CHECK(pod.layer() == "Water");
+    CHECK(plane.is_air_unit());
+    CHECK(plane.has_unit_state("CannotFindPlaceToLand"));
 }
 
 TEST_CASE("An idle transport with cargo comes down to its TransportHoverHeight and hovers there, "
