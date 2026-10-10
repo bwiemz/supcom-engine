@@ -613,6 +613,49 @@ bool Weapon::can_attack_ground(const Vector3& at, const map::Terrain* terrain) c
     return (fire_target_layer_caps & layer) != 0;
 }
 
+bool can_attack_target(const Unit& unit, const Unit& target, bool range_check) {
+    const std::string& at = target.layer();
+    if (unit.is_mobile()) {
+        if (unit.auto_surface_mode()) {
+            if (at == "Air" && unit.has_category("OVERLAYANTIAIR")) {
+                return true;
+            }
+            if (at == "Land" && unit.has_category("OVERLAYDIRECTFIRE")) {
+                return true;
+            }
+        }
+        const std::string& motion = unit.motion_type();
+        const bool amphibious = motion == "RULEUMT_Amphibious";
+        if (unit.layer() == "Land" && is_underwater(at)) {
+            if ((amphibious || motion == "RULEUMT_AmphibiousFloating") &&
+                unit.has_category("OVERLAYANTINAVY")) {
+                return true;
+            }
+        } else if (unit.layer() == "Seabed" && at == "Land" && amphibious &&
+                   unit.has_category("OVERLAYDIRECTFIRE")) {
+            return true;
+        }
+    }
+    const f32 dx = target.position().x - unit.position().x;
+    const f32 dz = target.position().z - unit.position().z;
+    const f32 dist = std::sqrt(dx * dx + dz * dz);
+    const u8 layer = layer_to_bit(at);
+    for (const auto& w : unit.weapons()) {
+        if (w->fire_on_death || w->dummy || (w->fire_target_layer_caps & layer) == 0) {
+            continue;
+        }
+        if ((!w->restrict_only_allow.empty() &&
+             !w->restrict_only_allow.matches(target.categories())) ||
+            w->restrict_disallow.matches(target.categories())) {
+            continue;
+        }
+        if (unit.is_mobile() || !range_check || (w->min_range <= dist && dist <= w->max_range)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Weapon::in_firing_range(const Unit& owner, const Vector3& at) const {
     const f32 dx = at.x - owner.position().x;
     const f32 dz = at.z - owner.position().z;

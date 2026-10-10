@@ -529,17 +529,12 @@ int uu_GetStat(lua_State* L) {
     return 1;
 }
 
-/// Whether one of the unit's weapons can fire at the target's layer.
 int uu_CanAttackTarget(lua_State* L) {
     const auto* u = check_unit(L);
     const auto* target = check_entity(L, 2);
-    bool can = false;
-    if (u && target && !target->destroyed() && target->is_unit()) {
-        const u8 bit = sim::layer_to_bit(static_cast<const sim::Unit*>(target)->layer());
-        for (const auto& w : u->weapons())
-            if (w->enabled && !w->fire_on_death && (w->fire_target_layer_caps & bit) != 0)
-                can = true;
-    }
+    const bool can = u && target && !target->destroyed() && target->is_unit() &&
+                     sim::can_attack_target(*u, static_cast<const sim::Unit&>(*target),
+                                            lua_toboolean(L, 3) != 0);
     lua_pushboolean(L, can ? 1 : 0);
     return 1;
 }

@@ -777,6 +777,17 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const
     if (unit.is_being_built() && !unit.has_category("FACTORY")) {
         return false;
     }
+    if (command.type == CommandType::Attack) {
+        if (!unit.is_mobile() && std::all_of(unit.weapons().begin(), unit.weapons().end(),
+                                             [](const auto& w) { return w->dummy; })) {
+            return false;
+        }
+        const Entity* target =
+            command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+        const ArmyBrain* brain =
+            unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+        return !target || target->army() < 0 || !brain || !brain->is_ally(target->army());
+    }
     if (command.type == CommandType::Reclaim) {
         const Entity* target =
             command.target_id ? entity_registry_.find(command.target_id) : nullptr;
@@ -810,12 +821,13 @@ bool SimState::command_queued(u32 command_id) const {
     if (command_id == 0) return false;
     bool found = false;
     entity_registry_.for_each_unit([&](const Entity& e) {
-        if (found || e.destroyed()) return;
-        for (const auto& c : static_cast<const Unit&>(e).command_queue())
-            if (c.command_id == command_id) {
-                found = true;
-                return;
-            }
+        if (found || e.destroyed()) {
+            return;
+        }
+        const auto& unit = static_cast<const Unit&>(e);
+        const auto has_it = [&](const UnitCommand& c) { return c.command_id == command_id; };
+        found = std::any_of(unit.command_queue().begin(), unit.command_queue().end(), has_it) ||
+                std::any_of(unit.rally_orders().begin(), unit.rally_orders().end(), has_it);
     });
     return found;
 }

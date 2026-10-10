@@ -341,6 +341,9 @@ static int worldview_GetRightMouseButtonOrder(lua_State* L) {
     case sim::CommandType::TransportLoad: name = "RULEUCC_CallTransport"; break;
     default: break; // Dock has no cursor of its own
     }
+    if (!order && at && sim && input->right_click_invalid(*sim, (*at)[0], (*at)[1])) {
+        name = "RULEUCC_Invalid";
+    }
     if (name) {
         lua_pushstring(L, name);
     } else {
