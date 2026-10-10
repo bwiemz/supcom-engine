@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 39; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -64,6 +64,7 @@ constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
                              // 37: builders' arm on target, and orders waiting for it;
                              // 38: builds' cleared sites, props being cleared and rebuilt wrecks
+                             // 39: props' bounded priority (AddBoundedProp)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -230,6 +231,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.u64v(sim.sim_random_.state());
     w.u64v(sim.seed_);
     save(w, sim.entity_registry_);
+    // bounded_props_: made again from the props, in id order, as Moho's load
     save(w, sim.thread_manager_);
     // blueprint_store_: the host's; projectile_info_: a cache
     save_ids(w, sim.collision_beams_);
@@ -409,6 +411,17 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.seed_ = r.u64v();
     sim.projectile_info_.clear(); // (the projectiles fill it again as they load)
     load(r, sim.entity_registry_, sim);
+    sim.bounded_props_.clear();
+    sim.entity_registry_.for_each([&](Entity& e) {
+        if (!e.is_prop()) {
+            return;
+        }
+        auto& prop = static_cast<Prop&>(e);
+        if (prop.bounded_handle != -1) {
+            prop.bounded_handle =
+                sim.bounded_props_.insert(prop.bounded_priority, prop.bounded_tick, &prop);
+        }
+    });
     load(r, sim.thread_manager_);
     sim.collision_beams_ = load_ids(r);
     sim.ferry_beacons_ = load_ids(r);

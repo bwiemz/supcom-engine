@@ -26,6 +26,10 @@ public:
     /// TryCopyPose's copy of a unit's skinning matrices: a wreck keeps the
     /// pose its unit died in. Empty draws the mesh at rest.
     std::vector<std::array<f32, 16>> pose;
+
+    i32 bounded_priority = 0;
+    i32 bounded_tick = 0;
+    i32 bounded_handle = -1;
 };
 
 } // namespace osc::sim
