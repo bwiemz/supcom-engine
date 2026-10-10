@@ -619,6 +619,15 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     move.target = wp;
     move.elevation = unit.elevation_target();
     move.top_speed = speed_through_goal_ || !is_final;
+    if (!air_hold_set_ || air_hold_.x != wp.x || air_hold_.z != wp.z) {
+        const auto at = unit.position();
+        const f32 fx = wp.x - at.x;
+        const f32 fz = wp.z - at.z;
+        const f32 far = std::sqrt(fx * fx + fz * fz);
+        if (far > unit.start_turn_distance()) {
+            unit.set_air_facing({fx / far, 0.0f, fz / far});
+        }
+    }
     air_hold_ = wp;
     air_hold_set_ = true;
     fly_air_move(unit, move, sim_, terrain, static_cast<f32>(dt));

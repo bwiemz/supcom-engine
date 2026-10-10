@@ -1313,6 +1313,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 rules.predict_ahead_for_bomb_drop = number("PredictAheadForBombDrop", 0.0f);
                 rules.k_turn = number("KTurn", 3.0f);
                 rules.k_turn_damping = number("KTurnDamping", 3.0f);
+                rules.k_roll = number("KRoll", 3.0f);
+                rules.k_roll_damping = number("KRollDamping", 3.0f);
+                rules.bank_forward = flag("BankForward");
                 rules.k_move = number("KMove", 1.0f);
                 rules.k_move_damping = number("KMoveDamping", 1.0f);
                 rules.k_lift = number("KLift", 1.0f);
@@ -1553,6 +1556,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
         // Initialize heading and orientation
         unit_ptr->set_heading(0);
         unit_ptr->set_orientation(sim::euler_to_quat(0, 0, 0));
+        unit_ptr->set_air_facing({0.0f, 0.0f, 1.0f});
     }
 
     spdlog::debug("Created unit {} (entity #{}) at ({}, {}, {})",
@@ -1653,6 +1657,9 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     if (id == 0) return 0;
     if (auto* made = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
         made->set_orientation(orientation);
+        if (made->is_air_unit()) {
+            made->set_air_facing(sim::forward_of(orientation));
+        }
         if (place_of) {
             made->set_position(pos);
             made->set_layer(place_of->layer());

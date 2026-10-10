@@ -125,6 +125,9 @@ struct AirCombatRules {
     f32 attack_elevation = 0.0f;                    ///< 0: Physics.Elevation
     f32 k_turn = 3.0f;
     f32 k_turn_damping = 3.0f;
+    f32 k_roll = 3.0f;
+    f32 k_roll_damping = 3.0f;
+    bool bank_forward = false;
     f32 k_move = 1.0f;
     f32 k_move_damping = 1.0f;
     f32 k_lift = 1.0f;
@@ -821,7 +824,24 @@ public:
     void reset_lift_ground() { lift_ground_set_ = false; }
     const Vector3& air_velocity() const { return air_velocity_; }
     f32 lift_velocity() const { return lift_velocity_; }
-    void set_air_velocity(const Vector3& v) { air_velocity_ = v; }
+    void set_air_velocity(const Vector3& v) {
+        air_dv_.x = v.x - air_velocity_.x;
+        air_dv_.z = v.z - air_velocity_.z;
+        air_velocity_ = v;
+    }
+    /// Its last tick's change of velocity (CalcHoverOrientation's).
+    const Vector3& air_dv() const { return air_dv_; }
+    /// Its angular momentum per unit mass, in world axes.
+    const Vector3& air_spin() const { return air_spin_; }
+    void set_air_spin(const Vector3& w) { air_spin_ = w; }
+    /// Its turn rate about the vertical, and its spin set to just that.
+    f32 air_turn_rate() const;
+    void set_air_turn_rate(f32 rate);
+    /// Unit::PredictAheadBomb a second on: its velocity turned each tick by its turn rate.
+    Vector3 air_stop_point() const;
+    /// Moho's mFormationVec: the way it faces once at its goal.
+    const Vector3& air_facing() const { return air_facing_; }
+    void set_air_facing(const Vector3& f) { air_facing_ = f; }
     bool flew_at(u32 tick) const { return lift_tick_ == tick; }
 
     // Motion type (from blueprint Physics.MotionType)
@@ -1787,6 +1807,9 @@ private:
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
     f32 lift_velocity_ = 0.0f;
     Vector3 air_velocity_{};
+    Vector3 air_dv_{};
+    Vector3 air_spin_{};
+    Vector3 air_facing_{};
     f32 lift_ground_ = 0.0f;
     bool lift_ground_set_ = false;
     u32 lift_tick_ = 0;

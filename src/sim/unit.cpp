@@ -374,8 +374,24 @@ bool Unit::take_crash_impact() {
 
 void Unit::stop_air() {
     navigator_.abort_move();
-    const Vector3 pos = position();
-    navigator_.set_air_hold({pos.x + air_velocity_.x, pos.y, pos.z + air_velocity_.z});
+    navigator_.set_air_hold(air_stop_point());
+}
+
+Vector3 Unit::air_stop_point() const {
+    Vector3 at = position();
+    f32 vx = (air_velocity_.x - air_dv_.x * 0.5f) * 0.1f;
+    f32 vz = (air_velocity_.z - air_dv_.z * 0.5f) * 0.1f;
+    const f32 turn = air_turn_rate() * 0.1f;
+    const f32 c = osc::dmath::cos(turn);
+    const f32 s = osc::dmath::sin(turn);
+    for (int step = 0; step < 10; ++step) {
+        const f32 x = vx * c + vz * s;
+        vz = vz * c - vx * s;
+        vx = x;
+        at.x += vx;
+        at.z += vz;
+    }
+    return at;
 }
 
 void Unit::update_speed_through() {
@@ -2299,6 +2315,8 @@ f32 Unit::track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 
     if (tick > lift_tick_ + 1) {
         lift_velocity_ = 0.0f;
         air_velocity_ = {};
+        air_dv_ = {};
+        air_spin_ = {};
     }
     lift_tick_ = tick;
     if (!terrain) {
@@ -2336,13 +2354,25 @@ f32 Unit::lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain
     }
     const f32 load = registry ? transport_load_factor(*registry) : 1.0f;
     const LiftStep step = lift_step(lift_velocity_, steer, r.k_lift, r.k_lift_damping, load, dt);
+    const f32 before = lift_velocity_;
     lift_velocity_ = step.velocity;
-    const f32 y = pos.y + step.rise;
+    f32 y = pos.y + step.rise;
     if (y < floor_after) {
         lift_velocity_ = std::max(lift_velocity_, 0.0f);
-        return floor_after;
+        y = floor_after;
     }
+    air_dv_.y = lift_velocity_ - before;
     return y;
+}
+
+f32 Unit::air_turn_rate() const {
+    const Quaternion q = orientation();
+    return quat_rotate(q, body_spin(q, air_spin_, box_inertia(size_x_, size_y_, size_z_))).y;
+}
+
+void Unit::set_air_turn_rate(f32 rate) {
+    air_spin_ =
+        momentum_of(orientation(), {0.0f, rate, 0.0f}, box_inertia(size_x_, size_y_, size_z_));
 }
 
 f32 Unit::transport_load_factor(const EntityRegistry& registry) const {
@@ -2811,20 +2841,23 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         return;
     }
     const u32 now = sim.tick_count();
-    if (land.idle_since == 0) land.idle_since = now;
+    if (land.idle_since == 0) {
+        land.idle_since = now + 1;
+    }
     const Vector3 pos = position();
     const auto hold = [&] {
         if (flew_at(now)) {
             return;
         }
         if (!navigator_.air_hold()) {
-            navigator_.set_air_hold({pos.x + air_velocity_.x, pos.y, pos.z + air_velocity_.z});
+            navigator_.set_air_hold(air_stop_point());
         }
         AirMove move;
         move.target = *navigator_.air_hold();
         move.elevation = elevation_target_;
         fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
     };
+    Vector3 aim = land.target;
     if (!land.descending) {
         const auto wait = static_cast<i32>(auto_land_time_ * 10.0f);
         if (wait <= 0 || now <= land.idle_since + static_cast<u32>(wait)) {
@@ -2836,9 +2869,10 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
             return;
         }
         if (!navigator_.air_hold()) {
-            navigator_.set_air_hold({pos.x + air_velocity_.x, pos.y, pos.z + air_velocity_.z});
+            navigator_.set_air_hold(air_stop_point());
         }
         Vector3 target = *navigator_.air_hold();
+        aim = target;
         const f32 gx = target.x - pos.x;
         const f32 gz = target.z - pos.z;
         if (gx * gx + gz * gz > start_turn_distance_ * start_turn_distance_) {
@@ -2862,11 +2896,23 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
             ctx.terrain->get_terrain_height(target.x, target.z) <= ctx.terrain->water_elevation();
         land.layer = wet ? "Water" : "Land";
     }
+    const f32 dx = aim.x - pos.x;
+    const f32 dz = aim.z - pos.z;
+    if (dx * dx + dz * dz > start_turn_distance_ * start_turn_distance_) {
+        set_unit_state("MovingDown", false);
+        set_vert_event("Top", L);
+        if (destroyed() || !in_registry()) {
+            return;
+        }
+        AirMove move;
+        move.target = aim;
+        move.elevation = elevation_target_;
+        fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
+        return;
+    }
     set_unit_state("MovingDown", true);
     set_vert_event("Down", L);
     if (destroyed() || !in_registry()) return;
-    const f32 dx = land.target.x - pos.x;
-    const f32 dz = land.target.z - pos.z;
     const bool over = dx * dx + dz * dz < 0.25f;
     if (over && pos.y - air_floor(ctx.terrain, pos.x, pos.z) < 0.1f) {
         free_landing_reservation(sim);
@@ -2874,6 +2920,8 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         current_altitude_ = 0;
         current_airspeed_ = 0;
         air_velocity_ = {};
+        air_dv_ = {};
+        air_spin_ = {};
         lift_velocity_ = 0.0f;
         set_unit_state("MovingDown", false);
         set_layer_with_callback(land.layer, L);
@@ -2882,7 +2930,7 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         return;
     }
     AirMove move;
-    move.target = land.target;
+    move.target = aim;
     move.elevation = over ? 0.0f : elevation_target_ * 0.5f;
     move.landing = true;
     fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));

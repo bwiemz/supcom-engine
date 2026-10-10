@@ -61,4 +61,49 @@ struct AirMoveStep {
 AirMoveStep air_move_step(const Vector3& velocity, const Vector3& force, f32 k_move, f32 damping,
                           f32 dt);
 
+/// The axes an aircraft's controller steers toward: its up and its nose.
+struct AirAxes {
+    Vector3 up{};
+    Vector3 nose{};
+};
+
+/// CalcWingedOrientation out of combat: the nose `nose` turned toward
+/// `selected` by at most TurnSpeed x 0.1, ten times over, banked into the turn.
+AirAxes winged_axes(const Vector3& nose, const Vector3& selected, f32 limited, f32 start_turn,
+                    f32 turn_speed, f32 bank_factor, f32 elevation_scale);
+
+/// CalcHoverOrientation: up leaning into the last tick's change of velocity
+/// `dv`, its forward part dropped unless BankForward; the nose along `facing`.
+AirAxes hover_axes(const Quaternion& body, Vector3 dv, f32 bank_factor, bool bank_forward,
+                   f32 elevation_ratio, const Vector3& facing);
+
+/// VAxes3::OrthoNormalize of `axes`, as an orientation.
+Quaternion attitude_of(const AirAxes& axes);
+
+/// ComputeAirControl's rotation error: the turn from `body` to `wanted`, as
+/// axis x angle in the body's axes.
+Vector3 attitude_error(const Quaternion& body, const Quaternion& wanted);
+
+/// `v` in the axes of `body`.
+Vector3 to_body(const Quaternion& body, const Vector3& v);
+
+/// REntityBlueprint's inertia tensor for a box of these sizes, per unit mass.
+Vector3 box_inertia(f32 size_x, f32 size_y, f32 size_z);
+
+/// The angular velocity, in body axes, of a body of `inertia` turning with
+/// angular momentum `momentum` (world axes).
+Vector3 body_spin(const Quaternion& body, const Vector3& momentum, const Vector3& inertia);
+
+/// The angular momentum of a body of `inertia` turning at `spin` (world axes).
+Vector3 momentum_of(const Quaternion& body, const Vector3& spin, const Vector3& inertia);
+
+/// SPhysBody::IntegrateAngularImpulse for a body-axes angular acceleration
+/// `accel`, its angular momentum per unit mass `momentum` in world axes.
+struct SpinStep {
+    Quaternion orientation{};
+    Vector3 momentum{};
+};
+SpinStep air_spin_step(const Quaternion& body, const Vector3& momentum, const Vector3& inertia,
+                       const Vector3& accel, f32 dt);
+
 } // namespace osc::sim
