@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "sim/manipulator.hpp"
@@ -172,4 +173,110 @@ TEST_CASE("A repair of a unit under construction starts once the builder's arm i
     w.sim.tick();
     CHECK(eng->is_building());
     CHECK(w.log() == "eng start Repair");
+}
+
+TEST_CASE("A paused repairer of a unit under construction holds it without work",
+          "[build][assist][pause]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    w.sim.tick();
+    w.sim.tick();
+    REQUIRE(eng->is_building());
+    const osc::f32 frac = w.site->fraction_complete();
+    eng->set_paused(true);
+    for (int i = 0; i < 20; ++i) {
+        w.sim.tick();
+    }
+    CHECK(eng->is_building());
+    CHECK(eng->command_queue().size() == 1);
+    CHECK(w.site->fraction_complete() == frac);
+    eng->set_paused(false);
+    w.sim.tick();
+    CHECK(w.site->fraction_complete() > frac);
+}
+
+TEST_CASE("A repairer paused before it starts waits at its target until a retry after unpause",
+          "[build][assist][pause]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->set_paused(true);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int i = 0; i < 15; ++i) {
+        w.sim.tick();
+        CHECK_FALSE(eng->is_building());
+    }
+    CHECK(eng->command_queue().size() == 1);
+    CHECK(arm_of(*eng).has_target());
+    eng->set_paused(false);
+    for (int i = 0; i < 5; ++i) {
+        w.sim.tick();
+        CHECK_FALSE(eng->is_building());
+    }
+    w.sim.tick();
+    CHECK(eng->is_building());
+}
+
+TEST_CASE("A guard paused before it helps a build waits until a retry after unpause",
+          "[build][assist][pause]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->set_paused(true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    for (int i = 0; i < 15; ++i) {
+        w.sim.tick();
+        CHECK_FALSE(helper->is_building());
+    }
+    helper->set_paused(false);
+    for (int i = 0; i < 5; ++i) {
+        w.sim.tick();
+        CHECK_FALSE(helper->is_building());
+    }
+    w.sim.tick();
+    CHECK(helper->is_building());
+}
+
+TEST_CASE("A paused guard helping a build holds it and adds nothing", "[build][assist][pause]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    w.sim.tick();
+    w.sim.tick();
+    REQUIRE(helper->is_building());
+    helper->set_paused(true);
+    const osc::f32 before = w.site->fraction_complete();
+    w.sim.tick();
+    const osc::f32 step = w.site->fraction_complete() - before;
+    w.sim.tick();
+    CHECK(helper->is_building());
+    CHECK(w.site->fraction_complete() - before == Catch::Approx(2 * step));
+    CHECK(step == Catch::Approx(0.01f));
+}
+
+TEST_CASE("A paused repairer of a damaged unit holds it without work", "[build][assist][pause]") {
+    AssistSim w;
+    w.site->set_unit_id("site");
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    w.sim.tick();
+    w.sim.tick();
+    REQUIRE(eng->is_repairing());
+    const osc::f32 hp = w.site->health();
+    REQUIRE(hp > 50.0f);
+    eng->set_paused(true);
+    for (int i = 0; i < 5; ++i) {
+        w.sim.tick();
+    }
+    CHECK(eng->is_repairing());
+    CHECK(w.site->health() == hp);
+    eng->set_paused(false);
+    w.sim.tick();
+    CHECK(w.site->health() > hp);
 }

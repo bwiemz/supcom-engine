@@ -1164,3 +1164,75 @@ TEST_CASE("A patrol whose point a unit stands on doesn't spin", "[session][rules
     REQUIRE(tank->command_queue().size() == 1);
     CHECK(tank->command_queue().front().type == osc::sim::CommandType::Patrol);
 }
+
+TEST_CASE("A paused factory holds its build without work, and the unit doesn't decay",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(f->is_building());
+    const osc::sim::Entity* tank = h.sim.entity_registry().find(f->build_target_id());
+    const osc::f32 frac = tank->fraction_complete();
+    f->set_paused(true);
+    for (int i = 0; i < 20; ++i) {
+        h.sim.tick();
+    }
+    CHECK(f->is_building());
+    CHECK(tank->fraction_complete() == frac);
+    f->set_paused(false);
+    h.sim.tick();
+    CHECK(tank->fraction_complete() > frac);
+}
+
+TEST_CASE("A factory paused before it starts makes its unit only on a retry after unpause",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_paused(true);
+    for (int i = 0; i < 15; ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.sim.entity_registry().count() == 1);
+    f->set_paused(false);
+    for (int i = 0; i < 5; ++i) {
+        h.sim.tick();
+        CHECK(h.sim.entity_registry().count() == 1);
+    }
+    h.sim.tick();
+    CHECK(h.sim.entity_registry().count() == 2);
+}
+
+TEST_CASE("A paused unit's enhancement waits", "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string(
+        "__blueprints.test_factory.Enhancements = {Gun = {BuildTime = 100, BuildCostMass = 1,"
+        " BuildCostEnergy = 1}}\n"
+        "CreateUnit('test_factory', 1, 0, 0, 0)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    osc::sim::UnitCommand enhance;
+    enhance.type = osc::sim::CommandType::Enhance;
+    enhance.blueprint_id = "Gun";
+    f->push_command(enhance, true);
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(f->is_enhancing());
+    const osc::f32 work = f->work_progress();
+    REQUIRE(work > 0.0f);
+    f->set_paused(true);
+    for (int i = 0; i < 5; ++i) {
+        h.sim.tick();
+    }
+    CHECK(f->is_enhancing());
+    CHECK(f->work_progress() == work);
+    f->set_paused(false);
+    h.sim.tick();
+    CHECK(f->work_progress() > work);
+}

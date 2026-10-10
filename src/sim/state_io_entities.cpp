@@ -328,7 +328,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.u32v(c.beacon_id);
     w.u32v(c.assigned_id);
     w.i32v(c.rolloff_wait);
-    w.i32v(c.cap_wait);
+    w.i32v(c.task_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
     save_ids(w, c.launch_queue);
@@ -378,7 +378,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.beacon_id = r.u32v();
     c.assigned_id = r.u32v();
     c.rolloff_wait = r.i32v();
-    c.cap_wait = r.i32v();
+    c.task_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
     c.launch_queue = load_ids(r);

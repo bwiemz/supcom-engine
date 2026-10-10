@@ -532,14 +532,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
     }
 
-    // Paused units skip their orders, and what follows them, but still
-    // update weapons.
-    if (!paused_) {
-        if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
-            return;
-        }
-        if (!tick_after_orders(dt, ctx)) return;
+    if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
+        return;
     }
+    if (!tick_after_orders(dt, ctx)) return;
     tend_unfinished(ctx);
     tick_upkeep(dt, ctx, econ_eff, was_assisting_silo);
 }
@@ -548,7 +544,10 @@ void Unit::tend_unfinished(SimContext& ctx) {
     if (!ctx.sim) {
         return;
     }
-    for (const u32 id : {build_target_id_, repair_target_id_}) {
+    const bool build_waits = !command_queue_.empty() &&
+                             command_queue_.front().type == CommandType::BuildMobile &&
+                             command_queue_.front().task_wait > 0;
+    for (const u32 id : {build_waits ? 0u : build_target_id_, repair_target_id_}) {
         Entity* e = id != 0 ? ctx.registry.find(id) : nullptr;
         if (e && !e->destroyed() && e->is_unit() && static_cast<Unit*>(e)->is_being_built()) {
             static_cast<Unit*>(e)->set_creation_tick(ctx.sim->tick_count());
@@ -959,6 +958,10 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
         finish_build(registry, L, true, grid);
         return false;
     }
+    if (paused_) {
+        work_progress_ = target->fraction_complete();
+        return true;
+    }
 
     if (build_time_ <= 0 || build_rate_ <= 0) {
         finish_build(registry, L, false, grid);
@@ -1182,6 +1185,11 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 
     if (target->fraction_complete() >= 1.0f)
         return false;
+
+    if (paused_) {
+        work_progress_ = target->fraction_complete();
+        return true;
+    }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     f32 new_frac = std::min(1.0f,
@@ -1576,6 +1584,9 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     if (repair_build_time_ <= 0 || build_rate_ <= 0) {
         stop_repairing(L, registry);
         return false;
+    }
+    if (paused_) {
+        return true;
     }
 
     // heal_per_tick = (build_rate / build_time) * max_health * dt * efficiency
@@ -2125,6 +2136,9 @@ bool Unit::progress_enhance(f64 dt, lua_State* L, f32 efficiency) {
     if (enhance_build_time_ <= 0 || build_rate_ <= 0) {
         cancel_enhance(L);
         return false;
+    }
+    if (paused_) {
+        return true;
     }
 
     work_progress_ = std::min(1.0f, work_progress_ + static_cast<f32>(

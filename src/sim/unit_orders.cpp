@@ -56,6 +56,11 @@ f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char*
     return value;
 }
 
+/// Ticks a build or repair waits at its army's unit cap, or paused, before
+/// trying again: Moho's tasks return 10 there (a task waits 9 ticks and runs
+/// on the 10th), the brain hearing OnUnitCapLimitReached at each try at the cap.
+constexpr i32 kTaskRetryTicks = 10;
+
 bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
                                   const SimContext& ctx) {
     if (!ctx.sim) return false;
@@ -64,7 +69,7 @@ bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
     if (!brain) return false;
 
     // (The unit cap is no rule of the order's: the unit's making checks it,
-    // and the builder waits it out -- start_build, kCapRetryTicks.)
+    // and the builder waits it out -- start_build, kTaskRetryTicks.)
     if (brain->is_build_restricted(cmd.blueprint_id)) {
         spdlog::info("Build blocked: army {} restricted blueprint {}", builder.army(),
                      cmd.blueprint_id);
@@ -260,7 +265,8 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
-        (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile)) {
+        (command_queue_.empty() || (command_queue_.front().type != CommandType::BuildMobile &&
+                                    command_queue_.front().task_wait <= 0))) {
         aim_builder_arms(nullptr, ctx.L);
     }
     // An attack run ends with its order: Moho's flight resets the combat
@@ -686,12 +692,14 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         }
 
         // Phase 2: Spawn skeleton unit
-        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        if (waits_out_task(cmd)) {
+            return OrderStep::Hold;
+        }
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (awaits_arm()) {
+        if (awaits_arm() || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
@@ -722,6 +730,13 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         }
     }
     // Phase 3: Progress the build
+    if (waits_out_task(cmd)) {
+        return OrderStep::Hold;
+    }
+    if (const Entity* site = registry.find(build_target_id_);
+        site && !site->destroyed() && waits_paused(cmd)) {
+        return OrderStep::Hold;
+    }
     if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -740,10 +755,15 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     }
     if (build_target_id_ == 0) {
         // Factory: spawn immediately at own position
-        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        if (waits_out_task(cmd)) {
+            return OrderStep::Hold;
+        }
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
+        }
+        if (waits_paused(cmd)) {
+            return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
         switch (start_build(cmd, registry, L)) {
@@ -777,20 +797,25 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     return OrderStep::Hold;
 }
 
-/// Ticks a build waits at its army's unit cap before trying again: Moho's
-/// build tasks return 10 there (a task waits 9 ticks and runs on the 10th),
-/// the brain hearing OnUnitCapLimitReached at each try.
-constexpr i32 kCapRetryTicks = 10;
+bool Unit::waits_out_task(UnitCommand& cmd) {
+    if (cmd.task_wait <= 0) {
+        return false;
+    }
+    --cmd.task_wait;
+    return cmd.task_wait > 0;
+}
 
-bool Unit::waits_out_unit_cap(UnitCommand& cmd) {
-    if (cmd.cap_wait <= 0) return false;
-    --cmd.cap_wait;
-    return cmd.cap_wait > 0;
+bool Unit::waits_paused(UnitCommand& cmd) const {
+    if (!paused_) {
+        return false;
+    }
+    cmd.task_wait = kTaskRetryTicks;
+    return true;
 }
 
 OrderStep Unit::hold_for_unit_cap(u32 command_id) {
     if (!command_queue_.empty() && command_queue_.front().command_id == command_id)
-        command_queue_.front().cap_wait = kCapRetryTicks;
+        command_queue_.front().task_wait = kTaskRetryTicks;
     return OrderStep::Hold;
 }
 
@@ -816,7 +841,7 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
     if (cmd.count > 1) {
         --cmd.count;
         cmd.rolloff_wait = 0;
-        cmd.cap_wait = 0;
+        cmd.task_wait = 0;
         return OrderStep::Next;
     }
     if (repeat_queue_) {
@@ -1124,7 +1149,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (awaits_arm()) {
+        if (awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         if (!start_repair(cmd, registry, L)) {
@@ -1164,7 +1189,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (awaits_arm()) {
+        if (awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         build_target_id_ = tid;
@@ -1480,7 +1505,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             command_queue_.push_front(std::move(order));
             return OrderStep::Next;
         }
-        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        if (waits_out_task(cmd) || waits_paused(cmd)) {
+            return OrderStep::Hold;
+        }
         const u32 guarded_factory = cmd.target_id;
         auto& queue = target_unit->command_queue_;
         for (size_t i = 0; i < queue.size() && L; ++i) {
@@ -1545,6 +1572,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         return OrderStep::Hold;
     }
 
+    const bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
     // after factory assist, before build, reclaim and repair help).
     if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), dt, ctx))
@@ -1622,7 +1650,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 if (destroyed() || !in_registry()) {
                     return OrderStep::Gone;
                 }
-                if (!awaits_arm()) {
+                if (!awaits_arm() && !task_waits && !waits_paused(cmd)) {
                     build_target_id_ = target_build_id;
                     build_command_id_ = cmd.command_id;
                     build_released_with_order_ = true;
@@ -1713,7 +1741,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             economy_.consumption_mass = missile.mass * per_second;
             economy_.consumption_active = true;
             assisting_silo_ = true;
-            target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+            if (!paused_) {
+                target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+            }
         }
     } else {
         // Target not building/reclaiming — stop if we were
@@ -1734,7 +1764,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
                     }
-                    if (!awaits_arm()) {
+                    if (!awaits_arm() && !task_waits && !waits_paused(cmd)) {
                         UnitCommand repair_cmd;
                         repair_cmd.type = CommandType::Repair;
                         repair_cmd.target_id = cmd.target_id;

@@ -95,13 +95,13 @@ How to read it:
 | Retail behaviour kept | FAF's exe | Evidence | Status |
 |---|---|---|---|
 | A moving unit's intel is repainted once it has moved a third of its radius, or after 30 ticks | Also after 5 ticks: a slow unit's vision and radar trail it by at most 0.5 s instead of 3 s | faf-re `CIntelPosHandle::UpdatePos`; FA-Binary-Patches `hooks/IntelUpdate.cpp`; engine `intel_sources.hpp` | Open |
-| A paused engineer keeps reclaiming | Pausing stops the reclaim | faf-re `CUnitReclaimTask`; FA-Binary-Patches `hooks/StopReclaimWhenPaused.cpp` | Open |
 | Double-clicking a wall selects nothing more | Selects the walls of that type on screen | faf-re `HandleDoubleClickSelection`; FA-Binary-Patches `hooks/WallSelection.cpp`; engine `input_handler.cpp` | Open |
 
 ## Closed since the audits
 
 | Item | PR |
 |---|---|
+| A paused unit moves, reclaims and fights; a paused builder, repairer or factory keeps its order and state but does no work, and starts nothing new until a retry after it unpauses; a frame whose only builder is a paused engineer decays (FAF's exe also stops a paused unit's prop reclaim) | [#557](https://github.com/bwiemz/supcom-engine/pull/557) |
 | An unfinished unit no builder works on decays from its second tick, by 0.1 / max(BuildCostEnergy, BuildCostMass, BuildTime) a tick, and calls `OnDecayed` at no health | [#538](https://github.com/bwiemz/supcom-engine/pull/538) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
