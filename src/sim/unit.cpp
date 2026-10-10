@@ -2425,14 +2425,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
         if (staging && cargo->is_air_unit()) {
             // An aircraft leaving a staging platform stays where it sat, and
             // flies from there (M206r; Moho resets only its height hold).
-            cargo->heading_ = quat_yaw(cargo->orientation());
-            cargo->pitch_ = 0.0f;
-            cargo->bank_angle_ = 0.0f;
-            cargo->current_airspeed_ = 0.0f;
-            if (terrain)
-                cargo->current_altitude_ =
-                    cargo->position().y -
-                    cargo->air_floor(terrain, cargo->position().x, cargo->position().z);
+            cargo->fly_on_from_here(terrain);
         } else if (terrain) {
             Vector3 at = cargo->position();
             at.y = cargo->ground_y(terrain, at.x, at.z);
@@ -2690,6 +2683,16 @@ void Unit::tick_work_circling(f64 dt, SimContext& ctx) {
     }
     around.move_goal = air_combat_.flying ? air_combat_.circle_anchor : position();
     fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+}
+
+void Unit::fly_on_from_here(const map::Terrain* terrain) {
+    heading_ = quat_yaw(orientation());
+    pitch_ = 0.0f;
+    bank_angle_ = 0.0f;
+    current_airspeed_ = 0.0f;
+    if (terrain) {
+        current_altitude_ = position().y - air_floor(terrain, position().x, position().z);
+    }
 }
 
 void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {

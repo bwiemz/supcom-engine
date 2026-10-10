@@ -770,6 +770,7 @@ public:
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
     f32 current_altitude() const { return current_altitude_; }
     void set_current_altitude(f32 a) { current_altitude_ = a; }
+    void fly_on_from_here(const map::Terrain* terrain);
     f32 max_airspeed() const { return max_airspeed_; }
     void set_max_airspeed(f32 s) { max_airspeed_ = s; }
     f32 turn_rate_rad() const { return turn_rate_rad_; }
