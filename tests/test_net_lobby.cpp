@@ -775,6 +775,9 @@ TEST_CASE("A matchmaking client's uids are the lobby's players' (M220b)", "[lobb
         -- player keeps its own name and uid
         a = NewLobbyAs('Alice', '42')
         a:JoinGame('127.0.0.1:' .. port, 'Host', '10')
+    )"));
+    REQUIRE(w.until("a.me ~= nil"));
+    REQUIRE(w.run(R"(
         -- One whose uid is taken is refused; one with none is numbered,
         -- past those taken
         c = NewLobbyAs('Carol', '42')
