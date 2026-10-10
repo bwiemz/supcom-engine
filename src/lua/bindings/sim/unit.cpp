@@ -592,6 +592,16 @@ static int unit_SetSpeedMult(lua_State* L) {
     return 0;
 }
 
+// FAF's ForceAltFootprint(self, bool) (FA-Binary-Patches EntityGetFootprint.cpp)
+static int unit_ForceAltFootprint(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) {
+        return 0;
+    }
+    u->set_force_alt_footprint(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
 // ShowBone(self, bone, recurse?)
 static int unit_ShowBone(lua_State* L) {
     auto* u = check_unit(L);
@@ -2388,6 +2398,7 @@ const MethodEntry unit_methods[] = {
     {"IsMoving",                    unit_IsMoving},
     {"GetNavigator",                unit_GetNavigator},
     {"SetSpeedMult",                unit_SetSpeedMult},
+    {"ForceAltFootprint",           unit_ForceAltFootprint},
     {"SetAccMult",                  unit_SetAccMult},
     {"SetTurnMult",                 unit_SetTurnMult},
     {"SetBreakOffDistanceMult",     unit_SetBreakOffDistanceMult},
