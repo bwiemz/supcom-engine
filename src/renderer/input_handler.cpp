@@ -93,6 +93,19 @@ bool capture_target(const sim::Unit& u) {
     return u.capturable() && !u.is_being_built() && u.parent_entity_id() == 0;
 }
 
+sim::MeshBounds mesh_box(const sim::Unit& unit) {
+    const sim::Vector3 hi{std::max(unit.size_x(), 0.5f) * 0.5f, std::max(unit.size_y(), 0.5f),
+                          std::max(unit.size_z(), 0.5f) * 0.5f};
+    const sim::BoneData* model = unit.bone_data();
+    if (!model || !model->mesh_bounds) {
+        return {{-hi.x, 0.0f, -hi.z}, hi};
+    }
+    const sim::Vector3 s{model->model_scale * unit.scale_x(), model->model_scale * unit.scale_y(),
+                         model->model_scale * unit.scale_z()};
+    const sim::MeshBounds& m = *model->mesh_bounds;
+    return {{s.x * m.lo.x, s.y * m.lo.y, s.z * m.lo.z}, {s.x * m.hi.x, s.y * m.hi.y, s.z * m.hi.z}};
+}
+
 } // namespace
 
 bool aboard(const sim::Unit& unit) {
@@ -856,22 +869,79 @@ void InputHandler::handle_drag_select(Renderer& renderer,
 void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& view_proj,
                                  f32 width, f32 height, f32 x0, f32 y0, f32 x1, f32 y1,
                                  bool shift) {
-    if (!shift)
+    if (!shift) {
         selected_.clear();
-    // What the box holds on the screen, where each unit is drawn: an
-    // aircraft at its height, not the ground under it (which the box's
-    // footprint on the ground had missed).
+    }
     const f32 sx0 = std::min(x0, x1);
     const f32 sx1 = std::max(x0, x1);
     const f32 sy0 = std::min(y0, y1);
     const f32 sy1 = std::max(y0, y1);
+    using Plane = std::array<f32, 4>;
+    const auto row = [&](int i) {
+        return Plane{view_proj[i], view_proj[4 + i], view_proj[8 + i], view_proj[12 + i]};
+    };
+    const auto mix = [](f32 a, const Plane& p, f32 b, const Plane& q) {
+        return Plane{a * p[0] + b * q[0], a * p[1] + b * q[1], a * p[2] + b * q[2],
+                     a * p[3] + b * q[3]};
+    };
+    const Plane cx = row(0);
+    const Plane cy = row(1);
+    const Plane cz = row(2);
+    const Plane cw = row(3);
+    const std::array<Plane, 6> inward = {mix(1.0f, cx, 1.0f - 2.0f * sx0 / width, cw),
+                                         mix(-1.0f, cx, 2.0f * sx1 / width - 1.0f, cw),
+                                         mix(1.0f, cy, 1.0f - 2.0f * sy0 / height, cw),
+                                         mix(-1.0f, cy, 2.0f * sy1 / height - 1.0f, cw),
+                                         mix(1.0f, cz, 0.0f, cw),
+                                         mix(-1.0f, cz, 1.0f, cw)};
+    const auto meets = [&](const sim::Vector3& centre, const std::array<sim::Vector3, 3>& half) {
+        for (const Plane& p : inward) {
+            f32 reach = p[0] * centre.x + p[1] * centre.y + p[2] * centre.z + p[3];
+            for (const sim::Vector3& h : half) {
+                reach += std::abs(p[0] * h.x + p[1] * h.y + p[2] * h.z);
+            }
+            if (reach < 0.0f) {
+                return false;
+            }
+        }
+        return true;
+    };
     std::vector<std::pair<u32, int>> boxed;
     sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
-        if (e.army() != player_army_ || !selectable(e)) return;
-        const auto at = screen_point(view_proj, view_.position(e), width, height);
-        if (at && (*at)[0] >= sx0 && (*at)[0] <= sx1 && (*at)[1] >= sy0 && (*at)[1] <= sy1)
-            boxed.emplace_back(e.entity_id(),
-                               static_cast<const sim::Unit&>(e).selection_priority());
+        if (e.army() != player_army_ || !selectable(e)) {
+            return;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(e);
+        const auto [lo, hi] = mesh_box(unit);
+        const sim::Vector3 pos = view_.position(e);
+        const sim::Quaternion orient = view_.orientation(e);
+        const sim::Vector3 mid = sim::quat_rotate(
+            orient, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f});
+        const sim::Vector3 centre{pos.x + mid.x, pos.y + mid.y, pos.z + mid.z};
+        std::array<sim::Vector3, 3> half = {
+            sim::quat_rotate(orient, {(hi.x - lo.x) * 0.5f, 0.0f, 0.0f}),
+            sim::quat_rotate(orient, {0.0f, (hi.y - lo.y) * 0.5f, 0.0f}),
+            sim::quat_rotate(orient, {0.0f, 0.0f, (hi.z - lo.z) * 0.5f})};
+        const sim::Vector3 aabb{std::abs(half[0].x) + std::abs(half[1].x) + std::abs(half[2].x),
+                                std::abs(half[0].y) + std::abs(half[1].y) + std::abs(half[2].y),
+                                std::abs(half[0].z) + std::abs(half[1].z) + std::abs(half[2].z)};
+        if (!meets(centre, {{{aabb.x, 0.0f, 0.0f}, {0.0f, aabb.y, 0.0f}, {0.0f, 0.0f, aabb.z}}})) {
+            return;
+        }
+        if (!shift) {
+            const PickBlueprint pick = mode_hooks_.pick_blueprint
+                                           ? mode_hooks_.pick_blueprint(unit.blueprint_id())
+                                           : PickBlueprint{};
+            const std::array<f32, 3> scale = {pick.mesh_scale_x, pick.mesh_scale_y,
+                                              pick.mesh_scale_z};
+            for (size_t i = 0; i < 3; ++i) {
+                half[i] = {half[i].x * scale[i], half[i].y * scale[i], half[i].z * scale[i]};
+            }
+            if (!meets(centre, half)) {
+                return;
+            }
+        }
+        boxed.emplace_back(e.entity_id(), unit.selection_priority());
     });
     if (shift) {
         for (const auto& unit : boxed) {
@@ -1528,19 +1598,7 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
         const auto& unit = static_cast<const sim::Unit&>(*e);
         const sim::Vector3 pos = view_.position(*e);
         const sim::Quaternion orient = view_.orientation(*e);
-        sim::Vector3 lo{-std::max(unit.size_x(), 0.5f) * 0.5f, 0.0f,
-                        -std::max(unit.size_z(), 0.5f) * 0.5f};
-        sim::Vector3 hi{-lo.x, std::max(unit.size_y(), 0.5f), -lo.z};
-        const sim::BoneData* model = unit.bone_data();
-        if (model && model->mesh_bounds) {
-            const sim::Vector3 s{model->model_scale * e->scale_x(),
-                                 model->model_scale * e->scale_y(),
-                                 model->model_scale * e->scale_z()};
-            lo = {s.x * model->mesh_bounds->lo.x, s.y * model->mesh_bounds->lo.y,
-                  s.z * model->mesh_bounds->lo.z};
-            hi = {s.x * model->mesh_bounds->hi.x, s.y * model->mesh_bounds->hi.y,
-                  s.z * model->mesh_bounds->hi.z};
-        }
+        const auto [lo, hi] = mesh_box(unit);
         const sim::Vector3 half{(hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f};
         const sim::Vector3 mid = sim::quat_rotate(
             orient, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f});

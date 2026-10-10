@@ -74,6 +74,7 @@ osc::renderer::PickBlueprint ui_blueprint_pick(lua_State* uiL, const std::string
     read("SelectionYOffset", pick.y_offset);
     read("SelectionMeshUseTopAmount", pick.use_top_amount);
     read("SelectionMeshScaleX", pick.mesh_scale_x);
+    read("SelectionMeshScaleY", pick.mesh_scale_y);
     read("SelectionMeshScaleZ", pick.mesh_scale_z);
     lua_pop(uiL, 1);
     return pick;

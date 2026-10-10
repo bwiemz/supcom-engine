@@ -47,12 +47,14 @@ struct PickRay {
     sim::Vector3 dir;
 };
 
-/// A unit blueprint's fields CUIWorldView::UpdateSelection picks by
+/// A unit blueprint's fields CUIWorldView::UpdateSelection picks by, and
+/// SelectionDragger::DragRelease boxes by
 struct PickBlueprint {
     f32 oob_test_zoom = 0.0f;
     f32 y_offset = 0.5f;
     f32 use_top_amount = 0.0f;
     f32 mesh_scale_x = 1.0f;
+    f32 mesh_scale_y = 1.0f;
     f32 mesh_scale_z = 1.0f;
 };
 using PickBlueprintOf = std::function<PickBlueprint(const std::string& bp)>;
@@ -394,10 +396,12 @@ public:
     }
     /// The camera's target zoom, as update() takes it each frame (tests set it).
     void set_camera_zoom(f32 zoom) { camera_zoom_ = zoom; }
-    /// Select the player's units drawn inside the screen box (x0, y0)-(x1,
-    /// y1) by the camera's `view_proj` on a `width` x `height` screen: those
-    /// of the highest selection priority there, or with `shift` all of them
-    /// added to the selection.
+    /// Select the player's units whose mesh box, where it is drawn, the view
+    /// through the screen box (x0, y0)-(x1, y1) of the camera's `view_proj`
+    /// on a `width` x `height` screen meets: without `shift` with the box
+    /// scaled by its blueprint's SelectionMeshScale, those of the highest
+    /// selection priority there; with `shift` all of them added to the
+    /// selection (Moho's SelectionDragger::DragRelease).
     void select_in_box(sim::SimState& sim, const std::array<f32, 16>& view_proj, f32 width,
                        f32 height, f32 x0, f32 y0, f32 x1, f32 y1, bool shift);
 

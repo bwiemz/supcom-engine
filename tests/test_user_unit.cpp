@@ -13,6 +13,7 @@
 #include "renderer/input_handler.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/pose.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -551,6 +552,61 @@ TEST_CASE("A unit is picked by its mesh's bounds, scaled by the model and its bl
     CHECK(under_cursor() == w.id);
     scale_x = 0.2f;
     CHECK(under_cursor() == 0);
+}
+
+TEST_CASE("A drag box takes a unit whose mesh box it meets, scaled by its blueprint without Shift",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-6.0f, 0.0f, -0.5f}, {6.0f, 2.0f, 0.5f}};
+    w.unit().set_bone_data(&model);
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(100.0f);
+    const auto vp = camera.view_proj(1024.0f / 768.0f);
+    osc::renderer::PickBlueprint bp;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.pick_blueprint = [&](const std::string&) { return bp; };
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_command_mode_hooks(hooks);
+    const auto boxed = [&](const osc::sim::Vector3& p, bool shift) {
+        const auto at = osc::renderer::screen_point(vp, p, 1024.0f, 768.0f);
+        REQUIRE(at);
+        input.set_selected({});
+        input.select_in_box(w.sim, vp, 1024.0f, 768.0f, (*at)[0] - 3, (*at)[1] - 3, (*at)[0] + 3,
+                            (*at)[1] + 3, shift);
+        return input.selected().count(w.id) == 1;
+    };
+
+    CHECK(boxed({133.0f, 11.0f, 128.0f}, false));
+    CHECK_FALSE(boxed({137.0f, 11.0f, 128.0f}, false));
+    bp.mesh_scale_x = 0.3f;
+    CHECK_FALSE(boxed({133.0f, 11.0f, 128.0f}, false));
+    CHECK(boxed({133.0f, 11.0f, 128.0f}, true));
+    bp = {};
+    bp.mesh_scale_z = 0.3f;
+    CHECK(boxed({133.0f, 11.0f, 128.0f}, false));
+
+    w.unit().set_orientation(osc::sim::quat_axis_angle('y', 1.5707964f));
+    bp = {};
+    CHECK(boxed({128.0f, 11.0f, 133.0f}, false));
+    bp.mesh_scale_x = 0.3f;
+    CHECK_FALSE(boxed({128.0f, 11.0f, 133.0f}, false));
+
+    w.unit().set_orientation(osc::sim::quat_axis_angle('z', 1.5707964f));
+    model.mesh_bounds = osc::sim::MeshBounds{{-0.5f, -6.0f, -0.5f}, {0.5f, 6.0f, 0.5f}};
+    bp = {};
+    CHECK(boxed({133.0f, 10.0f, 128.0f}, false));
+    bp.mesh_scale_y = 0.3f;
+    CHECK_FALSE(boxed({133.0f, 10.0f, 128.0f}, false));
+    CHECK(boxed({133.0f, 10.0f, 128.0f}, true));
 }
 
 TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][selection]") {
