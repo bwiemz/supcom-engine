@@ -337,7 +337,10 @@ public:
 
     // Pause state
     bool is_paused() const { return paused_; }
-    void set_paused(bool p) { paused_ = p; }
+    void set_paused(bool p) {
+        paused_ = p;
+        request_ui_refresh();
+    }
     /// Pause or resume the unit's work, as unit:SetPaused does: only a unit with
     /// RULEUCC_Pause or RULEUTC_GenericToggle; its script hears OnPaused or
     /// OnUnpaused on a change.
@@ -369,7 +372,12 @@ public:
     void set_block_command_queue(bool b) { block_command_queue_ = b; }
 
     i32 fire_state() const { return fire_state_; }
-    void set_fire_state(i32 s) { fire_state_ = s; }
+    void set_fire_state(i32 s) {
+        if (fire_state_ != s) {
+            fire_state_ = s;
+            request_ui_refresh();
+        }
+    }
 
     // Script bits (9 toggles, bits 0-8)
     u16 script_bits() const { return script_bits_; }
@@ -380,13 +388,15 @@ public:
         return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
     }
     void set_script_bit(i32 bit, bool value) {
-        if (bit < 0 || bit > 8) return;
-        if (value) script_bits_ |= static_cast<u16>(1u << bit);
-        else       script_bits_ &= static_cast<u16>(~(1u << bit));
+        if (get_script_bit(bit) != value) {
+            toggle_script_bit(bit);
+        }
     }
     void toggle_script_bit(i32 bit) {
-        if (bit >= 0 && bit <= 8)
+        if (bit >= 0 && bit <= 8) {
             script_bits_ ^= static_cast<u16>(1u << bit);
+            request_ui_refresh();
+        }
     }
 
     // Toggle caps (which RULEUTC_* toggles this unit supports)
@@ -508,6 +518,9 @@ public:
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
     void clear_commands(const char* source = "?");
+    /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
+    /// taken off the queue sets the unit's UI refresh flag.
+    void note_queue_head();
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {
@@ -980,7 +993,10 @@ public:
     /// (order_build_in_place), and one taken from a guarded factory goes to
     /// the back of that factory's (order_guard).
     bool repeat_queue() const { return repeat_queue_; }
-    void set_repeat_queue(bool v) { repeat_queue_ = v; }
+    void set_repeat_queue(bool v) {
+        repeat_queue_ = v;
+        request_ui_refresh();
+    }
     /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
     /// do not surface by themselves yet.
     bool auto_surface_mode() const { return auto_surface_mode_; }
@@ -1624,6 +1640,7 @@ private:
     std::unordered_set<std::string> categories_;
     CategoryBits category_bits_; // categories_, as ids
     std::deque<UnitCommand> command_queue_;
+    std::optional<std::pair<u32, CommandType>> noted_head_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
     std::vector<UnitCommand> rally_orders_; // see rally_orders()
     u32 build_target_id_ = 0;     // entity ID of unit being built

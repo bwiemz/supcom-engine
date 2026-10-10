@@ -100,6 +100,36 @@ void Unit::clear_commands(const char*) {
     navigator_.abort_move();
 }
 
+void Unit::note_queue_head() {
+    const auto head = command_queue_.empty()
+                          ? std::nullopt
+                          : std::optional{std::pair{command_queue_.front().command_id,
+                                                    command_queue_.front().type}};
+    const auto noted = std::exchange(noted_head_, head);
+    if (!noted || noted == head) {
+        return;
+    }
+    switch (noted->second) {
+    case CommandType::BuildFactory:
+    case CommandType::Reclaim:
+    case CommandType::Repair:
+    case CommandType::Capture:
+    case CommandType::TransportLoad:
+    case CommandType::TransportUnload:
+    case CommandType::WaitForFerry:
+    case CommandType::Upgrade:
+    case CommandType::Dock: break;
+    default: return;
+    }
+    const bool queued =
+        std::any_of(command_queue_.begin(), command_queue_.end(), [&](const UnitCommand& c) {
+            return c.command_id == noted->first && c.type == noted->second;
+        });
+    if (!queued) {
+        request_ui_refresh();
+    }
+}
+
 namespace {
 
 bool queued_build(const UnitCommand& c) {
@@ -3325,7 +3355,7 @@ void Unit::pause(lua_State* L, bool p) {
         return;
     }
     call_lua_method(L, p ? "OnPaused" : "OnUnpaused");
-    paused_ = p;
+    set_paused(p);
 }
 
 void Unit::call_lua_method(lua_State* L, const char* method_name) {

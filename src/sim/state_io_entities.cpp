@@ -1492,6 +1492,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.script_bits_ = r.u16v();
     u.creation_tick_ = r.u32v();
     u.toggle_caps_ = load_strings<std::unordered_set<std::string>>(r);
+    // noted_head_ isn't saved: a loaded unit's queue head is noted afresh
     u.original_toggle_caps_ = load_strings<std::unordered_set<std::string>>(r);
     u.surface_threat_ = r.f32v();
     u.air_threat_ = r.f32v();

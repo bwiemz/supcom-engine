@@ -4363,7 +4363,8 @@ static void restrict_army_builds(lua_State* L, bool restrict) {
     if (!sim || !sim->blueprint_store()) {
         return;
     }
-    auto* brain = sim->get_army(resolve_army(L, 1, sim));
+    const i32 army = resolve_army(L, 1, sim);
+    auto* brain = sim->get_army(army);
     if (!brain) {
         return;
     }
@@ -4386,6 +4387,11 @@ static void restrict_army_builds(lua_State* L, bool restrict) {
     } else {
         brain->remove_build_restriction(ids);
     }
+    sim->entity_registry().for_each_unit([army](sim::Entity& e) {
+        if (e.army() == army) {
+            e.request_ui_refresh();
+        }
+    });
 }
 
 // Helper: create a simple category table with __name and metatable
