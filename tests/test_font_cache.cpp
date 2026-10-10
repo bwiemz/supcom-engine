@@ -227,3 +227,35 @@ TEST_CASE("A face the game's files lack is drawn as Arial", "[font]") {
     CHECK(cache.get("Calibri", 20) != nullptr);
     fs::remove_all(root);
 }
+
+TEST_CASE("Text laid out for the HUD stands on its font's baseline", "[font]") {
+    const fs::path ttf = find_wide_ttf();
+    if (ttf.empty()) {
+        SKIP("no Arial-like font installed");
+    }
+    const fs::path root = fs::temp_directory_path() / "osc_font_baseline_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "fonts");
+    fs::copy_file(ttf, root / "fonts" / "arial.ttf");
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+
+    osc::renderer::FontCache cache;
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
+               VK_NULL_HANDLE, &vfs);
+    const auto* atlas = cache.get("Arial", 13);
+    REQUIRE(atlas);
+    const float top = 40.0f;
+    std::vector<std::pair<float, float>> spans;
+    const float advance = osc::renderer::place_glyphs(
+        *atlas, "HI", 10.0f, top, [&](float, float y, const osc::renderer::GlyphInfo& gi) {
+            spans.emplace_back(y, y + gi.height);
+        });
+    REQUIRE(spans.size() == 2);
+    for (const auto& [glyph_top, glyph_bottom] : spans) {
+        CHECK(glyph_top >= top);
+        CHECK(glyph_bottom == top + atlas->metrics.ascent);
+    }
+    CHECK(advance == cache.string_advance("Arial", 13, "HI"));
+    fs::remove_all(root);
+}

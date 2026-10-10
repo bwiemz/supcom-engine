@@ -98,6 +98,7 @@ How to read it:
 | `CameraFollowsProjectile`, `CameraFollowTimeout`: a camera following a unit goes on to such a shot of it, and back to the unit the timeout after the shot is gone (nukes, tactical missiles, artillery shells, bombs) | [#568](https://github.com/bwiemz/supcom-engine/pull/568) |
 | `TeamColorMode`: the strategic icons (world view and minimap) in `GameColors.TeamColorMode`'s Self, Ally, Enemy and Neutral by the focus army's alliances; FAF's per-army colour string | [#570](https://github.com/bwiemz/supcom-engine/pull/570) |
 | `RenderOverlayEconomy`: the focus army's units drawn as meshes show their net energy and mass per second (`/lua/ui/game/econoverlayparams.lua`) | [#571](https://github.com/bwiemz/supcom-engine/pull/571) |
+| The engine's own HUD text (`--legacy-hud`'s economy bar and selection panel, the profiler overlay) stands on its font's baseline | [#575](https://github.com/bwiemz/supcom-engine/pull/575) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
