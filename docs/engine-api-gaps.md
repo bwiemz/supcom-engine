@@ -69,7 +69,6 @@ How to read it:
 | `REBUILDER`: when a structure dies, retail queues its rebuild, same blueprint and spot, on its army's `REBUILDER` units guarding it | Support commanders guarding a structure don't rebuild it | faf-re `CUnitGuardTask`, `Unit::Kill` (`unit/core/Unit.cpp`); engine: no rebuild path | Open |
 | `UNTARGETABLE`: retail's cursor passes through a unit that is `UNTARGETABLE` and neither `SELECTABLE` nor `FERRYBEACON`; the engine applies it to props only | Hovering such a unit (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) shows it, and a right click on an enemy one is an Attack instead of a Move | faf-re `CUIWorldView::UpdateSelection`; engine `input_handler.cpp` targetable_prop, handle_right_click | Open |
 | `FAVORSWATER`: retail paths the Salem (URS0201) with its water footprint while it and its destinations are on water; the engine always uses its amphibious footprint | The Salem can take land routes where retail keeps to water | faf-re `CAiPathNavigator`; engine `path_navigator.cpp`, `alt_footprint()` unread | Open |
-| `SHOWQUEUE`: retail's queue display is empty for a unit without it; the engine shows any unit's queued builds | Selecting one non-`SHOWQUEUE` builder with queued builds (e.g. the UEF ACU's drone UEA0001) shows a queue retail doesn't | faf-re `UserUnit.cpp` (`SetCurrentFactoryForQueueDisplay`); retail `/lua/ui/game/construction.lua`; engine `factory_queue.cpp` | Open |
 | Order validity: retail's sim refuses Reclaim, Capture and Repair from a unit without `RECLAIM`, `CAPTURE`, `REPAIR` (or a docked `POD`), and builds from one that isn't `FACTORY`, `ENGINEER`, `NEEDMOBILEBUILD` or `POD`; the engine decides by the command caps | The UEF SACU's pod UEA0003 (Capture cap, no `CAPTURE`) takes capture orders and captures; retail drops them | faf-re `Sim.cpp` (order filter); retail `/units/UEL0301/UEL0301_script.lua`; engine `sim_state.cpp` takes_command | Open |
 | FAF: `CQUEMOV` makes a half-built unit selectable and able to queue orders, as `FACTORY` does in retail | FAF: a half-built mex or point defence can't be selected to queue its upgrade | FA-Binary-Patches `section/SelectUnit.cpp`, `section/BuildUnit.cpp`; FAF `/units/UEB1103/UEB1103_unit.bp` and 94 more | Open |
 
@@ -103,6 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| `SHOWQUEUE`: `SetCurrentFactoryForQueueDisplay` shows the queue only of a unit with the category, and gives `nil` for an empty one | [#555](https://github.com/bwiemz/supcom-engine/pull/555) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
