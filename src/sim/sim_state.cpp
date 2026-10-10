@@ -782,7 +782,7 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
 }
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
-    if (unit.is_being_built() && !unit.has_category("FACTORY")) {
+    if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
         return false;
     }
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {

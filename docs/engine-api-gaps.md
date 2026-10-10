@@ -62,7 +62,6 @@ How to read it:
 | `UNTARGETABLE`: retail's cursor passes through a unit that is `UNTARGETABLE` and neither `SELECTABLE` nor `FERRYBEACON`; the engine applies it to props only | Hovering such a unit (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) shows it, and a right click on an enemy one is an Attack instead of a Move | faf-re `CUIWorldView::UpdateSelection`; engine `input_handler.cpp` targetable_prop, handle_right_click | Open |
 | `FAVORSWATER`: retail paths the Salem (URS0201) with its water footprint while it and its destinations are on water; the engine always uses its amphibious footprint | The Salem can take land routes where retail keeps to water | faf-re `CAiPathNavigator`; engine `path_navigator.cpp`, `alt_footprint()` unread | Open |
 | `SHOWQUEUE`: retail's queue display is empty for a unit without it; the engine shows any unit's queued builds | Selecting one non-`SHOWQUEUE` builder with queued builds (e.g. the UEF ACU's drone UEA0001) shows a queue retail doesn't | faf-re `UserUnit.cpp` (`SetCurrentFactoryForQueueDisplay`); retail `/lua/ui/game/construction.lua`; engine `factory_queue.cpp` | Open |
-| FAF: `CQUEMOV` makes a half-built unit selectable and able to queue orders, as `FACTORY` does in retail | FAF: a half-built mex or point defence can't be selected to queue its upgrade | FA-Binary-Patches `section/SelectUnit.cpp`, `section/BuildUnit.cpp`; FAF `/units/UEB1103/UEB1103_unit.bp` and 94 more | Open |
 
 ## Engine callbacks
 
@@ -101,6 +100,7 @@ How to read it:
 | An unfinished unit no builder works on decays from its second tick, by 0.1 / max(BuildCostEnergy, BuildCostMass, BuildTime) a tick, and calls `OnDecayed` at no health | [#538](https://github.com/bwiemz/supcom-engine/pull/538) |
 | A builder arm calls `OnStartBuilderTracking` and `OnStopBuilderTracking` as its heading starts and stops turning, and turns back to rest at once at a quarter of its slew; `ConstructionUnit` folds the arm after a build | [#539](https://github.com/bwiemz/supcom-engine/pull/539) |
 | Order validity: Reclaim, Capture and Repair go only to a unit of `RECLAIM`, `CAPTURE`, `REPAIR` (not a docked `POD`); builds only to a `FACTORY`, `ENGINEER`, `NEEDMOBILEBUILD` or `POD` (the UEF support commander's pod no longer captures) | [#542](https://github.com/bwiemz/supcom-engine/pull/542) |
+| FAF: `CQUEMOV` makes a half-built unit selectable and able to take orders, as `FACTORY` does (a half-built mex takes its upgrade and starts it once finished) | [#543](https://github.com/bwiemz/supcom-engine/pull/543) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

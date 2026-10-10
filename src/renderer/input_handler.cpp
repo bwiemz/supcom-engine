@@ -105,7 +105,7 @@ bool selectable(const sim::Entity& e) {
         return false;
     }
     const auto& unit = static_cast<const sim::Unit&>(e);
-    return !aboard(unit) && (!unit.is_being_built() || unit.has_category("FACTORY")) &&
+    return !aboard(unit) && (!unit.is_being_built() || unit.takes_orders_unfinished()) &&
            !unit.is_dying() && !unit.has_category("INSIGNIFICANTUNIT");
 }
 
