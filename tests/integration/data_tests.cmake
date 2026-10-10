@@ -64,7 +64,7 @@ set(OSC_DATA_TESTS_RETAIL_GAP
 
 # Front-end flows that must boot without --map.
 set(OSC_DATA_TESTS_NO_MAP_GATE
-    audio-data-test edit-text-test lan-screen-test lobby-flow-test movie-test
+    audio-data-test combo-click-test edit-text-test lan-screen-test lobby-flow-test movie-test
 )
 set(OSC_DATA_TESTS_NO_MAP_RETAIL_GAP
 )
