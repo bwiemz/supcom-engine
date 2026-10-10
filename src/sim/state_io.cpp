@@ -83,6 +83,7 @@ constexpr u32 kVersion = 42; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 39: units' RaisedPlatforms;
                              // 40: units' StandUpright and SinkLower
                              // 39: paused factories' orders taken from the factory they guard
+                             // 39: sacrifices' wait
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

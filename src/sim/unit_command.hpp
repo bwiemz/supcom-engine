@@ -170,6 +170,10 @@ struct UnitCommand {
     /// ticks until it tries again, as Moho's tasks wait 10 there (runtime
     /// state; 0 otherwise).
     i32 task_wait = 0;
+    /// A sacrifice whose OnStartSacrifice has run: ticks until it gives
+    /// itself (Moho's task returns 10, which retail runs 9 ticks on).
+    /// Runtime state.
+    i32 sacrifice_wait = 0;
     /// A carrier's unload that launches its stored units (M206q; runtime
     /// state): those still to go, and ticks until the next leaves (-1: the
     /// launch has not started).

@@ -686,6 +686,12 @@ void Unit::update(f64 dt, SimContext& ctx) {
             set_unit_state("WaitForFerry", false);
         // A Script order's task whose order is gone -- cleared, replaced --
         // ends (M206w): its OnDestroy runs.
+        if (sacrifice_order_ != 0 && !(head && head->type == CommandType::Sacrifice &&
+                                       head->command_id == sacrifice_order_)) {
+            sacrifice_order_ = 0;
+            destroy_through_script(ctx.registry, ctx.L);
+            return;
+        }
         if (has_script_task() && !(head && head->type == CommandType::Script &&
                                    head->task_serial == script_task_serial())) {
             end_script_task(ctx.L);

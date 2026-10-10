@@ -324,6 +324,8 @@ public:
     bool factory_assist_build() const { return factory_assist_build_; }
     i32 assist_rolloff_wait() const { return assist_rolloff_wait_; }
     const std::string& assist_pending_bp() const { return assist_pending_bp_; }
+    /// The sacrifice order whose OnStartSacrifice has run (0: none).
+    u32 sacrifice_order() const { return sacrifice_order_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -1455,6 +1457,7 @@ private:
     OrderStep end_factory_build_order(UnitCommand& cmd);
     /// A sacrifice's donation to `target` (Moho's CUnitSacrificeTask).
     void donate_sacrifice(Unit& target, lua_State* L);
+    void destroy_through_script(EntityRegistry& registry, lua_State* L);
     /// Whether a factory whose unit is built still holds for the roll-off,
     /// counting `wait` down (see the definition).
     bool holds_for_rolloff(i32& wait) const;
@@ -1729,6 +1732,7 @@ private:
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     /// A paused factory's order taken from the factory it guards, not begun.
     std::string assist_pending_bp_;
+    u32 sacrifice_order_ = 0;
     std::unordered_set<std::string> unit_states_; // generic string-based states
     // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's
     // SSTIUnitVariableData (the UI shows a shield bar above 0).
