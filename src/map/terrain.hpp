@@ -57,6 +57,10 @@ public:
     /// Surface height: max(terrain_height, water_elevation).
     f32 get_surface_height(f32 x, f32 z) const;
 
+    /// Moho's STIMap::LookAheadForMaxTerrain: Heightmap::look_ahead_max,
+    /// raised to the water's surface unless it is for a flier in water.
+    f32 look_ahead_for_max_terrain(f32 x, f32 z, bool fly_in_water, f32 look_ahead) const;
+
     f32 water_elevation() const { return water_elevation_; }
     bool has_water() const { return has_water_; }
 

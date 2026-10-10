@@ -33,6 +33,10 @@ public:
     /// The grid's highest point.
     f32 max_height() const { return max_height_; }
 
+    /// STIMap::LookAheadForMaxTerrain without the water: the highest point of
+    /// the CHeightField tier cell around (x, z) that the look-ahead picks.
+    f32 look_ahead_max(f32 x, f32 z, f32 look_ahead) const;
+
     u32 grid_width() const { return grid_width_; }
     u32 grid_height() const { return grid_height_; }
     u32 map_width() const { return grid_width_ - 1; }
@@ -45,6 +49,12 @@ private:
     f32 scale_;        // raw_value * scale = world height
     std::vector<u16> data_; // row-major [gz * grid_width + gx]
     f32 max_height_ = 0.0f;
+    struct Tier {
+        u32 width = 0;
+        u32 height = 0;
+        std::vector<u16> max;
+    };
+    std::vector<Tier> tiers_;
 };
 
 /// The path of a shot, for CAiBrain:CheckBlockingTerrain.
