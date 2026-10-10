@@ -1318,6 +1318,8 @@ private:
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
     void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    void tend_unfinished(SimContext& ctx);
+    void decay(lua_State* L);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -1339,11 +1341,13 @@ private:
     /// Whether a factory whose unit is built still holds for the roll-off,
     /// counting `wait` down (see the definition).
     bool holds_for_rolloff(i32& wait) const;
-    /// Whether a build its army's unit cap stopped still waits, counting
-    /// its cap_wait down (it tries again once that runs out).
-    static bool waits_out_unit_cap(UnitCommand& cmd);
+    /// Whether a task the unit cap or a pause stopped still waits, counting
+    /// its task_wait down (it tries again once that runs out).
+    static bool waits_out_task(UnitCommand& cmd);
+    /// Whether the unit is paused, `cmd` then waiting kTaskRetryTicks.
+    bool waits_paused(UnitCommand& cmd) const;
     /// A build its army's unit cap stopped: the order `command_id` (if
-    /// still at the head -- the brain's scripts ran) waits kCapRetryTicks.
+    /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
     OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);

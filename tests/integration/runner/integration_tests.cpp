@@ -9749,11 +9749,33 @@ void test_missile(TestContext& ctx) {
         local spent = __osc_consumed(__osc_b, 'Energy') - __osc_paused.spent
         if spent > 1e-6 then error('B and its engineers spent ' .. spent) end
     )");
-    lua_check("setup: B resumes; C gets its missile", R"(
+    lua_check("setup: B resumes, its engineers paused; C gets its missile", R"(
         __osc_b:SetPaused(false)
+        for _, e in __osc_engineers do
+            e:SetPaused(true)
+        end
         __osc_c:GiveTacticalSiloAmmo(1)
     )");
-    run(289);
+    run(1);
+    lua_check("setup: B's progress with its engineers paused", R"(
+        __osc_alone = __osc_b:GetWorkProgress()
+    )");
+    run(5);
+    lua_check("setup: B's engineers unpaused", R"(
+        __osc_alone = __osc_b:GetWorkProgress() - __osc_alone
+        __osc_helped = __osc_b:GetWorkProgress()
+        for _, e in __osc_engineers do
+            e:SetPaused(false)
+        end
+    )");
+    run(5);
+    lua_check("Test 9b: paused engineers add nothing to the silo they help", R"(
+        local helped = __osc_b:GetWorkProgress() - __osc_helped
+        if not (__osc_alone > 0 and helped > 1.1 * __osc_alone) then
+            error(string.format('B made %g alone and %g helped', __osc_alone, helped))
+        end
+    )");
+    run(278);
     lua_check("Test 10: auto mode filled A's storage and stopped", R"(
         if __osc_a:GetTacticalSiloAmmoCount() ~= 12 then
             error('A has ' .. __osc_a:GetTacticalSiloAmmoCount())

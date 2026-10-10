@@ -78,7 +78,6 @@ How to read it:
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
 | `ShowEscapeDialog`: retail calls it when the window is closed | Closing the window quits at once; retail asks for confirmation | retail `/lua/ui/uimain.lua` ShowEscapeDialog, `/lua/ui/dialogs/eschandler.lua`; engine `app/window.cpp` | Open |
-| `OnDecayed`: retail drains a unit under construction from its second tick (0.1 / max(BuildCostEnergy, BuildCostMass, BuildTime) a tick) and calls `OnDecayed` at no health, which destroys it | Abandoned unfinished structures keep their progress and stay for ever | faf-re `Unit::MotionTick` (`unit/core/Unit.cpp`); retail `/lua/sim/Unit.lua` OnDecayed; engine `unit.cpp`: no decay | Open |
 | `OnStopBuilderTracking`: retail calls it when a builder arm leaves its target; `ConstructionUnit` folds the arm | UEF engineers (UEL0105/0208/0309) and the Fatboy keep their build arms out after a build | faf-re `CBuilderArmManipulator`; retail `/lua/defaultunits.lua` ConstructionUnit; engine `unit.cpp` aim_builder_arms | Open |
 | `ShowDesyncDialog`: retail shows a dialog naming the desynced players | A desync is detected but not shown to the player | retail `/lua/ui/uimain.lua` ShowDesyncDialog, `/lua/ui/dialogs/desync.lua`; engine `gpgnet_session.cpp` report_desync | Open |
 | `OnCommandGraphShow`: retail calls it while Shift is held | With Shift held, map-marker pings don't show their name panel and can't be dragged or Ctrl+right-click deleted | faf-re `UICommandGraph`; retail `/lua/ui/game/commandgraph.lua` → `/lua/ui/controls/worldview.lua` ShowPings | Open |
@@ -96,13 +95,14 @@ How to read it:
 | Retail behaviour kept | FAF's exe | Evidence | Status |
 |---|---|---|---|
 | A moving unit's intel is repainted once it has moved a third of its radius, or after 30 ticks | Also after 5 ticks: a slow unit's vision and radar trail it by at most 0.5 s instead of 3 s | faf-re `CIntelPosHandle::UpdatePos`; FA-Binary-Patches `hooks/IntelUpdate.cpp`; engine `intel_sources.hpp` | Open |
-| A paused engineer keeps reclaiming | Pausing stops the reclaim | faf-re `CUnitReclaimTask`; FA-Binary-Patches `hooks/StopReclaimWhenPaused.cpp` | Open |
 | Double-clicking a wall selects nothing more | Selects the walls of that type on screen | faf-re `HandleDoubleClickSelection`; FA-Binary-Patches `hooks/WallSelection.cpp`; engine `input_handler.cpp` | Open |
 
 ## Closed since the audits
 
 | Item | PR |
 |---|---|
+| A paused unit moves, reclaims and fights; a paused builder, repairer or factory keeps its order and state but does no work, and starts nothing new until a retry after it unpauses; a frame whose only builder is a paused engineer decays (FAF's exe also stops a paused unit's prop reclaim) | [#557](https://github.com/bwiemz/supcom-engine/pull/557) |
+| An unfinished unit no builder works on decays from its second tick, by 0.1 / max(BuildCostEnergy, BuildCostMass, BuildTime) a tick, and calls `OnDecayed` at no health | [#538](https://github.com/bwiemz/supcom-engine/pull/538) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

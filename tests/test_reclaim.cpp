@@ -207,3 +207,16 @@ TEST_CASE("A reclaim takes nothing while the reclaimer's arm is off its target",
     w.sim.tick();
     CHECK(w.wreck->fraction_complete() < 1.0f);
 }
+
+TEST_CASE("A paused engineer reclaims a prop as an unpaused one", "[reclaim][pause]") {
+    ReclaimSim w;
+    Unit* eng = w.engineer(10.0f);
+    eng->set_paused(true);
+    eng->push_command(order(CommandType::Reclaim, w.wreck->entity_id()), true);
+    w.sim.tick();
+    CHECK(eng->reclaim_target_id() == w.wreck->entity_id());
+    w.sim.tick();
+    CHECK(eng->economy().reclaim_mass == 30.0);
+    w.sim.tick();
+    CHECK(w.wreck->fraction_complete() < 1.0f);
+}

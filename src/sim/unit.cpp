@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <optional>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -531,15 +532,42 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
     }
 
-    // Paused units skip their orders, and what follows them, but still
-    // update weapons.
-    if (!paused_) {
-        if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
-            return;
-        }
-        if (!tick_after_orders(dt, ctx)) return;
+    if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
+        return;
     }
+    if (!tick_after_orders(dt, ctx)) return;
+    tend_unfinished(ctx);
     tick_upkeep(dt, ctx, econ_eff, was_assisting_silo);
+}
+
+void Unit::tend_unfinished(SimContext& ctx) {
+    if (!ctx.sim) {
+        return;
+    }
+    const bool build_waits = !command_queue_.empty() &&
+                             command_queue_.front().type == CommandType::BuildMobile &&
+                             command_queue_.front().task_wait > 0;
+    for (const u32 id : {build_waits ? 0u : build_target_id_, repair_target_id_}) {
+        Entity* e = id != 0 ? ctx.registry.find(id) : nullptr;
+        if (e && !e->destroyed() && e->is_unit() && static_cast<Unit*>(e)->is_being_built()) {
+            static_cast<Unit*>(e)->set_creation_tick(ctx.sim->tick_count());
+        }
+    }
+}
+
+void Unit::decay(lua_State* L) {
+    const BuildEconomy cost = blueprint_build_economy(L, unit_id());
+    const f32 span = std::max(
+        {static_cast<f32>(cost.energy), static_cast<f32>(cost.mass), static_cast<f32>(cost.time)});
+    if (span <= 0.0f) {
+        return;
+    }
+    const f32 step = -0.1f / span;
+    set_fraction_complete(std::clamp(fraction_complete() + step, 0.0f, 1.0f));
+    set_health(std::min(max_health(), health() + max_health() * step));
+    if (health() <= 0.0f) {
+        call_lua_method(L, "OnDecayed");
+    }
 }
 
 bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
@@ -709,6 +737,12 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
     if (!is_being_built() && regen_rate() > 0 && health() > 0 && health() < max_health()) {
         f32 new_hp = std::min(max_health(), health() + regen_rate() * static_cast<f32>(dt));
         set_health(new_hp);
+    } else if (is_being_built() && !dying_ && L && ctx.sim &&
+               static_cast<i64>(ctx.sim->tick_count()) - static_cast<i64>(creation_tick_) > 1) {
+        decay(L);
+        if (destroyed() || !in_registry()) {
+            return;
+        }
     }
 
     // Weapons hear about the motion change (through the unit script) before
@@ -923,6 +957,10 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
         if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false;
+    }
+    if (paused_) {
+        work_progress_ = target->fraction_complete();
+        return true;
     }
 
     if (build_time_ <= 0 || build_rate_ <= 0) {
@@ -1147,6 +1185,11 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
 
     if (target->fraction_complete() >= 1.0f)
         return false;
+
+    if (paused_) {
+        work_progress_ = target->fraction_complete();
+        return true;
+    }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     f32 new_frac = std::min(1.0f,
@@ -1541,6 +1584,9 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
     if (repair_build_time_ <= 0 || build_rate_ <= 0) {
         stop_repairing(L, registry);
         return false;
+    }
+    if (paused_) {
+        return true;
     }
 
     // heal_per_tick = (build_rate / build_time) * max_health * dt * efficiency
@@ -2090,6 +2136,9 @@ bool Unit::progress_enhance(f64 dt, lua_State* L, f32 efficiency) {
     if (enhance_build_time_ <= 0 || build_rate_ <= 0) {
         cancel_enhance(L);
         return false;
+    }
+    if (paused_) {
+        return true;
     }
 
     work_progress_ = std::min(1.0f, work_progress_ + static_cast<f32>(
