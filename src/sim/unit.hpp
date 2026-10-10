@@ -338,8 +338,9 @@ public:
     // Pause state
     bool is_paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
-    /// Pause or resume the unit's work, as unit:SetPaused does: its script hears
-    /// OnPaused or OnUnpaused on a change.
+    /// Pause or resume the unit's work, as unit:SetPaused does: only a unit with
+    /// RULEUCC_Pause or RULEUTC_GenericToggle; its script hears OnPaused or
+    /// OnUnpaused on a change.
     void pause(lua_State* L, bool p);
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
