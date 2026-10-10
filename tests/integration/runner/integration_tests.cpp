@@ -3978,21 +3978,58 @@ void test_bone(TestContext& ctx) {
         else { osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); fail++; }
     }
 
-    // Test 7: GetBoneDirection returns a vector
+    // Test 7: GetBoneDirection returns three numbers, as retail's does
     {
         auto r = ctx.lua_state.do_string(R"(
             local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 7: entity #1 not found'); return end
-            local dir = e:GetBoneDirection(0)
-            if dir and dir[1] and dir[2] and dir[3] then
+            local x, y, z = e:GetBoneDirection(0)
+            if x and y and z then
                 LOG('Bone test 7: PASS - direction (' ..
-                    string.format('%.3f, %.3f, %.3f', dir[1], dir[2], dir[3]) .. ')')
+                    string.format('%.3f, %.3f, %.3f', x, y, z) .. ')')
             else
                 WARN('Bone test 7: FAIL - GetBoneDirection returned nil/invalid')
             end
         )");
-        if (r) { spdlog::info("[PASS] Test 7: GetBoneDirection returns vector"); pass++; }
-        else { osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); fail++; }
+        if (r) {
+            spdlog::info("[PASS] Test 7: GetBoneDirection returns three numbers");
+            pass++;
+        } else {
+            osc::test_status::fail("[FAIL] Test 7: {}", r.error().message);
+            fail++;
+        }
+    }
+
+    // Test 7b: the Scathis's destructuring, the way retail's script reads it:
+    // three numbers assigned to a table's fields (URL0401_Script.lua).
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local e = GetEntityById(__osc_test_acu_id(1))
+            if not e then WARN('Bone test 7b: entity #1 not found'); return end
+            local restdirvector = {}
+            restdirvector.x, restdirvector.y, restdirvector.z = e:GetBoneDirection(0)
+            if not (restdirvector.x and restdirvector.y and restdirvector.z) then
+                error('GetBoneDirection did not fill the fields: ' ..
+                      tostring(restdirvector.x) .. ',' .. tostring(restdirvector.y) .. ',' ..
+                      tostring(restdirvector.z))
+            end
+            -- A unit's bone points along its facing, so this is a real direction.
+            local n = math.sqrt(restdirvector.x * restdirvector.x +
+                                restdirvector.y * restdirvector.y +
+                                restdirvector.z * restdirvector.z)
+            if math.abs(n - 1.0) > 0.01 then
+                error(string.format('direction is not a unit vector (%.4f)', n))
+            end
+            LOG('Bone test 7b: PASS - ' .. string.format('%.3f, %.3f, %.3f',
+                restdirvector.x, restdirvector.y, restdirvector.z))
+        )");
+        if (r) {
+            spdlog::info("[PASS] Test 7b: retail's destructuring works");
+            pass++;
+        } else {
+            osc::test_status::fail("[FAIL] Test 7b: {}", r.error().message);
+            fail++;
+        }
     }
 
     // Test 8: Enumerate all bones, verify count matches
@@ -10788,8 +10825,8 @@ void test_range(TestContext& ctx) {
         if n ~= 1 or not __osc_queued_acu:IsUnitState('Building') then
             error('not building its second; ' .. n .. ' orders')
         end
-        local v = __osc_queued_acu:GetBoneDirection('Torso')
-        if v[1] < 0.9 then error(string.format('torso faces (%.2f, %.2f)', v[1], v[3])) end
+        local x, _, z = __osc_queued_acu:GetBoneDirection('Torso')
+        if x < 0.9 then error(string.format('torso faces (%.2f, %.2f)', x, z)) end
     )");
 
     lua_check("Test 12i setup", R"(
@@ -10817,8 +10854,8 @@ void test_range(TestContext& ctx) {
             local u = ({{Reclaiming = __osc_reclaim_acu, Repairing = __osc_repair_acu,
                         Capturing = __osc_capture_acu}})['{0}']
             if not u:IsUnitState('{0}') then error('not {0}') end
-            local v = u:GetBoneDirection('Torso')
-            if v[1] < 0.9 then error(string.format('torso faces (%.2f, %.2f)', v[1], v[3])) end
+            local x, _, z = u:GetBoneDirection('Torso')
+            if x < 0.9 then error(string.format('torso faces (%.2f, %.2f)', x, z)) end
         )",
                               state)
                       .c_str());

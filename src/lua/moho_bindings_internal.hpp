@@ -89,6 +89,9 @@ audio::SoundManager* get_sound_mgr(lua_State* L);
 bool extract_sound_table(lua_State* L, int idx, std::string& bank, std::string& cue,
                          std::string* lod_cutoff = nullptr);
 void push_vector3(lua_State* L, const sim::Vector3& v);
+/// A direction as three numbers, the way retail's bindings return it (see
+/// entity_GetBoneDirection); returns 3.
+int push_direction(lua_State* L, const sim::Vector3& v);
 /// A UI unit object for unit `id` of `army` (a handle by id; UserUnit's
 /// methods). push_unit_for_ui makes one from a live entity.
 void push_user_unit(lua_State* L, u32 id, i32 army);
