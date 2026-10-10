@@ -974,6 +974,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     }
     w.i32v(u.footprints_.main_class);
     w.i32v(u.footprints_.alt_class);
+    w.b(u.using_alt_footprint_);
+    w.b(u.force_alt_footprint_);
     w.f32v(u.naval_draft_);
     w.u32v(u.jammer_blips_);
     w.f32v(u.jam_radius_min_);
@@ -1333,6 +1335,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     }
     u.footprints_.main_class = r.i32v();
     u.footprints_.alt_class = r.i32v();
+    u.using_alt_footprint_ = r.b();
+    u.force_alt_footprint_ = r.b();
     u.naval_draft_ = r.f32v();
     u.jammer_blips_ = r.u32v();
     u.jam_radius_min_ = r.f32v();

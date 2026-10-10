@@ -235,12 +235,71 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     return made;
 }
 
+// faf-re CAiPathNavigator's UpdateWaterFavorAltFootprintMode: the alt
+// footprint while it, and every FAVORSWATER unit given its order, are on
+// water and bound for water.
+void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
+    static const CategoryName kFavorsWater{"FAVORSWATER"};
+    if (has_category(kFavorsWater) && ctx.terrain) {
+        const map::Terrain& t = *ctx.terrain;
+        const f32 water = t.has_water() ? t.water_elevation() : -10000.0f;
+        const auto on_water = [&](const Vector3& p) {
+            return !(t.get_terrain_height(p.x, p.z) > water);
+        };
+        const auto destination = [&](const UnitCommand& c) {
+            const Entity* target = c.target_id != 0 ? ctx.registry.find(c.target_id) : nullptr;
+            return target ? target->position() : c.target_pos;
+        };
+        using_alt_footprint_ = false;
+        if (command_queue_.empty()) {
+            using_alt_footprint_ = on_water(position()) && on_water(goal);
+        } else {
+            const UnitCommand& order = command_queue_.front();
+            const auto keeps_to_water = [&](const Unit& u) {
+                const UnitCommand* own = nullptr;
+                for (const UnitCommand& c : u.command_queue_) {
+                    if (c.command_id == order.command_id) {
+                        own = &c;
+                        break;
+                    }
+                }
+                if (!own) {
+                    return true;
+                }
+                const UnitCommand& current = u.command_queue_.front();
+                return on_water(u.position()) && on_water(destination(*own)) &&
+                       (current.command_id == order.command_id || on_water(destination(current)));
+            };
+            bool all = keeps_to_water(*this);
+            if (all && order.command_id != 0) {
+                ctx.registry.for_each_unit([&](const Entity& e) {
+                    const auto& u = static_cast<const Unit&>(e);
+                    if (all && &u != this && !u.dying_ && !u.destroyed() &&
+                        u.has_category(kFavorsWater)) {
+                        all = keeps_to_water(u);
+                    }
+                });
+            }
+            using_alt_footprint_ = all;
+        }
+    }
+    if (!uses_alt_footprint()) {
+        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+        return;
+    }
+    const blueprints::Footprint& fp = footprint();
+    const bool afloat =
+        (fp.caps & (blueprints::occupancy::kLand | blueprints::occupancy::kSeabed)) == 0;
+    navigator_.set_goal(goal, ctx.pathfinder, position(), afloat ? std::string("Water") : layer_,
+                        std::max(naval_draft_, fp.min_water_depth), false);
+}
+
 bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to) {
     const Vector3 heading = navigator_.goal();
     if (!ferry_leg_set_ || std::abs(heading.x - to.x) > 1.0f || std::abs(heading.z - to.z) > 1.0f ||
         navigator_.status() == Navigator::Status::WaitingForPath) {
-        navigator_.set_goal(to, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(to, ctx);
         ferry_leg_set_ = true;
     }
     const bool going = nav_update(dt, ctx.terrain);
@@ -251,8 +310,7 @@ bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to) {
 bool Unit::approach_update(f64 dt, SimContext& ctx) {
     if (navigator_.status() == Navigator::Status::WaitingForPath) {
         const Vector3 goal = navigator_.goal();
-        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(goal, ctx);
     }
     return nav_update(dt, ctx.terrain);
 }
@@ -363,8 +421,7 @@ OrderStep Unit::order_stop() {
 OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
-        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(cmd.target_pos, ctx);
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
         command_queue_.pop_front();
@@ -460,8 +517,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         // Move toward target
         if (!navigator_.is_moving() || navigator_.goal().x != target->position().x ||
             navigator_.goal().z != target->position().z) {
-            navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                naval_draft_, is_amphibious() || is_hover());
+            set_path_goal(target->position(), ctx);
         }
         nav_update(dt, ctx.terrain);
     } else {
@@ -592,8 +648,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Hold;
     }
     if (!navigator_.is_moving() || navigator_.goal().x != goal.x || navigator_.goal().z != goal.z) {
-        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(goal, ctx);
     }
     nav_update(dt, ctx.terrain);
     return OrderStep::Hold;
@@ -663,9 +718,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 return OrderStep::Next;
             }
             cmd.approached = true;
-            navigator_.set_goal(approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1),
-                                ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1), ctx);
         }
         if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
         // After the walk only range decides: the pathfinder may have moved
@@ -887,8 +940,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
-        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(cmd.target_pos, ctx);
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
         // An attack-move is one leg: Moho's dispatch removes the order when
@@ -950,11 +1002,10 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                navigator_.set_goal(approach_point(*this, target->position(),
-                                                   target->footprint_size_x() * 0.5f,
-                                                   target->footprint_size_z() * 0.5f),
-                                    ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(approach_point(*this, target->position(),
+                                             target->footprint_size_x() * 0.5f,
+                                             target->footprint_size_z() * 0.5f),
+                              ctx);
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
@@ -1091,11 +1142,10 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                navigator_.set_goal(approach_point(*this, rtarget->position(),
-                                                   runit.skirt_size_x() * 0.5f + 1,
-                                                   runit.skirt_size_z() * 0.5f + 1),
-                                    ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(approach_point(*this, rtarget->position(),
+                                             runit.skirt_size_x() * 0.5f + 1,
+                                             runit.skirt_size_z() * 0.5f + 1),
+                              ctx);
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
@@ -1227,11 +1277,10 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                navigator_.set_goal(approach_point(*this, ctarget->position(),
-                                                   cunit.skirt_size_x() * 0.5f,
-                                                   cunit.skirt_size_z() * 0.5f),
-                                    ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(approach_point(*this, ctarget->position(),
+                                             cunit.skirt_size_x() * 0.5f,
+                                             cunit.skirt_size_z() * 0.5f),
+                              ctx);
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > kCaptureHold) {
@@ -1339,8 +1388,7 @@ void Unit::walk_to(const Vector3& goal, f64 dt, SimContext& ctx) {
     const Vector3 heading = navigator_.goal();
     if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
         std::abs(heading.z - goal.z) > 1.0f) {
-        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(goal, ctx);
     }
     nav_update(dt, ctx.terrain);
 }
@@ -1586,8 +1634,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
                 std::abs(heading.z - goal.z) > 1.0f) {
-                navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(goal, ctx);
             }
             nav_update(dt, ctx.terrain);
         }
@@ -1782,8 +1829,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
                 std::abs(heading.z - goal.z) > 1.0f) {
-                navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(goal, ctx);
             }
             nav_update(dt, ctx.terrain);
         } else if (navigator_.is_moving()) {
@@ -2021,8 +2067,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
         const Vector3 goal = navigator_.goal();
         if (!navigator_.is_moving() || std::abs(goal.x - pickup_center_.x) > 1.0f ||
             std::abs(goal.z - pickup_center_.z) > 1.0f) {
-            navigator_.set_goal(pickup_center_, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(pickup_center_, ctx);
         }
         if (nav_update(dt, ctx.terrain)) return OrderStep::Hold;
         navigator_.abort_move();
@@ -2208,8 +2253,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         const Vector3 goal = navigator_.goal();
         if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
             std::abs(goal.z - at.z) > 1.0f) {
-            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(at, ctx);
         }
         nav_update(dt, ctx.terrain);
     };
@@ -2275,8 +2319,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
         set_unit_state("TransportUnloading", true);
         if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
             navigator_.goal().z != cmd.target_pos.z) {
-            navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(cmd.target_pos, ctx);
         }
         // Flown, for an aircraft (the ground navigator had dragged transports
         // along the ground).
@@ -2395,8 +2438,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             const f32 ox = dist > 1e-3f ? -dx / dist : 0.0f;
             const f32 oz = dist > 1e-3f ? -dz / dist : -1.0f;
             const f32 back = weapon->min_range * 1.1f;
-            navigator_.set_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx.pathfinder,
-                                position(), layer_, naval_draft_, is_amphibious() || is_hover());
+            set_path_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx);
         }
         nav_update(dt, ctx.terrain);
         return OrderStep::Hold;
@@ -2409,8 +2451,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
         if (!navigator_.is_moving() || navigator_.goal().x != at.x || navigator_.goal().z != at.z) {
-            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(at, ctx);
         }
         nav_update(dt, ctx.terrain);
     } else {
@@ -2521,8 +2562,7 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     f32 sdist2 = sdx * sdx + sdz * sdz;
     if (sdist2 > sacrifice_range * sacrifice_range) {
         if (!navigator_.is_moving()) {
-            navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                naval_draft_, is_amphibious() || is_hover());
+            set_path_goal(target->position(), ctx);
         }
         navigator_.update(*this, effective_speed(), dt, ctx.terrain);
         // Fire OnStartSacrifice on first tick
@@ -2742,8 +2782,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - ferry->position().x) > 1.0f ||
                 std::abs(heading.z - ferry->position().z) > 1.0f) {
-                navigator_.set_goal(ferry->position(), ctx.pathfinder, position(), layer_,
-                                    naval_draft_, is_amphibious() || is_hover());
+                set_path_goal(ferry->position(), ctx);
             }
             nav_update(dt, ctx.terrain);
             return OrderStep::Hold;
@@ -2758,8 +2797,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         return OrderStep::Hold;
     }
     if (!navigator_.is_moving()) {
-        navigator_.set_goal(beacon->position(), ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(beacon->position(), ctx);
     }
     if (!nav_update(dt, ctx.terrain) && effective_speed() > 0 &&
         navigator_.status() == Navigator::Status::Idle) {
