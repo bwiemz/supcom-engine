@@ -1135,6 +1135,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.build_released_with_order_);
     w.b(u.build_repairs_);
     w.i32v(u.assist_rolloff_wait_);
+    w.str(u.assist_pending_bp_);
     save_strings(w, u.unit_states_);
     w.f32v(u.shield_ratio_);
     save_i32_set(w, u.hidden_bones_);
@@ -1520,6 +1521,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.build_released_with_order_ = r.b();
     u.build_repairs_ = r.b();
     u.assist_rolloff_wait_ = r.i32v();
+    u.assist_pending_bp_ = r.str();
     u.unit_states_ = load_strings<std::unordered_set<std::string>>(r);
     u.shield_ratio_ = r.f32v();
     u.hidden_bones_ = load_i32_set(r);

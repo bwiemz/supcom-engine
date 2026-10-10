@@ -323,6 +323,7 @@ public:
     /// (M206h): the guard order runs it, and cancels it when it ends.
     bool factory_assist_build() const { return factory_assist_build_; }
     i32 assist_rolloff_wait() const { return assist_rolloff_wait_; }
+    const std::string& assist_pending_bp() const { return assist_pending_bp_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -1725,6 +1726,8 @@ private:
     bool build_released_with_order_ = false;
     bool build_repairs_ = false;
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
+    /// A paused factory's order taken from the factory it guards, not begun.
+    std::string assist_pending_bp_;
     std::unordered_set<std::string> unit_states_; // generic string-based states
     // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's
     // SSTIUnitVariableData (the UI shows a shield bar above 0).

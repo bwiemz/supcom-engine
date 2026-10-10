@@ -11410,6 +11410,29 @@ void test_factory_assist(TestContext& ctx) {
         -- targetId as Moho gives it: the target's GetEntityId string.
         if q[1].targetId ~= __osc_a2:GetEntityId() then error('targetId ' .. tostring(q[1].targetId)) end
     )");
+    lua_check("setup: D, paused, guards A3", R"(
+        __osc_a3 = __osc_spawn('ueb0101', 1, 610, 180)
+        __osc_d = __osc_spawn('ueb0101', 1, 630, 180)
+        __osc_d:SetPaused(true)
+        IssueBuildFactory({__osc_a3}, 'uel0201', 3)
+        IssueGuard({__osc_d}, __osc_a3)
+    )");
+    run(20);
+    lua_check("D takes a build from A3's queue while paused, and holds it", R"(
+        if __osc_queue(__osc_a3) ~= 2 then
+            error('A3 has ' .. __osc_queue(__osc_a3) .. ' orders; 2 expected')
+        end
+        if __osc_building(__osc_d) then error('D builds while paused') end
+        __osc_d:SetPaused(false)
+    )");
+    run(15);
+    lua_check("unpaused, D builds the order it took", R"(
+        local u = __osc_building(__osc_d)
+        if not u or u:GetBlueprint().BlueprintId ~= 'uel0201' then error('D is not building a tank') end
+        if __osc_queue(__osc_a3) ~= 2 then
+            error('A3 has ' .. __osc_queue(__osc_a3) .. ' orders; 2 expected')
+        end
+    )");
     spdlog::info("=== FACTORY ASSIST TEST: {} passed, {} failed ===", pass, fail);
 }
 

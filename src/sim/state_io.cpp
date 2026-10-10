@@ -82,6 +82,7 @@ constexpr u32 kVersion = 42; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 39: units' alt footprint in use (FAVORSWATER, ForceAltFootprint)
                              // 39: units' RaisedPlatforms;
                              // 40: units' StandUpright and SinkLower
+                             // 39: paused factories' orders taken from the factory they guard
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
