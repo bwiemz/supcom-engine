@@ -488,3 +488,50 @@ TEST_CASE("a projectile's blueprint ranges spread each one made", "[collision]")
     plain.apply_blueprint_physics(lua.raw());
     CHECK(plain.max_speed == 10.0f);
 }
+
+TEST_CASE("a projectile spins at its blueprint's RotationalVelocity about a random axis",
+          "[collision]") {
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {['/bomblet'] = {Physics = {RotationalVelocity = 200,"
+                          " RotationalVelocityRange = 100}},"
+                          " ['/torpedo'] = {Physics = {RotationalVelocity = 800}},"
+                          " ['/shell'] = {Physics = {MaxSpeed = 30}}}")
+                .ok());
+    constexpr f32 kDeg = 0.017453292f;
+    const auto rate = [](const Projectile& p) {
+        const Vector3& w = p.angular_velocity;
+        return std::sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
+    };
+    osc::sim::SimRandom rng(9);
+    f32 low = 1e9f;
+    f32 high = -1e9f;
+    f32 lowest_x = 1e9f;
+    f32 highest_x = -1e9f;
+    for (int i = 0; i < 400; ++i) {
+        Projectile p;
+        p.set_blueprint_id("/bomblet");
+        (void)p.apply_blueprint_physics(lua.raw(), &rng);
+        CHECK(rate(p) >= Approx(100 * kDeg));
+        CHECK(rate(p) <= Approx(300 * kDeg));
+        low = std::min(low, rate(p));
+        high = std::max(high, rate(p));
+        lowest_x = std::min(lowest_x, p.angular_velocity.x / rate(p));
+        highest_x = std::max(highest_x, p.angular_velocity.x / rate(p));
+    }
+    CHECK(low < 110 * kDeg);
+    CHECK(high > 290 * kDeg);
+    CHECK(lowest_x < -0.9f);
+    CHECK(highest_x > 0.9f);
+
+    Projectile torpedo;
+    torpedo.set_blueprint_id("/torpedo");
+    (void)torpedo.apply_blueprint_physics(lua.raw(), &rng);
+    CHECK(rate(torpedo) == Approx(800 * kDeg));
+
+    const auto before = rng.state();
+    Projectile shell;
+    shell.set_blueprint_id("/shell");
+    (void)shell.apply_blueprint_physics(lua.raw(), &rng);
+    CHECK(rate(shell) == 0.0f);
+    CHECK(rng.state() == before);
+}

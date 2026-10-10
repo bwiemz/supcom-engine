@@ -109,20 +109,6 @@ bool is_underwater(const std::string& layer) {
 
 /// The water's surface, as Moho's target points compare to it: -10000 on a
 /// map without water (or with no terrain).
-/// A standard normal draw: Moho's CRandomStream::FRandGaussian, Marsaglia's
-/// polar method (which keeps the pair's second value for the next call;
-/// this draws a fresh pair each time).
-f32 gaussian(SimRandom& rng) {
-    f64 x = 0;
-    f64 s = 0;
-    do {
-        x = rng.next_double() * 2.0 - 1.0;
-        const f64 y = rng.next_double() * 2.0 - 1.0;
-        s = x * x + y * y;
-    } while (s >= 1.0 || s == 0.0);
-    return static_cast<f32>(x * std::sqrt(-2.0 * osc::dmath::log(s) / s));
-}
-
 /// `d` (of unit length) turned `heading` across and `pitch` up in its own
 /// frame, radians: the launch jitter of Moho's CreateProjectile.
 Vector3 turned(const Vector3& d, f32 heading, f32 pitch) {
