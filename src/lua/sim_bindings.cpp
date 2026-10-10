@@ -1402,6 +1402,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             }
             lua_pop(L, 2); // General (or nil) + bp table
             unit->snapshot_command_caps(); // what RestoreCommandCaps returns to
+            unit->snapshot_toggle_caps();
         }
 
         // Read Physics.FuelUseTime for air units
@@ -5806,6 +5807,7 @@ static int l_NotifyUpgrade(lua_State* L) {
     const bool repeat = from->repeat_queue();
     const bool was = to->repeat_queue();
     to->set_repeat_queue(repeat);
+    to->request_ui_refresh();
     if (repeat && !was) to->call_lua_method(L, "OnStartRepeatQueue");
     else if (!repeat && was) to->call_lua_method(L, "OnStopRepeatQueue");
 

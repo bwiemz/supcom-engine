@@ -1061,6 +1061,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u16v(u.script_bits_);
     w.u32v(u.creation_tick_);
     save_strings(w, u.toggle_caps_);
+    save_strings(w, u.original_toggle_caps_);
     w.f32v(u.surface_threat_);
     w.f32v(u.air_threat_);
     w.f32v(u.sub_threat_);
@@ -1425,6 +1426,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.script_bits_ = r.u16v();
     u.creation_tick_ = r.u32v();
     u.toggle_caps_ = load_strings<std::unordered_set<std::string>>(r);
+    u.original_toggle_caps_ = load_strings<std::unordered_set<std::string>>(r);
     u.surface_threat_ = r.f32v();
     u.air_threat_ = r.f32v();
     u.sub_threat_ = r.f32v();

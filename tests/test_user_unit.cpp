@@ -7,6 +7,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "renderer/input_handler.hpp"
 #include "sim/manipulator.hpp"
@@ -23,6 +24,7 @@ extern "C" {
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -510,6 +512,69 @@ TEST_CASE("A selected unit's RequestRefreshUI reports the selection again", "[se
     CHECK(input.selected() == std::unordered_set<osc::u32>{w.id});
     input.prune_selection(w.sim.entity_registry());
     CHECK_FALSE(input.take_selection_event());
+}
+
+TEST_CASE("A selected unit's caps, restrictions and upgrade report the selection again",
+          "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    osc::lua::register_sim_bindings(w.sim_lua, w.sim);
+    auto from = std::make_unique<osc::sim::Unit>();
+    from->set_army(0);
+    const osc::u32 from_id = w.sim.entity_registry().register_entity(std::move(from));
+    lua_State* S = w.sim_lua.raw();
+    for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"from", from_id}}) {
+        lua_newtable(S);
+        lua_pushstring(S, "_c_object");
+        lua_pushlightuserdata(S, w.sim.entity_registry().find(id));
+        lua_rawset(S, -3);
+        lua_setglobal(S, name);
+    }
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+
+    for (const char* trigger : {
+             "M.AddBuildRestriction(unit, 'TECH1')",
+             "M.RemoveBuildRestriction(unit, 'TECH1')",
+             "M.RestoreBuildRestrictions(unit)",
+             "M.AddCommandCap(unit, 'RULEUCC_Move')",
+             "M.RemoveCommandCap(unit, 'RULEUCC_Move')",
+             "M.RestoreCommandCaps(unit)",
+             "M.AddToggleCap(unit, 'RULEUTC_ShieldToggle')",
+             "M.RemoveToggleCap(unit, 'RULEUTC_ShieldToggle')",
+             "M.RestoreToggleCaps(unit)",
+             "NotifyUpgrade(from, unit)",
+         }) {
+        INFO(trigger);
+        input.prune_selection(w.sim.entity_registry());
+        REQUIRE_FALSE(input.take_selection_event());
+        REQUIRE(w.sim_lua.do_string(std::string("local M = moho.unit_methods ") + trigger).ok());
+        input.prune_selection(w.sim.entity_registry());
+        CHECK(input.take_selection_event());
+    }
+}
+
+TEST_CASE("RestoreToggleCaps returns a unit to the toggles it started with", "[selection]") {
+    UiWorld w;
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    w.unit().add_toggle_cap("RULEUTC_ShieldToggle");
+    w.unit().snapshot_toggle_caps();
+    lua_State* S = w.sim_lua.raw();
+    lua_newtable(S);
+    lua_pushstring(S, "_c_object");
+    lua_pushlightuserdata(S, &w.unit());
+    lua_rawset(S, -3);
+    lua_setglobal(S, "unit");
+    REQUIRE(w.sim_lua
+                .do_string("local M = moho.unit_methods\n"
+                           "M.RemoveToggleCap(unit, 'RULEUTC_ShieldToggle')\n"
+                           "M.AddToggleCap(unit, 'RULEUTC_CloakToggle')\n"
+                           "M.RestoreToggleCaps(unit)")
+                .ok());
+    CHECK(w.unit().has_toggle_cap("RULEUTC_ShieldToggle"));
+    CHECK_FALSE(w.unit().has_toggle_cap("RULEUTC_CloakToggle"));
 }
 
 TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", "[selection]") {
