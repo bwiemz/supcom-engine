@@ -832,3 +832,27 @@ TEST_CASE("Capture is offered only on a capturable unit that rides nothing", "[c
     eng->add_command_cap("RULEUCC_Reclaim");
     CHECK(input.right_button_order(sim, 70.0f, 10.0f) == CommandType::Reclaim);
 }
+
+TEST_CASE("The cursor passes through an UNTARGETABLE unit unless SELECTABLE or FERRYBEACON",
+          "[selection]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    tank->add_command_cap("RULEUCC_Attack");
+    tank->add_command_cap("RULEUCC_Move");
+    tank->add_weapon(std::make_unique<osc::sim::Weapon>());
+    Unit* drone = still(sim, 1, 40.0f, 10.0f);
+    drone->add_category("UNTARGETABLE");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({tank->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Move);
+    drone->add_category("FERRYBEACON");
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Attack);
+    Unit* shown = still(sim, 1, 40.0f, 40.0f);
+    shown->add_category("UNTARGETABLE");
+    shown->add_category("SELECTABLE");
+    CHECK(input.right_button_order(sim, 40.0f, 40.0f) == CommandType::Attack);
+}

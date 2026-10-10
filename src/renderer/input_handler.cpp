@@ -1438,6 +1438,10 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
             continue;
         }
         const auto& unit = static_cast<const sim::Unit&>(*e);
+        if (unit.has_category("UNTARGETABLE") && !unit.has_category("SELECTABLE") &&
+            !unit.has_category("FERRYBEACON")) {
+            continue;
+        }
         const sim::Vector3 pos = view_.position(*e);
         const sim::Quaternion orient = view_.orientation(*e);
         sim::Vector3 lo{-std::max(unit.size_x(), 0.5f) * 0.5f, 0.0f,
