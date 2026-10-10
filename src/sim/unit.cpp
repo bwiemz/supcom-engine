@@ -493,8 +493,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         // A factory whose guard order went while it built for the guarded
         // factory drops that unit (M206h).
-        if (factory_assist_build_ && !(head && head->type == CommandType::Guard))
+        if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
+            !(head && head->type == CommandType::Guard)) {
             end_guard_build(ctx.registry, ctx.L);
+        }
         // A mobile build, or a repair's or guard's help, whose order is gone
         // (replaced or stopped): the builder lets it go and stops paying; the
         // unfinished unit stays (Moho's build task ends with its command). It

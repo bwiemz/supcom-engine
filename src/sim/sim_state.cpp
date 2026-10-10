@@ -3129,6 +3129,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         // An assist build's roll-off, only while under way.
         if (u.assist_rolloff_wait() != 0)
             units.mix(0x524f4c4c00000000ull | static_cast<u32>(u.assist_rolloff_wait())); // "ROLL"
+        if (!u.assist_pending_bp().empty()) {
+            units.mix(0x50454e4400000000ull); // "PEND"
+            mix_str(units, u.assist_pending_bp());
+        }
         // A winged aircraft's attack run, only while under way.
         if (const AirCombatState& ac = u.air_combat(); ac.flying || ac.state != 0) {
             units.mix(0x4149524300000000ull | ac.state); // "AIRC"

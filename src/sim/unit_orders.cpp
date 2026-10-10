@@ -1290,6 +1290,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
 }
 
 void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
+    assist_pending_bp_.clear();
     if (factory_assist_build_) {
         factory_assist_build_ = false;
         assist_rolloff_wait_ = 0;
@@ -1505,7 +1506,26 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             command_queue_.push_front(std::move(order));
             return OrderStep::Next;
         }
-        if (waits_out_task(cmd) || waits_paused(cmd)) {
+        if (!assist_pending_bp_.empty()) {
+            if (waits_out_task(cmd) || waits_paused(cmd)) {
+                return OrderStep::Hold;
+            }
+            UnitCommand build;
+            build.type = CommandType::BuildFactory;
+            build.blueprint_id = assist_pending_bp_;
+            const u32 guard_id = cmd.command_id;
+            const BuildStart started = start_build(build, registry, L);
+            if (started == BuildStart::AtCap) {
+                return hold_for_unit_cap(guard_id);
+            }
+            assist_pending_bp_.clear();
+            factory_assist_build_ = started == BuildStart::Started;
+            if (factory_assist_build_) {
+                build_command_id_ = guard_id;
+            }
+            return OrderStep::Hold;
+        }
+        if (waits_out_task(cmd)) {
             return OrderStep::Hold;
         }
         const u32 guarded_factory = cmd.target_id;
@@ -1536,6 +1556,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 UnitCommand round = taken;
                 round.count = std::max(round.max_count, 1);
                 queue.push_back(std::move(round));
+            }
+            if (waits_paused(cmd)) {
+                assist_pending_bp_ = build.blueprint_id;
+                break;
             }
             const u32 guard_id = cmd.command_id; // cmd may go with the scripts' changes
             const BuildStart started = start_build(build, registry, L);
