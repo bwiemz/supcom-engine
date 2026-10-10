@@ -37,6 +37,22 @@ enum class StrategicIconType : u8 {
     COUNT
 };
 
+/// A projectile's StrategicIconName texture, drawn into the scene before the bloom with its glow
+/// (CWldSession::RenderProjectileIcons); glow < 0: none.
+struct ProjectileIcon {
+    f32 x = 0, y = 0, w = 0, h = 0;
+    f32 glow = -1.0f;
+    std::string path;
+    VkDescriptorSet ds = VK_NULL_HANDLE;
+};
+
+/// UI_RenProjectileGlowMin, UI_RenProjectileGlowMax, UI_RenProjectileGlowPeriod
+inline constexpr f32 kProjectileGlowMin = 0.01f;
+inline constexpr f32 kProjectileGlowMax = 0.15f;
+inline constexpr f32 kProjectileGlowPeriod = 2.0f;
+
+f32 projectile_icon_glow(f32 time);
+
 /// Draws FA's strategic icons, as Moho's CWldSession::RenderStrategicIcons
 /// (M215c): each unit's blueprint icon (StrategicIconName: its rest or
 /// selected texture, at the texture's own size, tinted by its army's
@@ -61,7 +77,8 @@ public:
     /// if strategic zoom is active (meshes give way to icons).
     bool update(const sim::FrameView& view, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
-                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, lua_State* L = nullptr);
+                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, lua_State* L = nullptr,
+                f32 frame_seconds = 0.0f);
 
     /// A minimap's icons, the map drawn at `area`: its own world view through
     /// the same pass (faf-re CUIWorldView::Render), fully zoomed out.
@@ -93,6 +110,9 @@ public:
     /// texture.
     const std::vector<UIInstance>& quads() const { return quads_; }
     const std::vector<std::string>& quad_textures() const { return quad_textures_; }
+    const std::vector<ProjectileIcon>& projectile_icons() const { return projectile_icons_; }
+    /// UI_CurGlowTime
+    f32 glow_time() const { return glow_time_; }
 
     u32 quad_count() const { return quad_count_; }
     bool is_strategic_zoom() const { return strategic_zoom_active_; }
@@ -107,6 +127,12 @@ public:
     /// UI_forceWeaponsToYellow
     void set_weapons_yellow(bool on) { weapons_yellow_ = on; }
     bool weapons_yellow() const { return weapons_yellow_; }
+    /// UI_RenProjectileIcons
+    void set_projectile_icons(bool on) { projectile_icons_on_ = on; }
+    bool projectile_icons_on() const { return projectile_icons_on_; }
+    /// UI_RenProjectileGlow
+    void set_projectile_glow(bool on) { projectile_glow_ = on; }
+    bool projectile_glow() const { return projectile_glow_; }
     VkDescriptorSet atlas_descriptor() const { return atlas_ds_; }
 
     /// Camera distance past which meshes give way to icons altogether.
@@ -158,9 +184,10 @@ private:
                  TextureCache& tex_cache, lua_State* L, bool fade, f32 cam_dist, f32 fade_cap,
                  Place&& place);
     template <class Emit> void emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit);
-    /// CWldSession::RenderProjectileIcons' squares
-    template <class Place, class Emit>
-    void projectile_squares(const sim::FrameView& view, lua_State* L, Place&& place, Emit&& emit);
+    /// CWldSession::RenderProjectileIcons: a square, or an icon at (x, y) with its texture
+    template <class Place, class SquareFn, class IconFn>
+    void projectile_marks(const sim::FrameView& view, lua_State* L, TextureCache& tex_cache,
+                          Place&& place, SquareFn&& square, IconFn&& icon);
     static UIInstance square_quad(f32 x, f32 y, f32 size, f32 r, f32 g, f32 b);
 
     /// What a blueprint's icon draws with (Moho's REntityBlueprint fields).
@@ -171,6 +198,7 @@ private:
         f32 fade_in_zoom = 0;       ///< its mesh's IconFadeInZoom
         bool projectile = false;    ///< in category PROJECTILE
         f32 icon_size = 1.0f;       ///< Display.StrategicIconSize
+        std::string projectile_icon; ///< a projectile's StrategicIconName, a texture
     };
     const IconBlueprint& icon_blueprint(const std::string& id, lua_State* L);
     /// An underlay's texture (Unit:SetStrategicUnderlay's name, as a
@@ -190,6 +218,8 @@ private:
 
     std::vector<UIInstance> quads_;
     std::vector<std::string> quad_textures_;
+    std::vector<ProjectileIcon> projectile_icons_;
+    f32 glow_time_ = 0.0f;
     u32 quad_count_ = 0;
     /// Runs of quads that share a texture, in draw order.
     struct Group {
@@ -207,6 +237,8 @@ private:
     bool strategic_zoom_active_ = false;
     bool nis_icons_ = true;
     bool weapons_yellow_ = true;
+    bool projectile_icons_on_ = true;
+    bool projectile_glow_ = true;
     bool always_ = false;
     const ReconView* recon_ = nullptr;
 };

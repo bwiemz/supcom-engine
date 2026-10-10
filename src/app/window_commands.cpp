@@ -346,6 +346,10 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
     renderer_bool("ui_NisRenderIcons", true, &Renderer::nis_icons, &Renderer::set_nis_icons);
     renderer_bool("UI_forceWeaponsToYellow", true, &Renderer::weapons_yellow,
                   &Renderer::set_weapons_yellow);
+    renderer_bool("UI_RenProjectileIcons", true, &Renderer::projectile_icons_on,
+                  &Renderer::set_projectile_icons);
+    renderer_bool("UI_RenProjectileGlow", true, &Renderer::projectile_glow,
+                  &Renderer::set_projectile_glow);
     renderer_bool("ren_SelectBoxes", true, &Renderer::select_boxes, &Renderer::set_select_boxes);
     renderer_bool("ren_bloom", true, &Renderer::bloom_enabled, &Renderer::set_bloom_enabled);
     // ren_ShadowBlur: the High lane's five-tap shadows at shadow fidelity 3

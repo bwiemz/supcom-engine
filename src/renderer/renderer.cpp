@@ -435,6 +435,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     selection_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     if (has_stencil()) range_renderer_.init(device_, allocator_, frame_.scene_pass());
     resource_icon_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
+    projectile_icon_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's sky (M210b)
@@ -2113,6 +2114,14 @@ void Renderer::dump_frame(std::ostream& out) const {
             out << (i < textures.size() ? textures[i] : std::string("?")) << " | "
                 << quad_line(qs[i]) << '\n';
     }
+    {
+        std::vector<std::string> icons;
+        for (const ProjectileIcon& p : strategic_icon_renderer_.projectile_icons()) {
+            icons.push_back(fmt::format("{} | {:.1f} {:.1f} {:.1f} {:.1f} | {:.4f}", p.path, p.x,
+                                        p.y, p.w, p.h, p.glow));
+        }
+        section("projectile-icons", std::move(icons));
+    }
     section("minimap-window", ui_quads(painted_minimap_));
     section("minimap-hud", ui_quads(minimap_renderer_.quads()));
     section("hud", quads(hud_renderer_.quads()));
@@ -2707,7 +2716,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
-                                    window_height_, L);
+                                    window_height_, L, frame_dt_);
+    projectile_icon_renderer_.update(strategic_icon_renderer_.projectile_icons(), fi);
 
     {
         bool resources = !camera_.free();
@@ -2994,6 +3004,7 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     }
     resource_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, resource_icon_time_,
                                    fi);
+    projectile_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, fi);
 }
 
 void Renderer::record_screen_layers(u32 fi) {
@@ -3870,6 +3881,7 @@ void Renderer::shutdown() {
     selection_renderer_.destroy(device_, allocator_);
     range_renderer_.destroy(device_, allocator_);
     resource_icon_renderer_.destroy(device_, allocator_);
+    projectile_icon_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);

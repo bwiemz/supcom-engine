@@ -28,6 +28,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -402,6 +403,148 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(bolt_squares(f).empty() && r.camera().zoom() < 128.0f,
             fmt::format("Test 19: at zoom {:.0f}, the bolt has no square ({} there)",
                         r.camera().zoom(), bolt_squares(f).size()));
+
+    // A tracking projectile made with no target is destroyed at once.
+    run_lua(ctx, "__blueprints['/projectiles/tifmissilenuke01/tifmissilenuke01_proj.bp']"
+                 ".Physics.TrackTarget = false\n");
+    run_lua(ctx, "__osc_ic_nuke = __osc_ic_tank:CreateProjectile("
+                 "'/projectiles/TIFMissileNuke01/TIFMissileNuke01_proj.bp', 8, 10, 0, 0, 0, 1)\n"
+                 "__osc_ic_nuke:SetCollision(false)\n"
+                 "__osc_ic_nuke:SetVelocity(0, 0, 0)\n"
+                 "__osc_ic_shell = __osc_ic_tank:CreateProjectile("
+                 "'/projectiles/TIFAntiMatterShells01/TIFAntiMatterShells01_proj.bp', "
+                 "-8, 3, 0, 0, 0, 1)\n"
+                 "__osc_ic_shell:SetVelocity(0, 0, 0)\n");
+    const auto projectile = [&](const char* name) -> const sim::EntityRecord* {
+        for (const sim::EntityRecord& e : seen.cur().entities) {
+            std::string id = e.blueprint_id;
+            for (char& c : id) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (e.is_projectile && id.find(name) != std::string::npos) {
+                return &e;
+            }
+        }
+        return nullptr;
+    };
+    const auto projectile_at = [&](const char* name) -> std::optional<std::array<f32, 2>> {
+        const sim::EntityRecord* e = projectile(name);
+        const auto at = e ? screen_of(r, e->position) : std::nullopt;
+        if (!at) {
+            return std::nullopt;
+        }
+        return std::array<f32, 2>{std::floor((*at)[0]), std::floor((*at)[1])};
+    };
+    const std::string nuke_icon = "/textures/ui/common/game/unit-over/icon-nuke_bmp.dds";
+    const auto nuke_icons = [&] {
+        std::vector<renderer::ProjectileIcon> found;
+        const auto at = projectile_at("tifmissilenuke01");
+        for (const renderer::ProjectileIcon& p : r.projectile_icons()) {
+            if (at && p.path == nuke_icon && std::abs(p.x + p.w * 0.5f - (*at)[0]) < 1.0f &&
+                std::abs(p.y + p.h * 0.5f - (*at)[1]) < 1.0f) {
+                found.push_back(p);
+            }
+        }
+        return found;
+    };
+    const auto squares_at = [&](const Frame& frame, const char* name) {
+        std::vector<Quad> found;
+        const auto at = projectile_at(name);
+        for (const Quad& q : frame.icons) {
+            if (at && q.texture.empty() && std::abs(q.x - (*at)[0]) < 1.0f &&
+                std::abs(q.y - (*at)[1]) < 1.0f) {
+                found.push_back(q);
+            }
+        }
+        return found;
+    };
+    (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+    (void)next();
+    f = next();
+    {
+        const auto icons = nuke_icons();
+        t.check(icons.size() == 1 && icons[0].w == 20.0f && icons[0].h == 20.0f &&
+                    squares_at(f, "tifmissilenuke01").empty(),
+                fmt::format("Test 20: the nuke is its 20x20 icon, not a square ({} icons, {} "
+                            "squares there; {} projectile icons in all)",
+                            icons.size(), squares_at(f, "tifmissilenuke01").size(),
+                            r.projectile_icons().size()));
+        const f32 glow = icons.empty() ? -1.0f : icons[0].glow;
+        t.check(glow >= renderer::kProjectileGlowMin && glow <= renderer::kProjectileGlowMax &&
+                    glow == renderer::projectile_icon_glow(r.projectile_glow_time()),
+                fmt::format("Test 21: its glow {:.4f} is the pulse at {:.3f} s", glow,
+                            r.projectile_glow_time()));
+    }
+    {
+        renderer::Renderer::SceneImage scene;
+        r.request_scene_capture(
+            [&](renderer::Renderer::SceneImage image) { scene = std::move(image); });
+        f = next();
+        const auto icons = nuke_icons();
+        int lit = 0;
+        int dark = 0;
+        if (icons.size() == 1 && scene.width > 0) {
+            const renderer::ProjectileIcon& icon = icons[0];
+            for (u32 y = static_cast<u32>(icon.y); y < static_cast<u32>(icon.y + icon.h); ++y) {
+                for (u32 x = static_cast<u32>(icon.x); x < static_cast<u32>(icon.x + icon.w); ++x) {
+                    const f32 a = scene.rgba[(static_cast<size_t>(y) * scene.width + x) * 4 + 3];
+                    lit += std::abs(a - icon.glow) < 0.002f ? 1 : 0;
+                    dark += a == 0.0f ? 1 : 0;
+                }
+            }
+        }
+        t.check(lit > 100 && dark > 0 && lit + dark == 400,
+                fmt::format("Test 22: in the scene, before the bloom, the icon's texels glow at "
+                            "{:.4f} and the rest of its quad at 0 ({} and {} of 400)",
+                            icons.empty() ? -1.0f : icons[0].glow, lit, dark));
+    }
+    t.check(std::abs(renderer::projectile_icon_glow(0.0f) - 0.01f) < 1e-6f &&
+                std::abs(renderer::projectile_icon_glow(1.0f) - 0.15f) < 1e-6f &&
+                std::abs(renderer::projectile_icon_glow(1.5f) - 0.08f) < 1e-6f &&
+                std::abs(renderer::projectile_icon_glow(2.0f) - 0.01f) < 1e-6f,
+            "Test 23: the glow rises from 0.01 to 0.15 over a second and falls back over the next");
+    {
+        const auto at = squares_at(f, "tifantimattershells01");
+        t.check(at.size() == 1 && at[0].w == 3.0f && same_colour(at[0], 1.0f, 1.0f, 0.0f),
+                fmt::format("Test 24: the antimatter shell, its icon name under Display, is a "
+                            "yellow square 3 across ({} there)",
+                            at.size()));
+    }
+    {
+        int icons = 0;
+        const renderer::GPUTexture* tex = r.texture_cache().get(nuke_icon);
+        if (const sim::EntityRecord* e = projectile("tifmissilenuke01")) {
+            const f32 x = std::floor(area.x + e->position.x / map_w * area.w);
+            const f32 y = std::floor(area.y + e->position.z / map_h * area.h);
+            for (const renderer::UIQuad& q : r.minimap().quads()) {
+                if (tex && q.texture_ds == tex->descriptor_set && q.inst.rect[2] == 20.0f &&
+                    std::abs(q.inst.rect[0] + 10.0f - x) < 1.0f &&
+                    std::abs(q.inst.rect[1] + 10.0f - y) < 1.0f && q.inst.uv[1] == 1.0f &&
+                    q.inst.uv[3] == 0.0f) {
+                    ++icons;
+                }
+            }
+        }
+        t.check(
+            icons == 1,
+            fmt::format("Test 25: the nuke's icon on the minimap, upside down ({} there)", icons));
+    }
+    r.set_projectile_glow(false);
+    f = next();
+    {
+        const auto icons = nuke_icons();
+        t.check(icons.size() == 1 && icons[0].glow < 0.0f,
+                "Test 26: with UI_RenProjectileGlow off, the nuke's icon has no glow");
+    }
+    r.set_projectile_glow(true);
+    r.set_projectile_icons(false);
+    f = next();
+    t.check(nuke_icons().empty() && squares_at(f, "tifmissilenuke01").empty() &&
+                squares_at(f, "tifantimattershells01").size() == 1,
+            fmt::format("Test 27: with UI_RenProjectileIcons off, the nuke has neither icon nor "
+                        "square ({}, {}); the shell keeps its square",
+                        nuke_icons().size(), squares_at(f, "tifmissilenuke01").size()));
+    r.set_projectile_icons(true);
 
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }

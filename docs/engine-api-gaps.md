@@ -102,6 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| Projectile `StrategicIconName`: nukes and anti-nukes show their icon in the strategic view, pulsing in the bloom (`UI_RenProjectileIcons`, `UI_RenProjectileGlow`) | [#576](https://github.com/bwiemz/supcom-engine/pull/576) |
 | Projectile `StrategicIconSize`: a projectile without an icon name is a square in the strategic view (yellow, as retail's `UI_forceWeaponsToYellow` defaults) | [#561](https://github.com/bwiemz/supcom-engine/pull/561) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |

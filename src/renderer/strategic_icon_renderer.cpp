@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 
 namespace osc::renderer {
 
@@ -367,6 +368,7 @@ StrategicIconRenderer::icon_blueprint(const std::string& id, lua_State* L) {
         // StrategicIconName names the four textures under the icon
         // directory (an absolute one is its own base).
         const std::string name = lowered(string_field(L, bp, "StrategicIconName"));
+        out.projectile_icon = name;
         if (!name.empty()) {
             const std::string base = name.front() == '/' ? name : kIconDirectory + name;
             out.rest = base + "_rest.dds";
@@ -564,9 +566,29 @@ UIInstance StrategicIconRenderer::square_quad(f32 x, f32 y, f32 size, f32 r, f32
     return inst;
 }
 
-template <class Place, class Emit>
-void StrategicIconRenderer::projectile_squares(const sim::FrameView& view, lua_State* L,
-                                               Place&& place, Emit&& emit) {
+namespace {
+
+std::array<f32, 4> projectile_icon_rect(f32 x, f32 y, const GPUTexture& tex) {
+    const auto half_w = static_cast<f32>(tex.width >> 1);
+    const auto half_h = static_cast<f32>(tex.height >> 1);
+    return {x - half_w, y - half_h, 2.0f * half_w, 2.0f * half_h};
+}
+
+} // namespace
+
+f32 projectile_icon_glow(f32 time) {
+    constexpr f32 half = kProjectileGlowPeriod * 0.5f;
+    if (time > half) {
+        return (kProjectileGlowMin - kProjectileGlowMax) / half * (time - half) +
+               kProjectileGlowMax;
+    }
+    return (kProjectileGlowMax - kProjectileGlowMin) / half * time + kProjectileGlowMin;
+}
+
+template <class Place, class SquareFn, class IconFn>
+void StrategicIconRenderer::projectile_marks(const sim::FrameView& view, lua_State* L,
+                                             TextureCache& tex_cache, Place&& place,
+                                             SquareFn&& square, IconFn&& icon) {
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_projectile || entity.army < 0) {
             continue;
@@ -575,12 +597,28 @@ void StrategicIconRenderer::projectile_squares(const sim::FrameView& view, lua_S
             continue;
         }
         const IconBlueprint& bp = icon_blueprint(entity.blueprint_id, L);
-        if (!bp.projectile || !bp.rest.empty()) {
+        if (!bp.projectile) {
             continue;
+        }
+        const GPUTexture* tex = nullptr;
+        if (!bp.projectile_icon.empty()) {
+            if (!projectile_icons_on_) {
+                continue;
+            }
+            tex = tex_cache.get_blocking(bp.projectile_icon);
+            if (!tex || tex->width == 0) {
+                continue;
+            }
         }
         f32 sx = 0;
         f32 sy = 0;
         if (!place(view.position(entity), sx, sy)) {
+            continue;
+        }
+        sx = std::floor(sx);
+        sy = std::floor(sy);
+        if (tex) {
+            icon(sx, sy, bp.projectile_icon, *tex);
             continue;
         }
         f32 r = 1.0f;
@@ -589,7 +627,7 @@ void StrategicIconRenderer::projectile_squares(const sim::FrameView& view, lua_S
         if (!weapons_yellow_) {
             get_army_color(entity, view, r, g, b);
         }
-        emit(square_quad(std::floor(sx), std::floor(sy), bp.icon_size, r, g, b));
+        square(square_quad(sx, sy, bp.icon_size, r, g, b));
     }
 }
 
@@ -615,9 +653,10 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
                                    const std::array<f32, 16>& vp_matrix,
                                    const std::unordered_set<u32>* selected_ids,
                                    TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
-                                   lua_State* L) {
+                                   lua_State* L, f32 frame_seconds) {
     quads_.clear();
     quad_textures_.clear();
+    projectile_icons_.clear();
     groups_.clear();
     quad_count_ = 0;
     load_generic_icons(L);
@@ -642,7 +681,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     }
     if (camera.zoom() >= kStrategicProjectileLod) {
         VkDescriptorSet white = tex_cache.fallback_descriptor();
-        projectile_squares(view, L, place, [&](const UIInstance& inst) {
+        const auto square = [&](const UIInstance& inst) {
             if (quad_count_ >= MAX_ICON_QUADS) {
                 return;
             }
@@ -653,7 +692,24 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
             }
             ++groups_.back().count;
             ++quad_count_;
-        });
+        };
+        const auto icon = [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex) {
+            ProjectileIcon out;
+            const auto rect = projectile_icon_rect(x, y, tex);
+            out.x = rect[0];
+            out.y = rect[1];
+            out.w = rect[2];
+            out.h = rect[3];
+            out.path = path;
+            out.ds = tex.descriptor_set;
+            if (projectile_glow_) {
+                glow_time_ =
+                    glow_time_ <= kProjectileGlowPeriod ? glow_time_ + frame_seconds : 0.0f;
+                out.glow = projectile_icon_glow(glow_time_);
+            }
+            projectile_icons_.push_back(std::move(out));
+        };
+        projectile_marks(view, L, tex_cache, place, square, icon);
     }
 
     // Upload to GPU
@@ -690,9 +746,18 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
                 out.push_back(q);
             });
     }
-    projectile_squares(view, L, place, [&](const UIInstance& inst) {
-        out.push_back({inst, tex_cache.fallback_descriptor()});
-    });
+    projectile_marks(
+        view, L, tex_cache, place,
+        [&](const UIInstance& inst) { out.push_back({inst, tex_cache.fallback_descriptor()}); },
+        [&](f32 x, f32 y, const std::string&, const GPUTexture& tex) {
+            UIInstance inst{};
+            const auto rect = projectile_icon_rect(x, y, tex);
+            std::copy(rect.begin(), rect.end(), inst.rect);
+            inst.uv[1] = 1.0f;
+            inst.uv[2] = 1.0f;
+            std::fill(std::begin(inst.color), std::end(inst.color), 1.0f);
+            out.push_back({inst, tex.descriptor_set});
+        });
 }
 
 void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
