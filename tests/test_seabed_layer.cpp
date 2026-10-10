@@ -163,6 +163,7 @@ TEST_CASE("Where a unit stands: the bed for those that walk it, else the surface
     Unit* land = mover(sim, "RULEUMT_Land", 10.0f, 20.0f);
     Unit* hover = mover(sim, "RULEUMT_Hover", 10.0f, 30.0f);
     Unit* ship = mover(sim, "RULEUMT_Water", 10.0f, 40.0f);
+    ship->set_layer("Water");
     CHECK(amph->ground_y(terrain, 30.0f, 30.0f) == 0.0f);
     CHECK(land->ground_y(terrain, 30.0f, 30.0f) == 0.0f);
     CHECK(hover->ground_y(terrain, 30.0f, 30.0f) == kWater);

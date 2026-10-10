@@ -38,9 +38,7 @@ SelectionYOffset
 ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette
-SinkLower
 SpawnRandomRotation
-StandUpright
 StayUpright
 StopOnPrimaryWeaponBusy
 StraddleWater

@@ -967,6 +967,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     for (f32 v : u.raised_platforms_) {
         w.f32v(v);
     }
+    w.b(u.stand_upright_);
+    w.b(u.sink_lower_);
     for (const blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         w.u8v(fp->size_x);
         w.u8v(fp->size_z);
@@ -1330,6 +1332,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     for (f32& v : u.raised_platforms_) {
         v = r.f32v();
     }
+    u.stand_upright_ = r.b();
+    u.sink_lower_ = r.b();
     for (blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         fp->size_x = r.u8v();
         fp->size_z = r.u8v();

@@ -1134,6 +1134,15 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                     unit->set_raised_platforms(std::move(quads));
                 }
                 lua_pop(L, 1);
+                lua_pushstring(L, "StandUpright");
+                lua_gettable(L, -2);
+                const bool stand_upright = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                lua_pushstring(L, "SinkLower");
+                lua_gettable(L, -2);
+                const bool sink_lower = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                unit->set_ground_snap_flags(stand_upright, sink_lower);
             }
             lua_pop(L, 2);
         }
