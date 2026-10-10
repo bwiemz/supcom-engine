@@ -74,6 +74,8 @@ extern const char* ui_vert;           // 2D UI quad (pixel coords → NDC)
 extern const char* ui_frag;           // 2D UI quad (texture * color)
 extern const char* resource_icon_vert; // primbatcher.fx's ResourceVS, on the screen
 extern const char* resource_icon_frag; // its ResourceIconPS
+extern const char* projectile_icon_vert; // CWldSession::RenderProjectileIcons' quads
+extern const char* projectile_icon_frag; // PrimBatcherPS, or CommandGlowPS for the glow
 extern const char* particle_vert;     // FA's particle quad (M214c: WorldVS)
 extern const char* particle_frag;     // particle.fx's WorldPS: texture × ramp
 extern const char* particle_refract_frag; // WorldRefractPS: the frame, displaced (M214d)

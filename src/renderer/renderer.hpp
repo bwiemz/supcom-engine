@@ -19,6 +19,7 @@
 #include "renderer/economy_overlay_renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/resource_icon_renderer.hpp"
+#include "renderer/projectile_icon_renderer.hpp"
 #include "renderer/hud_renderer.hpp"
 #include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
@@ -287,6 +288,14 @@ public:
         strategic_icon_renderer_.set_team_palette(std::move(palette));
     }
     const std::vector<u32>& team_palette() const { return strategic_icon_renderer_.team_palette(); }
+    void set_projectile_icons(bool on) { strategic_icon_renderer_.set_projectile_icons(on); }
+    bool projectile_icons_on() const { return strategic_icon_renderer_.projectile_icons_on(); }
+    void set_projectile_glow(bool on) { strategic_icon_renderer_.set_projectile_glow(on); }
+    bool projectile_glow() const { return strategic_icon_renderer_.projectile_glow(); }
+    const std::vector<ProjectileIcon>& projectile_icons() const {
+        return strategic_icon_renderer_.projectile_icons();
+    }
+    f32 projectile_glow_time() const { return strategic_icon_renderer_.glow_time(); }
     void set_select_boxes(bool on) {
         overlay_renderer_.set_select_boxes(on);
         selection_renderer_.set_enabled(on);
@@ -736,6 +745,7 @@ private:
     StrategicIconRenderer strategic_icon_renderer_;
     EconomyOverlayRenderer economy_overlay_renderer_;
     ResourceIconRenderer resource_icon_renderer_;
+    ProjectileIconRenderer projectile_icon_renderer_;
     f32 resource_icon_time_ = 0.0f;
     VideoOptions video_options_;
     bool cursor_clipped_ = false;

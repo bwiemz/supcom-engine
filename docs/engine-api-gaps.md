@@ -90,6 +90,7 @@ How to read it:
 | `SHOWQUEUE`: `SetCurrentFactoryForQueueDisplay` shows the queue only of a unit with the category, and gives `nil` for an empty one | [#555](https://github.com/bwiemz/supcom-engine/pull/555) |
 | `RequestRefreshUI()` on a selected unit reports the selection to `OnSelectionChanged` again (enhancements, adjacency, transport loads) | [#556](https://github.com/bwiemz/supcom-engine/pull/556) |
 | `Prop:AddBoundedProp(priority)` caps wrecks at 1000, destroying the cheapest, oldest one | [#560](https://github.com/bwiemz/supcom-engine/pull/560) |
+| Projectile `StrategicIconName`: nukes and anti-nukes show their icon in the strategic view, pulsing in the bloom (`UI_RenProjectileIcons`, `UI_RenProjectileGlow`) | [#576](https://github.com/bwiemz/supcom-engine/pull/576) |
 | Projectile `StrategicIconSize`: a projectile without an icon name is a square in the strategic view (yellow, as retail's `UI_forceWeaponsToYellow` defaults) | [#561](https://github.com/bwiemz/supcom-engine/pull/561) |
 | `RaisedPlatforms`: a unit on a factory's or gateway's deck stands on its platform quads, and rolls off down its ramps | [#564](https://github.com/bwiemz/supcom-engine/pull/564) |
 | `FAVORSWATER`: the Salem paths on its water footprint while it and its order's destinations are on water | [#565](https://github.com/bwiemz/supcom-engine/pull/565) |

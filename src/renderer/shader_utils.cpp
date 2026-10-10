@@ -2309,6 +2309,62 @@ void main() {
 }
 )glsl";
 
+const char* projectile_icon_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    vec2 viewport;
+    float glow;
+} pc;
+
+layout(location = 0) in vec4 inRect;
+layout(location = 1) in float inGlow;
+
+layout(location = 0) out vec2 fragUV;
+layout(location = 1) out float fragGlow;
+
+void main() {
+    const vec2 corners[6] = vec2[](vec2(0, 0), vec2(1, 0), vec2(1, 1),
+                                   vec2(0, 0), vec2(1, 1), vec2(0, 1));
+    vec2 pos = corners[gl_VertexIndex];
+    vec2 pixel = inRect.xy + pos * inRect.zw;
+    gl_Position = vec4(pixel / pc.viewport * 2.0 - 1.0, 0.0, 1.0);
+    fragUV = vec2(pos.x, 1.0 - pos.y);
+    fragGlow = inGlow;
+}
+)glsl";
+
+const char* projectile_icon_frag = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    vec2 viewport;
+    float glow;
+} pc;
+
+layout(set = 0, binding = 0) uniform sampler2D texSampler;
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in float fragGlow;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec4 color = texture(texSampler, fragUV);
+    if (pc.glow > 0.5) {
+        if (fragGlow < 0.0) {
+            discard;
+        }
+        outColor = vec4(0.0, 0.0, 0.0, color.a == 0.0 ? 0.0 : fragGlow);
+        return;
+    }
+    if (color.a <= 0.0) {
+        discard;
+    }
+    outColor = color;
+}
+)glsl";
+
 // ---------------------------------------------------------------------------
 // Beam strips (M214a): particle.fx's BeamVS/BeamPS, the strip built on the CPU
 // ---------------------------------------------------------------------------
