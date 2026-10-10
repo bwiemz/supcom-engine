@@ -115,28 +115,31 @@ TEST_CASE("A DDS's alpha mask reads its texels", "[ui][texture]") {
 
 // Its refusal comes before the mask is made: in a child whose address space
 // allows 64 MiB more than it has, the 512 MiB a 65536 x 65536 mask needs
-// would fail to allocate. (Linux; skipped under ASan, whose shadow memory a
-// limit on the address space breaks. Skipped, not left out, so every Linux
+// would fail to allocate. (Linux; skipped elsewhere and under ASan, whose shadow
+// memory a limit on the address space breaks. Skipped, not left out, so every
 // build lists the same test cases: docs/current-state.md counts them.)
-#if defined(__linux__)
-#if defined(__SANITIZE_ADDRESS__)
-#define OSC_TEXTURE_ALPHA_NO_RLIMIT_TEST
+#if !defined(__linux__)
+#define OSC_TEXTURE_ALPHA_SKIP "the limit on the address space is Linux's"
+#elif defined(__SANITIZE_ADDRESS__)
+#define OSC_TEXTURE_ALPHA_SKIP "a limit on the address space breaks ASan's shadow memory"
 #elif defined(__has_feature)
 #if __has_feature(address_sanitizer)
-#define OSC_TEXTURE_ALPHA_NO_RLIMIT_TEST
+#define OSC_TEXTURE_ALPHA_SKIP "a limit on the address space breaks ASan's shadow memory"
 #endif
 #endif
+#ifndef OSC_TEXTURE_ALPHA_SKIP
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <fstream>
 #include <new>
+#endif
 
 TEST_CASE("A truncated DDS declaring a huge texture is refused before its mask is allocated",
           "[ui][texture]") {
-#ifdef OSC_TEXTURE_ALPHA_NO_RLIMIT_TEST
-    SKIP("a limit on the address space breaks ASan's shadow memory");
+#ifdef OSC_TEXTURE_ALPHA_SKIP
+    SKIP(OSC_TEXTURE_ALPHA_SKIP);
 #else
     const auto file = dds(65536, 65536, kFourCC, kDxt5, 0);
     const pid_t pid = fork();
@@ -161,4 +164,3 @@ TEST_CASE("A truncated DDS declaring a huge texture is refused before its mask i
     CHECK(WEXITSTATUS(status) == 0);
 #endif
 }
-#endif
