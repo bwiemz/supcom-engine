@@ -241,6 +241,8 @@ public:
     /// looks for no targets while it moves (see begin_order).
     bool need_unpack() const { return need_unpack_; }
     void set_need_unpack(bool b) { need_unpack_ = b; }
+    bool need_to_face_target_to_build() const { return need_to_face_target_to_build_; }
+    void set_need_to_face_target_to_build(bool b) { need_to_face_target_to_build_ = b; }
 
     const std::string& layer() const { return layer_; }
     void set_layer(const std::string& l) { layer_ = l; }
@@ -569,6 +571,7 @@ public:
     static bool reclaim_wears_down(const Entity& target);
     bool reclaim_arm_ready(const Entity& target) const;
     bool awaits_arm();
+    bool turns_to_face(const Vector3& at);
     bool arm_awaited() const { return arm_awaited_; }
     bool wear_down(Unit& target) const;
     u32 reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L);
@@ -1561,10 +1564,11 @@ private:
     f32 guard_scan_radius_ = 25.0f;
     f32 attack_angle_ = 0.0f;      // AI.AttackAngle, degrees
     bool slaved_turning_ = false;  // turning to a slaved target (Moho's hysteresis)
-    Vector3 attack_facing_;        // a parked attack's facing; zero: none
+    Vector3 attack_facing_;        // a parked attack's or a build's facing; zero: none
     bool turned_in_place_ = false; // this tick
     f32 guard_return_radius_ = 50.0f;
     bool need_unpack_ = false;
+    bool need_to_face_target_to_build_ = false;
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)

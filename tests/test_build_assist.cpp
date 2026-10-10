@@ -173,3 +173,47 @@ TEST_CASE("A repair of a unit under construction starts once the builder's arm i
     CHECK(eng->is_building());
     CHECK(w.log() == "eng start Repair");
 }
+
+TEST_CASE("A builder that must face its target turns to it before it repairs",
+          "[build][assist][face]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit::Drive drive;
+    drive.turn_rate = 1.5f;
+    eng->set_drive(drive);
+    eng->set_need_to_face_target_to_build(true);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    w.sim.tick();
+    CHECK(w.log() == "eng arm");
+    CHECK_FALSE(eng->is_building());
+    int ticks = 1;
+    for (; ticks < 30 && !eng->is_building(); ++ticks) {
+        w.sim.tick();
+    }
+    CHECK(ticks > 5);
+    REQUIRE(eng->is_building());
+    CHECK(w.log() == "eng start Repair");
+    CHECK(osc::sim::quat_yaw(eng->orientation()) > 1.2f);
+    CHECK(eng->attack_facing().x == 0.0f);
+    CHECK(eng->attack_facing().z == 0.0f);
+}
+
+TEST_CASE("A guard that must face what it helps build turns to it first", "[build][assist][face]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    Unit::Drive drive;
+    drive.turn_rate = 1.5f;
+    helper->set_drive(drive);
+    helper->set_need_to_face_target_to_build(true);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    w.sim.tick();
+    w.sim.tick();
+    CHECK_FALSE(helper->is_building());
+    for (int i = 0; i < 30 && !helper->is_building(); ++i) {
+        w.sim.tick();
+    }
+    CHECK(helper->is_building());
+    CHECK(osc::sim::quat_yaw(helper->orientation()) > 1.2f);
+}

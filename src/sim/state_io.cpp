@@ -71,6 +71,7 @@ constexpr u32 kVersion = 41; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 39: aircraft's lift;
                              // 40: aircraft's level velocity and the motion target they hold;
                              // 41: aircraft's spin, facing, KRoll and BankForward
+                             // 39: NeedToFaceTargetToBuild
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

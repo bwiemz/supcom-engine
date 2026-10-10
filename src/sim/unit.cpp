@@ -1318,6 +1318,26 @@ bool Unit::awaits_arm() {
     return arm_awaited_;
 }
 
+bool Unit::turns_to_face(const Vector3& at) {
+    if (!need_to_face_target_to_build_) {
+        return false;
+    }
+    const f32 dx = at.x - position().x;
+    const f32 dz = at.z - position().z;
+    const f32 len = std::sqrt(dx * dx + dz * dz);
+    if (len <= 0.0f) {
+        return false;
+    }
+    const f32 yaw = quat_yaw(orientation());
+    if ((osc::dmath::sin(yaw) * dx + osc::dmath::cos(yaw) * dz) / len > 0.95f) {
+        attack_facing_ = {};
+        return false;
+    }
+    attack_facing_ = {dx / len, 0.0f, dz / len};
+    arm_awaited_ = true;
+    return true;
+}
+
 bool Unit::reclaim_wears_down(const Entity& target) {
     return target.is_unit() && !static_cast<const Unit&>(target).is_being_built();
 }
