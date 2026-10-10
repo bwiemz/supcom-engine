@@ -1,5 +1,6 @@
 #include "sim/flight_math.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace osc::sim {
@@ -87,6 +88,57 @@ Quaternion cap_turn(Quaternion q, f32 angle) {
 Quaternion turned_toward(const Quaternion& q, const Vector3& toward, f32 angle) {
     const Quaternion turn = cap_turn(shortest_arc(forward_of(q), toward), angle);
     return quat_multiply(turn, q);
+}
+
+f32 winged_lift(f32 want, f32 up_y, f32 lift_factor, f32 half_elevation, f32 height) {
+    const f32 lift = (up_y - 0.5f) * lift_factor;
+    if (lift <= 0.0f) {
+        if (half_elevation > height) {
+            return half_elevation - height;
+        }
+        return lift;
+    }
+    return std::min(want, lift);
+}
+
+LiftStep lift_step(f32 velocity, f32 steer, f32 k_lift, f32 k_lift_damping, f32 load, f32 dt) {
+    const f32 accel = k_lift_damping * -velocity + steer * (k_lift / load);
+    LiftStep out;
+    out.velocity = velocity + accel * dt;
+    out.rise = (out.velocity + velocity) * (dt * 0.5f);
+    return out;
+}
+
+f32 next_lift_ground(f32 ground, f32 look_ahead, f32 lift_factor, f32 dt, bool landing) {
+    f32 band = lift_factor * dt;
+    if (ground > look_ahead && !landing) {
+        band *= 0.5f;
+    }
+    return std::max(ground - band, std::min(ground + band, look_ahead));
+}
+
+f32 rising_ground_slowdown(f32 clearance, f32 half_speed) {
+    const f32 shrink = std::max(0.2f, (half_speed - clearance) / half_speed);
+    return shrink * shrink;
+}
+
+f32 air_move_damping(f32 control, f32 top, f32 k_move, f32 k_move_damping) {
+    const f32 len = std::min(control, top);
+    const f32 denominator = len > 1.0f ? len : 1.0f;
+    if (top <= denominator) {
+        return k_move;
+    }
+    return std::min(top / denominator, k_move_damping);
+}
+
+AirMoveStep air_move_step(const Vector3& velocity, const Vector3& force, f32 k_move, f32 damping,
+                          f32 dt) {
+    AirMoveStep out;
+    out.velocity.x = velocity.x + (force.x * k_move - velocity.x * damping) * dt;
+    out.velocity.z = velocity.z + (force.z * k_move - velocity.z * damping) * dt;
+    out.move.x = (out.velocity.x + velocity.x) * (dt * 0.5f);
+    out.move.z = (out.velocity.z + velocity.z) * (dt * 0.5f);
+    return out;
 }
 
 } // namespace osc::sim

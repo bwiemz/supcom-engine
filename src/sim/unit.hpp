@@ -127,6 +127,9 @@ struct AirCombatRules {
     f32 k_turn_damping = 3.0f;
     f32 k_move = 1.0f;
     f32 k_move_damping = 1.0f;
+    f32 k_lift = 1.0f;
+    f32 k_lift_damping = 1.0f;
+    f32 lift_factor = 5.0f;
     /// A hovering aircraft's circling (Moho's CalcCirclingOrientation):
     /// HoverOverAttack ones never circle. The rest circle a target, or
     /// what they work on, at a radius that changes now and then.
@@ -801,6 +804,25 @@ public:
     /// water's surface above it unless it flies in water (Moho's CUnitMotion
     /// samples max(terrain, water) for fliers).
     f32 air_floor(const map::Terrain* terrain, f32 x, f32 z) const;
+    /// Its ground to fly over (Moho's mTargetElevation), moved toward the
+    /// highest ground within `look_distance` ahead; the factor rising
+    /// ground puts on its speed.
+    f32 track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 tick, f32 dt,
+                          bool landing = false);
+    f32 lift_ground() const { return lift_ground_; }
+    u32 next_lift_tick() const { return lift_tick_ + 1; }
+    /// Its height after a step climbing toward `want` over it, under KLift
+    /// and KLiftDamping (ComputeAirControl), its wings' lift if winged; not
+    /// under `floor_after`.
+    f32 lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
+                    const EntityRegistry* registry, f32 dt);
+    /// Moho's CalcTransportLoadFactor: its mass with its cargo's over its own.
+    f32 transport_load_factor(const EntityRegistry& registry) const;
+    void reset_lift_ground() { lift_ground_set_ = false; }
+    const Vector3& air_velocity() const { return air_velocity_; }
+    f32 lift_velocity() const { return lift_velocity_; }
+    void set_air_velocity(const Vector3& v) { air_velocity_ = v; }
+    bool flew_at(u32 tick) const { return lift_tick_ == tick; }
 
     // Motion type (from blueprint Physics.MotionType)
     const std::string& motion_type() const { return motion_type_; }
@@ -1285,6 +1307,10 @@ private:
     /// Move along the navigator's path, no faster than `speed_cap` if set (a
     /// formation keeping its slowest unit's pace).
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    /// Moho's CAiNavigatorAir::AbortMove for an aircraft.
+    void stop_air();
+    /// Moho's Unit::UpdateSpeedThroughStatus.
+    void update_speed_through();
     /// Walk toward work out of reach (the goal set when the order sent the
     /// unit): nav_update, first asking again for a path the pathfinder put
     /// off (the navigator keeps a throttled request without retrying it).
@@ -1712,7 +1738,7 @@ private:
     /// already keeps there, else a new one from AI.BeaconName. 0 without one.
     u32 ferry_beacon(SimContext& ctx, UnitCommand& head);
     /// Fly a ferry leg toward `to`; true while under way.
-    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to);
+    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through = false);
     /// A teleport or an OverCharge whose order went unfinished: the script
     /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
     void settle_interrupted_orders(lua_State* L);
@@ -1759,6 +1785,11 @@ private:
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)
     f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
+    f32 lift_velocity_ = 0.0f;
+    Vector3 air_velocity_{};
+    f32 lift_ground_ = 0.0f;
+    bool lift_ground_set_ = false;
+    u32 lift_tick_ = 0;
     f32 elevation_target_ = 18.0f; // target altitude above its air floor, from Physics.Elevation
     bool fly_in_water_ = false;    // Air.FlyInWater
     // Diving and surfacing (M206o).

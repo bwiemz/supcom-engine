@@ -13066,8 +13066,8 @@ void test_carrier_land(TestContext& ctx) {
                       d->fuel_ratio(), d->health(), d->max_health(), d->position().y - surface));
     for (int i = 0; i < 200 && !d->command_queue().empty(); ++i) ctx.sim.tick();
     check(d->command_queue().empty() && !d->has_unit_state("Refueling") &&
-              d->current_altitude() == d->elevation_target(),
-          fmt::format("it climbs back to its flying height, and its order is done ({:.1f} of "
+              std::abs(d->current_altitude() - d->elevation_target()) < 0.25f,
+          fmt::format("it climbs back to its flying height, and its order is done ({:.2f} of "
                       "{:.1f})",
                       d->current_altitude(), d->elevation_target()));
 
@@ -13091,9 +13091,9 @@ void test_carrier_land(TestContext& ctx) {
         const float launch_alt = g->current_altitude();
         for (int i = 0; i < 300 && !g->command_queue().empty(); ++i) ctx.sim.tick();
         check(went_in && launch_alt < g->elevation_target() && g->command_queue().empty() &&
-                  g->current_altitude() == g->elevation_target(),
-              fmt::format("an interceptor launched from {:.1f} climbs to its {:.1f}", launch_alt,
-                          g->elevation_target()));
+                  std::abs(g->current_altitude() - g->elevation_target()) < 0.25f,
+              fmt::format("an interceptor launched from {:.1f} climbs to its {:.1f} ({:.2f})",
+                          launch_alt, g->elevation_target(), g->current_altitude()));
     } else {
         check(false, "the interceptor exists");
     }
@@ -13763,10 +13763,10 @@ void test_air_staging(TestContext& ctx) {
                       "repairs, {:.2f} after)",
                       asked_with, asks, number("__osc_req")));
     check(a->command_queue().empty() && !a->has_unit_state("Refueling") &&
-              a->current_altitude() == a->elevation_target() &&
+              std::abs(a->current_altitude() - a->elevation_target()) < 0.25f &&
               !pad->built_transport_slots()->slot_of(a->entity_id()) &&
               a->economy().dock_repair_energy == 0,
-          fmt::format("back at its height ({:.1f}), the order done and its slot free",
+          fmt::format("back at its height ({:.2f}), the order done and its slot free",
                       a->current_altitude()));
     check(b_docked && b_bone.find("_Med") != std::string::npos,
           fmt::format("the gunship loaded onto the pad (the AI's way) docked on a medium bone "
@@ -14161,7 +14161,7 @@ void test_transport_drop(TestContext& ctx) {
         __osc_x2 = CreateUnitHPR('uea0107', 'ARMY_1', 560, GetTerrainHeight(560, 140), 140, 0, 0, 0)
         __osc_one = CreateUnitHPR('uel0201', 'ARMY_1', 561, GetTerrainHeight(561, 144), 144, 0, 0, 0)
         __osc_board(__osc_x2, __osc_one)
-        IssueTransportUnload({__osc_x2}, {585, GetTerrainHeight(585, 140), 140})
+        IssueTransportUnload({__osc_x2}, {585, GetTerrainHeight(585, 139), 139})
     )"))
         return;
     auto* one = unit("__osc_one");
@@ -14716,7 +14716,7 @@ void test_ferry(TestContext& ctx) {
         __osc_beacon = beacon
         if table.getn(__osc_ferry:GetCommandQueue()) ~= 3 then error('the route was not kept') end
         if not __osc_ferry:IsUnitState('Ferrying') then error('the transport is not ferrying') end
-        __osc_first = {__osc_spawn('uel0201', 'ARMY_1', 585, 90), __osc_spawn('uel0201', 'ARMY_1', 585, 94)}
+        __osc_first = {__osc_spawn('uel0201', 'ARMY_1', 607, 98), __osc_spawn('uel0201', 'ARMY_1', 607, 102)}
         IssueTransportLoad(__osc_first, __osc_beacon)
         __osc_follow('first', __osc_first)
     )");

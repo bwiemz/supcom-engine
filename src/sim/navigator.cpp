@@ -1,5 +1,6 @@
 #include "sim/navigator.hpp"
 #include "core/dmath.hpp"
+#include "sim/air_combat.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/path_tables.hpp"
 #include "sim/prepare_move.hpp"
@@ -109,6 +110,7 @@ void Navigator::set_goal(const Vector3& pos) {
 }
 
 void Navigator::abort_move() {
+    air_hold_set_ = false;
     reset_moho();
     status_ = Status::Idle;
     waypoints_.clear();
@@ -603,93 +605,36 @@ bool Navigator::update_air(Unit& unit, f64 dt,
         return false;
     }
 
-    f32 fdt = static_cast<f32>(dt);
-    auto pos = unit.position();
-
-    // Current waypoint target
-    const auto& wp = waypoints_[waypoint_index_];
-    bool is_final = (waypoint_index_ == waypoints_.size() - 1);
-
-    // --- 1. Heading: turn toward target ---
-    f32 dx = wp.x - pos.x;
-    f32 dz = wp.z - pos.z;
-    f32 desired_heading = osc::dmath::atan2(dx, dz); // atan2(x,z) for Y-up heading
-    f32 heading = unit.heading();
-
-    // Shortest-arc angle difference
-    f32 angle_diff = desired_heading - heading;
-    while (angle_diff > 3.14159265f) angle_diff -= 6.28318530f;
-    while (angle_diff < -3.14159265f) angle_diff += 6.28318530f;
-
-    f32 max_turn = unit.turn_rate_rad() * unit.turn_mult() * fdt;
-    f32 actual_turn = 0;
-    if (std::abs(angle_diff) <= max_turn) {
-        heading = desired_heading;
-        actual_turn = angle_diff;
-    } else {
-        f32 sign = (angle_diff > 0) ? 1.0f : -1.0f;
-        heading += sign * max_turn;
-        actual_turn = sign * max_turn;
+    Vector3 wp = waypoints_[waypoint_index_];
+    const bool is_final = (waypoint_index_ == waypoints_.size() - 1);
+    // CAiNavigatorAir::BuildGoalWorldPos: the centre of the goal's cell.
+    const auto& fp = unit.footprint();
+    if (fp.size_x > 0 && fp.size_z > 0) {
+        const f32 hx = static_cast<f32>(fp.size_x) * 0.5f;
+        const f32 hz = static_cast<f32>(fp.size_z) * 0.5f;
+        wp.x = static_cast<f32>(std::lrint(wp.x - hx)) + hx;
+        wp.z = static_cast<f32>(std::lrint(wp.z - hz)) + hz;
     }
-    while (heading < 0) heading += 6.28318530f;
-    while (heading >= 6.28318530f) heading -= 6.28318530f;
-    unit.set_heading(heading);
+    AirMove move;
+    move.target = wp;
+    move.elevation = unit.elevation_target();
+    move.top_speed = speed_through_goal_ || !is_final;
+    air_hold_ = wp;
+    air_hold_set_ = true;
+    fly_air_move(unit, move, sim_, terrain, static_cast<f32>(dt));
 
-    // --- 2. Banking: proportional to turn rate ---
-    f32 bank = std::clamp(actual_turn / fdt * 0.5f, -0.5f, 0.5f);
-    f32 cur_bank = unit.bank_angle();
-    cur_bank += (bank - cur_bank) * std::min(1.0f, 5.0f * fdt);
-    unit.set_bank_angle(cur_bank);
-
-    // --- 3. Acceleration ---
-    f32 airspeed = unit.current_airspeed();
-    f32 target_speed = unit.max_airspeed() * unit.speed_mult();
-    f32 accel = unit.accel_rate() * unit.accel_mult();
-    if (airspeed < target_speed) {
-        airspeed = std::min(airspeed + accel * fdt, target_speed);
-    } else if (airspeed > target_speed) {
-        airspeed = std::max(airspeed - accel * fdt, target_speed);
+    // CUnitMotion::AtTarget, as CAiNavigatorAir::Execute asks it.
+    const auto pos = unit.position();
+    const f32 dist2 = (wp.x - pos.x) * (wp.x - pos.x) + (wp.z - pos.z) * (wp.z - pos.z);
+    f32 tolerance = 0.25f;
+    if (!is_final) {
+        tolerance = WAYPOINT_TOLERANCE;
+    } else if (speed_through_goal_) {
+        const AirCombatRules& r = unit.air_combat_rules();
+        tolerance = std::max(tolerance,
+                             unit.max_airspeed() * unit.speed_mult() * (r.winged ? 1.0f : 0.25f));
     }
-    unit.set_current_airspeed(airspeed);
-
-    // --- 4. Move along heading ---
-    f32 step = airspeed * fdt;
-    pos.x += osc::dmath::sin(heading) * step;
-    pos.z += osc::dmath::cos(heading) * step;
-
-    // --- 5. Altitude management ---
-    // Over its air floor: the water's surface at sea (Moho's CUnitMotion
-    // samples max(terrain, water) for fliers), unless it flies in water.
-    f32 terrain_h = unit.air_floor(terrain, pos.x, pos.z);
-    f32 target_alt = unit.elevation_target();
-    f32 alt = unit.current_altitude();
-    f32 climb = unit.climb_rate() * fdt;
-    if (alt < target_alt) {
-        alt = std::min(alt + climb, target_alt);
-    } else if (alt > target_alt) {
-        alt = std::max(alt - climb, target_alt);
-    }
-    unit.set_current_altitude(alt);
-    pos.y = terrain_h + alt;
-
-    // --- 6. Pitch: visual dive/climb indication ---
-    f32 target_y = terrain_h + target_alt;
-    f32 pitch = (target_y - pos.y) * 0.02f;
-    pitch = std::clamp(pitch, -0.3f, 0.3f);
-    unit.set_pitch_angle(pitch);
-
-    // --- 7. Set orientation from euler angles ---
-    unit.set_orientation(euler_to_quat(heading, pitch, cur_bank));
-
-    // --- 8. Clamp to playable area ---
-    if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
-    unit.set_position(pos);
-
-    // --- 9. Check waypoint arrival (2D distance) ---
-    f32 dist2 = (wp.x - pos.x) * (wp.x - pos.x) + (wp.z - pos.z) * (wp.z - pos.z);
-    f32 tolerance = is_final ? ARRIVAL_TOLERANCE : WAYPOINT_TOLERANCE;
-    f32 air_tolerance = std::max(tolerance, airspeed * 0.5f);
-    if (dist2 <= air_tolerance * air_tolerance) {
+    if (dist2 <= tolerance * tolerance) {
         if (is_final) {
             if (!speed_through_goal_) {
                 status_ = Status::Idle;

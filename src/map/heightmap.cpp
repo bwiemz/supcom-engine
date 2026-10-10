@@ -16,6 +16,65 @@ Heightmap::Heightmap(u32 map_width, u32 map_height, f32 scale,
     assert(data_.size() == static_cast<size_t>(grid_width_) * grid_height_);
     if (!data_.empty())
         max_height_ = static_cast<f32>(*std::max_element(data_.begin(), data_.end())) * scale_;
+    const u32 largest = std::max(map_width, map_height);
+    u32 count = 0;
+    for (u32 v = largest > 1 ? largest - 1 : 0; v != 0; v >>= 1) {
+        ++count;
+    }
+    if (data_.empty()) {
+        count = 0;
+    }
+    tiers_.resize(count);
+    for (u32 t = 0; t < count; ++t) {
+        Tier& tier = tiers_[t];
+        tier.width = std::max(map_width >> (t + 1), 1u);
+        tier.height = std::max(map_height >> (t + 1), 1u);
+        tier.max.assign(static_cast<size_t>(tier.width) * tier.height, 0);
+        const Tier* below = t > 0 ? &tiers_[t - 1] : nullptr;
+        for (u32 z = 0; z < tier.height; ++z) {
+            for (u32 x = 0; x < tier.width; ++x) {
+                u16 top = 0;
+                if (below) {
+                    for (u32 sz = 2 * z; sz < std::min(2 * z + 2, below->height); ++sz) {
+                        for (u32 sx = 2 * x; sx < std::min(2 * x + 2, below->width); ++sx) {
+                            top = std::max(top, below->max[sz * below->width + sx]);
+                        }
+                    }
+                } else {
+                    for (u32 sz = 2 * z; sz < std::min(2 * z + 3, grid_height_); ++sz) {
+                        for (u32 sx = 2 * x; sx < std::min(2 * x + 3, grid_width_); ++sx) {
+                            top = std::max(top, data_[sz * grid_width_ + sx]);
+                        }
+                    }
+                }
+                tier.max[z * tier.width + x] = top;
+            }
+        }
+    }
+}
+
+f32 Heightmap::look_ahead_max(f32 x, f32 z, f32 look_ahead) const {
+    if (look_ahead < 1.0f || tiers_.empty()) {
+        return get_height(x, z);
+    }
+    const auto bits = [](i32 v) {
+        u32 n = 0;
+        for (u32 u = static_cast<u32>(std::max(v, 0)); u != 0; u >>= 1) {
+            ++n;
+        }
+        return static_cast<i32>(n);
+    };
+    const i32 map_tier = bits(static_cast<i32>(std::min(map_width(), map_height())) - 1);
+    const i32 wanted = bits(static_cast<i32>(std::nearbyint(look_ahead * 0.5f)));
+    const i32 tier = std::clamp(std::min(map_tier, wanted), 1, static_cast<i32>(tiers_.size()));
+    const Tier& cells = tiers_[static_cast<size_t>(tier - 1)];
+    const i32 cx = std::clamp(static_cast<i32>(std::nearbyint(x)) >> tier, 0,
+                              static_cast<i32>(cells.width) - 1);
+    const i32 cz = std::clamp(static_cast<i32>(std::nearbyint(z)) >> tier, 0,
+                              static_cast<i32>(cells.height) - 1);
+    return static_cast<f32>(
+               cells.max[static_cast<size_t>(cz) * cells.width + static_cast<size_t>(cx)]) *
+           scale_;
 }
 
 f32 Heightmap::get_height_at_grid(u32 gx, u32 gz) const {
