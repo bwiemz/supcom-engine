@@ -415,6 +415,7 @@ void AimManipulator::tick(f32 dt) {
     // No bones to turn: nothing to wait for.
     if (!bones) {
         on_target_ = has_target_;
+        tracking_ = false;
         return;
     }
 
@@ -452,19 +453,28 @@ void AimManipulator::tick(f32 dt) {
     } else {
         // Hold the pose for the reset time, then return to rest.
         on_target_ = false;
-        idle_time_ += dt;
-        if (idle_time_ < reset_pose_time_) return;
+        if (!builder_arm_) {
+            idle_time_ += dt;
+            if (idle_time_ < reset_pose_time_) {
+                return;
+            }
+        }
         want_heading = full_circle ? 0.0f : std::clamp(0.0f, yaw_min_, yaw_max_);
         want_pitch = std::clamp(0.0f, pitch_min_, pitch_max_);
     }
 
+    const f32 slew = builder_arm_ && !has_target_ ? 0.25f * dt : dt;
+    const f32 heading_left =
+        full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_;
+    tracking_ = builder_arm_ && std::fabs(heading_left) > 1e-5f;
     if (full_circle) {
-        const f32 diff = wrap_angle(want_heading - heading_);
-        heading_ = wrap_angle(heading_ + approach(0.0f, diff, yaw_speed_ * dt));
+        heading_ = wrap_angle(heading_ + approach(0.0f, heading_left, yaw_speed_ * slew));
     } else {
-        heading_ = approach(heading_, want_heading, yaw_speed_ * dt);
+        heading_ = approach(heading_, want_heading, yaw_speed_ * slew);
     }
-    if (pitches) pitch_ = approach(pitch_, want_pitch, pitch_speed_ * dt);
+    if (pitches) {
+        pitch_ = approach(pitch_, want_pitch, pitch_speed_ * slew);
+    }
 
     if (!has_target_) return;
     const f32 heading_error =

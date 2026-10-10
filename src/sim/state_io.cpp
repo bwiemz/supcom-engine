@@ -67,6 +67,7 @@ constexpr u32 kVersion = 39; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 39: the player's command ids issued, a formation's Move or FormMove
                              // 39: a builder's help to an unfinished unit is repairing
                              // 39: aircraft's lift
+                             // 39: builder arms' tracking
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

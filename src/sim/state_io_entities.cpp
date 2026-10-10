@@ -749,6 +749,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.b(x.has_target_);
         w.b(x.on_target_);
         w.b(x.builder_arm_);
+        w.b(x.tracking_);
         w.b(x.yaw_only_on_target_);
         break;
     }
@@ -883,6 +884,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->has_target_ = r.b();
         x->on_target_ = r.b();
         x->builder_arm_ = r.b();
+        x->tracking_ = r.b();
         x->yaw_only_on_target_ = r.b();
         m = std::move(x);
         break;

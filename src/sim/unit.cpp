@@ -3261,9 +3261,15 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
     for (size_t i = 0; i < manipulators_.size(); ++i) {
         Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !m->enabled()) continue;
+        const auto* arm = dynamic_cast<const AimManipulator*>(m);
+        const bool was_tracking = arm && arm->tracking();
         m->tick(dt);
-        if (const auto* arm = dynamic_cast<const AimManipulator*>(m); arm && arm->builder_arm()) {
+        if (arm && arm->builder_arm()) {
             builder_on_target_ = arm->has_target() && arm->on_target();
+            if (arm->tracking() != was_tracking && L) {
+                call_lua_method(L, arm->tracking() ? "OnStartBuilderTracking"
+                                                   : "OnStopBuilderTracking");
+            }
         }
         // A thread waiting for it goes on once it is at its goal -- reached
         // in this tick, or set so between ticks (an animator a script sets
