@@ -4037,13 +4037,25 @@ static int l_CreateStorageManip(lua_State* L) {
 }
 
 // ====================================================================
-// CreateThrustController(unit) -> thrust manipulator (visual)
+// CreateThrustController(unit, label, thrustBone)
 // ====================================================================
 static int l_CreateThrustController(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 3) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "CreateThrustController(unit, label, thrustBone)", 3, n);
+    }
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
+    const i32 bone = manip_resolve_bone(unit, L, 3);
 
     auto manip = std::make_unique<sim::ThrustManipulator>();
+    manip->set_bone_index(bone);
+    const sim::BoneData* bd = unit->bone_data();
+    if (bd && bd->is_valid(bone)) {
+        manip->set_rest(
+            sim::quat_rotate(bd->bones[static_cast<size_t>(bone)].local_rotation, {0, 0, 1}));
+    }
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);

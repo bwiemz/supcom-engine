@@ -24121,12 +24121,15 @@ void test_deposits(TestContext& ctx) {
     // Test 9: CreateThrustController returns real object
     {
         auto r = ctx.lua_state.do_string(
-            ("local u = GetEntityById(" + u1 + ")\n"
-            "local tc = CreateThrustController(u)\n"
-            "if type(tc) ~= 'table' then error('not table') end\n"
-            "if not tc._c_object then error('no _c_object') end\n"
-            "tc:SetPrecedence(1)\n"
-            "tc:Destroy()\n").c_str());
+            ("local u = GetEntityById(" + u1 +
+             ")\n"
+             "local tc = CreateThrustController(u, 'thruster', 0)\n"
+             "if type(tc) ~= 'table' then error('not table') end\n"
+             "if not tc._c_object then error('no _c_object') end\n"
+             "tc:SetThrustingParam(-0.25, 0.25, -0.75, 0.75, -0.0, 0.0, 1.0, 0.25)\n"
+             "tc:SetPrecedence(1)\n"
+             "tc:Destroy()\n")
+                .c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 9: CreateThrustController returns real object"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 9: {}", r.error().message); }
     }
