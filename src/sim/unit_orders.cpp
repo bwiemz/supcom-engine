@@ -1791,13 +1791,13 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         if (within_reach(*target_unit, true, false)) {
-            const SiloBuild& missile = target_unit->silo_build();
-            const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
-            economy_.consumption_energy = missile.energy * per_second;
-            economy_.consumption_mass = missile.mass * per_second;
-            economy_.consumption_active = true;
             assisting_silo_ = true;
             if (!paused_) {
+                const SiloBuild& missile = target_unit->silo_build();
+                const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
+                economy_.consumption_energy = missile.energy * per_second;
+                economy_.consumption_mass = missile.mass * per_second;
+                economy_.consumption_active = true;
                 target_unit->assist_silo_build(build_rate_, dt, econ_eff);
             }
         }

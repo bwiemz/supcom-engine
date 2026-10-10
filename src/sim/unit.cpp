@@ -2164,6 +2164,7 @@ bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L,
     economy_.consumption_energy =
         enh_cost_energy * static_cast<f64>(build_rate_) / enhance_build_time_;
     economy_.consumption_active = true;
+    set_unit_state("Upgrading", true);
 
     // Call self:OnWorkBegin(enhancement_name)
     if (lua_table_ref() >= 0) {
@@ -2182,6 +2183,7 @@ bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L,
                 economy_.consumption_mass = 0;
                 economy_.consumption_energy = 0;
                 economy_.consumption_active = false;
+                set_unit_state("Upgrading", false);
                 enhance_build_time_ = 0;
                 enhance_name_.clear();
                 return false;
@@ -2261,6 +2263,7 @@ void Unit::finish_enhance(lua_State* L) {
     spdlog::info("finish_enhance: entity #{} completed enhancement '{}'",
                  entity_id(), enhance_name_);
     enhancing_ = false;
+    set_unit_state("Upgrading", false);
     enhance_build_time_ = 0;
     work_progress_ = 0.0f;
     enhance_name_.clear();
@@ -2292,6 +2295,7 @@ void Unit::cancel_enhance(lua_State* L) {
     economy_.consumption_active = false;
 
     enhancing_ = false;
+    set_unit_state("Upgrading", false);
     enhance_build_time_ = 0;
     work_progress_ = 0.0f;
     enhance_name_.clear();
@@ -3311,6 +3315,14 @@ bool Unit::call_on_teleport_unit(lua_State* L, const Vector3& location) {
     }
     lua_settop(L, top);
     return true;
+}
+
+void Unit::pause(lua_State* L, bool p) {
+    if (paused_ == p) {
+        return;
+    }
+    call_lua_method(L, p ? "OnPaused" : "OnUnpaused");
+    paused_ = p;
 }
 
 void Unit::call_lua_method(lua_State* L, const char* method_name) {

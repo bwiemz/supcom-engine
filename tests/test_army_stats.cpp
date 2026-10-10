@@ -100,8 +100,8 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
 }
 
-TEST_CASE("A paused unit keeps producing and its army pays for none of its work",
-          "[army][economy]") {
+TEST_CASE("A paused unit keeps producing, and its army pays what the unit asks",
+          "[army][economy][pause]") {
     osc::sim::EntityRegistry registry;
     osc::sim::ArmyBrain brain;
     brain.set_index(0);
@@ -109,27 +109,28 @@ TEST_CASE("A paused unit keeps producing and its army pays for none of its work"
     extractor->set_army(0);
     extractor->economy().production_mass = 2.0;
     extractor->economy().production_active = true;
-    extractor->pause(true);
-    auto builder = std::make_unique<osc::sim::Unit>();
-    builder->set_army(0);
-    builder->economy().consumption_mass = 4.0;
-    builder->economy().consumption_active = true;
-    builder->pause(true);
-    auto* b = builder.get();
+    extractor->set_paused(true);
+    auto shield = std::make_unique<osc::sim::Unit>();
+    shield->set_army(0);
+    shield->economy().consumption_mass = 4.0;
+    shield->economy().consumption_active = true;
+    shield->set_paused(true);
+    auto* s = shield.get();
     registry.register_entity(std::move(extractor));
-    registry.register_entity(std::move(builder));
+    registry.register_entity(std::move(shield));
 
     for (int i = 0; i < 10; ++i) {
         brain.update_economy(registry, 0.1);
     }
     CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 2.0) < 1e-9);
-    CHECK(brain.get_stat("Economy_TotalConsumed_Mass") == 0.0);
+    CHECK(brain.economy().mass.requested == 4.0);
+    CHECK(brain.get_stat("Economy_TotalConsumed_Mass") > 0.0);
 
-    b->pause(false);
+    s->economy().consumption_active = false;
     for (int i = 0; i < 10; ++i) {
         brain.update_economy(registry, 0.1);
     }
-    CHECK(std::abs(brain.get_stat("Economy_TotalConsumed_Mass") - 4.0) < 1e-9);
+    CHECK(brain.economy().mass.requested == 0.0);
 }
 
 TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",

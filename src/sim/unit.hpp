@@ -89,12 +89,9 @@ struct UnitEconomy {
     /// too (CAiSiloBuildImpl).
     f64 mass_requested() const { return consumption_mass + silo_mass; }
     f64 energy_requested() const { return consumption_energy + silo_energy + capture_energy; }
-    f64 mass_consumed(bool paused) const {
-        return (consumption_active && !paused ? consumption_mass : 0.0) + silo_mass;
-    }
-    f64 energy_consumed(bool paused) const {
-        return (consumption_active && !paused ? consumption_energy : 0.0) + silo_energy +
-               capture_energy;
+    f64 mass_consumed() const { return (consumption_active ? consumption_mass : 0.0) + silo_mass; }
+    f64 energy_consumed() const {
+        return (consumption_active ? consumption_energy : 0.0) + silo_energy + capture_energy;
     }
 };
 
@@ -341,9 +338,9 @@ public:
     // Pause state
     bool is_paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
-    /// Pause or resume the unit's work, as unit:SetPaused does. Moho's paused
-    /// unit keeps producing; its army pays for none of its work meanwhile.
-    void pause(bool p) { paused_ = p; }
+    /// Pause or resume the unit's work, as unit:SetPaused does: its script hears
+    /// OnPaused or OnUnpaused on a change.
+    void pause(lua_State* L, bool p);
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }

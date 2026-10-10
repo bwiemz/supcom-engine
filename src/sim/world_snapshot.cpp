@@ -222,8 +222,8 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
         static_cast<f32>((u.producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
     r.energy_produced =
         static_cast<f32>((u.producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
-    r.mass_consumed = static_cast<f32>(econ.mass_consumed(u.is_paused()));
-    r.energy_consumed = static_cast<f32>(econ.energy_consumed(u.is_paused()));
+    r.mass_consumed = static_cast<f32>(econ.mass_consumed());
+    r.energy_consumed = static_cast<f32>(econ.energy_consumed());
     r.mass_requested = static_cast<f32>(econ.mass_requested());
     r.energy_requested = static_cast<f32>(econ.energy_requested());
     r.nuke_silo_max = u.silo_max_storage(true);

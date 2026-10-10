@@ -83,12 +83,6 @@ void script_bit_hook(lua_State* L, const Unit& u, i32 bit, bool set) {
 // A setting applies to each unit, and a unit whose setting changes gets the
 // script hook Moho calls for it.
 
-void set_paused(lua_State* L, Unit& u, bool v) {
-    if (u.is_paused() == v) return;
-    u.pause(v);
-    u.call_lua_method(L, v ? "OnPaused" : "OnUnpaused");
-}
-
 void set_auto_mode(lua_State* L, Unit& u, bool v) {
     if (u.auto_mode() == v) return;
     u.set_auto_mode(v);
@@ -110,7 +104,7 @@ void unit_setting(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     const std::string name = setting ? *setting : std::string();
 
     if (name == "Paused" && flag) {
-        for_each_unit(sim, cb, [&](Unit& u) { set_paused(L, u, *flag); });
+        for_each_unit(sim, cb, [&](Unit& u) { u.pause(L, *flag); });
     } else if (name == "AutoMode" && flag) {
         for_each_unit(sim, cb, [&](Unit& u) { set_auto_mode(L, u, *flag); });
     } else if (name == "AutoSurfaceMode" && flag) {
@@ -136,7 +130,7 @@ void process_info(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     const bool value = text && *text == "true";
     const std::string name = action ? *action : std::string();
     if (name == "SetPaused") {
-        for_each_unit(sim, cb, [&](Unit& u) { set_paused(L, u, value); });
+        for_each_unit(sim, cb, [&](Unit& u) { u.pause(L, value); });
     } else if (name == "SetAutoMode") {
         for_each_unit(sim, cb, [&](Unit& u) { set_auto_mode(L, u, value); });
     } else if (name == "SetRepeatQueue") {
