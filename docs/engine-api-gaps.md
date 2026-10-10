@@ -79,7 +79,6 @@ How to read it:
 |---|---|---|---|
 | `ShowEscapeDialog`: retail calls it when the window is closed | Closing the window quits at once; retail asks for confirmation | retail `/lua/ui/uimain.lua` ShowEscapeDialog, `/lua/ui/dialogs/eschandler.lua`; engine `app/window.cpp` | Open |
 | `OnDecayed`: retail drains a unit under construction from its second tick (0.1 / max(BuildCostEnergy, BuildCostMass, BuildTime) a tick) and calls `OnDecayed` at no health, which destroys it | Abandoned unfinished structures keep their progress and stay for ever | faf-re `Unit::MotionTick` (`unit/core/Unit.cpp`); retail `/lua/sim/Unit.lua` OnDecayed; engine `unit.cpp`: no decay | Open |
-| `OnStopBuilderTracking`: retail calls it when a builder arm leaves its target; `ConstructionUnit` folds the arm | UEF engineers (UEL0105/0208/0309) and the Fatboy keep their build arms out after a build | faf-re `CBuilderArmManipulator`; retail `/lua/defaultunits.lua` ConstructionUnit; engine `unit.cpp` aim_builder_arms | Open |
 | `ShowDesyncDialog`: retail shows a dialog naming the desynced players | A desync is detected but not shown to the player | retail `/lua/ui/uimain.lua` ShowDesyncDialog, `/lua/ui/dialogs/desync.lua`; engine `gpgnet_session.cpp` report_desync | Open |
 | `OnCommandGraphShow`: retail calls it while Shift is held | With Shift held, map-marker pings don't show their name panel and can't be dragged or Ctrl+right-click deleted | faf-re `UICommandGraph`; retail `/lua/ui/game/commandgraph.lua` → `/lua/ui/controls/worldview.lua` ShowPings | Open |
 | `OnPlayNoStagingPlatformsVO` / `OnPlayBusyStagingPlatformsVO`: retail's Dock plays a voice when there is no air staging platform or all are full | Dock silently does nothing in those cases | faf-re `IssueDockCommand`; retail `/lua/aibrain.lua` OnPlayNoStagingPlatformsVO; engine `user_bindings.cpp` IssueDockCommand | Open |
@@ -103,6 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| A builder arm calls `OnStartBuilderTracking` and `OnStopBuilderTracking` as its heading starts and stops turning, and turns back to rest at once at a quarter of its slew; `ConstructionUnit` folds the arm after a build | [#539](https://github.com/bwiemz/supcom-engine/pull/539) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

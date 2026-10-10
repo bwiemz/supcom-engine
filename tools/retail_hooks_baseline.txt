@@ -15,8 +15,6 @@ method OnPlayBusyStagingPlatformsVO
 method OnPlayNoStagingPlatformsVO
 method OnSpecialAction
 method OnStart
-method OnStartBuilderTracking
-method OnStopBuilderTracking
 method OnSubtitle
 method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand

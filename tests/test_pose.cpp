@@ -12,11 +12,14 @@
 #include "sim/unit.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <cmath>
+#include <cstring>
 #include <memory>
+#include <string>
 
 using namespace osc;
 using namespace osc::sim;
@@ -332,4 +335,57 @@ TEST_CASE("AttachBoneToEntityBone pins the unit's bone to the entity", "[pose][l
     target.mark_destroyed();
     unit.tick_manipulators(0.1f, L);
     CHECK(unit.bone_world_position(1).y < -1000.0f);
+}
+
+TEST_CASE("A builder arm calls its unit's builder tracking hooks as it starts and stops turning",
+          "[pose][build]") {
+    lua_State* L = lua_open();
+    const char* code =
+        "tracked = ''"
+        " return {OnStartBuilderTracking = function() tracked = tracked .. 'start,' end,"
+        " OnStopBuilderTracking = function() tracked = tracked .. 'stop,' end}";
+    REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "unit") == 0);
+    REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+    const auto tracked = [&] {
+        lua_getglobal(L, "tracked");
+        std::string v = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "");
+        lua_setglobal(L, "tracked");
+        return v;
+    };
+
+    BoneData bd = make_two_bones();
+    Unit unit;
+    unit.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    auto& arm =
+        static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+    arm.set_builder_arm(true);
+    arm.set_yaw_bone(1);
+    arm.set_firing_arc(-180.0f, 180.0f, 90.0f, -90.0f, 90.0f, 90.0f);
+    arm.set_target({10.0f, 0.0f, 11.0f}, 0.2617994f);
+
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "start,");
+    for (int i = 0; i < 4; ++i) {
+        unit.tick_manipulators(0.1f, L);
+    }
+    CHECK(tracked().empty());
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "stop,");
+
+    arm.clear_target();
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "start,");
+    CHECK_THAT(arm.heading(), WithinAbs(0.95 * 3.14159265 / 4.0, 1e-4));
+    for (int i = 0; i < 19; ++i) {
+        unit.tick_manipulators(0.1f, L);
+    }
+    CHECK(tracked().empty());
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "stop,");
+    CHECK(arm.heading() == 0.0f);
+    lua_close(L);
 }

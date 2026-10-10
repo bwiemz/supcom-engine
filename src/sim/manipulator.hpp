@@ -254,6 +254,7 @@ public:
     /// CreateBuilderArmController's: the unit's build orders aim it
     void set_builder_arm(bool b) { builder_arm_ = b; }
     bool builder_arm() const { return builder_arm_; }
+    bool tracking() const { return tracking_; }
     /// An arcing weapon's launch angle above the horizontal: the pitch to
     /// take instead of the straight line to the target (none: the line).
     void set_elevation(std::optional<f32> radians) { elevation_ = radians; }
@@ -278,6 +279,7 @@ private:
     bool has_target_ = false;
     bool on_target_ = false;
     bool builder_arm_ = false;
+    bool tracking_ = false;
     bool yaw_only_on_target_ = false;
 };
 
