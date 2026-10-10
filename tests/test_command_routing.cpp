@@ -298,3 +298,46 @@ TEST_CASE("A Guard order leaves out the units Moho's issue does", "[routing][gua
     unit_of(sim, plane)->set_transport_id(carrier);
     CHECK(sim.route_command({plane}, guard(tank), false) == 0);
 }
+
+TEST_CASE("A reclaim, capture, repair or build goes only to a unit of its category", "[routing]") {
+    // faf-re Sim.cpp ProcessIssuedUnitCommand
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const auto make = [&](std::initializer_list<const char*> categories) {
+        auto u = std::make_unique<Unit>();
+        u->set_army(0);
+        u->set_motion_type("RULEUMT_Air");
+        for (const char* c : categories) {
+            u->add_category(c);
+        }
+        u->add_command_cap("RULEUCC_Reclaim");
+        u->add_command_cap("RULEUCC_Capture");
+        u->add_command_cap("RULEUCC_Repair");
+        return sim.entity_registry().register_entity(std::move(u));
+    };
+    const auto order = [](CommandType type) {
+        UnitCommand c;
+        c.type = type;
+        c.blueprint_id = "uab1101";
+        return c;
+    };
+
+    const osc::u32 pod = make({"POD"});
+    CHECK(sim.route_command({pod}, order(CommandType::Capture), false) == 0);
+    CHECK(sim.route_command({pod}, order(CommandType::Reclaim), false) == 0);
+    CHECK(sim.route_command({pod}, order(CommandType::Repair), false) == 0);
+    CHECK(sim.route_command({pod}, order(CommandType::BuildMobile), false) != 0);
+
+    const osc::u32 tank = make({"LAND"});
+    CHECK(sim.route_command({tank}, order(CommandType::BuildMobile), false) == 0);
+    CHECK(sim.route_command({tank}, order(CommandType::BuildFactory), false) == 0);
+    const osc::u32 fatboy = make({"NEEDMOBILEBUILD"});
+    CHECK(sim.route_command({fatboy}, order(CommandType::BuildFactory), false) != 0);
+
+    const osc::u32 drone = make({"POD", "RECLAIM", "CAPTURE", "REPAIR"});
+    CHECK(sim.route_command({drone}, order(CommandType::Capture), false) != 0);
+    unit_of(sim, drone)->set_transport_id(tank);
+    CHECK(sim.route_command({drone}, order(CommandType::Capture), false) == 0);
+    CHECK(sim.route_command({drone}, order(CommandType::Reclaim), false) == 0);
+    CHECK(sim.route_command({drone}, order(CommandType::Repair), false) == 0);
+}
