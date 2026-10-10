@@ -12650,15 +12650,12 @@ void test_right_click(TestContext& ctx) {
         for (int i = 0; i < 5 && eng->build_target_id() != unbuilt->entity_id(); ++i) {
             ctx.sim.tick();
         }
-        check(gave("Repair", unbuilt->entity_id()) && gave("Guard", unbuilt->entity_id()) &&
-                  issued.size() == 2 && eng->build_target_id() == unbuilt->entity_id() &&
-                  head(*tank2, CT::Guard, unbuilt->entity_id()),
-              fmt::format("on construction: the engineer repairs (builds) it, the tank guards it "
-                          "(repair {}, guard {}, {} issued, building #{} repairing #{}, tank "
-                          "guards {})",
-                          gave("Repair", unbuilt->entity_id()), gave("Guard", unbuilt->entity_id()),
-                          issued.size(), eng->build_target_id(), eng->repair_target_id(),
-                          head(*tank2, CT::Guard, unbuilt->entity_id())));
+        check(gave("Repair", unbuilt->entity_id()) && issued.size() == 1 &&
+                  issued.front().units.size() == 2 &&
+                  eng->build_target_id() == unbuilt->entity_id(),
+              fmt::format("on construction: one repair, for the engineer and the tank; the "
+                          "engineer builds it ({} issued, building #{} repairing #{})",
+                          issued.size(), eng->build_target_id(), eng->repair_target_id()));
     } else {
         check(false, "a structure under construction");
     }
@@ -12750,12 +12747,19 @@ void test_right_click(TestContext& ctx) {
         }
     }
 
-    right_click({tank2->entity_id()}, *xport);
-    check(head(*tank2, CT::TransportLoad, xport->entity_id()),
-          "on a transport: the tank loads onto it");
+    right_click({tank2->entity_id(), plane->entity_id()}, *xport);
+    check(head(*tank2, CT::TransportLoad, xport->entity_id()) && issued.size() == 1 &&
+              gave("TransportLoadUnits", xport->entity_id()) && issued.front().units.size() == 2 &&
+              !head(*plane, CT::TransportLoad, xport->entity_id()),
+          "on a transport: one load, for the tank and the plane; the tank loads, the plane "
+          "can't");
 
-    right_click({plane->entity_id()}, *pad);
-    check(head(*plane, CT::Dock, pad->entity_id()), "on a staging platform: the plane docks");
+    right_click({tank2->entity_id(), plane->entity_id()}, *pad);
+    check(head(*plane, CT::TransportLoad, pad->entity_id()) && issued.size() == 1 &&
+              issued.front().units.size() == 2 &&
+              !head(*tank2, CT::TransportLoad, pad->entity_id()),
+          "on a staging platform: one load, for the plane and the tank; the plane docks, the "
+          "tank can't");
 
     if (prop) {
         input.set_selected({eng->entity_id(), tank->entity_id()});

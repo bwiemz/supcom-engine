@@ -919,6 +919,114 @@ TEST_CASE("A right click gives the whole selection one order", "[attack][capture
     CHECK(order.second == std::vector<osc::u32>{eng->entity_id(), flak->entity_id()});
 }
 
+TEST_CASE("A right click on an own unit gives the whole selection one order",
+          "[guard][transport]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    const auto mobile = [&](osc::f32 x, osc::f32 z, const char* motion) {
+        Unit* u = walker(sim, x, z);
+        u->set_motion_type(motion);
+        for (const char* cap : {"RULEUCC_Move", "RULEUCC_Guard", "RULEUCC_CallTransport"}) {
+            u->add_command_cap(cap);
+        }
+        return u;
+    };
+    Unit* eng = mobile(10.0f, 10.0f, "RULEUMT_Land");
+    eng->add_command_cap("RULEUCC_Repair");
+    Unit* tank = mobile(12.0f, 10.0f, "RULEUMT_Land");
+    Unit* fighter = mobile(14.0f, 10.0f, "RULEUMT_Air");
+    Unit* frame = still(sim, 0, 40.0f, 10.0f);
+    frame->set_is_being_built(true);
+    Unit* factory = still(sim, 0, 40.0f, 40.0f);
+    factory->add_category("FACTORY");
+    factory->set_is_being_built(true);
+    Unit* damaged = still(sim, 0, 70.0f, 10.0f);
+    damaged->set_health(50.0f);
+    Unit* transport = mobile(70.0f, 40.0f, "RULEUMT_Air");
+    transport->add_category("TRANSPORTATION");
+    Unit* pad = still(sim, 0, 100.0f, 10.0f);
+    pad->add_category("AIRSTAGINGPLATFORM");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    const auto one_order = [&](const Unit& on) {
+        const auto orders = input.right_click_orders(sim, on.position().x, on.position().z);
+        REQUIRE(orders.size() == 1);
+        CHECK(orders.front().first.target_id == on.entity_id());
+        return orders.front();
+    };
+
+    input.set_selected({eng->entity_id(), tank->entity_id()});
+    auto order = one_order(*frame);
+    CHECK(order.first.type == CommandType::Repair);
+    CHECK(order.second == std::vector<osc::u32>{eng->entity_id(), tank->entity_id()});
+    CHECK(one_order(*factory).first.type == CommandType::Guard);
+    CHECK(one_order(*damaged).first.type == CommandType::Guard);
+
+    input.set_selected({tank->entity_id(), fighter->entity_id()});
+    order = one_order(*transport);
+    CHECK(order.first.type == CommandType::TransportLoad);
+    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), fighter->entity_id()});
+    order = one_order(*pad);
+    CHECK(order.first.type == CommandType::TransportLoad);
+    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), fighter->entity_id()});
+
+    input.set_selected({tank->entity_id()});
+    const auto orders = input.right_click_orders(sim, tank->position().x, tank->position().z);
+    REQUIRE(orders.size() == 1);
+    CHECK(orders.front().first.type == CommandType::Move);
+    CHECK(orders.front().second == std::vector<osc::u32>{tank->entity_id()});
+}
+
+TEST_CASE("A load order goes only to a unit its transport can carry", "[transport]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    two_armies(sim);
+    const auto mobile = [&](osc::f32 x, const char* motion) {
+        Unit* u = walker(sim, x, 10.0f);
+        u->set_motion_type(motion);
+        u->add_command_cap("RULEUCC_CallTransport");
+        return u;
+    };
+    Unit* tank = mobile(10.0f, "RULEUMT_Land");
+    Unit* fighter = mobile(12.0f, "RULEUMT_Air");
+    fighter->add_category("AIR");
+    Unit* acu = mobile(14.0f, "RULEUMT_Land");
+    acu->add_category("COMMAND");
+    Unit* walker_only = walker(sim, 16.0f, 10.0f);
+    walker_only->set_motion_type("RULEUMT_Land");
+    Unit* transport = mobile(40.0f, "RULEUMT_Air");
+    transport->add_category("AIR");
+    transport->add_category("TRANSPORTATION");
+    transport->add_command_cap("RULEUCC_Transport");
+    Unit* pad = still(sim, 0, 60.0f, 10.0f);
+    pad->add_category("AIRSTAGINGPLATFORM");
+    pad->add_command_cap("RULEUCC_Transport");
+    Unit* beacon = still(sim, 0, 80.0f, 10.0f);
+    beacon->add_category("FERRYBEACON");
+    const Unit* other = still(sim, 0, 90.0f, 10.0f);
+    const auto takes = [&](const Unit& u, CommandType type, const Unit& onto) {
+        osc::sim::UnitCommand load;
+        load.type = type;
+        load.target_id = onto.entity_id();
+        return sim.takes_command(u, load);
+    };
+    CHECK(takes(*tank, CommandType::TransportLoad, *transport));
+    CHECK(takes(*transport, CommandType::TransportLoad, *transport));
+    CHECK_FALSE(takes(*fighter, CommandType::TransportLoad, *transport));
+    CHECK_FALSE(takes(*walker_only, CommandType::TransportLoad, *transport));
+    CHECK_FALSE(takes(*acu, CommandType::TransportLoad, *transport));
+    transport->add_category("CANTRANSPORTCOMMANDER");
+    CHECK(takes(*acu, CommandType::TransportLoad, *transport));
+    CHECK(takes(*fighter, CommandType::TransportLoad, *pad));
+    CHECK(takes(*fighter, CommandType::Dock, *pad));
+    CHECK_FALSE(takes(*tank, CommandType::TransportLoad, *pad));
+    CHECK_FALSE(takes(*tank, CommandType::TransportLoad, *other));
+    CHECK(takes(*tank, CommandType::WaitForFerry, *beacon));
+    CHECK_FALSE(takes(*transport, CommandType::WaitForFerry, *beacon));
+}
+
 TEST_CASE("An attack order goes to no unarmed structure and onto no ally", "[attack]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);

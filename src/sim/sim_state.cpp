@@ -773,6 +773,41 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
     return queued ? issued.command_id : 0;
 }
 
+namespace {
+
+bool boards(const EntityRegistry& registry, const Unit& unit, u32 target_id) {
+    const Entity* e = target_id ? registry.find(target_id) : nullptr;
+    if (!e || !e->is_unit()) {
+        return true;
+    }
+    const auto& target = static_cast<const Unit&>(*e);
+    if ((&target != &unit && !unit.has_command_cap("RULEUCC_CallTransport")) ||
+        target.layer() == "Seabed") {
+        return false;
+    }
+    if (target.has_category("FERRYBEACON") ||
+        (target.has_category("FACTORY") && !target.has_category("AIRSTAGINGPLATFORM") &&
+         !target.has_category("TELEPORTATION"))) {
+        return unit.is_mobile() && !unit.has_category("TRANSPORTATION");
+    }
+    if (target.destroyed() || target.is_dying() || target.is_being_built() ||
+        (!target.has_command_cap("RULEUCC_Transport") &&
+         !target.has_category("PODSTAGINGPLATFORM"))) {
+        return false;
+    }
+    if (&target == &unit) {
+        return true;
+    }
+    if (!unit.is_mobile() || unit.has_category("AIR") != target.is_staging_platform() ||
+        (unit.has_category("COMMAND") && !target.has_category("CANTRANSPORTCOMMANDER"))) {
+        return false;
+    }
+    const TransportSlots* slots = const_cast<Unit&>(target).transport_slots();
+    return !slots || slots->can_carry_class(unit.transport_class());
+}
+
+} // namespace
+
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
     if (unit.is_being_built() && !unit.has_category("FACTORY")) {
         return false;
@@ -795,7 +830,7 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const
     }
     if (command.type == CommandType::TransportLoad || command.type == CommandType::Dock ||
         command.type == CommandType::WaitForFerry) {
-        return unit.transport_id() == 0;
+        return unit.transport_id() == 0 && boards(entity_registry_, unit, command.target_id);
     }
     if (command.type != CommandType::Guard) return true;
     // A pod, or a unit a carrier holds, guards nothing; nor does a unit
