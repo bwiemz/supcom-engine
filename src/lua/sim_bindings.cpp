@@ -752,6 +752,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (lua_isnumber(L, -1))
                     unit->set_max_build_distance(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+                lua_pushstring(L, "NeedToFaceTargetToBuild");
+                lua_gettable(L, -2);
+                unit->set_need_to_face_target_to_build(lua_toboolean(L, -1) != 0);
+                lua_pop(L, 1);
             }
             lua_pop(L, 2);
         }

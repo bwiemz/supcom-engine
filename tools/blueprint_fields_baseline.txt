@@ -22,7 +22,6 @@ MaxBounceCount
 MaxSteerForce
 MinBounceCount
 NeedPrep
-NeedToFaceTargetToBuild
 PlaceholderMeshName
 PositionY
 PrefersPrimaryWeaponTarget

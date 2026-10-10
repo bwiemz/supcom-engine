@@ -955,6 +955,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.max_build_distance_);
     w.f32v(u.guard_scan_radius_);
     w.b(u.need_unpack_);
+    w.b(u.need_to_face_target_to_build_);
     w.f32v(u.guard_return_radius_);
     w.f32v(u.attack_angle_);
     w.b(u.slaved_turning_);
@@ -1314,6 +1315,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.max_build_distance_ = r.f32v();
     u.guard_scan_radius_ = r.f32v();
     u.need_unpack_ = r.b();
+    u.need_to_face_target_to_build_ = r.b();
     u.guard_return_radius_ = r.f32v();
     u.attack_angle_ = r.f32v();
     u.slaved_turning_ = r.b();

@@ -13,6 +13,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -195,4 +196,21 @@ TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[buil
     }
     REQUIRE(w.built());
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
+}
+
+TEST_CASE("A builder that must face its site turns to it before it builds", "[build][face]") {
+    WreckSite w;
+    Unit::Drive drive;
+    drive.turn_rate = 1.5f;
+    w.engineer->set_drive(drive);
+    w.engineer->set_orientation(osc::sim::euler_to_quat(3.0f, 0.0f, 0.0f));
+    w.engineer->set_need_to_face_target_to_build(true);
+    w.build("ueb1103");
+    w.sim.tick();
+    CHECK_FALSE(w.built());
+    for (int i = 0; i < 30 && !w.built(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.built());
+    CHECK(std::abs(osc::sim::quat_yaw(w.engineer->orientation())) < 0.32f);
 }

@@ -691,7 +691,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (awaits_arm()) {
+        if (turns_to_face(cmd.target_pos) || awaits_arm()) {
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
@@ -1124,7 +1124,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (awaits_arm()) {
+        if (turns_to_face(at) || awaits_arm()) {
             return OrderStep::Hold;
         }
         if (!start_repair(cmd, registry, L)) {
@@ -1164,7 +1164,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (awaits_arm()) {
+        if (turns_to_face(at) || awaits_arm()) {
             return OrderStep::Hold;
         }
         build_target_id_ = tid;
@@ -1622,7 +1622,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 if (destroyed() || !in_registry()) {
                     return OrderStep::Gone;
                 }
-                if (!awaits_arm()) {
+                if (!turns_to_face(at) && !awaits_arm()) {
                     build_target_id_ = target_build_id;
                     build_command_id_ = cmd.command_id;
                     build_released_with_order_ = true;
@@ -1734,7 +1734,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
                     }
-                    if (!awaits_arm()) {
+                    if (!turns_to_face(at) && !awaits_arm()) {
                         UnitCommand repair_cmd;
                         repair_cmd.type = CommandType::Repair;
                         repair_cmd.target_id = cmd.target_id;

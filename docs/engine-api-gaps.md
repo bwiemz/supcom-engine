@@ -56,7 +56,6 @@ How to read it:
 | `RaisedPlatforms` raises land units on a factory's deck to its platform quads in retail; the engine snaps them to terrain or water | Units on a factory's deck, new ones rolling off among them, stay at ground level inside the deck (25 retail factories and gates) | faf-re `CUnitMotion` (ground snap); engine `Unit::ground_y` | Open |
 | `SelectionYOffset` cuts the top off a unit's pick box by that fraction in retail (default 0.5; ACUs and SACUs 0, transport beacons 1); the engine picks by the whole box | The cursor picks a unit anywhere in its box; retail picks most units only by the lower half of theirs | faf-re `CUIWorldView::UpdateSelection`; engine `InputHandler::unit_under` | Open |
 | `SelectionMeshScaleX/Z`, `SelectionMeshUseTopAmount` narrow a unit's pick box in retail | UEF and Cybran naval factories are picked by their whole box; retail picks them only by the top 15%, UEF ones narrowed to 0.3×/0.4× | faf-re `CUIWorldView::UpdateSelection`; engine `InputHandler::unit_under` | Open |
-| `NeedToFaceTargetToBuild` turns a builder to its site before it builds in retail | Seraphim engineers (XSL0105, XSL0208, XSL0309) build without turning to the site | faf-re `CUnitMobileBuildTask`, `CUnitRepairTask`; engine `unit_orders.cpp` order_build_mobile | Open |
 | `CameraFollowsProjectile`, `CameraFollowTimeout`: retail moves a camera tracking a unit onto such a shot for the timeout | With the camera tracking a unit, its nukes, missiles, shells and bombs (90 retail projectiles) don't take the camera along | faf-re `Projectile.cpp` (constructor), `CameraImpl`; engine: no reader | Open |
 | Projectile `StrategicIconSize`: retail draws a projectile without an icon name as a square in its army's colour in the strategic view; the engine draws no projectiles there | The strategic view shows no projectiles (106 retail projectiles set the size) | faf-re `CWldSession` (strategic icons); engine `strategic_icon_renderer.cpp` | Open |
 | Projectile `RotationalVelocity`, `RotationalVelocityRange`: retail spins a projectile about a random axis at creation | Four meshed retail projectiles don't spin (Brackman hack pegs, neutron cluster bomblets, Kril torpedo, meson rocket) | faf-re `RProjectileBlueprint`, `Projectile.cpp` (constructor); engine `projectile.hpp` | Open |
@@ -103,6 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| `NeedToFaceTargetToBuild` turns a builder to its site or repair target before it builds (retail's Seraphim engineers) | [#550](https://github.com/bwiemz/supcom-engine/pull/550) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
