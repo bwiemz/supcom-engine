@@ -9,6 +9,7 @@
 // the albedo alone), at the same view.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
@@ -97,8 +98,8 @@ void test_decal_render(TestContext& ctx) {
     const map::ScmapLighting original = ctx.sim.terrain()->lighting();
     const map::ScmapEnvironment env = ctx.sim.terrain()->environment();
 
-    const auto dir = std::filesystem::temp_directory_path() / "osc_decal_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_decal_test");
+    const auto& dir = scratch.path();
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, a_}; };
     };

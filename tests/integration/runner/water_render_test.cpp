@@ -8,6 +8,7 @@
 // its foam). SCMP_009's water lies in its north-west corner.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
@@ -249,8 +250,8 @@ void test_water_render(TestContext& ctx) {
     // Test 5: the frame drawn before the water shows through it, refracted:
     // a red glow hung 1 under the surface over open water.
     {
-        const auto dir = std::filesystem::temp_directory_path() / "osc_water_test";
-        std::filesystem::create_directories(dir);
+        const TempDir scratch("osc_water_test");
+        const auto& dir = scratch.path();
         write_dds(dir / "white.dds", 1,
                   [](int, u32, u32) { return std::array<u8, 4>{255, 255, 255, 255}; });
         write_dds(dir / "red.dds", 1,
@@ -451,8 +452,8 @@ void test_water_render(TestContext& ctx) {
                                                            z + static_cast<f32>(dz)) < w - 1;
                 if (under) open = Spot{x, z};
             }
-        const auto dir = std::filesystem::temp_directory_path() / "osc_water_decal_test";
-        std::filesystem::create_directories(dir);
+        const TempDir scratch("osc_water_decal_test");
+        const auto& dir = scratch.path();
         const auto flat = [](u8 r_, u8 g_, u8 b_) {
             return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, 255}; };
         };

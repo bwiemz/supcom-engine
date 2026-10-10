@@ -12,6 +12,7 @@
 // shows as itself.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -107,8 +108,8 @@ void test_build_shaders(TestContext& ctx) {
     }
 
     // The plates' files.
-    const auto dir = std::filesystem::temp_directory_path() / "osc_build_shader_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_build_shader_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 4.0f);
     write_plate_scm(dir / "plate_hover.scm", 2.0f);
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
