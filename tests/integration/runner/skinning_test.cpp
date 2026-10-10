@@ -9,6 +9,7 @@
 // real commander.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -74,8 +75,8 @@ void test_skinning(TestContext& ctx) {
         ground.set_strata(std::move(strata), {}, {});
     }
 
-    const auto dir = std::filesystem::temp_directory_path() / "osc_skinning_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_skinning_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate_bones.scm", 4.0f, 1, true);
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, a_}; };

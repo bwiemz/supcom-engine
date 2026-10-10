@@ -12,6 +12,7 @@
 // ARMY_2's moves in the fog; a retail shell carries retail's.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
@@ -88,8 +89,8 @@ void test_trail_render(TestContext& ctx) {
 
     // The test's blueprints: white and red textures (ramp and repeat), and
     // trails of them.
-    const auto dir = std::filesystem::temp_directory_path() / "osc_trail_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_trail_test");
+    const auto& dir = scratch.path();
     write_dds(dir / "white.dds", 1,
               [](int, u32, u32) { return std::array<u8, 4>{255, 255, 255, 255}; });
     write_dds(dir / "red.dds", 1, [](int, u32, u32) { return std::array<u8, 4>{255, 0, 0, 255}; });

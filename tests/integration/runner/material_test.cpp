@@ -8,6 +8,7 @@
 // Frames of the same view are compared per pixel.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -186,8 +187,8 @@ void test_material(TestContext& ctx) {
     // Cubes of the test's own: white on one face only (faces +X -X +Y -Y +Z
     // -Z), on one side of x = 0, or all over. A face's columns run along +x
     // on +Y, -Y and +Z, along -x on -Z.
-    const auto dir = std::filesystem::temp_directory_path() / "osc_material_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_material_test");
+    const auto& dir = scratch.path();
     const char* const kFaces[] = {"px", "nx", "py", "ny", "pz", "nz"};
     for (int f = 0; f < 6; ++f)
         write_cube(dir / fmt::format("{}.dds", kFaces[f]),

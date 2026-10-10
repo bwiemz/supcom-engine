@@ -11,6 +11,7 @@
 // generator: vision the terrain can't block.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
 
@@ -376,8 +377,8 @@ void test_effect_intel(TestContext& ctx) {
     // Two copies of a steady emitter (aeon_build_01: a ring a tick, for
     // ever, EmitIfVisible), the second CreateIfVisible too.
     constexpr const char* kRoot = "/osc_effect_intel";
-    const auto dir = std::filesystem::temp_directory_path() / "osc_effect_intel";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_effect_intel");
+    const auto& dir = scratch.path();
     {
         const auto source = ctx.vfs.read_file("/effects/emitters/aeon_build_01_emit.bp");
         if (!source) {

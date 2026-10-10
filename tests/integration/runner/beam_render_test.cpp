@@ -12,6 +12,7 @@
 // drawn.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
@@ -77,8 +78,8 @@ void test_beam_render(TestContext& ctx) {
     // The test's blueprints: a white texture; a fat additive beam going red
     // to blue; a fat subtractive (MODULATEINVERSE) one in white; one that
     // stops drawing 5 from the camera.
-    const auto dir = std::filesystem::temp_directory_path() / "osc_beam_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_beam_test");
+    const auto& dir = scratch.path();
     write_dds(dir / "white.dds", 1,
               [](int, u32, u32) { return std::array<u8, 4>{255, 255, 255, 255}; });
     const auto beam_bp = [&](const char* file, const char* colors, int blend, f32 lod) {

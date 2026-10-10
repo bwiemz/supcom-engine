@@ -76,7 +76,8 @@ add_executable(osc_integration
     runner/yaw_only_test.cpp
     runner/air_attack_test.cpp
 )
-target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)
+target_include_directories(osc_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/runner ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_integration PRIVATE osc::warnings osc::app)
 # Beside opensupcom (on Windows with the same DLLs, which the cross-OS
 # check's artifact carries); crash backtraces show function names.
