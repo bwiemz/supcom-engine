@@ -699,6 +699,9 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
 
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
     face_weapons_work(dt, ctx.registry);
+    if (turned_in_place_ && ctx.terrain && snaps_to_ground()) {
+        stand_on_ground(ctx.terrain, position(), orientation());
+    }
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
 
     // A sub dives or surfaces, moving or not (M206o).
@@ -2630,9 +2633,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
             // flies from there (M206r; Moho resets only its height hold).
             cargo->fly_on_from_here(terrain);
         } else if (terrain) {
-            Vector3 at = cargo->position();
-            at.y = cargo->ground_y(terrain, at.x, at.z);
-            cargo->set_position(at);
+            cargo->stand_on_ground(terrain, cargo->position(), cargo->orientation());
         }
         cargo->note_snap();
 
@@ -2812,41 +2813,90 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
         p.x += osc::dmath::sin(heading) * ground_speed_ * step;
         p.z += osc::dmath::cos(heading) * ground_speed_ * step;
     }
-    if (terrain) p.y = ground_y(terrain, p.x, p.z);
-    set_position(p);
+    if (terrain) {
+        stand_on_ground(terrain, p, orientation());
+    } else {
+        set_position(p);
+    }
 }
 
+namespace {
+
+Vector3 normalized(const Vector3& v) {
+    const f32 length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (length <= 0.0f) {
+        return {};
+    }
+    const f32 inv = 1.0f / length;
+    return {v.x * inv, v.y * inv, v.z * inv};
+}
+
+// Moho's COORDS_Tilt: the shortest turn of its up onto the normal, before it.
+Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
+    const Vector3 n = normalized(normal);
+    if (n.x == 0.0f && n.y == 0.0f && n.z == 0.0f) {
+        return q;
+    }
+    const Vector3 up = quat_rotate(q, {0.0f, 1.0f, 0.0f});
+    const Vector3 h = normalized({up.x + n.x, up.y + n.y, up.z + n.z});
+    const Quaternion delta{up.y * h.z - up.z * h.y, up.z * h.x - up.x * h.z,
+                           up.x * h.y - up.y * h.x, up.x * h.x + up.y * h.y + up.z * h.z};
+    return quat_multiply(delta, q);
+}
+
+} // namespace
+
 // Moho's CUnitMotion::SnapToGround (from CalcMoveHover and CalcMoveLand).
-f32 Unit::ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
-    if (!terrain) return position().y;
+Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z,
+                                       const Quaternion& facing) const {
+    if (!terrain) {
+        return {position().y, facing};
+    }
     const Unit* platform = raised_platform();
     const bool hover = is_hover();
-    if (!hover && layer_ != "Land" && layer_ != "Seabed") {
+    if (!snaps_to_ground()) {
         const f32 ground =
             walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
-        return platform ? ground + platform->raised_platform_height(x, z) : ground;
+        return {platform ? ground + platform->raised_platform_height(x, z) : ground, facing};
     }
-    const auto sample = [&](f32 dx, f32 dz) {
-        const Vector3 d = quat_rotate(orientation(), {dx, 0, dz});
-        const f32 cx = x + d.x;
-        const f32 cz = z + d.z;
-        f32 h = terrain->get_terrain_height(cx, cz);
+    const auto corner = [&](f32 dx, f32 dz) {
+        const Vector3 d = quat_rotate(facing, {dx, 0, dz});
+        Vector3 c{x + d.x, terrain->get_terrain_height(x + d.x, z + d.z), z + d.z};
         if (hover && terrain->has_water()) {
-            h = std::max(h, terrain->water_elevation());
+            c.y = std::max(c.y, terrain->water_elevation());
         }
-        return platform ? h + platform->raised_platform_height(cx, cz) : h;
+        if (platform) {
+            c.y += platform->raised_platform_height(c.x, c.z);
+        }
+        return c;
     };
     const f32 hx = size_x_ * 0.5f;
     const f32 hz = size_z_ * 0.5f;
-    const std::array<f32, 4> corners = {sample(hx, hz), sample(-hx, hz), sample(-hx, -hz),
-                                        sample(hx, -hz)};
-    f32 y = (corners[3] + corners[2] + corners[1] + corners[0]) * 0.25f;
+    const Vector3 fr = corner(hx, hz);
+    const Vector3 fl = corner(-hx, hz);
+    const Vector3 bl = corner(-hx, -hz);
+    const Vector3 br = corner(hx, -hz);
+    f32 y = (br.y + bl.y + fl.y + fr.y) * 0.25f;
     if (stand_upright_ || sink_lower_) {
         const f32 centre = terrain->get_terrain_height(x, z);
-        const auto [lo, hi] = std::minmax_element(corners.begin(), corners.end());
-        y -= (std::max(*hi, centre) - std::min(*lo, centre)) * 0.25f;
+        const f32 lo = std::min({fr.y, fl.y, bl.y, br.y, centre});
+        const f32 hi = std::max({fr.y, fl.y, bl.y, br.y, centre});
+        y -= (hi - lo) * 0.25f;
     }
-    return y;
+    const Vector3 d0{br.x - fl.x, br.y - fl.y, br.z - fl.z};
+    const Vector3 d1{bl.x - fr.x, bl.y - fr.y, bl.z - fr.z};
+    const Vector3 normal = stand_upright_
+                               ? Vector3{0.0f, 1.0f, 0.0f}
+                               : Vector3{d0.y * d1.z - d0.z * d1.y, d0.z * d1.x - d0.x * d1.z,
+                                         d0.x * d1.y - d0.y * d1.x};
+    return {y, tilt_to(facing, normal)};
+}
+
+void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing) {
+    const GroundStance stance = ground_stance(terrain, at.x, at.z, facing);
+    at.y = stance.y;
+    set_position(at);
+    set_orientation(stance.orientation);
 }
 
 // Moho's CUnitMotion::FindIntersectingRaisedPlatform, over the units its box

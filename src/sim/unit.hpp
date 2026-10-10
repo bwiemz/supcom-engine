@@ -885,8 +885,21 @@ public:
     bool walks_seabed() const {
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_Land";
     }
-    /// The height it stands at with its centre at (x, z).
-    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const;
+    struct GroundStance {
+        f32 y;
+        Quaternion orientation;
+    };
+    /// Its height with its centre at (x, z), and `facing` tilted to the
+    /// ground under its box.
+    GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z,
+                               const Quaternion& facing) const;
+    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
+        return ground_stance(terrain, x, z, orientation()).y;
+    }
+    void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing);
+    bool snaps_to_ground() const {
+        return !can_fly() && (is_hover() || layer_ == "Land" || layer_ == "Seabed");
+    }
     /// Physics.StandUpright and Physics.SinkLower.
     void set_ground_snap_flags(bool stand_upright, bool sink_lower) {
         stand_upright_ = stand_upright;
