@@ -334,6 +334,75 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(minimap_icons_at(unbuilt).empty(),
             "Test 15: the power generator being built has no minimap icon");
 
+    run_lua(ctx, "__osc_ic_bolt = __osc_ic_tank:CreateProjectile("
+                 "'/projectiles/TDFHiroLaser01/TDFHiroLaser01_proj.bp', 0, 3, 0, 0, 0, 1)\n"
+                 "__osc_ic_bolt:SetVelocity(0, 0, 0)\n");
+    const auto bolt_squares = [&](const Frame& frame) {
+        std::vector<Quad> found;
+        for (const sim::EntityRecord& e : seen.cur().entities) {
+            if (!e.is_projectile) {
+                continue;
+            }
+            const auto at = screen_of(r, e.position);
+            if (!at) {
+                continue;
+            }
+            for (const Quad& q : frame.icons) {
+                if (q.texture.empty() && std::abs(q.x - std::floor((*at)[0])) < 1.0f &&
+                    std::abs(q.y - std::floor((*at)[1])) < 1.0f) {
+                    found.push_back(q);
+                }
+            }
+        }
+        return found;
+    };
+    (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+    f = next();
+    {
+        const auto at = bolt_squares(f);
+        t.check(at.size() == 1 && at[0].w == 3.0f && at[0].h == 3.0f &&
+                    same_colour(at[0], 1.0f, 1.0f, 0.0f),
+                fmt::format("Test 16: the bolt is a yellow square 3 across ({} there, zoom {:.0f})",
+                            at.size(), r.camera().zoom()));
+    }
+
+    {
+        int squares = 0;
+        for (const sim::EntityRecord& e : seen.cur().entities) {
+            if (!e.is_projectile) {
+                continue;
+            }
+            const f32 x = std::floor(area.x + e.position.x / map_w * area.w);
+            const f32 y = std::floor(area.y + e.position.z / map_h * area.h);
+            for (const renderer::UIQuad& q : r.minimap().quads()) {
+                if (q.inst.rect[2] == 3.0f && q.inst.rect[3] == 3.0f &&
+                    std::abs(q.inst.rect[0] + 1.5f - x) < 1.0f &&
+                    std::abs(q.inst.rect[1] + 1.5f - y) < 1.0f && q.inst.color[0] == 1.0f &&
+                    q.inst.color[1] == 1.0f && q.inst.color[2] == 0.0f) {
+                    ++squares;
+                }
+            }
+        }
+        t.check(squares == 1,
+                fmt::format("Test 17: the bolt's square on the minimap ({} there)", squares));
+    }
+
+    r.set_weapons_yellow(false);
+    f = next();
+    {
+        const auto at = bolt_squares(f);
+        t.check(at.size() == 1 && same_colour(at[0], blue[0], blue[1], blue[2]),
+                fmt::format("Test 18: unforced, the bolt's square is ARMY_1's colour ({} there)",
+                            at.size()));
+    }
+    r.set_weapons_yellow(true);
+
+    r.camera().set_eye_distance(80.0f);
+    f = next();
+    t.check(bolt_squares(f).empty() && r.camera().zoom() < 128.0f,
+            fmt::format("Test 19: at zoom {:.0f}, the bolt has no square ({} there)",
+                        r.camera().zoom(), bolt_squares(f).size()));
+
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

@@ -382,8 +382,27 @@ StrategicIconRenderer::icon_blueprint(const std::string& id, lua_State* L) {
         out.can_fly = lua_toboolean(L, -1) != 0;
         lua_pop(L, 2);
         // Its mesh blueprint's IconFadeInZoom (0 when it says none).
+        push_field(L, bp, "Categories");
+        if (lua_istable(L, -1)) {
+            for (int i = 1;; ++i) {
+                lua_rawgeti(L, -1, i);
+                if (!lua_isstring(L, -1)) {
+                    lua_pop(L, 1);
+                    break;
+                }
+                out.projectile =
+                    out.projectile || std::strcmp(lua_tostring(L, -1), "PROJECTILE") == 0;
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
         push_field(L, bp, "Display");
         const int display = lua_gettop(L);
+        push_field(L, display, "StrategicIconSize");
+        if (lua_isnumber(L, -1)) {
+            out.icon_size = static_cast<f32>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
         const std::string mesh = lowered(string_field(L, display, "MeshBlueprint"));
         if (!mesh.empty()) push_field(L, bps, mesh.c_str());
         else push_field(L, display, "Mesh");
@@ -529,6 +548,51 @@ StrategicIconRenderer::collect(const sim::FrameView& view,
     return runs;
 }
 
+UIInstance StrategicIconRenderer::square_quad(f32 x, f32 y, f32 size, f32 r, f32 g, f32 b) {
+    const f32 half = size * 0.5f;
+    UIInstance inst{};
+    inst.rect[0] = x - half;
+    inst.rect[1] = y - half;
+    inst.rect[2] = half * 2.0f;
+    inst.rect[3] = half * 2.0f;
+    inst.uv[2] = 1.0f;
+    inst.uv[3] = 1.0f;
+    inst.color[0] = r;
+    inst.color[1] = g;
+    inst.color[2] = b;
+    inst.color[3] = 1.0f;
+    return inst;
+}
+
+template <class Place, class Emit>
+void StrategicIconRenderer::projectile_squares(const sim::FrameView& view, lua_State* L,
+                                               Place&& place, Emit&& emit) {
+    for (const sim::EntityRecord& entity : view.entities()) {
+        if (!entity.is_projectile || entity.army < 0) {
+            continue;
+        }
+        if (recon_ && !shows_icon(recon_->sight(entity))) {
+            continue;
+        }
+        const IconBlueprint& bp = icon_blueprint(entity.blueprint_id, L);
+        if (!bp.projectile || !bp.rest.empty()) {
+            continue;
+        }
+        f32 sx = 0;
+        f32 sy = 0;
+        if (!place(view.position(entity), sx, sy)) {
+            continue;
+        }
+        f32 r = 1.0f;
+        f32 g = 1.0f;
+        f32 b = 0.0f;
+        if (!weapons_yellow_) {
+            get_army_color(entity, view, r, g, b);
+        }
+        emit(square_quad(std::floor(sx), std::floor(sy), bp.icon_size, r, g, b));
+    }
+}
+
 template <class Emit>
 void StrategicIconRenderer::emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit) {
     // The underlay at its own colour, the base icon tinted over it, the
@@ -560,22 +624,37 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
 
     const f32 cam_dist = camera.eye_distance();
     strategic_zoom_active_ = cam_dist >= ZOOM_THRESHOLD;
-    if (!nis_icons_) return strategic_zoom_active_; // a NIS draws none
     const f32 sw = static_cast<f32>(viewport_w);
     const f32 sh = static_cast<f32>(viewport_h);
-    // An icon fades in with the camera out past its mesh's IconFadeInZoom
-    // (no further than 0.89 of the farthest zoom, as Moho caps it).
-    const f32 fade_cap = camera.max_zoom() * 0.89f;
-
-    const Runs runs =
-        collect(view, selected_ids, tex_cache, L, !always_, cam_dist, fade_cap,
-                [&](const sim::Vector3& pos, f32& sx, f32& sy) {
-                    return world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy) &&
-                           sx >= -32.0f && sx <= sw + 32.0f && sy >= -32.0f && sy <= sh + 32.0f;
-                });
-    emit_runs(runs, tex_cache,
-              [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
-                  f32 b) { emit_icon(x, y, path, tex, r, g, b); });
+    const auto place = [&](const sim::Vector3& pos, f32& sx, f32& sy) {
+        return world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy) && sx >= -32.0f &&
+               sx <= sw + 32.0f && sy >= -32.0f && sy <= sh + 32.0f;
+    };
+    if (nis_icons_) {
+        // An icon fades in with the camera out past its mesh's IconFadeInZoom
+        // (no further than 0.89 of the farthest zoom, as Moho caps it).
+        const f32 fade_cap = camera.max_zoom() * 0.89f;
+        const Runs runs =
+            collect(view, selected_ids, tex_cache, L, !always_, cam_dist, fade_cap, place);
+        emit_runs(runs, tex_cache,
+                  [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
+                      f32 b) { emit_icon(x, y, path, tex, r, g, b); });
+    }
+    if (camera.zoom() >= kStrategicProjectileLod) {
+        VkDescriptorSet white = tex_cache.fallback_descriptor();
+        projectile_squares(view, L, place, [&](const UIInstance& inst) {
+            if (quad_count_ >= MAX_ICON_QUADS) {
+                return;
+            }
+            quads_.push_back(inst);
+            quad_textures_.emplace_back();
+            if (groups_.empty() || groups_.back().ds != white) {
+                groups_.push_back({white, quad_count_, 0});
+            }
+            ++groups_.back().count;
+            ++quad_count_;
+        });
+    }
 
     // Upload to GPU
     if (!quads_.empty() && instance_mapped_[fi_]) {
@@ -590,24 +669,30 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
                                       TextureCache& tex_cache, lua_State* L,
                                       std::vector<UIQuad>& out) {
     load_generic_icons(L);
-    if (!nis_icons_ || map_w <= 0.0f || map_h <= 0.0f) {
+    if (map_w <= 0.0f || map_h <= 0.0f) {
         return;
     }
-    const Runs runs = collect(view, selected_ids, tex_cache, L, false, 0.0f, 0.0f,
-                              [&](const sim::Vector3& pos, f32& sx, f32& sy) {
-                                  const f32 nx = pos.x / map_w;
-                                  const f32 nz = pos.z / map_h;
-                                  sx = area.x + nx * area.w;
-                                  sy = area.y + nz * area.h;
-                                  return nx >= 0.0f && nx <= 1.0f && nz >= 0.0f && nz <= 1.0f;
-                              });
-    emit_runs(runs, tex_cache,
-              [&](f32 x, f32 y, const std::string&, const GPUTexture& tex, f32 r, f32 g, f32 b) {
-                  UIQuad q{};
-                  q.inst = icon_quad(x, y, tex, r, g, b);
-                  q.texture_ds = tex.descriptor_set;
-                  out.push_back(q);
-              });
+    const auto place = [&](const sim::Vector3& pos, f32& sx, f32& sy) {
+        const f32 nx = pos.x / map_w;
+        const f32 nz = pos.z / map_h;
+        sx = area.x + nx * area.w;
+        sy = area.y + nz * area.h;
+        return nx >= 0.0f && nx <= 1.0f && nz >= 0.0f && nz <= 1.0f;
+    };
+    if (nis_icons_) {
+        const Runs runs = collect(view, selected_ids, tex_cache, L, false, 0.0f, 0.0f, place);
+        emit_runs(
+            runs, tex_cache,
+            [&](f32 x, f32 y, const std::string&, const GPUTexture& tex, f32 r, f32 g, f32 b) {
+                UIQuad q{};
+                q.inst = icon_quad(x, y, tex, r, g, b);
+                q.texture_ds = tex.descriptor_set;
+                out.push_back(q);
+            });
+    }
+    projectile_squares(view, L, place, [&](const UIInstance& inst) {
+        out.push_back({inst, tex_cache.fallback_descriptor()});
+    });
 }
 
 void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,

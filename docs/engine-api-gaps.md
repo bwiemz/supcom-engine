@@ -44,7 +44,6 @@ How to read it:
 | `PrefersPrimaryWeaponTarget` makes a weapon take the primary's target when it can hit it; `StopOnPrimaryWeaponBusy` makes one drop its target while the primary has one. The engine targets each weapon alone | A unit's other weapons don't share its primary's target: 73 weapons on 36 units (ships, gunships, ASF, Fatboy, Monkeylord); Janus and Notha keep firing their second weapon | faf-re `CAcquireTargetTask`; engine `weapon.cpp` | Open |
 | `RaisedPlatforms` raises land units on a factory's deck to its platform quads in retail; the engine snaps them to terrain or water | Units on a factory's deck, new ones rolling off among them, stay at ground level inside the deck (25 retail factories and gates) | faf-re `CUnitMotion` (ground snap); engine `Unit::ground_y` | Open |
 | `CameraFollowsProjectile`, `CameraFollowTimeout`: retail moves a camera tracking a unit onto such a shot for the timeout | With the camera tracking a unit, its nukes, missiles, shells and bombs (90 retail projectiles) don't take the camera along | faf-re `Projectile.cpp` (constructor), `CameraImpl`; engine: no reader | Open |
-| Projectile `StrategicIconSize`: retail draws a projectile without an icon name as a square in its army's colour in the strategic view; the engine draws no projectiles there | The strategic view shows no projectiles (106 retail projectiles set the size) | faf-re `CWldSession` (strategic icons); engine `strategic_icon_renderer.cpp` | Open |
 
 ## Categories
 
@@ -96,6 +95,7 @@ How to read it:
 | `SHOWQUEUE`: `SetCurrentFactoryForQueueDisplay` shows the queue only of a unit with the category, and gives `nil` for an empty one | [#555](https://github.com/bwiemz/supcom-engine/pull/555) |
 | `RequestRefreshUI()` on a selected unit reports the selection to `OnSelectionChanged` again (enhancements, adjacency, transport loads) | [#556](https://github.com/bwiemz/supcom-engine/pull/556) |
 | `Prop:AddBoundedProp(priority)` caps wrecks at 1000, destroying the cheapest, oldest one | [#560](https://github.com/bwiemz/supcom-engine/pull/560) |
+| Projectile `StrategicIconSize`: a projectile without an icon name is a square in the strategic view (yellow, as retail's `UI_forceWeaponsToYellow` defaults) | [#561](https://github.com/bwiemz/supcom-engine/pull/561) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

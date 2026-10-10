@@ -344,6 +344,8 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
     // What a campaign's NIS turns off and on again (gamemain.NISMode)
     renderer_bool("ui_RenderUnitBars", true, &Renderer::unit_bars, &Renderer::set_unit_bars);
     renderer_bool("ui_NisRenderIcons", true, &Renderer::nis_icons, &Renderer::set_nis_icons);
+    renderer_bool("UI_forceWeaponsToYellow", true, &Renderer::weapons_yellow,
+                  &Renderer::set_weapons_yellow);
     renderer_bool("ren_SelectBoxes", true, &Renderer::select_boxes, &Renderer::set_select_boxes);
     renderer_bool("ren_bloom", true, &Renderer::bloom_enabled, &Renderer::set_bloom_enabled);
     // ren_ShadowBlur: the High lane's five-tap shadows at shadow fidelity 3

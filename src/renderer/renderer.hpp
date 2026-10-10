@@ -276,6 +276,8 @@ public:
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
+    void set_weapons_yellow(bool on) { strategic_icon_renderer_.set_weapons_yellow(on); }
+    bool weapons_yellow() const { return strategic_icon_renderer_.weapons_yellow(); }
     void set_select_boxes(bool on) {
         overlay_renderer_.set_select_boxes(on);
         selection_renderer_.set_enabled(on);

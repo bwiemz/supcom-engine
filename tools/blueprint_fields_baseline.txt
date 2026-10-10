@@ -33,6 +33,5 @@ StandUpright
 StayUpright
 StopOnPrimaryWeaponBusy
 StraddleWater
-StrategicIconSize
 WobbleFactor
 WobbleSpeed

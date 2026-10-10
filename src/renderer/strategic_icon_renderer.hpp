@@ -104,10 +104,15 @@ public:
     /// all, as a campaign's NIS turns them off.
     void set_nis_icons(bool on) { nis_icons_ = on; }
     bool nis_icons() const { return nis_icons_; }
+    /// UI_forceWeaponsToYellow
+    void set_weapons_yellow(bool on) { weapons_yellow_ = on; }
+    bool weapons_yellow() const { return weapons_yellow_; }
     VkDescriptorSet atlas_descriptor() const { return atlas_ds_; }
 
     /// Camera distance past which meshes give way to icons altogether.
     static constexpr f32 ZOOM_THRESHOLD = 250.0f;
+    /// UI_StrategicProjectileLOD
+    static constexpr f32 kStrategicProjectileLod = 128.0f;
     /// Where FA's strategic icon textures live (REntityBlueprint).
     static constexpr const char* kIconDirectory = "/textures/ui/common/game/strategicicons/";
     static constexpr u32 MAX_ICON_QUADS = 4096;
@@ -153,6 +158,10 @@ private:
                  TextureCache& tex_cache, lua_State* L, bool fade, f32 cam_dist, f32 fade_cap,
                  Place&& place);
     template <class Emit> void emit_runs(const Runs& runs, TextureCache& tex_cache, Emit&& emit);
+    /// CWldSession::RenderProjectileIcons' squares
+    template <class Place, class Emit>
+    void projectile_squares(const sim::FrameView& view, lua_State* L, Place&& place, Emit&& emit);
+    static UIInstance square_quad(f32 x, f32 y, f32 size, f32 r, f32 g, f32 b);
 
     /// What a blueprint's icon draws with (Moho's REntityBlueprint fields).
     struct IconBlueprint {
@@ -160,6 +169,8 @@ private:
         u8 sort_priority = 0;       ///< StrategicIconSortPriority, a byte
         bool can_fly = false;       ///< Air.CanFly: the air run
         f32 fade_in_zoom = 0;       ///< its mesh's IconFadeInZoom
+        bool projectile = false;    ///< in category PROJECTILE
+        f32 icon_size = 1.0f;       ///< Display.StrategicIconSize
     };
     const IconBlueprint& icon_blueprint(const std::string& id, lua_State* L);
     /// An underlay's texture (Unit:SetStrategicUnderlay's name, as a
@@ -195,6 +206,7 @@ private:
     VkDescriptorSet atlas_ds_ = VK_NULL_HANDLE;
     bool strategic_zoom_active_ = false;
     bool nis_icons_ = true;
+    bool weapons_yellow_ = true;
     bool always_ = false;
     const ReconView* recon_ = nullptr;
 };
