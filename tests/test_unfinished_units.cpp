@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "blueprints/blueprint_store.hpp"
@@ -15,9 +16,11 @@
 #include "sim/unit_command.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -52,6 +55,30 @@ Unit* walker(SimState& sim, osc::f32 x, osc::f32 z) {
     auto* raw = u.get();
     sim.entity_registry().register_entity(std::move(u));
     return raw;
+}
+
+Unit* unfinished(SimState& sim, lua_State* L, osc::f32 health) {
+    const char* code = "__blueprints = {shed = {Economy = {BuildTime = 10, BuildCostMass = 5,"
+                       " BuildCostEnergy = 20}}}"
+                       " decayed = 0"
+                       " return {OnDecayed = function(self) decayed = decayed + 1 end}";
+    REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "shed") == 0);
+    REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+    Unit* u = walker(sim, 10.0f, 10.0f);
+    u->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    u->set_unit_id("shed");
+    u->set_is_being_built(true);
+    u->set_health(health);
+    u->set_fraction_complete(health / u->max_health());
+    u->set_creation_tick(sim.tick_count());
+    return u;
+}
+
+int decayed(lua_State* L) {
+    lua_getglobal(L, "decayed");
+    const int n = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return n;
 }
 
 osc::sim::UnitCommand move_to(osc::f32 x, osc::f32 z) {
@@ -102,6 +129,44 @@ TEST_CASE("A unit being built doesn't regenerate", "[sim]") {
     u->set_is_being_built(false);
     sim.tick();
     CHECK(u->health() > 50.0f);
+}
+
+TEST_CASE("An unfinished unit no one builds decays from its second tick to OnDecayed",
+          "[sim][build]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* u = unfinished(sim, g.L, 0.8f);
+    sim.tick();
+    CHECK(u->health() == 0.8f);
+    sim.tick();
+    CHECK(u->health() == Catch::Approx(0.3f));
+    CHECK(u->fraction_complete() == Catch::Approx(0.003f));
+    CHECK(decayed(g.L) == 0);
+    sim.tick();
+    CHECK(u->health() == 0.0f);
+    CHECK(decayed(g.L) == 1);
+}
+
+TEST_CASE("A builder on an unfinished unit keeps it from decaying, paused too", "[sim][build]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* u = unfinished(sim, g.L, 50.0f);
+    Unit* builder = walker(sim, 12.0f, 10.0f);
+    builder->set_build_target_id(u->entity_id());
+    builder->set_paused(true);
+    for (int i = 0; i < 10; ++i) {
+        sim.tick();
+    }
+    CHECK(u->health() == 50.0f);
+    builder->set_build_target_id(0);
+    sim.tick();
+    CHECK(u->health() == 50.0f);
+    sim.tick();
+    CHECK(u->health() < 50.0f);
 }
 
 TEST_CASE("A unit being built holds its orders until it is finished", "[sim][orders]") {

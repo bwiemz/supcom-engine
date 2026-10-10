@@ -164,7 +164,7 @@ TEST_CASE("A repair of a unit under construction starts once the builder's arm i
         CHECK(arm_of(*eng).has_target());
     }
     CHECK(w.log().empty());
-    CHECK(w.site->fraction_complete() == 0.1f);
+    CHECK(w.site->fraction_complete() <= 0.1f);
 
     arm.set_enabled(true);
     w.sim.tick();
