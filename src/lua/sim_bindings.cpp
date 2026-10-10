@@ -5430,6 +5430,37 @@ static u32 route_units_command(lua_State* L, int table_idx, const sim::UnitComma
     return ids.empty() ? 0 : sim->route_command(ids, cmd, clear);
 }
 
+// Moho's func_Validate_IssueCommand; factories_only is IssueFactoryAssist's filter.
+static std::vector<u32> units_with_command_cap(lua_State* L, const std::string& cap,
+                                               bool factories_only = false) {
+    auto* sim = get_sim(L);
+    auto ids = collect_unit_ids(L, 1);
+    const bool movement = cap == "RULEUCC_Move" || cap == "RULEUCC_Guard" ||
+                          cap == "RULEUCC_Patrol" || cap == "RULEUCC_Ferry";
+    std::erase_if(ids, [&](u32 id) {
+        const sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
+        if (!e || !e->is_unit()) {
+            return true;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(*e);
+        if (!unit.has_command_cap(cap)) {
+            return true;
+        }
+        if (factories_only) {
+            return !unit.has_category("FACTORY");
+        }
+        return movement && unit.keeps_rally_orders();
+    });
+    return ids;
+}
+
+static u32 route_capable_command(lua_State* L, const std::string& cap, const sim::UnitCommand& cmd,
+                                 bool factories_only = false) {
+    auto* sim = get_sim(L);
+    const auto ids = units_with_command_cap(L, cap, factories_only);
+    return !sim || ids.empty() ? 0 : sim->route_command(ids, cmd, false);
+}
+
 /// What an Issue* returns: the command its units took (its id, the handle
 /// IsCommandDone and platoon:IsCommandsActive take), or nil when none took
 /// it -- as Moho returns the issued CUnitCommand's object, or nil.
@@ -5481,7 +5512,7 @@ static int l_IssueMove(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
 // IssueAggressiveMove(units_table, position): an attack-move.
@@ -5489,7 +5520,7 @@ static int l_IssueAggressiveMove(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::AggressiveMove;
     cmd.target_pos = extract_position(L, 2);
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
 // IssueFormMove(units, position, formation, degrees) and
@@ -5505,7 +5536,7 @@ static int form_order(lua_State* L, sim::CommandType type) {
         cmd.has_facing = true;
         cmd.facing = static_cast<f32>(lua_tonumber(L, 4)) * 3.14159265358979f / 180.0f;
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 static int l_IssueFormMove(lua_State* L) {
     return form_order(L, sim::CommandType::Move);
@@ -5600,13 +5631,7 @@ static int l_IssueAttack(lua_State* L) {
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
-    auto ids = collect_unit_ids(L, 1);
-    std::erase_if(ids, [&](u32 id) {
-        const sim::Entity* e = sim->entity_registry().find(id);
-        return !e || !e->is_unit() ||
-               !static_cast<const sim::Unit*>(e)->has_command_cap("RULEUCC_Attack");
-    });
-    return push_command_handle(L, ids.empty() ? 0 : sim->route_command(ids, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Attack", cmd));
 }
 
 // IssueGuard(units_table, target_entity)
@@ -5626,10 +5651,20 @@ static int l_IssueGuard(lua_State* L) {
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Guard", cmd));
 }
 
-static int l_IssueFactoryAssist(lua_State* L) { return l_IssueGuard(L); }
+static int l_IssueFactoryAssist(lua_State* L) {
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed() || !target->is_unit()) {
+        return 0;
+    }
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Guard;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Guard", cmd, true));
+}
 
 // IssueRepair(units_table, target_entity)
 static int l_IssueRepair(lua_State* L) {
@@ -5643,7 +5678,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Repair", cmd));
 }
 
 // IssueCapture(units_table, target)
@@ -5658,7 +5693,7 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Capture", cmd));
 }
 
 static int l_IssueDive(lua_State* L) {
@@ -5981,7 +6016,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
 // IssueFactoryRallyPoint(units_table, position): a Move, after their other
@@ -5998,7 +6033,9 @@ static int l_IssueFactoryRallyPoint(lua_State* L) {
         L, 1,
         [](sim::Unit* u, void* c) {
             auto& r = *static_cast<Rally*>(c);
-            if (!u->keeps_rally_orders()) return;
+            if (!u->keeps_rally_orders() || !u->has_command_cap("RULEUCC_Move")) {
+                return;
+            }
             // One command id for them all, taken only if a factory gets it.
             if (r.move.command_id == 0 && r.sim) r.move.command_id = r.sim->next_command_id();
             u->add_rally_order(r.move);
@@ -6028,7 +6065,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Reclaim", cmd));
 }
 
 // CreateProp(position, blueprint_path) -> prop Lua table
@@ -6278,7 +6315,7 @@ static int l_IssuePatrol(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Patrol;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Patrol", cmd));
 }
 
 // Stub for unimplemented order types — just does nothing
@@ -6311,7 +6348,7 @@ static int l_IssueTransportUnload(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = target_pos;
 
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Transport", cmd));
 }
 
 // IssueTransportUnloadSpecific(transports, category, position): the
@@ -6336,7 +6373,7 @@ static int l_IssueTransportUnloadSpecific(lua_State* L) {
         }
     }
     if (cmd.unload_ids.empty()) return 0;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Transport", cmd));
 }
 
 // IssueNuke(units_table, position): launch a nuke at the position. Like
@@ -6346,7 +6383,7 @@ static int l_IssueNuke(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Nuke;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Nuke", cmd));
 }
 
 // IssueTactical(units_table, target): launch a tactical missile at a unit or
@@ -6363,7 +6400,7 @@ static int l_IssueTactical(lua_State* L) {
     } else {
         cmd.target_pos = extract_position(L, 2);
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Tactical", cmd));
 }
 
 // IssueSiloBuildNuke(units) / IssueSiloBuildTactical(units): one missile
@@ -6389,7 +6426,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Overcharge", cmd));
 }
 
 // IssueSacrifice(units_table, target_entity) — sacrifice unit to build target
@@ -6401,7 +6438,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Sacrifice", cmd));
 }
 
 // IssueTeleport(units_table, location) — teleport to position
@@ -6410,7 +6447,7 @@ static int l_IssueTeleport(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Teleport;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Teleport", cmd));
 }
 
 // CreateVisibleAreaAtPoint(army, x, y, z, radius, lifetime) — temporary vision (scrying)
@@ -6459,7 +6496,7 @@ static int l_IssueFerry(lua_State* L) {
     cmd.type = sim::CommandType::Ferry;
     cmd.target_pos = target_pos;
     // Ferry appends like Patrol, doesn't clear
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Ferry", cmd));
 }
 
 // ====================================================================

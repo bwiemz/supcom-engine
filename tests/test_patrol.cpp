@@ -28,6 +28,7 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -1072,4 +1073,116 @@ TEST_CASE("IssueAttack goes only to units with the Attack command", "[attack][lu
     CHECK(eng->command_queue().empty());
     REQUIRE(tank->command_queue().size() == 1);
     CHECK(tank->command_queue().front().target_id == enemy->entity_id());
+}
+
+TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {
+    struct Row {
+        const char* issue;
+        const char* cap;
+    };
+    const std::vector<Row> rows = {
+        {"function(u) return IssueMove(u, {20, 0, 20}) end", "RULEUCC_Move"},
+        {"function(u) return IssueMoveOffFactory(u, {20, 0, 20}) end", "RULEUCC_Move"},
+        {"function(u) return IssueAggressiveMove(u, {20, 0, 20}) end", "RULEUCC_Move"},
+        {"function(u) return IssueFormMove(u, {20, 0, 20}, 'NoFormation', 0) end", "RULEUCC_Move"},
+        {"function(u) return IssueFormAggressiveMove(u, {20, 0, 20}, 'NoFormation', 0) end",
+         "RULEUCC_Move"},
+        {"function(u) return IssuePatrol(u, {20, 0, 20}) end", "RULEUCC_Patrol"},
+        {"function(u) return IssueFormPatrol(u, {20, 0, 20}, 'NoFormation', 0) end",
+         "RULEUCC_Patrol"},
+        {"function(u) return IssueGuard(u, friend) end", "RULEUCC_Guard"},
+        {"function(u) return IssueAttack(u, enemy) end", "RULEUCC_Attack"},
+        {"function(u) return IssueFormAttack(u, enemy, 'NoFormation', 0) end", "RULEUCC_Attack"},
+        {"function(u) return IssueRepair(u, friend) end", "RULEUCC_Repair"},
+        {"function(u) return IssueCapture(u, enemy) end", "RULEUCC_Capture"},
+        {"function(u) return IssueReclaim(u, rock) end", "RULEUCC_Reclaim"},
+        {"function(u) return IssueSacrifice(u, friend) end", "RULEUCC_Sacrifice"},
+        {"function(u) return IssueOverCharge(u, enemy) end", "RULEUCC_Overcharge"},
+        {"function(u) return IssueNuke(u, {20, 0, 20}) end", "RULEUCC_Nuke"},
+        {"function(u) return IssueTactical(u, {20, 0, 20}) end", "RULEUCC_Tactical"},
+        {"function(u) return IssueTeleport(u, {20, 0, 20}) end", "RULEUCC_Teleport"},
+        {"function(u) return IssueFerry(u, {20, 0, 20}) end", "RULEUCC_Ferry"},
+        {"function(u) return IssueTransportUnload(u, {20, 0, 20}) end", "RULEUCC_Transport"},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.issue) {
+            osc::lua::LuaState lua;
+            SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            osc::lua::register_sim_bindings(lua, sim);
+            two_armies(sim);
+            Unit* without = still(sim, 0, 10.0f, 10.0f);
+            without->set_motion_type("RULEUMT_Land");
+            Unit* with = still(sim, 0, 12.0f, 10.0f);
+            with->set_motion_type("RULEUMT_Land");
+            with->add_command_cap(row.cap);
+            lua_State* L = lua.raw();
+            const auto global = [&](const char* name, osc::sim::Entity* e) {
+                lua_newtable(L);
+                lua_pushstring(L, "_c_object");
+                lua_pushlightuserdata(L, e);
+                lua_rawset(L, -3);
+                lua_setglobal(L, name);
+            };
+            global("without", without);
+            global("with", with);
+            global("friend", still(sim, 0, 14.0f, 10.0f));
+            global("enemy", still(sim, 1, 40.0f, 10.0f));
+            global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
+            const auto r = lua.do_string(std::string("local issue = ") + row.issue + R"(
+                if issue({without}) ~= nil then error('a unit without the command took it') end
+                if issue({with}) == nil then error('a unit with the command did not take it') end
+            )");
+            if (!r) {
+                FAIL(r.error().message);
+            }
+            CHECK(without->command_queue().empty());
+            CHECK_FALSE(with->command_queue().empty());
+        }
+    }
+}
+
+TEST_CASE(
+    "A factory that can't move takes no Move, Patrol or Guard, and alone takes IssueFactoryAssist",
+    "[lua][factory]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    two_armies(sim);
+    Unit* factory = still(sim, 0, 10.0f, 10.0f);
+    Unit* other = still(sim, 0, 20.0f, 10.0f);
+    for (Unit* u : {factory, other}) {
+        u->add_category("FACTORY");
+        u->add_command_cap("RULEUCC_Move");
+        u->add_command_cap("RULEUCC_Patrol");
+        u->add_command_cap("RULEUCC_Guard");
+    }
+    Unit* eng = still(sim, 0, 14.0f, 10.0f);
+    eng->set_motion_type("RULEUMT_Land");
+    eng->add_command_cap("RULEUCC_Guard");
+    lua_State* L = lua.raw();
+    const auto global = [&](const char* name, const Unit* u) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, static_cast<osc::sim::Entity*>(const_cast<Unit*>(u)));
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    global("factory", factory);
+    global("other", other);
+    global("eng", eng);
+    const auto r = lua.do_string(R"(
+        if IssueMove({factory}, {30, 0, 30}) ~= nil then error('move') end
+        if IssuePatrol({factory}, {30, 0, 30}) ~= nil then error('patrol') end
+        if IssueGuard({factory}, other) ~= nil then error('guard') end
+        if IssueFactoryAssist({eng}, other) ~= nil then error('engineer assist') end
+        if IssueFactoryAssist({factory, eng}, other) == nil then error('factory assist') end
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
+    REQUIRE(factory->command_queue().size() == 1);
+    CHECK(factory->command_queue().front().type == CommandType::Guard);
+    CHECK(eng->command_queue().empty());
 }

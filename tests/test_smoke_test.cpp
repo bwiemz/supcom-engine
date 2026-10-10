@@ -498,13 +498,14 @@ osc::sim::Unit* find_unit(const BuildRuleHarness& h, const std::string& bp) {
 TEST_CASE("A factory's rally orders are apart from its build orders", "[session][rules]") {
     BuildRuleHarness h;
     REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
-                              "local tank = CreateUnit('test_tank', 1, 20, 0, 0)\n"
-                              "IssueBuildFactory({factory}, 'test_tank', 2)\n"
-                              "IssueFactoryRallyPoint({factory, tank}, {50, 0, 60})\n"));
+                              "tank = CreateUnit('test_tank', 1, 20, 0, 0)\n"));
     osc::sim::Unit* f = find_factory(h);
     osc::sim::Unit* tank = find_unit(h, "test_tank");
     REQUIRE(f);
     REQUIRE(tank);
+    f->add_command_cap("RULEUCC_Move");
+    REQUIRE(h.state.do_string("IssueBuildFactory({factory}, 'test_tank', 2)\n"
+                              "IssueFactoryRallyPoint({factory, tank}, {50, 0, 60})\n"));
     REQUIRE(f->rally_orders().size() == 2); // after its initial rally, as Moho's appends
     const auto& rally = f->rally_orders().back();
     CHECK(rally.type == osc::sim::CommandType::Move);
@@ -522,11 +523,12 @@ TEST_CASE("A factory's rally orders are apart from its build orders", "[session]
 
 TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[session][rules]") {
     BuildRuleHarness h;
-    REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
-                              "IssueFactoryRallyPoint({factory}, {50, 0, 60})\n"
-                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"));
     osc::sim::Unit* f = find_factory(h);
     REQUIRE(f);
+    f->add_command_cap("RULEUCC_Move");
+    REQUIRE(h.state.do_string("IssueFactoryRallyPoint({factory}, {50, 0, 60})\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
     // Then a guard order, which never ends: without a pathfinder here, a
     // move is done the tick it starts.
     osc::sim::UnitCommand guard;
