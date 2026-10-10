@@ -3206,11 +3206,10 @@ static lua::FactoryQueueDisplay* get_factory_queue(lua_State* L) {
 
 static int l_SetCurrentFactoryForQueueDisplay(lua_State* L) {
     auto* fq = get_factory_queue(L);
-    auto* unit = check_unit(L, 1);
-    if (fq && unit) {
-        fq->set_current(L, unit);
+    if (fq) {
+        fq->set_current(L, check_unit(L, 1));
     } else {
-        lua_newtable(L);
+        lua_pushnil(L);
     }
     return 1;
 }

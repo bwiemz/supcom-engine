@@ -18832,7 +18832,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         end
         SelectUnits({f})
         IssueBlueprintCommand('UNITCOMMAND_BuildFactory', 'uel0105', 3)
-        if table.getn(SetCurrentFactoryForQueueDisplay(f)) ~= 0 then
+        if SetCurrentFactoryForQueueDisplay(f) then
             error('queued before the sim ran')
         end
     )");
@@ -18887,6 +18887,34 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     play(1);
     sim_lua(R"(
+        local p = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]:GetPosition()
+        local drone = CreateUnitHPR('uea0001', 'ARMY_1', p[1] + 4, p[2], p[3], 0, 0, 0)
+        IssueBuildMobile({drone}, Vector(p[1] + 10, 0, p[3] - 10), 'ueb1101', {})
+        IssueBuildMobile({drone}, Vector(p[1] + 14, 0, p[3] - 10), 'ueb1101', {})
+    )");
+    play(1);
+    {
+        const auto* drone = army1_unit("uea0001");
+        lua_pushstring(L, "__osc_test_drone_id");
+        lua_pushnumber(L, drone ? drone->entity_id() : 0);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+        if (!drone || drone->factory_queue().empty()) {
+            osc::test_status::fail("[FAIL] Test 10s5: the drone has no queued builds");
+        }
+    }
+    lua_ok("Test 10s5: a unit without SHOWQUEUE shows no queue", R"(
+        local drone = GetUnitById(__osc_test_drone_id)
+        if not drone then error('no drone') end
+        local q = SetCurrentFactoryForQueueDisplay(drone)
+        if q then error(table.getn(q) .. ' groups') end
+    )");
+    sim_lua(R"(
+        for _, u in ArmyBrains[1]:GetListOfUnits(categories.uea0001, false) do
+            u:Destroy()
+        end
+    )");
+    play(1);
+    sim_lua(R"(
         for _, u in ArmyBrains[1]:GetListOfUnits(categories.STRUCTURE, false) do
             if u:IsBeingBuilt() then u:Destroy() end
         end
@@ -18894,7 +18922,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(1);
     lua_ok("Test 10t: stopped; an enhancement for the commander", R"(
         local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
-        if table.getn(q) ~= 0 then error(table.getn(q) .. ' entries after Stop') end
+        if q then error(table.getn(q) .. ' entries after Stop') end
         SelectUnits(GetArmyAvatars())
         IssueCommand('UNITCOMMAND_Script', {TaskName = 'EnhanceTask', Enhancement = 'AdvancedEngineering'}, true)
     )");
