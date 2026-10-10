@@ -392,10 +392,10 @@ static int brain_GetListOfUnits(lua_State* L) {
         }
     }
     bool has_category = (cat_idx > 0);
-    // needBuilt / needIdle is the first boolean AFTER the category.
-    // If no category found, don't assume any filtering.
-    int built_idx = has_category ? cat_idx + 1 : -1;
-    bool need_built = (built_idx > 0) && lua_toboolean(L, built_idx) != 0;
+    // (category, needToBeIdle[, requireBuilt = true]), faf-re cfunc_CAiBrainGetListOfUnitsL.
+    const bool need_idle = has_category && lua_toboolean(L, cat_idx + 1) != 0;
+    const bool need_built =
+        has_category && (top < cat_idx + 2 || lua_toboolean(L, cat_idx + 2) != 0);
 
     auto entities = brain->get_units(sim->entity_registry());
     const std::optional<osc::lua::CategoryMatcher> category =
@@ -410,6 +410,9 @@ static int brain_GetListOfUnits(lua_State* L) {
         if (!entity->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(entity);
         if (need_built && unit->is_being_built()) continue;
+        if (need_idle && !unit->command_queue().empty()) {
+            continue;
+        }
         if (category && !category->matches(unit->category_bits())) continue;
 
         lua_pushnumber(L, idx++);

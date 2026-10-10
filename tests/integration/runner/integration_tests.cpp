@@ -598,7 +598,7 @@ void test_ai(TestContext& ctx) {
             local catEng = ParseEntityCategory('TECH1 ENGINEER')
 
             -- Find our ACU
-            local units = brain:GetListOfUnits(catCmd, true)
+            local units = brain:GetListOfUnits(catCmd, false)
             if not units or not units[1] then
                 LOG('AI thread: no ACU found')
                 return
@@ -625,7 +625,7 @@ void test_ai(TestContext& ctx) {
             while not acu:IsIdleState() do WaitTicks(10) end
 
             -- Phase 3: Queue 3 engineers from factory (continuous production)
-            local facs = brain:GetListOfUnits(catFac, true)
+            local facs = brain:GetListOfUnits(catFac, false)
             if facs and facs[1] then
                 brain:BuildUnit(facs[1], 'uel0105')
                 brain:BuildUnit(facs[1], 'uel0105')
@@ -636,7 +636,7 @@ void test_ai(TestContext& ctx) {
             -- Phase 4: Wait for first engineer to complete
             for i = 1, 100 do
                 WaitTicks(10)
-                local engs = brain:GetListOfUnits(catEng, true)
+                local engs = brain:GetListOfUnits(catEng, false)
                 if engs and engs[1] and not engs[1]:IsUnitState('BeingBuilt') then
                     LOG('AI thread: first engineer ready')
 
@@ -661,7 +661,7 @@ void test_ai(TestContext& ctx) {
             local guards = acu:GetGuards()
             LOG('AI thread: ACU has ' .. table.getn(guards) .. ' guards')
 
-            local engs = brain:GetListOfUnits(catEng, true)
+            local engs = brain:GetListOfUnits(catEng, false)
             if engs and engs[1] then
                 local guarded = engs[1]:GetGuardedUnit()
                 if guarded then
@@ -850,8 +850,8 @@ void test_threat(TestContext& ctx) {
 
             -- Find ARMY_1 ACU and ARMY_2 ACU
             local catCmd = ParseEntityCategory('COMMAND')
-            local units1 = brain1:GetListOfUnits(catCmd, true)
-            local units2 = brain2:GetListOfUnits(catCmd, true)
+            local units1 = brain1:GetListOfUnits(catCmd, false)
+            local units2 = brain2:GetListOfUnits(catCmd, false)
             if not units1 or not units1[1] or not units2 or not units2[1] then
                 LOG('THREAT TEST FAILED: no ACUs found')
                 return
@@ -1126,7 +1126,7 @@ void test_combat(TestContext& ctx) {
             local catLand = ParseEntityCategory('TECH1 MOBILE LAND DIRECTFIRE')
 
             -- Find ACU
-            local units = brain:GetListOfUnits(catCmd, true)
+            local units = brain:GetListOfUnits(catCmd, false)
             if not units or not units[1] then
                 LOG('COMBAT TEST FAILED: no ACU')
                 return
@@ -1149,7 +1149,7 @@ void test_combat(TestContext& ctx) {
             LOG('Combat test: factory built')
 
             -- Queue 4 assault bots (uel0201 = Mech Marine)
-            local facs = brain:GetListOfUnits(catFac, true)
+            local facs = brain:GetListOfUnits(catFac, false)
             if not facs or not facs[1] then
                 LOG('COMBAT TEST FAILED: no factory found')
                 return
@@ -1163,7 +1163,7 @@ void test_combat(TestContext& ctx) {
             local ready = 0
             for i = 1, 150 do
                 WaitTicks(10)
-                local bots = brain:GetListOfUnits(catLand, true)
+                local bots = brain:GetListOfUnits(catLand, false)
                 ready = 0
                 if bots then
                     for _, u in bots do
@@ -1220,7 +1220,7 @@ void test_combat(TestContext& ctx) {
 
             -- Assign ready bots to platoon
             local readyBots = {}
-            local bots = brain:GetListOfUnits(catLand, true)
+            local bots = brain:GetListOfUnits(catLand, false)
             if bots then
                 for _, u in bots do
                     if not u:IsUnitState('BeingBuilt') then
@@ -1318,7 +1318,7 @@ void test_platoon(TestContext& ctx) {
 
             -- Find ACU
             local catCmd = ParseEntityCategory('COMMAND')
-            local units = brain:GetListOfUnits(catCmd, true)
+            local units = brain:GetListOfUnits(catCmd, false)
             if not units or not units[1] then
                 LOG('PLATOON TEST FAILED: no ACU found')
                 return
