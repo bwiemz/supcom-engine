@@ -468,6 +468,40 @@ bool around_point(const sim::SimState& sim, i32 army, const sim::Unit& u,
     return known_to(sim, army, u);
 }
 
+std::pair<i32, i32> cell_span(i32 lo, i32 hi, i32 min_width) {
+    const i32 start = std::clamp(lo >> 2, 0, 0xFFFF);
+    return {start, start + std::max(std::min(((hi + 3) >> 2) - start, 0xFFFF - start), min_width)};
+}
+
+/// faf-re func_GetUnitsAroundPoint: units on the 4x4 collision cells under the
+/// square 2r about (x, z), as func_Rect2fToInt16 and func_AABoxToRect cut them.
+std::vector<const sim::Unit*> units_on_cells_around(const sim::SimState& sim, f32 x, f32 z, f32 r) {
+    const auto [qx0, qx1] = cell_span(static_cast<i32>(x - r), static_cast<i32>(x + r), 1);
+    const auto [qz0, qz1] = cell_span(static_cast<i32>(z - r), static_cast<i32>(z + r), 1);
+    std::vector<const sim::Unit*> out;
+    sim.entity_registry().any_unit_collider(
+        static_cast<f32>(qx0 * 4), static_cast<f32>(qz0 * 4), static_cast<f32>(qx1 * 4),
+        static_cast<f32>(qz1 * 4), [&](const sim::Entity& e) {
+            const auto box = sim::collision_bounds(e);
+            if (!box) {
+                return false;
+            }
+            const auto [ux0, ux1] = cell_span(static_cast<i32>(std::floor(box->first.x)),
+                                              static_cast<i32>(std::ceil(box->second.x)), 0);
+            const auto [uz0, uz1] = cell_span(static_cast<i32>(std::floor(box->first.z)),
+                                              static_cast<i32>(std::ceil(box->second.z)), 0);
+            if (ux0 < qx1 && qx0 < ux1 && uz0 < qz1 && qz0 < uz1) {
+                out.push_back(static_cast<const sim::Unit*>(&e));
+            }
+            return false;
+        });
+    std::sort(out.begin(), out.end(), [](const sim::Unit* a, const sim::Unit* b) {
+        return a->entity_id() < b->entity_id();
+    });
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 std::optional<Alliance> alliance_arg(lua_State* L, int i) {
     if (lua_type(L, i) != LUA_TSTRING) {
         return std::nullopt;
@@ -533,18 +567,12 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
 
     // Radius is first number after position
     int radius_arg = (pos_arg > 0) ? pos_arg + 1 : 4;
-    f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
-    if (radius <= 0) radius = 1.0f;
-
+    const f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
     const auto alliance = alliance_arg(L, radius_arg + 1);
-
-    // Collect units in radius
-    const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
 
     lua_newtable(L);
     int idx = 1;
-    for (auto* entity : units) {
-        auto* unit = static_cast<sim::Unit*>(entity);
+    for (const sim::Unit* unit : units_on_cells_around(*sim, px, pz, radius)) {
         if (!around_point(*sim, brain->index(), *unit, alliance)) {
             continue;
         }
@@ -1121,9 +1149,7 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
     }
 
     int radius_arg = (pos_arg > 0) ? pos_arg + 1 : 4;
-    f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
-    if (radius <= 0) radius = 1.0f;
-
+    const f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
     const auto alliance = alliance_arg(L, radius_arg + 1);
 
     const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
@@ -1131,6 +1157,12 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
     int count = 0;
     for (auto* entity : units) {
         auto* unit = static_cast<sim::Unit*>(entity);
+        // faf-re func_EntitiesAroundPoint: centres strictly within the radius.
+        const f32 dx = unit->position().x - px;
+        const f32 dz = unit->position().z - pz;
+        if (dx * dx + dz * dz >= radius * radius) {
+            continue;
+        }
         if (!around_point(*sim, brain->index(), *unit, alliance)) {
             continue;
         }
@@ -2422,28 +2454,14 @@ f32 dist_sq(const sim::Vector3& a, const sim::Vector3& b) {
     return dx * dx + dy * dy + dz * dz;
 }
 
-/// Moho's func_GetUnitsAroundPoint: the live units whose footprints reach
-/// the square `reach` about `at`, of `alliance` to the brain's army, known
-/// to it (its own, or one it holds a blip of), in `category`.
 std::vector<const sim::Unit*> units_around(const sim::SimState& sim, i32 army,
                                            const osc::lua::CategoryMatcher& category,
                                            const sim::Vector3& at, f32 reach, Alliance alliance) {
     std::vector<const sim::Unit*> out;
-    constexpr f32 kSlack = sim::EntityRegistry::COLLIDER_REACH;
-    for (const sim::Entity* e :
-         sim.entity_registry().units_in_radius(at.x, at.z, reach * 1.4143f + kSlack)) {
-        const auto& u = static_cast<const sim::Unit&>(*e);
-        if (u.destroyed() || u.is_dying()) continue;
-        const f32 hx = u.footprint_size_x() * 0.5f;
-        const f32 hz = u.footprint_size_z() * 0.5f;
-        const auto& p = u.position();
-        if (p.x + hx < at.x - reach || p.x - hx > at.x + reach || p.z + hz < at.z - reach ||
-            p.z - hz > at.z + reach)
-            continue;
-        if (alliance_with(sim, army, u.army()) != alliance || !known_to(sim, army, u)) {
-            continue;
+    for (const sim::Unit* u : units_on_cells_around(sim, at.x, at.z, reach)) {
+        if (around_point(sim, army, *u, alliance) && category.matches(u->category_bits())) {
+            out.push_back(u);
         }
-        if (category.matches(u.category_bits())) out.push_back(&u);
     }
     return out;
 }
