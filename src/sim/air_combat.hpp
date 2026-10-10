@@ -129,6 +129,18 @@ bool flies_winged_on_guard(const Unit& unit);
 void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
                    f32 dt);
 
+/// Moho's CUnitMotion target out of combat.
+struct AirMove {
+    Vector3 target{};
+    f32 elevation = 0.0f;
+    bool top_speed = false;
+    bool landing = false;
+};
+
+/// One tick of Moho's CalcMoveAir out of combat.
+void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Terrain* terrain,
+                  f32 dt);
+
 /// Moho's re-pick in CalcCirclingOrientation, once `tick` is past the
 /// state's timeout. In order, it draws:
 /// 1. the way round (only with CirclingDirChange);

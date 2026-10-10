@@ -404,6 +404,8 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.vec3(n.goal_);
     enum8(w, n.status_);
     w.b(n.speed_through_goal_);
+    w.vec3(n.air_hold_);
+    w.b(n.air_hold_set_);
     w.size(n.waypoints_.size());
     for (const Vector3& p : n.waypoints_) w.vec3(p);
     w.u64v(n.waypoint_index_);
@@ -438,6 +440,8 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.goal_ = r.vec3();
     n.status_ = enum8<Navigator::Status>(r);
     n.speed_through_goal_ = r.b();
+    n.air_hold_ = r.vec3();
+    n.air_hold_set_ = r.b();
     n.waypoints_.resize(r.size(12));
     for (Vector3& p : n.waypoints_) p = r.vec3();
     n.waypoint_index_ = static_cast<size_t>(r.u64v());
@@ -1267,6 +1271,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.lift_ground_);
     w.b(u.lift_ground_set_);
     w.u32v(u.lift_tick_);
+    w.vec3(u.air_velocity_);
     w.f32v(u.elevation_target_);
     w.b(u.fly_in_water_);
     enum8(w, u.vert_motion_);
@@ -1641,6 +1646,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.lift_ground_ = r.f32v();
     u.lift_ground_set_ = r.b();
     u.lift_tick_ = r.u32v();
+    u.air_velocity_ = r.vec3();
     u.elevation_target_ = r.f32v();
     u.fly_in_water_ = r.b();
     u.vert_motion_ = enum8<Unit::VertMotion>(r);

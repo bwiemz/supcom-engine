@@ -102,6 +102,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| `KMove`, `KMoveDamping`: an aircraft's level velocity answers KMove toward the lesser of its distance and its top speed against CalcAirMovementDampingFactor, so it brakes onto the centre of its goal's cell, and with no move to follow holds where its velocity would carry it in a second; it flies through at speed only with another move, attack, patrol or guard order queued (UpdateSpeedThroughStatus), and lands under the same controller | [#544](https://github.com/bwiemz/supcom-engine/pull/544) |
 | `KLift`, `KLiftDamping`, `LiftFactor`: an aircraft climbs under KLift over its transport load, against KLiftDamping, toward the highest ground ahead tracked at LiftFactor a second, and slows for ground rising more than LiftFactor | [#537](https://github.com/bwiemz/supcom-engine/pull/537) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |

@@ -51,6 +51,22 @@ enum class CommandType : u8 {
     AggressiveMove = 81,
 };
 
+/// Moho's CommandIsInstant: an order that takes no move of its own.
+inline bool instant_order(CommandType type) {
+    switch (type) {
+    case CommandType::Stop:
+    case CommandType::Dive:
+    case CommandType::BuildMobile:
+    case CommandType::Nuke:
+    case CommandType::Tactical:
+    case CommandType::Teleport:
+    case CommandType::Reclaim:
+    case CommandType::Capture:
+    case CommandType::Upgrade: return true;
+    default: return false;
+    }
+}
+
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
 enum class DockPhase : u8 {
     Reserve,  ///< asking the platform for a slot, heading for it meanwhile
