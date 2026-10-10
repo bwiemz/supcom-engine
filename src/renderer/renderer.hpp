@@ -18,6 +18,7 @@
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/resource_icon_renderer.hpp"
+#include "renderer/projectile_icon_renderer.hpp"
 #include "renderer/hud_renderer.hpp"
 #include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
@@ -273,6 +274,16 @@ public:
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
+    void set_weapons_yellow(bool on) { strategic_icon_renderer_.set_weapons_yellow(on); }
+    bool weapons_yellow() const { return strategic_icon_renderer_.weapons_yellow(); }
+    void set_projectile_icons(bool on) { strategic_icon_renderer_.set_projectile_icons(on); }
+    bool projectile_icons_on() const { return strategic_icon_renderer_.projectile_icons_on(); }
+    void set_projectile_glow(bool on) { strategic_icon_renderer_.set_projectile_glow(on); }
+    bool projectile_glow() const { return strategic_icon_renderer_.projectile_glow(); }
+    const std::vector<ProjectileIcon>& projectile_icons() const {
+        return strategic_icon_renderer_.projectile_icons();
+    }
+    f32 projectile_glow_time() const { return strategic_icon_renderer_.glow_time(); }
     void set_select_boxes(bool on) {
         overlay_renderer_.set_select_boxes(on);
         selection_renderer_.set_enabled(on);
@@ -721,6 +732,7 @@ private:
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
     ResourceIconRenderer resource_icon_renderer_;
+    ProjectileIconRenderer projectile_icon_renderer_;
     f32 resource_icon_time_ = 0.0f;
     VideoOptions video_options_;
     bool cursor_clipped_ = false;
