@@ -963,6 +963,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
+    w.size(u.raised_platforms_.size());
+    for (f32 v : u.raised_platforms_) {
+        w.f32v(v);
+    }
     for (const blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         w.u8v(fp->size_x);
         w.u8v(fp->size_z);
@@ -1322,6 +1326,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
+    u.raised_platforms_.resize(r.size(4));
+    for (f32& v : u.raised_platforms_) {
+        v = r.f32v();
+    }
     for (blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         fp->size_x = r.u8v();
         fp->size_z = r.u8v();

@@ -27,7 +27,6 @@ PlaceholderMeshName
 PositionY
 PrefersPrimaryWeaponTarget
 QuickSelectPriority
-RaisedPlatforms
 ReTargetOnMiss
 RepairRate
 RotationalVelocity

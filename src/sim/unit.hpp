@@ -830,6 +830,11 @@ public:
     /// The height it stands at on the ground at (x, z): the terrain, under
     /// the water too, for one that walks the seabed; else the surface.
     f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const;
+    /// Physics.RaisedPlatforms: quads of four (x, z, height) corners.
+    void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
+    /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
+    f32 raised_platform_height(f32 x, f32 z) const;
+    const Unit* raised_platform() const;
     /// Physics.LayerChangeOffsetHeight: how far above (+) or below (-) the
     /// water's surface the ground must lie for it to count as under water.
     f32 layer_change_offset() const { return layer_change_offset_; }
@@ -1513,6 +1518,7 @@ private:
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
+    std::vector<f32> raised_platforms_;
     blueprints::UnitFootprints footprints_;
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
