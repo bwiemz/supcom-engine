@@ -126,6 +126,7 @@ How to read it:
 | Right-button drag moves the selection in formation, facing the drag, with ghosts in their slots | [#465](https://github.com/bwiemz/supcom-engine/pull/465), [#466](https://github.com/bwiemz/supcom-engine/pull/466) |
 | Selection brackets as Moho sizes them: `SelectionCenterOffsetX/Y/Z`, `SelectionSizeX/Z`, `SelectionThickness` | [#483](https://github.com/bwiemz/supcom-engine/pull/483) |
 | The cursor picks a unit by its mesh's bounds, cut by `SelectionYOffset` and narrowed by `SelectionMeshScaleX/Z`, `SelectionMeshUseTopAmount` | [#525](https://github.com/bwiemz/supcom-engine/pull/525) |
+| A drag box takes a unit whose mesh box it meets, not one whose origin it holds; without Shift that box is scaled by `SelectionMeshScaleX/Y/Z` | [#552](https://github.com/bwiemz/supcom-engine/pull/552) |
 | Console variables and range profiles exist before the window (`range_RenderSelected`/`Highlighted`/`Build`, `Cam_Free`, `UI_RenderUnitBars`, `ren_SelectBoxes`) | [#481](https://github.com/bwiemz/supcom-engine/pull/481) |
 | Partly: Moho's random stream (MT19937 with `CRandomStream`'s conversions), opt-in behind `--moho-random`; the default stays SplitMix64, and `FRandGaussian`'s cached second value isn't Moho's yet | [#480](https://github.com/bwiemz/supcom-engine/pull/480) |
 | Veterancy counts kills (`KILLS`, not BENIGN or unfinished) | [#383](https://github.com/bwiemz/supcom-engine/pull/383) |
