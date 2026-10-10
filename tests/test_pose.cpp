@@ -333,3 +333,69 @@ TEST_CASE("AttachBoneToEntityBone pins the unit's bone to the entity", "[pose][l
     unit.tick_manipulators(0.1f, L);
     CHECK(unit.bone_world_position(1).y < -1000.0f);
 }
+
+TEST_CASE("A thrust controller turns its engine toward the unit's thrust", "[pose][lua]") {
+    // retail UEA0107_Script.lua's engines
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    lua::register_sim_bindings(lua, sim);
+    lua::register_moho_bindings(lua, sim);
+    BoneData bd = make_two_bones();
+    auto owned = std::make_unique<Unit>();
+    owned->set_bone_data(&bd);
+    owned->init_animated_bones();
+    Unit& unit = *owned;
+    sim.entity_registry().register_entity(std::move(owned));
+    lua_State* L = lua.raw();
+    set_lua_handle(L, "u", unit);
+    REQUIRE(lua.do_string("c = CreateThrustController(u, 'thruster', 'child') "
+                          "c:SetThrustingParam(-0.25, 0.25, -0.75, 0.75, -0.0, 0.0, 1.0, 0.25)")
+                .ok());
+    const auto forward = [&] { return quat_rotate(unit.bone_pose(1).rotation, {0, 0, 1}); };
+
+    unit.tick_manipulators(0.1f, L);
+    CHECK_THAT(forward().y, WithinAbs(1.0, 1e-5));
+
+    unit.set_velocity({1, 0, 0});
+    unit.tick_manipulators(0.1f, L);
+    CHECK(forward().x > 0.1f);
+    CHECK(forward().x < 0.3f);
+
+    unit.set_velocity({2, 0, 0});
+    unit.tick_manipulators(0.1f, L);
+    CHECK_THAT(forward().x, WithinAbs(0.25 / std::sqrt(0.625), 1e-5));
+    CHECK_THAT(forward().y, WithinAbs(0.75 / std::sqrt(0.625), 1e-5));
+    CHECK_THAT(forward().z, WithinAbs(0.0, 1e-5));
+}
+
+TEST_CASE("An animation plays on top of the manipulators before it", "[pose]") {
+    BoneData bd = make_two_bones();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    SCAData sca = root_slide();
+    sca.num_bones = 2;
+    sca.bone_names.push_back("child");
+    sca.parent_indices.push_back(0);
+    for (auto& frame : sca.frames) {
+        frame.bones.push_back({{0, 0, 1}, Quaternion{}});
+    }
+    AnimCache cache(nullptr);
+    cache.inject("/both.sca", sca);
+
+    auto& rotator = static_cast<RotateManipulator&>(
+        *unit.add_manipulator(std::make_unique<RotateManipulator>()));
+    rotator.set_bone_index(1);
+    rotator.set_axis('y');
+    rotator.set_current_angle(90.0f);
+    auto& anim =
+        static_cast<AnimManipulator&>(*unit.add_manipulator(std::make_unique<AnimManipulator>()));
+    anim.play_anim("/both.sca", false, &cache);
+    anim.set_rate(1.0f);
+    unit.tick_manipulators(1.0f, nullptr);
+
+    const BonePose child = unit.bone_pose(1);
+    CHECK_THAT(child.position.x, WithinAbs(1.0, 1e-5));
+    const Vector3 forward = quat_rotate(child.rotation, {0, 0, 1});
+    CHECK_THAT(forward.x, WithinAbs(1.0, 1e-5));
+}

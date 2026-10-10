@@ -784,7 +784,19 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.vec3(x.current_);
         break;
     }
-    case ManipKind::Thrust: break;
+    case ManipKind::Thrust: {
+        const auto& x = static_cast<const ThrustManipulator&>(m);
+        w.vec3(x.cap_min_);
+        w.vec3(x.cap_max_);
+        w.f32v(x.turn_force_mult_);
+        w.f32v(x.turn_speed_);
+        w.vec3(x.rest_);
+        w.quat(x.orientation_);
+        w.vec3(x.force_);
+        w.vec3(x.last_velocity_);
+        w.b(x.has_last_velocity_);
+        break;
+    }
     case ManipKind::BoneEntity: {
         const auto& x = static_cast<const BoneEntityManipulator&>(m); // sim_: the loading sim
         w.u32v(x.target_id_);
@@ -923,7 +935,20 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         m = std::move(x);
         break;
     }
-    case ManipKind::Thrust: m = std::make_unique<ThrustManipulator>(); break;
+    case ManipKind::Thrust: {
+        auto x = std::make_unique<ThrustManipulator>();
+        x->cap_min_ = r.vec3();
+        x->cap_max_ = r.vec3();
+        x->turn_force_mult_ = r.f32v();
+        x->turn_speed_ = r.f32v();
+        x->rest_ = r.vec3();
+        x->orientation_ = r.quat();
+        x->force_ = r.vec3();
+        x->last_velocity_ = r.vec3();
+        x->has_last_velocity_ = r.b();
+        m = std::move(x);
+        break;
+    }
     case ManipKind::BoneEntity: {
         const u32 target = r.u32v();
         const i32 target_bone = r.i32v();

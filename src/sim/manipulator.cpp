@@ -2,6 +2,7 @@
 #include "sim/anim_cache.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/projectile.hpp"
 #include "sim/sca_parser.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -240,13 +241,17 @@ void AnimManipulator::apply_pose(PoseLocals& pose) {
     // Each animated bone relative to its SCM parent: that parent as this
     // frame has it, or in bind pose when the animation doesn't move it.
     // Other manipulators then turn the bones on top, and bones the
-    // animation leaves alone follow their animated parents.
+    // animation leaves alone follow their animated parents. It plays on
+    // top of those before it: its change from the bind pose, as Moho's.
     const size_t bone_count = static_cast<size_t>(bd->bone_count());
     last_.resize(bone_count);
     last_set_.assign(bone_count, 0);
     for (u32 i = 0; i < num_sca_bones; i++) {
         const i32 scm = i < sca_to_scm_map_.size() ? sca_to_scm_map_[i] : -1;
-        if (scm < 0 || static_cast<size_t>(scm) >= bone_count || !is_bone_enabled(scm)) continue;
+        if (scm < 0 || static_cast<size_t>(scm) >= bone_count || !is_bone_enabled(scm) ||
+            !pose.valid(scm)) {
+            continue;
+        }
         const i32 parent = bd->bones[static_cast<size_t>(scm)].parent_index;
         BonePose parent_world;
         if (parent >= 0 && static_cast<size_t>(parent) < bone_count) {
@@ -258,6 +263,16 @@ void AnimManipulator::apply_pose(PoseLocals& pose) {
         }
         BonePose local = pose_relative(parent_world, world[i]);
         const auto s_idx = static_cast<size_t>(scm);
+        const BoneInfo& rest = bd->bones[s_idx];
+        const Quaternion rest_inverse = quat_conjugate(rest.local_rotation);
+        const Vector3 moved = quat_rotate(rest_inverse, {local.position.x - rest.local_position.x,
+                                                         local.position.y - rest.local_position.y,
+                                                         local.position.z - rest.local_position.z});
+        const BonePose& below = pose.local[s_idx];
+        const Vector3 offset = quat_rotate(below.rotation, moved);
+        local = {
+            {below.position.x + offset.x, below.position.y + offset.y, below.position.z + offset.z},
+            quat_multiply(below.rotation, quat_multiply(rest_inverse, local.rotation))};
         if (from_weight > 0.0f && s_idx < blend_from_set_.size() && blend_from_set_[s_idx]) {
             local = {vec3_lerp(local.position, blend_from_[s_idx].position, from_weight),
                      quat_nlerp(local.rotation, blend_from_[s_idx].rotation, from_weight)};
@@ -384,6 +399,115 @@ void StorageManipulator::tick(f32 /*dt*/) {
                          empty_.z * empty + full_.z * full};
     current_ = {current_.x * 0.9f + target.x * 0.1f, current_.y * 0.9f + target.y * 0.1f,
                 current_.z * 0.9f + target.z * 0.1f};
+}
+
+// ---------------------------------------------------------------------------
+// ThrustManipulator
+// ---------------------------------------------------------------------------
+
+namespace {
+
+Vector3 normalized_or_zero(const Vector3& v) {
+    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (len <= 1e-6f) {
+        return {};
+    }
+    return {v.x / len, v.y / len, v.z / len};
+}
+
+Quaternion shortest_arc(const Vector3& from, const Vector3& to) {
+    const Vector3 half = normalized_or_zero({from.x + to.x, from.y + to.y, from.z + to.z});
+    const f32 w = from.x * half.x + from.y * half.y + from.z * half.z;
+    if (w == 0.0f) {
+        if (std::fabs(from.x) < std::fabs(from.y)) {
+            const f32 inv = 1.0f / std::sqrt(from.y * from.y + from.z * from.z);
+            return {0.0f, from.z * inv, -from.y * inv, 0.0f};
+        }
+        const f32 inv = 1.0f / std::sqrt(from.x * from.x + from.z * from.z);
+        return {-from.z * inv, 0.0f, from.x * inv, 0.0f};
+    }
+    return {from.y * half.z - from.z * half.y, from.z * half.x - from.x * half.z,
+            from.x * half.y - from.y * half.x, w};
+}
+
+Quaternion bone_model_rotation(const PoseLocals& pose, const BoneData& bd, i32 bone) {
+    Quaternion q = pose.local[static_cast<size_t>(bone)].rotation;
+    for (i32 b = bone;;) {
+        const auto i = static_cast<size_t>(b);
+        if (i < pose.model_space.size() && pose.model_space[i]) {
+            break;
+        }
+        const i32 parent = bd.bones[i].parent_index;
+        if (parent < 0 || parent >= b || !pose.valid(parent)) {
+            break;
+        }
+        q = quat_multiply(pose.local[static_cast<size_t>(parent)].rotation, q);
+        b = parent;
+    }
+    return q;
+}
+
+} // namespace
+
+void ThrustManipulator::set_rest(const Vector3& rest) {
+    rest_ = rest;
+    orientation_ = shortest_arc(rest_, {0.0f, 1.0f, 0.0f});
+}
+
+void ThrustManipulator::set_thrusting_param(const Vector3& cap_min, const Vector3& cap_max,
+                                            f32 turn_force_mult, f32 turn_speed) {
+    cap_min_ = cap_min;
+    cap_max_ = cap_max;
+    turn_force_mult_ = turn_force_mult;
+    turn_speed_ = turn_speed;
+}
+
+void ThrustManipulator::tick(f32 dt) {
+    if (!owner_ || owner_->is_being_built() || dt <= 0.0f) {
+        return;
+    }
+    const Vector3 v = owner_->velocity();
+    Vector3 accel{};
+    if (has_last_velocity_) {
+        accel = {(v.x - last_velocity_.x) / dt, (v.y - last_velocity_.y) / dt,
+                 (v.z - last_velocity_.z) / dt};
+    }
+    last_velocity_ = v;
+    has_last_velocity_ = true;
+    const f32 mass = owner_->load_metric();
+    force_ = {accel.x * mass, (accel.y + Projectile::GRAVITY) * mass, accel.z * mass};
+}
+
+Quaternion ThrustManipulator::turn_toward(const Vector3& local_force) {
+    const Vector3 capped{std::min(cap_max_.x, std::max(cap_min_.x, local_force.x)),
+                         std::min(cap_max_.y, std::max(cap_min_.y, local_force.y)),
+                         std::min(cap_max_.z, std::max(cap_min_.z, local_force.z))};
+    const Quaternion target = shortest_arc(rest_, normalized_or_zero(capped));
+    Quaternion delta = quat_multiply(quat_conjugate(orientation_), target);
+    if (delta.w < 0.0f) {
+        delta = {-delta.x, -delta.y, -delta.z, -delta.w};
+    }
+    const f32 angle = 2.0f * osc::dmath::acos(std::min(delta.w, 1.0f));
+    if (angle <= turn_speed_) {
+        orientation_ = target;
+        return orientation_;
+    }
+    const Vector3 axis = normalized_or_zero({delta.x, delta.y, delta.z});
+    const f32 s = osc::dmath::sin(turn_speed_ * 0.5f);
+    const Quaternion step{axis.x * s, axis.y * s, axis.z * s, osc::dmath::cos(turn_speed_ * 0.5f)};
+    orientation_ = quat_multiply(orientation_, step);
+    return orientation_;
+}
+
+void ThrustManipulator::apply_pose(PoseLocals& pose) {
+    const BoneData* bd = owner_ ? owner_->bone_data() : nullptr;
+    if (!bd || owner_->is_being_built() || !pose.valid(bone_index_) ||
+        static_cast<size_t>(bone_index_) >= bd->bones.size()) {
+        return;
+    }
+    const Quaternion world =
+        quat_multiply(owner_->orientation(), bone_model_rotation(pose, *bd, bone_index_));
+    pose.rotate(bone_index_, turn_toward(quat_rotate(quat_conjugate(world), force_)));
 }
 
 // ---------------------------------------------------------------------------
