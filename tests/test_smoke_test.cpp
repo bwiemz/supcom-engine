@@ -1270,3 +1270,52 @@ TEST_CASE("Taking an upgrade under way off the factory's queue ends it", "[sessi
     const osc::sim::Entity* left = h.sim.entity_registry().find(upgrade);
     CHECK((!left || left->destroyed()));
 }
+
+TEST_CASE("A stopped upgrade takes its unfinished unit with it", "[session][rules]") {
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnFailedToBuild() __heard = __heard .. 'failed ' end\n"
+                           "function __f:OnStopBuild(u, order)\n"
+                           "  __heard = __heard .. 'stop ' .. order .. ' ' ..\n"
+                           "            tostring(u == __frame)\n"
+                           "end")
+                .ok());
+    h.queue(osc::sim::CommandType::Upgrade, "f2");
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 upgrade = h.factory->build_target_id();
+    lua_pushstring(L, "__frame");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.sim.entity_registry().find(upgrade)->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(
+        h.state.do_string("function __frame:OnFailedToBeBuilt() __heard = __heard .. 'frame ' end")
+            .ok());
+
+    SECTION("by Stop") {
+        osc::sim::UnitCommand stop;
+        stop.type = osc::sim::CommandType::Stop;
+        h.sim.route_command({h.factory->entity_id()}, stop, true);
+    }
+    SECTION("by taking its order off") {
+        h.factory->remove_command(h.factory->command_queue().front().command_id,
+                                  h.sim.entity_registry(), L);
+    }
+    h.sim.tick();
+
+    const osc::sim::Entity* left = h.sim.entity_registry().find(upgrade);
+    CHECK((!left || left->destroyed()));
+    CHECK_FALSE(h.factory->destroyed());
+    CHECK_FALSE(h.factory->is_building());
+    CHECK_FALSE(h.factory->economy().consumption_active);
+    CHECK(h.factory->work_progress() == 0.0f);
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) == "failed frame stop Upgrade true");
+    lua_pop(L, 1);
+}
