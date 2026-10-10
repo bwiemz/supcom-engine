@@ -65,7 +65,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `SELECTABLE`: retail selects only `SELECTABLE` units, and a unit being built only if it is a `FACTORY`; the engine ignores the category and never selects a unit being built | Your own transport beacon (no `SELECTABLE`) can be clicked and boxed; a factory under construction can't be selected | faf-re `UserUnit::IsSelectable` (`unit/core/UserUnit.cpp`), `UserEntity`; engine `input_handler.cpp` selectable() | Open |
 | `REBUILDER`: when a structure dies, retail queues its rebuild, same blueprint and spot, on its army's `REBUILDER` units guarding it | Support commanders guarding a structure don't rebuild it | faf-re `CUnitGuardTask`, `Unit::Kill` (`unit/core/Unit.cpp`); engine: no rebuild path | Open |
 | `UNTARGETABLE`: retail's cursor passes through a unit that is `UNTARGETABLE` and neither `SELECTABLE` nor `FERRYBEACON`; the engine applies it to props only | Hovering such a unit (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) shows it, and a right click on an enemy one is an Attack instead of a Move | faf-re `CUIWorldView::UpdateSelection`; engine `input_handler.cpp` targetable_prop, handle_right_click | Open |
 | `FAVORSWATER`: retail paths the Salem (URS0201) with its water footprint while it and its destinations are on water; the engine always uses its amphibious footprint | The Salem can take land routes where retail keeps to water | faf-re `CAiPathNavigator`; engine `path_navigator.cpp`, `alt_footprint()` unread | Open |
@@ -122,6 +121,7 @@ How to read it:
 | One command graph line per shared order, `CalculateWaypointLineWidth` wide | [#455](https://github.com/bwiemz/supcom-engine/pull/455) |
 | An order moved or taken off shows at once, paused or before its tick | [#454](https://github.com/bwiemz/supcom-engine/pull/454) |
 | A unit aboard a transport can't be selected | [#458](https://github.com/bwiemz/supcom-engine/pull/458) |
+| `SELECTABLE`: only a unit with it can be selected (a transport beacon can't) | [#512](https://github.com/bwiemz/supcom-engine/pull/512) |
 | Orders and their cursor take the unit under the cursor; Capture only on what Moho offers it | [#477](https://github.com/bwiemz/supcom-engine/pull/477) |
 | Past zoom 150 the cursor and right-click pass over props | [#478](https://github.com/bwiemz/supcom-engine/pull/478) |
 | A press reaches the control the global click handler destroyed (chat recipient) | [#462](https://github.com/bwiemz/supcom-engine/pull/462) |
