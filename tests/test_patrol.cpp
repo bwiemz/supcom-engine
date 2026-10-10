@@ -1239,7 +1239,7 @@ TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {
             global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
             const auto r = lua.do_string(std::string("local issue = ") + row.issue + R"(
                 if issue({without}) ~= nil then error('a unit without the command took it') end
-                if issue({with}) == nil then error('a unit with the command did not take it') end
+                issue({with})
             )");
             if (!r) {
                 FAIL(r.error().message);
@@ -1285,7 +1285,7 @@ TEST_CASE(
         if IssuePatrol({factory}, {30, 0, 30}) ~= nil then error('patrol') end
         if IssueGuard({factory}, other) ~= nil then error('guard') end
         if IssueFactoryAssist({eng}, other) ~= nil then error('engineer assist') end
-        if IssueFactoryAssist({factory, eng}, other) == nil then error('factory assist') end
+        IssueFactoryAssist({factory, eng}, other)
     )");
     if (!r) {
         FAIL(r.error().message);
@@ -1293,4 +1293,137 @@ TEST_CASE(
     REQUIRE(factory->command_queue().size() == 1);
     CHECK(factory->command_queue().front().type == CommandType::Guard);
     CHECK(eng->command_queue().empty());
+}
+
+TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return their command",
+          "[lua]") {
+    struct Row {
+        const char* issue;
+        const char* cap;
+        bool returns_command;
+    };
+    const std::vector<Row> rows = {
+        {"IssueMove({with}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueMoveOffFactory({with}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueAggressiveMove({with}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueFormMove({with}, {20, 0, 20}, 'NoFormation', 0)", "RULEUCC_Move", true},
+        {"IssueFormAggressiveMove({with}, {20, 0, 20}, 'NoFormation', 0)", "RULEUCC_Move", true},
+        {"IssueAttack({with}, enemy)", "RULEUCC_Attack", true},
+        {"IssueDive({with})", "RULEUCC_Dive", true},
+        {"IssueFactoryRallyPoint({factory}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueFormAttack({with}, enemy, 'NoFormation', 0)", "RULEUCC_Attack", false},
+        {"IssuePatrol({with}, {20, 0, 20})", "RULEUCC_Patrol", false},
+        {"IssueFormPatrol({with}, {20, 0, 20}, 'NoFormation', 0)", "RULEUCC_Patrol", false},
+        {"IssueGuard({with}, friend)", "RULEUCC_Guard", false},
+        {"IssueFactoryAssist({factory}, other)", "RULEUCC_Guard", false},
+        {"IssueRepair({with}, friend)", "RULEUCC_Repair", false},
+        {"IssueCapture({with}, enemy)", "RULEUCC_Capture", false},
+        {"IssueReclaim({with}, rock)", "RULEUCC_Reclaim", false},
+        {"IssueSacrifice({with}, friend)", "RULEUCC_Sacrifice", false},
+        {"IssueOverCharge({with}, enemy)", "RULEUCC_Overcharge", false},
+        {"IssueNuke({with}, {20, 0, 20})", "RULEUCC_Nuke", false},
+        {"IssueTactical({with}, {20, 0, 20})", "RULEUCC_Tactical", false},
+        {"IssueTeleport({with}, {20, 0, 20})", "RULEUCC_Teleport", false},
+        {"IssueFerry({with}, {20, 0, 20})", "RULEUCC_Ferry", false},
+        {"IssueTransportUnload({with}, {20, 0, 20})", "RULEUCC_Transport", false},
+        {"IssueUpgrade({with}, 'uel0001')", "RULEUCC_Move", false},
+        {"IssueScript({with}, {TaskName = 'EnhanceTask'})", "RULEUCC_Move", false},
+        {"IssueBuildMobile({with}, {20, 0, 20}, 'uel0001', {})", "RULEUCC_Move", false},
+        {"IssueBuildFactory({with}, 'uel0001', 1)", "RULEUCC_Move", false},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.issue) {
+            osc::lua::LuaState lua;
+            SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            osc::lua::register_sim_bindings(lua, sim);
+            two_armies(sim);
+            Unit* with = still(sim, 0, 12.0f, 10.0f);
+            with->set_motion_type("RULEUMT_Land");
+            with->add_command_cap(row.cap);
+            Unit* factory = still(sim, 0, 30.0f, 10.0f);
+            Unit* other = still(sim, 0, 40.0f, 10.0f);
+            for (Unit* u : {factory, other}) {
+                u->add_category("FACTORY");
+                u->add_command_cap(row.cap);
+            }
+            lua_State* L = lua.raw();
+            const auto global = [&](const char* name, osc::sim::Entity* e) {
+                lua_newtable(L);
+                lua_pushstring(L, "_c_object");
+                lua_pushlightuserdata(L, e);
+                lua_rawset(L, -3);
+                lua_setglobal(L, name);
+            };
+            global("with", with);
+            global("factory", factory);
+            global("other", other);
+            global("friend", still(sim, 0, 14.0f, 10.0f));
+            global("enemy", still(sim, 1, 60.0f, 10.0f));
+            global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
+            const auto r = lua.do_string(std::string(R"(
+                local function results(...) return arg.n, arg[1] end
+                n, command = results()") +
+                                         row.issue + ")");
+            if (!r) {
+                FAIL(r.error().message);
+            }
+            const bool taken = !with->command_queue().empty() ||
+                               !factory->command_queue().empty() ||
+                               !factory->rally_orders().empty();
+            CHECK(taken);
+            lua_getglobal(L, "n");
+            CHECK(lua_tonumber(L, -1) == (row.returns_command ? 1 : 0));
+            lua_pop(L, 1);
+            if (row.returns_command) {
+                const auto done = lua.do_string("assert(not IsCommandDone(command))");
+                if (!done) {
+                    FAIL(done.error().message);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Repair, Sacrifice, Reclaim and Capture leave their target out of the units ordered",
+          "[lua]") {
+    const std::vector<std::pair<const char*, const char*>> rows = {
+        {"IssueRepair", "RULEUCC_Repair"},
+        {"IssueSacrifice", "RULEUCC_Sacrifice"},
+        {"IssueReclaim", "RULEUCC_Reclaim"},
+        {"IssueCapture", "RULEUCC_Capture"},
+    };
+    for (const auto& [issue, cap] : rows) {
+        DYNAMIC_SECTION(issue) {
+            osc::lua::LuaState lua;
+            SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            osc::lua::register_sim_bindings(lua, sim);
+            two_armies(sim);
+            Unit* a = still(sim, 0, 10.0f, 10.0f);
+            Unit* b = still(sim, 0, 12.0f, 10.0f);
+            for (Unit* u : {a, b}) {
+                u->set_motion_type("RULEUMT_Land");
+                u->add_command_cap(cap);
+                u->add_category("RECLAIMABLE");
+            }
+            lua_State* L = lua.raw();
+            const auto global = [&](const char* name, osc::sim::Entity* e) {
+                lua_newtable(L);
+                lua_pushstring(L, "_c_object");
+                lua_pushlightuserdata(L, e);
+                lua_rawset(L, -3);
+                lua_setglobal(L, name);
+            };
+            global("a", a);
+            global("b", b);
+            const auto r = lua.do_string(std::string(issue) + "({a}, a) " + issue + "({a, b}, a)");
+            if (!r) {
+                FAIL(r.error().message);
+            }
+            CHECK(a->command_queue().empty());
+            REQUIRE(b->command_queue().size() == 1);
+            CHECK(b->command_queue().front().target_id == a->entity_id());
+        }
+    }
 }
