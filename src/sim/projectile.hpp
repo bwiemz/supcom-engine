@@ -73,7 +73,7 @@ public:
     /// target unit or entity, alive and not dying, else a point it was sent
     /// to.
     bool has_live_target(const EntityRegistry& registry) const;
-    bool lead_target = false;    // Physics.LeadTarget: it aims where its target will be
+    bool lead_target = true;     // Physics.LeadTarget: it aims where its target will be
     f32 max_zig_zag = 0;         // Physics.MaxZigZag, ChangeMaxZigZag
     f32 zig_zag_freq = 0;        // Physics.ZigZagFrequency (seconds), ChangeZigZagFrequency
     /// Its zig-zag offset and the tick it is next drawn (Moho's

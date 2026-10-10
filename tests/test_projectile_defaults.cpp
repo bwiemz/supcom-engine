@@ -61,3 +61,23 @@ TEST_CASE("A projectile takes its blueprint's CollideSurface and CollideEntity",
     CHECK(shell.collide_entity);
     CHECK(shell.collide_surface);
 }
+
+TEST_CASE("A projectile leads its target unless its blueprint says not", "[blueprints]") {
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string(R"(
+        __blueprints = {
+            torpedo = {Physics = {TrackTarget = true, MaxSpeed = 5}},
+            dart = {Physics = {TrackTarget = true, MaxSpeed = 30, LeadTarget = false}},
+        }
+    )")
+                .ok());
+    osc::sim::Projectile torpedo;
+    torpedo.set_blueprint_id("torpedo");
+    (void)torpedo.apply_blueprint_physics(state.raw());
+    CHECK(torpedo.lead_target);
+    osc::sim::Projectile dart;
+    dart.set_blueprint_id("dart");
+    (void)dart.apply_blueprint_physics(state.raw());
+    CHECK_FALSE(dart.lead_target);
+}
