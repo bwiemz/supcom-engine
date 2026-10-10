@@ -329,6 +329,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.u32v(c.assigned_id);
     w.i32v(c.rolloff_wait);
     w.i32v(c.cap_wait);
+    w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
     save_ids(w, c.launch_queue);
@@ -379,6 +380,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.assigned_id = r.u32v();
     c.rolloff_wait = r.i32v();
     c.cap_wait = r.i32v();
+    c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
     c.launch_queue = load_ids(r);
@@ -1086,6 +1088,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
     w.i32v(u.assist_rolloff_wait_);
+    w.u32v(u.sacrifice_order_);
     save_strings(w, u.unit_states_);
     w.f32v(u.shield_ratio_);
     save_i32_set(w, u.hidden_bones_);
@@ -1449,6 +1452,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.build_command_id_ = r.u32v();
     u.build_released_with_order_ = r.b();
     u.assist_rolloff_wait_ = r.i32v();
+    u.sacrifice_order_ = r.u32v();
     u.unit_states_ = load_strings<std::unordered_set<std::string>>(r);
     u.shield_ratio_ = r.f32v();
     u.hidden_bones_ = load_i32_set(r);

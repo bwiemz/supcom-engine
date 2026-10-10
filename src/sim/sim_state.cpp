@@ -3129,6 +3129,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         // An assist build's roll-off, only while under way.
         if (u.assist_rolloff_wait() != 0)
             units.mix(0x524f4c4c00000000ull | static_cast<u32>(u.assist_rolloff_wait())); // "ROLL"
+        if (u.sacrifice_order() != 0) {
+            units.mix(0x5341435200000000ull | u.sacrifice_order()); // "SACR"
+        }
         // A winged aircraft's attack run, only while under way.
         if (const AirCombatState& ac = u.air_combat(); ac.flying || ac.state != 0) {
             units.mix(0x4149524300000000ull | ac.state); // "AIRC"
@@ -3331,6 +3334,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             if (cmd.cap_wait != 0) {
                 orders.mix(0x43415057u); // "CAPW"
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.cap_wait)));
+            }
+            if (cmd.sacrifice_wait != 0) {
+                orders.mix(0x53414357u); // "SACW"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.sacrifice_wait)));
             }
             // A refuel under way (M206r), only once it has a slot or waits.
             if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {

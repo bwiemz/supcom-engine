@@ -2497,53 +2497,117 @@ void Unit::donate_sacrifice(Unit& target, lua_State* L) {
     materialize(target, step);
 }
 
+namespace {
+
+bool sacrifice_upgrading(const Unit& u) {
+    return u.has_unit_state("Upgrading") || u.is_enhancing() ||
+           (!u.command_queue().empty() && u.command_queue().front().type == CommandType::Upgrade);
+}
+
+Unit* live_unit(EntityRegistry& registry, u32 id) {
+    Entity* e = id != 0 ? registry.find(id) : nullptr;
+    if (!e || e->destroyed() || !e->is_unit()) {
+        return nullptr;
+    }
+    return static_cast<Unit*>(e);
+}
+
+} // namespace
+
+void Unit::destroy_through_script(EntityRegistry& registry, lua_State* L) {
+    const u32 id = entity_id();
+    call_lua_method(L, "Destroy");
+    Entity* self = registry.find(id);
+    if (self && !self->destroyed()) {
+        mark_destroyed();
+        registry.unregister_entity(id);
+    }
+}
+
+// Moho's IAiCommandDispatchImpl hands the order to a CUnitSacrificeTask only
+// for these targets; faf-re CUnitSacrificeTask.cpp for the task.
 OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    // Move to target, then sacrifice (transfer mass value, kill self)
-    if (cmd.target_id == 0) {
+    const auto give_up = [&] {
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
-    }
-    auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed() || !target->is_unit()) {
-        call_lua_method(L, "OnStopSacrifice");
-        set_unit_state("Sacrificing", false);
-        release_navigator(); // its walk to the target ends too
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    auto* target_unit = static_cast<Unit*>(target);
-    // Move into range
-    constexpr f32 sacrifice_range = 5.0f;
-    f32 sdx = target->position().x - position().x;
-    f32 sdz = target->position().z - position().z;
-    f32 sdist2 = sdx * sdx + sdz * sdz;
-    if (sdist2 > sacrifice_range * sacrifice_range) {
-        if (!navigator_.is_moving()) {
-            navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                naval_draft_, is_amphibious() || is_hover());
+    };
+    if (!cmd.approached) {
+        Unit* target = live_unit(registry, cmd.target_id);
+        if (!target) {
+            return give_up();
         }
-        navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-        // Fire OnStartSacrifice on first tick
-        if (!has_unit_state("Sacrificing")) {
-            set_unit_state("Sacrificing", true);
-            call_lua_method_with_entity(L, "OnStartSacrifice", target);
+        if (!target->is_being_built() && !sacrifice_upgrading(*target) &&
+            target->health() >= target->max_health()) {
+            Unit* focus =
+                target->is_building() ? live_unit(registry, target->build_target_id()) : nullptr;
+            if (!focus) {
+                return give_up();
+            }
+            cmd.target_id = focus->entity_id();
         }
+    }
+    if (cmd.approached && !cmd.started && approach_update(dt, ctx)) {
         return OrderStep::Hold;
     }
-    navigator_.abort_move();
-    donate_sacrifice(*target_unit, L);
-    // Fire OnStopSacrifice then kill self
-    call_lua_method_with_entity(L, "OnStopSacrifice", target);
-    set_unit_state("Sacrificing", false);
-    set_health(0);
-    mark_destroyed();
-    {
-        u32 eid = entity_id();
-        registry.unregister_entity(eid);
+    Unit* target = live_unit(registry, cmd.target_id);
+    if (!target || target->layer() == "Air" || target->is_dying()) {
+        if (cmd.started) {
+            sacrifice_order_ = 0;
+            destroy_through_script(registry, L);
+            return OrderStep::Gone;
+        }
+        return give_up();
     }
-    return OrderStep::Gone; // unit is dead, stop processing
+    if (!cmd.approached) {
+        Unit* go_to = target;
+        Unit* creator =
+            target->is_being_built() ? live_unit(registry, target->creator_id()) : nullptr;
+        if (creator && creator->has_category("FACTORY")) {
+            go_to = creator;
+        } else if (sacrifice_upgrading(*target)) {
+            if (Unit* next = live_unit(registry, target->build_target_id())) {
+                cmd.target_id = next->entity_id();
+                go_to = next;
+            }
+        }
+        if (effective_speed() <= 0) {
+            return give_up();
+        }
+        cmd.approached = true;
+        navigator_.set_goal(approach_point(*this, go_to->position(), go_to->skirt_size_x() * 0.5f,
+                                           go_to->skirt_size_z() * 0.5f),
+                            ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+        return OrderStep::Hold;
+    }
+    if (!cmd.started) {
+        if (work_gap(*this, target->position(), footprint_extent(*target)) > max_build_distance_) {
+            return give_up();
+        }
+        if (target->is_enhancing() &&
+            (target->is_paused() || std::max(target->economy().mass_requested(),
+                                             target->economy().energy_requested()) <= 0.0)) {
+            return give_up();
+        }
+        cmd.started = true;
+        cmd.sacrifice_wait = 9;
+        sacrifice_order_ = cmd.command_id;
+        call_lua_method_with_entity(L, "OnStartSacrifice", target);
+        return OrderStep::Hold;
+    }
+    if (--cmd.sacrifice_wait > 0) {
+        return OrderStep::Hold;
+    }
+    sacrifice_order_ = 0;
+    donate_sacrifice(*target, L);
+    call_lua_method_with_entity(L, "OnStopSacrifice", target);
+    if (!destroyed() && in_registry()) {
+        destroy_through_script(registry, L);
+    }
+    return OrderStep::Gone;
 }
 
 OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
