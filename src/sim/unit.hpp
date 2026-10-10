@@ -148,14 +148,11 @@ struct AirCombatRules {
     f32 bank_factor = 0.5f;                 ///< how far it leans into a change of speed
 };
 
-/// Its attack run under way: Moho's CUnitMotion combat state, and the
-/// combat flight's yaw rate and velocity (the airframe's lag).
+/// Its attack run under way: Moho's CUnitMotion combat state.
 struct AirCombatState {
     u8 state = 0;         ///< EAirCombatState: 0 None .. 7 ReturnToMap
     u32 timeout_tick = 0; ///< until when a turn or break-off holds
     i32 sustained_turn_ticks = 0;
-    f32 yaw_rate = 0.0f; ///< rad/s
-    Vector3 velocity{};  ///< per second, horizontal
     bool flying = false; ///< the combat flight has the airframe
     /// Circling (a hovering aircraft's), drawn again at each timeout: the
     /// way round (Moho's -90 degree yaw of the tangent when set, +90 not), its

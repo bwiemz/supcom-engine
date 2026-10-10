@@ -6,8 +6,12 @@
 //    its speed and falling, reach the target;
 // 2. its bombs land on the target and hurt it;
 // 3. each bomb leaves at the bomber's speed, aimed flat at the target;
-// 4. it never stops in the air: it overflies, breaks off and comes round,
-//    and makes another run.
+// 4. it never stops in the air while it attacks: it overflies, breaks off and
+//    comes round, and makes another run.
+//
+// Before them, a probe of the retail game: a UEF interceptor attacking a
+// bomber flying by, and a UEF bomber's run on a power generator, each from
+// rest, against retail's track up to its first random draw.
 //
 // The engine had parked an attacking aircraft at its longest weapon's range
 // (the bomb's 40) and hung it there, and the bomb only fell within 3 of the
@@ -28,6 +32,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <string>
@@ -64,6 +69,107 @@ void test_air_attack_run(TestContext& ctx) {
             test_status::fail("[FAIL] {}", what);
         }
     };
+
+    {
+        auto probe = ctx.lua_state.do_string(R"(
+            local function make(bp, army, x, z)
+                return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            end
+            __run_i = make('uea0102', 'ARMY_1', 260, 740)
+            __run_t = make('uea0103', 'ARMY_2', 260, 860)
+            __run_b = make('uea0103', 'ARMY_1', 700, 80)
+            __run_p = make('ueb1101', 'ARMY_2', 700, 180)
+            for _, u in {__run_t, __run_p} do u:SetCanTakeDamage(false) end
+            __run_t:SetFireState(1)
+            IssueMove({__run_t}, {560, GetTerrainHeight(260, 860), 860})
+            IssueAttack({__run_i}, __run_t)
+            IssueAttack({__run_b}, __run_p)
+            __run_ids = {}
+            for i, u in {__run_i, __run_t, __run_b} do __run_ids[i] = tonumber(u:GetEntityId()) end
+            __run_i_id, __run_t_id, __run_b_id = __run_ids[1], __run_ids[2], __run_ids[3]
+        )");
+        record(static_cast<bool>(probe), probe ? "probe setup" : "probe: " + probe.error().message);
+        if (!probe) {
+            return;
+        }
+        auto& reg = ctx.sim.entity_registry();
+        const auto* fighter = static_cast<const sim::Unit*>(reg.find(global_id(ctx, "__run_i_id")));
+        const auto* quarry = static_cast<const sim::Unit*>(reg.find(global_id(ctx, "__run_t_id")));
+        const auto* bomber = static_cast<const sim::Unit*>(reg.find(global_id(ctx, "__run_b_id")));
+        if (!fighter || !quarry || !bomber) {
+            return;
+        }
+        // A probe of the retail game, its tick k + 1: tick, x, z, heading, bank.
+        struct Sample {
+            int tick;
+            f32 x, z, heading, bank;
+        };
+        const std::vector<Sample> fighter_ref = {
+            {20, 260.00f, 757.29f, 0.001f, 0.0f},    {60, 263.41f, 815.10f, 0.337f, -0.003f},
+            {82, 275.55f, 845.13f, 1.003f, -0.320f}, {86, 279.30f, 849.55f, 1.149f, -0.399f},
+            {90, 283.63f, 853.31f, 1.141f, -0.261f}, {120, 323.79f, 870.04f, 1.525f, -0.025f},
+            {160, 378.65f, 870.92f, 1.664f, 0.004f}, {240, 459.26f, 865.97f, 1.625f, 0.0f},
+            {330, 549.13f, 861.12f, 1.625f, 0.0f},
+        };
+        const std::vector<Sample> bomber_ref = {
+            {20, 700.05f, 91.65f, 0.004f, 0.0f},
+            {60, 700.25f, 130.37f, 0.006f, 0.0f},
+            {90, 700.17f, 160.25f, 6.276f, 0.0f},
+            {120, 699.92f, 190.21f, 6.277f, 0.0f},
+        };
+        const auto turn = [](f32 a, f32 b) {
+            f32 d = std::fmod(std::fabs(a - b), 6.2831853f);
+            return std::min(d, 6.2831853f - d);
+        };
+        f32 fighter_off = 0, fighter_turn = 0, bomber_off = 0, bomber_turn = 0;
+        int fighter_run = 0, bomber_run = 0;
+        f32 trail_lo = 1e9f, trail_hi = 0;
+        for (int k = 0; k <= 330; ++k) {
+            const auto match = [&](const std::vector<Sample>& ref, const sim::Unit& u, f32& off,
+                                   f32& turned) {
+                for (const Sample& s : ref) {
+                    if (s.tick == k) {
+                        off = std::max(off, std::hypot(u.position().x - s.x, u.position().z - s.z));
+                        turned = std::max({turned, turn(u.heading(), s.heading),
+                                           std::fabs(u.bank_angle() - s.bank)});
+                    }
+                }
+            };
+            match(fighter_ref, *fighter, fighter_off, fighter_turn);
+            match(bomber_ref, *bomber, bomber_off, bomber_turn);
+            if (fighter_run == 0 && fighter->has_unit_state("MakingAttackRun")) {
+                fighter_run = k + 1;
+            }
+            if (bomber_run == 0 && bomber->has_unit_state("MakingAttackRun")) {
+                bomber_run = k + 1;
+            }
+            if (k >= 200) {
+                const auto a = fighter->position();
+                const auto b = quarry->position();
+                const f32 d = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) +
+                                        (a.z - b.z) * (a.z - b.z));
+                trail_lo = std::min(trail_lo, d);
+                trail_hi = std::max(trail_hi, d);
+            }
+            ctx.sim.tick();
+        }
+        record(fighter_off < 1.0f && fighter_turn < 0.05f && fighter_run == 77,
+               fmt::format("Probe 1: an interceptor attacking a bomber flying by keeps within 1 of "
+                           "retail's track ({:.2f}), its heading and bank within 0.05 ({:.3f}); "
+                           "its run starts on retail's tick 77 ({})",
+                           fighter_off, fighter_turn, fighter_run));
+        record(
+            trail_lo > 6.5f && trail_hi < 7.4f,
+            fmt::format("Probe 2: it trails the bomber at retail's 6.6 to 7.3 ({:.2f} to {:.2f})",
+                        trail_lo, trail_hi));
+        record(bomber_off < 0.1f && bomber_turn < 0.01f && bomber_run == 62,
+               fmt::format("Probe 3: a bomber's run on a power generator keeps within 0.1 of "
+                           "retail's track ({:.3f}), its heading within 0.01 ({:.4f}); its run "
+                           "starts on retail's tick 62 ({})",
+                           bomber_off, bomber_turn, bomber_run));
+        (void)ctx.lua_state.do_string(
+            "for _, u in {__run_i, __run_t, __run_b, __run_p} do u:Destroy() end");
+    }
 
     auto r = ctx.lua_state.do_string(R"(
         local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
@@ -106,7 +212,7 @@ void test_air_attack_run(TestContext& ctx) {
         if (!bomber || bomber->destroyed()) break;
         const f32 to_target = flat(bomber->position(), target_pos);
         if (!engaged && to_target < 50.0f) engaged = true;
-        if (engaged) {
+        if (engaged && !bomber->command_queue().empty()) {
             const sim::Vector3& v = bomber->velocity();
             min_speed_engaged = std::min(min_speed_engaged, std::sqrt(v.x * v.x + v.z * v.z));
             // How far past the target along its first approach (north).
@@ -176,8 +282,8 @@ void test_air_attack_run(TestContext& ctx) {
                        "(worst: speed {:.2f} off, bearing {:.3f} rad off, falling {:.2f})",
                        worst_ratio, worst_off, worst_vy));
     record(engaged && min_speed_engaged >= 5.0f && farthest_past > 10.0f && salvo_ticks.size() >= 2,
-           fmt::format("Test 4: it never stops (slowest {:.1f}), overflies by {:.0f} and makes "
-                       "another run ({} salvos in 900 ticks)",
+           fmt::format("Test 4: it never stops while it attacks (slowest {:.1f}), overflies by "
+                       "{:.0f} and makes another run ({} salvos in 900 ticks)",
                        min_speed_engaged, farthest_past, salvo_ticks.size()));
 
     spdlog::info("Air attack run test: {}/{} passed", pass, pass + fail);

@@ -3,7 +3,6 @@
 #include "core/dmath.hpp"
 #include "map/terrain.hpp"
 #include "sim/flight_math.hpp"
-#include "sim/projectile.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/sim_state.hpp"
 
@@ -14,26 +13,21 @@ namespace osc::sim {
 
 namespace {
 
-constexpr f32 kPi = 3.14159265f;
 constexpr f32 kTwoPi = 6.28318530f;
-
-f32 wrap_angle(f32 a) {
-    while (a > kPi) a -= kTwoPi;
-    while (a < -kPi) a += kTwoPi;
-    return a;
-}
 
 /// ComputeAirControl's turn and roll axes toward `wanted`, under KTurn and
 /// KTurnDamping, KRoll and KRollDamping.
-void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* registry, f32 dt) {
+void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* registry,
+                    f32 turn_mult, f32 turn_add, f32 dt) {
     const AirCombatRules& r = unit.air_combat_rules();
     const Quaternion body = unit.orientation();
     const f32 load = registry ? unit.transport_load_factor(*registry) : 1.0f;
     const Vector3 err = attitude_error(body, wanted);
     const Vector3 inertia = box_inertia(unit.size_x(), unit.size_y(), unit.size_z());
     const Vector3 w = body_spin(body, unit.air_spin(), inertia);
-    const Vector3 accel{err.x * r.k_turn / load - w.x * r.k_turn_damping,
-                        err.y * r.k_turn / load - w.y * r.k_turn_damping,
+    const f32 turn = r.k_turn / load * turn_mult + turn_add;
+    const Vector3 accel{err.x * turn - w.x * r.k_turn_damping,
+                        err.y * turn - w.y * r.k_turn_damping,
                         err.z * r.k_roll / load - w.z * r.k_roll_damping};
     const SpinStep step = air_spin_step(body, unit.air_spin(), inertia, accel, dt);
     unit.set_air_spin(step.momentum);
@@ -48,6 +42,39 @@ void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* 
     const Vector3 up = quat_rotate(step.orientation, Vector3{0.0f, 1.0f, 0.0f});
     unit.set_bank_angle(osc::dmath::atan2(right.y, up.y));
     unit.set_pitch_angle(osc::dmath::asin(std::clamp(-fwd.y, -1.0f, 1.0f)));
+}
+
+/// ComputeAirControl's step toward `force`, `lift` and `axes`.
+void air_control(Unit& unit, const Vector3& force, f32 lift, f32 damping, const AirAxes& axes,
+                 bool winged, f32 turn_mult, f32 turn_add, SimState* sim,
+                 const map::Terrain* terrain, f32 dt) {
+    const AirCombatRules& r = unit.air_combat_rules();
+    const AirMoveStep step = air_move_step(unit.air_velocity(), force, r.k_move, damping, dt);
+    unit.set_air_velocity(step.velocity);
+    Vector3 next = unit.position();
+    next.x += step.move.x;
+    next.z += step.move.z;
+    const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
+    const EntityRegistry* registry = sim ? &sim->entity_registry() : nullptr;
+    next.y = unit.lift_toward(lift, winged, floor_here, terrain, registry, dt);
+    unit.set_current_altitude(next.y - floor_here);
+    steer_attitude(unit, attitude_of(axes), registry, turn_mult, turn_add, dt);
+    if (sim) {
+        next = sim->clamp_to_playable(next, unit.army());
+    }
+    unit.set_position(next);
+    unit.set_current_airspeed(
+        std::sqrt(step.velocity.x * step.velocity.x + step.velocity.z * step.velocity.z));
+}
+
+Vector3 flat_nose(const Unit& unit) {
+    Vector3 nose = forward_of(unit.orientation());
+    nose.y = 0.0f;
+    const f32 len = std::sqrt(nose.x * nose.x + nose.z * nose.z);
+    if (len > 0.0f) {
+        return {nose.x / len, 0.0f, nose.z / len};
+    }
+    return {osc::dmath::sin(unit.heading()), 0.0f, osc::dmath::cos(unit.heading())};
 }
 
 /// Moho's RandomUniformIntRange: [lo, hi); lo when the range is empty.
@@ -180,22 +207,16 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
     const Vector3 pos = unit.position();
-    f32 heading = unit.heading();
     const f32 to_x = at.x - pos.x;
     const f32 to_z = at.z - pos.z;
     unit.track_lift_ground(terrain, std::sqrt(to_x * to_x + to_z * to_z), sim.tick_count(), dt);
-    if (!st.flying) {
-        // The run takes over the airframe as it flies.
-        st.flying = true;
-        st.yaw_rate = unit.air_turn_rate();
-        st.velocity = unit.air_velocity();
-    }
+    st.flying = true;
 
     const Unit* target_unit =
         target && target->is_unit() ? static_cast<const Unit*>(target) : nullptr;
     AirTacticsInput in;
     in.position = pos;
-    in.heading = heading;
+    in.heading = unit.heading();
     in.target = at;
     in.target_in_air = target_unit && target_unit->layer() == "Air";
     if (target_unit) {
@@ -212,16 +233,14 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
     air_tactics(st, r, in, sim.random());
     const auto mode = static_cast<M>(st.state);
 
-    // What the state asks (Moho's switch over the combat states).
-    const f32 dx = in.target.x - pos.x;
-    const f32 dz = in.target.z - pos.z;
-    const f32 dist = std::sqrt(dx * dx + dz * dz + (in.target.y - pos.y) * (in.target.y - pos.y));
-    AirSteer steer;
-    steer.making_attack_run = mode == M::Combat || mode == M::NormalTurn || mode == M::BreakOff;
-    steer.full_thrust = static_cast<u8>(mode) > static_cast<u8>(M::NormalTurn);
-    steer.speed = in.max_airspeed;
-    steer.turn_clamp = unit.turn_rate_rad() * unit.turn_mult();
-    Vector3 aim = in.target;
+    const Vector3 nose = flat_nose(unit);
+    const f32 top = in.max_airspeed;
+    const f32 dist = std::sqrt((in.target.x - pos.x) * (in.target.x - pos.x) +
+                               (in.target.y - pos.y) * (in.target.y - pos.y) +
+                               (in.target.z - pos.z) * (in.target.z - pos.z));
+    Vector3 want{in.target.x - pos.x, 0.0f, in.target.z - pos.z};
+    f32 length = top;
+    bool set_length = true;
     switch (mode) {
     case M::Combat:
     case M::NormalTurn:
@@ -229,109 +248,85 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
             const f32 ahead = r.predict_ahead_for_bomb_drop > 0.0f && !in.target_in_air
                                   ? r.predict_ahead_for_bomb_drop
                                   : 1.0f;
-            aim = predict_ahead(*target_unit, ahead);
+            const Vector3 aim = predict_ahead(*target_unit, ahead);
+            want = {aim.x - pos.x, 0.0f, aim.z - pos.z};
         }
-        if (mode == M::NormalTurn && in.target_in_air && !in.target_moved)
-            steer.speed = std::max(r.min_airspeed, dist);
+        // A moving one, as retail trails it; faf-re's text reads the test the other way.
+        if (mode == M::NormalTurn && in.target_in_air && in.target_moved) {
+            length = std::max(r.min_airspeed, dist);
+        }
         break;
     case M::CombatTurn:
     case M::CombatTurnB:
-        steer.speed = r.min_airspeed;
-        if (mode == M::CombatTurn) steer.turn_clamp = r.combat_turn_speed * unit.turn_mult();
+        length = r.min_airspeed;
         ++st.sustained_turn_ticks;
         break;
     case M::Realign: ++st.sustained_turn_ticks; break;
     case M::BreakOff:
-        aim = {pos.x + osc::dmath::sin(heading), pos.y, pos.z + osc::dmath::cos(heading)};
+        want = {nose.x * top, 0.0f, nose.z * top};
+        set_length = false;
         st.sustained_turn_ticks = 0;
         break;
     case M::ReturnToMap:
-        aim = sim.has_playable_rect()
-                  ? Vector3{(sim.playable_x0() + sim.playable_x1()) * 0.5f, pos.y,
-                            (sim.playable_z0() + sim.playable_z1()) * 0.5f}
-                  : pos;
+        if (sim.has_playable_rect()) {
+            want = {(sim.playable_x0() + sim.playable_x1()) * 0.5f - pos.x, 0.0f,
+                    (sim.playable_z0() + sim.playable_z1()) * 0.5f - pos.z};
+        } else {
+            want = {};
+        }
         st.sustained_turn_ticks = 0;
         break;
-    case M::None: break;
+    case M::None: length = std::min(std::sqrt(want.x * want.x + want.z * want.z), top); break;
     }
-    steer.heading = (aim.x != pos.x || aim.z != pos.z)
-                        ? osc::dmath::atan2(aim.x - pos.x, aim.z - pos.z)
-                        : heading;
-    const f32 align = osc::dmath::cos(wrap_angle(steer.heading - heading));
-    const f32 wing_blend = 1.0f - align;
-    steer.turn_gain = r.k_turn;
-    if (mode == M::Combat || mode == M::NormalTurn) steer.turn_gain += wing_blend;
-    else if (mode == M::CombatTurn) steer.turn_gain += r.tight_turn_multiplier * wing_blend;
 
-    // Its height (CalcDesiredTargetElevation): over the ground ahead of it,
-    // the target's in a run; an aircraft's cruise height for an aircraft.
-    const Vector3 ground_at = (mode == M::BreakOff || mode == M::ReturnToMap)
-                                  ? Vector3{pos.x + st.velocity.x, pos.y, pos.z + st.velocity.z}
-                                  : in.target;
-    const f32 floor_there = unit.air_floor(terrain, ground_at.x, ground_at.z);
-    if (in.target_in_air && target_unit)
-        steer.altitude =
-            std::max(target_unit->elevation_target(), 0.5f * unit.elevation_target()) + floor_there;
-    else
-        steer.altitude =
-            (mode == M::Combat ? r.attack_elevation : unit.elevation_target()) + floor_there;
+    // CalcDesiredTargetElevation, over the ground where it is headed.
+    const f32 floor_there = unit.air_floor(terrain, pos.x + want.x, pos.z + want.z);
+    const f32 altitude =
+        in.target_in_air && target_unit
+            ? std::max(target_unit->elevation_target(), 0.5f * unit.elevation_target()) +
+                  floor_there
+            : (mode == M::Combat ? r.attack_elevation : unit.elevation_target()) + floor_there;
+    want.y = altitude - pos.y;
+    if (set_length) {
+        const f32 len = std::sqrt(want.x * want.x + want.y * want.y + want.z * want.z);
+        if (len > 0.0f) {
+            want = {want.x * length / len, want.y * length / len, want.z * length / len};
+        }
+    }
 
-    fly_airframe(unit, steer, sim, terrain, dt);
+    const f32 want_len = std::sqrt(want.x * want.x + want.y * want.y + want.z * want.z);
+    const Vector3 selected =
+        want_len > 0.0f ? Vector3{want.x / want_len, want.y / want_len, want.z / want_len} : nose;
+    const f32 limited = std::min(std::sqrt(want.x * want.x + want.z * want.z), top);
+    f32 thrust = limited;
+    if (static_cast<u8>(mode) <= static_cast<u8>(M::NormalTurn)) {
+        const f32 align = selected.x * nose.x + selected.z * nose.z;
+        thrust *= align > 0.5f ? align : 0.5f;
+    }
+    const Vector3 force{nose.x * thrust, 0.0f, nose.z * thrust};
+    const f32 elevation = unit.elevation_target();
+    const f32 height = pos.y - unit.air_floor(terrain, pos.x, pos.z);
+    const f32 lean =
+        unit.has_unit_state("MovingDown") && elevation > 0.0f ? height / elevation : 1.0f;
+    const f32 turn_speed =
+        (mode == M::CombatTurn ? r.combat_turn_speed : unit.turn_rate_rad()) * unit.turn_mult();
+    const AirAxes axes = winged_axes(nose, selected, limited, unit.start_turn_distance(),
+                                     turn_speed, r.bank_factor, lean, mode == M::NormalTurn);
+    f32 turn_add = 0.0f;
+    if (mode == M::Combat || mode == M::NormalTurn) {
+        turn_add = axes.wing_blend;
+    } else if (mode == M::CombatTurn) {
+        turn_add = r.tight_turn_multiplier * axes.wing_blend;
+    }
+    const f32 damping = unit.has_category("TARGETCHASER")
+                            ? 1.0f
+                            : air_move_damping(want_len, top, r.k_move, r.k_move_damping);
+    air_control(unit, force, want.y, damping, axes, true, 1.0f, turn_add, &sim, terrain, dt);
+    unit.set_unit_state("MakingAttackRun",
+                        mode == M::Combat || mode == M::NormalTurn || mode == M::BreakOff);
 }
 
 } // namespace
-
-/// The airframe follows `steer` with Moho's lag: the nose led by at most the
-/// turn clamp, a yaw rate under KTurn and KTurnDamping, and the velocity
-/// easing toward the nose under KMove (thrust waits for the nose until the
-/// turns); its height toward steer.altitude at its climb rate.
-void fly_airframe(Unit& unit, const AirSteer& steer, SimState& sim, const map::Terrain* terrain,
-                  f32 dt) {
-    AirCombatState& st = unit.air_combat();
-    const AirCombatRules& r = unit.air_combat_rules();
-    const Vector3 pos = unit.position();
-    f32 heading = unit.heading();
-    const f32 err =
-        std::clamp(wrap_angle(steer.heading - heading), -steer.turn_clamp, steer.turn_clamp);
-    st.yaw_rate += (steer.turn_gain * err - r.k_turn_damping * st.yaw_rate) * dt;
-    heading += st.yaw_rate * dt;
-    while (heading < 0.0f) heading += kTwoPi;
-    while (heading >= kTwoPi) heading -= kTwoPi;
-    unit.set_heading(heading);
-    const f32 nx = osc::dmath::sin(heading);
-    const f32 nz = osc::dmath::cos(heading);
-    const f32 thrust = std::min(
-        steer.full_thrust
-            ? 1.0f
-            : std::max(osc::dmath::sin(steer.heading) * nx + osc::dmath::cos(steer.heading) * nz,
-                       0.5f),
-        steer.thrust_cap);
-    st.velocity.x += (r.k_move * steer.speed * thrust * nx - r.k_move * st.velocity.x) * dt;
-    st.velocity.z += (r.k_move * steer.speed * thrust * nz - r.k_move * st.velocity.z) * dt;
-    st.velocity.y = 0.0f;
-
-    Vector3 next = pos;
-    next.x += st.velocity.x * dt;
-    next.z += st.velocity.z * dt;
-    const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
-    next.y = unit.lift_toward(steer.altitude - pos.y, true, floor_here, terrain,
-                              &sim.entity_registry(), dt);
-    unit.set_current_altitude(next.y - floor_here);
-
-    const f32 bank = std::clamp(st.yaw_rate * 0.5f, -0.5f, 0.5f);
-    f32 cur_bank = unit.bank_angle();
-    cur_bank += (bank - cur_bank) * std::min(1.0f, 5.0f * dt);
-    unit.set_bank_angle(cur_bank);
-    const f32 pitch = std::clamp((steer.altitude - next.y) * 0.02f, -0.3f, 0.3f);
-    unit.set_pitch_angle(pitch);
-    unit.set_orientation(euler_to_quat(heading, pitch, cur_bank));
-    unit.set_position(sim.clamp_to_playable(next, unit.army()));
-    unit.set_air_velocity(st.velocity);
-    unit.set_air_turn_rate(st.yaw_rate);
-    unit.set_current_airspeed(
-        std::sqrt(st.velocity.x * st.velocity.x + st.velocity.z * st.velocity.z));
-    unit.set_unit_state("MakingAttackRun", steer.making_attack_run);
-}
 
 void fly_attack_run(Unit& unit, const Entity& target, SimState& sim, const map::Terrain* terrain,
                     f32 dt) {
@@ -374,30 +369,12 @@ bool flies_winged_on_guard(const Unit& unit) {
 
 void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
                    f32 dt) {
-    AirCombatState& st = unit.air_combat();
-    const AirCombatRules& r = unit.air_combat_rules();
-    const Vector3 pos = unit.position();
-    const f32 heading = unit.heading();
-    const f32 dx = goal.x - pos.x;
-    const f32 dz = goal.z - pos.z;
-    unit.track_lift_ground(terrain, std::sqrt(dx * dx + dz * dz), sim.tick_count(), dt);
-    if (!st.flying) {
-        // It takes over the airframe as it flies.
-        st.flying = true;
-        st.yaw_rate = unit.air_turn_rate();
-        st.velocity = unit.air_velocity();
-    }
-    const f32 limited =
-        std::min(std::sqrt(dx * dx + dz * dz), unit.max_airspeed() * unit.speed_mult());
-    AirSteer steer;
-    steer.heading = (dx != 0.0f || dz != 0.0f) ? osc::dmath::atan2(dx, dz) : heading;
-    steer.speed = limited;
-    steer.turn_clamp = unit.turn_rate_rad() * unit.turn_mult();
-    steer.turn_gain = r.k_turn;
-    const f32 start_turn = unit.start_turn_distance();
-    if (start_turn > limited) steer.thrust_cap = std::min(limited / start_turn, 0.5f);
-    steer.altitude = unit.lift_ground() + unit.elevation_target();
-    fly_airframe(unit, steer, sim, terrain, dt);
+    unit.air_combat().flying = true;
+    AirMove move;
+    move.target = goal;
+    move.elevation = unit.elevation_target();
+    move.winged = true;
+    fly_air_move(unit, move, &sim, terrain, dt);
 }
 
 void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Terrain* terrain,
@@ -437,14 +414,7 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
     }
 
     const Quaternion body = unit.orientation();
-    Vector3 nose = forward_of(body);
-    nose.y = 0.0f;
-    const f32 nose_len = std::sqrt(nose.x * nose.x + nose.z * nose.z);
-    if (nose_len > 0.0f) {
-        nose = {nose.x / nose_len, 0.0f, nose.z / nose_len};
-    } else {
-        nose = {osc::dmath::sin(unit.heading()), 0.0f, osc::dmath::cos(unit.heading())};
-    }
+    const Vector3 nose = flat_nose(unit);
     const f32 nx = nose.x;
     const f32 nz = nose.z;
     const f32 want_len = std::sqrt(want.x * want.x + want.y * want.y + want.z * want.z);
@@ -457,7 +427,8 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
     }
     Vector3 force{want.x, 0.0f, want.z};
     AirAxes axes;
-    if (r.winged) {
+    const bool winged = r.winged || move.winged;
+    if (winged) {
         const f32 limited = std::min(std::sqrt(want.x * want.x + want.z * want.z), top);
         const bool near = start_turn > limited;
         const auto& queue = unit.command_queue();
@@ -488,22 +459,7 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
     const f32 damping = unit.has_category("TARGETCHASER")
                             ? 1.0f
                             : air_move_damping(want_len, top, r.k_move, r.k_move_damping);
-    const AirMoveStep step = air_move_step(v0, force, r.k_move, damping, dt);
-    unit.set_air_velocity(step.velocity);
-    Vector3 next = pos;
-    next.x += step.move.x;
-    next.z += step.move.z;
-    const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
-    const EntityRegistry* registry = sim ? &sim->entity_registry() : nullptr;
-    next.y = unit.lift_toward(want.y, r.winged, floor_here, terrain, registry, dt);
-    unit.set_current_altitude(next.y - floor_here);
-    steer_attitude(unit, attitude_of(axes), registry, dt);
-    if (sim) {
-        next = sim->clamp_to_playable(next, unit.army());
-    }
-    unit.set_position(next);
-    unit.set_current_airspeed(
-        std::sqrt(step.velocity.x * step.velocity.x + step.velocity.z * step.velocity.z));
+    air_control(unit, force, want.y, damping, axes, winged, 1.0f, 0.0f, sim, terrain, dt);
 }
 
 void circling_draws(AirCombatState& st, const AirCombatRules& r, f32 attack_elevation, u32 tick,
@@ -565,6 +521,7 @@ CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrai
     const f32 speed = std::min(len, in.max_airspeed);
     if (len > 0.0f) v = {v.x * speed / len, v.y * speed / len, v.z * speed / len};
     out.velocity = v;
+    out.toward = {tx, 0.0f, tz};
     out.facing = osc::dmath::atan2(tx, tz);
     return out;
 }
@@ -574,13 +531,10 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
     const Vector3 pos = unit.position();
-    f32 heading = unit.heading();
-    const bool starting = !st.flying;
-    if (starting) {
-        // The circling takes over the airframe as it flies, from where it
-        // is (Moho's motion target, once stopped).
+    if (!st.flying) {
+        // The circling takes over from where it is (Moho's motion target,
+        // once stopped).
         st.flying = true;
-        st.yaw_rate = unit.air_turn_rate();
         st.circle_anchor = pos;
     }
     circling_draws(st, r, r.attack_elevation, sim.tick_count(), sim.random());
@@ -590,7 +544,9 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     f32 radius = unit.start_turn_distance() * st.circle_radius_ratio;
     if (around.weapon_radius > 0.0f) {
         radius = around.weapon_radius * st.circle_radius_ratio;
-        if (around.target_in_air) radius *= r.circling_radius_vs_air_mult;
+        if (around.target_in_air) {
+            radius *= r.circling_radius_vs_air_mult;
+        }
     }
     CirclingInput in;
     in.position = pos;
@@ -603,73 +559,27 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     const f32 to_x = around.center.x - pos.x;
     const f32 to_z = around.center.z - pos.z;
     unit.track_lift_ground(terrain, std::sqrt(to_x * to_x + to_z * to_z), sim.tick_count(), dt);
-    if (starting) {
-        st.velocity = unit.air_velocity();
-    }
     const CirclingSteer steer = circling_steer(in, terrain);
 
-    // The airframe's damping (CalcAirMovementDampingFactor) reads its move
-    // vector, to its goal at most its top speed long (and to its flying
-    // height): KMove when that is its top speed, else more, up to
-    // KMoveDamping. A TARGETCHASER's is 1.
+    // CalcAirMovementDampingFactor reads its move vector, to its goal at most
+    // its top speed long, and to its flying height.
     const f32 top = unit.max_airspeed() * unit.speed_mult();
-    f32 damping = r.k_move;
-    if (unit.has_category("TARGETCHASER")) {
-        damping = 1.0f;
-    } else {
+    f32 damping = 1.0f;
+    if (!unit.has_category("TARGETCHASER")) {
         const f32 mx = around.move_goal.x - pos.x;
         const f32 mz = around.move_goal.z - pos.z;
         const f32 flat = std::min(std::sqrt(mx * mx + mz * mz), top);
         const f32 my = unit.air_floor(terrain, pos.x, pos.z) + unit.elevation_target() - pos.y;
-        const f32 len = std::min(std::sqrt(flat * flat + my * my), top);
-        const f32 denominator = len > 1.0f ? len : 1.0f;
-        if (top > denominator) damping = std::min(top / denominator, r.k_move_damping);
+        damping =
+            air_move_damping(std::sqrt(flat * flat + my * my), top, r.k_move, r.k_move_damping);
     }
-
-    // The velocity eases toward KMove x the steer against the damping; the
-    // nose turns to the centre (CalcHoverOrientation) under KTurn, raised by
-    // CirclingTurnMult, against KTurnDamping.
-    const Vector3 before = st.velocity;
-    st.velocity.x += (r.k_move * steer.velocity.x - damping * st.velocity.x) * dt;
-    st.velocity.z += (r.k_move * steer.velocity.z - damping * st.velocity.z) * dt;
-    st.velocity.y = 0.0f;
-    const f32 err = wrap_angle(steer.facing - heading);
-    st.yaw_rate += (r.k_turn * r.circling_turn_mult * err - r.k_turn_damping * st.yaw_rate) * dt;
-    heading += st.yaw_rate * dt;
-    while (heading < 0.0f) heading += kTwoPi;
-    while (heading >= kTwoPi) heading -= kTwoPi;
-    unit.set_heading(heading);
-
-    // Its height: AttackElevation and the drawn offset over the terrain at
-    // its aim. Moho's aim reads no water; its surface collision keeps the
-    // aircraft above it, as its floor does here.
-    Vector3 next = pos;
-    next.x += st.velocity.x * dt;
-    next.z += st.velocity.z * dt;
-    const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
-    next.y =
-        unit.lift_toward(steer.velocity.y, false, floor_here, terrain, &sim.entity_registry(), dt);
-    const f32 alt = next.y - floor_here;
-    unit.set_current_altitude(alt);
-
-    // It leans into its change of velocity (CalcHoverOrientation's up
-    // axis): the change sideways x BankFactor x its height over its
-    // Elevation (at most 1), against a tenth of gravity.
-    const f32 side = (st.velocity.x - before.x) * osc::dmath::cos(heading) -
-                     (st.velocity.z - before.z) * osc::dmath::sin(heading);
-    const f32 lift =
-        unit.elevation_target() > 0.0f ? std::min(alt / unit.elevation_target(), 1.0f) : 1.0f;
-    const f32 bank = osc::dmath::atan2(side * r.bank_factor * lift, Projectile::GRAVITY * 0.1f);
-    f32 cur_bank = unit.bank_angle();
-    cur_bank += (bank - cur_bank) * std::min(1.0f, 5.0f * dt);
-    unit.set_bank_angle(cur_bank);
-    unit.set_pitch_angle(0.0f);
-    unit.set_orientation(euler_to_quat(heading, 0.0f, cur_bank));
-    unit.set_position(sim.clamp_to_playable(next, unit.army()));
-    unit.set_air_velocity(st.velocity);
-    unit.set_air_turn_rate(st.yaw_rate);
-    unit.set_current_airspeed(
-        std::sqrt(st.velocity.x * st.velocity.x + st.velocity.z * st.velocity.z));
+    const f32 elevation = unit.elevation_target();
+    const f32 height = pos.y - unit.air_floor(terrain, pos.x, pos.z);
+    const AirAxes axes =
+        hover_axes(unit.orientation(), unit.air_dv(), r.bank_factor, r.bank_forward,
+                   elevation > 0.0f ? height / elevation : 1.0f, steer.toward);
+    air_control(unit, steer.velocity, steer.velocity.y, damping, axes, false, r.circling_turn_mult,
+                0.0f, &sim, terrain, dt);
 }
 
 } // namespace osc::sim

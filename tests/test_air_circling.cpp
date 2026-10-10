@@ -82,9 +82,10 @@ struct World {
         sim.add_army("ARMY_1", "ARMY_1");
         sim.set_game_setup(game);
         lua_State* L = state.raw();
-        const std::string gunship_air =
+        const std::string airframe =
             "CanFly = true, MaxAirspeed = 12, MinAirspeed = 3, StartTurnDistance = 5,"
-            " KMove = 0.8, KMoveDamping = 2, KTurn = 0.8, KTurnDamping = 1.5, BankFactor = 0.1";
+            " KMove = 0.8, KMoveDamping = 2, KTurn = 0.8, KTurnDamping = 1.5";
+        const std::string gunship_air = airframe + ", BankFactor = 0.1";
         // return {BlueprintId = '<id>', <body>, Air = {<air>}}
         const auto blueprint = [](const char* id, const std::string& air) {
             std::string s = "return {BlueprintId = '";
@@ -102,6 +103,9 @@ struct World {
                 blueprint("steady", gunship_air + ", CirclingDirChange = false"),
                 blueprint("hoverer", gunship_air + ", HoverOverAttack = true"),
                 blueprint("plane", gunship_air + ", Winged = true"),
+                blueprint("banker", airframe + ", Winged = true, BankFactor = 2"),
+                blueprint("flatwing", airframe + ", Winged = true, BankFactor = 0"),
+                blueprint("gunfwd", gunship_air + ", BankForward = true"),
                 blueprint("drone", "CanFly = true, MaxAirspeed = 4, MinAirspeed = 3,"
                                    " StartTurnDistance = 5, KMove = 1, KMoveDamping = 1.2"),
                 // An engineering drone: it repairs what it guards (REPAIR, a
@@ -133,8 +137,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id :
-             {"gunship", "steady", "hoverer", "plane", "drone", "repairdrone", "tank"}) {
+        for (const char* id : {"gunship", "steady", "hoverer", "plane", "banker", "flatwing",
+                               "gunfwd", "drone", "repairdrone", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -509,7 +513,7 @@ TEST_CASE("A gunship guarding with nothing to do flies as a winged one: nose fir
     f32 worst_slip = 0.0f;
     for (int t = 0; t < 40; ++t) {
         w.tick(g);
-        const Vector3& v = g.air_combat().velocity;
+        const Vector3& v = g.air_velocity();
         const f32 speed = std::hypot(v.x, v.z);
         if (speed > 1.0f)
             worst_slip = std::max(worst_slip, std::abs(wrap(std::atan2(v.x, v.z) - g.heading())));
@@ -521,7 +525,7 @@ TEST_CASE("A gunship guarding with nothing to do flies as a winged one: nose fir
     const f32 there = flat_dist(g, charge.position());
     INFO("there " << there);
     CHECK(there < 6.0f);
-    CHECK(std::hypot(g.air_combat().velocity.x, g.air_combat().velocity.z) < 0.5f);
+    CHECK(std::hypot(g.air_velocity().x, g.air_velocity().z) < 0.5f);
     CHECK(g.air_combat().flying);
     CHECK(g.air_combat().state == 0);                  // no attack runs
     CHECK(g.air_combat().circle_radius_ratio == 1.0f); // never drew a circle
@@ -610,17 +614,20 @@ TEST_CASE("A drone guarding a hurt unit out of its reach flies winged to it, onc
     f32 fastest = 0.0f;
     f32 worst_extra = 0.0f;
     Vector3 last = d.position();
+    Vector3 last_v = d.air_velocity();
     int t = 0;
     for (; t < 600 && !d.is_repairing(); ++t) {
         w.tick(d);
         const Vector3 p = d.position();
         const f32 moved = std::hypot(p.x - last.x, p.z - last.z);
         fastest = std::max(fastest, moved * 10.0f);
+        const Vector3& v = d.air_velocity();
         if (d.air_combat().flying && !d.is_repairing()) {
-            const Vector3& v = d.air_combat().velocity;
-            worst_extra = std::max(worst_extra, std::abs(moved - std::hypot(v.x, v.z) * 0.1f));
+            const f32 step = std::hypot(v.x + last_v.x, v.z + last_v.z) * 0.05f;
+            worst_extra = std::max(worst_extra, std::abs(moved - step));
         }
         last = p;
+        last_v = v;
     }
     INFO("ticks " << t << " fastest " << fastest << " worst extra " << worst_extra);
     CHECK(d.is_repairing());
@@ -630,4 +637,53 @@ TEST_CASE("A drone guarding a hurt unit out of its reach flies winged to it, onc
     // At work it hovers, circling what it repairs (Moho: Repairing)
     CHECK_FALSE(osc::sim::flies_winged_on_guard(d));
     CHECK(osc::sim::circles(d));
+}
+
+TEST_CASE("A winged aircraft's attack run banks into its turn by its BankFactor, as its moves do",
+          "[air_circling]") {
+    World w;
+    Unit& banked = *w.make("banker", 20.0f, 20.0f);
+    Unit& level = *w.make("flatwing", 20.0f, 90.0f);
+    World::arm(banked, 200.0f);
+    World::arm(level, 200.0f);
+    World::attack_ground(banked, {80.0f, 10.0f, 20.0f});
+    World::attack_ground(level, {80.0f, 10.0f, 90.0f});
+    f32 deepest = 0.0f;
+    f32 flattest = 0.0f;
+    for (int t = 0; t < 30; ++t) {
+        w.tick(banked);
+        deepest = std::max(deepest, std::abs(banked.bank_angle()));
+        flattest = std::max(flattest, std::abs(level.bank_angle()));
+    }
+    INFO("deepest " << deepest << " flattest " << flattest);
+    REQUIRE(engaged(banked));
+    REQUIRE(engaged(level));
+    CHECK(deepest > 0.2f);
+    CHECK(flattest < 0.01f);
+}
+
+TEST_CASE("A circling gunship leans forward as its speed changes only with BankForward",
+          "[air_circling]") {
+    World w;
+    Unit& plain = *w.make("gunship", 20.0f, 30.0f);
+    Unit& forward = *w.make("gunfwd", 20.0f, 100.0f);
+    World::arm(plain, 22.0f);
+    World::arm(forward, 22.0f);
+    World::attack_ground(plain, {64.0f, 10.0f, 30.0f});
+    World::attack_ground(forward, {64.0f, 10.0f, 100.0f});
+    f32 plain_pitch = 0.0f;
+    f32 forward_pitch = 0.0f;
+    for (int t = 0; t < 200; ++t) {
+        w.tick(plain);
+        if (engaged(plain)) {
+            plain_pitch = std::max(plain_pitch, std::abs(plain.pitch_angle()));
+        }
+        if (engaged(forward)) {
+            forward_pitch = std::max(forward_pitch, std::abs(forward.pitch_angle()));
+        }
+    }
+    INFO("plain " << plain_pitch << " forward " << forward_pitch);
+    REQUIRE(engaged(forward));
+    CHECK(forward_pitch > 0.1f);
+    CHECK(plain_pitch < forward_pitch * 0.5f);
 }

@@ -162,7 +162,10 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
             {"vertical event", "units", [&] { u.set_vert_event("Bottom", nullptr); }},
             {"flying", "units", [&] { u.air_combat().flying = true; }},
             {"airframe velocity", "units",
-             [&] { u.air_combat().velocity = osc::sim::Vector3{3, 0, 1}; }},
+             [&] {
+                 u.air_combat().flying = true;
+                 u.set_air_velocity(osc::sim::Vector3{3, 0, 1});
+             }},
             {"circle anchor", "units",
              [&] { u.air_combat().circle_anchor = osc::sim::Vector3{5, 0, 5}; }},
             // Orders
