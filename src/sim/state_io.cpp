@@ -138,7 +138,8 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.u32v(reg.next_id_);
     // default_random_, sim_random_: the sim's generator (SimState's);
     // walking_: no walk is under way between ticks; unregister_hook_: the
-    // sim's; grid_initialized_, grid_width_, grid_height_: the map's
+    // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
+    // prop_grid_height_: the map's
 }
 
 void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
@@ -155,6 +156,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.large_colliders_.clear();
     for (auto& cell : reg.grid_cells_) cell.clear();
     for (auto& cell : reg.unit_cells_) cell.clear();
+    for (auto& cell : reg.prop_cells_) {
+        cell.clear();
+    }
 
     const size_t n = r.size(64);
     u32 last_id = 0;
@@ -204,6 +208,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         // As register_entity takes one, at its own id
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
+        e->set_prop_cell(-1);
         reg.order_.push_back({id, e.get()});
         if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
         if (reg.entities_.size() <= id) reg.entities_.resize(id + 1);
@@ -217,6 +222,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             reg.world_to_cell(placed.position().x, placed.position().z, cx, cz);
             reg.grid_insert(placed, cx, cz);
             placed.set_grid_cell(cx, cz);
+            if (placed.is_prop()) {
+                reg.prop_cell_update(placed);
+            }
         }
     }
     reg.next_id_ = r.u32v();

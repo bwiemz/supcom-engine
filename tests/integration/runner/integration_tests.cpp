@@ -6370,6 +6370,43 @@ void test_prop(TestContext& ctx) {
     lua_check("Test 11d: ...and by 21.5 s the wreck is gone", R"(
         if not __osc_reclaim_wreck:BeenDestroyed() then error('still there') end
     )");
+    lua_check("Test 13: a tank driving into a tree calls its OnCollision", R"(
+        local a = GetEntityById(__osc_test_acu_id(1)):GetPosition()
+        local x, z = a[1] + 12, a[3] - 12
+        __osc_tank = CreateUnitHPR('uel0201', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        -- Its box (half 0.05 wide) reaches 0.07 into the tank's side (half 0.35).
+        __osc_hit_tree = CreatePropHPR(__osc_tree:GetBlueprint().BlueprintId, x + 0.33, GetTerrainHeight(x + 0.33, z + 0.2), z + 0.2, 0, 0, 0)
+        __osc_hits = {}
+        local class_on_collision = __osc_hit_tree.OnCollision
+        __osc_hit_tree.OnCollision = function(self, other, nx, ny, nz, depth)
+            table.insert(__osc_hits, {tick = GetGameTick(), other = other, n = {nx, ny, nz}, depth = depth})
+            class_on_collision(self, other, nx, ny, nz, depth)
+        end
+        IssueMove({__osc_tank}, {x, GetTerrainHeight(x, z + 20), z + 20})
+    )");
+    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    lua_check("Test 13b: on the tank's tick, with the unit, a normal away from it and the depth",
+              R"(
+        local hit = __osc_hits[1]
+        if not hit then error('no OnCollision in 2 s') end
+        if math.mod(hit.tick, 5) ~= math.mod(__osc_tank:GetEntityId(), 5) then
+            error('tick ' .. hit.tick .. ' for unit ' .. __osc_tank:GetEntityId())
+        end
+        for _, h in __osc_hits do
+            if math.mod(h.tick - hit.tick, 5) ~= 0 then error('off-beat call at tick ' .. h.tick) end
+        end
+        if hit.other ~= __osc_tank then error('other is not the tank') end
+        local n = hit.n
+        if n[1] < 0.99 or math.abs(hit.depth - 0.07) > 0.01 then
+            error(string.format('normal (%.3f, %.3f, %.3f), depth %.3f', n[1], n[2], n[3], hit.depth))
+        end
+    )");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick();
+    lua_check("Test 13c: the tree it ran into lies flat", R"(
+        local q = __osc_hit_tree:GetOrientation()
+        local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
+        if math.abs(up_y) > 0.05 then error('still standing: up.y ' .. up_y) end
+    )");
     if (osc::test_status::failure_count() - fail == failures_before) {
         pass++;
         spdlog::info("[PASS] Test 12: no prop script errors");

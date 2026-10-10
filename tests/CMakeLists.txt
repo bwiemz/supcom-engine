@@ -19,6 +19,7 @@ add_executable(osc_tests
     test_category_expr.cpp
     test_scm_bones.cpp
     test_pose.cpp
+    test_prop_collision.cpp
     test_prop_fall.cpp
     test_image.cpp
     test_navigation_throttle.cpp

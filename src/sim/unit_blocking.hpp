@@ -7,6 +7,7 @@
 // never blocks.
 
 #include "core/types.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity.hpp"
 #include "sim/path_finder.hpp"
 
@@ -14,14 +15,6 @@ namespace osc::sim {
 
 class SimState;
 class Unit;
-
-/// A box in the world: its centre, three unit axes and the half-extents
-/// along them (Wm3's Box3f).
-struct OrientedBox {
-    Vector3 centre;
-    Vector3 axis[3];
-    f32 extent[3] = {0, 0, 0};
-};
 
 /// Whether two boxes overlap: the separating-axis test over their six axes
 /// and nine cross products. Touching overlaps, as in Moho's CollideBox.

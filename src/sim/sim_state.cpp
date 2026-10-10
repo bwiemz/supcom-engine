@@ -22,6 +22,7 @@
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
+#include "sim/prop_collision.hpp"
 #include "sim/script_class.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
@@ -1724,6 +1725,10 @@ void SimState::update_entities() {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
         if (e->is_unit()) {
+            collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
+            if (e->destroyed()) {
+                continue;
+            }
             const Vector3 before = e->position();
             const u32 snaps = e->snap_serial();
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
