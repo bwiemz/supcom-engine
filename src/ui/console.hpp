@@ -28,6 +28,8 @@ public:
 
     void add(std::string name, Handler handler);
     bool has(std::string_view name) const;
+    /// CON_GetFindTextMatches: the names starting with `prefix`, in any case.
+    std::vector<std::string> matches(std::string_view prefix) const;
 
     /// CON_Execute: each `;`-separated command in turn. An unknown one is
     /// logged, as Moho prints it.

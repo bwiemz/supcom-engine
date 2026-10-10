@@ -148,6 +148,32 @@ int l_RemoveSpecialFile(lua_State* L) {
     return 0;
 }
 
+/// RemoveProfileDirectories(profile): Moho recycles the profile's replay and
+/// save folders; FA's own files share them, so only ours go, then the
+/// folders if that empties them.
+int l_RemoveProfileDirectories(lua_State* L) {
+    const std::string_view profile = luaL_checkstring(L, 1);
+    auto* files = get_special_files(L);
+    if (!files || !SpecialFiles::plain_name(profile)) {
+        return 0;
+    }
+    for (const auto& type : kTypes) {
+        const fs::path folder = files->directory(type) / fs::path(std::string(profile));
+        std::error_code ec;
+        std::vector<fs::path> ours;
+        for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+            if (files->holds(type, it->path())) {
+                ours.push_back(it->path());
+            }
+        }
+        for (const fs::path& file : ours) {
+            fs::remove(file, ec);
+        }
+        fs::remove(folder, ec);
+    }
+    return 0;
+}
+
 /// The game being played, or null.
 sim::SimState* sim_of(lua_State* L) {
     lua_pushstring(L, "osc_sim_state");
@@ -494,6 +520,7 @@ void register_special_file_bindings(LuaState& state, SpecialFiles* files) {
     state.register_function("GetSpecialFilePath", l_GetSpecialFilePath);
     state.register_function("GetSpecialFileInfo", l_GetSpecialFileInfo);
     state.register_function("RemoveSpecialFile", l_RemoveSpecialFile);
+    state.register_function("RemoveProfileDirectories", l_RemoveProfileDirectories);
     state.register_function("CopyCurrentReplay", l_CopyCurrentReplay);
     state.register_function("LaunchReplaySession", l_LaunchReplaySession);
     state.register_function("InternalSaveGame", l_InternalSaveGame);

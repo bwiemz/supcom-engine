@@ -50,6 +50,19 @@ f32 item_list_row_height(const UIControl& list) {
     return static_cast<f32>(list.font_pointsize()) + 4.0f;
 }
 
+ItemRowColors item_list_row_colors(const UIControl& list, i32 row) {
+    const bool hovered = list.show_mouseover() && row == list.hover_item();
+    const bool selected = list.show_selection() && row == list.selection();
+    if (hovered) {
+        return {list.item_mo_fg_color(), true,
+                selected ? list.item_sel_bg_color() : list.item_mo_bg_color()};
+    }
+    if (selected) {
+        return {list.item_sel_fg_color(), true, list.item_sel_bg_color()};
+    }
+    return {list.item_fg_color(), false, 0};
+}
+
 namespace {
 
 i32 shown_rows(const UIControl& list, f32 height) {

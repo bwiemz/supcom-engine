@@ -136,6 +136,32 @@ TEST_CASE("The special-file globals, as retail's file picker uses them", "[speci
     CHECK_FALSE(run(lua, "GetSpecialFiles('Screenshot')").empty()); // unknown type
 }
 
+TEST_CASE("RemoveProfileDirectories takes a profile's replays and saves", "[specialfiles]") {
+    TempDir dir;
+    SpecialFiles files(dir.path);
+    osc::lua::LuaState lua;
+    osc::lua::register_special_file_bindings(lua, &files);
+    const auto* replay = SpecialFiles::find_type("Replay");
+    const auto* save = SpecialFiles::find_type("SaveGame");
+    touch(files.path(*replay, "Gone", "match"));
+    touch(files.path(*save, "Gone", "quick"));
+    touch(files.path(*replay, "Kept", "match"));
+    touch(dir.path / "savegames" / "Other" / "fa.SCFASave");
+    const fs::path fa_own = dir.path / "replays" / "Other" / "fa.SCFAReplay";
+    touch(fa_own);
+    touch(files.path(*replay, "Other", "ours"));
+
+    CHECK(run(lua, "RemoveProfileDirectories('Gone') RemoveProfileDirectories('Other') "
+                   "RemoveProfileDirectories('..')")
+              .empty());
+    CHECK_FALSE(fs::exists(dir.path / "replays" / "Gone"));
+    CHECK_FALSE(fs::exists(dir.path / "savegames" / "Gone"));
+    CHECK(fs::exists(files.path(*replay, "Kept", "match")));
+    CHECK(fs::exists(fa_own));
+    CHECK(fs::exists(dir.path / "savegames" / "Other" / "fa.SCFASave"));
+    CHECK_FALSE(fs::exists(files.path(*replay, "Other", "ours")));
+}
+
 TEST_CASE("LaunchReplaySession asks the game loop to play a replay", "[specialfiles][replay]") {
     TempDir dir;
     SpecialFiles files(dir.path);

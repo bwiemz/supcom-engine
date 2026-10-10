@@ -22195,13 +22195,11 @@ void test_drag_render(TestContext& ctx) {
 
     // --- Test 2: PostDragger stores dragger in registry ---
     {
-        int err = do_lua_string(L,
-            "do\n"
-            "local root = GetFrame(0)\n"
-            "local d = rawget(_G, '_test_dragger')\n"
-            "PostDragger(root, 0, d)\n"
-            "end\n"
-        );
+        int err = do_lua_string(L, "do\n"
+                                   "local root = GetFrame(0)\n"
+                                   "local d = rawget(_G, '_test_dragger')\n"
+                                   "PostDragger(root, 1, d)\n"
+                                   "end\n");
         bool ok = (err == 0);
         if (ok) {
             lua_pushstring(L, "__osc_active_dragger");
@@ -22286,17 +22284,15 @@ void test_drag_render(TestContext& ctx) {
     // --- Test 5: OnCancel fires on ESC ---
     {
         // Re-post the dragger
-        int err = do_lua_string(L,
-            "do\n"
-            "local root = GetFrame(0)\n"
-            "local d = rawget(_G, '_test_dragger')\n"
-            "PostDragger(root, 0, d)\n"
-            "rawset(_G, '_test_drag_cancelled', false)\n"
-            "d.OnCancel = function(self)\n"
-            "  rawset(_G, '_test_drag_cancelled', true)\n"
-            "end\n"
-            "end\n"
-        );
+        int err = do_lua_string(L, "do\n"
+                                   "local root = GetFrame(0)\n"
+                                   "local d = rawget(_G, '_test_dragger')\n"
+                                   "PostDragger(root, 1, d)\n"
+                                   "rawset(_G, '_test_drag_cancelled', false)\n"
+                                   "d.OnCancel = function(self)\n"
+                                   "  rawset(_G, '_test_drag_cancelled', true)\n"
+                                   "end\n"
+                                   "end\n");
         bool ok = (err == 0);
         if (ok && reg) {
             osc::ui::UIDispatch dispatch;
