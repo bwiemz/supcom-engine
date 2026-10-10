@@ -13066,8 +13066,8 @@ void test_carrier_land(TestContext& ctx) {
                       d->fuel_ratio(), d->health(), d->max_health(), d->position().y - surface));
     for (int i = 0; i < 200 && !d->command_queue().empty(); ++i) ctx.sim.tick();
     check(d->command_queue().empty() && !d->has_unit_state("Refueling") &&
-              d->current_altitude() == d->elevation_target(),
-          fmt::format("it climbs back to its flying height, and its order is done ({:.1f} of "
+              std::abs(d->current_altitude() - d->elevation_target()) < 0.25f,
+          fmt::format("it climbs back to its flying height, and its order is done ({:.2f} of "
                       "{:.1f})",
                       d->current_altitude(), d->elevation_target()));
 
@@ -13091,9 +13091,9 @@ void test_carrier_land(TestContext& ctx) {
         const float launch_alt = g->current_altitude();
         for (int i = 0; i < 300 && !g->command_queue().empty(); ++i) ctx.sim.tick();
         check(went_in && launch_alt < g->elevation_target() && g->command_queue().empty() &&
-                  g->current_altitude() == g->elevation_target(),
-              fmt::format("an interceptor launched from {:.1f} climbs to its {:.1f}", launch_alt,
-                          g->elevation_target()));
+                  std::abs(g->current_altitude() - g->elevation_target()) < 0.25f,
+              fmt::format("an interceptor launched from {:.1f} climbs to its {:.1f} ({:.2f})",
+                          launch_alt, g->elevation_target(), g->current_altitude()));
     } else {
         check(false, "the interceptor exists");
     }

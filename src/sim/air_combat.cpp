@@ -161,6 +161,10 @@ void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
                        osc::dmath::cos(heading) * unit.current_airspeed()};
     }
 
+    const f32 to_x = at.x - pos.x;
+    const f32 to_z = at.z - pos.z;
+    unit.track_lift_ground(terrain, std::sqrt(to_x * to_x + to_z * to_z), sim.tick_count(), dt);
+
     const Unit* target_unit =
         target && target->is_unit() ? static_cast<const Unit*>(target) : nullptr;
     AirTacticsInput in;
@@ -284,12 +288,9 @@ void fly_airframe(Unit& unit, const AirSteer& steer, SimState& sim, const map::T
     next.x += st.velocity.x * dt;
     next.z += st.velocity.z * dt;
     const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
-    f32 alt = unit.current_altitude();
-    const f32 want = steer.altitude - floor_here;
-    const f32 climb = unit.climb_rate() * dt;
-    alt = alt < want ? std::min(alt + climb, want) : std::max(alt - climb, want);
-    unit.set_current_altitude(alt);
-    next.y = floor_here + alt;
+    next.y = unit.lift_toward(steer.altitude - pos.y, true, floor_here, terrain,
+                              &sim.entity_registry(), dt);
+    unit.set_current_altitude(next.y - floor_here);
 
     const f32 bank = std::clamp(st.yaw_rate * 0.5f, -0.5f, 0.5f);
     f32 cur_bank = unit.bank_angle();
@@ -358,6 +359,7 @@ void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Te
     }
     const f32 dx = goal.x - pos.x;
     const f32 dz = goal.z - pos.z;
+    unit.track_lift_ground(terrain, std::sqrt(dx * dx + dz * dz), sim.tick_count(), dt);
     const f32 limited =
         std::min(std::sqrt(dx * dx + dz * dz), unit.max_airspeed() * unit.speed_mult());
     AirSteer steer;
@@ -367,7 +369,7 @@ void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Te
     steer.turn_gain = r.k_turn;
     const f32 start_turn = unit.start_turn_distance();
     if (start_turn > limited) steer.thrust_cap = std::min(limited / start_turn, 0.5f);
-    steer.altitude = unit.elevation_target() + unit.air_floor(terrain, goal.x, goal.z);
+    steer.altitude = unit.lift_ground() + unit.elevation_target();
     fly_airframe(unit, steer, sim, terrain, dt);
 }
 
@@ -466,6 +468,9 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     in.max_airspeed = unit.max_airspeed();
     in.height = r.attack_elevation + st.circle_elevation;
     in.reverse = st.circle_reverse;
+    const f32 to_x = around.center.x - pos.x;
+    const f32 to_z = around.center.z - pos.z;
+    unit.track_lift_ground(terrain, std::sqrt(to_x * to_x + to_z * to_z), sim.tick_count(), dt);
     const CirclingSteer steer = circling_steer(in, terrain);
 
     // The airframe's damping (CalcAirMovementDampingFactor) reads its move
@@ -507,12 +512,10 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     next.x += st.velocity.x * dt;
     next.z += st.velocity.z * dt;
     const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
-    const f32 want = std::max(steer.aim.y - floor_here, 0.0f);
-    f32 alt = unit.current_altitude();
-    const f32 climb = unit.climb_rate() * dt;
-    alt = alt < want ? std::min(alt + climb, want) : std::max(alt - climb, want);
+    next.y =
+        unit.lift_toward(steer.velocity.y, false, floor_here, terrain, &sim.entity_registry(), dt);
+    const f32 alt = next.y - floor_here;
     unit.set_current_altitude(alt);
-    next.y = floor_here + alt;
 
     // It leans into its change of velocity (CalcHoverOrientation's up
     // axis): the change sideways x BankFactor x its height over its

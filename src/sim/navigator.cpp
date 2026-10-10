@@ -642,8 +642,10 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     unit.set_bank_angle(cur_bank);
 
     // --- 3. Acceleration ---
+    const u32 tick = sim_ ? sim_->tick_count() : unit.next_lift_tick();
+    const f32 slow = unit.track_lift_ground(terrain, std::sqrt(dx * dx + dz * dz), tick, fdt);
     f32 airspeed = unit.current_airspeed();
-    f32 target_speed = unit.max_airspeed() * unit.speed_mult();
+    f32 target_speed = unit.max_airspeed() * unit.speed_mult() * slow;
     f32 accel = unit.accel_rate() * unit.accel_mult();
     if (airspeed < target_speed) {
         airspeed = std::min(airspeed + accel * fdt, target_speed);
@@ -661,19 +663,12 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     // Over its air floor: the water's surface at sea (Moho's CUnitMotion
     // samples max(terrain, water) for fliers), unless it flies in water.
     f32 terrain_h = unit.air_floor(terrain, pos.x, pos.z);
-    f32 target_alt = unit.elevation_target();
-    f32 alt = unit.current_altitude();
-    f32 climb = unit.climb_rate() * fdt;
-    if (alt < target_alt) {
-        alt = std::min(alt + climb, target_alt);
-    } else if (alt > target_alt) {
-        alt = std::max(alt - climb, target_alt);
-    }
-    unit.set_current_altitude(alt);
-    pos.y = terrain_h + alt;
+    const f32 target_y = unit.lift_ground() + unit.elevation_target();
+    pos.y = unit.lift_toward(target_y - pos.y, unit.air_combat_rules().winged, terrain_h, terrain,
+                             sim_ ? &sim_->entity_registry() : nullptr, fdt);
+    unit.set_current_altitude(pos.y - terrain_h);
 
     // --- 6. Pitch: visual dive/climb indication ---
-    f32 target_y = terrain_h + target_alt;
     f32 pitch = (target_y - pos.y) * 0.02f;
     pitch = std::clamp(pitch, -0.3f, 0.3f);
     unit.set_pitch_angle(pitch);
