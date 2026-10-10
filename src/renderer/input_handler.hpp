@@ -15,6 +15,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -313,7 +314,9 @@ public:
     void select_blueprint_of(sim::SimState& sim, u32 picked, bool shift);
 
     /// A unit that boards (Moho's UserUnit::UpdateUnitData) or dies (its
-    /// selection refresh keeps no dead unit) leaves the selection.
+    /// selection refresh keeps no dead unit) leaves the selection; a selected
+    /// unit's RequestRefreshUI reports the selection again
+    /// (CWldSession::CheckForNecessaryUIRefresh).
     void prune_selection(const sim::EntityRegistry& registry);
 
     /// Replace the current selection (called from Lua SelectUnits).
@@ -437,6 +440,7 @@ private:
     /// Whether the player's intel shows `e` (anything, without a view).
     bool shown(const sim::Entity& e) const;
     std::unordered_set<u32> selected_;
+    std::unordered_map<u32, u32> refresh_requests_;
     BuildTemplate build_template_;
     bool selection_event_ = false;
 

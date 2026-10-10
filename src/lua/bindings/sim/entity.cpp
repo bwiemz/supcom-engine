@@ -86,6 +86,13 @@ static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 static int (*const stub_return_nil)(lua_State*) = lua_stubs::return_nil;
 
 /// entity:PlaySound(sound) -- a one-shot at the entity
+static int entity_RequestRefreshUI(lua_State* L) {
+    if (auto* e = check_entity(L)) {
+        e->request_ui_refresh();
+    }
+    return 0;
+}
+
 static int entity_PlaySound(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
@@ -1128,7 +1135,7 @@ const MethodEntry entity_methods[] = {
     {"AddPingPongScroller",     stub_noop},
     {"AddThreadScroller",       stub_noop},
     {"RemoveScroller",          stub_noop},
-    {"RequestRefreshUI",        stub_noop},
+    {"RequestRefreshUI",        entity_RequestRefreshUI},
     {"SetCustomName",           entity_SetCustomName},
     {nullptr, nullptr},
 };

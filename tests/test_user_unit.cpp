@@ -641,6 +641,30 @@ TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     CHECK(input.selected().empty());
 }
 
+TEST_CASE("A selected unit's RequestRefreshUI reports the selection again", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    lua_State* S = w.sim_lua.raw();
+    lua_newtable(S);
+    lua_pushstring(S, "_c_object");
+    lua_pushlightuserdata(S, &w.unit());
+    lua_rawset(S, -3);
+    lua_setglobal(S, "unit");
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE_FALSE(input.take_selection_event());
+
+    REQUIRE(w.sim_lua.do_string("moho.entity_methods.RequestRefreshUI(unit)").ok());
+    input.prune_selection(w.sim.entity_registry());
+    CHECK(input.take_selection_event());
+    CHECK(input.selected() == std::unordered_set<osc::u32>{w.id});
+    input.prune_selection(w.sim.entity_registry());
+    CHECK_FALSE(input.take_selection_event());
+}
+
 TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", "[selection]") {
     UiWorld w;
     osc::renderer::InputHandler input;
