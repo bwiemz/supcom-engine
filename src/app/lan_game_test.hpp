@@ -64,6 +64,7 @@ private:
     void check_pause(lua::LuaState& ui);
     /// The joiner's speed change heard, and the game at it (M218i).
     void check_speed(lua::LuaState& ui);
+    static bool joiner_defeated(const sim::SimState& sim);
     /// Whether retail's disconnect dialog is open (its file-local `parent`).
     bool disconnect_dialog_open(lua::LuaState& ui);
     void check_chat(lua::LuaState& ui);
