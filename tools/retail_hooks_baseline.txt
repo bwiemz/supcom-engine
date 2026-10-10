@@ -5,7 +5,6 @@ method OnAssignedFocusEntity
 method OnAttachedKilled
 method OnBeingBuiltProgress
 method OnBuildProgress
-method OnCollision
 method OnDamageBy
 method OnIconsVisible
 method OnNukeArmed

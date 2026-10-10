@@ -214,7 +214,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
         w.u32v(c.entity_id);
         w.i32v(c.bone);
     }
-    // grid_cell_x_, grid_cell_z_, registry_: the registry's, set as it takes the entity
+    // grid_cell_x_, grid_cell_z_, prop_cell_, registry_: the registry's, set as it takes the entity
     w.b(e.script_destroy_notified_);
     w.b(e.script_owns_death_);
     w.b(e.is_collision_beam_);

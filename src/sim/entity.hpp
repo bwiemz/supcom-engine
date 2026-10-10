@@ -323,6 +323,8 @@ public:
     i32 grid_cell_x() const { return grid_cell_x_; }
     i32 grid_cell_z() const { return grid_cell_z_; }
     void set_grid_cell(i32 cx, i32 cz) { grid_cell_x_ = cx; grid_cell_z_ = cz; }
+    i32 prop_cell() const { return prop_cell_; }
+    void set_prop_cell(i32 cell) { prop_cell_ = cell; }
     void set_registry(EntityRegistry* r) { registry_ = r; }
     /// False once unregistered (the object may outlive that until the tick ends).
     bool in_registry() const { return registry_ != nullptr; }
@@ -406,6 +408,7 @@ private:
     std::vector<ChildAttachment> children_;
     i32 grid_cell_x_ = -1; // spatial grid cell, -1 = not in grid
     i32 grid_cell_z_ = -1;
+    i32 prop_cell_ = -1;
     EntityRegistry* registry_ = nullptr; // back-pointer for auto grid update
     bool script_destroy_notified_ = false;
     bool script_owns_death_ = false;
