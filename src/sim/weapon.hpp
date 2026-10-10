@@ -313,6 +313,9 @@ private:
     void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);
 };
 
+/// Moho's UserUnit::CanAttackTarget
+bool can_attack_target(const Unit& unit, const Unit& target, bool range_check);
+
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.
 inline uint8_t parse_layer_caps(const std::string& caps) {
     if (caps == "None" || caps.empty()) return 0x00;

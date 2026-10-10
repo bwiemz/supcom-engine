@@ -832,3 +832,38 @@ TEST_CASE("Capture is offered only on a capturable unit that rides nothing", "[c
     eng->add_command_cap("RULEUCC_Reclaim");
     CHECK(input.right_button_order(sim, 70.0f, 10.0f) == CommandType::Reclaim);
 }
+
+TEST_CASE("A right click attacks only an enemy a selected weapon can hit", "[attack]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    tank->add_command_cap("RULEUCC_Attack");
+    tank->add_command_cap("RULEUCC_Move");
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 20.0f;
+    gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land|Water");
+    tank->add_weapon(std::move(gun));
+    still(sim, 1, 40.0f, 10.0f);
+    Unit* bomber = still(sim, 1, 40.0f, 40.0f);
+    bomber->set_layer("Air");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({tank->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Attack);
+    CHECK_FALSE(input.right_button_order(sim, 40.0f, 40.0f));
+    CHECK(input.right_click_invalid(sim, 40.0f, 40.0f));
+    CHECK(input.right_click_at(sim, 40.0f, 40.0f, false).empty());
+
+    Unit* flak = walker(sim, 12.0f, 10.0f);
+    flak->set_motion_type("RULEUMT_Land");
+    flak->add_command_cap("RULEUCC_Attack");
+    auto aa = std::make_unique<osc::sim::Weapon>();
+    aa->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    flak->add_weapon(std::move(aa));
+    input.set_selected({tank->entity_id(), flak->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 40.0f) == CommandType::Attack);
+    CHECK_FALSE(input.right_click_invalid(sim, 40.0f, 40.0f));
+}
