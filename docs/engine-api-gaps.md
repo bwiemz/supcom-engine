@@ -1,6 +1,6 @@
 # Engine API gaps
 
-Engine API that retail's Lua and data use and the engine doesn't support, or supports in part, with what FAF adds on top. Found by audits of the bindings' optional and flag arguments, the callbacks' return values, the data's flags and categories, the parity-ratchet baselines and FAF's executable patches, and by play. Checked against main at be5c57c (2026-10-09).
+Engine API that retail's Lua and data use and the engine doesn't support, or supports in part, with what FAF adds on top. Found by audits of the bindings' optional and flag arguments, the callbacks' return values, the data's flags and categories, the parity-ratchet baselines and FAF's executable patches, and by play. Checked against main at 6570e4c (2026-10-10).
 
 How to read it:
 - Each group lists retail's gaps first, ranked by how visible they are in play, then FAF's additions.
@@ -13,7 +13,7 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `GetBoneDirection(bone)` returns three numbers `x, y, z` in retail; the engine returns a vector table | The Scathis never fires: its `CreateProjectileAtMuzzle` reads the three numbers, errors in `GetAngleInBetween` before the shell is made, and the weapon's thread dies | faf-re `cfunc_EntityGetBoneDirection` (`entity/Entity.cpp`); retail `/units/URL0401/URL0401_Script.lua` CreateProjectileAtMuzzle; engine `entity.cpp` entity_GetBoneDirection | Open |
+| `GetBoneDirection(bone)` returns three numbers `x, y, z` in retail; the engine returns a vector table | The Scathis never fires: its `CreateProjectileAtMuzzle` reads the three numbers, errors in `GetAngleInBetween` before the shell is made, and the weapon's thread dies | faf-re `cfunc_EntityGetBoneDirection` (`entity/Entity.cpp`); retail `/units/URL0401/URL0401_Script.lua` CreateProjectileAtMuzzle; engine `entity.cpp` entity_GetBoneDirection | [#509](https://github.com/bwiemz/supcom-engine/pull/509) |
 | `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield in retail; the engine's is a no-op | Terrain under structures with a FlattenSkirt (219 retail blueprints) isn't levelled; buildings stand on the slope | faf-re `cfunc_FlattenMapRect` (`sim/Sim.cpp`); retail `/lua/defaultunits.lua` OnCreate; engine `sim_bindings.cpp` stub_noop | Open |
 | Scrollers (`AddThreadScroller`, `AddPingPongScroller`, `AddManualScroller`, `RemoveScroller`) are no-ops; the renderer ignores the mesh LOD's `Scrolling` | Tank tracks don't move (37 blueprints with `Treads.ScrollTreads`); UEA0102's ping-pong scroll doesn't run | faf-re `AddThreadScroller` (`entity/Entity.cpp`); retail `/lua/sim/Unit.lua` CreateTreads, `/lua/defaultunits.lua`; engine `entity.cpp` stub_noop | Open |
 | `CreateAnimator(unit, true)` ties the animation's rate to the unit's speed in retail (step × speed / MaxSpeed); the engine ignores the second argument | Walk cycles play at a fixed rate, so feet slide when a walker is slower than its MaxSpeed | faf-re `cfunc_CreateAnimator`, `CAnimationManipulator` (`animation/CAnimationManipulator.cpp`); retail `/lua/defaultunits.lua`; engine `sim_bindings.cpp` l_CreateAnimator, `sim/manipulator.cpp` | Open |
@@ -34,7 +34,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `_c_CreateDecal` (`UserDecal`) is bound in retail; the engine doesn't bind it | With an area weapon or a nuke in attack mode, `OnUpdateCursor` errors on every cursor update and no target-area decal follows the cursor | faf-re `_c_CreateDecal` (`script/ScriptedDecal.cpp`); retail `/lua/ui/controls/worldview.lua` (AreaTargetDecal), `/lua/user/UserDecal.lua`; engine `binding_baseline_retail.txt` | Open |
 | `RenderOverlayEconomy` gates the world view's per-unit economy readout in retail, and the minimap draws cartographic by default (`SetCartographic`); the engine stores both flags and draws neither | *Seen:* the minimap isn't cartographic, and the Cartographic and economy-overlay toggles do nothing | faf-re `RenderOverlayEconomy` (`sim/SimStartupRegistrations.cpp`), `SetCartographic` (`ui/UiRuntimeTypes.cpp`); retail `/lua/ui/game/minimap.lua`, `/lua/ui/game/gamemain.lua`; engine `renderer.hpp` ("Nothing draws the overlay yet") | Open |
 | `TeamColorMode(bool)` is bound in retail and colours units from `GameColors.TeamColorMode` (self, ally, enemy, neutral); the engine doesn't bind it | The team-colour button errors and units keep their army colours. FAF also passes a string of per-army colours and calls it at the start when its option is on | faf-re `TeamColorMode` (`sim/SimStartupRegistrations.cpp`); retail `/lua/ui/game/multifunction.lua`, `GameColors.lua`; FA-Binary-Patches `section/TeamColorMode.cpp` | Open |
 | `PostDragger(origin, keycode, dragger)`: retail ends the drag only on the release of the button that started it; the engine ends it on any release | Releasing another mouse button mid-drag ends it: sliders, window moves and resizes, map-marker drags | faf-re `PostDragger` (`ui/UiRuntimeTypes.cpp`); retail `/lua/maui/slider.lua`, `/lua/maui/window.lua`; engine `moho_bindings.cpp` l_PostDragger | Open |
@@ -90,19 +89,20 @@ How to read it:
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
 | Retail's right click on an enemy is an attack only if a selected unit can hit it (`OVERLAYANTIAIR`, `OVERLAYDIRECTFIRE`, `OVERLAYANTINAVY`, then each weapon's layers and categories); the engine makes it an attack whenever a unit has the Attack cap | Right-clicking an enemy no selected weapon can hit (tanks on a bomber) gives an Attack order | faf-re `UserUnit::CanAttackTarget`, `func_GetRightMouseButtonAction`; engine `input_handler.cpp` | Open |
+| A paused engineer keeps reclaiming in retail; the engine's paused units skip all their orders | A paused engineer stops reclaiming (what retail does with a paused unit's other orders is not checked here). FAF's exe also stops the reclaim | faf-re `CUnitReclaimTask`; FA-Binary-Patches `hooks/StopReclaimWhenPaused.cpp`; engine `unit.cpp` Unit::tick (`if (!paused_)`) | Open |
 
 ### Where the engine does retail's way and FAF's exe differs
 
 | Retail behaviour kept | FAF's exe | Evidence | Status |
 |---|---|---|---|
 | A moving unit's intel is repainted once it has moved a third of its radius, or after 30 ticks | Also after 5 ticks: a slow unit's vision and radar trail it by at most 0.5 s instead of 3 s | faf-re `CIntelPosHandle::UpdatePos`; FA-Binary-Patches `hooks/IntelUpdate.cpp`; engine `intel_sources.hpp` | Open |
-| A paused engineer keeps reclaiming | Pausing stops the reclaim | faf-re `CUnitReclaimTask`; FA-Binary-Patches `hooks/StopReclaimWhenPaused.cpp` | Open |
 | Double-clicking a wall selects nothing more | Selects the walls of that type on screen | faf-re `HandleDoubleClickSelection`; FA-Binary-Patches `hooks/WallSelection.cpp`; engine `input_handler.cpp` | Open |
 
 ## Closed since the audits
 
 | Item | PR |
 |---|---|
+| `_c_CreateDecal` (`UserDecal`): the area-weapon and nuke target reticle follows the cursor | [#502](https://github.com/bwiemz/supcom-engine/pull/502) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
