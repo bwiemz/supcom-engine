@@ -5567,7 +5567,13 @@ static int l_IssueAttack(lua_State* L) {
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    auto ids = collect_unit_ids(L, 1);
+    std::erase_if(ids, [&](u32 id) {
+        const sim::Entity* e = sim->entity_registry().find(id);
+        return !e || !e->is_unit() ||
+               !static_cast<const sim::Unit*>(e)->has_command_cap("RULEUCC_Attack");
+    });
+    return push_command_handle(L, ids.empty() ? 0 : sim->route_command(ids, cmd, false));
 }
 
 // IssueGuard(units_table, target_entity)

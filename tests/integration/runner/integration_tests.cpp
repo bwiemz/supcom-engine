@@ -12630,9 +12630,9 @@ void test_right_click(TestContext& ctx) {
     using CT = osc::sim::CommandType;
 
     right_click({tank->entity_id(), eng->entity_id()}, *enemy);
-    check(head(*tank, CT::Attack, enemy->entity_id()) &&
-              head(*eng, CT::Capture, enemy->entity_id()),
-          "on an enemy: the tank attacks, the engineer captures");
+    check(head(*tank, CT::Attack, enemy->entity_id()) && issued.size() == 1 &&
+              gave("Attack", enemy->entity_id()) && issued.front().units.size() == 2,
+          "on an enemy: one attack, for the tank and the engineer");
 
     right_click({eng->entity_id(), tank2->entity_id()}, *tank);
     check(head(*eng, CT::Guard, tank->entity_id()) && head(*tank2, CT::Guard, tank->entity_id()),
@@ -12761,9 +12761,10 @@ void test_right_click(TestContext& ctx) {
             input.right_button_order(ctx.sim, prop->position().x, prop->position().z);
         right_click({eng->entity_id(), tank->entity_id()}, *prop);
         check(head(*eng, CT::Reclaim, prop->entity_id()) && gave("Reclaim", prop->entity_id()) &&
-                  gave("Move", 0) && issued.size() == 2 && shown_order == CT::Reclaim,
-              "on a wreck or prop: the engineer reclaims it, the tank moves there; the cursor "
-              "shows the reclaim");
+                  issued.size() == 1 && issued.front().units.size() == 2 &&
+                  shown_order == CT::Reclaim,
+              "on a wreck or prop: one reclaim, for the engineer and the tank; the cursor shows "
+              "the reclaim");
     } else {
         check(false, "a reclaimable prop near by");
     }
