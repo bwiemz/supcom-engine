@@ -326,6 +326,7 @@ public:
     void set_registry(EntityRegistry* r) { registry_ = r; }
     /// False once unregistered (the object may outlive that until the tick ends).
     bool in_registry() const { return registry_ != nullptr; }
+    const EntityRegistry* registry() const { return registry_; }
 
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }

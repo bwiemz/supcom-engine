@@ -20,7 +20,6 @@ PlaceholderMeshName
 PositionY
 PrefersPrimaryWeaponTarget
 QuickSelectPriority
-RaisedPlatforms
 ReTargetOnMiss
 RepairRate
 Scrolling

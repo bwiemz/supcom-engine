@@ -42,7 +42,6 @@ How to read it:
 |---|---|---|---|
 | Projectile `Physics.LeadTarget` defaults to true in retail; the engine's default is false | Homing projectiles fly at where their target is, not ahead of it: 82 of retail's 102 `TrackTarget` projectiles leave the field unset | faf-re `RProjectileBlueprint` constructor (`LeadTarget(1)`), `Projectile.cpp`; engine `projectile.hpp` lead_target | Open |
 | `PrefersPrimaryWeaponTarget` makes a weapon take the primary's target when it can hit it; `StopOnPrimaryWeaponBusy` makes one drop its target while the primary has one. The engine targets each weapon alone | A unit's other weapons don't share its primary's target: 73 weapons on 36 units (ships, gunships, ASF, Fatboy, Monkeylord); Janus and Notha keep firing their second weapon | faf-re `CAcquireTargetTask`; engine `weapon.cpp` | Open |
-| `RaisedPlatforms` raises land units on a factory's deck to its platform quads in retail; the engine snaps them to terrain or water | Units on a factory's deck, new ones rolling off among them, stay at ground level inside the deck (25 retail factories and gates) | faf-re `CUnitMotion` (ground snap); engine `Unit::ground_y` | Open |
 | `CameraFollowsProjectile`, `CameraFollowTimeout`: retail moves a camera tracking a unit onto such a shot for the timeout | With the camera tracking a unit, its nukes, missiles, shells and bombs (90 retail projectiles) don't take the camera along | faf-re `Projectile.cpp` (constructor), `CameraImpl`; engine: no reader | Open |
 
 ## Categories
@@ -97,6 +96,7 @@ How to read it:
 | `RequestRefreshUI()` on a selected unit reports the selection to `OnSelectionChanged` again (enhancements, adjacency, transport loads) | [#556](https://github.com/bwiemz/supcom-engine/pull/556) |
 | `Prop:AddBoundedProp(priority)` caps wrecks at 1000, destroying the cheapest, oldest one | [#560](https://github.com/bwiemz/supcom-engine/pull/560) |
 | Projectile `StrategicIconSize`: a projectile without an icon name is a square in the strategic view (yellow, as retail's `UI_forceWeaponsToYellow` defaults) | [#561](https://github.com/bwiemz/supcom-engine/pull/561) |
+| `RaisedPlatforms`: a unit on a factory's or gateway's deck stands on its platform quads, and rolls off down its ramps | [#564](https://github.com/bwiemz/supcom-engine/pull/564) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |

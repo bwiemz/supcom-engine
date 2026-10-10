@@ -5,6 +5,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/collision.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
@@ -19,6 +20,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -2816,7 +2818,74 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
 
 f32 Unit::ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
     if (!terrain) return position().y;
-    return walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+    const f32 ground =
+        walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+    const Unit* platform = raised_platform();
+    return platform ? ground + platform->raised_platform_height(x, z) : ground;
+}
+
+// Moho's CUnitMotion::FindIntersectingRaisedPlatform, over the units its box
+// meets (ProcessSurfaceCollisionFromLastMove).
+const Unit* Unit::raised_platform() const {
+    const EntityRegistry* registry = this->registry();
+    if (!registry || is_air_unit() || is_being_built_ || parent_entity_id() != 0 ||
+        layer_ == "Sub") {
+        return nullptr;
+    }
+    const Vector3 at = position();
+    const Vector3 ax = quat_rotate(orientation(), {size_x_ * 0.5f, 0, 0});
+    const Vector3 az = quat_rotate(orientation(), {0, 0, size_z_ * 0.5f});
+    const f32 hx = std::abs(ax.x) + std::abs(az.x);
+    const f32 hz = std::abs(ax.z) + std::abs(az.z);
+    const Unit* nearest = nullptr;
+    f32 nearest_d2 = std::numeric_limits<f32>::infinity();
+    registry->any_unit_collider(at.x - hx, at.z - hz, at.x + hx, at.z + hz, [&](const Entity& e) {
+        const auto* u = dynamic_cast<const Unit*>(&e);
+        if (!u || u == this || u->raised_platforms_.empty() || u->dying_) {
+            return false;
+        }
+        const auto bounds = collision_bounds(*u);
+        if (!bounds || bounds->first.x > at.x + hx || bounds->second.x < at.x - hx ||
+            bounds->first.z > at.z + hz || bounds->second.z < at.z - hz ||
+            bounds->first.y > at.y + size_y_ || bounds->second.y < at.y - size_y_) {
+            return false;
+        }
+        const Vector3 p = u->position();
+        const f32 d2 =
+            (at.x - p.x) * (at.x - p.x) + (at.y - p.y) * (at.y - p.y) + (at.z - p.z) * (at.z - p.z);
+        if (d2 < nearest_d2 || (d2 == nearest_d2 && u->entity_id() < nearest->entity_id())) {
+            nearest = u;
+            nearest_d2 = d2;
+        }
+        return false;
+    });
+    return nearest;
+}
+
+f32 Unit::raised_platform_height(f32 x, f32 z) const {
+    if (dying_) {
+        return 0.0f;
+    }
+    const Vector3 at = position();
+    const size_t quads = raised_platforms_.size() / 12;
+    for (size_t i = 0; i < quads; ++i) {
+        const f32* q = &raised_platforms_[i * 12];
+        const f32 x0 = q[0] + at.x;
+        const f32 z0 = q[1] + at.z;
+        const f32 x1 = q[3] + at.x;
+        const f32 z2 = q[7] + at.z;
+        const f32 x3 = q[9] + at.x;
+        const f32 z3 = q[10] + at.z;
+        if (x > x3 || x0 > x || z > z3 || z0 > z) {
+            continue;
+        }
+        const f32 u = (x - x0) / (x1 - x0);
+        const f32 v = (z - z0) / (z2 - z0);
+        const f32 left = (q[8] - q[2]) * v + q[2];
+        const f32 right = (q[11] - q[5]) * v + q[5];
+        return u * (right - left) + left;
+    }
+    return 0.0f;
 }
 
 void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {

@@ -1125,6 +1125,19 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (lua_isnumber(L, -1))
                     unit->set_layer_change_offset(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+                lua_pushstring(L, "RaisedPlatforms");
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    std::vector<f32> quads;
+                    const int n = luaL_getn(L, -1);
+                    for (int i = 1; i <= n; ++i) {
+                        lua_rawgeti(L, -1, i);
+                        quads.push_back(static_cast<f32>(lua_tonumber(L, -1)));
+                        lua_pop(L, 1);
+                    }
+                    unit->set_raised_platforms(std::move(quads));
+                }
+                lua_pop(L, 1);
             }
             lua_pop(L, 2);
         }
