@@ -1236,3 +1236,75 @@ TEST_CASE("A paused unit's enhancement waits", "[session][rules][pause]") {
     h.sim.tick();
     CHECK(f->work_progress() > work);
 }
+
+TEST_CASE("unit:SetPaused calls OnPaused, and a paused unit pays what its script leaves on",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local M = moho.unit_methods\n"
+                              "local function unit(maintenance)\n"
+                              "  local u = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "  u.Maintenance = maintenance\n"
+                              "  M.SetConsumptionPerSecondEnergy(u, maintenance + 20)\n"
+                              "  M.SetConsumptionActive(u, true)\n"
+                              "  u.OnPaused = function(self)\n"
+                              "    M.SetConsumptionPerSecondEnergy(self, self.Maintenance)\n"
+                              "    M.SetConsumptionActive(self, self.Maintenance > 0)\n"
+                              "  end\n"
+                              "  return u\n"
+                              "end\n"
+                              "local shield, builder = unit(5), unit(0)\n"
+                              "M.SetPaused(shield, true)\n"
+                              "M.SetPaused(builder, true)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(5.0));
+}
+
+namespace {
+
+osc::sim::Unit* enhancing_factory(BuildRuleHarness& h) {
+    REQUIRE(h.state.do_string(
+        "__blueprints.test_factory.Enhancements = {Gun = {BuildTime = 100, BuildCostMass = 1,"
+        " BuildCostEnergy = 1}}\n"
+        "__osc_factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+        "local M = moho.unit_methods\n"
+        "__osc_factory.OnPaused = function(self) M.SetConsumptionActive(self, false) end\n"
+        "__osc_factory.OnUnpaused = function(self)\n"
+        "  if M.IsUnitState(self, 'Upgrading') then M.SetConsumptionActive(self, true) end\n"
+        "end\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    osc::sim::UnitCommand enhance;
+    enhance.type = osc::sim::CommandType::Enhance;
+    enhance.blueprint_id = "Gun";
+    f->push_command(enhance, true);
+    return f;
+}
+
+} // namespace
+
+TEST_CASE("An enhancement begun while paused pays without progress", "[session][rules][pause]") {
+    BuildRuleHarness h;
+    osc::sim::Unit* f = enhancing_factory(h);
+    f->set_paused(true);
+    for (int i = 0; i < 3; ++i) {
+        h.sim.tick();
+    }
+    REQUIRE(f->is_enhancing());
+    CHECK(f->work_progress() == 0.0f);
+    const double rate = f->build_rate() / 100.0;
+    CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(rate));
+}
+
+TEST_CASE("An enhancing unit is Upgrading, so its OnUnpaused resumes paying",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    osc::sim::Unit* f = enhancing_factory(h);
+    h.sim.tick();
+    REQUIRE(f->is_enhancing());
+    REQUIRE(h.state.do_string("moho.unit_methods.SetPaused(__osc_factory, true)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested == 0.0);
+    REQUIRE(h.state.do_string("moho.unit_methods.SetPaused(__osc_factory, false)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested > 0.0);
+}

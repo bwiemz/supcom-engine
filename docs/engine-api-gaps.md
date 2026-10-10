@@ -101,6 +101,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| A paused unit's army pays what its script leaves asked: a shield's or radar's upkeep goes on, a build stops costing through `OnPaused`, and an enhancement begun while paused costs without progress; sim `unit:SetPaused` calls `OnPaused`/`OnUnpaused`, and an enhancing unit is `Upgrading` | this PR |
 | A paused unit moves, reclaims and fights; a paused builder, repairer or factory keeps its order and state but does no work, and starts nothing new until a retry after it unpauses; a frame whose only builder is a paused engineer decays (FAF's exe also stops a paused unit's prop reclaim) | [#557](https://github.com/bwiemz/supcom-engine/pull/557) |
 | An unfinished unit no builder works on decays from its second tick, by 0.1 / max(BuildCostEnergy, BuildCostMass, BuildTime) a tick, and calls `OnDecayed` at no health | [#538](https://github.com/bwiemz/supcom-engine/pull/538) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |

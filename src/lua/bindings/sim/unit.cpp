@@ -1367,10 +1367,11 @@ static int unit_Stop(lua_State* L) {
     return 0;
 }
 
-// unit:SetPaused(bool) — set/clear pause flag + economy
 static int unit_SetPaused(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->pause(lua_toboolean(L, 2) != 0);
+    if (u) {
+        u->pause(L, lua_toboolean(L, 2) != 0);
+    }
     return 0;
 }
 
@@ -2118,8 +2119,8 @@ static int unit_GetEconData(lua_State* L) {
     };
     set("massProduced", (u->producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
     set("energyProduced", (u->producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
-    set("massConsumed", econ.mass_consumed(u->is_paused()));
-    set("energyConsumed", econ.energy_consumed(u->is_paused()));
+    set("massConsumed", econ.mass_consumed());
+    set("energyConsumed", econ.energy_consumed());
     set("massRequested", econ.mass_requested());
     set("energyRequested", econ.energy_requested());
     return 1;
