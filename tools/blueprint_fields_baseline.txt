@@ -30,7 +30,6 @@ QuickSelectPriority
 RaisedPlatforms
 ReTargetOnMiss
 RepairRate
-RotationalVelocity
 Scrolling
 SelectionMeshScaleX
 SelectionMeshScaleZ
