@@ -250,6 +250,36 @@ TEST_CASE("A directional animation runs backward while its unit backs up", "[pos
     CHECK_THAT(anim.animation_fraction(), WithinAbs(0.75, 1e-6));
 }
 
+TEST_CASE("A motion-scaled animation plays at its unit's speed over its MaxSpeed", "[pose]") {
+    AnimCache cache(nullptr);
+    cache.inject("/slide.sca", root_slide());
+    Unit unit;
+    unit.set_max_speed(4.0f);
+    AnimManipulator anim;
+    anim.set_owner(&unit);
+    anim.set_motion_scaled(true);
+    anim.play_anim("/slide.sca", true, &cache);
+
+    unit.note_tick_position();
+    unit.set_position({0.1f, 0, 0});
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.025, 1e-6));
+
+    unit.note_tick_position();
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.025, 1e-6));
+
+    unit.note_tick_position();
+    unit.set_orientation(euler_to_quat(0.1f, 0, 0));
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.05, 1e-6));
+
+    unit.note_tick_position();
+    unit.set_position({0.5f, 0, 0});
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.15, 1e-6));
+}
+
 TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its pitch",
           "[pose][aim]") {
     // YawOnlyOnTarget (the Torrent's missile racks: pitch fixed at 55 deg):
@@ -388,4 +418,22 @@ TEST_CASE("A builder arm calls its unit's builder tracking hooks as it starts an
     CHECK(tracked() == "stop,");
     CHECK(arm.heading() == 0.0f);
     lua_close(L);
+}
+
+TEST_CASE("CreateAnimator(unit, true) binds the animation's rate to the unit's motion",
+          "[pose][lua]") {
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    lua::register_sim_bindings(lua, sim);
+    auto owned = std::make_unique<Unit>();
+    Unit& unit = *owned;
+    sim.entity_registry().register_entity(std::move(owned));
+    set_lua_handle(lua.raw(), "u", unit);
+
+    REQUIRE(
+        lua.do_string("CreateAnimator(u, true) CreateAnimator(u) CreateAnimator(u, false)").ok());
+    REQUIRE(unit.manipulators().size() == 3);
+    CHECK(static_cast<const AnimManipulator&>(*unit.manipulators()[0]).motion_scaled());
+    CHECK_FALSE(static_cast<const AnimManipulator&>(*unit.manipulators()[1]).motion_scaled());
+    CHECK_FALSE(static_cast<const AnimManipulator&>(*unit.manipulators()[2]).motion_scaled());
 }

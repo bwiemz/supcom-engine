@@ -3735,13 +3735,14 @@ static int l_CreateRotator(lua_State* L) {
 }
 
 // ====================================================================
-// CreateAnimator(unit [, looping])
+// CreateAnimator(unit [, bindGoalUnit])
 // ====================================================================
 static int l_CreateAnimator(lua_State* L) {
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
 
     auto manip = std::make_unique<sim::AnimManipulator>();
+    manip->set_motion_scaled(lua_gettop(L) > 1 && lua_toboolean(L, 2) != 0);
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);
