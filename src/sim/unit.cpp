@@ -7,6 +7,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
 #include "sim/sim_state.hpp"
@@ -2277,6 +2278,70 @@ i32 Unit::transport_attach_bone() const {
 f32 Unit::air_floor(const map::Terrain* terrain, f32 x, f32 z) const {
     if (!terrain) return 0.0f;
     return fly_in_water_ ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+}
+
+f32 Unit::track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 tick, f32 dt) {
+    if (tick > lift_tick_ + 1) {
+        lift_velocity_ = 0.0f;
+    }
+    lift_tick_ = tick;
+    if (!terrain) {
+        return 1.0f;
+    }
+    const Vector3 pos = position();
+    if (!lift_ground_set_) {
+        lift_ground_ = terrain->get_surface_height(pos.x, pos.z);
+        lift_ground_set_ = true;
+    }
+    const f32 lift_factor = air_combat_rules_.lift_factor;
+    const f32 look_speed = std::min(max_airspeed_ * speed_mult_ * 5.0f, look_distance);
+    const f32 look = terrain->look_ahead_for_max_terrain(pos.x, pos.z, fly_in_water_, look_speed);
+    f32 factor = 1.0f;
+    if (std::max(look - pos.y, 0.0f) > lift_factor && look_speed > 1.0f) {
+        const f32 half = look_speed * 0.5f;
+        const f32 near =
+            terrain->look_ahead_for_max_terrain(pos.x, pos.z, fly_in_water_, half) * 1.5f;
+        factor = rising_ground_slowdown(std::max(near - pos.y, 0.0f), half);
+    }
+    lift_ground_ = next_lift_ground(lift_ground_, look, lift_factor, dt);
+    return factor;
+}
+
+f32 Unit::lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
+                      const EntityRegistry* registry, f32 dt) {
+    const Vector3 pos = position();
+    const AirCombatRules& r = air_combat_rules_;
+    f32 steer = want;
+    if (winged) {
+        const Quaternion q = orientation();
+        const f32 up_y = 1.0f - 2.0f * (q.x * q.x + q.z * q.z);
+        steer = winged_lift(want, up_y, r.lift_factor, elevation_target_ * 0.5f,
+                            pos.y - air_floor(terrain, pos.x, pos.z));
+    }
+    const f32 load = registry ? transport_load_factor(*registry) : 1.0f;
+    const LiftStep step = lift_step(lift_velocity_, steer, r.k_lift, r.k_lift_damping, load, dt);
+    lift_velocity_ = step.velocity;
+    const f32 y = pos.y + step.rise;
+    if (y < floor_after) {
+        lift_velocity_ = std::max(lift_velocity_, 0.0f);
+        return floor_after;
+    }
+    return y;
+}
+
+f32 Unit::transport_load_factor(const EntityRegistry& registry) const {
+    const f32 own = load_metric();
+    if (cargo_ids_.empty() || own <= 0.0f) {
+        return 1.0f;
+    }
+    f32 carried = 0.0f;
+    for (const u32 id : cargo_ids_) {
+        const Entity* e = registry.find(id);
+        if (e && e->is_unit()) {
+            carried += static_cast<const Unit*>(e)->load_metric();
+        }
+    }
+    return (carried + own) / own;
 }
 
 void Unit::hang_from(const Unit& transport) {

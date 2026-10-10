@@ -1323,6 +1323,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 rules.k_turn_damping = number("KTurnDamping", 3.0f);
                 rules.k_move = number("KMove", 1.0f);
                 rules.k_move_damping = number("KMoveDamping", 1.0f);
+                rules.k_lift = number("KLift", 1.0f);
+                rules.k_lift_damping = number("KLiftDamping", 1.0f);
+                rules.lift_factor = number("LiftFactor", 5.0f);
                 // A hovering aircraft's circling (CalcCirclingOrientation).
                 rules.hover_over_attack = flag("HoverOverAttack");
                 {
@@ -2111,6 +2114,9 @@ static int l_Warp(lua_State* L) {
         lua_pop(L, 1);
         entity->set_position(v);
         entity->note_snap();
+        if (entity->is_unit()) {
+            static_cast<sim::Unit*>(entity)->reset_lift_ground();
+        }
     }
     // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
     if (lua_istable(L, 3)) {

@@ -11,13 +11,10 @@ DirectionY
 DirectionZ
 GroundCollisionOffset
 IgnoreIfDisabled
-KLift
-KLiftDamping
 KRoll
 KRollDamping
 LAYER_Air
 LayerTransitionDuration
-LiftFactor
 MaxBounceCount
 MaxSteerForce
 MinBounceCount
