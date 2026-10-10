@@ -395,6 +395,8 @@ public:
     }
     void add_toggle_cap(const std::string& cap) { toggle_caps_.insert(cap); }
     void remove_toggle_cap(const std::string& cap) { toggle_caps_.erase(cap); }
+    void restore_toggle_caps() { toggle_caps_ = original_toggle_caps_; }
+    void snapshot_toggle_caps() { original_toggle_caps_ = toggle_caps_; }
 
     // Layer change with Lua OnLayerChange(new, old) callback
     void set_layer_with_callback(const std::string& new_layer, lua_State* L);
@@ -1665,6 +1667,7 @@ private:
     u16 script_bits_ = 0;        // 9 toggle bits (0-8)
     u32 creation_tick_ = 0;      // the tick it was made (Moho's mCreationTick)
     std::unordered_set<std::string> toggle_caps_; // RULEUTC_* toggle capabilities
+    std::unordered_set<std::string> original_toggle_caps_;
     f32 surface_threat_ = 0;
     f32 air_threat_ = 0;
     f32 sub_threat_ = 0;
