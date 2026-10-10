@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "lua/smoke_test.hpp"
+#include "support/temp_path.hpp"
 #include <fstream>
 #include <filesystem>
 #include <string>
@@ -52,7 +53,7 @@ TEST_CASE("SmokeTestHarness file output", "[smoke]") {
     harness.record(osc::lua::SmokeCategory::MissingMethod,
                    "Brain.Foo", "test.lua:1");
 
-    auto path = std::filesystem::temp_directory_path() / "test_smoke_report.txt";
+    auto path = osc::test::unique_temp_path("test_smoke_report", ".txt");
     harness.write_report_to_file(path.string());
 
     std::string content;

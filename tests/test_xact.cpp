@@ -7,6 +7,7 @@
 #include "audio/xact/sound_bank.hpp"
 #include "audio/xwb_parser.hpp"
 #include "xact_fixtures.hpp"
+#include "support/temp_path.hpp"
 
 #include <cstring>
 #include <filesystem>
@@ -163,8 +164,7 @@ TEST_CASE("XACT: a damaged sound bank fails to parse", "[audio][xact]") {
 
 TEST_CASE("XACT: wave banks resolve by their internal name", "[audio][xact]") {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "osc_xact_registry_test";
-    fs::remove_all(dir);
+    const fs::path dir = osc::test::unique_temp_path("osc_xact_registry_test");
     fs::create_directories(dir);
     // The sound bank lists "TestWaves", a wave bank whose file is named
     // otherwise (as retail's XAS_Weapons.xwb is internally XAS_Weapon).
@@ -199,7 +199,7 @@ TEST_CASE("XACT: wave banks resolve by their internal name", "[audio][xact]") {
 
 TEST_CASE("XACT: a damaged wave bank fails to load", "[audio][xact]") {
     namespace fs = std::filesystem;
-    const fs::path file = fs::temp_directory_path() / "osc_xact_bad.xwb";
+    const fs::path file = osc::test::unique_temp_path("osc_xact_bad", ".xwb");
     const auto good = make_xwb("TestWaves", 4);
     {
         write(file, good);
