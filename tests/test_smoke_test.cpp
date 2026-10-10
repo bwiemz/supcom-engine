@@ -261,6 +261,8 @@ struct BuildRuleHarness {
             state, store, "test_experimental",
             {"MOBILE", "LAND", "EXPERIMENTAL"}, 1);
         store.expose_to_lua(state.raw());
+        REQUIRE(state.do_string(
+            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
     }
 };
 
@@ -1257,6 +1259,28 @@ TEST_CASE("unit:SetPaused calls OnPaused, and a paused unit pays what its script
                               "M.SetPaused(builder, true)\n"));
     h.sim.tick();
     CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(5.0));
+}
+
+TEST_CASE("unit:SetPaused pauses only a unit with RULEUCC_Pause or RULEUTC_GenericToggle",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(
+        h.state.do_string("local M = moho.unit_methods\n"
+                          "local function paused(command, toggle)\n"
+                          "  local u = CreateUnit('test_tank', 1, 0, 0, 0)\n"
+                          "  if command then M.AddCommandCap(u, command) end\n"
+                          "  if toggle then M.AddToggleCap(u, toggle) end\n"
+                          "  M.SetPaused(u, true)\n"
+                          "  return M.IsPaused(u)\n"
+                          "end\n"
+                          "__osc_paused = tostring(paused()) .. ','\n"
+                          "  .. tostring(paused('RULEUCC_Pause')) .. ','\n"
+                          "  .. tostring(paused(nil, 'RULEUTC_GenericToggle')) .. ','\n"
+                          "  .. tostring(paused('RULEUCC_Stop', 'RULEUTC_ProductionToggle'))\n"));
+    lua_State* L = h.state.raw();
+    lua_getglobal(L, "__osc_paused");
+    CHECK(std::string(lua_tostring(L, -1)) == "false,true,true,false");
+    lua_pop(L, 1);
 }
 
 namespace {

@@ -2989,6 +2989,9 @@ bool Unit::call_on_teleport_unit(lua_State* L, const Vector3& location) {
 }
 
 void Unit::pause(lua_State* L, bool p) {
+    if (!has_command_cap("RULEUCC_Pause") && !has_toggle_cap("RULEUTC_GenericToggle")) {
+        return;
+    }
     if (paused_ == p) {
         return;
     }
