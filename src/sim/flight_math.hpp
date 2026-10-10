@@ -43,11 +43,22 @@ struct LiftStep {
 LiftStep lift_step(f32 velocity, f32 steer, f32 k_lift, f32 k_lift_damping, f32 load, f32 dt);
 
 /// CalcMoveAir's ground to fly over: toward `look_ahead`, by at most
-/// LiftFactor a second up and half that down.
-f32 next_lift_ground(f32 ground, f32 look_ahead, f32 lift_factor, f32 dt);
+/// LiftFactor a second up and half that down, or the whole of it landing.
+f32 next_lift_ground(f32 ground, f32 look_ahead, f32 lift_factor, f32 dt, bool landing = false);
 
 /// CalcMoveAir's slowing for ground rising `clearance` over it within half
 /// its look-ahead, `half_speed`: its speed's factor, 0.04 at least.
 f32 rising_ground_slowdown(f32 clearance, f32 half_speed);
+
+/// CalcAirMovementDampingFactor.
+f32 air_move_damping(f32 control, f32 top, f32 k_move, f32 k_move_damping);
+
+/// ComputeAirControl's level axes, integrated as SPhysBody::IntegrateFreefallStep.
+struct AirMoveStep {
+    Vector3 velocity{};
+    Vector3 move{};
+};
+AirMoveStep air_move_step(const Vector3& velocity, const Vector3& force, f32 k_move, f32 damping,
+                          f32 dt);
 
 } // namespace osc::sim

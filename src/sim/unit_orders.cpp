@@ -235,7 +235,8 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     return made;
 }
 
-bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to) {
+bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through) {
+    navigator_.set_speed_through_goal(through);
     const Vector3 heading = navigator_.goal();
     if (!ferry_leg_set_ || std::abs(heading.x - to.x) > 1.0f || std::abs(heading.z - to.z) > 1.0f ||
         navigator_.status() == Navigator::Status::WaitingForPath) {
@@ -368,6 +369,10 @@ OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
         command_queue_.pop_front();
+        if (is_air_unit() &&
+            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
+            stop_air();
+        }
         return OrderStep::Next;
     }
     return OrderStep::Hold; // Still moving
@@ -2089,6 +2094,7 @@ void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
     else if (alt > altitude) alt = std::max(alt - climb, altitude);
     current_altitude_ = alt;
     current_airspeed_ = 0.0f;
+    air_velocity_ = {};
     Vector3 at = position();
     at.y = air_floor(terrain, at.x, at.z) + alt;
     set_position(at);
@@ -2677,7 +2683,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (ferry_phase_ == FerryPhase::Out) {
         // Out along the waypoints, then to the drop-off.
         if (ferry_index_ < route - 1) {
-            if (!ferry_fly(dt, ctx, point(ferry_index_))) ++ferry_index_;
+            if (!ferry_fly(dt, ctx, point(ferry_index_), true)) ++ferry_index_;
             return OrderStep::Hold;
         }
         ferry_phase_ = FerryPhase::Unload;
@@ -2701,7 +2707,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     // Back along the waypoints, then to the beacon to load again.
     if (ferry_index_ > 1) {
-        if (!ferry_fly(dt, ctx, point(ferry_index_ - 1))) --ferry_index_;
+        if (!ferry_fly(dt, ctx, point(ferry_index_ - 1), true)) --ferry_index_;
         return OrderStep::Hold;
     }
     if (!ferry_fly(dt, ctx, home)) {
