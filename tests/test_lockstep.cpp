@@ -181,6 +181,40 @@ TEST_CASE("A desync names the domain that diverged", "[lockstep]") {
     CHECK(sa.desync_tick() >= 1);
 }
 
+TEST_CASE("Each differing checksum is a desync naming its peer", "[lockstep]") {
+    LuaGuard ga, gb, gc;
+    SimState a(ga.L, nullptr);
+    SimState b(gb.L, nullptr);
+    SimState c(gc.L, nullptr);
+    spawn_mover(a, 5.0f);
+    spawn_mover(b, 5.0f);
+    const auto idc = spawn_mover(c, 5.0f);
+    static_cast<Unit*>(c.entity_registry().find(idc))->set_fire_state(1);
+
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LoopbackTransport tc(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1, 2});
+    LockstepSession sb(b, tb, 1, {0, 1, 2});
+    LockstepSession sc(c, tc, 2, {0, 1, 2});
+    for (int round = 0; round < 4; ++round) {
+        sa.send_frame();
+        sb.send_frame();
+        sc.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+        sc.receive_and_advance();
+    }
+    const auto desyncs = sa.take_desyncs();
+    REQUIRE(desyncs.size() >= 2);
+    for (const auto& desync : desyncs) {
+        CHECK(desync.source == 2);
+    }
+    CHECK(desyncs[1].tick > desyncs[0].tick);
+    CHECK(sa.take_desyncs().empty());
+}
+
 TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
     LoopbackHub hub;
     LuaGuard ga, gb;

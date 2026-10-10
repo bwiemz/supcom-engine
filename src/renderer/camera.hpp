@@ -187,6 +187,10 @@ public:
     bool signaled() const { return signaled_; }
     /// Called once, when the event is next signalled.
     void on_signal(std::function<void()> waiter) { waiters_.push_back(std::move(waiter)); }
+    /// At Moho's SCameraTracking broadcasts.
+    void set_tracking_listener(std::function<void(bool)> listener) {
+        tracking_listener_ = std::move(listener);
+    }
     CameraTarget target_type() const { return target_type_; }
     CameraAccel acc_mode() const { return accel_; }
 
@@ -373,6 +377,9 @@ private:
     f32 target_time_left_ = 0.0f;
     bool signaled_ = true;
     std::vector<std::function<void()>> waiters_;
+    std::function<void(bool)> tracking_listener_;
+    void tell_tracking(bool tracking);
+    void stop_tracking();
     EntityLookup entity_lookup_;
 
     // The world view's drags

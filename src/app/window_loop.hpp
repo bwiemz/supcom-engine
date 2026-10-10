@@ -235,6 +235,7 @@ private:
     /// it the game has nothing to do (M220a).
     bool gpgnet_done = false;
     osc::u32 gpgnet_logged_tick = 0;
+    bool command_graph_shown = false;
     /// OnFirstUpdate, once after the game's first tick (each game's).
     bool first_update_fired = false;
     std::optional<osc::u32>& world_ui_after_post_load = app.world_ui_after_post_load;

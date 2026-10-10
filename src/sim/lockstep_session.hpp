@@ -130,6 +130,13 @@ public:
     /// NoteGameSpeedChanged), drained.
     std::vector<SpeedChange> take_speed_changes();
 
+    struct Desync {
+        u32 tick;
+        u32 source;
+    };
+    /// Moho's SSyncData::mDesyncs, drained.
+    std::vector<Desync> take_desyncs();
+
 private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
@@ -157,11 +164,12 @@ private:
     std::vector<ScheduledCommand> pending_;      // local commands for next_frame_
     using Parts = std::array<u64, SimState::ChecksumParts::kCount>;
     std::unordered_map<u32, Parts> my_checksums_;   // tick -> local checksum, by domain
-    std::unordered_map<u32, Parts> peer_checksums_; // tick -> a peer's reported one
+    std::unordered_map<u32, std::map<u32, Parts>> peer_checksums_; // tick -> source -> checksum
     u32 desync_tick_ = 0;
     std::vector<std::string> desync_domains_;
     std::pair<u64, u64> desync_hashes_{};
     bool desynced_ = false;
+    std::vector<Desync> desyncs_;
     u32 drop_timeout_rounds_ = 30;
     u32 round_ = 0;                                 // send_frame calls, while not paused
     std::unordered_map<u32, u32> peer_confirmed_;   // source -> last confirmed frame
@@ -188,10 +196,10 @@ private:
     void finalize_drops();
     void finalize_drop(u32 source, const DropVote& vote);
 
-    void note_peer_checksum(u32 tick, const Parts& parts);
+    void note_peer_checksum(u32 source, u32 tick, const Parts& parts);
     void record_local_checksum(u32 tick, const Parts& parts);
     /// Compare a tick's checksums; on the first desync, note its domains.
-    void compare_checksums(u32 tick, const Parts& mine, const Parts& theirs);
+    void compare_checksums(u32 tick, u32 source, const Parts& mine, const Parts& theirs);
 };
 
 } // namespace osc::sim

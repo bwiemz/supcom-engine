@@ -11,8 +11,6 @@ method OnDecayed
 method OnFailedToBeBuilt
 method OnIconsVisible
 method OnNukeArmed
-method OnPlayBusyStagingPlatformsVO
-method OnPlayNoStagingPlatformsVO
 method OnSpecialAction
 method OnStart
 method OnStartBuilderTracking
@@ -20,12 +18,8 @@ method OnStopBuilderTracking
 method OnSubtitle
 method OnTerrainTypeChange
 module /lua/UserScriptCommand.lua:VerifyScriptCommand
-module /lua/ui/game/commandgraph.lua:OnCommandGraphShow
 module /lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus
-module /lua/ui/game/tracking.lua:OnTrackUnit
 module /lua/ui/uimain.lua:OnApplicationResize
-module /lua/ui/uimain.lua:ShowDesyncDialog
-module /lua/ui/uimain.lua:ShowEscapeDialog
 module /lua/ui/uimain.lua:StartHostLobbyUI
 module /lua/ui/uimain.lua:StartJoinLobbyUI
 module /lua/ui/uimain.lua:StopCursorText

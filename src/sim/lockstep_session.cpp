@@ -77,6 +77,10 @@ std::vector<LockstepSession::SpeedChange> LockstepSession::take_speed_changes() 
     return std::exchange(speed_changes_, {});
 }
 
+std::vector<LockstepSession::Desync> LockstepSession::take_desyncs() {
+    return std::exchange(desyncs_, {});
+}
+
 namespace {
 
 /// How many rounds `normal` of them at normal speed are, at `speed` (its
@@ -216,7 +220,7 @@ void LockstepSession::receive_and_advance() {
         u32& pc = peer_confirmed_[source];
         if (frame > pc) pc = frame;
         peer_heard_round_[source] = round_; // arms the drop timer after first contact
-        if (has_cs) note_peer_checksum(cs_tick, cs_parts);
+        if (has_cs) note_peer_checksum(source, cs_tick, cs_parts);
         // Kept to relay, should this peer drop before every survivor has it.
         auto& kept = recent_frames_[source];
         kept[frame] = std::move(commands);
@@ -446,20 +450,34 @@ bool LockstepSession::has_dropped(u32 src) const {
     return std::find(dropped_.begin(), dropped_.end(), src) != dropped_.end();
 }
 
-void LockstepSession::note_peer_checksum(u32 tick, const Parts& parts) {
-    peer_checksums_[tick] = parts;
+void LockstepSession::note_peer_checksum(u32 source, u32 tick, const Parts& parts) {
+    peer_checksums_[tick][source] = parts;
     auto it = my_checksums_.find(tick);
-    if (it != my_checksums_.end()) compare_checksums(tick, it->second, parts);
+    if (it != my_checksums_.end()) {
+        compare_checksums(tick, source, it->second, parts);
+    }
 }
 
 void LockstepSession::record_local_checksum(u32 tick, const Parts& parts) {
     my_checksums_[tick] = parts;
     auto it = peer_checksums_.find(tick);
-    if (it != peer_checksums_.end()) compare_checksums(tick, parts, it->second);
+    if (it == peer_checksums_.end()) {
+        return;
+    }
+    for (const auto& [source, theirs] : it->second) {
+        compare_checksums(tick, source, parts, theirs);
+    }
 }
 
-void LockstepSession::compare_checksums(u32 tick, const Parts& mine, const Parts& theirs) {
-    if (mine == theirs || desynced_) return;
+void LockstepSession::compare_checksums(u32 tick, u32 source, const Parts& mine,
+                                        const Parts& theirs) {
+    if (mine == theirs) {
+        return;
+    }
+    desyncs_.push_back({tick, source});
+    if (desynced_) {
+        return;
+    }
     desynced_ = true;
     desync_tick_ = tick;
     const auto fold = [](const Parts& parts) {

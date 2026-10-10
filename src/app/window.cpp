@@ -407,6 +407,11 @@ std::optional<int> App::Window::start_flows() {
         scripted_mouse.emplace(opt.mouse);
         renderer.set_scripted_pointer(scripted_mouse->pointer());
     }
+    renderer.camera().set_tracking_listener([this](bool tracking) {
+        if (sim_state) {
+            osc::core::call_on_track_unit(ui_lua_state.raw(), tracking);
+        }
+    });
     return std::nullopt;
 }
 

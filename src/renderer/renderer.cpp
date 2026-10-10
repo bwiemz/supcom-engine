@@ -2496,10 +2496,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     command_graph_renderer_.set_highlight(highlight_command_, hovered_);
     command_graph_renderer_.update(view, camera_, selected_ids, player_army_, texture_cache_, L,
                                    unit_renderer_.shader_time() / 10.0f, window_height_,
-                                   (!ui_keys_blocked_ && (is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                                                          is_key_pressed(GLFW_KEY_RIGHT_SHIFT))) ||
-                                       command_drag_held_,
-                                   fi);
+                                   command_graph_held(), fi);
 
     const std::vector<WorldMeshDraw> world_meshes =
         ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
@@ -3241,6 +3238,22 @@ void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {
 
 bool Renderer::should_close() const {
     return window_ && glfwWindowShouldClose(window_);
+}
+
+bool Renderer::iconified() const {
+    return window_ && glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
+}
+
+void Renderer::keep_open() {
+    if (window_) {
+        glfwSetWindowShouldClose(window_, GLFW_FALSE);
+    }
+}
+
+bool Renderer::command_graph_held() const {
+    return (!ui_keys_blocked_ &&
+            (is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT))) ||
+           command_drag_held_;
 }
 
 bool Renderer::is_key_pressed(int glfw_key) const {

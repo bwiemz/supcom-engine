@@ -759,6 +759,25 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
     )"));
 }
 
+TEST_CASE("A desync shows uimain's dialog naming the players", "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    auto& mp = osc::lua::mp_net_state();
+    mp.clients = {{0, "Host"}, {1, "Alice"}, {2, "Bob"}};
+    REQUIRE(w.run(R"(
+        __modules = __modules or {}
+        __modules['/lua/ui/uimain.lua'] = {ShowDesyncDialog = function(beat, names)
+            __beat = beat
+            __names = names
+        end}
+    )"));
+    osc::lua::show_desyncs(w.state.raw(), 42, {2, 1});
+    REQUIRE(w.run(R"(
+        assert(__beat == 42, tostring(__beat))
+        assert(table.getn(__names) == 2 and __names[1] == 'Bob' and __names[2] == 'Alice')
+    )"));
+}
+
 TEST_CASE("A matchmaking client's uids are the lobby's players' (M220b)", "[lobby][lua]") {
     World w;
     REQUIRE(w.run(R"(

@@ -168,6 +168,8 @@ public:
 
     /// Returns true if the window close was requested.
     bool should_close() const;
+    bool iconified() const;
+    void keep_open();
 
     /// Poll window events and update camera.
     void poll_events(f64 dt);
@@ -182,6 +184,7 @@ public:
     bool is_key_pressed(int glfw_key) const;
     void set_ui_keys_blocked(bool blocked) { ui_keys_blocked_ = blocked; }
     bool ui_keys_blocked() const { return ui_keys_blocked_; }
+    bool command_graph_held() const;
 
     /// The FA technique (mesh.fx) that draws a blueprint's mesh (M211b).
     MeshTechnique mesh_technique(const std::string& blueprint_id, lua_State* L);
