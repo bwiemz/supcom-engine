@@ -13606,7 +13606,7 @@ void test_change_army(TestContext& ctx) {
 }
 
 void test_air_turn(TestContext& ctx) {
-    spdlog::info("=== AIR TURN TEST: aircraft turn at Air.TurnSpeed radians a second ===");
+    spdlog::info("=== AIR TURN TEST: aircraft turn under KTurn, at most Air.TurnSpeed ===");
     int pass = 0, fail = 0;
     const auto check = [&](bool ok, const std::string& what) {
         if (ok) {
@@ -13625,8 +13625,96 @@ void test_air_turn(TestContext& ctx) {
         lua_pop(L, 1);
         return v;
     };
-    // An interceptor (TurnSpeed 1.5) and a bomber (0.7), flying north.
+    const auto unit = [&](const char* id_global) -> const osc::sim::Unit* {
+        const auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number(id_global)));
+        return e && e->is_unit() && !e->destroyed() ? static_cast<const osc::sim::Unit*>(e)
+                                                    : nullptr;
+    };
+    // A probe of the retail game on this map: two UEA0102 from rest, nose north.
     auto r = ctx.lua_state.do_string(R"(
+        __osc_a = CreateUnitHPR('uea0102', 'ARMY_1', 230, GetTerrainHeight(230, 720), 720, 0, 0, 0)
+        IssueMove({__osc_a}, {320, GetTerrainHeight(320, 720), 720})
+        __osc_f = CreateUnitHPR('uea0102', 'ARMY_1', 400, GetTerrainHeight(400, 720), 720, 0, 0, 0)
+        IssueMove({__osc_f}, {400, GetTerrainHeight(400, 790), 790})
+        __osc_a_id = __osc_a:GetEntityId()
+        __osc_f_id = __osc_f:GetEntityId()
+    )");
+    if (!r) {
+        check(false, "probe script: " + r.error().message);
+        return;
+    }
+    struct Flight {
+        const osc::sim::Unit* unit = nullptr;
+        osc::sim::Vector3 start{};
+        int moved = 0;
+        int closed = 0;
+        int landed = 0;
+        osc::sim::Vector3 at_close{};
+        std::vector<osc::sim::Vector3> track;
+        std::vector<float> height;
+    };
+    Flight a;
+    Flight f;
+    a.unit = unit("__osc_a_id");
+    f.unit = unit("__osc_f_id");
+    if (!a.unit || !f.unit) {
+        check(false, "the probe's interceptors exist");
+        return;
+    }
+    for (Flight* flight : {&a, &f}) {
+        flight->start = flight->unit->position();
+    }
+    const auto* ground = ctx.sim.terrain();
+    for (int t = 1; t <= 260 && (a.landed == 0 || f.landed == 0); ++t) {
+        ctx.sim.tick();
+        for (Flight* flight : {&a, &f}) {
+            const auto p = flight->unit->position();
+            if (flight->moved == 0 && (p.x != flight->start.x || p.z != flight->start.z)) {
+                flight->moved = t;
+            }
+            if (flight->closed == 0 && flight->unit->command_queue().empty()) {
+                flight->closed = t;
+                flight->at_close = p;
+            }
+            if (flight->landed == 0 && flight->unit->layer() != "Air") {
+                flight->landed = t;
+            }
+            flight->track.push_back(p);
+            flight->height.push_back(p.y - ground->get_terrain_height(p.x, p.z));
+        }
+    }
+    const auto off = [](const osc::sim::Vector3& p, float x, float z) {
+        return std::hypot(p.x - x, p.z - z);
+    };
+    // Retail: 86 ticks into its flight, 0.167 off at (320.36, 720.59), its order done.
+    check(a.closed > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
+              off(a.at_close, 320.36f, 720.59f) < 0.05f &&
+              std::abs(a.closed - a.moved + 1 - 86) <= 1,
+          fmt::format("the interceptor passes its goal {:.3f} off at ({:.2f}, {:.2f}), {} ticks "
+                      "into its flight, and its order is done there",
+                      off(a.at_close, 320.5f, 720.5f), a.at_close.x, a.at_close.z,
+                      a.closed - a.moved + 1));
+    // Retail: it lands 96 ticks later at (329.32, 721.20).
+    const auto a_end = a.unit->position();
+    check(a.landed > 0 && off(a_end, 329.32f, 721.2f) < 0.1f &&
+              std::abs(a.landed - a.closed - 96) <= 2,
+          fmt::format("it lands at ({:.2f}, {:.2f}), {} ticks after its order", a_end.x, a_end.z,
+                      a.landed - a.closed));
+    // Retail: the other lands at (390.46, 794.52), 18.45 over the ground till within 5.
+    const auto f_end = f.unit->position();
+    float lowest = 1e9f;
+    for (size_t i = static_cast<size_t>(std::max(f.closed - 1, 0)); i < f.track.size(); ++i) {
+        if (off(f.track[i], f_end.x, f_end.z) > 5.0f && static_cast<int>(i) + 1 < f.landed) {
+            lowest = std::min(lowest, f.height[i]);
+        }
+    }
+    check(f.landed > 0 && off(f_end, 390.46f, 794.52f) < 0.1f && lowest > 18.0f,
+          fmt::format("sent on to land at ({:.2f}, {:.2f}), it keeps {:.2f} over the ground "
+                      "until it is near",
+                      f_end.x, f_end.z, lowest));
+
+    // An interceptor (TurnSpeed 1.5) and a bomber (0.7), flying north.
+    r = ctx.lua_state.do_string(R"(
         local y = GetTerrainHeight(300, 700) + 20
         __osc_fighter = CreateUnitHPR('uea0102', 'ARMY_1', 300, y, 700, 0, 0, 0)
         __osc_bomber = CreateUnitHPR('uea0103', 'ARMY_1', 340, y, 700, 0, 0, 0)
@@ -13639,11 +13727,6 @@ void test_air_turn(TestContext& ctx) {
         check(false, "script: " + r.error().message);
         return;
     }
-    const auto unit = [&](const char* id_global) -> const osc::sim::Unit* {
-        const auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number(id_global)));
-        return e && e->is_unit() && !e->destroyed() ? static_cast<const osc::sim::Unit*>(e)
-                                                    : nullptr;
-    };
     const auto* fighter = unit("__osc_fighter_id");
     const auto* bomber = unit("__osc_bomber_id");
     if (!fighter || !bomber) {
@@ -13654,7 +13737,7 @@ void test_air_turn(TestContext& ctx) {
           fmt::format("TurnSpeed is read as radians a second ({}, {})", fighter->turn_rate_rad(),
                       bomber->turn_rate_rad()));
     for (int i = 0; i < 60; ++i) ctx.sim.tick();
-    // Turned about to a point behind them, each turns TurnSpeed / 10 a tick.
+    // At most TurnSpeed x KTurn / KTurnDamping a second: 1 for the interceptor, 0.49 the bomber.
     (void)ctx.lua_state.do_string(R"(
         IssueClearCommands({__osc_fighter, __osc_bomber})
         IssueMove({__osc_fighter}, {300, 0, 400})
@@ -13666,22 +13749,27 @@ void test_air_turn(TestContext& ctx) {
         while (d < -3.14159265f) d += 6.28318530f;
         return std::abs(d);
     };
-    const float f0 = fighter->heading(), b0 = bomber->heading();
-    ctx.sim.tick();
-    const float f1 = fighter->heading(), b1 = bomber->heading();
-    ctx.sim.tick();
-    const float f2 = fighter->heading(), b2 = bomber->heading();
-    check(std::abs(turned(f0, f1) - 0.15f) < 1e-4f && std::abs(turned(f1, f2) - 0.15f) < 1e-4f,
-          fmt::format("the interceptor turns 0.15 rad a tick ({:.4f}, {:.4f})", turned(f0, f1),
-                      turned(f1, f2)));
-    check(std::abs(turned(b0, b1) - 0.07f) < 1e-4f && std::abs(turned(b1, b2) - 0.07f) < 1e-4f,
-          fmt::format("the bomber turns 0.07 rad a tick ({:.4f}, {:.4f})", turned(b0, b1),
-                      turned(b1, b2)));
-    // About in 2 s, the interceptor comes back past where it turned.
-    for (int i = 0; i < 40; ++i) ctx.sim.tick();
-    check(turned(fighter->heading(), 3.14159265f) < 0.2f,
-          fmt::format("the interceptor has turned about in 4 s (heading {:.2f})",
-                      fighter->heading()));
+    float f_prev = fighter->heading(), b_prev = bomber->heading();
+    float f_first = 0.0f, b_first = 0.0f, f_top = 0.0f, b_top = 0.0f;
+    for (int i = 0; i < 40; ++i) {
+        ctx.sim.tick();
+        const float f_turn = turned(f_prev, fighter->heading());
+        const float b_turn = turned(b_prev, bomber->heading());
+        if (i == 0) {
+            f_first = f_turn;
+            b_first = b_turn;
+        }
+        f_top = std::max(f_top, f_turn);
+        b_top = std::max(b_top, b_turn);
+        f_prev = fighter->heading();
+        b_prev = bomber->heading();
+    }
+    check(f_first < 0.01f && b_first < 0.005f,
+          fmt::format("they start turning slowly ({:.4f}, {:.4f} rad the first tick)", f_first,
+                      b_first));
+    check(f_top > 0.09f && f_top < 0.12f && b_top > 0.045f && b_top < 0.06f,
+          fmt::format("the interceptor turns at most {:.3f} rad a tick, the bomber {:.3f}", f_top,
+                      b_top));
     // Over deep water, an aircraft holds its height over the water's surface,
     // not the seabed (Moho's CUnitMotion samples max(terrain, water)).
     r = ctx.lua_state.do_string(R"(

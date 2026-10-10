@@ -1249,10 +1249,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
         w.f32v(v);
     w.b(ar.hover_over_attack);
     w.b(ar.circling_dir_change);
-    for (const f32 v : {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
-                        ar.circling_radius_max, ar.circling_radius_vs_air_mult,
-                        ar.circling_elevation_ratio, ar.circling_change_frequency, ar.bank_factor})
+    for (const f32 v :
+         {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
+          ar.circling_radius_max, ar.circling_radius_vs_air_mult, ar.circling_elevation_ratio,
+          ar.circling_change_frequency, ar.bank_factor, ar.k_roll, ar.k_roll_damping})
         w.f32v(v);
+    w.b(ar.bank_forward);
     const AirCombatState& ac = u.air_combat_;
     w.u8v(ac.state);
     w.u32v(ac.timeout_tick);
@@ -1278,6 +1280,9 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.lift_ground_set_);
     w.u32v(u.lift_tick_);
     w.vec3(u.air_velocity_);
+    w.vec3(u.air_dv_);
+    w.vec3(u.air_spin_);
+    w.vec3(u.air_facing_);
     w.f32v(u.elevation_target_);
     w.b(u.fly_in_water_);
     enum8(w, u.vert_motion_);
@@ -1625,10 +1630,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
         *v = r.f32v();
     ar.hover_over_attack = r.b();
     ar.circling_dir_change = r.b();
-    for (f32* v : {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
-                   &ar.circling_radius_max, &ar.circling_radius_vs_air_mult,
-                   &ar.circling_elevation_ratio, &ar.circling_change_frequency, &ar.bank_factor})
+    for (f32* v :
+         {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
+          &ar.circling_radius_max, &ar.circling_radius_vs_air_mult, &ar.circling_elevation_ratio,
+          &ar.circling_change_frequency, &ar.bank_factor, &ar.k_roll, &ar.k_roll_damping})
         *v = r.f32v();
+    ar.bank_forward = r.b();
     AirCombatState& ac = u.air_combat_;
     ac.state = r.u8v();
     ac.timeout_tick = r.u32v();
@@ -1654,6 +1661,9 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.lift_ground_set_ = r.b();
     u.lift_tick_ = r.u32v();
     u.air_velocity_ = r.vec3();
+    u.air_dv_ = r.vec3();
+    u.air_spin_ = r.vec3();
+    u.air_facing_ = r.vec3();
     u.elevation_target_ = r.f32v();
     u.fly_in_water_ = r.b();
     u.vert_motion_ = enum8<Unit::VertMotion>(r);

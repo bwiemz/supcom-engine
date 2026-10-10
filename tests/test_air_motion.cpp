@@ -69,6 +69,29 @@ struct World {
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, KMove = 1,"
                  " KMoveDamping = 1, StartTurnDistance = 5, TurnSpeed = 1.5, AutoLandTime = 1},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 "{BlueprintId = 'gunfwd', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 12, KMove = 0.8, KMoveDamping = 2,"
+                 " StartTurnDistance = 5, AutoLandTime = 0, BankForward = true},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'level', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeY = 0.2, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Air = {CanFly = true, Winged = true, AutoLandTime = 1, BankFactor = 0,"
+                 " KLift = 3, KLiftDamping = 2.5, KMove = 1, KMoveDamping = 1, KRoll = 2,"
+                 " KRollDamping = 1, KTurn = 1, KTurnDamping = 1.5, LiftFactor = 7,"
+                 " MaxAirspeed = 15, StartTurnDistance = 5, TurnSpeed = 1.5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 "{BlueprintId = 'uea0102', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeY = 0.2, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Air = {CanFly = true, Winged = true, AutoLandTime = 1, BankFactor = 2,"
+                 " BankForward = false, KLift = 3, KLiftDamping = 2.5, KMove = 1,"
+                 " KMoveDamping = 1, KRoll = 2, KRollDamping = 1, KTurn = 1,"
+                 " KTurnDamping = 1.5, LiftFactor = 7, MaxAirspeed = 15, MinAirspeed = 10,"
+                 " StartTurnDistance = 5, TurnSpeed = 1.5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -81,7 +104,7 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"gunship", "gun1", "fighter"}) {
+        for (const char* id : {"gunship", "gun1", "fighter", "gunfwd", "level", "uea0102"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -218,6 +241,7 @@ TEST_CASE("An aircraft whose move ends at speed holds where it would be a second
     World w;
     Unit& fighter = w.make("fighter", 20.0f, 128.0f);
     fighter.set_heading(1.5707964f);
+    fighter.set_orientation(osc::sim::euler_to_quat(1.5707964f, 0.0f, 0.0f));
     World::move(fighter, 60.0f, 128.0f);
     osc::sim::Vector3 held{};
     std::vector<f32> drops;
@@ -244,4 +268,107 @@ TEST_CASE("An aircraft whose move ends at speed holds where it would be a second
     CHECK(steepest > 0.3f);
     CHECK(drops.back() < steepest / 3.0f);
     CHECK(fighter.position().y - 10.0f < 0.1f);
+}
+
+
+TEST_CASE("A winged aircraft's turn builds under KTurn toward KTurn x TurnSpeed / KTurnDamping",
+          "[air_motion]") {
+    World w;
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    World::move(a, 30.0f, 20.0f);
+    f32 first = 0.0f;
+    f32 fastest = 0.0f;
+    f32 before = a.heading();
+    for (int t = 0; t < 30; ++t) {
+        w.sim.tick();
+        f32 turn = std::abs(a.heading() - before);
+        turn = std::min(turn, 6.2831855f - turn);
+        if (t == 0) {
+            first = turn;
+        }
+        fastest = std::max(fastest, turn);
+        before = a.heading();
+    }
+    CHECK(first == Approx(0.0075f).margin(0.001f));
+    CHECK(fastest > 0.09f);
+    CHECK(fastest < 0.115f);
+}
+
+TEST_CASE("A winged aircraft banks into its turn by its BankFactor", "[air_motion]") {
+    World w;
+    Unit& banked = w.make("uea0102", 30.0f, 128.0f);
+    Unit& level = w.make("level", 30.0f, 60.0f);
+    World::move(banked, 120.0f, 128.0f);
+    World::move(level, 120.0f, 60.0f);
+    f32 deepest = 0.0f;
+    f32 flattest = 0.0f;
+    for (int t = 0; t < 20; ++t) {
+        w.sim.tick();
+        deepest = std::max(deepest, osc::sim::quat_rotate(banked.orientation(), {0, 1, 0}).x);
+        flattest =
+            std::max(flattest, std::abs(osc::sim::quat_rotate(level.orientation(), {0, 1, 0}).x));
+    }
+    CHECK(deepest > 0.3f);
+    CHECK(flattest < 0.05f);
+}
+
+TEST_CASE("A hovering aircraft leans into its change of velocity, forward only with BankForward",
+          "[air_motion]") {
+    World w;
+    Unit& plain = w.make("gunship", 30.0f, 60.0f);
+    Unit& forward = w.make("gunfwd", 60.0f, 60.0f);
+    World::move(plain, 30.0f, 200.0f);
+    World::move(forward, 60.0f, 200.0f);
+    f32 plain_lean = 0.0f;
+    f32 forward_lean = 0.0f;
+    for (int t = 0; t < 10; ++t) {
+        w.sim.tick();
+        plain_lean =
+            std::max(plain_lean, std::abs(osc::sim::quat_rotate(plain.orientation(), {0, 1, 0}).z));
+        forward_lean =
+            std::max(forward_lean, osc::sim::quat_rotate(forward.orientation(), {0, 1, 0}).z);
+    }
+    CHECK(plain_lean < 0.01f);
+    CHECK(forward_lean > 0.2f);
+
+    const osc::sim::AirAxes side = osc::sim::hover_axes(osc::sim::Quaternion{}, {1.0f, 0.0f, 0.0f},
+                                                        0.5f, false, 1.0f, {0.0f, 0.0f, 1.0f});
+    CHECK(side.up.x == Approx(0.5f));
+    CHECK(side.up.y == Approx(0.49f));
+    const osc::sim::AirAxes ahead = osc::sim::hover_axes(osc::sim::Quaternion{}, {0.0f, 0.0f, 1.0f},
+                                                         0.5f, false, 1.0f, {0.0f, 0.0f, 1.0f});
+    CHECK(ahead.up.z == Approx(0.0f));
+}
+
+TEST_CASE("An aircraft stopped while turning holds where its turn would carry it in a second",
+          "[air_motion]") {
+    World w;
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    a.set_orientation(osc::sim::euler_to_quat(1.5707964f, 0.0f, 0.0f));
+    a.set_air_velocity({10.0f, 0.0f, 0.0f});
+    a.set_air_velocity({10.0f, 0.0f, 0.0f});
+    a.set_air_turn_rate(1.0f);
+    CHECK(a.air_turn_rate() == Approx(1.0f));
+    const osc::sim::Vector3 at = a.air_stop_point();
+    f32 x = 30.0f;
+    f32 z = 128.0f;
+    for (int step = 1; step <= 10; ++step) {
+        x += std::cos(0.1f * static_cast<f32>(step));
+        z -= std::sin(0.1f * static_cast<f32>(step));
+    }
+    CHECK(at.x == Approx(x).margin(0.001f));
+    CHECK(at.z == Approx(z).margin(0.001f));
+}
+
+TEST_CASE("Near its goal a winged aircraft turns its nose to the way its order sent it",
+          "[air_motion]") {
+    World w;
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    a.set_air_velocity({0.0f, 0.0f, 15.0f});
+    World::move(a, 60.0f, 128.0f);
+    for (int t = 0; t < 600 && a.layer() == "Air"; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(a.layer() == "Land");
+    CHECK(a.heading() == Approx(1.5707964f).margin(0.05f));
 }
