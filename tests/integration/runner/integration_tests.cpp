@@ -11761,11 +11761,11 @@ void test_naval_depth(TestContext& ctx) {
         local want = sum * 0.25 - (hi - lo) * 0.25
         if math.abs(p[2] - want) > 0.05 then error('at ' .. p[2] .. ', the bed snap is ' .. want) end
     )");
-    lua_check("Test 8: the hover tank rides the water", R"(
+    lua_check("Test 8: the hover tank rides its Elevation over the water", R"(
         if __osc_aurora:GetCurrentLayer() ~= 'Water' then error('it is on ' .. __osc_aurora:GetCurrentLayer()) end
         local p = __osc_aurora:GetPosition()
-        local top = GetSurfaceHeight(p[1], p[3])
-        if math.abs(p[2] - top) > 0.05 then error('at ' .. p[2] .. ', the surface is ' .. top) end
+        local want = GetSurfaceHeight(p[1], p[3]) + __osc_aurora:GetBlueprint().Physics.Elevation
+        if math.abs(p[2] - want) > 0.01 then error('at ' .. p[2] .. ', want ' .. want) end
         local x, z = __osc_ashore[1], __osc_ashore[2]
         IssueMove({__osc_acu}, {x, GetTerrainHeight(x, z), z})
     )");

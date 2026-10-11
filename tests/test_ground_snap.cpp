@@ -5,6 +5,7 @@
 #include "sim/bone_data.hpp"
 #include "map/terrain.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/sim_random.hpp"
 #include "sim/unit.hpp"
 
 #include <algorithm>
@@ -141,6 +142,99 @@ TEST_CASE("A StandUpright unit, a hover unit on the water and a ship stay level 
     ship->set_layer("Water");
     ship->stand_on_ground(&ridge_dry, {70.0f, 0.0f, 64.0f}, ship->orientation());
     check_vec(up(*ship), 0.0f, 1.0f, 0.0f);
+}
+
+TEST_CASE("A hover unit stands its Elevation over the ground and the water", "[ground_snap]") {
+    const auto flooded = ridge(kBase + 6.0f, true);
+    const auto hover = unit("RULEUMT_Hover", 0.0f);
+    hover->set_blueprint_elevation(0.5f);
+    hover->stand_on_ground(&flooded, {20.0f, 0.0f, 64.0f}, hover->orientation());
+    CHECK(hover->position().y == Approx(kBase + 6.5f));
+    hover->stand_on_ground(&flooded, {64.0f, 0.0f, 64.0f}, hover->orientation());
+    CHECK(hover->position().y == Approx(kBase + 9.5f));
+    hover->set_elevation(2.0f);
+    CHECK(hover->ground_y(&flooded, 20.0f, 64.0f) == Approx(kBase + 8.0f));
+    hover->revert_elevation();
+    CHECK(hover->ground_y(&flooded, 20.0f, 64.0f) == Approx(kBase + 6.5f));
+
+    const auto tank = unit("RULEUMT_Land", 0.0f);
+    tank->set_blueprint_elevation(0.5f);
+    CHECK(tank->ground_y(&flooded, 64.0f, 64.0f) == Approx(kBase + 9.0f));
+}
+
+TEST_CASE("A hover unit leans into its acceleration by BankingSlope", "[ground_snap]") {
+    const auto terrain = ridge(0.0f, false);
+    const auto hover = unit("RULEUMT_Hover", 0.0f);
+    hover->set_hover_physics({0.5f, 5.0f, 0.0f, 0.0f});
+    osc::sim::SimRandom random;
+    hover->set_position({20.0f, kBase, 64.0f});
+    hover->note_tick_position();
+    hover->set_position({20.1f, kBase, 64.0f});
+    hover->note_drive(1.0f, 1.0f, 1.0f, Unit::MotionTurn::Straight);
+    hover->tick_hover(&terrain, 1, random);
+    CHECK(hover->hover_tilt().x == Approx(0.02f));
+    CHECK(hover->hover_tilt().z == Approx(0.0f).margin(1e-6));
+    CHECK(hover->position().y == Approx(kBase));
+    const f32 normal_y = 2.0f * 2.0f * 1.0f;
+    const f32 len = std::sqrt(0.02f * 0.02f + normal_y * normal_y);
+    check_vec(up(*hover), 0.02f / len, normal_y / len, 0.0f);
+
+    hover->note_tick_position();
+    hover->set_position({20.2f, kBase, 64.0f});
+    hover->note_drive(1.0f, 1.0f, 1.0f, Unit::MotionTurn::Straight);
+    hover->tick_hover(&terrain, 2, random);
+    CHECK(hover->hover_tilt().x == Approx(0.016f));
+
+    const auto still = unit("RULEUMT_Hover", 0.0f);
+    still->set_hover_physics({0.5f, 5.0f, 0.0f, 0.0f});
+    still->set_position({20.0f, kBase, 64.0f});
+    still->note_tick_position();
+    still->set_position({20.1f, kBase, 64.0f});
+    still->tick_hover(&terrain, 1, random);
+    CHECK(still->hover_tilt().x == 0.0f);
+    check_vec(up(*still), 0.0f, 1.0f, 0.0f);
+}
+
+TEST_CASE("A hover unit draws its wobble from the sim's stream every fifth tick", "[ground_snap]") {
+    const auto terrain = ridge(0.0f, false);
+    const auto wobbly = unit("RULEUMT_Hover", 0.0f);
+    wobbly->set_hover_physics({0.0f, 1.0f, 0.05f, 0.001f});
+    wobbly->set_position({20.0f, kBase, 64.0f});
+    const auto steady = unit("RULEUMT_Hover", 0.0f);
+    steady->set_hover_physics({0.0f, 1.0f, 0.0f, 0.0f});
+    steady->set_position({20.0f, kBase, 64.0f});
+    osc::sim::SimRandom random;
+    random.set_mt19937(true);
+    random.seed(7);
+    osc::sim::SimRandom expected;
+    expected.set_mt19937(true);
+    expected.seed(7);
+    for (osc::u32 tick = 1; tick <= 4; ++tick) {
+        wobbly->tick_hover(&terrain, tick, random);
+        steady->tick_hover(&terrain, tick, random);
+    }
+    CHECK(random.words_drawn() == 0);
+    CHECK(wobbly->wobble_offset().x == 0.0f);
+
+    wobbly->tick_hover(&terrain, 5, random);
+    CHECK(random.words_drawn() == 2);
+    steady->tick_hover(&terrain, 5, random);
+    CHECK(random.words_drawn() == 4);
+    const f32 tx = expected.range(-0.05f, 0.05f);
+    const f32 tz = expected.range(-0.05f, 0.05f);
+    const f32 len = std::sqrt(tx * tx + tz * tz);
+    CHECK(wobbly->wobble_offset().x == Approx(tx / len * 0.0001f));
+    CHECK(wobbly->wobble_offset().z == Approx(tz / len * 0.0001f));
+    CHECK(wobbly->wobble_offset().y == 0.0f);
+    CHECK(up(*wobbly).x == Approx(wobbly->wobble_offset().x / 4.0f).margin(1e-7));
+    CHECK(steady->wobble_offset().x == 0.0f);
+
+    for (osc::u32 tick = 6; tick <= 9; ++tick) {
+        wobbly->tick_hover(&terrain, tick, random);
+    }
+    CHECK(random.words_drawn() == 4);
+    wobbly->tick_hover(&terrain, 10, random);
+    CHECK(random.words_drawn() == 6);
 }
 
 TEST_CASE("A turret on a slope aims and lobs at a target on level ground", "[ground_snap][aim]") {

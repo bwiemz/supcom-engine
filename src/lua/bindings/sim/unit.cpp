@@ -1946,13 +1946,13 @@ static int unit_RestoreBuildRestrictions(lua_State* L) {
 
 static int unit_SetElevation(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_elevation_override(static_cast<f32>(luaL_checknumber(L, 2)));
+    if (u) u->set_elevation(static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
 
 static int unit_RevertElevation(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->clear_elevation_override();
+    if (u) u->revert_elevation();
     return 0;
 }
 

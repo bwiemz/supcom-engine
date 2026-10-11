@@ -541,6 +541,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (!tick_after_orders(dt, ctx)) return;
     }
+    if (ctx.sim) {
+        tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
+    }
     tick_upkeep(dt, ctx, econ_eff, was_assisting_silo);
 }
 
@@ -2691,11 +2694,73 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
     }
     const Vector3 d0{br.x - fl.x, br.y - fl.y, br.z - fl.z};
     const Vector3 d1{bl.x - fr.x, bl.y - fr.y, bl.z - fr.z};
-    const Vector3 normal = stand_upright_
-                               ? Vector3{0.0f, 1.0f, 0.0f}
-                               : Vector3{d0.y * d1.z - d0.z * d1.y, d0.z * d1.x - d0.x * d1.z,
-                                         d0.x * d1.y - d0.y * d1.x};
+    Vector3 normal = stand_upright_ ? Vector3{0.0f, 1.0f, 0.0f}
+                                    : Vector3{d0.y * d1.z - d0.z * d1.y, d0.z * d1.x - d0.x * d1.z,
+                                              d0.x * d1.y - d0.y * d1.x};
+    if (hover) {
+        y += elevation_;
+        normal.x += hover_tilt_.x + wobble_offset_.x;
+        normal.y += hover_tilt_.y + wobble_offset_.y;
+        normal.z += hover_tilt_.z + wobble_offset_.z;
+    }
     return {y, tilt_to(facing, normal)};
+}
+
+namespace {
+
+// Moho's VecLimitLengthTo.
+void limit_length(Vector3& v, f32 max_length) {
+    const f32 length_sq = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (max_length * max_length >= length_sq) {
+        return;
+    }
+    const f32 scale = max_length / std::sqrt(length_sq);
+    v.x *= scale;
+    v.y *= scale;
+    v.z *= scale;
+}
+
+} // namespace
+
+void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random) {
+    if (!is_hover() || can_fly() || is_being_built_ || dying_ || immobile_ || is_stunned() ||
+        parent_entity_id() != 0) {
+        return;
+    }
+    const Vector3& at = position();
+    const Vector3 step =
+        tick_position_set_
+            ? Vector3{at.x - tick_position_.x, at.y - tick_position_.y, at.z - tick_position_.z}
+            : Vector3{};
+    const Vector3 accel =
+        drove_ ? Vector3{step.x - hover_step_.x, step.y - hover_step_.y, step.z - hover_step_.z}
+               : Vector3{};
+    hover_step_ = step;
+
+    const HoverPhysics& h = hover_physics_;
+    const f32 bank = h.max_acceleration > 0 ? h.banking_slope / h.max_acceleration : 0.0f;
+    hover_tilt_.x = hover_tilt_.x * 0.8f + accel.x * 10.0f * bank * 0.2f;
+    hover_tilt_.y = hover_tilt_.y * 0.8f;
+    hover_tilt_.z = hover_tilt_.z * 0.8f + accel.z * 10.0f * bank * 0.2f;
+
+    if (tick % 5 == 0) {
+        wobble_target_.x = random.range(-h.wobble_factor, h.wobble_factor);
+        wobble_target_.z = random.range(-h.wobble_factor, h.wobble_factor);
+    }
+    Vector3 push{wobble_target_.x - wobble_offset_.x, wobble_target_.y - wobble_offset_.y,
+                 wobble_target_.z - wobble_offset_.z};
+    limit_length(push, h.wobble_speed * 0.1f);
+    wobble_velocity_.x += push.x;
+    wobble_velocity_.y += push.y;
+    wobble_velocity_.z += push.z;
+    limit_length(wobble_velocity_, h.wobble_speed);
+    wobble_offset_.x = wobble_offset_.x * 0.98f + wobble_velocity_.x;
+    wobble_offset_.y = wobble_offset_.y * 0.98f + wobble_velocity_.y;
+    wobble_offset_.z = wobble_offset_.z * 0.98f + wobble_velocity_.z;
+
+    if (terrain && !teleporting_) {
+        stand_on_ground(terrain, position(), orientation());
+    }
 }
 
 void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing) {

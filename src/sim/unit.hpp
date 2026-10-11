@@ -847,6 +847,18 @@ public:
         stand_upright_ = stand_upright;
         sink_lower_ = sink_lower;
     }
+    struct HoverPhysics {
+        f32 banking_slope = 0;
+        f32 max_acceleration = 0;
+        f32 wobble_factor = 0;
+        f32 wobble_speed = 0;
+    };
+    void set_hover_physics(const HoverPhysics& h) { hover_physics_ = h; }
+    /// Moho's CUnitMotion::CalcMoveHover after its move: the lean into its
+    /// acceleration and the wobble, then the snap.
+    void tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random);
+    const Vector3& hover_tilt() const { return hover_tilt_; }
+    const Vector3& wobble_offset() const { return wobble_offset_; }
     /// Physics.RaisedPlatforms: quads of four (x, z, height) corners.
     void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
     /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
@@ -970,11 +982,15 @@ public:
     /// What it may not build (empty: no restriction)
     const CategoryExpr& build_restriction() const { return build_restriction_; }
 
-    // Elevation override
-    f32 elevation_override() const { return elevation_override_; }
-    void set_elevation_override(f32 e) { elevation_override_ = e; }
-    bool has_elevation_override() const { return elevation_override_ >= 0; }
-    void clear_elevation_override() { elevation_override_ = -1.0f; }
+    /// Moho's UnitAttributes::spawnElevationOffset: Physics.Elevation, or
+    /// what SetElevation gave it.
+    f32 elevation() const { return elevation_; }
+    void set_elevation(f32 e) { elevation_ = e; }
+    void set_blueprint_elevation(f32 e) {
+        blueprint_elevation_ = e;
+        elevation_ = e;
+    }
+    void revert_elevation() { elevation_ = blueprint_elevation_; }
 
     i32 transport_class() const { return transport_class_; }
     void set_transport_class(i32 c) { transport_class_ = c; }
@@ -1538,6 +1554,12 @@ private:
     std::vector<f32> raised_platforms_;
     bool stand_upright_ = false;
     bool sink_lower_ = false;
+    HoverPhysics hover_physics_;
+    Vector3 hover_step_;
+    Vector3 hover_tilt_;
+    Vector3 wobble_offset_;
+    Vector3 wobble_velocity_;
+    Vector3 wobble_target_;
     blueprints::UnitFootprints footprints_;
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
@@ -1821,8 +1843,8 @@ private:
     std::unordered_set<std::string> original_command_caps_;
     // Build restrictions
     CategoryExpr build_restriction_;
-    // Elevation override
-    f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
+    f32 elevation_ = 0;
+    f32 blueprint_elevation_ = 0;
     bool dying_ = false;             ///< killed; see begin_dying
     bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)

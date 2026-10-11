@@ -381,6 +381,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 drive.rotate_on_spot = lua_toboolean(L, -1) != 0;
                 lua_pop(L, 1);
                 unit->set_drive(drive);
+                unit->set_blueprint_elevation(number("Elevation", 0));
+                unit->set_hover_physics({number("BankingSlope", 0), number("MaxAcceleration", 0),
+                                         number("WobbleFactor", 0), number("WobbleSpeed", 0)});
             }
             lua_pop(L, 2);
 

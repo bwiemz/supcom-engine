@@ -969,6 +969,14 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     }
     w.b(u.stand_upright_);
     w.b(u.sink_lower_);
+    w.f32v(u.hover_physics_.banking_slope);
+    w.f32v(u.hover_physics_.max_acceleration);
+    w.f32v(u.hover_physics_.wobble_factor);
+    w.f32v(u.hover_physics_.wobble_speed);
+    for (const Vector3* v : {&u.hover_step_, &u.hover_tilt_, &u.wobble_offset_, &u.wobble_velocity_,
+                             &u.wobble_target_}) {
+        w.vec3(*v);
+    }
     for (const blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         w.u8v(fp->size_x);
         w.u8v(fp->size_z);
@@ -1300,7 +1308,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     save_strings(w, u.original_command_caps_);
     save(w, u.build_restriction_);
     w.i32v(u.selection_priority_);
-    w.f32v(u.elevation_override_);
+    w.f32v(u.elevation_);
+    w.f32v(u.blueprint_elevation_);
     w.b(u.dying_);
     w.b(u.transferred_);
     w.size(u.on_unit_built_callbacks_.size());
@@ -1334,6 +1343,14 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     }
     u.stand_upright_ = r.b();
     u.sink_lower_ = r.b();
+    u.hover_physics_.banking_slope = r.f32v();
+    u.hover_physics_.max_acceleration = r.f32v();
+    u.hover_physics_.wobble_factor = r.f32v();
+    u.hover_physics_.wobble_speed = r.f32v();
+    for (Vector3* v : {&u.hover_step_, &u.hover_tilt_, &u.wobble_offset_, &u.wobble_velocity_,
+                       &u.wobble_target_}) {
+        *v = r.vec3();
+    }
     for (blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         fp->size_x = r.u8v();
         fp->size_z = r.u8v();
@@ -1676,7 +1693,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.original_command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     load(r, u.build_restriction_);
     u.selection_priority_ = r.i32v();
-    u.elevation_override_ = r.f32v();
+    u.elevation_ = r.f32v();
+    u.blueprint_elevation_ = r.f32v();
     u.dying_ = r.b();
     u.transferred_ = r.b();
     u.on_unit_built_callbacks_.resize(r.size(8));
