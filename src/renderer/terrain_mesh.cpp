@@ -22,7 +22,85 @@ void emit_quad(u32 x, u32 z, u32 w, std::vector<u32>& out) {
     out.insert(out.end(), {tl, bl, tr, tr, bl, br});
 }
 
+TerrainVertex vertex_at(const osc::map::Heightmap& hm, u32 dx, u32 dz) {
+    const u32 gw = hm.grid_width();
+    const u32 gh = hm.grid_height();
+    const u32 gx = std::min(dx * TerrainMesh::DECIMATE, gw - 1);
+    const u32 gz = std::min(dz * TerrainMesh::DECIMATE, gh - 1);
+
+    const f32 h = hm.get_height_at_grid(gx, gz);
+    TerrainVertex v{};
+    v.x = static_cast<f32>(gx);
+    v.y = h;
+    v.z = static_cast<f32>(gz);
+
+    // Central-difference normal
+    const f32 hL = (gx > 0) ? hm.get_height_at_grid(gx - 1, gz) : h;
+    const f32 hR = (gx + 1 < gw) ? hm.get_height_at_grid(gx + 1, gz) : h;
+    const f32 hD = (gz > 0) ? hm.get_height_at_grid(gx, gz - 1) : h;
+    const f32 hU = (gz + 1 < gh) ? hm.get_height_at_grid(gx, gz + 1) : h;
+
+    f32 nx = hL - hR;
+    f32 nz = hD - hU;
+    f32 ny = 2.0f;
+    const f32 len = std::sqrt(nx * nx + ny * ny + nz * nz);
+    if (len > 0) {
+        nx /= len;
+        ny /= len;
+        nz /= len;
+    }
+    v.nx = nx;
+    v.ny = ny;
+    v.nz = nz;
+    return v;
+}
+
 } // namespace
+
+void TerrainMesh::record_update(VkCommandBuffer cmd, const osc::map::Heightmap& hm, i32 x0, i32 z0,
+                                i32 x1, i32 z1) {
+    if (!vertex_buf_.buffer || grid_w_ == 0 || grid_h_ == 0) {
+        return;
+    }
+    const auto first = [](i32 g) { return static_cast<u32>(std::max(g, 0) + 1) / DECIMATE; };
+    const auto last = [](i32 g, u32 n) {
+        return std::min(static_cast<u32>(std::max(g, 0)) / DECIMATE, n - 1);
+    };
+    const u32 dx0 = first(x0 - 1);
+    const u32 dz0 = first(z0 - 1);
+    const u32 dx1 = last(x1, grid_w_);
+    const u32 dz1 = last(z1, grid_h_);
+    if (dx0 > dx1 || dz0 > dz1) {
+        return;
+    }
+
+    VkBufferMemoryBarrier before{};
+    before.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    before.srcAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    before.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    before.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    before.buffer = vertex_buf_.buffer;
+    before.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                         0, nullptr, 1, &before, 0, nullptr);
+
+    std::vector<TerrainVertex> row(dx1 - dx0 + 1);
+    for (u32 dz = dz0; dz <= dz1; ++dz) {
+        for (u32 dx = dx0; dx <= dx1; ++dx) {
+            row[dx - dx0] = vertex_at(hm, dx, dz);
+        }
+        vkCmdUpdateBuffer(cmd, vertex_buf_.buffer,
+                          static_cast<VkDeviceSize>(dz * grid_w_ + dx0) * sizeof(TerrainVertex),
+                          row.size() * sizeof(TerrainVertex), row.data());
+    }
+
+    VkBufferMemoryBarrier after = before;
+    after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    after.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0,
+                         0, nullptr, 1, &after, 0, nullptr);
+}
 
 void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
                         VmaAllocator allocator, VkCommandPool cmd_pool,
@@ -40,30 +118,7 @@ void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
 
     for (u32 dz = 0; dz < dh; dz++) {
         for (u32 dx = 0; dx < dw; dx++) {
-            u32 gx = std::min(dx * DECIMATE, gw - 1);
-            u32 gz = std::min(dz * DECIMATE, gh - 1);
-
-            f32 h = hm.get_height_at_grid(gx, gz);
-            auto& v = vertices[dz * dw + dx];
-            v.x = static_cast<f32>(gx);
-            v.y = h;
-            v.z = static_cast<f32>(gz);
-
-            // Central-difference normal
-            f32 hL = (gx > 0) ? hm.get_height_at_grid(gx - 1, gz) : h;
-            f32 hR = (gx + 1 < gw) ? hm.get_height_at_grid(gx + 1, gz) : h;
-            f32 hD = (gz > 0) ? hm.get_height_at_grid(gx, gz - 1) : h;
-            f32 hU = (gz + 1 < gh) ? hm.get_height_at_grid(gx, gz + 1) : h;
-
-            f32 nx = hL - hR;
-            f32 nz = hD - hU;
-            f32 ny = 2.0f;
-            f32 len = std::sqrt(nx * nx + ny * ny + nz * nz);
-            if (len > 0) { nx /= len; ny /= len; nz /= len; }
-
-            v.nx = nx;
-            v.ny = ny;
-            v.nz = nz;
+            vertices[dz * dw + dx] = vertex_at(hm, dx, dz);
         }
     }
 

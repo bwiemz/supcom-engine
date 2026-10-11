@@ -37,6 +37,11 @@ public:
     /// the CHeightField tier cell around (x, z) that the look-ahead picks.
     f32 look_ahead_max(f32 x, f32 z, f32 look_ahead) const;
 
+    /// Moho's CHeightField::SetElevationRect.
+    void set_rect(i32 x0, i32 z0, i32 x1, i32 z1, f32 elevation);
+    void copy_rect(const Heightmap& from, i32 x0, i32 z0, i32 x1, i32 z1);
+    void reset();
+
     u32 grid_width() const { return grid_width_; }
     u32 grid_height() const { return grid_height_; }
     u32 map_width() const { return grid_width_ - 1; }
@@ -48,6 +53,7 @@ private:
     u32 grid_height_;  // map_height + 1
     f32 scale_;        // raw_value * scale = world height
     std::vector<u16> data_; // row-major [gz * grid_width + gx]
+    std::vector<u16> original_;
     f32 max_height_ = 0.0f;
     struct Tier {
         u32 width = 0;
@@ -55,6 +61,8 @@ private:
         std::vector<u16> max;
     };
     std::vector<Tier> tiers_;
+
+    void update_tiers(i32 x0, i32 z0, i32 x1, i32 z1);
 };
 
 /// The path of a shot, for CAiBrain:CheckBlockingTerrain.

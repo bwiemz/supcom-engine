@@ -13,7 +13,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield in retail; the engine's is a no-op | Terrain under structures with a FlattenSkirt (219 retail blueprints) isn't levelled; buildings stand on the slope | faf-re `cfunc_FlattenMapRect` (`sim/Sim.cpp`); retail `/lua/defaultunits.lua` OnCreate; engine `sim_bindings.cpp` stub_noop | Open |
 | `IssueFormAttack(units, target, formation, heading)` attacks in formation in retail; the engine's is a plain `IssueAttack` | A skirmish AI attack platoon's final push on a nearby target goes in without a formation | faf-re `cfunc_IssueFormAttack` (`sim/CCommandLuaFunctionRegistrations.cpp`); retail `/lua/platoon.lua` AttackForceAI; engine `sim_bindings.cpp` IssueFormAttack | Open |
 | FAF: sim `Unit:GetCommandQueue()` gives Moho's command numbers, `x,y,z`, `targetId` and `blueprintId`; the engine gives its own numbers and positions only for Move and Attack | FAF: "copy orders" and "distribute orders" mis-map every order whose number differs (a build reads as Repair, an upgrade as attack-move) and error on capture and later orders | FA-Binary-Patches `section/SimGetCommandQueue.cpp`; FAF `/lua/sim/commands/shared.lua:237`, `copy-queue.lua:72`, `distribute-queue.lua:77-84`; engine `bindings/sim/unit.cpp` GetCommandQueue, `sim/unit_command.hpp` | Open |
 | FAF: `SetCommandSource(army, source, bool)` is a no-op | FAF: with the Union army option, orders to an ally's units are dropped; with Common army, the merged players can't command the team army | FA-Binary-Patches `section/SimSetCommandSource.cpp`; FAF `/lua/simInit.lua:461-526`; engine `sim_bindings.cpp` stub_noop, `sim/sim_state.cpp` source armies | Open |
@@ -100,6 +99,7 @@ How to read it:
 | Projectile `Physics.LeadTarget` defaults to true (homing missiles and torpedoes lead a moving target) | this PR |
 | `PrefersPrimaryWeaponTarget` (a weapon takes its primary's target when it can hit it) and `StopOnPrimaryWeaponBusy` (it drops its target while the primary has one): ships, gunships, ASF, experimentals; Janus and Notha bombs | this PR |
 | Texture scrollers (`AddThreadScroller`, `AddPingPongScroller`, `AddManualScroller`, `RemoveScroller`) and the mesh LOD's `Scrolling`: tank treads (36 retail blueprints with `Treads.ScrollTreads`) and UEA0102's ping-pong scroll move | this PR |
+| `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield: a FlattenSkirt structure levels the ground under its skirt, the land units on it follow, and a save keeps it | this PR |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
