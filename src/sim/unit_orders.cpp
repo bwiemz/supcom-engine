@@ -323,7 +323,7 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
 
 OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     switch (cmd.type) {
-    case CommandType::Stop: return order_stop();
+    case CommandType::Stop: return order_stop(ctx.L);
     case CommandType::Move: return order_move(cmd, dt, ctx);
     case CommandType::Attack: return order_attack(cmd, dt, ctx);
     case CommandType::BuildMobile: return order_build_mobile(cmd, dt, ctx, econ_eff);
@@ -354,9 +354,10 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     }
 }
 
-OrderStep Unit::order_stop() {
+OrderStep Unit::order_stop(lua_State* L) {
     navigator_.abort_move();
     command_queue_.pop_front();
+    run_stop(L);
     return OrderStep::Next;
 }
 

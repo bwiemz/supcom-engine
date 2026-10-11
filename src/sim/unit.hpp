@@ -442,6 +442,9 @@ public:
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
     /// the order in progress cancels it (cancel_factory_build).
     void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// Moho's CUnitCommand::DecreaseCount, an upgrade order gone: the builds
+    /// and upgrades queued after it that no upgrade still leads to go too.
+    void prune_upgrade_chain(lua_State* L);
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
     void remove_command(u32 id, EntityRegistry& registry, lua_State* L);
@@ -449,13 +452,18 @@ public:
     /// factory queue (1-based, as factory_queue() groups it), after the
     /// group's last order. An index past the queue changes nothing.
     void increase_build_count(int index, int count);
-    /// A factory's build under way is cancelled: the factory hears
-    /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
+    /// A factory's build under way is cancelled, as Moho's ~CFactoryBuildTask ends it unfinished.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
+    /// An upgrade under way is cancelled, as Moho's ~CUnitUpgradeTask ends it unfinished.
+    void cancel_upgrade(EntityRegistry& registry, lua_State* L);
     /// True while a factory order is under way.
     bool building_factory_order() const {
         return build_target_id_ != 0 && !command_queue_.empty() &&
                command_queue_.front().type == CommandType::BuildFactory;
+    }
+    bool upgrading() const {
+        return build_target_id_ != 0 && !command_queue_.empty() &&
+               command_queue_.front().type == CommandType::Upgrade;
     }
 
     // Command queue
@@ -501,6 +509,8 @@ public:
         }
     }
     void clear_commands(const char* source = "?");
+    /// Moho's ClearCommandQueue: the head order's build, upgrade or enhancement ends with it.
+    void clear_commands(EntityRegistry& registry, lua_State* L);
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {
@@ -669,6 +679,10 @@ public:
     /// StopSiloBuild: the missile under way is abandoned and the builds
     /// ordered are dropped.
     void stop_silo_build();
+    /// What a Stop order does as it reaches the head (faf-re
+    /// IAiCommandDispatchImpl::Stop): a silo's auto mode goes off and its
+    /// missile under way is dropped, with the builds ordered.
+    void run_stop(lua_State* L);
     /// GiveNukeSiloAmmo(blocks, true), FAF's: the missile under way, else the
     /// next one, has `blocks` of its 10 * BuildTime / build rate done.
     void set_silo_blocks(i32 blocks);
@@ -1321,7 +1335,7 @@ private:
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
-    OrderStep order_stop();
+    OrderStep order_stop(lua_State* L);
     OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// Close to the best weapon's range of the target, and stay on it.
     OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);
