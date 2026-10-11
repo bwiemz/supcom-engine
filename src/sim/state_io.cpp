@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 42; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 43; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -64,26 +64,13 @@ constexpr u32 kVersion = 42; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
                              // 37: builders' arm on target, and orders waiting for it;
                              // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
-                             // 39: the player's command ids issued, a formation's Move or FormMove
-                             // 39: a builder's help to an unfinished unit is repairing
-                             // 39: aircraft's lift
-                             // 39: builder arms' tracking
-                             // 39: aircraft's lift;
-                             // 40: aircraft's level velocity and the motion target they hold;
-                             // 41: aircraft's spin, facing, KRoll and BankForward
-                             // 39: NeedToFaceTargetToBuild
-                             // 39: walk animators' motion scaling
-                             // 39: trees' fall motors
-                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks
-                             // 39: props' bounded priority (AddBoundedProp)
-                             // 41: aircraft's spin, facing, KRoll and BankForward;
-                             // 42: attack runs fly the aircraft's own velocity and spin
-                             // 39: units' RaisedPlatforms
-                             // 39: units' alt footprint in use (FAVORSWATER, ForceAltFootprint)
-                             // 39: units' RaisedPlatforms;
-                             // 40: units' StandUpright and SinkLower
-                             // 39: paused factories' orders taken from the factory they guard
-                             // 39: sacrifices' wait
+                             // 39-42: unpublished PR snapshot formats;
+                             // 43: combined batch format: player command ids, formation Move flags,
+                             //     repairing assists, builder tracking and facing, aircraft lift,
+                             //     velocity and spin, motion-scaled animators, prop fall and
+                             //     bounds, raised platforms, alt footprints, ground stance, pending
+                             //     factory assists and sacrifice waits.
+
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).

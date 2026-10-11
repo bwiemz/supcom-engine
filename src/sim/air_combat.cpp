@@ -372,6 +372,7 @@ bool flies_winged_on_guard(const Unit& unit) {
 
 void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
                    f32 dt) {
+    if (!unit.take_air_step()) return;
     unit.air_combat().flying = true;
     AirMove move;
     move.target = goal;

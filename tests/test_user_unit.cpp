@@ -795,6 +795,7 @@ TEST_CASE("A selected unit's settings, Stop and its army's build restrictions re
     for (const auto& [name, army] : {std::pair{"unit", 0}, std::pair{"enemy", 1}}) {
         auto u = std::make_unique<osc::sim::Unit>();
         u->set_army(army);
+        u->add_command_cap("RULEUCC_Pause");
         const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
         ids[static_cast<size_t>(army)] = id;
         lua_newtable(S);

@@ -1494,7 +1494,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         sim.route_player_command(attack_movers, move, !shift);
     }
     sim.set_human_input_active(false);
-    out.units = ids;
+    out.units = std::move(ids);
     out.units.insert(out.units.end(), attack_movers.begin(), attack_movers.end());
     std::sort(out.units.begin(), out.units.end());
     return out;

@@ -2680,7 +2680,8 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         cmd.approached = true;
         set_path_goal(approach_point(*this, go_to->position(), go_to->skirt_size_x() * 0.5f,
-                                    go_to->skirt_size_z() * 0.5f), ctx);
+                                     go_to->skirt_size_z() * 0.5f),
+                      ctx);
         return OrderStep::Hold;
     }
     if (!cmd.started) {

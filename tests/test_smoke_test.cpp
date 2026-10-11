@@ -504,7 +504,7 @@ TEST_CASE("A factory guarding a factory sends the order it takes round as the gu
                                               "moho.unit_methods.SetRepeatQueue(b, ") +
                                   (guarded_repeats ? "false" : "true") +
                                   ")\n"
-                                  "IssueGuard({b}, __osc_a)\n"
+                                  "IssueFactoryAssist({b}, __osc_a)\n"
                                   "__osc_b = b\n"));
         h.sim.tick();
         h.sim.tick();
@@ -1579,6 +1579,7 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
     } else if (path == "platoon:Stop()") {
         osc::sim::Platoon* platoon = h.sim.army_at(0)->create_platoon("");
         platoon->add_unit(h.factory->entity_id());
+        platoon->set_unit_squad(h.factory->entity_id(), "Attack");
         lua_pushstring(L, "__p");
         lua_newtable(L);
         lua_pushstring(L, "_c_object");

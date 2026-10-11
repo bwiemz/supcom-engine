@@ -1191,6 +1191,16 @@ void test_combat(TestContext& ctx) {
             LOG('Combat test: GetCurrentEnemy OK')
 
             -- 2) GetNumUnitsAroundPoint
+            -- Enemy queries require a known blip: scout the enemy ACU first.
+            local enemyUnits = enemy:GetListOfUnits(catCmd, false)
+            if not enemyUnits or not enemyUnits[1] then
+                LOG('COMBAT TEST FAILED: no enemy ACU to scout')
+                return
+            end
+            local enemyPos = enemyUnits[1]:GetPosition()
+            CreateVisibleAreaAtPoint(brain:GetArmyIndex(), enemyPos[1], enemyPos[2],
+                enemyPos[3], 40, 120)
+            WaitTicks(2)
             local startPos = acu:GetPosition()
             local numEnemy = brain:GetNumUnitsAroundPoint(
                 ParseEntityCategory('ALLUNITS'),
@@ -11452,7 +11462,7 @@ void test_factory_assist(TestContext& ctx) {
         __osc_d = __osc_spawn('ueb0101', 1, 630, 180)
         __osc_d:SetPaused(true)
         IssueBuildFactory({__osc_a3}, 'uel0201', 3)
-        IssueGuard({__osc_d}, __osc_a3)
+        IssueFactoryAssist({__osc_d}, __osc_a3)
     )");
     run(20);
     lua_check("D takes a build from A3's queue while paused, and holds it", R"(
@@ -23856,11 +23866,11 @@ void test_commands(TestContext& ctx) {
         if (r) {
             for (int t = 0; t < 40; ++t) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                std::string("local u = rawget(_G, '_cmd5_unit')\n"
+                "local u = rawget(_G, '_cmd5_unit')\n"
                 "local p = u:GetPosition()\n"
                 "if math.abs(p[1] - 200) < 1 and math.abs(p[3] - 300) < 1 then\n"
                 "    LOG('cmd test 5: PASS')\n"
-                "else error('FAIL - pos=' .. p[1] .. ',' .. p[3]) end\n").c_str());
+                "else error('FAIL - pos=' .. p[1] .. ',' .. p[3]) end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 5: IssueTeleport moves unit"); }
             else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r2.error().message); }
         } else { fail++; osc::test_status::fail("[FAIL] Test 5: setup {}", r.error().message); }

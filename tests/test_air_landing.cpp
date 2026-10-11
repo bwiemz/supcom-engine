@@ -435,3 +435,37 @@ TEST_CASE("An aircraft flies one step a tick as it passes from one move to the n
     CHECK(plane.position().z > 70.0f);
     CHECK(longest <= 10.0f * 0.1f + 1e-3f);
 }
+
+TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_landing]") {
+    World queued;
+    World plain;
+    Unit& plane = *queued.make("drone", 30.0f, 30.0f);
+    Unit& reference = *plain.make("drone", 30.0f, 30.0f);
+    World::move(plane, 60.0f, 30.0f);
+    World::move(reference, 60.0f, 30.0f);
+    osc::sim::UnitCommand guard;
+    guard.type = osc::sim::CommandType::Guard;
+    guard.target_pos = {60.0f, 20.0f, 80.0f};
+    SECTION("a point") {}
+    SECTION("a unit") {
+        guard.target_id = queued.make("tank", 60.0f, 80.0f)->entity_id();
+    }
+    plane.push_command(guard, false);
+    // Both queues fly through the first goal; the reference's next Move
+    // already obeys the once-per-tick gate.
+    osc::sim::UnitCommand next = guard;
+    next.type = osc::sim::CommandType::Move;
+    next.target_id = 0;
+    reference.push_command(next, false);
+    bool handed_over = false;
+    for (int tick = 0; tick < 400 && !handed_over; ++tick) {
+        queued.sim.tick();
+        plain.sim.tick();
+        handed_over = plane.command_queue().front().type == osc::sim::CommandType::Guard;
+        INFO("tick " << tick);
+        CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
+        CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
+        CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+    }
+    REQUIRE(handed_over);
+}

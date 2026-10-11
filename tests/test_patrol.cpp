@@ -1224,6 +1224,11 @@ TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {
             Unit* with = still(sim, 0, 12.0f, 10.0f);
             with->set_motion_type("RULEUMT_Land");
             with->add_command_cap(row.cap);
+            for (Unit* u : {without, with}) {
+                for (const char* category : {"REPAIR", "CAPTURE", "RECLAIM"}) {
+                    u->add_category(category);
+                }
+            }
             lua_State* L = lua.raw();
             const auto global = [&](const char* name, osc::sim::Entity* e) {
                 lua_newtable(L);
@@ -1341,6 +1346,9 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
             Unit* with = still(sim, 0, 12.0f, 10.0f);
             with->set_motion_type("RULEUMT_Land");
             with->add_command_cap(row.cap);
+            for (const char* category : {"ENGINEER", "REPAIR", "CAPTURE", "RECLAIM"}) {
+                with->add_category(category);
+            }
             Unit* factory = still(sim, 0, 30.0f, 10.0f);
             Unit* other = still(sim, 0, 40.0f, 10.0f);
             for (Unit* u : {factory, other}) {
@@ -1405,7 +1413,9 @@ TEST_CASE("Repair, Sacrifice, Reclaim and Capture leave their target out of the 
             for (Unit* u : {a, b}) {
                 u->set_motion_type("RULEUMT_Land");
                 u->add_command_cap(cap);
-                u->add_category("RECLAIMABLE");
+                for (const char* category : {"RECLAIMABLE", "REPAIR", "CAPTURE", "RECLAIM"}) {
+                    u->add_category(category);
+                }
             }
             lua_State* L = lua.raw();
             const auto global = [&](const char* name, osc::sim::Entity* e) {
