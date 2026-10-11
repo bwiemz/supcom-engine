@@ -442,6 +442,9 @@ public:
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
     /// the order in progress cancels it (cancel_factory_build).
     void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// Moho's CUnitCommand::DecreaseCount, an upgrade order gone: the builds
+    /// and upgrades queued after it that no upgrade still leads to go too.
+    void prune_upgrade_chain(lua_State* L);
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
     void remove_command(u32 id, EntityRegistry& registry, lua_State* L);
@@ -449,13 +452,18 @@ public:
     /// factory queue (1-based, as factory_queue() groups it), after the
     /// group's last order. An index past the queue changes nothing.
     void increase_build_count(int index, int count);
-    /// A factory's build under way is cancelled: the factory hears
-    /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
+    /// A factory's build under way is cancelled, as Moho's ~CFactoryBuildTask ends it unfinished.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
+    /// An upgrade under way is cancelled, as Moho's ~CUnitUpgradeTask ends it unfinished.
+    void cancel_upgrade(EntityRegistry& registry, lua_State* L);
     /// True while a factory order is under way.
     bool building_factory_order() const {
         return build_target_id_ != 0 && !command_queue_.empty() &&
                command_queue_.front().type == CommandType::BuildFactory;
+    }
+    bool upgrading() const {
+        return build_target_id_ != 0 && !command_queue_.empty() &&
+               command_queue_.front().type == CommandType::Upgrade;
     }
 
     // Command queue
@@ -501,6 +509,8 @@ public:
         }
     }
     void clear_commands(const char* source = "?");
+    /// Moho's ClearCommandQueue: the head order's build, upgrade or enhancement ends with it.
+    void clear_commands(EntityRegistry& registry, lua_State* L);
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {

@@ -4,6 +4,7 @@
 #include "core/test_status.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/air_combat.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -96,11 +98,54 @@ void Unit::clear_commands(const char*) {
     navigator_.abort_move();
 }
 
+void Unit::clear_commands(EntityRegistry& registry, lua_State* L) {
+    const bool factory_build = building_factory_order();
+    const bool upgrade = upgrading();
+    clear_commands();
+    if (factory_build) {
+        cancel_factory_build(registry, L);
+    }
+    if (upgrade) {
+        cancel_upgrade(registry, L);
+    }
+    if (!destroyed() && is_enhancing()) {
+        cancel_enhance(L);
+    }
+}
+
 namespace {
 
 bool queued_build(const UnitCommand& c) {
-    return c.type == CommandType::BuildFactory ||
+    return c.type == CommandType::BuildFactory || c.type == CommandType::Upgrade ||
            (c.type == CommandType::BuildMobile && !c.blueprint_id.empty());
+}
+
+bool upgrades_to(lua_State* L, const std::string& from, const std::string& to) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    std::string next;
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, from.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "General");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "UpgradesTo");
+                lua_rawget(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING) {
+                    next = lua_tostring(L, -1);
+                }
+            }
+        }
+    }
+    lua_settop(L, top);
+    return next.size() == to.size() &&
+           std::equal(next.begin(), next.end(), to.begin(), [](char a, char b) {
+               return std::tolower(static_cast<unsigned char>(a)) ==
+                      std::tolower(static_cast<unsigned char>(b));
+           });
 }
 
 /// The units an order still makes: a factory build's count, else one.
@@ -141,8 +186,10 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     }
     // Newest first, so earlier positions stay valid; a factory build's
     // count goes down first, the order with it at none.
-    const bool in_progress = building_factory_order();
+    const bool factory_build = building_factory_order();
+    const bool upgrade = upgrading();
     bool cancel = false;
+    bool upgrade_gone = false;
     for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it) {
         UnitCommand& c = command_queue_[*it];
         // A structure a builder is at stays its work, as Stop leaves it
@@ -155,10 +202,37 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
             c.count -= take; // (its high-water mark stays: Moho's DecreaseCount)
             continue;
         }
-        if (*it == 0 && in_progress) cancel = true;
+        if (*it == 0 && (factory_build || upgrade)) cancel = true;
+        upgrade_gone = upgrade_gone || c.type == CommandType::Upgrade;
         command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
     }
-    if (cancel) cancel_factory_build(registry, L);
+    if (cancel && factory_build) {
+        cancel_factory_build(registry, L);
+    }
+    if (cancel && upgrade) {
+        cancel_upgrade(registry, L);
+    }
+    if (upgrade_gone && !destroyed()) {
+        prune_upgrade_chain(L);
+    }
+}
+
+void Unit::prune_upgrade_chain(lua_State* L) {
+    std::vector<std::string> stages{blueprint_id()};
+    for (auto it = command_queue_.begin(); it != command_queue_.end();) {
+        bool keep = true;
+        if (it->type == CommandType::Upgrade) {
+            keep = upgrades_to(L, stages.back(), it->blueprint_id);
+            if (keep) {
+                stages.push_back(it->blueprint_id);
+            }
+        } else if (queued_build(*it)) {
+            keep = std::any_of(stages.begin(), stages.end(), [&](const std::string& bp) {
+                return blueprint_can_build(L, bp, it->blueprint_id);
+            });
+        }
+        it = keep ? std::next(it) : command_queue_.erase(it);
+    }
 }
 
 void Unit::remove_command(u32 id, EntityRegistry& registry, lua_State* L) {
@@ -176,11 +250,15 @@ void Unit::remove_command(u32 id, EntityRegistry& registry, lua_State* L) {
         return;
     }
     const bool factory_build = building_factory_order();
+    const bool upgrade = upgrading();
     const bool enhancing = it->type == CommandType::Enhance && is_enhancing();
     command_queue_.pop_front();
     navigator_.abort_move();
     if (factory_build) {
         cancel_factory_build(registry, L);
+    }
+    if (upgrade) {
+        cancel_upgrade(registry, L);
     }
     if (enhancing && !destroyed()) {
         cancel_enhance(L);
@@ -210,12 +288,10 @@ void Unit::increase_build_count(int index, int count) {
     order.max_count = std::max(order.max_count, order.count);
 }
 
-void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
-    const u32 target_id = build_target_id_;
-    if (target_id == 0) return;
-    finish_build(registry, L, false); // OnFailedToBuild; the factory's work ends
-    // The unit under construction goes with it, through its own Destroy
-    // (OnDestroy and the rest of its script lifecycle).
+namespace {
+
+void destroy_unfinished(EntityRegistry& registry, lua_State* L, u32 target_id) {
+    // Through its own Destroy (OnDestroy and the rest of its script lifecycle).
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) return;
     if (target->is_unit()) static_cast<Unit*>(target)->call_lua_method(L, "Destroy");
@@ -224,6 +300,72 @@ void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
         target->mark_destroyed();
         registry.unregister_entity(target_id);
     }
+}
+
+void tell_build_failed(const Unit& builder, lua_State* L, int frame_ref, const char* order) {
+    if (builder.destroyed() || builder.lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L);
+    if (frame_ref >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, frame_ref);
+    } else {
+        lua_pushnil(L);
+    }
+    const int frame_tbl = lua_gettop(L);
+    if (lua_istable(L, frame_tbl)) {
+        lua_pushstring(L, "OnFailedToBeBuilt");
+        lua_gettable(L, frame_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, frame_tbl);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("OnFailedToBeBuilt error: {}", lua_tostring(L, -1));
+            }
+        }
+        lua_settop(L, frame_tbl);
+    }
+    if (!builder.destroyed()) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, builder.lua_table_ref());
+        lua_pushstring(L, "OnStopBuild");
+        lua_gettable(L, -2);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, -2);
+            lua_pushvalue(L, frame_tbl);
+            lua_pushstring(L, order);
+            if (lua_pcall(L, 3, 0, 0) != 0) {
+                spdlog::warn("OnStopBuild error: {}", lua_tostring(L, -1));
+            }
+        }
+    }
+    lua_settop(L, top);
+}
+
+int lua_ref_of(const EntityRegistry& registry, u32 id) {
+    const Entity* e = registry.find(id);
+    return e ? e->lua_table_ref() : -1;
+}
+
+} // namespace
+
+void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
+    const u32 target_id = build_target_id_;
+    if (target_id == 0) {
+        return;
+    }
+    const int frame_ref = lua_ref_of(registry, target_id);
+    finish_build(registry, L, false);
+    tell_build_failed(*this, L, frame_ref, "FactoryBuild");
+}
+
+void Unit::cancel_upgrade(EntityRegistry& registry, lua_State* L) {
+    const u32 frame_id = build_target_id_;
+    if (frame_id == 0) {
+        return;
+    }
+    const int frame_ref = lua_ref_of(registry, frame_id);
+    destroy_unfinished(registry, L, frame_id);
+    finish_build(registry, L, false);
+    tell_build_failed(*this, L, frame_ref, "Upgrade");
 }
 
 // --- Adjacency helpers ---
