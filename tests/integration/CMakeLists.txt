@@ -282,6 +282,17 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
+    # Under FAF's Lua: each load runs on the game's own data folder too.
+    set(OSC_FAF_DATA "" CACHE PATH "A FAF data folder (bin/init_faf.lua) for data.save_load_faf")
+    add_test(NAME data.save_load_faf
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --faf-data "${OSC_FAF_DATA}" --map ${OSC_TEST_MAP} --ai-skirmish
+                     --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders)
+    set_tests_properties(data.save_load_faf PROPERTIES
+        LABELS "data"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
 
     # M199b: retail's replay dialog path -- GetSpecialFiles lists the
     # recording, LaunchReplaySession opens it -- and the game plays it to
