@@ -285,6 +285,32 @@ void test_binding_tail(TestContext& ctx) {
         end
     )");
 
+    const auto queued = [&](u32 id) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->command_queue().size() : 0;
+    };
+    check("a platoon's move for one squad", fmt::format(R"(
+        __osc_bt_platoon:Stop()
+        __osc_bt_platoon:MoveToLocation({{{0}, 0, {1}}}, false, 'Scout')
+    )",
+                                                        sx, sz + 20));
+    t.check(first_order(transport) == sim::CommandType::Move, "the scout squad moves");
+    t.check(!first_order(marine), "the attack squad has no order");
+    t.check(!first_order(idle), "the unassigned transport has no order");
+    check("an attack-move for another squad, then a move for every squad",
+          fmt::format(R"(
+        __osc_bt_platoon:AggressiveMoveToLocation({{{0}, 0, {1}}}, 'attack')
+        __osc_bt_platoon:MoveToLocation({{{0}, 0, {2}}}, false)
+        if pcall(__osc_bt_platoon.Patrol, __osc_bt_platoon, {{{0}, 0, {1}}}, 'Scouts') then
+            error('an unknown squad taken')
+        end
+    )",
+                      sx, sz + 20, sz + 30));
+    t.check(first_order(marine) == sim::CommandType::AggressiveMove && queued(marine) == 2,
+            "the attack squad attack-moves, then moves");
+    t.check(queued(transport) == 2, "the scout squad moves twice");
+    t.check(!first_order(idle), "the unassigned transport still has no order");
+
     spdlog::info("=== BINDING TAIL TEST: {} passed, {} failed ===", t.pass, t.fail);
 }
 
