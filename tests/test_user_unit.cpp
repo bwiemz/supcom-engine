@@ -819,7 +819,6 @@ TEST_CASE("A selected unit's settings, Stop and its army's build restrictions re
              "M.SetFireState(unit, 1)",
              "M.SetScriptBit(unit, 'RULEUTC_ShieldToggle', true)",
              "M.ToggleScriptBit(unit, 'RULEUTC_ShieldToggle')",
-             "IssueStop({unit})",
              "AddBuildRestriction(1, 'TECH1')",
              "RemoveBuildRestriction(1, 'TECH1')",
          }) {
@@ -832,6 +831,21 @@ TEST_CASE("A selected unit's settings, Stop and its army's build restrictions re
         theirs.prune_selection(sim.entity_registry());
         CHECK_FALSE(theirs.take_selection_event());
     }
+    // A script Stop waits in the queue; the player's Stop clears it and
+    // reports the selected unit's changed orders immediately.
+    REQUIRE(lua.do_string("IssueStop({unit})").ok());
+    auto* selected = static_cast<osc::sim::Unit*>(sim.entity_registry().find(ids[0]));
+    REQUIRE(selected->command_queue().size() == 1);
+    mine.prune_selection(sim.entity_registry());
+    CHECK_FALSE(mine.take_selection_event());
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    sim.route_command({ids[0]}, stop, true);
+    CHECK(selected->command_queue().empty());
+    mine.prune_selection(sim.entity_registry());
+    CHECK(mine.take_selection_event());
+    theirs.prune_selection(sim.entity_registry());
+    CHECK_FALSE(theirs.take_selection_event());
 }
 
 TEST_CASE("A selected unit's head order of a refreshing type, taken off, reports the selection "
