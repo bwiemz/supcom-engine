@@ -3749,6 +3749,21 @@ void Unit::stop_silo_build() {
     abandon_silo_build();
 }
 
+void Unit::run_stop(lua_State* L) {
+    if (std::none_of(weapons_.begin(), weapons_.end(),
+                     [](const auto& w) { return w->counted_projectile; })) {
+        return;
+    }
+    if (auto_mode_) {
+        auto_mode_ = false;
+        call_lua_method(L, "OnAutoModeOff");
+        if (destroyed()) {
+            return;
+        }
+    }
+    stop_silo_build();
+}
+
 f64 Unit::silo_blocks_progress(i32 blocks) const {
     const f64 blocks_total = 10.0 * silo_build_.build_time / static_cast<f64>(build_rate_);
     if (!(blocks_total > 0)) {

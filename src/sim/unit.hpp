@@ -679,6 +679,10 @@ public:
     /// StopSiloBuild: the missile under way is abandoned and the builds
     /// ordered are dropped.
     void stop_silo_build();
+    /// What a Stop order does as it reaches the head (faf-re
+    /// IAiCommandDispatchImpl::Stop): a silo's auto mode goes off and its
+    /// missile under way is dropped, with the builds ordered.
+    void run_stop(lua_State* L);
     /// GiveNukeSiloAmmo(blocks, true), FAF's: the missile under way, else the
     /// next one, has `blocks` of its 10 * BuildTime / build rate done.
     void set_silo_blocks(i32 blocks);
@@ -1331,7 +1335,7 @@ private:
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
-    OrderStep order_stop();
+    OrderStep order_stop(lua_State* L);
     OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// Close to the best weapon's range of the target, and stay on it.
     OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);

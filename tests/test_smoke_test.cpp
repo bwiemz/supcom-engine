@@ -1327,9 +1327,9 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
     const auto [type, order] =
         GENERATE(std::pair{osc::sim::CommandType::BuildFactory, std::string("FactoryBuild")},
                  std::pair{osc::sim::CommandType::Upgrade, std::string("Upgrade")});
-    const std::string path = GENERATE("IssueStop", "IssueClearCommands({__f})", "__f:Stop()",
-                                      "IssueToUnitClearCommands(__f)", "IssueToUnitStop(__f)",
-                                      "platoon:Stop()", "a new order");
+    const std::string path =
+        GENERATE("a player's Stop", "IssueClearCommands({__f})", "__f:Stop()",
+                 "IssueToUnitClearCommands(__f)", "platoon:Stop()", "a new order");
     CAPTURE(order, path);
     UpgradeHarness h;
     lua_State* L = h.state.raw();
@@ -1368,7 +1368,7 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
                            "end")
                 .ok());
 
-    if (path == "IssueStop") {
+    if (path == "a player's Stop") {
         osc::sim::UnitCommand stop;
         stop.type = osc::sim::CommandType::Stop;
         h.sim.route_command({h.factory->entity_id()}, stop, true);
@@ -1404,4 +1404,34 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
 
     h.sim.tick();
     CHECK(h.factory->build_target_id() != frame);
+}
+
+TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
+          "[session][rules]") {
+    const std::string call = GENERATE("IssueStop({__f})", "IssueToUnitStop(__f)");
+    CAPTURE(call);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    h.queue(osc::sim::CommandType::BuildFactory, "t2");
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 frame = h.factory->build_target_id();
+
+    REQUIRE(h.state.do_string(call).ok());
+    REQUIRE(h.factory->command_queue().size() == 2);
+    CHECK(h.factory->command_queue().back().type == osc::sim::CommandType::Stop);
+    CHECK(h.factory->build_target_id() == frame);
+
+    for (int i = 0; i < 100 && !h.factory->command_queue().empty(); ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.factory->command_queue().empty());
+    const auto* built = static_cast<const osc::sim::Unit*>(h.sim.entity_registry().find(frame));
+    REQUIRE(built);
+    CHECK_FALSE(built->destroyed());
+    CHECK_FALSE(built->is_being_built());
 }

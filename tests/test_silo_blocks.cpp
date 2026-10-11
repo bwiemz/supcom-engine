@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -14,6 +15,7 @@ extern "C" {
 }
 
 #include <memory>
+#include <string>
 
 using Catch::Approx;
 using osc::sim::SimState;
@@ -70,4 +72,38 @@ TEST_CASE("GiveNukeSiloAmmo(blocks, true) sets the missile's done blocks, not am
 
     REQUIRE(s.state.do_string("silo:GiveNukeSiloAmmo(2)").ok());
     CHECK(s.silo->nuke_silo_ammo() == 2);
+}
+
+TEST_CASE("A Stop turns a silo's auto mode off and drops its missile under way", "[silo]") {
+    const bool by_player = GENERATE(false, true);
+    CAPTURE(by_player);
+    SiloSim s;
+    lua_State* L = s.state.raw();
+    lua_getglobal(L, "silo");
+    s.silo->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    REQUIRE(s.state
+                .do_string("__heard = ''\n"
+                           "function silo:OnAutoModeOff() __heard = __heard .. 'off' end")
+                .ok());
+    s.silo->set_auto_mode(true);
+    s.silo->order_silo_build(true);
+    s.silo->update_silo(0.1, 1.0f, L);
+    REQUIRE(s.silo->silo_building());
+
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    if (by_player) {
+        s.sim.schedule_command(0, {s.silo->entity_id()}, stop, true);
+    } else {
+        s.silo->push_command(stop, false);
+    }
+    s.sim.tick();
+
+    CHECK(s.silo->command_queue().empty());
+    CHECK_FALSE(s.silo->auto_mode());
+    CHECK_FALSE(s.silo->silo_building());
+    CHECK(s.silo->silo_build_count(true) == 0);
+    lua_getglobal(L, "__heard");
+    CHECK(std::string(lua_tostring(L, -1)) == "off");
+    lua_pop(L, 1);
 }

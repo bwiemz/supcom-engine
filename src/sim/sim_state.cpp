@@ -761,9 +761,7 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
-        // Stop clears the queue outright (rather than queueing a Stop order), so
-        // it matches the old IssueStop's immediate clear_commands() semantics.
-        if (cmd.type == CommandType::Stop) {
+        if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd)) {
             if (clear_existing) {
@@ -911,7 +909,7 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
                 continue;
             }
             QueueWithPending& queue = queue_of(id, *unit);
-            if (cmd.type == CommandType::Stop) {
+            if (cmd.type == CommandType::Stop && scheduled.clear_existing) {
                 queue.orders.clear();
                 queue.kept_from_queue = 0;
                 continue;
@@ -1078,6 +1076,9 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
 
 void SimState::stop_unit(Unit& unit) {
     unit.clear_commands(entity_registry_, L_);
+    if (!unit.destroyed()) {
+        unit.run_stop(L_);
+    }
 }
 
 void SimState::request_pause(u32 source) {
@@ -1154,9 +1155,7 @@ void SimState::dispatch_due_commands() {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<Unit*>(e);
-            // A scheduled Stop clears the queue (mirrors route_command's direct
-            // branch), so a networked player's Stop lands identically on peers.
-            if (sc.command.type == CommandType::Stop) {
+            if (sc.command.type == CommandType::Stop && sc.clear_existing) {
                 stop_unit(*unit);
                 continue;
             }

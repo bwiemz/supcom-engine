@@ -801,7 +801,7 @@ void test_reclaim(TestContext& ctx) {
             break;
         }
     }
-    (void)ctx.lua_state.do_string("IssueStop({GetEntityById(__osc_test_acu_id(1))})");
+    (void)ctx.lua_state.do_string("IssueClearCommands({GetEntityById(__osc_test_acu_id(1))})");
     for (int i = 0; i < 3; ++i) {
         ctx.sim.tick();
     }
@@ -1883,7 +1883,7 @@ void test_capture(TestContext& ctx) {
         osc::test_status::fail("[FAIL] Test 3: the commander never began repairing");
         return;
     }
-    lua("setup: stopped mid-repair", "IssueStop({__osc_acu})");
+    lua("setup: orders cleared mid-repair", "IssueClearCommands({__osc_acu})");
     for (int t = 0; t < 2; ++t) ctx.sim.tick();
     lua("Test 3: a stopped repair ends: not Repairing, idle, paying nothing", R"(
         if __osc_acu:IsUnitState('Repairing') then error('still Repairing') end
@@ -1899,7 +1899,7 @@ void test_capture(TestContext& ctx) {
         osc::test_status::fail("[FAIL] Test 4: the commander never began capturing");
         return;
     }
-    lua("setup: stopped mid-capture", "IssueStop({__osc_acu})");
+    lua("setup: orders cleared mid-capture", "IssueClearCommands({__osc_acu})");
     for (int t = 0; t < 2; ++t) ctx.sim.tick();
     lua("Test 4: a stopped capture ends: not Capturing, idle, paying nothing", R"(
         if __osc_acu:IsUnitState('Capturing') then error('still Capturing') end
@@ -12161,7 +12161,7 @@ void test_transport_pickup(TestContext& ctx) {
     auto* x2 = unit("__osc_x2");
     for (int i = 0; i < 10; ++i) ctx.sim.tick();
     const bool flying = x2 && x2->pickup_running() && !x2->pickup_ready();
-    lua("IssueStop({__osc_x2})");
+    lua("IssueClearCommands({__osc_x2})");
     for (int i = 0; i < 20; ++i) ctx.sim.tick();
     lua(R"(
         __osc_aborted = __osc_count('OnTransportAborted')

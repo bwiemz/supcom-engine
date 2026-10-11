@@ -922,8 +922,8 @@ private:
     /// at the start of the tick as Moho's army OnTick does.
     void update_influence_maps();
     void dispatch_due_commands();
-    /// A Stop order: the unit drops its orders, and the one under way (a
-    /// factory's build, an enhancement).
+    /// A Stop order given with clearing: the unit drops its orders, and the
+    /// one under way (a factory's build, an enhancement), then stops.
     void stop_unit(Unit& unit);
     void enforce_no_rush();
     /// Moho's CArmyImpl::CleanUpPlatoons, each army's at the start of the
