@@ -1084,13 +1084,25 @@ public:
 
     /// Moho's UnitAttributes::spawnElevationOffset: Physics.Elevation, or
     /// what SetElevation gave it.
+    /// A hover unit rides it (elevation()); an aircraft flies at it
+    /// (elevation_target(), from the air or naval Physics.Elevation, else 18).
     f32 elevation() const { return elevation_; }
-    void set_elevation(f32 e) { elevation_ = e; }
+    void set_elevation(f32 e) {
+        elevation_ = e;
+        elevation_target_ = e;
+    }
     void set_blueprint_elevation(f32 e) {
         blueprint_elevation_ = e;
         elevation_ = e;
     }
-    void revert_elevation() { elevation_ = blueprint_elevation_; }
+    void set_blueprint_elevation_target(f32 e) {
+        blueprint_elevation_target_ = e;
+        elevation_target_ = e;
+    }
+    void revert_elevation() {
+        elevation_ = blueprint_elevation_;
+        elevation_target_ = blueprint_elevation_target_;
+    }
 
     i32 transport_class() const { return transport_class_; }
     void set_transport_class(i32 c) { transport_class_ = c; }
@@ -1974,6 +1986,7 @@ private:
     CategoryExpr build_restriction_;
     f32 elevation_ = 0;
     f32 blueprint_elevation_ = 0;
+    f32 blueprint_elevation_target_ = 18.0f;
     bool dying_ = false;             ///< killed; see begin_dying
     bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)
