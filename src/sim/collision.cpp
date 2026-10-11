@@ -6,6 +6,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -165,6 +166,91 @@ f32 shape_distance(const CollisionShape& shape, const Vector3& position,
     const f32 oy = std::max(qy, 0.0f);
     const f32 oz = std::max(qz, 0.0f);
     return std::sqrt(ox * ox + oy * oy + oz * oz) + std::min(std::max({qx, qy, qz}), 0.0f);
+}
+
+OrientedBox oriented_box(const Vector3& centre, const Quaternion& orientation,
+                         const Vector3& half) {
+    OrientedBox b;
+    b.centre = centre;
+    b.axis[0] = quat_rotate(orientation, {1, 0, 0});
+    b.axis[1] = quat_rotate(orientation, {0, 1, 0});
+    b.axis[2] = quat_rotate(orientation, {0, 0, 1});
+    b.extent[0] = half.x;
+    b.extent[1] = half.y;
+    b.extent[2] = half.z;
+    return b;
+}
+
+std::optional<OrientedBox> collision_box(const Entity& e) {
+    const CollisionShape& s = e.collision_shape();
+    if (s.type != CollisionShapeType::BOX) {
+        return std::nullopt;
+    }
+    return oriented_box(collision_centre(e), e.orientation(), {s.sx, s.sy, s.sz});
+}
+
+namespace {
+
+f32 dot(const Vector3& a, const Vector3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+Vector3 cross(const Vector3& a, const Vector3& b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+
+std::pair<f32, f32> project(const OrientedBox& b, const Vector3& axis) {
+    const f32 centre = dot(axis, b.centre);
+    const f32 radius = (std::abs(dot(axis, b.axis[2])) * b.extent[2] +
+                        std::abs(dot(axis, b.axis[1])) * b.extent[1]) +
+                       std::abs(dot(axis, b.axis[0])) * b.extent[0];
+    return {centre - radius, centre + radius};
+}
+
+} // namespace
+
+std::optional<BoxContact> box_contact(const OrientedBox& shape, const OrientedBox& box) {
+    const std::array<Vector3, 3> a{shape.axis[0], shape.axis[2], shape.axis[1]};
+    const std::array<Vector3, 3> b{box.axis[0], box.axis[2], box.axis[1]};
+    std::array<Vector3, 15> axes;
+    std::array<f32, 15> overlap{};
+    for (int i = 0; i < 3; ++i) {
+        axes[i] = a[i];
+        axes[3 + i] = b[i];
+        for (int j = 0; j < 3; ++j) {
+            axes[6 + i * 3 + j] = cross(a[i], b[j]);
+        }
+    }
+    for (size_t i = 0; i < axes.size(); ++i) {
+        const auto [a_min, a_max] = project(shape, axes[i]);
+        const auto [b_min, b_max] = project(box, axes[i]);
+        if (a_min > b_max || b_min > a_max) {
+            return std::nullopt;
+        }
+        overlap[i] = std::fmin(a_max, b_max) - std::fmax(a_min, b_min);
+    }
+    std::optional<BoxContact> best;
+    for (size_t i = 0; i < axes.size(); ++i) {
+        const f32 length_sq = dot(axes[i], axes[i]);
+        if (length_sq < 1e-6f) {
+            continue;
+        }
+        const f32 inverse = 1.0f / std::sqrt(length_sq);
+        const f32 depth = overlap[i] * inverse;
+        if (!best || depth < best->depth) {
+            best =
+                BoxContact{{axes[i].x * inverse, axes[i].y * inverse, axes[i].z * inverse}, depth};
+        }
+    }
+    if (!best) {
+        return std::nullopt;
+    }
+    const Vector3 apart{box.centre.x - shape.centre.x, box.centre.y - shape.centre.y,
+                        box.centre.z - shape.centre.z};
+    if (dot(apart, best->normal) > 0.0f) {
+        best->normal = {-best->normal.x, -best->normal.y, -best->normal.z};
+    }
+    return best;
 }
 
 std::optional<f32> terrain_crossing(const map::Terrain& terrain, const Vector3& from,

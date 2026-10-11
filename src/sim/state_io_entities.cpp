@@ -214,7 +214,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
         w.u32v(c.entity_id);
         w.i32v(c.bone);
     }
-    // grid_cell_x_, grid_cell_z_, registry_: the registry's, set as it takes the entity
+    // grid_cell_x_, grid_cell_z_, prop_cell_, registry_: the registry's, set as it takes the entity
     w.b(e.script_destroy_notified_);
     w.b(e.script_owns_death_);
     w.b(e.is_collision_beam_);
@@ -1776,6 +1776,12 @@ void StateIO::save(StateWriter& w, const Prop& p) {
     // untargetable, reclaimable_category, obstructs_building, reclaim_mass_max,
     // reclaim_energy_max: its blueprint's (read_prop_blueprint)
     w.f32v(p.sink_rate);
+    w.b(p.fall_motor);
+    w.b(p.fall_breaks);
+    w.f32v(p.fall_direction);
+    w.f32v(p.fall_angle);
+    w.f32v(p.fall_speed);
+    w.f32v(p.fall_size_x);
     w.size(p.pose.size());
     for (const auto& m : p.pose)
         for (f32 v : m) w.f32v(v);
@@ -1785,6 +1791,12 @@ void StateIO::load(StateReader& r, Prop& p) {
     load(r, static_cast<Entity&>(p));
     r.tag("PROP");
     p.sink_rate = r.f32v();
+    p.fall_motor = r.b();
+    p.fall_breaks = r.b();
+    p.fall_direction = r.f32v();
+    p.fall_angle = r.f32v();
+    p.fall_speed = r.f32v();
+    p.fall_size_x = r.f32v();
     p.pose.resize(r.size(64));
     for (auto& m : p.pose)
         for (f32& v : m) v = r.f32v();

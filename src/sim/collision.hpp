@@ -50,6 +50,29 @@ std::optional<std::pair<Vector3, Vector3>> collision_bounds(const Entity& e);
 f32 shape_distance(const CollisionShape& shape, const Vector3& position,
                    const Quaternion& orientation, const Vector3& point);
 
+/// A box in the world: its centre, three unit axes and the half-extents
+/// along them (Wm3's Box3f).
+struct OrientedBox {
+    Vector3 centre;
+    Vector3 axis[3];
+    f32 extent[3] = {0, 0, 0};
+};
+
+OrientedBox oriented_box(const Vector3& centre, const Quaternion& orientation, const Vector3& half);
+
+/// `e`'s box collision shape in the world; none for a sphere or no shape.
+std::optional<OrientedBox> collision_box(const Entity& e);
+
+struct BoxContact {
+    Vector3 normal;
+    f32 depth;
+};
+
+/// Moho's CColPrimitive_Box::CollideBox: the separating-axis test of `shape`
+/// against `box`, the axis of least overlap pointing from `box` toward
+/// `shape`, and that overlap. None when they are apart.
+std::optional<BoxContact> box_contact(const OrientedBox& shape, const OrientedBox& box);
+
 /// Where along the segment `from` to `to` (0 to 1) it first goes below the
 /// terrain, sampled about every unit (the heightmap's spacing) and refined
 /// by halving. None if it stays above.

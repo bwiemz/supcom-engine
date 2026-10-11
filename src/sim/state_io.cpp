@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 39; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -63,7 +63,8 @@ constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 35: reclaims' ticks before their first share;
                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
                              // 37: builders' arm on target, and orders waiting for it;
-                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks
+                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
+                             // 39: trees' fall motors
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -137,7 +138,8 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.u32v(reg.next_id_);
     // default_random_, sim_random_: the sim's generator (SimState's);
     // walking_: no walk is under way between ticks; unregister_hook_: the
-    // sim's; grid_initialized_, grid_width_, grid_height_: the map's
+    // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
+    // prop_grid_height_: the map's
 }
 
 void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
@@ -154,6 +156,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.large_colliders_.clear();
     for (auto& cell : reg.grid_cells_) cell.clear();
     for (auto& cell : reg.unit_cells_) cell.clear();
+    for (auto& cell : reg.prop_cells_) {
+        cell.clear();
+    }
 
     const size_t n = r.size(64);
     u32 last_id = 0;
@@ -203,6 +208,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         // As register_entity takes one, at its own id
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
+        e->set_prop_cell(-1);
         reg.order_.push_back({id, e.get()});
         if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
         if (reg.entities_.size() <= id) reg.entities_.resize(id + 1);
@@ -216,6 +222,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             reg.world_to_cell(placed.position().x, placed.position().z, cx, cz);
             reg.grid_insert(placed, cx, cz);
             placed.set_grid_cell(cx, cz);
+            if (placed.is_prop()) {
+                reg.prop_cell_update(placed);
+            }
         }
     }
     reg.next_id_ = r.u32v();

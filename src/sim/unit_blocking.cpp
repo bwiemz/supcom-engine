@@ -32,20 +32,6 @@ void project(const OrientedBox& b, const Vector3& axis, f32& lo, f32& hi) {
     hi = c + r;
 }
 
-/// The box an entity's box shape makes in the world.
-OrientedBox shape_box(const Entity& e) {
-    const CollisionShape& s = e.collision_shape();
-    OrientedBox b;
-    b.centre = collision_centre(e);
-    b.axis[0] = quat_rotate(e.orientation(), {1, 0, 0});
-    b.axis[1] = quat_rotate(e.orientation(), {0, 1, 0});
-    b.axis[2] = quat_rotate(e.orientation(), {0, 0, 1});
-    b.extent[0] = s.sx;
-    b.extent[1] = s.sy;
-    b.extent[2] = s.sz;
-    return b;
-}
-
 /// The transport its head order waits for, or 0 (Moho's
 /// UNITSTATE_WaitingForTransport, and its focus).
 u32 awaited_transport(const Unit& u) {
@@ -113,7 +99,7 @@ bool box_sphere_overlap(const OrientedBox& box, const Vector3& centre, f32 radiu
 bool shape_overlaps_box(const Entity& e, const OrientedBox& box) {
     const CollisionShape& s = e.collision_shape();
     switch (s.type) {
-    case CollisionShapeType::BOX: return boxes_overlap(shape_box(e), box);
+    case CollisionShapeType::BOX: return boxes_overlap(*collision_box(e), box);
     case CollisionShapeType::SPHERE: return box_sphere_overlap(box, collision_centre(e), s.sx);
     default: return false;
     }
