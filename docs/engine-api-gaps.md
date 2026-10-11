@@ -95,11 +95,11 @@ How to read it:
 | `TeamColorMode`: the strategic icons (world view and minimap) in `GameColors.TeamColorMode`'s Self, Ally, Enemy and Neutral by the focus army's alliances; FAF's per-army colour string | [#570](https://github.com/bwiemz/supcom-engine/pull/570) |
 | `RenderOverlayEconomy`: the focus army's units drawn as meshes show their net energy and mass per second (`/lua/ui/game/econoverlayparams.lua`) | [#571](https://github.com/bwiemz/supcom-engine/pull/571) |
 | The engine's own HUD text (`--legacy-hud`'s economy bar and selection panel, the profiler overlay) stands on its font's baseline | [#575](https://github.com/bwiemz/supcom-engine/pull/575) |
-| `UNTARGETABLE` on units: the cursor passes through one that is neither `SELECTABLE` nor `FERRYBEACON` (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) | this PR |
-| Projectile `Physics.LeadTarget` defaults to true (homing missiles and torpedoes lead a moving target) | this PR |
-| `PrefersPrimaryWeaponTarget` (a weapon takes its primary's target when it can hit it) and `StopOnPrimaryWeaponBusy` (it drops its target while the primary has one): ships, gunships, ASF, experimentals; Janus and Notha bombs | this PR |
-| Texture scrollers (`AddThreadScroller`, `AddPingPongScroller`, `AddManualScroller`, `RemoveScroller`) and the mesh LOD's `Scrolling`: tank treads (36 retail blueprints with `Treads.ScrollTreads`) and UEA0102's ping-pong scroll move | this PR |
-| `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield: a FlattenSkirt structure levels the ground under its skirt, the land units on it follow, and a save keeps it | this PR |
+| `UNTARGETABLE` on units: the cursor passes through one that is neither `SELECTABLE` nor `FERRYBEACON` (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) | [#536](https://github.com/bwiemz/supcom-engine/pull/536) |
+| Projectile `Physics.LeadTarget` defaults to true (homing missiles and torpedoes lead a moving target) | [#529](https://github.com/bwiemz/supcom-engine/pull/529) |
+| `PrefersPrimaryWeaponTarget` (a weapon takes its primary's target when it can hit it) and `StopOnPrimaryWeaponBusy` (it drops its target while the primary has one): ships, gunships, ASF, experimentals; Janus and Notha bombs | [#549](https://github.com/bwiemz/supcom-engine/pull/549) |
+| Texture scrollers (`AddThreadScroller`, `AddPingPongScroller`, `AddManualScroller`, `RemoveScroller`) and the mesh LOD's `Scrolling`: tank treads (36 retail blueprints with `Treads.ScrollTreads`) and UEA0102's ping-pong scroll move | [#540](https://github.com/bwiemz/supcom-engine/pull/540) |
+| `FlattenMapRect(x, z, sx, sz, y)` writes the heightfield: a FlattenSkirt structure levels the ground under its skirt, the land units on it follow, and a save keeps it | [#541](https://github.com/bwiemz/supcom-engine/pull/541) |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
@@ -119,7 +119,7 @@ How to read it:
 | One command graph line per shared order, `CalculateWaypointLineWidth` wide | [#455](https://github.com/bwiemz/supcom-engine/pull/455) |
 | An order moved or taken off shows at once, paused or before its tick | [#454](https://github.com/bwiemz/supcom-engine/pull/454) |
 | A unit aboard a transport can't be selected | [#458](https://github.com/bwiemz/supcom-engine/pull/458) |
-| `SELECTABLE`: only a unit with it can be selected (a transport beacon can't) | this PR |
+| `SELECTABLE`: only a unit with it can be selected (a transport beacon can't) | [#512](https://github.com/bwiemz/supcom-engine/pull/512) |
 | Orders and their cursor take the unit under the cursor; Capture only on what Moho offers it | [#477](https://github.com/bwiemz/supcom-engine/pull/477) |
 | Past zoom 150 the cursor and right-click pass over props | [#478](https://github.com/bwiemz/supcom-engine/pull/478) |
 | A press reaches the control the global click handler destroyed (chat recipient) | [#462](https://github.com/bwiemz/supcom-engine/pull/462) |
