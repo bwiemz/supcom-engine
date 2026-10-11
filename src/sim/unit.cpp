@@ -5,6 +5,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/collision.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -539,6 +541,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (!tick_after_orders(dt, ctx)) return;
     }
+    if (ctx.sim) {
+        tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
+    }
     tick_upkeep(dt, ctx, econ_eff, was_assisting_silo);
 }
 
@@ -623,6 +628,9 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
 
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
     face_weapons_work(dt, ctx.registry);
+    if (turned_in_place_ && ctx.terrain && snaps_to_ground()) {
+        stand_on_ground(ctx.terrain, position(), orientation());
+    }
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
 
     // A sub dives or surfaces, moving or not (M206o).
@@ -2434,9 +2442,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
                     cargo->position().y -
                     cargo->air_floor(terrain, cargo->position().x, cargo->position().z);
         } else if (terrain) {
-            Vector3 at = cargo->position();
-            at.y = cargo->ground_y(terrain, at.x, at.z);
-            cargo->set_position(at);
+            cargo->stand_on_ground(terrain, cargo->position(), cargo->orientation());
         }
         cargo->note_snap();
 
@@ -2616,13 +2622,216 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
         p.x += osc::dmath::sin(heading) * ground_speed_ * step;
         p.z += osc::dmath::cos(heading) * ground_speed_ * step;
     }
-    if (terrain) p.y = ground_y(terrain, p.x, p.z);
-    set_position(p);
+    if (terrain) {
+        stand_on_ground(terrain, p, orientation());
+    } else {
+        set_position(p);
+    }
 }
 
-f32 Unit::ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
-    if (!terrain) return position().y;
-    return walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+namespace {
+
+Vector3 normalized(const Vector3& v) {
+    const f32 length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (length <= 0.0f) {
+        return {};
+    }
+    const f32 inv = 1.0f / length;
+    return {v.x * inv, v.y * inv, v.z * inv};
+}
+
+// Moho's COORDS_Tilt: the shortest turn of its up onto the normal, before it.
+Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
+    const Vector3 n = normalized(normal);
+    if (n.x == 0.0f && n.y == 0.0f && n.z == 0.0f) {
+        return q;
+    }
+    const Vector3 up = quat_rotate(q, {0.0f, 1.0f, 0.0f});
+    const Vector3 h = normalized({up.x + n.x, up.y + n.y, up.z + n.z});
+    const Quaternion delta{up.y * h.z - up.z * h.y, up.z * h.x - up.x * h.z,
+                           up.x * h.y - up.y * h.x, up.x * h.x + up.y * h.y + up.z * h.z};
+    return quat_multiply(delta, q);
+}
+
+} // namespace
+
+// Moho's CUnitMotion::SnapToGround (from CalcMoveHover and CalcMoveLand).
+Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z,
+                                       const Quaternion& facing) const {
+    if (!terrain) {
+        return {position().y, facing};
+    }
+    const Unit* platform = raised_platform();
+    const bool hover = is_hover();
+    if (!snaps_to_ground()) {
+        const f32 ground =
+            walks_seabed() ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+        return {platform ? ground + platform->raised_platform_height(x, z) : ground, facing};
+    }
+    const auto corner = [&](f32 dx, f32 dz) {
+        const Vector3 d = quat_rotate(facing, {dx, 0, dz});
+        Vector3 c{x + d.x, terrain->get_terrain_height(x + d.x, z + d.z), z + d.z};
+        if (hover && terrain->has_water()) {
+            c.y = std::max(c.y, terrain->water_elevation());
+        }
+        if (platform) {
+            c.y += platform->raised_platform_height(c.x, c.z);
+        }
+        return c;
+    };
+    const f32 hx = size_x_ * 0.5f;
+    const f32 hz = size_z_ * 0.5f;
+    const Vector3 fr = corner(hx, hz);
+    const Vector3 fl = corner(-hx, hz);
+    const Vector3 bl = corner(-hx, -hz);
+    const Vector3 br = corner(hx, -hz);
+    f32 y = (br.y + bl.y + fl.y + fr.y) * 0.25f;
+    if (stand_upright_ || sink_lower_) {
+        const f32 centre = terrain->get_terrain_height(x, z);
+        const f32 lo = std::min({fr.y, fl.y, bl.y, br.y, centre});
+        const f32 hi = std::max({fr.y, fl.y, bl.y, br.y, centre});
+        y -= (hi - lo) * 0.25f;
+    }
+    const Vector3 d0{br.x - fl.x, br.y - fl.y, br.z - fl.z};
+    const Vector3 d1{bl.x - fr.x, bl.y - fr.y, bl.z - fr.z};
+    Vector3 normal = stand_upright_ ? Vector3{0.0f, 1.0f, 0.0f}
+                                    : Vector3{d0.y * d1.z - d0.z * d1.y, d0.z * d1.x - d0.x * d1.z,
+                                              d0.x * d1.y - d0.y * d1.x};
+    if (hover) {
+        y += elevation_;
+        normal.x += hover_tilt_.x + wobble_offset_.x;
+        normal.y += hover_tilt_.y + wobble_offset_.y;
+        normal.z += hover_tilt_.z + wobble_offset_.z;
+    }
+    return {y, tilt_to(facing, normal)};
+}
+
+namespace {
+
+// Moho's VecLimitLengthTo.
+void limit_length(Vector3& v, f32 max_length) {
+    const f32 length_sq = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (max_length * max_length >= length_sq) {
+        return;
+    }
+    const f32 scale = max_length / std::sqrt(length_sq);
+    v.x *= scale;
+    v.y *= scale;
+    v.z *= scale;
+}
+
+} // namespace
+
+void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random) {
+    if (!is_hover() || can_fly() || is_being_built_ || dying_ || immobile_ || is_stunned() ||
+        parent_entity_id() != 0) {
+        return;
+    }
+    const Vector3& at = position();
+    const Vector3 step =
+        tick_position_set_
+            ? Vector3{at.x - tick_position_.x, at.y - tick_position_.y, at.z - tick_position_.z}
+            : Vector3{};
+    const Vector3 accel =
+        drove_ ? Vector3{step.x - hover_step_.x, step.y - hover_step_.y, step.z - hover_step_.z}
+               : Vector3{};
+    hover_step_ = step;
+
+    const HoverPhysics& h = hover_physics_;
+    const f32 bank = h.max_acceleration > 0 ? h.banking_slope / h.max_acceleration : 0.0f;
+    hover_tilt_.x = hover_tilt_.x * 0.8f + accel.x * 10.0f * bank * 0.2f;
+    hover_tilt_.y = hover_tilt_.y * 0.8f;
+    hover_tilt_.z = hover_tilt_.z * 0.8f + accel.z * 10.0f * bank * 0.2f;
+
+    if (tick % 5 == 0) {
+        wobble_target_.x = random.range(-h.wobble_factor, h.wobble_factor);
+        wobble_target_.z = random.range(-h.wobble_factor, h.wobble_factor);
+    }
+    Vector3 push{wobble_target_.x - wobble_offset_.x, wobble_target_.y - wobble_offset_.y,
+                 wobble_target_.z - wobble_offset_.z};
+    limit_length(push, h.wobble_speed * 0.1f);
+    wobble_velocity_.x += push.x;
+    wobble_velocity_.y += push.y;
+    wobble_velocity_.z += push.z;
+    limit_length(wobble_velocity_, h.wobble_speed);
+    wobble_offset_.x = wobble_offset_.x * 0.98f + wobble_velocity_.x;
+    wobble_offset_.y = wobble_offset_.y * 0.98f + wobble_velocity_.y;
+    wobble_offset_.z = wobble_offset_.z * 0.98f + wobble_velocity_.z;
+
+    if (terrain && !teleporting_) {
+        stand_on_ground(terrain, position(), orientation());
+    }
+}
+
+void Unit::stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing) {
+    const GroundStance stance = ground_stance(terrain, at.x, at.z, facing);
+    at.y = stance.y;
+    set_position(at);
+    set_orientation(stance.orientation);
+}
+
+// Moho's CUnitMotion::FindIntersectingRaisedPlatform, over the units its box
+// meets (ProcessSurfaceCollisionFromLastMove).
+const Unit* Unit::raised_platform() const {
+    const EntityRegistry* registry = this->registry();
+    if (!registry || is_air_unit() || is_being_built_ || parent_entity_id() != 0 ||
+        layer_ == "Sub") {
+        return nullptr;
+    }
+    const Vector3 at = position();
+    const Vector3 ax = quat_rotate(orientation(), {size_x_ * 0.5f, 0, 0});
+    const Vector3 az = quat_rotate(orientation(), {0, 0, size_z_ * 0.5f});
+    const f32 hx = std::abs(ax.x) + std::abs(az.x);
+    const f32 hz = std::abs(ax.z) + std::abs(az.z);
+    const Unit* nearest = nullptr;
+    f32 nearest_d2 = std::numeric_limits<f32>::infinity();
+    registry->any_unit_collider(at.x - hx, at.z - hz, at.x + hx, at.z + hz, [&](const Entity& e) {
+        const auto* u = dynamic_cast<const Unit*>(&e);
+        if (!u || u == this || u->raised_platforms_.empty() || u->dying_) {
+            return false;
+        }
+        const auto bounds = collision_bounds(*u);
+        if (!bounds || bounds->first.x > at.x + hx || bounds->second.x < at.x - hx ||
+            bounds->first.z > at.z + hz || bounds->second.z < at.z - hz ||
+            bounds->first.y > at.y + size_y_ || bounds->second.y < at.y - size_y_) {
+            return false;
+        }
+        const Vector3 p = u->position();
+        const f32 d2 =
+            (at.x - p.x) * (at.x - p.x) + (at.y - p.y) * (at.y - p.y) + (at.z - p.z) * (at.z - p.z);
+        if (d2 < nearest_d2 || (d2 == nearest_d2 && u->entity_id() < nearest->entity_id())) {
+            nearest = u;
+            nearest_d2 = d2;
+        }
+        return false;
+    });
+    return nearest;
+}
+
+f32 Unit::raised_platform_height(f32 x, f32 z) const {
+    if (dying_) {
+        return 0.0f;
+    }
+    const Vector3 at = position();
+    const size_t quads = raised_platforms_.size() / 12;
+    for (size_t i = 0; i < quads; ++i) {
+        const f32* q = &raised_platforms_[i * 12];
+        const f32 x0 = q[0] + at.x;
+        const f32 z0 = q[1] + at.z;
+        const f32 x1 = q[3] + at.x;
+        const f32 z2 = q[7] + at.z;
+        const f32 x3 = q[9] + at.x;
+        const f32 z3 = q[10] + at.z;
+        if (x > x3 || x0 > x || z > z3 || z0 > z) {
+            continue;
+        }
+        const f32 u = (x - x0) / (x1 - x0);
+        const f32 v = (z - z0) / (z2 - z0);
+        const f32 left = (q[8] - q[2]) * v + q[2];
+        const f32 right = (q[11] - q[5]) * v + q[5];
+        return u * (right - left) + left;
+    }
+    return 0.0f;
 }
 
 void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {

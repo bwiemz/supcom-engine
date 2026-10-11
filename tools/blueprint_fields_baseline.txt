@@ -1,7 +1,6 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 AimsStraightOnDisable
 BankForward
-BankingSlope
 BounceVelDamp
 CameraFollowTimeout
 CameraFollowsProjectile
@@ -27,7 +26,6 @@ PlaceholderMeshName
 PositionY
 PrefersPrimaryWeaponTarget
 QuickSelectPriority
-RaisedPlatforms
 ReTargetOnMiss
 RepairRate
 RotationalVelocity
@@ -39,13 +37,9 @@ SelectionYOffset
 ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette
-SinkLower
 SpawnRandomRotation
-StandUpright
 StayUpright
 StopOnPrimaryWeaponBusy
 StraddleWater
 StrategicIconSize
 UseOOBTestZoom
-WobbleFactor
-WobbleSpeed

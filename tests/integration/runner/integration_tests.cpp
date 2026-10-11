@@ -11745,13 +11745,27 @@ void test_naval_depth(TestContext& ctx) {
         local p = __osc_acu:GetPosition()
         local bed, top = GetTerrainHeight(p[1], p[3]), GetSurfaceHeight(p[1], p[3])
         if top - bed < 2 then error('only ' .. (top - bed) .. ' deep at ' .. p[1]) end
-        if math.abs(p[2] - bed) > 0.05 then error('at ' .. p[2] .. ', the bed is ' .. bed) end
+        -- Moho's SnapToGround: the mean of its box's corners, less a quarter
+        -- of their spread with the centre (StandUpright).
+        local q = __osc_acu:GetOrientation()
+        local bp = __osc_acu:GetBlueprint()
+        local lo, hi, sum = bed, bed, 0
+        for _, c in {{1, 1}, {-1, 1}, {-1, -1}, {1, -1}} do
+            local vx, vz = c[1] * bp.SizeX * 0.5, c[2] * bp.SizeZ * 0.5
+            local tx, ty, tz = 2 * q[2] * vz, 2 * (q[3] * vx - q[1] * vz), -2 * q[2] * vx
+            local rx = vx + q[4] * tx + (q[2] * tz - q[3] * ty)
+            local rz = vz + q[4] * tz + (q[1] * ty - q[2] * tx)
+            local h = GetTerrainHeight(p[1] + rx, p[3] + rz)
+            lo, hi, sum = math.min(lo, h), math.max(hi, h), sum + h
+        end
+        local want = sum * 0.25 - (hi - lo) * 0.25
+        if math.abs(p[2] - want) > 0.05 then error('at ' .. p[2] .. ', the bed snap is ' .. want) end
     )");
-    lua_check("Test 8: the hover tank rides the water", R"(
+    lua_check("Test 8: the hover tank rides its Elevation over the water", R"(
         if __osc_aurora:GetCurrentLayer() ~= 'Water' then error('it is on ' .. __osc_aurora:GetCurrentLayer()) end
         local p = __osc_aurora:GetPosition()
-        local top = GetSurfaceHeight(p[1], p[3])
-        if math.abs(p[2] - top) > 0.05 then error('at ' .. p[2] .. ', the surface is ' .. top) end
+        local want = GetSurfaceHeight(p[1], p[3]) + __osc_aurora:GetBlueprint().Physics.Elevation
+        if math.abs(p[2] - want) > 0.01 then error('at ' .. p[2] .. ', want ' .. want) end
         local x, z = __osc_ashore[1], __osc_ashore[2]
         IssueMove({__osc_acu}, {x, GetTerrainHeight(x, z), z})
     )");

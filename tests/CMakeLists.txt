@@ -28,6 +28,8 @@ add_executable(osc_tests
     test_ground_attack.cpp
     test_command_feedback.cpp
     test_seabed_layer.cpp
+    test_raised_platforms.cpp
+    test_ground_snap.cpp
     test_target_points.cpp
     test_footprint_classes.cpp
     test_occupancy.cpp

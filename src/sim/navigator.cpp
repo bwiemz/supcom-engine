@@ -362,13 +362,19 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         if (speed == 0 && --hold_ticks_ == 0) next_check_ = 0; // looks again as it goes on
         pos.x += osc::dmath::sin(heading) * speed * step;
         pos.z += osc::dmath::cos(heading) * speed * step;
-        if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
+        Quaternion facing = unit.orientation();
+        if (terrain) {
+            const Unit::GroundStance stance = unit.ground_stance(terrain, pos.x, pos.z, facing);
+            pos.y = stance.y;
+            facing = stance.orientation;
+        }
         if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
         if (refused(pos)) {
             unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
             return true;
         }
         unit.set_position(pos);
+        unit.set_orientation(facing);
         unit.note_drive(speed, 0, max_speed, Unit::MotionTurn::Straight);
         return true;
     }
@@ -483,7 +489,13 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     // Drive along its heading.
     pos.x += osc::dmath::sin(heading) * speed * step;
     pos.z += osc::dmath::cos(heading) * speed * step;
-    if (terrain) pos.y = unit.ground_y(terrain, pos.x, pos.z);
+    const Quaternion level = euler_to_quat(heading, 0.0f, 0.0f);
+    Quaternion facing = level;
+    if (terrain) {
+        const Unit::GroundStance stance = unit.ground_stance(terrain, pos.x, pos.z, level);
+        pos.y = stance.y;
+        facing = stance.orientation;
+    }
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
     // Refused (as above): it stays put, turned, and its steering then asks
     // for the way afresh. A sidestep (M203c) that led there is given up --
@@ -497,12 +509,13 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
             next_check_ = 0;
         }
         moho_.request_repath();
-        unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+        unit.set_orientation(
+            terrain ? unit.ground_stance(terrain, from.x, from.z, level).orientation : level);
         unit.note_drive(0, 0, top, turning);
         return true;
     }
     unit.set_position(pos);
-    unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+    unit.set_orientation(facing);
     unit.note_drive(speed, stopping ? 0.0f : target, top, turning);
     return true;
 }

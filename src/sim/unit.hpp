@@ -827,9 +827,43 @@ public:
     bool walks_seabed() const {
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_Land";
     }
-    /// The height it stands at on the ground at (x, z): the terrain, under
-    /// the water too, for one that walks the seabed; else the surface.
-    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const;
+    struct GroundStance {
+        f32 y;
+        Quaternion orientation;
+    };
+    /// Its height with its centre at (x, z), and `facing` tilted to the
+    /// ground under its box.
+    GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z,
+                               const Quaternion& facing) const;
+    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
+        return ground_stance(terrain, x, z, orientation()).y;
+    }
+    void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing);
+    bool snaps_to_ground() const {
+        return !can_fly() && (is_hover() || layer_ == "Land" || layer_ == "Seabed");
+    }
+    /// Physics.StandUpright and Physics.SinkLower.
+    void set_ground_snap_flags(bool stand_upright, bool sink_lower) {
+        stand_upright_ = stand_upright;
+        sink_lower_ = sink_lower;
+    }
+    struct HoverPhysics {
+        f32 banking_slope = 0;
+        f32 max_acceleration = 0;
+        f32 wobble_factor = 0;
+        f32 wobble_speed = 0;
+    };
+    void set_hover_physics(const HoverPhysics& h) { hover_physics_ = h; }
+    /// Moho's CUnitMotion::CalcMoveHover after its move: the lean into its
+    /// acceleration and the wobble, then the snap.
+    void tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random);
+    const Vector3& hover_tilt() const { return hover_tilt_; }
+    const Vector3& wobble_offset() const { return wobble_offset_; }
+    /// Physics.RaisedPlatforms: quads of four (x, z, height) corners.
+    void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
+    /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
+    f32 raised_platform_height(f32 x, f32 z) const;
+    const Unit* raised_platform() const;
     /// Physics.LayerChangeOffsetHeight: how far above (+) or below (-) the
     /// water's surface the ground must lie for it to count as under water.
     f32 layer_change_offset() const { return layer_change_offset_; }
@@ -948,11 +982,15 @@ public:
     /// What it may not build (empty: no restriction)
     const CategoryExpr& build_restriction() const { return build_restriction_; }
 
-    // Elevation override
-    f32 elevation_override() const { return elevation_override_; }
-    void set_elevation_override(f32 e) { elevation_override_ = e; }
-    bool has_elevation_override() const { return elevation_override_ >= 0; }
-    void clear_elevation_override() { elevation_override_ = -1.0f; }
+    /// Moho's UnitAttributes::spawnElevationOffset: Physics.Elevation, or
+    /// what SetElevation gave it.
+    f32 elevation() const { return elevation_; }
+    void set_elevation(f32 e) { elevation_ = e; }
+    void set_blueprint_elevation(f32 e) {
+        blueprint_elevation_ = e;
+        elevation_ = e;
+    }
+    void revert_elevation() { elevation_ = blueprint_elevation_; }
 
     i32 transport_class() const { return transport_class_; }
     void set_transport_class(i32 c) { transport_class_ = c; }
@@ -1513,6 +1551,15 @@ private:
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
+    std::vector<f32> raised_platforms_;
+    bool stand_upright_ = false;
+    bool sink_lower_ = false;
+    HoverPhysics hover_physics_;
+    Vector3 hover_step_;
+    Vector3 hover_tilt_;
+    Vector3 wobble_offset_;
+    Vector3 wobble_velocity_;
+    Vector3 wobble_target_;
     blueprints::UnitFootprints footprints_;
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
@@ -1796,8 +1843,8 @@ private:
     std::unordered_set<std::string> original_command_caps_;
     // Build restrictions
     CategoryExpr build_restriction_;
-    // Elevation override
-    f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
+    f32 elevation_ = 0;
+    f32 blueprint_elevation_ = 0;
     bool dying_ = false;             ///< killed; see begin_dying
     bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)

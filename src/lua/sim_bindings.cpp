@@ -381,6 +381,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 drive.rotate_on_spot = lua_toboolean(L, -1) != 0;
                 lua_pop(L, 1);
                 unit->set_drive(drive);
+                unit->set_blueprint_elevation(number("Elevation", 0));
+                unit->set_hover_physics({number("BankingSlope", 0), number("MaxAcceleration", 0),
+                                         number("WobbleFactor", 0), number("WobbleSpeed", 0)});
             }
             lua_pop(L, 2);
 
@@ -1121,6 +1124,28 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (lua_isnumber(L, -1))
                     unit->set_layer_change_offset(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+                lua_pushstring(L, "RaisedPlatforms");
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    std::vector<f32> quads;
+                    const int n = luaL_getn(L, -1);
+                    for (int i = 1; i <= n; ++i) {
+                        lua_rawgeti(L, -1, i);
+                        quads.push_back(static_cast<f32>(lua_tonumber(L, -1)));
+                        lua_pop(L, 1);
+                    }
+                    unit->set_raised_platforms(std::move(quads));
+                }
+                lua_pop(L, 1);
+                lua_pushstring(L, "StandUpright");
+                lua_gettable(L, -2);
+                const bool stand_upright = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                lua_pushstring(L, "SinkLower");
+                lua_gettable(L, -2);
+                const bool sink_lower = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                unit->set_ground_snap_flags(stand_upright, sink_lower);
             }
             lua_pop(L, 2);
         }
