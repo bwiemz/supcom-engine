@@ -15,6 +15,7 @@
 #include "ui/world_view.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/temp_path.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -303,8 +304,7 @@ void write_dxt5(const std::filesystem::path& file, std::uint8_t left_alpha,
 
 TEST_CASE("UseAlphaHitTest hits a bitmap only where its frame's texel has alpha", "[ui][lua]") {
     namespace fs = std::filesystem;
-    const fs::path root_dir = fs::temp_directory_path() / "osc_alpha_hit_test";
-    fs::remove_all(root_dir);
+    const fs::path root_dir = osc::test::unique_temp_path("osc_alpha_hit_test");
     fs::create_directories(root_dir / "textures");
     write_dxt5(root_dir / "textures" / "half.dds", 255, 0);
     write_dxt5(root_dir / "textures" / "clear.dds", 0, 0);

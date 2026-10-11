@@ -20,6 +20,7 @@
 #include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/temp_path.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -58,8 +59,7 @@ TEST_CASE("Emitter curves read as Moho's SEfxCurve::GetValue", "[renderer][emitt
 
 TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their clock",
           "[renderer][emitter]") {
-    const fs::path root = fs::temp_directory_path() / "osc_particle_system_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_particle_system_test");
     const fs::path dir = root / "effects" / "Emitters";
     fs::create_directories(dir);
     // 2.5 a tick; and one whose rate is 1 for phases 0-2 and 5 at phase 3,
@@ -149,8 +149,7 @@ TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their
 TEST_CASE("A script's emitter params and curves reach its emitter", "[renderer][emitter]") {
     // SetEmitterParam's REPEATTIME and TICKCOUNT, SetEmitterCurveParam and
     // ResizeEmitterCurve (M214d), as the effect's record carries them.
-    const fs::path root = fs::temp_directory_path() / "osc_particle_overrides_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_particle_overrides_test");
     const fs::path dir = root / "effects" / "Emitters";
     fs::create_directories(dir);
     // 1 a tick for phases 0-2 and 5 at phase 3, over a Repeattime of 4.
@@ -239,8 +238,7 @@ TEST_CASE("Effects are made at the fidelities their blueprints allow, as Moho's 
     CHECK_FALSE(fidelity_allows(0b111, 3)); // no such fidelity: 1 << 3 is in no mask
     CHECK_FALSE(fidelity_allows(0b111, -1));
 
-    const fs::path root = fs::temp_directory_path() / "osc_effect_fidelity_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_effect_fidelity_test");
     const fs::path emitters = root / "effects" / "Emitters";
     fs::create_directories(emitters);
     const std::string common = "    Lifetime = -1, InterpolateEmission = false,\n"
@@ -429,8 +427,7 @@ TEST_CASE("A LightParticleIntel is made only where the player's army sees it",
 TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, blend; refracting "
           "last -- each bucket in the order it emitted",
           "[renderer][emitter]") {
-    const fs::path root = fs::temp_directory_path() / "osc_particle_order_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_particle_order_test");
     const fs::path dir = root / "effects" / "Emitters";
     fs::create_directories(dir);
     const auto emitter_bp = [&](const char* name, const char* fields) {
@@ -497,8 +494,7 @@ TEST_CASE("Particles draw by bucket -- under the water, SortOrder, textures, ble
 
 TEST_CASE("Only a SortOrder below efx_ParticleWaterSurface snaps under the water",
           "[renderer][emitter]") {
-    const fs::path root = fs::temp_directory_path() / "osc_particle_water_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_particle_water_test");
     const fs::path dir = root / "effects" / "Emitters";
     fs::create_directories(dir);
     const auto emitter_bp = [&](const char* name, const char* sort_order) {

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/directory_mount.hpp"
+#include "support/temp_path.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -32,8 +33,7 @@ TEST_CASE("a directory mount never reads a directory as a file", "[vfs]") {
     // On Linux an ifstream opens a directory; its size query fails, and an
     // empty path (the mount root) once turned that into a SIZE_MAX alloc.
     namespace fs = std::filesystem;
-    const fs::path root = fs::temp_directory_path() / "osc_vfs_dir_read_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_vfs_dir_read_test");
     fs::create_directories(root / "sub");
     { std::ofstream(root / "sub" / "file.txt") << "abc"; }
 

@@ -4,6 +4,7 @@
 #include "renderer/emitter_blueprint.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/temp_path.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -17,8 +18,7 @@ TEST_CASE("emitter blueprints load through the VFS as FA writes them", "[rendere
     // Retail keeps them in effects.scd under effects/Emitters/, and each file
     // is an `EmitterBlueprint { ... }` statement, not a `return`.
     namespace fs = std::filesystem;
-    const fs::path root = fs::temp_directory_path() / "osc_emitter_bp_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_emitter_bp_test");
     fs::create_directories(root / "effects" / "Emitters");
     {
         std::ofstream(root / "effects" / "Emitters" / "mist_emit.bp") << R"(
