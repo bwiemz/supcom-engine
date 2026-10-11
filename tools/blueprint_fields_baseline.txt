@@ -1,6 +1,5 @@
 # Engine-only blueprint fields src/ doesn't read yet (tools/check_blueprint_fields.py)
 AimsStraightOnDisable
-BankingSlope
 BounceVelDamp
 CatchUpAcc
 DirectionX
@@ -25,5 +24,3 @@ Silhouette
 SpawnRandomRotation
 StayUpright
 StraddleWater
-WobbleFactor
-WobbleSpeed
