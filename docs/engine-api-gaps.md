@@ -43,7 +43,6 @@ How to read it:
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
 | `REBUILDER`: when a structure dies, retail queues its rebuild, same blueprint and spot, on its army's `REBUILDER` units guarding it | Support commanders guarding a structure don't rebuild it | faf-re `CUnitGuardTask`, `Unit::Kill` (`unit/core/Unit.cpp`); engine: no rebuild path | Open |
-| `UNTARGETABLE`: retail's cursor passes through a unit that is `UNTARGETABLE` and neither `SELECTABLE` nor `FERRYBEACON`; the engine applies it to props only | Hovering such a unit (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) shows it, and a right click on an enemy one is an Attack instead of a Move | faf-re `CUIWorldView::UpdateSelection`; engine `input_handler.cpp` targetable_prop, handle_right_click | Open |
 
 ## Engine callbacks
 
@@ -100,6 +99,7 @@ How to read it:
 | `TeamColorMode`: the strategic icons (world view and minimap) in `GameColors.TeamColorMode`'s Self, Ally, Enemy and Neutral by the focus army's alliances; FAF's per-army colour string | [#570](https://github.com/bwiemz/supcom-engine/pull/570) |
 | `RenderOverlayEconomy`: the focus army's units drawn as meshes show their net energy and mass per second (`/lua/ui/game/econoverlayparams.lua`) | [#571](https://github.com/bwiemz/supcom-engine/pull/571) |
 | The engine's own HUD text (`--legacy-hud`'s economy bar and selection panel, the profiler overlay) stands on its font's baseline | [#575](https://github.com/bwiemz/supcom-engine/pull/575) |
+| `UNTARGETABLE` on units: the cursor passes through one that is neither `SELECTABLE` nor `FERRYBEACON` (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) | this PR |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
