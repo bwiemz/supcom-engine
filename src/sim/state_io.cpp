@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 44; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -63,7 +63,15 @@ constexpr u32 kVersion = 38; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 35: reclaims' ticks before their first share;
                              // 36: silos' preset blocks (GiveNukeSiloAmmo(blocks, true));
                              // 37: builders' arm on target, and orders waiting for it;
-                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks
+                             // 38: builds' cleared sites, props being cleared and rebuilt wrecks;
+                             // 39-42: unpublished PR snapshot formats;
+                             // 43: combined batch format: player command ids, formation Move flags,
+                             //     repairing assists, builder tracking and facing, aircraft lift,
+                             //     velocity and spin, motion-scaled animators, prop fall and
+                             //     bounds, raised platforms, alt footprints, ground stance, pending
+                             //     factory assists and sacrifice waits;
+                             // 44: the order given to build callbacks.
+
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -137,7 +145,8 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     w.u32v(reg.next_id_);
     // default_random_, sim_random_: the sim's generator (SimState's);
     // walking_: no walk is under way between ticks; unregister_hook_: the
-    // sim's; grid_initialized_, grid_width_, grid_height_: the map's
+    // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
+    // prop_grid_height_: the map's
 }
 
 void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
@@ -154,6 +163,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.large_colliders_.clear();
     for (auto& cell : reg.grid_cells_) cell.clear();
     for (auto& cell : reg.unit_cells_) cell.clear();
+    for (auto& cell : reg.prop_cells_) {
+        cell.clear();
+    }
 
     const size_t n = r.size(64);
     u32 last_id = 0;
@@ -203,6 +215,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         // As register_entity takes one, at its own id
         e->set_registry(&reg);
         e->set_grid_cell(-1, -1);
+        e->set_prop_cell(-1);
         reg.order_.push_back({id, e.get()});
         if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
         if (reg.entities_.size() <= id) reg.entities_.resize(id + 1);
@@ -216,6 +229,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
             reg.world_to_cell(placed.position().x, placed.position().z, cx, cz);
             reg.grid_insert(placed, cx, cz);
             placed.set_grid_cell(cx, cz);
+            if (placed.is_prop()) {
+                reg.prop_cell_update(placed);
+            }
         }
     }
     reg.next_id_ = r.u32v();
@@ -230,6 +246,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.u64v(sim.sim_random_.state());
     w.u64v(sim.seed_);
     save(w, sim.entity_registry_);
+    // bounded_props_: made again from the props, in id order, as Moho's load
     save(w, sim.thread_manager_);
     // blueprint_store_: the host's; projectile_info_: a cache
     save_ids(w, sim.collision_beams_);
@@ -249,7 +266,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(client);
         w.i32v(left);
     }
-    // pause_holds_: the host's; terrain_: the map's; pathfinding_grid_ and
+    // pause_holds_, issuing_source_: the host's; terrain_: the map's; pathfinding_grid_ and
     // pathfinder_: the map's, with occupied_footprints_ marked
     save_by_id(w, sim.occupied_footprints_, [&](const SimState::Footprint& f) {
         w.f32v(f.x);
@@ -339,6 +356,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         }
     }
     w.u32v(sim.next_command_id_);
+    w.u32v(sim.player_commands_issued_);
     w.b(sim.game_ended_);
     w.b(sim.script_victory_);
     w.str(sim.victory_condition_);
@@ -350,8 +368,9 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.f32v(sim.no_rush_radius_);
     w.b(sim.common_army_);
     w.b(sim.team_share_overflow_);
-    // camera_shake_events_, death_events_, intel_flush_events_,
-    // sound_requests_: the renderer's and the audio's, emptied each tick
+    // camera_shake_events_, camera_follow_events_, death_events_,
+    // intel_flush_events_, sound_requests_: the renderer's and the audio's,
+    // emptied each tick
     w.size(sim.resource_deposits_.size());
     for (const ResourceDeposit& d : sim.resource_deposits_) {
         w.f32v(d.x);
@@ -409,6 +428,17 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.seed_ = r.u64v();
     sim.projectile_info_.clear(); // (the projectiles fill it again as they load)
     load(r, sim.entity_registry_, sim);
+    sim.bounded_props_.clear();
+    sim.entity_registry_.for_each([&](Entity& e) {
+        if (!e.is_prop()) {
+            return;
+        }
+        auto& prop = static_cast<Prop&>(e);
+        if (prop.bounded_handle != -1) {
+            prop.bounded_handle =
+                sim.bounded_props_.insert(prop.bounded_priority, prop.bounded_tick, &prop);
+        }
+    });
     load(r, sim.thread_manager_);
     sim.collision_beams_ = load_ids(r);
     sim.ferry_beacons_ = load_ids(r);
@@ -539,6 +569,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     }
     sim.next_command_id_ = r.u32v();
+    sim.player_commands_issued_ = r.u32v();
     sim.game_ended_ = r.b();
     sim.script_victory_ = r.b();
     sim.victory_condition_ = r.str();
@@ -551,6 +582,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.common_army_ = r.b();
     sim.team_share_overflow_ = r.b();
     sim.camera_shake_events_.clear();
+    sim.camera_follow_events_.clear();
     sim.death_events_.clear();
     sim.intel_flush_events_.clear();
     sim.sound_requests_.clear();

@@ -29,6 +29,9 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
         world_to_cell(e->position().x, e->position().z, cx, cz);
         grid_insert(*e, cx, cz);
         e->set_grid_cell(cx, cz);
+        if (e->is_prop()) {
+            prop_cell_update(*e);
+        }
     }
 
     return id;
@@ -54,6 +57,7 @@ void EntityRegistry::unregister_entity(u32 id) {
         i32 cx = entity->grid_cell_x();
         i32 cz = entity->grid_cell_z();
         if (cx >= 0) grid_remove(*entity, cx, cz);
+        prop_cell_remove(*entity);
     }
     entity->set_registry(nullptr);
     Entity& ref = *entity;
@@ -100,6 +104,10 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
     if (grid_height_ == 0) grid_height_ = 1;
     grid_cells_.resize(static_cast<size_t>(grid_width_) * grid_height_);
     unit_cells_.resize(grid_cells_.size());
+    prop_cells_.clear();
+    prop_grid_width_ = std::max(1u, (map_width + PROP_CELL_SIZE - 1) / PROP_CELL_SIZE);
+    prop_grid_height_ = std::max(1u, (map_height + PROP_CELL_SIZE - 1) / PROP_CELL_SIZE);
+    prop_cells_.resize(static_cast<size_t>(prop_grid_width_) * prop_grid_height_);
     grid_initialized_ = true;
 
     // Retroactively insert all existing entities (e.g. props created before grid init)
@@ -108,6 +116,10 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
         world_to_cell(e.position().x, e.position().z, cx, cz);
         grid_insert(e, cx, cz);
         e.set_grid_cell(cx, cz);
+        if (e.is_prop()) {
+            e.set_prop_cell(-1);
+            prop_cell_update(e);
+        }
     });
 
     spdlog::info("Spatial hash grid: {}x{} cells (cell_size={}u, {} entities indexed)", grid_width_,
@@ -151,6 +163,9 @@ void EntityRegistry::grid_remove(const Entity& entity, i32 cx, i32 cz) {
 
 void EntityRegistry::notify_position_changed(Entity& entity) {
     if (!grid_initialized_) return;
+    if (entity.is_prop()) {
+        prop_cell_update(entity);
+    }
 
     i32 new_cx, new_cz;
     world_to_cell(entity.position().x, entity.position().z, new_cx, new_cz);
@@ -303,6 +318,80 @@ std::vector<Entity*> EntityRegistry::units_in_rect(f32 x0, f32 z0, f32 x1, f32 z
     result.reserve(found.size());
     for (const UnitRef& unit : found) result.push_back(unit.entity);
     return result;
+}
+
+i32 EntityRegistry::prop_cell_index(f32 wx, f32 wz) const {
+    const auto size = static_cast<f32>(PROP_CELL_SIZE);
+    const i32 cx = std::clamp(static_cast<i32>(std::floor(wx / size)), 0,
+                              static_cast<i32>(prop_grid_width_) - 1);
+    const i32 cz = std::clamp(static_cast<i32>(std::floor(wz / size)), 0,
+                              static_cast<i32>(prop_grid_height_) - 1);
+    return cz * static_cast<i32>(prop_grid_width_) + cx;
+}
+
+void EntityRegistry::prop_cell_update(Entity& entity) {
+    const i32 cell = prop_cell_index(entity.position().x, entity.position().z);
+    if (cell == entity.prop_cell()) {
+        return;
+    }
+    prop_cell_remove(entity);
+    prop_cells_[static_cast<size_t>(cell)].push_back({entity.entity_id(), &entity});
+    entity.set_prop_cell(cell);
+}
+
+void EntityRegistry::prop_cell_remove(Entity& entity) {
+    if (entity.prop_cell() < 0) {
+        return;
+    }
+    auto& props = prop_cells_[static_cast<size_t>(entity.prop_cell())];
+    auto p = std::find_if(props.begin(), props.end(),
+                          [&](const UnitRef& r) { return r.id == entity.entity_id(); });
+    if (p != props.end()) {
+        *p = props.back();
+        props.pop_back();
+    }
+    entity.set_prop_cell(-1);
+}
+
+void EntityRegistry::props_touching(f32 x0, f32 z0, f32 x1, f32 z1,
+                                    std::vector<Entity*>& out) const {
+    out.clear();
+    const auto consider = [&](Entity& e, f32 reach) {
+        if (e.destroyed() || e.collision_shape().type == CollisionShapeType::NONE) {
+            return;
+        }
+        const Vector3& p = e.position();
+        if (p.x >= x0 - reach && p.x <= x1 + reach && p.z >= z0 - reach && p.z <= z1 + reach) {
+            out.push_back(&e);
+        }
+    };
+    if (!grid_initialized_) {
+        for_each([&](Entity& e) {
+            if (e.is_prop()) {
+                consider(e, e.shape_reach());
+            }
+        });
+        return;
+    }
+    const i32 lo = prop_cell_index(x0 - COLLIDER_REACH, z0 - COLLIDER_REACH);
+    const i32 hi = prop_cell_index(x1 + COLLIDER_REACH, z1 + COLLIDER_REACH);
+    const i32 w = static_cast<i32>(prop_grid_width_);
+    for (i32 cz = lo / w; cz <= hi / w; ++cz) {
+        for (i32 cx = lo % w; cx <= hi % w; ++cx) {
+            for (const UnitRef& prop : prop_cells_[static_cast<size_t>(cz) * prop_grid_width_ +
+                                                   static_cast<size_t>(cx)]) {
+                consider(*prop.entity, prop.entity->shape_reach());
+            }
+        }
+    }
+    for (const u32 id : large_colliders_) {
+        if (Entity* e = find(id); e && e->is_prop()) {
+            consider(*e, e->shape_reach());
+        }
+    }
+    std::sort(out.begin(), out.end(),
+              [](const Entity* a, const Entity* b) { return a->entity_id() < b->entity_id(); });
+    out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
 void EntityRegistry::notify_collision_shape_changed(const Entity& entity) {

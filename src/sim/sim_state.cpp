@@ -22,6 +22,7 @@
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
+#include "sim/prop_collision.hpp"
 #include "sim/script_class.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
@@ -739,8 +740,16 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
     // Either way a replay can record it.
     if (human_input_active_) {
         if (playback_) return 0; // a replay plays only what it recorded
-        if (local_command_sink_) local_command_sink_(unit_ids, command, clear_existing);
-        else schedule_command(0, unit_ids, command, clear_existing);
+        UnitCommand issued = command;
+        issued.command_id = 0;
+        if (!issued.factory && issued.type != CommandType::Stop) {
+            issued.command_id = next_player_command_id();
+        }
+        if (local_command_sink_) {
+            local_command_sink_(unit_ids, issued, clear_existing);
+        } else {
+            schedule_command(0, unit_ids, issued, clear_existing);
+        }
         return 0;
     }
     // An AI or script order, issued inside a tick: apply now. (AI runs
@@ -761,21 +770,83 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
-        // Stop clears the queue outright (rather than queueing a Stop order), so
-        // it matches the old IssueStop's immediate clear_commands() semantics.
-        if (cmd.type == CommandType::Stop) {
+        if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd)) {
-            unit->push_command(cmd, clear_existing);
+            if (clear_existing) {
+                unit->clear_commands(entity_registry_, L_);
+                if (unit->destroyed()) {
+                    continue;
+                }
+            }
+            unit->push_command(cmd, false);
             queued = true;
         }
     }
     return queued ? issued.command_id : 0;
 }
 
-bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
-    if (unit.is_being_built() && !unit.has_category("FACTORY")) {
+namespace {
+
+bool boards(const EntityRegistry& registry, const Unit& unit, u32 target_id) {
+    const Entity* e = target_id ? registry.find(target_id) : nullptr;
+    if (!e || !e->is_unit()) {
+        return true;
+    }
+    const auto& target = static_cast<const Unit&>(*e);
+    if ((&target != &unit && !unit.has_command_cap("RULEUCC_CallTransport")) ||
+        target.layer() == "Seabed") {
         return false;
+    }
+    if (target.has_category("FERRYBEACON") ||
+        (target.has_category("FACTORY") && !target.has_category("AIRSTAGINGPLATFORM") &&
+         !target.has_category("TELEPORTATION"))) {
+        return unit.is_mobile() && !unit.has_category("TRANSPORTATION");
+    }
+    if (target.destroyed() || target.is_dying() || target.is_being_built() ||
+        (!target.has_command_cap("RULEUCC_Transport") &&
+         !target.has_category("PODSTAGINGPLATFORM"))) {
+        return false;
+    }
+    if (&target == &unit) {
+        return true;
+    }
+    if (!unit.is_mobile() || unit.has_category("AIR") != target.is_staging_platform() ||
+        (unit.has_category("COMMAND") && !target.has_category("CANTRANSPORTCOMMANDER"))) {
+        return false;
+    }
+    const TransportSlots* slots = const_cast<Unit&>(target).transport_slots();
+    return !slots || slots->can_carry_class(unit.transport_class());
+}
+
+} // namespace
+
+bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
+    if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
+        return false;
+    }
+    if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
+        return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
+               unit.has_category("NEEDMOBILEBUILD") || unit.has_category("POD");
+    }
+    const char* needs = command.type == CommandType::Reclaim   ? "RECLAIM"
+                        : command.type == CommandType::Capture ? "CAPTURE"
+                        : command.type == CommandType::Repair  ? "REPAIR"
+                                                               : nullptr;
+    if (needs &&
+        (!unit.has_category(needs) || (unit.transport_id() != 0 && unit.has_category("POD")))) {
+        return false;
+    }
+    if (command.type == CommandType::Attack) {
+        if (!unit.is_mobile() && std::all_of(unit.weapons().begin(), unit.weapons().end(),
+                                             [](const auto& w) { return w->dummy; })) {
+            return false;
+        }
+        const Entity* target =
+            command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+        const ArmyBrain* brain =
+            unit.army() >= 0 ? army_at(static_cast<size_t>(unit.army())) : nullptr;
+        return !target || target->army() < 0 || !brain || !brain->is_ally(target->army());
     }
     if (command.type == CommandType::Reclaim) {
         const Entity* target =
@@ -784,7 +855,7 @@ bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const
     }
     if (command.type == CommandType::TransportLoad || command.type == CommandType::Dock ||
         command.type == CommandType::WaitForFerry) {
-        return unit.transport_id() == 0;
+        return unit.transport_id() == 0 && boards(entity_registry_, unit, command.target_id);
     }
     if (command.type != CommandType::Guard) return true;
     // A pod, or a unit a carrier holds, guards nothing; nor does a unit
@@ -810,14 +881,26 @@ bool SimState::command_queued(u32 command_id) const {
     if (command_id == 0) return false;
     bool found = false;
     entity_registry_.for_each_unit([&](const Entity& e) {
-        if (found || e.destroyed()) return;
-        for (const auto& c : static_cast<const Unit&>(e).command_queue())
-            if (c.command_id == command_id) {
-                found = true;
-                return;
-            }
+        if (found || e.destroyed()) {
+            return;
+        }
+        const auto& unit = static_cast<const Unit&>(e);
+        const auto has_it = [&](const UnitCommand& c) { return c.command_id == command_id; };
+        found = std::any_of(unit.command_queue().begin(), unit.command_queue().end(), has_it) ||
+                std::any_of(unit.rally_orders().begin(), unit.rally_orders().end(), has_it);
     });
     return found;
+}
+
+u32 SimState::next_player_command_id() const {
+    const auto pending = command_scheduler_.pending();
+    for (u32 n = player_commands_issued_ + 1;; ++n) {
+        const u32 id = ((issuing_source_ + 1) << 24) | (n & 0xFFFFFFu);
+        if (std::none_of(pending.begin(), pending.end(),
+                         [&](const auto& c) { return c.command.command_id == id; })) {
+            return id;
+        }
+    }
 }
 
 namespace {
@@ -905,7 +988,7 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
                 continue;
             }
             QueueWithPending& queue = queue_of(id, *unit);
-            if (cmd.type == CommandType::Stop) {
+            if (cmd.type == CommandType::Stop && scheduled.clear_existing) {
                 queue.orders.clear();
                 queue.kept_from_queue = 0;
                 continue;
@@ -988,8 +1071,8 @@ SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitComma
                 UnitCommand cmd = command;
                 cmd.target_pos = slot.position;
                 cmd.formation.clear();
-                cmd.speed_cap = pace;
-                cmd.formed = true;
+                cmd.speed_cap = command.form_move ? pace : 0;
+                cmd.formed = command.form_move;
                 out.emplace_back(slot.unit_id, std::move(cmd));
             }
             return out;
@@ -1063,6 +1146,19 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
             lua_rawget(L_, bp);
             if (lua_type(L_, -1) == LUA_TNUMBER && lua_tonumber(L_, -1) > 0)
                 info->desired_shooter_cap = static_cast<u32>(lua_tonumber(L_, -1));
+            lua_pushstring(L_, "Display");
+            lua_rawget(L_, bp);
+            if (lua_istable(L_, -1)) {
+                const int display = lua_gettop(L_);
+                lua_pushstring(L_, "CameraFollowsProjectile");
+                lua_rawget(L_, display);
+                info->camera_follows = lua_toboolean(L_, -1) != 0;
+                lua_pushstring(L_, "CameraFollowTimeout");
+                lua_rawget(L_, display);
+                if (lua_type(L_, -1) == LUA_TNUMBER) {
+                    info->camera_follow_timeout = static_cast<f32>(lua_tonumber(L_, -1));
+                }
+            }
         }
         lua_settop(L_, top);
     }
@@ -1071,12 +1167,11 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
 }
 
 void SimState::stop_unit(Unit& unit) {
-    const bool factory_build = unit.building_factory_order();
-    unit.clear_commands();
-    // The order it was working on goes too: a factory's unit under
-    // construction, or an enhancement under way.
-    if (factory_build) unit.cancel_factory_build(entity_registry_, L_);
-    if (!unit.destroyed() && unit.is_enhancing()) unit.cancel_enhance(L_);
+    unit.clear_commands(entity_registry_, L_);
+    if (!unit.destroyed()) {
+        unit.run_stop(L_);
+    }
+    unit.request_ui_refresh();
 }
 
 void SimState::request_pause(u32 source) {
@@ -1140,11 +1235,13 @@ void SimState::dispatch_due_commands() {
             run_sim_callback(*sc.callback);
             return;
         }
-        // Command ids come from the sim's counter here, inside the tick, so
-        // every peer (and a replay) numbers an order the same way; the id it
-        // arrived with was the issuer's.
         UnitCommand base = sc.command;
-        base.command_id = next_command_id();
+        if (base.command_id == 0) {
+            base.command_id = next_command_id();
+        } else if (base.command_id >> 24 != 0) {
+            player_commands_issued_ =
+                std::max(player_commands_issued_, base.command_id & 0xFFFFFFu);
+        }
         if (base.factory) {
             apply_factory_command(sc.unit_ids, base, sc.clear_existing);
             return;
@@ -1153,9 +1250,7 @@ void SimState::dispatch_due_commands() {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<Unit*>(e);
-            // A scheduled Stop clears the queue (mirrors route_command's direct
-            // branch), so a networked player's Stop lands identically on peers.
-            if (sc.command.type == CommandType::Stop) {
+            if (sc.command.type == CommandType::Stop && sc.clear_existing) {
                 stop_unit(*unit);
                 continue;
             }
@@ -1175,7 +1270,13 @@ void SimState::dispatch_due_commands() {
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
             if (!takes_command(*unit, cmd)) continue;
-            unit->push_command(cmd, sc.clear_existing);
+            if (sc.clear_existing) {
+                unit->clear_commands(entity_registry_, L_);
+                if (unit->destroyed()) {
+                    continue;
+                }
+            }
+            unit->push_command(cmd, false);
         }
     });
 }
@@ -1413,7 +1514,16 @@ void SimState::tick() {
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe,
     // their Lua handles cut first.
-    entity_registry_.collect_garbage([this](Entity& e) { release_script_handle(e); });
+    entity_registry_.collect_garbage([this](Entity& e) {
+        if (e.is_prop()) {
+            auto& prop = static_cast<Prop&>(e);
+            if (prop.bounded_handle != -1) {
+                bounded_props_.remove(prop.bounded_handle);
+                prop.bounded_handle = -1;
+            }
+        }
+        release_script_handle(e);
+    });
 
     if (tick_observer_) {
         PROFILE_ZONE("Sim::observer");
@@ -1444,6 +1554,7 @@ void SimState::tick() {
     // next one).
     death_events_.clear();
     camera_shake_events_.clear();
+    camera_follow_events_.clear();
     sound_requests_.clear();
     intel_flush_events_.clear();
     // A loaded game has caught up: the player's orders count from here.
@@ -1724,10 +1835,15 @@ void SimState::update_entities() {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
         if (e->is_unit()) {
+            collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
+            if (e->destroyed()) {
+                continue;
+            }
             const Vector3 before = e->position();
             const u32 snaps = e->snap_serial();
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
             if (auto* moved = entity_registry_.find(id); moved && !moved->destroyed()) {
+                static_cast<Unit*>(moved)->note_queue_head();
                 // A teleport or a boarding jumps: no speed to lead by.
                 const Vector3 after = moved->position();
                 const auto per_second = static_cast<f32>(1.0 / SECONDS_PER_TICK);
@@ -1743,6 +1859,7 @@ void SimState::update_entities() {
         } else if (e->is_prop()) {
             // A fallen tree sinking away (SinkAway) before its script destroys it.
             auto* prop = static_cast<Prop*>(e);
+            prop->step_fall(terrain_.get());
             if (prop->sink_rate != 0) {
                 Vector3 p = prop->position();
                 p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
@@ -1848,7 +1965,12 @@ void SimState::separate_ground_units() {
             footprint_fits_at(u.footprint(), u.position().x, u.position().z) != 0)
             continue;
         // On the surface as it drives; a submarine keeps its depth.
-        if (terrain_ && !bodies[i].sub) p.y = u.ground_y(terrain_.get(), p.x, p.z);
+        if (terrain_ && !bodies[i].sub) {
+            const Unit::GroundStance stance =
+                u.ground_stance(terrain_.get(), p.x, p.z, u.orientation());
+            p.y = stance.y;
+            u.set_orientation(stance.orientation);
+        }
         u.set_position(clamp_to_playable(p, u.army()));
         u.set_jostled(true);
     }
@@ -3129,14 +3251,21 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         // An assist build's roll-off, only while under way.
         if (u.assist_rolloff_wait() != 0)
             units.mix(0x524f4c4c00000000ull | static_cast<u32>(u.assist_rolloff_wait())); // "ROLL"
+        if (!u.assist_pending_bp().empty()) {
+            units.mix(0x50454e4400000000ull); // "PEND"
+            mix_str(units, u.assist_pending_bp());
+        }
+        if (u.sacrifice_order() != 0) {
+            units.mix(0x5341435200000000ull | u.sacrifice_order()); // "SACR"
+        }
         // A winged aircraft's attack run, only while under way.
         if (const AirCombatState& ac = u.air_combat(); ac.flying || ac.state != 0) {
             units.mix(0x4149524300000000ull | ac.state); // "AIRC"
             units.mix(ac.timeout_tick);
             units.mix(static_cast<u64>(static_cast<u32>(ac.sustained_turn_ticks)));
-            units.mix_f32(ac.yaw_rate);
-            // The airframe's own velocity, while it has the unit.
-            if (ac.flying) mix_vec(units, ac.velocity);
+            if (ac.flying) {
+                mix_vec(units, u.air_velocity());
+            }
             // A hovering aircraft's circle, once drawn, and where it is
             // drawn about.
             const Vector3& around = ac.circle_anchor;
@@ -3327,10 +3456,14 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.count)) << 32 |
                            static_cast<u32>(cmd.max_count));
             }
-            // A build waiting out its army's unit cap, only then.
-            if (cmd.cap_wait != 0) {
+            // A task waiting out its army's unit cap or a pause, only then.
+            if (cmd.task_wait != 0) {
                 orders.mix(0x43415057u); // "CAPW"
-                orders.mix(static_cast<u64>(static_cast<u32>(cmd.cap_wait)));
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.task_wait)));
+            }
+            if (cmd.sacrifice_wait != 0) {
+                orders.mix(0x53414357u); // "SACW"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.sacrifice_wait)));
             }
             // A refuel under way (M206r), only once it has a slot or waits.
             if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {

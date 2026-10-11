@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "core/preferences.hpp"
 #include "lua/lua_state.hpp"
+#include "support/temp_path.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -53,10 +54,6 @@ std::string read_file(const fs::path& p) {
     std::stringstream ss;
     ss << in.rdbuf();
     return ss.str();
-}
-
-fs::path temp_prefs(const char* name) {
-    return fs::temp_directory_path() / name;
 }
 
 } // namespace
@@ -133,8 +130,7 @@ TEST_CASE("Preferences hold Lua tables, as retail's profiles need", "[preference
 }
 
 TEST_CASE("Preferences save as Lua and load back", "[preferences]") {
-    const fs::path file = temp_prefs("osc_test_game.prefs");
-    fs::remove(file);
+    const fs::path file = osc::test::unique_temp_path("osc_test_game", ".prefs");
     {
         osc::core::Preferences prefs;
         Script s;
@@ -172,7 +168,7 @@ TEST_CASE("Preferences save as Lua and load back", "[preferences]") {
     CHECK(std::signbit(loaded.get_float("negzero", 1.0f))); // -0 keeps its sign
 
     // Stable output: saving what was loaded writes the same text
-    const fs::path again = temp_prefs("osc_test_game2.prefs");
+    const fs::path again = osc::test::unique_temp_path("osc_test_game2", ".prefs");
     REQUIRE(loaded.save(again));
     CHECK(read_file(again) == text);
     fs::remove(file);
@@ -180,7 +176,7 @@ TEST_CASE("Preferences save as Lua and load back", "[preferences]") {
 }
 
 TEST_CASE("Preferences files hold data only", "[preferences]") {
-    const fs::path file = temp_prefs("osc_test_bad.prefs");
+    const fs::path file = osc::test::unique_temp_path("osc_test_bad", ".prefs");
     osc::core::Preferences prefs;
     prefs.set_string("keep", "me");
 
@@ -189,7 +185,7 @@ TEST_CASE("Preferences files hold data only", "[preferences]") {
     CHECK_FALSE(prefs.load(file));
     { std::ofstream(file) << "profile = {"; } // syntax error
     CHECK_FALSE(prefs.load(file));
-    CHECK_FALSE(prefs.load(temp_prefs("osc_test_missing.prefs")));
+    CHECK_FALSE(prefs.load(osc::test::unique_temp_path("osc_test_missing", ".prefs")));
     // A failed load keeps what was there
     CHECK(prefs.get_string("keep", "") == "me");
     CHECK(prefs.get_int("x", -1) == -1);
@@ -201,7 +197,7 @@ TEST_CASE("Preferences write a cycle without hanging", "[preferences]") {
     Script s;
     s.run("t = { name = 'loop' }; t.self = t");
     s.set_from_global(prefs, "cyclic", "t");
-    const fs::path file = temp_prefs("osc_test_cycle.prefs");
+    const fs::path file = osc::test::unique_temp_path("osc_test_cycle", ".prefs");
     REQUIRE(prefs.save(file));
     osc::core::Preferences loaded;
     REQUIRE(loaded.load(file));

@@ -235,13 +235,16 @@ void push_vector3(lua_State* L, const sim::Vector3& v) {
     lua_setmetatable(L, -2);
 }
 
-// ====================================================================
-// Stub helpers
-// ====================================================================
+// Push a direction as the three separate numbers retail's bindings return, for
+// the calls retail's Lua destructures (`local x, y, z = GetBoneDirection(b)`).
+// Returns 3, for the caller's return statement.
+int push_direction(lua_State* L, const sim::Vector3& v) {
+    lua_pushnumber(L, v.x);
+    lua_pushnumber(L, v.y);
+    lua_pushnumber(L, v.z);
+    return 3;
+}
 
-// Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
-#include "lua/lua_stubs.hpp"
-static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 // ====================================================================
 // Threat helper
 // ====================================================================
@@ -458,13 +461,31 @@ static const MethodEntry collision_manipulator_methods[] = {
 };
 // clang-format on
 
+static int thrust_SetThrustingParam(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 9) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "ThrustManipulator:SetThrustingParam(xCapMin, xCapMax, yCapMin, "
+                          "yCapMax, zCapMin, zCapMax, turnForceMult, turnSpeed)",
+                          9, n);
+    }
+    auto* m = check_manip_base(L);
+    if (!m) {
+        return 0;
+    }
+    f32 v[8] = {};
+    for (int arg = 9; arg >= 2; --arg) {
+        v[arg - 2] = static_cast<f32>(luaL_checknumber(L, arg));
+    }
+    static_cast<sim::ThrustManipulator*>(m)->set_thrusting_param({v[0], v[2], v[4]},
+                                                                 {v[1], v[3], v[5]}, v[6], v[7]);
+    return 0;
+}
+
 // Minimal entries for other classes
-// A thrust controller turns an aircraft's engines with its motion
-// (UEA0107 sets their arcs). It only moves bones on screen, which our air
-// movement doesn't drive yet, so its arcs change nothing.
 // clang-format off
 static const MethodEntry thrust_manipulator_methods[] = {
-    {"SetThrustingParam", stub_noop},
+    {"SetThrustingParam", thrust_SetThrustingParam},
     {nullptr, nullptr},
 };
 // clang-format on
@@ -1111,12 +1132,26 @@ static int l_InternalCreateDragger(lua_State* L) {
 /// Registers a dragger to receive mouse events until release/cancel.
 /// For now, we just store the dragger ref so Lua side can call OnMove/OnRelease/OnCancel.
 static int l_PostDragger(lua_State* L) {
-    // Args: originFrame (table), keycode (number), dragger (table)
-    // Store dragger in registry key for the UI dispatch to find
-    if (!lua_istable(L, 3)) return 0;
-
+    int key = 0;
+    if (lua_type(L, 2) == LUA_TNUMBER) {
+        key = static_cast<int>(lua_tonumber(L, 2));
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        const std::string_view name = lua_tostring(L, 2);
+        key = name == "LBUTTON" ? 1 : name == "MBUTTON" ? 2 : name == "RBUTTON" ? 3 : 0;
+    }
+    if (key < 1 || key > 3) {
+        return luaL_error(L, "Invalid key specified. Must be LBUTTON or RBUTTON or MBUTTON");
+    }
+    const bool posted = lua_istable(L, 3);
     lua_pushstring(L, "__osc_active_dragger");
-    lua_pushvalue(L, 3);
+    if (posted) {
+        lua_pushvalue(L, 3);
+    } else {
+        lua_pushnil(L);
+    }
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "__osc_active_dragger_key");
+    lua_pushnumber(L, posted ? key : 0);
     lua_rawset(L, LUA_REGISTRYINDEX);
     return 0;
 }
@@ -2465,9 +2500,18 @@ static int l_SetFocusArmy(lua_State* L) {
 /// A unit blueprint's Economy.BuildableCategory strings ("BUILTBYCOMMANDER
 /// UEF", ...), read from the blueprint store.
 static std::vector<std::string> buildable_category_strings(lua_State* L,
-                                                           const sim::Unit* u) {
+                                                           const std::string& blueprint_id) {
     std::vector<std::string> out;
-    if (!push_entity_blueprint(L, u)) return out;
+    auto* store = LuaState::get_blueprint_store(L);
+    const auto* entry = store ? store->find(blueprint_id) : nullptr;
+    if (!entry) {
+        return out;
+    }
+    store->push_lua_table(*entry, L);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return out;
+    }
     lua_pushstring(L, "Economy");
     lua_rawget(L, -2);
     if (lua_istable(L, -1)) {
@@ -2705,8 +2749,24 @@ static int l_GetUnitCommandData(lua_State* L) {
             continue;
         }
         auto* unit = static_cast<sim::Unit*>(entity);
-        buildable.push_back({buildable_category_strings(L, unit),
-                             unit_build_restriction(*sim, *unit, army_restrictions)});
+        const sim::UnitCommand* upgrade = nullptr;
+        for (const sim::UnitCommand& c : unit->command_queue()) {
+            if (c.type == sim::CommandType::Upgrade) {
+                upgrade = &c;
+            }
+        }
+        sim::CategoryExpr restriction = unit_build_restriction(*sim, *unit, army_restrictions);
+        if (upgrade) {
+            sim::CategoryExpr target = sim::CategoryExpr::name(upgrade->blueprint_id);
+            restriction =
+                restriction.empty()
+                    ? std::move(target)
+                    : sim::CategoryExpr::combine(sim::CategoryExpr::Op::Union,
+                                                 std::move(restriction), std::move(target));
+        }
+        buildable.push_back(
+            {buildable_category_strings(L, upgrade ? upgrade->blueprint_id : unit->blueprint_id()),
+             std::move(restriction)});
 
         if (first_unit) {
             for (const char** cap = all_caps; *cap; ++cap) {
@@ -3157,11 +3217,10 @@ static lua::FactoryQueueDisplay* get_factory_queue(lua_State* L) {
 
 static int l_SetCurrentFactoryForQueueDisplay(lua_State* L) {
     auto* fq = get_factory_queue(L);
-    auto* unit = check_unit(L, 1);
-    if (fq && unit) {
-        fq->set_current(L, unit);
+    if (fq) {
+        fq->set_current(L, check_unit(L, 1));
     } else {
-        lua_newtable(L);
+        lua_pushnil(L);
     }
     return 1;
 }
@@ -3700,6 +3759,19 @@ static int l_ConExecute(lua_State* L) {
     const char* line = luaL_checkstring(L, 1);
     if (auto* console = get_console(L)) console->execute(L, line);
     return 0;
+}
+
+static int l_ConTextMatches(lua_State* L) {
+    const char* prefix = luaL_checkstring(L, 1);
+    lua_newtable(L);
+    if (auto* console = get_console(L)) {
+        int i = 0;
+        for (const std::string& name : console->matches(prefix)) {
+            lua_pushstring(L, name.c_str());
+            lua_rawseti(L, -2, ++i);
+        }
+    }
+    return 1;
 }
 
 /// Call `module`'s function `fn` with string arguments, in the UI state,
@@ -4741,6 +4813,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SetGameSpeed", l_SetGameSpeed);
     state.register_function("GetGameSpeed", l_GetGameSpeed);
     state.register_function("ConExecute", l_ConExecute);
+    state.register_function("ConTextMatches", l_ConTextMatches);
     state.register_function("ConExecuteSave", l_ConExecute);
     state.register_function("SessionRequestPause", l_SessionRequestPause);
     state.register_function("SessionResume", l_SessionResume);

@@ -19,6 +19,8 @@ add_executable(osc_tests
     test_category_expr.cpp
     test_scm_bones.cpp
     test_pose.cpp
+    test_prop_collision.cpp
+    test_prop_fall.cpp
     test_image.cpp
     test_navigation_throttle.cpp
     test_build_placement.cpp
@@ -28,6 +30,9 @@ add_executable(osc_tests
     test_ground_attack.cpp
     test_command_feedback.cpp
     test_seabed_layer.cpp
+    test_raised_platforms.cpp
+    test_favors_water.cpp
+    test_ground_snap.cpp
     test_target_points.cpp
     test_footprint_classes.cpp
     test_occupancy.cpp
@@ -36,11 +41,14 @@ add_executable(osc_tests
     test_path_navigator.cpp
     test_moho_pathing.cpp
     test_air_landing.cpp
+    test_air_lift.cpp
+    test_air_motion.cpp
     test_air_circling.cpp
     test_unit_blocking.cpp
     test_hull_facing.cpp
     test_reclaim.cpp
     test_build_assist.cpp
+    test_bounded_props.cpp
     test_build_on_wreck.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
@@ -79,6 +87,7 @@ add_executable(osc_tests
     test_key_codes.cpp
     test_movie_player.cpp
     test_console_keymap.cpp
+    test_ui_engine_callbacks.cpp
     test_range_overlays.cpp
     test_selection_geometry.cpp
     test_build_template.cpp
@@ -100,6 +109,7 @@ add_executable(osc_tests
     test_window_mode.cpp
     test_console_vars.cpp
     test_team_color_lookup.cpp
+    test_economy_overlay.cpp
     test_instance_capacity.cpp
     test_mesh_technique.cpp
     test_playable_rect.cpp

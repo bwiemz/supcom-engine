@@ -6,6 +6,7 @@
 // (props, which stay where they're put) hovering over it.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -70,8 +71,8 @@ void test_shadow_map(TestContext& ctx) {
         }
     map::Terrain ground(map::Heightmap(kSize, kSize, kScale, std::move(heights)), 0.0f, false);
 
-    const auto dir = std::filesystem::temp_directory_path() / "osc_shadow_map_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_shadow_map_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate_hover.scm", 2.0f);
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, a_}; };

@@ -2,6 +2,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "core/preferences.hpp"
 #include "core/localization.hpp"
+#include "support/temp_path.hpp"
 #include <filesystem>
 
 // ─── SimCallbackQueue ────────────────────────────────────────────────────────
@@ -96,8 +97,7 @@ TEST_CASE("Preferences defaults returned for missing keys", "[phase1][preference
 
 TEST_CASE("Preferences save and load persistence", "[phase1][preferences]") {
     namespace fs = std::filesystem;
-    auto tmp = fs::temp_directory_path() / "osc_test_phase1_prefs.json";
-    fs::remove(tmp);
+    auto tmp = osc::test::unique_temp_path("osc_test_phase1_prefs", ".json");
 
     {
         osc::core::Preferences prefs;

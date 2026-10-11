@@ -83,9 +83,14 @@ namespace osc::lua {
 
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 
-static int (*const stub_return_nil)(lua_State*) = lua_stubs::return_nil;
-
 /// entity:PlaySound(sound) -- a one-shot at the entity
+static int entity_RequestRefreshUI(lua_State* L) {
+    if (auto* e = check_entity(L)) {
+        e->request_ui_refresh();
+    }
+    return 0;
+}
+
 static int entity_PlaySound(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
@@ -171,14 +176,21 @@ int entity_IsValidBone(lua_State* L) {
 }
 
 int entity_GetBoneDirection(lua_State* L) {
+    // Retail returns three numbers, not a vector table: the Scathis's
+    // CreateProjectileAtMuzzle destructures `v.x, v.y, v.z = GetBoneDirection(b)`
+    // (retail /units/URL0401/URL0401_Script.lua), and GetAngleInBetween then
+    // errors on the nils, so the weapon never fires.
     auto* e = check_entity(L);
-    if (!e) { push_vector3(L, {0, 0, 1}); return 1; }
+    if (!e) {
+        push_direction(L, {0, 0, 1});
+        return 3;
+    }
     auto* bd = e->bone_data();
     if (!bd || lua_gettop(L) < 2) {
         // No bone data or no bone arg: return entity forward direction
         auto fwd = sim::quat_rotate(e->orientation(), {0, 0, 1});
-        push_vector3(L, fwd);
-        return 1;
+        push_direction(L, fwd);
+        return 3;
     }
     // The bone's forward (+Z) in the world: a unit's as posed (turrets,
     // rotators), anything else's in bind pose.
@@ -188,8 +200,8 @@ int entity_GetBoneDirection(lua_State* L) {
                      : bd->bones[static_cast<size_t>(idx)].world_rotation;
     auto bone_world_rot = sim::quat_multiply(e->orientation(), model_rot);
     auto dir = sim::quat_rotate(bone_world_rot, {0, 0, 1});
-    push_vector3(L, dir);
-    return 1;
+    push_direction(L, dir);
+    return 3;
 }
 
 // ====================================================================
@@ -942,6 +954,17 @@ static int entity_AttachBoneToEntityBone(lua_State* L) {
     return 1;
 }
 
+static void released(sim::Entity& e, lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!e.is_unit() || !sim) {
+        return;
+    }
+    auto& unit = static_cast<sim::Unit&>(e);
+    if (unit.is_air_unit()) {
+        unit.fly_on_from_here(sim->terrain());
+    }
+}
+
 static int entity_DetachFrom(lua_State* L) {
     auto* self = check_entity(L); if (!self) return 0;
     if (self->parent_entity_id()) {
@@ -951,6 +974,7 @@ static int entity_DetachFrom(lua_State* L) {
             if (parent) parent->remove_child(self->entity_id());
         }
         self->clear_parent();
+        released(*self, L);
     }
     return 0;
 }
@@ -971,7 +995,10 @@ static int entity_DetachAll(lua_State* L) {
     for (auto& c : children_copy) {
         if (bone >= 0 && c.bone != bone) continue;
         auto* child = sim->entity_registry().find(c.entity_id);
-        if (child) child->clear_parent();
+        if (child) {
+            child->clear_parent();
+            released(*child, L);
+        }
         self->remove_child(c.entity_id);
     }
     return 0;
@@ -1106,7 +1133,7 @@ const MethodEntry entity_methods[] = {
     {"AddPingPongScroller",     stub_noop},
     {"AddThreadScroller",       stub_noop},
     {"RemoveScroller",          stub_noop},
-    {"RequestRefreshUI",        stub_noop},
+    {"RequestRefreshUI",        entity_RequestRefreshUI},
     {"SetCustomName",           entity_SetCustomName},
     {nullptr, nullptr},
 };
@@ -1216,49 +1243,49 @@ static int prop_CreatePropAtBone(lua_State* L) {
 // until the script destroys it.
 static int prop_SinkAway(lua_State* L) {
     auto* e = check_entity(L);
-    if (e && e->is_prop()) static_cast<sim::Prop*>(e)->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
+    if (e && e->is_prop()) {
+        auto* prop = static_cast<sim::Prop*>(e);
+        prop->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
+        prop->fall_motor = false;
+    }
     return 0;
 }
 
-// motor:Whack(nx, ny, nz, depth, dotrunk): the tree falls over away from
-// the push, once. (Moho simulates the fall; it lands the same way.)
+// motor:Whack(nx, ny, nz, force, dobreak) -> motor
 static int falldown_Whack(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
-    lua_pushstring(L, "_c_fallen");
-    lua_rawget(L, 1);
-    const bool fallen = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
     lua_pushstring(L, "_c_prop_id");
     lua_rawget(L, 1);
     const auto id = static_cast<u32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     auto* sim = get_sim(L);
     sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
-    if (fallen || !e || e->destroyed()) return 0;
-    f32 dx = static_cast<f32>(lua_tonumber(L, 2));
-    f32 dz = static_cast<f32>(lua_tonumber(L, 4));
-    const f32 len = std::sqrt(dx * dx + dz * dz);
-    if (len < 1e-4f) {
-        dx = 1.0f; // no horizontal push: any way will do
-        dz = 0.0f;
-    } else {
-        dx /= len;
-        dz /= len;
+    if (e && !e->destroyed() && e->is_prop()) {
+        static_cast<sim::Prop*>(e)->whack(
+            static_cast<f32>(lua_tonumber(L, 2)), static_cast<f32>(lua_tonumber(L, 4)),
+            static_cast<f32>(lua_tonumber(L, 5)), lua_toboolean(L, 6) != 0);
     }
-    // A quarter turn about (dz, 0, -dx) carries up (+Y) onto the push.
-    const f32 s = 0.70710678f;
-    const sim::Quaternion fall{dz * s, 0.0f, -dx * s, s};
-    e->set_orientation(sim::quat_multiply(fall, e->orientation()));
-    lua_pushstring(L, "_c_fallen");
-    lua_pushboolean(L, 1);
-    lua_rawset(L, 1);
-    return 0;
+    lua_settop(L, 1);
+    return 1;
 }
 
 // prop:FallDown() -> motor: whacking it topples the tree. The motor is a
 // moho.MotorFallDown, as Moho's is.
 static int prop_FallDown(lua_State* L) {
     auto* e = check_entity(L);
+    if (e && e->is_prop()) {
+        lua_pushstring(L, "Blueprint");
+        lua_rawget(L, 1);
+        f32 size_x = 0;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SizeX");
+            lua_rawget(L, -2);
+            size_x = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        static_cast<sim::Prop*>(e)->fall_down(size_x);
+    }
     lua_newtable(L);
     lua_pushstring(L, "_c_prop_id");
     lua_pushnumber(L, e ? static_cast<lua_Number>(e->entity_id()) : 0);
@@ -1299,6 +1326,56 @@ const MethodEntry motor_falldown_methods[] = {
 };
 // clang-format on
 
+// faf-re cfunc_PropAddBoundedPropL and EntityDB::AddBoundedProp.
+static int prop_AddBoundedProp(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 2) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d", "Prop:AddBoundedProp(priority)",
+                          2, n);
+    }
+    auto* e = check_entity(L);
+    if (!e || !e->is_prop()) {
+        return luaL_error(L, "Incorrect type of game object.  (Did you call with '.' instead of "
+                             "':'?)");
+    }
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        luaL_typerror(L, 2, "number");
+    }
+    auto* sim = get_sim(L);
+    if (!sim) {
+        return 0;
+    }
+    auto* prop = static_cast<sim::Prop*>(e);
+    auto& bounded = sim->bounded_props();
+    if (prop->bounded_handle != -1) {
+        bounded.remove(prop->bounded_handle);
+        prop->bounded_handle = -1;
+    }
+    prop->bounded_priority = static_cast<i32>(std::ceil(static_cast<f32>(lua_tonumber(L, 2))));
+    prop->bounded_tick = static_cast<i32>(sim->tick_count());
+    while (bounded.size() >= sim::BoundedProps::kLimit) {
+        sim::Prop* evicted = bounded.lowest();
+        bounded.pop_lowest();
+        evicted->bounded_handle = -1;
+        if (evicted->destroyed()) {
+            continue;
+        }
+        if (evicted->lua_table_ref() >= 0) {
+            lua_pushcfunction(L, entity_Destroy);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, evicted->lua_table_ref());
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("Destroy error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            evicted->mark_destroyed();
+            sim->entity_registry().unregister_entity(evicted->entity_id());
+        }
+    }
+    prop->bounded_handle = bounded.insert(prop->bounded_priority, prop->bounded_tick, prop);
+    return 0;
+}
+
 // clang-format off
 const MethodEntry prop_methods[] = {
     {"GetMaxHealth",                entity_GetMaxHealth},
@@ -1315,7 +1392,7 @@ const MethodEntry prop_methods[] = {
     {"SetOrientation",              entity_SetOrientation},
     {"Destroy",                     entity_Destroy},
     {"BeenDestroyed",               entity_BeenDestroyed},
-    {"AddBoundedProp",              stub_return_nil},
+    {"AddBoundedProp",              prop_AddBoundedProp},
     {"SetCollisionShape",           entity_SetCollisionShape},
     {"GetCollisionExtents",         entity_GetCollisionExtents},
     {"SetMesh",                     entity_SetMesh},

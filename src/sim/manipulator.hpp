@@ -126,6 +126,8 @@ public:
     /// velocity is against its facing; the Megalith's walk).
     void set_directional(bool on) { directional_ = on; }
     bool directional() const { return directional_; }
+    void set_motion_scaled(bool on) { motion_scaled_ = on; }
+    bool motion_scaled() const { return motion_scaled_; }
     void set_animation_fraction(f32 frac) { fraction_ = frac; finished_ = false; }
     f32 animation_fraction() const { return fraction_; }
     f32 animation_duration() const { return duration_; }
@@ -154,6 +156,7 @@ private:
     f32 duration_ = 1.0f;     // default (no .sca parsing yet)
     bool looping_ = false;
     bool directional_ = false;
+    bool motion_scaled_ = false;
     bool finished_ = false;
 
     const SCAData* sca_data_ = nullptr;
@@ -254,6 +257,7 @@ public:
     /// CreateBuilderArmController's: the unit's build orders aim it
     void set_builder_arm(bool b) { builder_arm_ = b; }
     bool builder_arm() const { return builder_arm_; }
+    bool tracking() const { return tracking_; }
     /// An arcing weapon's launch angle above the horizontal: the pitch to
     /// take instead of the straight line to the target (none: the line).
     void set_elevation(std::optional<f32> radians) { elevation_ = radians; }
@@ -278,6 +282,7 @@ private:
     bool has_target_ = false;
     bool on_target_ = false;
     bool builder_arm_ = false;
+    bool tracking_ = false;
     bool yaw_only_on_target_ = false;
 };
 
@@ -415,12 +420,35 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// ThrustManipulator — air unit thrust visual controller
+// ThrustManipulator — turns an engine bone toward its unit's thrust
+// (CreateThrustController: UEF transports' engines; faf-re CThrustManipulator)
 // ---------------------------------------------------------------------------
 class ThrustManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    void tick(f32 /*dt*/) override {} // visual only
+    /// `rest`: the bone's forward (+Z) in its bind pose, relative to its parent.
+    void set_rest(const Vector3& rest);
+    void set_thrusting_param(const Vector3& cap_min, const Vector3& cap_max, f32 turn_force_mult,
+                             f32 turn_speed);
+
+    /// The force the unit flies by: its mass times its change of velocity
+    /// against gravity.
+    void tick(f32 dt) override;
     bool is_at_goal() const override { return true; }
+    void apply_pose(PoseLocals& pose) override;
+
+private:
+    Quaternion turn_toward(const Vector3& local_force);
+
+    Vector3 cap_min_{-100.0f, -100.0f, -100.0f};
+    Vector3 cap_max_{100.0f, 100.0f, 100.0f};
+    f32 turn_force_mult_ = 1.0f;
+    f32 turn_speed_ = 0.3f;
+    Vector3 rest_{0, 0, 1};
+    Quaternion orientation_{};
+    Vector3 force_{};
+    Vector3 last_velocity_{};
+    bool has_last_velocity_ = false;
 };
 
 } // namespace osc::sim

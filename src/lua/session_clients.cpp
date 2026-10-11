@@ -336,6 +336,33 @@ void pump_speed_changes(lua_State* L) {
     }
 }
 
+void show_desyncs(lua_State* L, u32 tick, const std::vector<u32>& sources) {
+    lua_pushnumber(L, static_cast<double>(tick));
+    lua_newtable(L);
+    for (size_t i = 0; i < sources.size(); ++i) {
+        lua_pushnumber(L, static_cast<double>(i + 1));
+        lua_pushstring(L, client_name(L, sources[i]).c_str());
+        lua_settable(L, -3);
+    }
+    core::call_ui_callback(L, core::kUiMainModule, "ShowDesyncDialog", 2);
+}
+
+void pump_desyncs(lua_State* L) {
+    auto* session = mp_net_state().session.get();
+    if (!session_is_multiplayer() || !session) {
+        return;
+    }
+    std::vector<u32> sources;
+    for (const sim::LockstepSession::Desync& desync : session->take_desyncs()) {
+        sources.push_back(desync.source);
+    }
+    if (sources.empty()) {
+        return;
+    }
+    const sim::SimState* sim = sim_of(L);
+    show_desyncs(L, sim ? sim->tick_count() : 0, sources);
+}
+
 void pump_pause_state(lua_State* L) {
     // What the UI was last told, for the game it was told of: known by the
     // sim's generation (each new game's sim has its own), not its address,

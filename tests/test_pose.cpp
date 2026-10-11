@@ -12,11 +12,14 @@
 #include "sim/unit.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <cmath>
+#include <cstring>
 #include <memory>
+#include <string>
 
 using namespace osc;
 using namespace osc::sim;
@@ -247,6 +250,36 @@ TEST_CASE("A directional animation runs backward while its unit backs up", "[pos
     CHECK_THAT(anim.animation_fraction(), WithinAbs(0.75, 1e-6));
 }
 
+TEST_CASE("A motion-scaled animation plays at its unit's speed over its MaxSpeed", "[pose]") {
+    AnimCache cache(nullptr);
+    cache.inject("/slide.sca", root_slide());
+    Unit unit;
+    unit.set_max_speed(4.0f);
+    AnimManipulator anim;
+    anim.set_owner(&unit);
+    anim.set_motion_scaled(true);
+    anim.play_anim("/slide.sca", true, &cache);
+
+    unit.note_tick_position();
+    unit.set_position({0.1f, 0, 0});
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.025, 1e-6));
+
+    unit.note_tick_position();
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.025, 1e-6));
+
+    unit.note_tick_position();
+    unit.set_orientation(euler_to_quat(0.1f, 0, 0));
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.05, 1e-6));
+
+    unit.note_tick_position();
+    unit.set_position({0.5f, 0, 0});
+    anim.tick(0.1f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.15, 1e-6));
+}
+
 TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its pitch",
           "[pose][aim]") {
     // YawOnlyOnTarget (the Torrent's missile racks: pitch fixed at 55 deg):
@@ -332,4 +365,141 @@ TEST_CASE("AttachBoneToEntityBone pins the unit's bone to the entity", "[pose][l
     target.mark_destroyed();
     unit.tick_manipulators(0.1f, L);
     CHECK(unit.bone_world_position(1).y < -1000.0f);
+}
+
+TEST_CASE("A builder arm calls its unit's builder tracking hooks as it starts and stops turning",
+          "[pose][build]") {
+    lua_State* L = lua_open();
+    const char* code =
+        "tracked = ''"
+        " return {OnStartBuilderTracking = function() tracked = tracked .. 'start,' end,"
+        " OnStopBuilderTracking = function() tracked = tracked .. 'stop,' end}";
+    REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "unit") == 0);
+    REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+    const auto tracked = [&] {
+        lua_getglobal(L, "tracked");
+        std::string v = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "");
+        lua_setglobal(L, "tracked");
+        return v;
+    };
+
+    BoneData bd = make_two_bones();
+    Unit unit;
+    unit.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    auto& arm =
+        static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+    arm.set_builder_arm(true);
+    arm.set_yaw_bone(1);
+    arm.set_firing_arc(-180.0f, 180.0f, 90.0f, -90.0f, 90.0f, 90.0f);
+    arm.set_target({10.0f, 0.0f, 11.0f}, 0.2617994f);
+
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "start,");
+    for (int i = 0; i < 4; ++i) {
+        unit.tick_manipulators(0.1f, L);
+    }
+    CHECK(tracked().empty());
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "stop,");
+
+    arm.clear_target();
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "start,");
+    CHECK_THAT(arm.heading(), WithinAbs(0.95 * 3.14159265 / 4.0, 1e-4));
+    for (int i = 0; i < 19; ++i) {
+        unit.tick_manipulators(0.1f, L);
+    }
+    CHECK(tracked().empty());
+    unit.tick_manipulators(0.1f, L);
+    CHECK(tracked() == "stop,");
+    CHECK(arm.heading() == 0.0f);
+    lua_close(L);
+}
+
+TEST_CASE("CreateAnimator(unit, true) binds the animation's rate to the unit's motion",
+          "[pose][lua]") {
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    lua::register_sim_bindings(lua, sim);
+    auto owned = std::make_unique<Unit>();
+    Unit& unit = *owned;
+    sim.entity_registry().register_entity(std::move(owned));
+    set_lua_handle(lua.raw(), "u", unit);
+
+    REQUIRE(
+        lua.do_string("CreateAnimator(u, true) CreateAnimator(u) CreateAnimator(u, false)").ok());
+    REQUIRE(unit.manipulators().size() == 3);
+    CHECK(static_cast<const AnimManipulator&>(*unit.manipulators()[0]).motion_scaled());
+    CHECK_FALSE(static_cast<const AnimManipulator&>(*unit.manipulators()[1]).motion_scaled());
+    CHECK_FALSE(static_cast<const AnimManipulator&>(*unit.manipulators()[2]).motion_scaled());
+}
+
+TEST_CASE("A thrust controller turns its engine toward the unit's thrust", "[pose][lua]") {
+    // retail UEA0107_Script.lua's engines
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    lua::register_sim_bindings(lua, sim);
+    lua::register_moho_bindings(lua, sim);
+    BoneData bd = make_two_bones();
+    auto owned = std::make_unique<Unit>();
+    owned->set_bone_data(&bd);
+    owned->init_animated_bones();
+    Unit& unit = *owned;
+    sim.entity_registry().register_entity(std::move(owned));
+    lua_State* L = lua.raw();
+    set_lua_handle(L, "u", unit);
+    REQUIRE(lua.do_string("c = CreateThrustController(u, 'thruster', 'child') "
+                          "c:SetThrustingParam(-0.25, 0.25, -0.75, 0.75, -0.0, 0.0, 1.0, 0.25)")
+                .ok());
+    const auto forward = [&] { return quat_rotate(unit.bone_pose(1).rotation, {0, 0, 1}); };
+
+    unit.tick_manipulators(0.1f, L);
+    CHECK_THAT(forward().y, WithinAbs(1.0, 1e-5));
+
+    unit.set_velocity({1, 0, 0});
+    unit.tick_manipulators(0.1f, L);
+    CHECK(forward().x > 0.1f);
+    CHECK(forward().x < 0.3f);
+
+    unit.set_velocity({2, 0, 0});
+    unit.tick_manipulators(0.1f, L);
+    CHECK_THAT(forward().x, WithinAbs(0.25 / std::sqrt(0.625), 1e-5));
+    CHECK_THAT(forward().y, WithinAbs(0.75 / std::sqrt(0.625), 1e-5));
+    CHECK_THAT(forward().z, WithinAbs(0.0, 1e-5));
+}
+
+TEST_CASE("An animation plays on top of the manipulators before it", "[pose]") {
+    BoneData bd = make_two_bones();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    SCAData sca = root_slide();
+    sca.num_bones = 2;
+    sca.bone_names.push_back("child");
+    sca.parent_indices.push_back(0);
+    for (auto& frame : sca.frames) {
+        frame.bones.push_back({{0, 0, 1}, Quaternion{}});
+    }
+    AnimCache cache(nullptr);
+    cache.inject("/both.sca", sca);
+
+    auto& rotator = static_cast<RotateManipulator&>(
+        *unit.add_manipulator(std::make_unique<RotateManipulator>()));
+    rotator.set_bone_index(1);
+    rotator.set_axis('y');
+    rotator.set_current_angle(90.0f);
+    auto& anim =
+        static_cast<AnimManipulator&>(*unit.add_manipulator(std::make_unique<AnimManipulator>()));
+    anim.play_anim("/both.sca", false, &cache);
+    anim.set_rate(1.0f);
+    unit.tick_manipulators(1.0f, nullptr);
+
+    const BonePose child = unit.bone_pose(1);
+    CHECK_THAT(child.position.x, WithinAbs(1.0, 1e-5));
+    const Vector3 forward = quat_rotate(child.rotation, {0, 0, 1});
+    CHECK_THAT(forward.x, WithinAbs(1.0, 1e-5));
 }

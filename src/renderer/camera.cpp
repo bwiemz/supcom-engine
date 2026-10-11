@@ -165,7 +165,20 @@ void Camera::set_view(f32 x, f32 z, f32 zoom, f32 heading, f32 pitch) {
     set_target(x, z);
 }
 
+void Camera::tell_tracking(bool tracking) {
+    if (tracking_listener_) {
+        tracking_listener_(tracking);
+    }
+}
+
+void Camera::stop_tracking() {
+    if (target_type_ == CameraTarget::Entity) {
+        tell_tracking(false);
+    }
+}
+
 void Camera::target_manual(f32 x, f32 y, f32 z, f32 heading, f32 pitch, f32 zoom, f32 seconds) {
+    stop_tracking();
     timed_move_init(seconds, 0.0f);
     end_pitch_ = pitch;
     // Unwrapped about the heading wrapped to +-pi, where the move starts.
@@ -220,6 +233,7 @@ void Camera::setup_hermite() {
 }
 
 void Camera::target_box(const std::array<f32, 3>& min, const std::array<f32, 3>& max, f32 seconds) {
+    stop_tracking();
     timed_move_init(seconds, 0.0f);
     for (int i = 0; i < 3; ++i) target_[i] = (min[i] + max[i]) * 0.5f;
     near_zoom_ = std::max(max[0] - min[0], max[2] - min[2]);
@@ -247,12 +261,18 @@ void Camera::target_entities(std::vector<u32> ids, bool track, f32 zoom, f32 sec
     if (!target_pose(pose)) return;
     target_ = pose.pos;
     near_zoom_ = zoom;
+    if (track) {
+        tell_tracking(true);
+    } else {
+        stop_tracking();
+    }
     target_type_ = track ? CameraTarget::Entity : CameraTarget::Location;
     setup_hermite();
 }
 
 void Camera::target_nose_cam(std::vector<u32> ids, f32 pitch_adjust, f32 zoom, f32 seconds,
                              f32 transition) {
+    stop_tracking();
     target_time_left_ = 0.0f;
     target_time_armed_ = false;
     target_ids_ = std::move(ids);
@@ -278,9 +298,21 @@ void Camera::target_nose_cam(std::vector<u32> ids, f32 pitch_adjust, f32 zoom, f
 }
 
 void Camera::target_nothing() {
+    stop_tracking();
     target_type_ = CameraTarget::Location;
     target_time_armed_ = false;
     target_time_left_ = 0.0f;
+}
+
+void Camera::camera_follow(u32 source, u32 target, f32 seconds) {
+    CameraEntityPose pose;
+    if (!target_pose(pose) || target_ids_[active_target_] != source || !entity_lookup_ ||
+        !entity_lookup_(target, pose)) {
+        return;
+    }
+    target_ids_.push_back(target);
+    active_target_ = target_ids_.size() - 1;
+    target_time_left_ = seconds;
 }
 
 void Camera::spin_rates(f32 heading_rate, f32 zoom_rate) {
@@ -327,8 +359,10 @@ void Camera::target_next_entity() {
             target_type_ = CameraTarget::Entity;
             target_time_left_ = 0.0f;
             target_time_armed_ = false;
+            tell_tracking(true);
             return;
         }
+        tell_tracking(false);
         target_ids_.erase(target_ids_.begin() + static_cast<std::ptrdiff_t>(next));
         if (target_ids_.empty()) return;
         // The one after the gone now sits where it was: step back so the
@@ -481,6 +515,9 @@ void Camera::update_targets(f32 dt) {
         if (!target_pose(pose)) {
             // Gone: a location, a turned view turned back
             target_time_armed_ = true;
+            if (target_type_ == CameraTarget::Entity && target_ids_.size() <= 1) {
+                tell_tracking(false);
+            }
             target_type_ = CameraTarget::Location;
             if (rotated_) revert_ = true;
             return;

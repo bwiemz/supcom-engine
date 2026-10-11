@@ -7,12 +7,18 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
+#include "map/heightmap.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/pose.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
 #include "ui/ui_control.hpp"
 
@@ -20,9 +26,12 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -457,6 +466,202 @@ TEST_CASE("A unit aboard can't be selected, unless a POD or a structure", "[sele
     CHECK(osc::renderer::selectable(structure));
 }
 
+TEST_CASE("The cursor's unit is one its view takes in, but a close OOB-tested one by its ray",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_motion_type("RULEUMT_Land");
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(400.0f);
+    const auto at = osc::renderer::screen_point(camera.view_proj(1024.0f / 768.0f),
+                                                {128.0f, 10.25f, 128.0f}, 1024.0f, 768.0f);
+    REQUIRE(at);
+
+    osc::renderer::InputHandler input;
+    osc::f32 oob_zoom = 0.0f;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.pick_blueprint = [&](const std::string&) {
+        osc::renderer::PickBlueprint bp;
+        bp.oob_test_zoom = oob_zoom;
+        return bp;
+    };
+    input.set_command_mode_hooks(hooks);
+    input.set_camera_zoom(400.0f);
+    const auto under = [&](osc::f32 dx) {
+        osc::f32 wx = 0;
+        osc::f32 wz = 0;
+        REQUIRE(camera.screen_to_world((*at)[0] + dx, (*at)[1], 1024.0f, 768.0f, 10.0f, wx, wz));
+        input.set_cursor_view(camera, 1024.0f, 768.0f, (*at)[0] + dx, (*at)[1], wx, wz);
+        return input.unit_under(w.sim, wx, wz);
+    };
+    CHECK(under(5.0f) == w.id);
+    CHECK(under(-5.0f) == w.id);
+    CHECK(under(12.0f) == 0);
+
+    oob_zoom = 200.0f;
+    CHECK(under(5.0f) == w.id);
+    input.set_camera_zoom(150.0f);
+    CHECK(under(5.0f) == 0);
+    CHECK(under(0.0f) == w.id);
+}
+
+TEST_CASE("A unit is picked by its mesh's bounds, scaled by the model and its blueprint",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-2.5f, 0.0f, -2.5f}, {2.5f, 5.6f, 2.5f}};
+    w.unit().set_bone_data(&model);
+    osc::renderer::InputHandler input;
+    CHECK(input.unit_under(w.sim, 130.3f, 128.0f) == w.id);
+    CHECK(input.unit_under(w.sim, 130.7f, 128.0f) == 0);
+    model.model_scale = 0.5f;
+    CHECK(input.unit_under(w.sim, 129.2f, 128.0f) == w.id);
+    CHECK(input.unit_under(w.sim, 130.3f, 128.0f) == 0);
+
+    model.model_scale = 1.0f;
+    model.mesh_bounds = osc::sim::MeshBounds{{8.0f, 0.0f, -0.5f}, {15.0f, 2.0f, 0.5f}};
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(100.0f);
+    const auto at = osc::renderer::screen_point(camera.view_proj(1024.0f / 768.0f),
+                                                {142.0f, 10.5f, 128.0f}, 1024.0f, 768.0f);
+    REQUIRE(at);
+    osc::f32 scale_x = 1.0f;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.pick_blueprint = [&](const std::string&) {
+        osc::renderer::PickBlueprint bp;
+        bp.mesh_scale_x = scale_x;
+        return bp;
+    };
+    input.set_command_mode_hooks(hooks);
+    const auto under_cursor = [&] {
+        osc::f32 wx = 0;
+        osc::f32 wz = 0;
+        REQUIRE(camera.screen_to_world((*at)[0], (*at)[1], 1024.0f, 768.0f, 10.0f, wx, wz));
+        input.set_cursor_view(camera, 1024.0f, 768.0f, (*at)[0], (*at)[1], wx, wz);
+        return input.unit_under(w.sim, wx, wz);
+    };
+    CHECK(under_cursor() == w.id);
+    scale_x = 0.2f;
+    CHECK(under_cursor() == 0);
+}
+
+TEST_CASE("A drag box takes a unit whose mesh box it meets, scaled by its blueprint without Shift",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-6.0f, 0.0f, -0.5f}, {6.0f, 2.0f, 0.5f}};
+    w.unit().set_bone_data(&model);
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(100.0f);
+    const auto vp = camera.view_proj(1024.0f / 768.0f);
+    osc::renderer::PickBlueprint bp;
+    osc::renderer::CommandModeHooks hooks;
+    hooks.pick_blueprint = [&](const std::string&) { return bp; };
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_command_mode_hooks(hooks);
+    const auto boxed = [&](const osc::sim::Vector3& p, bool shift) {
+        const auto at = osc::renderer::screen_point(vp, p, 1024.0f, 768.0f);
+        REQUIRE(at);
+        input.set_selected({});
+        input.select_in_box(w.sim, vp, 1024.0f, 768.0f, (*at)[0] - 3, (*at)[1] - 3, (*at)[0] + 3,
+                            (*at)[1] + 3, shift);
+        return input.selected().count(w.id) == 1;
+    };
+
+    CHECK(boxed({133.0f, 11.0f, 128.0f}, false));
+    CHECK_FALSE(boxed({137.0f, 11.0f, 128.0f}, false));
+    bp.mesh_scale_x = 0.3f;
+    CHECK_FALSE(boxed({133.0f, 11.0f, 128.0f}, false));
+    CHECK(boxed({133.0f, 11.0f, 128.0f}, true));
+    bp = {};
+    bp.mesh_scale_z = 0.3f;
+    CHECK(boxed({133.0f, 11.0f, 128.0f}, false));
+
+    w.unit().set_orientation(osc::sim::quat_axis_angle('y', 1.5707964f));
+    bp = {};
+    CHECK(boxed({128.0f, 11.0f, 133.0f}, false));
+    bp.mesh_scale_x = 0.3f;
+    CHECK_FALSE(boxed({128.0f, 11.0f, 133.0f}, false));
+
+    w.unit().set_orientation(osc::sim::quat_axis_angle('z', 1.5707964f));
+    model.mesh_bounds = osc::sim::MeshBounds{{-0.5f, -6.0f, -0.5f}, {0.5f, 6.0f, 0.5f}};
+    bp = {};
+    CHECK(boxed({133.0f, 10.0f, 128.0f}, false));
+    bp.mesh_scale_y = 0.3f;
+    CHECK_FALSE(boxed({133.0f, 10.0f, 128.0f}, false));
+    CHECK(boxed({133.0f, 10.0f, 128.0f}, true));
+}
+
+TEST_CASE("A drag box skips an upgrade's frame without Shift and deselects with Shift",
+          "[selection]") {
+    UiWorld w;
+    w.unit().set_position({128.0f, 10.0f, 128.0f});
+    osc::sim::BoneData model;
+    model.mesh_bounds = osc::sim::MeshBounds{{-1.0f, 0.0f, -1.0f}, {1.0f, 2.0f, 1.0f}};
+    w.unit().set_bone_data(&model);
+    auto other_unit = std::make_unique<osc::sim::Unit>();
+    other_unit->set_army(0);
+    other_unit->set_position({160.0f, 10.0f, 128.0f});
+    other_unit->set_bone_data(&model);
+    const osc::u32 other = w.sim.entity_registry().register_entity(std::move(other_unit));
+    const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
+                                     std::vector<osc::u16>(257 * 257, 10 * 128)};
+    osc::renderer::Camera camera;
+    camera.set_viewport(1024.0f, 768.0f);
+    camera.set_ground(&ground, false, 0.0f);
+    camera.init(256.0f, 256.0f);
+    camera.set_target(128.0f, 128.0f);
+    camera.set_eye_distance(100.0f);
+    const auto vp = camera.view_proj(1024.0f / 768.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    const auto box = [&](const std::unordered_set<osc::u32>& before, bool shift) {
+        const auto at = osc::renderer::screen_point(vp, {128.0f, 11.0f, 128.0f}, 1024.0f, 768.0f);
+        REQUIRE(at);
+        input.set_selected(before);
+        input.select_in_box(w.sim, vp, 1024.0f, 768.0f, (*at)[0] - 3, (*at)[1] - 3, (*at)[0] + 3,
+                            (*at)[1] + 3, shift);
+        return input.selected();
+    };
+    using Ids = std::unordered_set<osc::u32>;
+
+    w.unit().set_motion_type("RULEUMT_None");
+    w.unit().set_unit_state("BeingUpgraded", true);
+    CHECK(box({}, false).empty());
+    CHECK(box({}, true) == Ids{w.id});
+    w.unit().set_motion_type("RULEUMT_Land");
+    CHECK(box({}, false) == Ids{w.id});
+    w.unit().set_unit_state("BeingUpgraded", false);
+    w.unit().set_motion_type("RULEUMT_None");
+    CHECK(box({}, false) == Ids{w.id});
+
+    CHECK(box({w.id, other}, true) == Ids{other});
+    CHECK(box({w.id}, true).empty());
+    CHECK(box({other}, true) == Ids{w.id, other});
+    CHECK(box({w.id, other}, false) == Ids{w.id});
+}
+
 TEST_CASE("SelectUnits takes a unit aboard as its transport", "[userunit][selection]") {
     UiWorld w;
     osc::lua::register_user_bindings(w.ui);
@@ -486,6 +691,225 @@ TEST_CASE("A selected unit that boards leaves the selection", "[selection]") {
     w.unit().set_transport_id(w.id + 1);
     input.prune_selection(w.sim.entity_registry());
     CHECK(input.selected().empty());
+}
+
+TEST_CASE("A selected unit's RequestRefreshUI reports the selection again", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    lua_State* S = w.sim_lua.raw();
+    lua_newtable(S);
+    lua_pushstring(S, "_c_object");
+    lua_pushlightuserdata(S, &w.unit());
+    lua_rawset(S, -3);
+    lua_setglobal(S, "unit");
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE_FALSE(input.take_selection_event());
+
+    REQUIRE(w.sim_lua.do_string("moho.entity_methods.RequestRefreshUI(unit)").ok());
+    input.prune_selection(w.sim.entity_registry());
+    CHECK(input.take_selection_event());
+    CHECK(input.selected() == std::unordered_set<osc::u32>{w.id});
+    input.prune_selection(w.sim.entity_registry());
+    CHECK_FALSE(input.take_selection_event());
+}
+
+TEST_CASE("A selected unit's caps, restrictions and upgrade report the selection again",
+          "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    osc::lua::register_sim_bindings(w.sim_lua, w.sim);
+    auto from = std::make_unique<osc::sim::Unit>();
+    from->set_army(0);
+    const osc::u32 from_id = w.sim.entity_registry().register_entity(std::move(from));
+    lua_State* S = w.sim_lua.raw();
+    for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"from", from_id}}) {
+        lua_newtable(S);
+        lua_pushstring(S, "_c_object");
+        lua_pushlightuserdata(S, w.sim.entity_registry().find(id));
+        lua_rawset(S, -3);
+        lua_setglobal(S, name);
+    }
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+
+    for (const char* trigger : {
+             "M.AddBuildRestriction(unit, 'TECH1')",
+             "M.RemoveBuildRestriction(unit, 'TECH1')",
+             "M.RestoreBuildRestrictions(unit)",
+             "M.AddCommandCap(unit, 'RULEUCC_Move')",
+             "M.RemoveCommandCap(unit, 'RULEUCC_Move')",
+             "M.RestoreCommandCaps(unit)",
+             "M.AddToggleCap(unit, 'RULEUTC_ShieldToggle')",
+             "M.RemoveToggleCap(unit, 'RULEUTC_ShieldToggle')",
+             "M.RestoreToggleCaps(unit)",
+             "NotifyUpgrade(from, unit)",
+         }) {
+        INFO(trigger);
+        input.prune_selection(w.sim.entity_registry());
+        REQUIRE_FALSE(input.take_selection_event());
+        REQUIRE(w.sim_lua.do_string(std::string("local M = moho.unit_methods ") + trigger).ok());
+        input.prune_selection(w.sim.entity_registry());
+        CHECK(input.take_selection_event());
+    }
+}
+
+TEST_CASE("RestoreToggleCaps returns a unit to the toggles it started with", "[selection]") {
+    UiWorld w;
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    w.unit().add_toggle_cap("RULEUTC_ShieldToggle");
+    w.unit().snapshot_toggle_caps();
+    lua_State* S = w.sim_lua.raw();
+    lua_newtable(S);
+    lua_pushstring(S, "_c_object");
+    lua_pushlightuserdata(S, &w.unit());
+    lua_rawset(S, -3);
+    lua_setglobal(S, "unit");
+    REQUIRE(w.sim_lua
+                .do_string("local M = moho.unit_methods\n"
+                           "M.RemoveToggleCap(unit, 'RULEUTC_ShieldToggle')\n"
+                           "M.AddToggleCap(unit, 'RULEUTC_CloakToggle')\n"
+                           "M.RestoreToggleCaps(unit)")
+                .ok());
+    CHECK(w.unit().has_toggle_cap("RULEUTC_ShieldToggle"));
+    CHECK_FALSE(w.unit().has_toggle_cap("RULEUTC_CloakToggle"));
+}
+
+TEST_CASE("A selected unit's settings, Stop and its army's build restrictions report the "
+          "selection again",
+          "[selection]") {
+    osc::lua::LuaState lua;
+    osc::blueprints::BlueprintStore store{lua.raw()};
+    osc::sim::SimState sim{lua.raw(), &store};
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    lua_State* S = lua.raw();
+    std::array<osc::u32, 2> ids{};
+    for (const auto& [name, army] : {std::pair{"unit", 0}, std::pair{"enemy", 1}}) {
+        auto u = std::make_unique<osc::sim::Unit>();
+        u->set_army(army);
+        u->add_command_cap("RULEUCC_Pause");
+        const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+        ids[static_cast<size_t>(army)] = id;
+        lua_newtable(S);
+        lua_pushstring(S, "_c_object");
+        lua_pushlightuserdata(S, sim.entity_registry().find(id));
+        lua_rawset(S, -3);
+        lua_setglobal(S, name);
+    }
+    osc::renderer::InputHandler mine;
+    osc::renderer::InputHandler theirs;
+    mine.set_selected({ids[0]});
+    theirs.set_selected({ids[1]});
+    for (auto* input : {&mine, &theirs}) {
+        input->prune_selection(sim.entity_registry());
+        REQUIRE(input->take_selection_event());
+    }
+
+    for (const char* trigger : {
+             "M.SetPaused(unit, true)",
+             "M.SetRepeatQueue(unit, true)",
+             "M.SetFireState(unit, 1)",
+             "M.SetScriptBit(unit, 'RULEUTC_ShieldToggle', true)",
+             "M.ToggleScriptBit(unit, 'RULEUTC_ShieldToggle')",
+             "AddBuildRestriction(1, 'TECH1')",
+             "RemoveBuildRestriction(1, 'TECH1')",
+         }) {
+        INFO(trigger);
+        mine.prune_selection(sim.entity_registry());
+        REQUIRE_FALSE(mine.take_selection_event());
+        REQUIRE(lua.do_string(std::string("local M = moho.unit_methods ") + trigger).ok());
+        mine.prune_selection(sim.entity_registry());
+        CHECK(mine.take_selection_event());
+        theirs.prune_selection(sim.entity_registry());
+        CHECK_FALSE(theirs.take_selection_event());
+    }
+    // A script Stop waits in the queue; the player's Stop clears it and
+    // reports the selected unit's changed orders immediately.
+    REQUIRE(lua.do_string("IssueStop({unit})").ok());
+    auto* selected = static_cast<osc::sim::Unit*>(sim.entity_registry().find(ids[0]));
+    REQUIRE(selected->command_queue().size() == 1);
+    mine.prune_selection(sim.entity_registry());
+    CHECK_FALSE(mine.take_selection_event());
+    osc::sim::UnitCommand stop;
+    stop.type = osc::sim::CommandType::Stop;
+    sim.route_command({ids[0]}, stop, true);
+    CHECK(selected->command_queue().empty());
+    mine.prune_selection(sim.entity_registry());
+    CHECK(mine.take_selection_event());
+    theirs.prune_selection(sim.entity_registry());
+    CHECK_FALSE(theirs.take_selection_event());
+}
+
+TEST_CASE("A selected unit's head order of a refreshing type, taken off, reports the selection "
+          "again",
+          "[selection]") {
+    using osc::sim::CommandType;
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    input.set_selected({w.id});
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+    osc::u32 next_id = 1;
+    for (const auto& [type, refreshes] : {
+             std::pair{CommandType::BuildFactory, true},
+             std::pair{CommandType::Reclaim, true},
+             std::pair{CommandType::Repair, true},
+             std::pair{CommandType::Capture, true},
+             std::pair{CommandType::TransportLoad, true},
+             std::pair{CommandType::TransportUnload, true},
+             std::pair{CommandType::WaitForFerry, true},
+             std::pair{CommandType::Upgrade, true},
+             std::pair{CommandType::Dock, true},
+             std::pair{CommandType::Move, false},
+             std::pair{CommandType::BuildMobile, false},
+             std::pair{CommandType::Attack, false},
+         }) {
+        INFO(static_cast<int>(type));
+        osc::sim::UnitCommand head;
+        head.type = type;
+        head.command_id = next_id++;
+        osc::sim::UnitCommand next;
+        next.type = CommandType::Move;
+        next.command_id = next_id++;
+        w.unit().push_command(head, true);
+        w.unit().push_command(next, false);
+        w.unit().note_queue_head();
+        input.prune_selection(w.sim.entity_registry());
+        REQUIRE_FALSE(input.take_selection_event());
+        w.unit().remove_command(head.command_id, w.sim.entity_registry(), w.sim_lua.raw());
+        w.unit().note_queue_head();
+        input.prune_selection(w.sim.entity_registry());
+        CHECK(input.take_selection_event() == refreshes);
+        w.unit().clear_commands();
+        w.unit().note_queue_head();
+        input.prune_selection(w.sim.entity_registry());
+        input.take_selection_event();
+    }
+}
+
+TEST_CASE("A repair given and finished in one tick reports the selection again", "[selection]") {
+    UiWorld w;
+    osc::renderer::InputHandler input;
+    input.set_selected({w.id});
+    osc::sim::UnitCommand repair;
+    repair.type = osc::sim::CommandType::Repair;
+    repair.command_id = 1;
+    repair.target_id = 9999;
+    w.unit().push_command(repair, true);
+    input.prune_selection(w.sim.entity_registry());
+    REQUIRE(input.take_selection_event());
+    w.sim.tick();
+    REQUIRE(w.unit().command_queue().empty());
+    input.prune_selection(w.sim.entity_registry());
+    CHECK(input.take_selection_event());
 }
 
 TEST_CASE("A dying unit leaves the selection and can't be selected or hovered", "[selection]") {
@@ -537,4 +961,25 @@ TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[s
     input.set_selected({engineer, tank, far_tank});
     input.left_click_at(sim, 10.0f, 10.0f, true, true);
     CHECK(input.selected() == std::unordered_set<osc::u32>{engineer});
+}
+
+TEST_CASE("UserUnit:CanAttackTarget holds a structure to its weapon's reach", "[userunit]") {
+    UiWorld w;
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 10.0f;
+    gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
+    w.unit().add_weapon(std::move(gun));
+    auto target = std::make_unique<osc::sim::Unit>();
+    target->set_army(1);
+    target->set_position({30.0f, 0.0f, 0.0f});
+    const osc::u32 target_id = w.sim.entity_registry().register_entity(std::move(target));
+    lua_State* L = w.ui.raw();
+    osc::lua::push_units_for_ui(L, {target_id});
+    lua_setglobal(L, "far");
+    auto result = w.ui.do_string(R"(
+        if units[1]:CanAttackTarget(far[1], true) then error('in reach with the range check') end
+        if not units[1]:CanAttackTarget(far[1], false) then error('out of reach without it') end
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    CHECK(result.ok());
 }

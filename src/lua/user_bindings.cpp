@@ -40,11 +40,13 @@
 #include <unordered_set>
 #include <optional>
 #include <cctype>
+#include <charconv>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -1011,6 +1013,38 @@ static int l_RenderOverlayEconomy(lua_State* L) {
     return 0;
 }
 
+/// Moho's cfunc_TeamColorModeL; the string of per-army colours is FAF's
+/// (FA-Binary-Patches section/TeamColorMode.cpp).
+static int l_TeamColorMode(lua_State* L) {
+    if (lua_gettop(L) != 1) {
+        return luaL_error(L, "TeamColorMode(bool)\n  expected 1 args, but got %d", lua_gettop(L));
+    }
+    auto* r = get_renderer(L);
+    if (!r) {
+        return 0;
+    }
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        std::vector<u32> palette;
+        const std::string_view text(lua_tostring(L, 1), lua_strlen(L, 1));
+        size_t start = 0;
+        while (start < text.size()) {
+            const size_t end = std::min(text.find(',', start), text.size());
+            u32 color = 0;
+            const auto digits = text.substr(start, end - start);
+            std::from_chars(digits.data(), digits.data() + digits.size(), color, 16);
+            palette.push_back(color);
+            start = end + 1;
+        }
+        r->set_team_palette(std::move(palette));
+        return 0;
+    }
+    if (!lua_isboolean(L, 1)) {
+        return luaL_typerror(L, 1, "bool");
+    }
+    r->set_team_color_mode(lua_toboolean(L, 1) != 0);
+    return 0;
+}
+
 /// The range overlays FA's UI sets up: the session's, or none.
 static renderer::RangeOverlays* get_range_overlays(lua_State* L) {
     lua_pushstring(L, "__osc_range_overlays");
@@ -1486,10 +1520,12 @@ static int l_IssueDockCommand(lua_State* L) {
     };
     static const sim::CategoryName kStaging{"AIRSTAGINGPLATFORM"};
     std::vector<Pad> pads;
+    bool any_pad = false;
     registry.for_each_unit([&](sim::Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != focus) return;
         const auto& pad = static_cast<const sim::Unit&>(e);
         if (pad.is_being_built() || pad.is_dying() || !pad.has_category(kStaging)) return;
+        any_pad = true;
         if (pad.layer() == "Sub" || pad.layer() == "Seabed" || !pad.command_queue().empty()) return;
         const i32 room = pad.storage_slots() != 0
                              ? pad.storage_slots() - static_cast<i32>(pad.stored_ids().size())
@@ -1499,7 +1535,18 @@ static int l_IssueDockCommand(lua_State* L) {
         const f32 dz = pad.position().z - cz;
         pads.push_back({&pad, dz * dz + dx * dx, room});
     });
-    if (pads.empty()) return 0;
+    if (pads.empty()) {
+        if (auto* queue = get_callback_queue(L)) {
+            sim::SimCallbackEntry entry;
+            entry.func_name = sim::kProcessInfoCallback;
+            entry.args["Action"] =
+                std::string(any_pad ? "PlayBusyStagingPlatformsVO" : "PlayNoStagingPlatformsVO");
+            entry.args["Value"] = std::string("play");
+            entry.unit_ids.push_back(selected_unit_ids(L).front());
+            queue->push(std::move(entry));
+        }
+        return 0;
+    }
     std::sort(pads.begin(), pads.end(), [](const Pad& a, const Pad& b) {
         if (a.d2 != b.d2) return a.d2 < b.d2;
         return a.unit->entity_id() < b.unit->entity_id();
@@ -1697,9 +1744,9 @@ static int l_GetRolloverInfo(lua_State* L) {
 
     const auto& econ = unit->economy();
     set_num("massProduced", static_cast<lua_Number>(econ.production_mass));
-    set_num("massConsumed", static_cast<lua_Number>(econ.mass_consumed(unit->is_paused())));
+    set_num("massConsumed", static_cast<lua_Number>(econ.mass_consumed()));
     set_num("energyProduced", static_cast<lua_Number>(econ.production_energy));
-    set_num("energyConsumed", static_cast<lua_Number>(econ.energy_consumed(unit->is_paused())));
+    set_num("energyConsumed", static_cast<lua_Number>(econ.energy_consumed()));
     set_num("massRequested", static_cast<lua_Number>(econ.mass_requested()));
     set_num("energyRequested", static_cast<lua_Number>(econ.energy_requested()));
 
@@ -1715,13 +1762,16 @@ static int l_GetRolloverInfo(lua_State* L) {
     push_unit_for_ui(L, unit);
     lua_rawset(L, -3);
 
-    // focus: if unit is building something, include a sub-table for the target
+    // focus: what the unit builds; "focusUpgrade" while it upgrades (faf-re
+    // cfunc_GetRolloverInfoL)
     u32 focus_id = unit->build_target_id();
     if (focus_id != 0) {
         auto* focus_entity = sim->entity_registry().find(focus_id);
         if (focus_entity && focus_entity->is_unit() && !focus_entity->destroyed()) {
             auto* focus_unit = static_cast<sim::Unit*>(focus_entity);
-            lua_pushstring(L, "focus");
+            const bool upgrading = !unit->command_queue().empty() &&
+                                   unit->command_queue().front().type == sim::CommandType::Upgrade;
+            lua_pushstring(L, upgrading ? "focusUpgrade" : "focus");
             lua_newtable(L); // focus sub-table
             lua_pushstring(L, "blueprintId");
             lua_pushstring(L, focus_unit->blueprint_id().c_str());
@@ -1729,6 +1779,8 @@ static int l_GetRolloverInfo(lua_State* L) {
             lua_pushstring(L, "entityId");
             sim::push_entity_id(L, focus_unit->entity_id());
             lua_rawset(L, -3);
+            set_num("health", static_cast<lua_Number>(focus_unit->health()));
+            set_num("maxHealth", static_cast<lua_Number>(focus_unit->max_health()));
             lua_rawset(L, -3); // result["focus"] = focus_sub_table
         }
     }
@@ -1801,6 +1853,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
     state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
+    state.register_function("TeamColorMode", l_TeamColorMode);
     state.register_function("SetOverlayFilter", l_SetOverlayFilter);
     state.register_function("SetOverlayFilters", l_SetOverlayFilters);
     state.register_function("GenerateBuildTemplateFromSelection",

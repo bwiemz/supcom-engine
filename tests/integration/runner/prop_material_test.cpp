@@ -7,6 +7,7 @@
 // colour.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -91,8 +92,8 @@ void test_prop_materials(TestContext& ctx) {
         ground.set_strata(std::move(strata), {}, {});
     }
 
-    const auto dir = std::filesystem::temp_directory_path() / "osc_prop_material_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_prop_material_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 4.0f);
     write_plate_scm(dir / "plate_hover.scm", 2.0f);
     write_plate_scm(dir / "plate_wide.scm", 8.0f);

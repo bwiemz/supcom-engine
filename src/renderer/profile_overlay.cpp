@@ -73,33 +73,12 @@ f32 ProfileOverlay::emit_text(const std::string& text, f32 x, f32 y,
                                FontCache& font_cache,
                                const std::string& font_family, i32 font_size) {
     auto* atlas = font_cache.get(font_family, font_size);
-    if (!atlas) return 0.0f;
-
-    f32 cursor_x = x;
-    f32 baseline_y = y + atlas->metrics.ascent;
-
-    for (char c : text) {
-        u32 cp = static_cast<u32>(static_cast<u8>(c));
-        auto it = atlas->glyphs.find(cp);
-        if (it == atlas->glyphs.end()) {
-            auto sp = atlas->glyphs.find(32);
-            if (sp != atlas->glyphs.end())
-                cursor_x += sp->second.x_advance;
-            continue;
-        }
-
-        auto& gi = it->second;
-        f32 gx = cursor_x + gi.x_offset;
-        f32 gy = baseline_y - gi.y_offset;
-
-        if (gi.width > 0 && gi.height > 0) {
-            emit_quad(gx, gy, gi.width, gi.height,
-                      gi.u0, gi.v0, gi.u1, gi.v1,
-                      r, g, b, a);
-        }
-        cursor_x += gi.x_advance;
+    if (!atlas) {
+        return 0.0f;
     }
-    return cursor_x - x;
+    return place_glyphs(*atlas, text, x, y, [&](f32 gx, f32 gy, const GlyphInfo& gi) {
+        emit_quad(gx, gy, gi.width, gi.height, gi.u0, gi.v0, gi.u1, gi.v1, r, g, b, a);
+    });
 }
 
 void ProfileOverlay::update(FontCache& font_cache, TextureCache& tex_cache,

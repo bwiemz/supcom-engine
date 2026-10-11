@@ -83,6 +83,29 @@ inline void call_lua_global(lua_State* L, const char* name) {
     }
 }
 
+inline void push_imported_function(lua_State* L, const char* module, const char* name) {
+    // A chunk returning a function of the name (LuaPlus main chunks get no
+    // `arg`, and config.lua makes reading it an error).
+    static const char* kImport = "return function(module, name)\n"
+                                 "  local ok, m = pcall(import, module)\n"
+                                 "  if ok and type(m) == 'table' then return m[name] end\n"
+                                 "end\n";
+    if (luaL_loadbuffer(L, kImport, std::strlen(kImport), "=import") != 0 ||
+        lua_pcall(L, 0, 1, 0) != 0) {
+        spdlog::warn("module loader error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return;
+    }
+    lua_pushstring(L, module);
+    lua_pushstring(L, name);
+    if (lua_pcall(L, 2, 1, 0) != 0) {
+        spdlog::warn("{} import error: {}", module, lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
+}
+
 /// Push uimain's function `name` (SetupUI, StartGameUI): the global if a
 /// script defined one (FAF's doscript'ed uimain), else
 /// import('/lua/ui/uimain.lua')[name] as Moho calls it -- retail uimain
@@ -93,26 +116,7 @@ inline void push_uimain_function(lua_State* L, const char* name) {
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_isfunction(L, -1)) return;
     lua_pop(L, 1);
-    // A chunk returning a function of the name (LuaPlus main chunks get no
-    // `arg`, and config.lua makes reading it an error).
-    static const char* kImport =
-        "return function(name)\n"
-        "  local ok, m = pcall(import, '/lua/ui/uimain.lua')\n"
-        "  if ok and type(m) == 'table' then return m[name] end\n"
-        "end\n";
-    if (luaL_loadbuffer(L, kImport, std::strlen(kImport), "=uimain") != 0 ||
-        lua_pcall(L, 0, 1, 0) != 0) {
-        spdlog::warn("uimain loader error: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        lua_pushnil(L);
-        return;
-    }
-    lua_pushstring(L, name);
-    if (lua_pcall(L, 1, 1, 0) != 0) {
-        spdlog::warn("uimain import error: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        lua_pushnil(L);
-    }
+    push_imported_function(L, "/lua/ui/uimain.lua", name);
 }
 
 inline void push_setup_ui(lua_State* L) { push_uimain_function(L, "SetupUI"); }
@@ -198,6 +202,52 @@ inline void call_ui_callback(lua_State* L, const char* module, const char* name,
         }
     }
     lua_settop(L, base);
+}
+
+inline bool call_imported_ui_callback(lua_State* L, const char* module, const char* name,
+                                      int nargs) {
+    const int base = lua_gettop(L) - nargs;
+    push_imported_function(L, module, name);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, base);
+        return false;
+    }
+    lua_insert(L, base + 1);
+    if (lua_pcall(L, nargs, 0, 0) != 0) {
+        const char* raw = lua_tostring(L, -1);
+        spdlog::warn("Error running '{}:{}': {}", module, name, raw ? raw : "(unknown error)");
+    }
+    lua_settop(L, base);
+    return true;
+}
+
+/// Moho's WSupComFrame::OnCloseWindow asks this instead of quitting.
+inline bool call_show_escape_dialog(lua_State* L) {
+    const int top = lua_gettop(L);
+    push_uimain_function(L, "ShowEscapeDialog");
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return false;
+    }
+    lua_pushboolean(L, 1);
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        const char* raw = lua_tostring(L, -1);
+        spdlog::warn("Error running '/lua/ui/uimain.lua:ShowEscapeDialog': {}",
+                     raw ? raw : "(unknown error)");
+    }
+    lua_settop(L, top);
+    return true;
+}
+
+inline void call_on_track_unit(lua_State* L, bool tracking) {
+    lua_pushstring(L, "WorldCamera");
+    lua_pushboolean(L, tracking ? 1 : 0);
+    call_imported_ui_callback(L, "/lua/ui/game/tracking.lua", "OnTrackUnit", 2);
+}
+
+inline void call_on_command_graph_show(lua_State* L, bool show) {
+    lua_pushboolean(L, show ? 1 : 0);
+    call_imported_ui_callback(L, "/lua/ui/game/commandgraph.lua", "OnCommandGraphShow", 1);
 }
 
 /// The engine's own per-UI-frame heartbeat: a global OnBeat(dt) if a

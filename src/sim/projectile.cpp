@@ -510,6 +510,16 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
     // RandomSymmetricAround). Moho draws even for a range of 0; this only
     // for one there is.
     if (rng) {
+        f32 spin = 0;
+        f32 spin_range = 0;
+        number("RotationalVelocity", spin);
+        number("RotationalVelocityRange", spin_range);
+        if (spin != 0.0f || spin_range != 0.0f) {
+            Vector3 axis{gaussian(*rng), gaussian(*rng), gaussian(*rng)};
+            const f32 length = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+            const f32 rate = (spin + rng->range(-spin_range, spin_range)) * kDegToRad / length;
+            angular_velocity = {axis.x * rate, axis.y * rate, axis.z * rate};
+        }
         const auto spread = [&](const char* key, f32& value) {
             f32 range = 0;
             number(key, range);

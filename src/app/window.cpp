@@ -144,6 +144,7 @@ std::optional<int> App::Window::set_up() {
              call_command_graph(L, "OnCommandDragEnd", 2);
          },
          [this](const std::string& bp) { return ui_blueprint_footprint(ui_lua_state.raw(), bp); },
+         [this](const std::string& bp) { return ui_blueprint_pick(ui_lua_state.raw(), bp); },
          [this](bool air) { return osc::sim::formation_scripts(ui_lua_state.raw(), air); },
          [this](const std::vector<osc::sim::FormationMember>& units, const std::string& script,
                 const osc::sim::Vector3& at, osc::f32 facing) {
@@ -407,6 +408,11 @@ std::optional<int> App::Window::start_flows() {
         scripted_mouse.emplace(opt.mouse);
         renderer.set_scripted_pointer(scripted_mouse->pointer());
     }
+    renderer.camera().set_tracking_listener([this](bool tracking) {
+        if (sim_state) {
+            osc::core::call_on_track_unit(ui_lua_state.raw(), tracking);
+        }
+    });
     return std::nullopt;
 }
 

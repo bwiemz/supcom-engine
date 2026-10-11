@@ -28,7 +28,9 @@ add_library(osc_renderer STATIC
     minimap_renderer.cpp
     terrain_preview.cpp
     strategic_icon_renderer.cpp
+    economy_overlay_renderer.cpp
     resource_icon_renderer.cpp
+    projectile_icon_renderer.cpp
     hud_renderer.cpp
     selection_info_renderer.cpp
     fog_renderer.cpp

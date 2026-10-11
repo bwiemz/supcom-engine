@@ -11,6 +11,7 @@
 #include "core/types.hpp"
 
 #include <cstddef>
+#include <vector>
 
 struct lua_State;
 
@@ -84,6 +85,9 @@ bool session_speed(i32& rate);
 /// Each frame of a network game: uimain.NoteGameSpeedChanged(client, speed)
 /// for each change the lockstep applied, as Moho's client manager calls it.
 void pump_speed_changes(lua_State* L);
+
+void show_desyncs(lua_State* L, osc::u32 tick, const std::vector<osc::u32>& sources);
+void pump_desyncs(lua_State* L);
 
 /// Each frame of a network game: gamemain.OnPause(pausedBy,
 /// timeoutsRemaining) as a pause starts, OnResume() as it ends (Moho's

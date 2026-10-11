@@ -13,6 +13,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -74,6 +75,7 @@ struct WreckSite {
         auto* self = static_cast<WreckSite*>(lua_touserdata(L, lua_upvalueindex(1)));
         auto u = std::make_unique<Unit>();
         u->set_blueprint_id(lua_tostring(L, 1));
+        u->set_unit_id(lua_tostring(L, 1));
         u->set_position({static_cast<osc::f32>(lua_tonumber(L, 3)), 0.0f,
                          static_cast<osc::f32>(lua_tonumber(L, 5))});
         u->set_max_health(100.0f);
@@ -195,4 +197,214 @@ TEST_CASE("A wreck worth nothing is reclaimed off the site all the same", "[buil
     }
     REQUIRE(w.built());
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
+}
+
+TEST_CASE("A paused engineer clears its site, then makes its frame only on a retry after unpause",
+          "[build][wreck][pause]") {
+    WreckSite w;
+    const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
+    w.engineer->set_paused(true);
+    w.build("uab1103");
+    for (int i = 0; i < 40 && w.sim.entity_registry().find(wreck); ++i) {
+        w.sim.tick();
+    }
+    CHECK(w.sim.entity_registry().find(wreck) == nullptr);
+    for (int i = 0; i < 15; ++i) {
+        w.sim.tick();
+    }
+    CHECK_FALSE(w.built());
+    REQUIRE(w.engineer->command_queue().size() == 1);
+    w.engineer->set_paused(false);
+    int ticks = 0;
+    while (!w.built() && ticks < 20) {
+        w.sim.tick();
+        ++ticks;
+    }
+    CHECK(ticks <= 10);
+}
+
+TEST_CASE("A paused engineer's frame decays while it holds it, and builds on after a retry",
+          "[build][pause]") {
+    WreckSite w;
+    w.build("ueb1103");
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.built());
+    const osc::f32 frac = w.built()->fraction_complete();
+    const osc::f32 work = w.engineer->work_progress();
+    w.engineer->set_paused(true);
+    for (int i = 0; i < 15; ++i) {
+        w.sim.tick();
+    }
+    CHECK(w.engineer->is_building());
+    CHECK(w.engineer->command_queue().size() == 1);
+    CHECK(w.engineer->work_progress() == work);
+    CHECK(w.built()->fraction_complete() == Catch::Approx(frac - 14 * 0.1f / 360.0f));
+    w.engineer->set_paused(false);
+    osc::f32 last = w.built()->fraction_complete();
+    w.sim.tick();
+    CHECK(w.built()->fraction_complete() < last);
+    for (int i = 0; i < 10; ++i) {
+        w.sim.tick();
+    }
+    CHECK(w.built()->fraction_complete() > last);
+}
+
+TEST_CASE("A builder that must face its site turns to it before it builds", "[build][face]") {
+    WreckSite w;
+    Unit::Drive drive;
+    drive.turn_rate = 1.5f;
+    w.engineer->set_drive(drive);
+    w.engineer->set_orientation(osc::sim::euler_to_quat(3.0f, 0.0f, 0.0f));
+    w.engineer->set_need_to_face_target_to_build(true);
+    w.build("ueb1103");
+    w.sim.tick();
+    CHECK_FALSE(w.built());
+    for (int i = 0; i < 30 && !w.built(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.built());
+    CHECK(std::abs(osc::sim::quat_yaw(w.engineer->orientation())) < 0.32f);
+}
+
+namespace {
+
+constexpr const char* kHeard = R"(
+    __heard = ''
+    function Engineer:OnStartBuild(u, order) __heard = __heard .. 'start ' .. tostring(order) .. ' ' end
+    function Engineer:OnStopBuild(u, order) __heard = __heard .. 'stop ' .. tostring(order) .. ' ' end
+    function Engineer:OnFailedToBuild() __heard = __heard .. 'failed ' end
+)";
+
+std::string heard(lua_State* L) {
+    lua_getglobal(L, "__heard");
+    std::string s = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("A mobile build tells OnStartBuild and OnStopBuild its order", "[build]") {
+    WreckSite w(kHeard);
+    w.build("ueb1103");
+    for (int i = 0; i < 200 && !w.engineer->command_queue().empty(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.built());
+    CHECK_FALSE(w.built()->is_being_built());
+    CHECK(heard(w.L) == "start MobileBuild stop MobileBuild ");
+}
+
+TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame left", "[build]") {
+    WreckSite w(kHeard);
+    w.build("ueb1103");
+    w.sim.tick();
+    REQUIRE(w.built());
+    REQUIRE(w.engineer->build_target_id() == w.built_id);
+    w.engineer->clear_commands(w.sim.entity_registry(), w.L);
+    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->economy().consumption_active);
+    CHECK(heard(w.L) == "start MobileBuild stop MobileBuild failed ");
+    REQUIRE(w.built());
+    CHECK(w.built()->is_being_built());
+}
+
+TEST_CASE("A build callback can clear its orders without stopping the build twice", "[build]") {
+    WreckSite w(R"(
+        __stops = 0
+        __failed = 0
+        function Engineer:OnStopBuild(u, order)
+            __stops = __stops + 1
+            if __stops == 1 and not __starting then __clear() end
+        end
+        function Engineer:OnFailedToBuild() __failed = __failed + 1 end
+    )");
+    lua_pushlightuserdata(w.L, &w);
+    lua_pushcclosure(
+        w.L,
+        [](lua_State* L) {
+            auto* site = static_cast<WreckSite*>(lua_touserdata(L, lua_upvalueindex(1)));
+            site->engineer->clear_commands(site->sim.entity_registry(), L);
+            lua_getglobal(L, "__replace");
+            const bool replace = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            if (replace) {
+                UnitCommand guard;
+                guard.type = CommandType::Guard;
+                guard.command_id = 12345;
+                guard.target_pos = {1000.0f, 0.0f, 1000.0f};
+                site->engineer->push_command(guard, false);
+            }
+            return 0;
+        },
+        1);
+    lua_setglobal(w.L, "__clear");
+    w.build("ueb1103");
+    int failures = 0;
+    SECTION("an incomplete build is cancelled") {
+        w.sim.tick();
+        REQUIRE(w.built());
+        w.engineer->clear_commands(w.sim.entity_registry(), w.L);
+        failures = 1;
+        CHECK(w.built()->is_being_built());
+    }
+    SECTION("OnStartBuild replaces the queue") {
+        lua_pushboolean(w.L, true);
+        lua_setglobal(w.L, "__replace");
+        lua_getglobal(w.L, "Engineer");
+        lua_pushstring(w.L, "OnStartBuild");
+        const std::string callback = "return function(self, target, order) __starting = true; "
+                                     "__clear(); __starting = false end";
+        REQUIRE(luaL_loadbuffer(w.L, callback.c_str(), callback.size(), "callback") == 0);
+        REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+        lua_rawset(w.L, -3);
+        lua_pop(w.L, 1);
+        w.sim.tick();
+        failures = 1;
+        REQUIRE(w.built());
+        CHECK(w.built()->is_being_built());
+        REQUIRE(w.engineer->command_queue().size() == 1);
+        CHECK(w.engineer->command_queue().front().command_id == 12345);
+    }
+    SECTION("the build finishes") {
+        SECTION("OnStopBuild clears the queue") {}
+        SECTION("OnStopBuild replaces the queue") {
+            lua_pushboolean(w.L, true);
+            lua_setglobal(w.L, "__replace");
+        }
+        SECTION("OnStopBeingBuilt clears the builder's queue first") {
+            w.sim.tick();
+            REQUIRE(w.built());
+            lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.built()->lua_table_ref());
+            lua_pushstring(w.L, "OnStopBeingBuilt");
+            const std::string callback = "return function(self, builder) __clear() end";
+            REQUIRE(luaL_loadbuffer(w.L, callback.c_str(), callback.size(), "callback") == 0);
+            REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+            lua_rawset(w.L, -3);
+            lua_pop(w.L, 1);
+        }
+        for (int tick = 0; tick < 200 && (!w.built() || w.built()->is_being_built()); ++tick) {
+            w.sim.tick();
+        }
+        REQUIRE(w.built());
+        CHECK_FALSE(w.built()->is_being_built());
+        lua_getglobal(w.L, "__replace");
+        if (lua_toboolean(w.L, -1)) {
+            REQUIRE(w.engineer->command_queue().size() == 1);
+            CHECK(w.engineer->command_queue().front().command_id == 12345);
+        } else {
+            CHECK(w.engineer->command_queue().empty());
+        }
+        lua_pop(w.L, 1);
+    }
+    lua_getglobal(w.L, "__stops");
+    CHECK(lua_tonumber(w.L, -1) == 1);
+    lua_pop(w.L, 1);
+    lua_getglobal(w.L, "__failed");
+    CHECK(lua_tonumber(w.L, -1) == failures);
+    lua_pop(w.L, 1);
+    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->economy().consumption_active);
 }

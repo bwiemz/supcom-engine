@@ -96,6 +96,10 @@ struct CallbackSim {
                         table.insert(hooks, bit and (hook .. bit) or hook)
                     end
                 end
+                u.OnFailedToBeBuilt = function(self)
+                    table.insert(hooks, 'OnFailedToBeBuilt')
+                    self:Destroy()
+                end
                 return u
             end
         )";
@@ -107,6 +111,7 @@ struct CallbackSim {
     osc::u32 spawn() {
         auto u = std::make_unique<Unit>();
         u->set_army(0);
+        u->add_command_cap("RULEUCC_Pause");
         // its script object, as the sim gives every unit
         lua_pushstring(L, "make_unit");
         lua_rawget(L, LUA_GLOBALSINDEX);
@@ -312,6 +317,7 @@ TEST_CASE("A callback's one value survives the codec; older replays have none",
 TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][replay]") {
     std::vector<osc::u8> bytes;
     size_t script_at = 0; // where the command's Script table sits in the file
+    size_t form_move_at = 0;
     {
         CallbackSim rec;
         const osc::u32 unit = rec.spawn();
@@ -331,6 +337,13 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
         osc::sim::write_command(wm, c);
         const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
         script_at = bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
+        c.command.form_move = !c.command.form_move;
+        std::vector<osc::u8> paced;
+        osc::sim::ByteWriter wf(paced);
+        osc::sim::write_command(wf, c);
+        const auto form = std::mismatch(marked.begin(), marked.end(), paced.begin());
+        form_move_at =
+            bytes.size() - plain.size() + static_cast<size_t>(form.first - marked.begin());
     }
     // The callback is the last command, its "no value" and "no Lua args"
     // bytes the file's last: v7 wrote neither, nor its (empty) Script table
@@ -340,6 +353,7 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
     bytes.pop_back();
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(script_at),
                 bytes.begin() + static_cast<std::ptrdiff_t>(script_at) + 4);
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(form_move_at));
     const osc::u32 v7 = 7;
     std::memcpy(bytes.data() + 4, &v7, 4); // after "OSCR"
     Replay back;
@@ -510,6 +524,42 @@ TEST_CASE("ProcessInfo's pause and auto mode call the same hooks", "[simcallback
     CHECK(w.hooks() == "OnPaused,OnAutoModeOn");
 }
 
+TEST_CASE("The UI pauses only a unit with RULEUCC_Pause or RULEUTC_GenericToggle",
+          "[simcallback]") {
+    CallbackSim w;
+    struct Case {
+        const char* command_cap;
+        const char* toggle_cap;
+        bool paused;
+    };
+    for (const Case c : {Case{nullptr, nullptr, false}, Case{"RULEUCC_Pause", nullptr, true},
+                         Case{nullptr, "RULEUTC_GenericToggle", true},
+                         Case{"RULEUCC_Stop", "RULEUTC_ProductionToggle", false}}) {
+        const osc::u32 by_setting = w.spawn();
+        const osc::u32 by_info = w.spawn();
+        for (const osc::u32 id : {by_setting, by_info}) {
+            w.unit(id).remove_command_cap("RULEUCC_Pause");
+            if (c.command_cap) {
+                w.unit(id).add_command_cap(c.command_cap);
+            }
+            if (c.toggle_cap) {
+                w.unit(id).add_toggle_cap(c.toggle_cap);
+            }
+        }
+        w.sim.submit_callback(setting("Paused", true, by_setting));
+        SimCallbackEntry info;
+        info.func_name = osc::sim::kProcessInfoCallback;
+        info.args["Action"] = std::string("SetPaused");
+        info.args["Value"] = std::string("true");
+        info.unit_ids = {by_info};
+        w.sim.submit_callback(info);
+        w.sim.tick();
+        CHECK(w.unit(by_setting).is_paused() == c.paused);
+        CHECK(w.unit(by_info).is_paused() == c.paused);
+    }
+    CHECK(w.hooks() == "OnPaused,OnPaused,OnPaused,OnPaused");
+}
+
 TEST_CASE("ProcessInfo's CustomName names the unit at the tick", "[simcallback]") {
     // UserUnit:SetCustomName reaches the sim as this pair, as Moho's does
     // (ProcessInfoPair(id, "CustomName", name)): the rename dialog, and the
@@ -526,6 +576,29 @@ TEST_CASE("ProcessInfo's CustomName names the unit at the tick", "[simcallback]"
     w.sim.tick();
     CHECK(w.unit(id).custom_name() == "Fred");
     CHECK(w.hooks().empty()); // a name, no script hook
+}
+
+TEST_CASE("ProcessInfo's staging platform voices reach the unit's brain", "[simcallback]") {
+    CallbackSim w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    const char* code = "return {OnPlayNoStagingPlatformsVO = function(self) "
+                       "table.insert(hooks, 'NoStaging') end, "
+                       "OnPlayBusyStagingPlatformsVO = function(self) "
+                       "table.insert(hooks, 'BusyStaging') end}";
+    REQUIRE(luaL_loadbuffer(w.L, code, std::strlen(code), "brain") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+    w.sim.army_at(0)->set_lua_table_ref(luaL_ref(w.L, LUA_REGISTRYINDEX));
+    const osc::u32 id = w.spawn();
+    for (const char* action : {"PlayNoStagingPlatformsVO", "PlayBusyStagingPlatformsVO"}) {
+        SimCallbackEntry cb;
+        cb.func_name = osc::sim::kProcessInfoCallback;
+        cb.args["Action"] = std::string(action);
+        cb.args["Value"] = std::string("play");
+        cb.unit_ids = {id};
+        w.sim.submit_callback(cb);
+    }
+    w.sim.tick();
+    CHECK(w.hooks() == "NoStaging,BusyStaging");
 }
 
 TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
@@ -735,13 +808,11 @@ TEST_CASE("Cancelling a factory's build under way destroys the unit it was build
     CHECK(w.hooks().empty());
 
     // Taking the last one off cancels it: the factory fails the build and
-    // the partial unit is destroyed through its own Destroy.
+    // the partial unit's script destroys it.
     w.sim.run_sim_callback(cb);
     CHECK(f.factory_queue().empty());
     CHECK(f.build_target_id() == 0);
-    CHECK(w.hooks() == "OnFailedToBuild,Destroy");
-    auto* gone = w.sim.entity_registry().find(partial);
-    CHECK((gone == nullptr || gone->destroyed()));
+    CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
 TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simcallback]") {
@@ -767,7 +838,7 @@ TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simca
     REQUIRE(f.command_queue().size() == 1);
     CHECK(f.command_queue().front().command_id == 5);
     CHECK(f.build_target_id() == 0);
-    CHECK(w.hooks() == "OnFailedToBuild,Destroy");
+    CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
 TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallback][drop]") {

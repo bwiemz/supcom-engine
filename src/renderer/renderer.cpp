@@ -435,6 +435,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     selection_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     if (has_stencil()) range_renderer_.init(device_, allocator_, frame_.scene_pass());
     resource_icon_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
+    projectile_icon_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's sky (M210b)
@@ -451,6 +452,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     // Strategic icon renderer
     strategic_icon_renderer_.init(device_, allocator_);
+    economy_overlay_renderer_.init(device_, allocator_);
 
     // What the player's intel shows, for everything that draws units (M215a)
     unit_renderer_.set_recon(&recon_);
@@ -1368,6 +1370,10 @@ void Renderer::clear_scene() {
     trail_renderer_.clear();
     trail_bp_cache_.clear();
     strategic_icon_renderer_.forget_blueprints(); // likewise the icons' (M215c)
+    strategic_icon_renderer_.set_team_color_mode(false);
+    strategic_icon_renderer_.set_team_palette({});
+    economy_overlay_renderer_.forget_params();
+    economy_overlay_renderer_.set_enabled(false);
 
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
@@ -1477,6 +1483,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     if (L) {
         sim::GameColors colors = sim::read_game_colors(L);
         recon_.set_unidentified_color(colors.unidentified_color);
+        strategic_icon_renderer_.set_team_colors(colors.team_colors);
         unit_renderer_.set_game_colors(std::move(colors));
     }
     // The cubes and lookups meshes shade with (M211a/b), once the texture
@@ -1839,6 +1846,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // take (its moves and basis run in poll_events); the world it follows
     camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
     camera_view_ = view;
+    for (const auto& follow : events.camera_follows) {
+        camera_.camera_follow(follow.source, follow.projectile, follow.timeout);
+    }
+    events.camera_follows.clear();
     camera_game_time_ =
         view.cur() ? (static_cast<f64>(view.cur()->tick) + view.alpha()) * 0.1 : 0.0;
     // FA's own game interface replaces the C++ HUD placeholders.
@@ -1887,6 +1898,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     minimap_renderer_.set_frame_index(fi);
     minimap_renderer_.begin_frame();
     strategic_icon_renderer_.set_frame_index(fi);
+    economy_overlay_renderer_.set_frame_index(fi);
     hud_renderer_.set_frame_index(fi);
     selection_info_renderer_.set_frame_index(fi);
     fog_renderer_.set_frame_index(fi);
@@ -2112,6 +2124,14 @@ void Renderer::dump_frame(std::ostream& out) const {
         for (size_t i = 0; i < qs.size(); ++i)
             out << (i < textures.size() ? textures[i] : std::string("?")) << " | "
                 << quad_line(qs[i]) << '\n';
+    }
+    {
+        std::vector<std::string> icons;
+        for (const ProjectileIcon& p : strategic_icon_renderer_.projectile_icons()) {
+            icons.push_back(fmt::format("{} | {:.1f} {:.1f} {:.1f} {:.1f} | {:.4f}", p.path, p.x,
+                                        p.y, p.w, p.h, p.glow));
+        }
+        section("projectile-icons", std::move(icons));
     }
     section("minimap-window", ui_quads(painted_minimap_));
     section("minimap-hud", ui_quads(minimap_renderer_.quads()));
@@ -2487,6 +2507,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                   const std::unordered_set<u32>* selected_ids) {
     // What the player's army sees this tick (everything, with the fog off)
     recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
+    strategic_icon_renderer_.set_focus_army(player_army_);
     recon_.update(view, events.intel_flushes);
     events.intel_flushes.clear();
     // A playable rect the scripts synced since: what's outside it now hides
@@ -2496,10 +2517,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     command_graph_renderer_.set_highlight(highlight_command_, hovered_);
     command_graph_renderer_.update(view, camera_, selected_ids, player_army_, texture_cache_, L,
                                    unit_renderer_.shader_time() / 10.0f, window_height_,
-                                   (!ui_keys_blocked_ && (is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                                                          is_key_pressed(GLFW_KEY_RIGHT_SHIFT))) ||
-                                       command_drag_held_,
-                                   fi);
+                                   command_graph_held(), fi);
 
     const std::vector<WorldMeshDraw> world_meshes =
         ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
@@ -2707,7 +2725,12 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
-                                    window_height_, L);
+                                    window_height_, L, frame_dt_);
+    economy_overlay_renderer_.update(
+        view, camera_, vp, player_army_,
+        [&](const std::string& id) { return strategic_icon_renderer_.fade_in_zoom(id, L); },
+        texture_cache_, font_cache_, window_width_, window_height_, L);
+    projectile_icon_renderer_.update(strategic_icon_renderer_.projectile_icons(), fi);
 
     {
         bool resources = !camera_.free();
@@ -2994,6 +3017,7 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     }
     resource_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, resource_icon_time_,
                                    fi);
+    projectile_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, fi);
 }
 
 void Renderer::record_screen_layers(u32 fi) {
@@ -3009,6 +3033,10 @@ void Renderer::record_screen_layers(u32 fi) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
         overlay_renderer_.render(cmd_buf_[fi], ui_layout_,
                                  window_width_, window_height_);
+    }
+    if (ui_pipeline_ && economy_overlay_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        economy_overlay_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
     }
 
     // 8. Draw minimap (terrain bg + unit icons + camera box)
@@ -3241,6 +3269,22 @@ void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {
 
 bool Renderer::should_close() const {
     return window_ && glfwWindowShouldClose(window_);
+}
+
+bool Renderer::iconified() const {
+    return window_ && glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
+}
+
+void Renderer::keep_open() {
+    if (window_) {
+        glfwSetWindowShouldClose(window_, GLFW_FALSE);
+    }
+}
+
+bool Renderer::command_graph_held() const {
+    return (!ui_keys_blocked_ &&
+            (is_key_pressed(GLFW_KEY_LEFT_SHIFT) || is_key_pressed(GLFW_KEY_RIGHT_SHIFT))) ||
+           command_drag_held_;
 }
 
 bool Renderer::is_key_pressed(int glfw_key) const {
@@ -3870,10 +3914,12 @@ void Renderer::shutdown() {
     selection_renderer_.destroy(device_, allocator_);
     range_renderer_.destroy(device_, allocator_);
     resource_icon_renderer_.destroy(device_, allocator_);
+    projectile_icon_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
     strategic_icon_renderer_.destroy(device_, allocator_);
+    economy_overlay_renderer_.destroy(device_, allocator_);
     hud_renderer_.destroy(device_, allocator_);
     selection_info_renderer_.destroy(device_, allocator_);
     profile_overlay_.destroy(device_, allocator_);

@@ -6,6 +6,7 @@
 #include "ui/font_metrics_provider.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/temp_path.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -70,8 +71,7 @@ TEST_CASE("FontCache: a space advances by the font's own width", "[font]") {
     if (ttf.empty()) SKIP("no TrueType font installed");
 
     // Serve it as FA's Arial: /fonts/arial.ttf
-    const fs::path root = fs::temp_directory_path() / "osc_font_cache_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_font_cache_test");
     fs::create_directories(root / "fonts");
     fs::copy_file(ttf, root / "fonts" / "arial.ttf");
     osc::vfs::VirtualFileSystem vfs;
@@ -169,8 +169,7 @@ TEST_CASE("A font's atlas holds its accented Latin and Cyrillic letters, and tex
         SKIP("no font with accented Latin and Cyrillic letters installed");
     }
 
-    const fs::path root = fs::temp_directory_path() / "osc_font_cache_wide_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_font_cache_wide_test");
     fs::create_directories(root / "fonts");
     fs::copy_file(ttf, root / "fonts" / "arial.ttf");
     osc::vfs::VirtualFileSystem vfs;
@@ -203,8 +202,7 @@ TEST_CASE("A face the game's files lack is drawn as Arial", "[font]") {
     // FAF's UI asks for Calibri, which Moho takes from Windows' fonts.
     const fs::path ttf = find_system_ttf();
     if (ttf.empty()) SKIP("no TrueType font installed");
-    const fs::path root = fs::temp_directory_path() / "osc_font_fallback_test";
-    fs::remove_all(root);
+    const fs::path root = osc::test::unique_temp_path("osc_font_fallback_test");
     fs::create_directories(root / "fonts");
     fs::copy_file(ttf, root / "fonts" / "arial.ttf");
     osc::vfs::VirtualFileSystem vfs;
@@ -225,5 +223,37 @@ TEST_CASE("A face the game's files lack is drawn as Arial", "[font]") {
     // Asked again (another size too), it is found, not looked for afresh.
     CHECK(cache.get("Calibri", 14) == calibri);
     CHECK(cache.get("Calibri", 20) != nullptr);
+    fs::remove_all(root);
+}
+
+TEST_CASE("Text laid out for the HUD stands on its font's baseline", "[font]") {
+    const fs::path ttf = find_wide_ttf();
+    if (ttf.empty()) {
+        SKIP("no Arial-like font installed");
+    }
+    const fs::path root = fs::temp_directory_path() / "osc_font_baseline_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "fonts");
+    fs::copy_file(ttf, root / "fonts" / "arial.ttf");
+    osc::vfs::VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
+
+    osc::renderer::FontCache cache;
+    cache.init(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE,
+               VK_NULL_HANDLE, &vfs);
+    const auto* atlas = cache.get("Arial", 13);
+    REQUIRE(atlas);
+    const float top = 40.0f;
+    std::vector<std::pair<float, float>> spans;
+    const float advance = osc::renderer::place_glyphs(
+        *atlas, "HI", 10.0f, top, [&](float, float y, const osc::renderer::GlyphInfo& gi) {
+            spans.emplace_back(y, y + gi.height);
+        });
+    REQUIRE(spans.size() == 2);
+    for (const auto& [glyph_top, glyph_bottom] : spans) {
+        CHECK(glyph_top >= top);
+        CHECK(glyph_bottom == top + atlas->metrics.ascent);
+    }
+    CHECK(advance == cache.string_advance("Arial", 13, "HI"));
     fs::remove_all(root);
 }

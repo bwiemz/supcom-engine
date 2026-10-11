@@ -9,6 +9,7 @@ add_library(osc_sim STATIC
     game_colors.cpp
     bone_cache.cpp
     bone_data.cpp
+    bounded_props.cpp
     collision.cpp
     collision_beam.cpp
     emitter_params.cpp
@@ -68,6 +69,8 @@ add_library(osc_sim STATIC
     game_setup.cpp
     script_class.cpp
     projectile_script.cpp
+    prop.cpp
+    prop_collision.cpp
     prop_script.cpp
     build_info.cpp
     sim_callbacks.cpp

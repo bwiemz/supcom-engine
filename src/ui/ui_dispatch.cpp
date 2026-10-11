@@ -165,6 +165,14 @@ static bool is_key_event(const UIEvent& ev) {
 
 /// The event's KeyCode, as Moho gives it (see key_codes.hpp): a key's wx
 /// code, a button's wx number, a character's code, else 0.
+static i32 dragger_key(lua_State* L) {
+    lua_pushstring(L, "__osc_active_dragger_key");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto key = static_cast<i32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return key;
+}
+
 static i32 moho_event_key_code(const UIEvent& ev) {
     if (is_key_event(ev)) return moho_key_code(ev.key_code);
     if (is_press(ev.type) || ev.type == UIEventType::BUTTON_RELEASE)
@@ -562,7 +570,8 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                     lua_pop(L, 1);
                 }
                 handled = true;
-            } else if (ev.type == UIEventType::BUTTON_RELEASE) {
+            } else if (ev.type == UIEventType::BUTTON_RELEASE &&
+                       moho_mouse_button(ev.key_code) == dragger_key(L)) {
                 lua_pushstring(L, "OnRelease");
                 lua_gettable(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
@@ -900,19 +909,22 @@ bool UIDispatch::item_list_key(lua_State* L, UIControl* list, const UIEvent& ev)
 }
 
 void UIDispatch::hover_item_list(lua_State* L, UIControl* target, const UIEvent& ev) {
-    UIControl* const list =
-        target && !target->destroyed() && target->control_type() == UIControl::ControlType::ItemList
-            ? target
-            : nullptr;
+    UIControl* const list = target && !target->destroyed() &&
+                                    target->control_type() == UIControl::ControlType::ItemList &&
+                                    target->show_mouseover()
+                                ? target
+                                : nullptr;
     const i32 row = list ? item_list_row(L, *list, ev) : -1;
     if (list == mouseover_list_ && row == mouseover_row_) {
         return;
     }
     if (mouseover_list_ && mouseover_list_ != list && mouseover_row_ >= 0) {
+        mouseover_list_->set_hover_item(-1);
         const f64 none = -1;
         run_script(L, mouseover_list_, "OnMouseoverItem", &none);
     }
     if (list && (list == mouseover_list_ || row >= 0)) {
+        list->set_hover_item(row);
         const f64 at = row;
         run_script(L, list, "OnMouseoverItem", &at);
     }

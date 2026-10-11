@@ -16,8 +16,10 @@
 #include "renderer/ui_renderer.hpp"
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/minimap_renderer.hpp"
+#include "renderer/economy_overlay_renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/resource_icon_renderer.hpp"
+#include "renderer/projectile_icon_renderer.hpp"
 #include "renderer/hud_renderer.hpp"
 #include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
@@ -168,6 +170,8 @@ public:
 
     /// Returns true if the window close was requested.
     bool should_close() const;
+    bool iconified() const;
+    void keep_open();
 
     /// Poll window events and update camera.
     void poll_events(f64 dt);
@@ -182,6 +186,7 @@ public:
     bool is_key_pressed(int glfw_key) const;
     void set_ui_keys_blocked(bool blocked) { ui_keys_blocked_ = blocked; }
     bool ui_keys_blocked() const { return ui_keys_blocked_; }
+    bool command_graph_held() const;
 
     /// The FA technique (mesh.fx) that draws a blueprint's mesh (M211b).
     MeshTechnique mesh_technique(const std::string& blueprint_id, lua_State* L);
@@ -260,9 +265,11 @@ public:
     bool decals_enabled() const { return decals_enabled_; }
     /// The session's economy overlay flag (Moho's DisplayEconomyOverlay,
     /// RenderOverlayEconomy): the MFD's economy toggle, off during a NIS.
-    /// Nothing draws the overlay yet.
-    void set_economy_overlay(bool on) { economy_overlay_ = on; }
-    bool economy_overlay() const { return economy_overlay_; }
+    void set_economy_overlay(bool on) { economy_overlay_renderer_.set_enabled(on); }
+    bool economy_overlay() const { return economy_overlay_renderer_.enabled(); }
+    const EconomyOverlayRenderer& economy_overlay_renderer() const {
+        return economy_overlay_renderer_;
+    }
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     /// ui_AlwaysRenderStrategicIcons (M217i).
     void set_icons_always(bool on) { strategic_icon_renderer_.set_always(on); }
@@ -273,6 +280,22 @@ public:
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
+    void set_weapons_yellow(bool on) { strategic_icon_renderer_.set_weapons_yellow(on); }
+    bool weapons_yellow() const { return strategic_icon_renderer_.weapons_yellow(); }
+    void set_team_color_mode(bool on) { strategic_icon_renderer_.set_team_color_mode(on); }
+    bool team_color_mode() const { return strategic_icon_renderer_.team_color_mode(); }
+    void set_team_palette(std::vector<u32> palette) {
+        strategic_icon_renderer_.set_team_palette(std::move(palette));
+    }
+    const std::vector<u32>& team_palette() const { return strategic_icon_renderer_.team_palette(); }
+    void set_projectile_icons(bool on) { strategic_icon_renderer_.set_projectile_icons(on); }
+    bool projectile_icons_on() const { return strategic_icon_renderer_.projectile_icons_on(); }
+    void set_projectile_glow(bool on) { strategic_icon_renderer_.set_projectile_glow(on); }
+    bool projectile_glow() const { return strategic_icon_renderer_.projectile_glow(); }
+    const std::vector<ProjectileIcon>& projectile_icons() const {
+        return strategic_icon_renderer_.projectile_icons();
+    }
+    f32 projectile_glow_time() const { return strategic_icon_renderer_.glow_time(); }
     void set_select_boxes(bool on) {
         overlay_renderer_.set_select_boxes(on);
         selection_renderer_.set_enabled(on);
@@ -720,7 +743,9 @@ private:
     MinimapRenderer minimap_renderer_;
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
+    EconomyOverlayRenderer economy_overlay_renderer_;
     ResourceIconRenderer resource_icon_renderer_;
+    ProjectileIconRenderer projectile_icon_renderer_;
     f32 resource_icon_time_ = 0.0f;
     VideoOptions video_options_;
     bool cursor_clipped_ = false;
@@ -752,7 +777,6 @@ private:
     UserPlayableRect playable_rect_;
     bool fog_enabled_ = true;
     bool decals_enabled_ = true;
-    bool economy_overlay_ = false;
 
     // The map's decals, projected and lit (M212b): each draws the terrain's
     // own triangles under it, a range of decal_indices_ over the terrain's

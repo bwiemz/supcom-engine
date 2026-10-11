@@ -11,6 +11,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/weapon.hpp"
 #include "sim/world_snapshot.hpp"
 
 extern "C" {
@@ -455,6 +456,7 @@ TEST_CASE("A build dropped where it can't stand is not sent; elsewhere it snaps"
           "[order_edit][input]") {
     World w;
     Unit& a = w.walker(10, 10);
+    a.add_category("ENGINEER");
     UnitCommand build;
     build.type = CommandType::BuildMobile;
     build.blueprint_id = "pgen";
@@ -622,6 +624,7 @@ TEST_CASE("A queue with more than moves, or not holding the waypoint, starts no 
 TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[order_edit][patrol]") {
     World w;
     Unit& a = w.walker(10, 10);
+    a.add_weapon(std::make_unique<osc::sim::Weapon>());
     Unit& theirs = w.walker(10, 20, 1);
     w.order({a.entity_id()}, CommandType::Move, 60, 10);
     w.order({a.entity_id()}, CommandType::Attack, 60, 60, false);
@@ -697,7 +700,7 @@ TEST_CASE("A right button held moves the selection in formation, facing the drag
     CHECK_FALSE(input.formation_drag());
 }
 
-TEST_CASE("A right click let go before the formation settles is a plain move",
+TEST_CASE("A right click let go before the formation settles moves to the formation's slots",
           "[order_edit][input][formation]") {
     World w;
     Unit& a = w.walker(10, 10);
@@ -708,8 +711,37 @@ TEST_CASE("A right click let go before the formation settles is a plain move",
     input.right_release(*w.sim);
     const UnitCommand c = pending_order(*w.sim, a.entity_id());
     CHECK(c.type == CommandType::Move);
-    CHECK(c.formation.empty());
-    CHECK_FALSE(c.has_facing);
+    CHECK(c.formation == "AttackFormation");
+    CHECK_FALSE(c.form_move);
+}
+
+TEST_CASE("A Move given a formation sends each unit to its slot at its own pace",
+          "[order_edit][formation]") {
+    World w;
+    const char* code = R"(
+        local formations = {AttackFormation = function() return {{-1, 0}, {1, 0}} end}
+        function import() return formations end
+    )";
+    REQUIRE(luaL_loadbuffer(w.L, code, std::strlen(code), "formations") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
+    Unit& a = w.walker(10, 10);
+    Unit& b = w.walker(14, 10);
+    for (Unit* u : {&a, &b}) {
+        lua_newtable(w.L);
+        u->set_lua_table_ref(luaL_ref(w.L, LUA_REGISTRYINDEX));
+    }
+    UnitCommand c;
+    c.type = CommandType::Move;
+    c.target_pos = {60, 0, 60};
+    c.formation = "AttackFormation";
+    c.form_move = false;
+    w.sim->route_command({a.entity_id(), b.entity_id()}, c, true);
+    const UnitCommand& ca = a.command_queue().front();
+    const UnitCommand& cb = b.command_queue().front();
+    CHECK(ca.target_pos.x != cb.target_pos.x);
+    CHECK(ca.speed_cap == 0.0f);
+    CHECK(cb.speed_cap == 0.0f);
+    CHECK_FALSE(ca.formed);
 }
 
 TEST_CASE("A left press in a drag formation takes the next script, from then on",

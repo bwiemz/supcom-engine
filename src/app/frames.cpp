@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "lua/factory_queue.hpp"
+#include "sim/unit.hpp"
 #include "sim/collision.hpp"
 #include "core/game_state.hpp"
 #include "lua/game_mods.hpp"
@@ -51,6 +52,32 @@ std::array<osc::f32, 2> ui_blueprint_footprint(lua_State* uiL, const std::string
     const auto [fx, fz] = osc::sim::blueprint_footprint(uiL, lua_gettop(uiL));
     lua_pop(uiL, 1);
     return {fx > 0 ? fx : 1.0f, fz > 0 ? fz : 1.0f};
+}
+
+osc::renderer::PickBlueprint ui_blueprint_pick(lua_State* uiL, const std::string& bp_id) {
+    osc::renderer::PickBlueprint pick;
+    auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
+    auto* entry = store ? store->find(bp_id) : nullptr;
+    if (!entry) {
+        return pick;
+    }
+    store->push_lua_table(*entry, uiL);
+    const auto read = [&](const char* key, osc::f32& out) {
+        lua_pushstring(uiL, key);
+        lua_rawget(uiL, -2);
+        if (lua_isnumber(uiL, -1)) {
+            out = static_cast<osc::f32>(lua_tonumber(uiL, -1));
+        }
+        lua_pop(uiL, 1);
+    };
+    read("UseOOBTestZoom", pick.oob_test_zoom);
+    read("SelectionYOffset", pick.y_offset);
+    read("SelectionMeshUseTopAmount", pick.use_top_amount);
+    read("SelectionMeshScaleX", pick.mesh_scale_x);
+    read("SelectionMeshScaleY", pick.mesh_scale_y);
+    read("SelectionMeshScaleZ", pick.mesh_scale_z);
+    lua_pop(uiL, 1);
+    return pick;
 }
 
 /// The structure a build mode places, from the UI state's blueprint store:
@@ -262,6 +289,24 @@ void sync_build_ghost(osc::sim::SimState& sim, const osc::renderer::CommandMode&
     }
 }
 
+static std::vector<std::pair<osc::u32, osc::u32>>
+selection_upgrades(const osc::sim::SimState& sim, const std::unordered_set<osc::u32>& sel) {
+    std::vector<std::pair<osc::u32, osc::u32>> out;
+    for (const osc::u32 id : sel) {
+        const auto* e = sim.entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
+        }
+        for (const auto& c : static_cast<const osc::sim::Unit*>(e)->command_queue()) {
+            if (c.type == osc::sim::CommandType::Upgrade) {
+                out.emplace_back(id, c.command_id);
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 /// A selection action reaches the UI as Moho reports it,
 /// gamemain.OnSelectionChanged(old, new, added, removed), and then the
 /// engine's own AddOnSelectionChangedCallback callbacks. Moho reports every
@@ -313,6 +358,16 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev
         lua_pop(uL, 1); // selection array
     }
     lua_pop(uL, 1); // callbacks table (or nil)
+}
+
+void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev,
+                               std::vector<std::pair<osc::u32, osc::u32>>& prev_upgrades,
+                               const osc::sim::SimState& sim,
+                               const std::unordered_set<osc::u32>& cur, bool action) {
+    auto upgrades = selection_upgrades(sim, cur);
+    const bool refresh = upgrades != prev_upgrades;
+    prev_upgrades = std::move(upgrades);
+    dispatch_selection_change(uL, prev, cur, action || refresh);
 }
 
 /// Moho's world-UI start (see ui::WldUIProvider): the user side of the

@@ -4,19 +4,27 @@
 #include "renderer/recon_view.hpp"
 #include "renderer/renderer.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
 #include "sim/prop.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/weapon.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
 
+extern "C" {
+#include "lua.h"
+}
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -29,9 +37,131 @@ bool targetable_prop(const sim::Entity& e) {
     return e.is_prop() && !static_cast<const sim::Prop&>(e).untargetable;
 }
 
+std::string upgrades_from(const sim::SimState& sim, const std::string& blueprint_id) {
+    const auto* store = sim.blueprint_store();
+    lua_State* L = sim.lua_state();
+    const auto* entry = store && L ? store->find(blueprint_id) : nullptr;
+    if (!entry) {
+        return {};
+    }
+    std::string out;
+    store->push_lua_table(*entry, L);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "General");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "UpgradesFrom");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                out = lua_tostring(L, -1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return out;
+}
+
+bool same_id(const std::string& a, const std::string& b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+        return std::tolower(static_cast<unsigned char>(x)) ==
+               std::tolower(static_cast<unsigned char>(y));
+    });
+}
+
+// Moho's world view hover: an unfinished unit whose creator is what it
+// upgrades from is that creator.
+const sim::Entity* hover_entity(const sim::SimState& sim, const sim::Entity* e) {
+    if (!e->is_unit() || e->parent_entity_id() != 0) {
+        return e;
+    }
+    const auto& unit = static_cast<const sim::Unit&>(*e);
+    if (!unit.is_being_built() || unit.creator_id() == 0) {
+        return e;
+    }
+    const sim::Entity* creator = sim.entity_registry().find(unit.creator_id());
+    if (!creator || creator->destroyed() || !creator->is_unit() ||
+        static_cast<const sim::Unit*>(creator)->is_dying()) {
+        return e;
+    }
+    return same_id(creator->blueprint_id(), upgrades_from(sim, unit.blueprint_id())) ? creator : e;
+}
+
 // Moho's func_GetRightMouseButtonAction: a unit riding another is busy.
 bool capture_target(const sim::Unit& u) {
     return u.capturable() && !u.is_being_built() && u.parent_entity_id() == 0;
+}
+
+sim::MeshBounds mesh_box(const sim::Unit& unit) {
+    const sim::Vector3 hi{std::max(unit.size_x(), 0.5f) * 0.5f, std::max(unit.size_y(), 0.5f),
+                          std::max(unit.size_z(), 0.5f) * 0.5f};
+    const sim::BoneData* model = unit.bone_data();
+    if (!model || !model->mesh_bounds) {
+        return {{-hi.x, 0.0f, -hi.z}, hi};
+    }
+    const sim::Vector3 s{model->model_scale * unit.scale_x(), model->model_scale * unit.scale_y(),
+                         model->model_scale * unit.scale_z()};
+    const sim::MeshBounds& m = *model->mesh_bounds;
+    return {{s.x * m.lo.x, s.y * m.lo.y, s.z * m.lo.z}, {s.x * m.hi.x, s.y * m.hi.y, s.z * m.hi.z}};
+}
+
+std::optional<sim::CommandType> friendly_mode(sim::SimState& sim,
+                                              const std::unordered_set<u32>& selected,
+                                              i32 player_army, const sim::Unit& target) {
+    std::vector<const sim::Unit*> units;
+    for (const u32 id : selected) {
+        const sim::Entity* e = sim.entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) {
+            units.push_back(static_cast<const sim::Unit*>(e));
+        }
+    }
+    const auto any = [&](const auto& pred) {
+        return std::any_of(units.begin(), units.end(), pred);
+    };
+    const auto has = [&](const char* cap) {
+        return any([&](const sim::Unit* u) { return u->has_command_cap(cap); });
+    };
+    if (target.has_category("RECLAIMFRIENDLY") && target.parent_entity_id() == 0 &&
+        sim::reclaim_target_valid(target) && has("RULEUCC_Reclaim")) {
+        return sim::CommandType::Reclaim;
+    }
+    if (target.army() == player_army && has("RULEUCC_CallTransport") && !target.is_being_built() &&
+        target.layer() != "Seabed") {
+        const bool takes_commander =
+            target.has_category("CANTRANSPORTCOMMANDER") || target.has_category("FERRYBEACON");
+        const bool lifts = target.has_category("TRANSPORTATION") ||
+                           target.has_category("TELEPORTATION") ||
+                           target.has_category("FERRYBEACON");
+        const bool stages = target.has_category("AIRSTAGINGPLATFORM");
+        const bool boards = any([&](const sim::Unit* u) {
+            if (u->is_being_built() || (!takes_commander && u->has_category("COMMAND"))) {
+                return false;
+            }
+            if (lifts) {
+                return !u->can_fly();
+            }
+            return stages && u->can_fly() && !u->has_category("CANNOTUSEAIRSTAGING");
+        });
+        if (boards) {
+            return target.has_category("FERRYBEACON") ? sim::CommandType::WaitForFerry
+                                                      : sim::CommandType::TransportLoad;
+        }
+    }
+    if (target.is_being_built() && has("RULEUCC_Repair") &&
+        (target.is_mobile() || (!target.has_category("FACTORY") && !target.has_category("SILO")))) {
+        return sim::CommandType::Repair;
+    }
+    const bool only_target =
+        std::all_of(units.begin(), units.end(), [&](const sim::Unit* u) { return u == &target; });
+    if (has("RULEUCC_Guard") && !target.has_category("CAMPAIGNGATE") && !only_target) {
+        return sim::CommandType::Guard;
+    }
+    if (has("RULEUCC_Repair") &&
+        (target.health() < target.max_health() || target.has_unit_state("Upgrading"))) {
+        return sim::CommandType::Repair;
+    }
+    return std::nullopt;
 }
 
 } // namespace
@@ -46,7 +176,7 @@ bool selectable(const sim::Entity& e) {
         return false;
     }
     const auto& unit = static_cast<const sim::Unit&>(e);
-    return !aboard(unit) && (!unit.is_being_built() || unit.has_category("FACTORY")) &&
+    return !aboard(unit) && (!unit.is_being_built() || unit.takes_orders_unfinished()) &&
            !unit.is_dying() && !unit.has_category("INSIGNIFICANTUNIT");
 }
 
@@ -97,6 +227,18 @@ std::optional<f32> ray_box_distance(const PickRay& ray, const sim::Vector3& cent
     }
     if (t_out < 0) return std::nullopt; // behind it
     return std::max(t_in, 0.0f);
+}
+
+bool solid_meets_box(const PickSolid& solid, const sim::Vector3& lo, const sim::Vector3& hi) {
+    for (const sim::Vector3& n : solid.inward) {
+        const f32 x = n.x >= 0 ? hi.x : lo.x;
+        const f32 y = n.y >= 0 ? hi.y : lo.y;
+        const f32 z = n.z >= 0 ? hi.z : lo.z;
+        if (n.x * (x - solid.eye.x) + n.y * (y - solid.eye.y) + n.z * (z - solid.eye.z) < 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::optional<std::array<f32, 2>> screen_point(const std::array<f32, 16>& view_proj,
@@ -185,13 +327,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
             cursor_world_ = std::array<f32, 2>{wx, wz};
             // The ray the cursor is on, for picking units where they are
             // drawn (an aircraft where it flies).
-            f32 o[3];
-            f32 d[3];
-            if (renderer.camera().screen_ray(mx, my, static_cast<f32>(renderer.width()),
-                                             static_cast<f32>(renderer.height()), o, d)) {
-                cursor_ray_ = PickRay{{o[0], o[1], o[2]}, {d[0], d[1], d[2]}};
-                cursor_ray_ground_ = {wx, wz};
-            }
+            set_cursor_view(renderer.camera(), static_cast<f32>(renderer.width()),
+                            static_cast<f32>(renderer.height()), mx, my, wx, wz);
             if (!dragging_) {
                 hovered_ = unit_under(sim, wx, wz);
             }
@@ -738,6 +875,20 @@ void InputHandler::prune_selection(const sim::EntityRegistry& registry) {
         const auto& unit = static_cast<const sim::Unit&>(*e);
         return aboard(unit) || unit.is_dying();
     });
+    std::unordered_map<u32, u32> requests;
+    for (const u32 id : selected_) {
+        const sim::Entity* e = registry.find(id);
+        if (!e) {
+            continue;
+        }
+        const u32 count = e->ui_refresh_requests();
+        if (const auto seen = refresh_requests_.find(id);
+            seen != refresh_requests_.end() && seen->second != count) {
+            selection_event_ = true;
+        }
+        requests.emplace(id, count);
+    }
+    refresh_requests_ = std::move(requests);
 }
 
 void InputHandler::world_click(sim::SimState& sim, f32 wx, f32 wz, bool shift, bool ctrl,
@@ -790,26 +941,93 @@ void InputHandler::handle_drag_select(Renderer& renderer,
 void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& view_proj,
                                  f32 width, f32 height, f32 x0, f32 y0, f32 x1, f32 y1,
                                  bool shift) {
-    if (!shift)
+    if (!shift) {
         selected_.clear();
-    // What the box holds on the screen, where each unit is drawn: an
-    // aircraft at its height, not the ground under it (which the box's
-    // footprint on the ground had missed).
+    }
     const f32 sx0 = std::min(x0, x1);
     const f32 sx1 = std::max(x0, x1);
     const f32 sy0 = std::min(y0, y1);
     const f32 sy1 = std::max(y0, y1);
+    using Plane = std::array<f32, 4>;
+    const auto row = [&](int i) {
+        return Plane{view_proj[i], view_proj[4 + i], view_proj[8 + i], view_proj[12 + i]};
+    };
+    const auto mix = [](f32 a, const Plane& p, f32 b, const Plane& q) {
+        return Plane{a * p[0] + b * q[0], a * p[1] + b * q[1], a * p[2] + b * q[2],
+                     a * p[3] + b * q[3]};
+    };
+    const Plane cx = row(0);
+    const Plane cy = row(1);
+    const Plane cz = row(2);
+    const Plane cw = row(3);
+    const std::array<Plane, 6> inward = {mix(1.0f, cx, 1.0f - 2.0f * sx0 / width, cw),
+                                         mix(-1.0f, cx, 2.0f * sx1 / width - 1.0f, cw),
+                                         mix(1.0f, cy, 1.0f - 2.0f * sy0 / height, cw),
+                                         mix(-1.0f, cy, 2.0f * sy1 / height - 1.0f, cw),
+                                         mix(1.0f, cz, 0.0f, cw),
+                                         mix(-1.0f, cz, 1.0f, cw)};
+    const auto meets = [&](const sim::Vector3& centre, const std::array<sim::Vector3, 3>& half) {
+        for (const Plane& p : inward) {
+            f32 reach = p[0] * centre.x + p[1] * centre.y + p[2] * centre.z + p[3];
+            for (const sim::Vector3& h : half) {
+                reach += std::abs(p[0] * h.x + p[1] * h.y + p[2] * h.z);
+            }
+            if (reach < 0.0f) {
+                return false;
+            }
+        }
+        return true;
+    };
     std::vector<std::pair<u32, int>> boxed;
     sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
-        if (e.army() != player_army_ || !selectable(e)) return;
-        const auto at = screen_point(view_proj, view_.position(e), width, height);
-        if (at && (*at)[0] >= sx0 && (*at)[0] <= sx1 && (*at)[1] >= sy0 && (*at)[1] <= sy1)
-            boxed.emplace_back(e.entity_id(),
-                               static_cast<const sim::Unit&>(e).selection_priority());
+        if (e.army() != player_army_ || !selectable(e)) {
+            return;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(e);
+        if (!shift && !unit.is_mobile() && unit.has_unit_state("BeingUpgraded")) {
+            return;
+        }
+        const auto [lo, hi] = mesh_box(unit);
+        const sim::Vector3 pos = view_.position(e);
+        const sim::Quaternion orient = view_.orientation(e);
+        const sim::Vector3 mid = sim::quat_rotate(
+            orient, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f});
+        const sim::Vector3 centre{pos.x + mid.x, pos.y + mid.y, pos.z + mid.z};
+        std::array<sim::Vector3, 3> half = {
+            sim::quat_rotate(orient, {(hi.x - lo.x) * 0.5f, 0.0f, 0.0f}),
+            sim::quat_rotate(orient, {0.0f, (hi.y - lo.y) * 0.5f, 0.0f}),
+            sim::quat_rotate(orient, {0.0f, 0.0f, (hi.z - lo.z) * 0.5f})};
+        const sim::Vector3 aabb{std::abs(half[0].x) + std::abs(half[1].x) + std::abs(half[2].x),
+                                std::abs(half[0].y) + std::abs(half[1].y) + std::abs(half[2].y),
+                                std::abs(half[0].z) + std::abs(half[1].z) + std::abs(half[2].z)};
+        if (!meets(centre, {{{aabb.x, 0.0f, 0.0f}, {0.0f, aabb.y, 0.0f}, {0.0f, 0.0f, aabb.z}}})) {
+            return;
+        }
+        if (!shift) {
+            const PickBlueprint pick = mode_hooks_.pick_blueprint
+                                           ? mode_hooks_.pick_blueprint(unit.blueprint_id())
+                                           : PickBlueprint{};
+            const std::array<f32, 3> scale = {pick.mesh_scale_x, pick.mesh_scale_y,
+                                              pick.mesh_scale_z};
+            for (size_t i = 0; i < 3; ++i) {
+                half[i] = {half[i].x * scale[i], half[i].y * scale[i], half[i].z * scale[i]};
+            }
+            if (!meets(centre, half)) {
+                return;
+            }
+        }
+        boxed.emplace_back(e.entity_id(), unit.selection_priority());
     });
     if (shift) {
+        const bool all_selected = std::all_of(boxed.begin(), boxed.end(), [&](const auto& unit) {
+            return selected_.count(unit.first) > 0;
+        });
         for (const auto& unit : boxed) {
-            selected_.insert(unit.first);
+            if (all_selected) {
+                selected_.erase(unit.first);
+            } else {
+                selected_.insert(unit.first);
+            }
         }
     } else {
         for (u32 id : highest_selection_priority(boxed)) {
@@ -823,7 +1041,7 @@ void InputHandler::select_in_box(sim::SimState& sim, const std::array<f32, 16>& 
 }
 
 std::vector<std::pair<sim::UnitCommand, std::vector<u32>>>
-InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
+InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz, bool* invalid) const {
     auto& registry = sim.entity_registry();
     const sim::ArmyBrain* me = sim.get_army(player_army_);
     const auto allied = [&](i32 army) {
@@ -849,57 +1067,64 @@ InputHandler::right_click_orders(sim::SimState& sim, f32 wx, f32 wz) const {
     const f32 wy = sim.terrain() ? sim.terrain()->get_surface_height(wx, wz) : 0.0f;
     const sim::Entity* t = target ? live(target) : nullptr;
     const auto* tu = t && t->is_unit() ? static_cast<const sim::Unit*>(t) : nullptr;
-    // Each unit's default order there.
-    const auto order_for = [&](const sim::Unit& u) {
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::Move;
-        cmd.target_pos = {wx, wy, wz};
-        const auto aim = [&](sim::CommandType type) {
-            cmd.type = type;
-            cmd.target_id = target;
-            cmd.target_pos = view_.position(*t);
-        };
-        if (on == On::Enemy) {
-            if (u.has_command_cap("RULEUCC_Attack")) {
-                aim(sim::CommandType::Attack);
-            } else if (u.has_command_cap("RULEUCC_Capture") && tu && capture_target(*tu)) {
-                aim(sim::CommandType::Capture);
-            } else if (u.has_command_cap("RULEUCC_Reclaim") && tu && tu->parent_entity_id() == 0 &&
-                       sim::reclaim_target_valid(*tu)) {
-                aim(sim::CommandType::Reclaim);
-            }
-        } else if (on == On::Ally && tu) {
-            // An aircraft, flying or landed.
-            if (tu->has_category("AIRSTAGINGPLATFORM") && u.has_command_cap("RULEUCC_Dock") &&
-                u.can_fly())
-                aim(sim::CommandType::Dock);
-            else if (tu->has_category("TRANSPORTATION") &&
-                     u.has_command_cap("RULEUCC_CallTransport") && !u.can_fly())
-                aim(sim::CommandType::TransportLoad);
-            else if (tu->is_being_built() && u.has_command_cap("RULEUCC_Repair"))
-                aim(sim::CommandType::Repair);
-            else if (u.has_command_cap("RULEUCC_Guard")) aim(sim::CommandType::Guard);
-        } else if (on == On::Wreck && t) {
-            if (u.has_command_cap("RULEUCC_Reclaim")) aim(sim::CommandType::Reclaim);
-        }
-        return cmd;
-    };
-
-    // One order per kind (and target), in id order, each routed to its units.
-    std::vector<u32> ids;
-    for (u32 id : selected_)
-        if (const sim::Entity* e = live(id); e && e->is_unit() && id != target) ids.push_back(id);
-    std::sort(ids.begin(), ids.end());
-    std::vector<std::pair<sim::UnitCommand, std::vector<u32>>> groups;
-    for (u32 id : ids) {
-        const sim::UnitCommand cmd = order_for(static_cast<const sim::Unit&>(*live(id)));
-        auto it = std::find_if(groups.begin(), groups.end(), [&](const auto& g) {
-            return g.first.type == cmd.type && g.first.target_id == cmd.target_id;
+    const bool hits =
+        on == On::Enemy && tu && std::any_of(selected_.begin(), selected_.end(), [&](u32 id) {
+            const sim::Entity* e = live(id);
+            return e && e->is_unit() &&
+                   sim::can_attack_target(static_cast<const sim::Unit&>(*e), *tu, true);
         });
-        if (it == groups.end()) groups.push_back({cmd, {id}});
-        else it->second.push_back(id);
+    const auto selection_has = [&](const char* cap) {
+        return std::any_of(selected_.begin(), selected_.end(), [&](u32 id) {
+            const sim::Entity* e = live(id);
+            return e && e->is_unit() && static_cast<const sim::Unit&>(*e).has_command_cap(cap);
+        });
+    };
+    std::optional<sim::CommandType> mode;
+    if (on == On::Enemy) {
+        if (hits && selection_has("RULEUCC_Attack")) {
+            mode = sim::CommandType::Attack;
+        } else if (tu && capture_target(*tu) && selection_has("RULEUCC_Capture")) {
+            mode = sim::CommandType::Capture;
+        } else if (tu && tu->parent_entity_id() == 0 && sim::reclaim_target_valid(*tu) &&
+                   selection_has("RULEUCC_Reclaim")) {
+            mode = sim::CommandType::Reclaim;
+        } else if (selection_has("RULEUCC_Attack")) {
+            if (invalid) {
+                *invalid = true;
+            }
+            return {};
+        }
+    } else if (on == On::Wreck && t && selection_has("RULEUCC_Reclaim")) {
+        mode = sim::CommandType::Reclaim;
+    } else if (on == On::Ally && tu) {
+        mode = friendly_mode(sim, selected_, player_army_, *tu);
     }
-    return groups;
+
+    std::vector<u32> ids;
+    for (const u32 id : selected_) {
+        if (const sim::Entity* e = live(id); e && e->is_unit() && (!mode || id != target)) {
+            ids.push_back(id);
+        }
+    }
+    if (ids.empty()) {
+        return {};
+    }
+    std::sort(ids.begin(), ids.end());
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Move;
+    cmd.target_pos = {wx, wy, wz};
+    if (mode) {
+        cmd.type = *mode;
+        cmd.target_id = target;
+        cmd.target_pos = view_.position(*t);
+    }
+    return {{cmd, std::move(ids)}};
+}
+
+bool InputHandler::right_click_invalid(sim::SimState& sim, f32 wx, f32 wz) const {
+    bool invalid = false;
+    right_click_orders(sim, wx, wz, &invalid);
+    return invalid;
 }
 
 std::optional<sim::CommandType> InputHandler::right_button_order(sim::SimState& sim, f32 wx,
@@ -931,6 +1156,7 @@ std::vector<IssuedCommand> InputHandler::issue_right_orders(
             cmd.formation = formation->script;
             cmd.has_facing = true;
             cmd.facing = formation->facing;
+            cmd.form_move = formation->settled();
         }
         // Player-issued: routed so it applies inside a tick (and a networked
         // match broadcasts it); a move goes to factories as their rally point.
@@ -947,7 +1173,8 @@ std::vector<IssuedCommand> InputHandler::issue_right_orders(
         case sim::CommandType::Capture: out.type = "Capture"; break;
         case sim::CommandType::Guard: out.type = "Guard"; break;
         case sim::CommandType::Repair: out.type = "Repair"; break;
-        case sim::CommandType::TransportLoad: out.type = "TransportLoadUnits"; break;
+        case sim::CommandType::TransportLoad:
+        case sim::CommandType::WaitForFerry: out.type = "TransportLoadUnits"; break;
         case sim::CommandType::Dock: out.type = "Dock"; break;
         case sim::CommandType::Reclaim: out.type = "Reclaim"; break;
         default: out.type = "Move"; break;
@@ -1038,9 +1265,8 @@ void InputHandler::right_drag(std::optional<std::array<f32, 2>> cursor, f64 dt) 
 std::vector<IssuedCommand> InputHandler::right_release(sim::SimState& sim) {
     std::vector<IssuedCommand> issued;
     if (pending_right_) {
-        const FormationDrag* formation =
-            formation_ && formation_->settled() ? &*formation_ : nullptr;
-        issued = issue_right_orders(sim, pending_right_->orders, pending_right_->shift, formation);
+        issued = issue_right_orders(sim, pending_right_->orders, pending_right_->shift,
+                                    formation_ ? &*formation_ : nullptr);
     }
     pending_right_.reset();
     formation_.reset();
@@ -1268,7 +1494,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         sim.route_player_command(attack_movers, move, !shift);
     }
     sim.set_human_input_active(false);
-    out.units = ids;
+    out.units = std::move(ids);
     out.units.insert(out.units.end(), attack_movers.begin(), attack_movers.end());
     std::sort(out.units.begin(), out.units.end());
     return out;
@@ -1349,6 +1575,51 @@ std::vector<IssuedCommand> InputHandler::build_line(sim::SimState& sim, const Co
     return issued;
 }
 
+void InputHandler::set_cursor_view(const Camera& camera, f32 width, f32 height, f32 mx, f32 my,
+                                   f32 wx, f32 wz) {
+    cursor_ray_.reset();
+    cursor_solid_.reset();
+    const auto ray_at = [&](f32 x, f32 y) -> std::optional<PickRay> {
+        f32 o[3];
+        f32 d[3];
+        if (!camera.screen_ray(x, y, width, height, o, d)) {
+            return std::nullopt;
+        }
+        return PickRay{{o[0], o[1], o[2]}, {d[0], d[1], d[2]}};
+    };
+    cursor_ray_ = ray_at(mx, my);
+    if (!cursor_ray_) {
+        return;
+    }
+    cursor_ray_ground_ = {wx, wz};
+    constexpr f32 t = kSelectTolerance;
+    const std::array<std::optional<PickRay>, 4> corners = {
+        ray_at(mx - t, my - t), ray_at(mx + t, my - t), ray_at(mx + t, my + t),
+        ray_at(mx - t, my + t)};
+    PickSolid solid{cursor_ray_->origin, {}};
+    const sim::Vector3& c = cursor_ray_->dir;
+    f32 spread = 0.0f;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!corners[i] || !corners[(i + 1) % 4]) {
+            return;
+        }
+        const sim::Vector3& a = corners[i]->dir;
+        const sim::Vector3& b = corners[(i + 1) % 4]->dir;
+        sim::Vector3 n{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+        if (n.x * c.x + n.y * c.y + n.z * c.z < 0) {
+            n = {-n.x, -n.y, -n.z};
+        }
+        solid.inward[i] = n;
+        spread = std::max(spread, std::hypot(a.x - c.x, a.y - c.y, a.z - c.z));
+    }
+    cursor_solid_ = solid;
+    const sim::Vector3& eye = cursor_ray_->origin;
+    cursor_reach_ = spread * std::hypot(wx - eye.x, eye.y, wz - eye.z);
+    cursor_view_proj_ = camera.view_proj(width / height);
+    cursor_screen_ = {mx, my};
+    screen_size_ = {width, height};
+}
+
 u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) const {
     // The cursor's ray if (wx, wz) is what it is on; else straight down.
     const bool on_cursor = cursor_ray_ && std::abs(cursor_ray_ground_[0] - wx) < 1e-3f &&
@@ -1369,31 +1640,70 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
         z0 = std::min(z0, hz);
         z1 = std::max(z1, hz);
     }
+    const bool tolerant = on_cursor && cursor_solid_;
     constexpr f32 kReach = 16.0f; // the widest unit's half size
+    const f32 reach = kReach + (tolerant ? cursor_reach_ : 0.0f);
     u32 best_id = 0;
     f32 best_t = std::numeric_limits<f32>::max();
-    for (u32 id : sim.entity_registry().collect_in_rect(x0 - kReach, z0 - kReach, x1 + kReach,
-                                                        z1 + kReach)) {
+    for (u32 id :
+         sim.entity_registry().collect_in_rect(x0 - reach, z0 - reach, x1 + reach, z1 + reach)) {
         const auto* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit() || !shown(*e) ||
             static_cast<const sim::Unit&>(*e).is_dying()) {
             continue;
         }
-        if (own_only && (e->army() != player_army_ || !selectable(*e))) {
+        const sim::Entity& hovered = *hover_entity(sim, e);
+        if (own_only && (hovered.army() != player_army_ || !selectable(hovered))) {
             continue;
         }
         const auto& unit = static_cast<const sim::Unit&>(*e);
         const sim::Vector3 pos = view_.position(*e);
         const sim::Quaternion orient = view_.orientation(*e);
-        const sim::Vector3 half{std::max(unit.size_x(), 0.5f) * 0.5f,
-                                std::max(unit.size_y(), 0.5f) * 0.5f,
-                                std::max(unit.size_z(), 0.5f) * 0.5f};
-        const sim::Vector3 up = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
-        const sim::Vector3 centre{pos.x + up.x, pos.y + up.y, pos.z + up.z};
-        const std::optional<f32> t = ray_box_distance(ray, centre, orient, half);
-        if (t && *t < best_t) {
+        const auto [lo, hi] = mesh_box(unit);
+        const sim::Vector3 half{(hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f};
+        const sim::Vector3 mid = sim::quat_rotate(
+            orient, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f});
+        const sim::Vector3 centre{pos.x + mid.x, pos.y + mid.y, pos.z + mid.z};
+        const PickBlueprint pick = tolerant && mode_hooks_.pick_blueprint
+                                       ? mode_hooks_.pick_blueprint(unit.blueprint_id())
+                                       : PickBlueprint{};
+        const bool by_ray = !tolerant || (unit.is_mobile() && pick.oob_test_zoom > camera_zoom_);
+        std::optional<f32> t;
+        if (by_ray) {
+            t = ray_box_distance(ray, centre, orient, half);
+        } else {
+            const sim::Vector3 ax = sim::quat_rotate(orient, {half.x, 0.0f, 0.0f});
+            const sim::Vector3 ay = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
+            const sim::Vector3 az = sim::quat_rotate(orient, {0.0f, 0.0f, half.z});
+            const sim::Vector3 ext{
+                (std::abs(ax.x) + std::abs(ay.x) + std::abs(az.x)) * pick.mesh_scale_x,
+                std::abs(ax.y) + std::abs(ay.y) + std::abs(az.y),
+                (std::abs(ax.z) + std::abs(ay.z) + std::abs(az.z)) * pick.mesh_scale_z};
+            sim::Vector3 box_lo{centre.x - ext.x, centre.y - ext.y, centre.z - ext.z};
+            sim::Vector3 box_hi{centre.x + ext.x, centre.y + ext.y, centre.z + ext.z};
+            const f32 height = box_hi.y - box_lo.y;
+            if (pick.use_top_amount <= 0.0f) {
+                box_hi.y -= height * pick.y_offset;
+            } else {
+                box_lo.y += (1.0f - pick.use_top_amount) * height;
+            }
+            if (solid_meets_box(*cursor_solid_, box_lo, box_hi)) {
+                t = 0.0f;
+            }
+        }
+        if (!t) {
+            continue;
+        }
+        if (tolerant) {
+            const auto at = screen_point(cursor_view_proj_, pos, screen_size_[0], screen_size_[1]);
+            if (!at) {
+                continue;
+            }
+            t = std::hypot((*at)[0] - cursor_screen_[0], (*at)[1] - cursor_screen_[1]);
+        }
+        if (*t < best_t) {
             best_t = *t;
-            best_id = id;
+            best_id = hovered.entity_id();
         }
     }
     return best_id;

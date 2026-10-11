@@ -8,6 +8,7 @@
 // with the bloom on and off are compared.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -70,8 +71,8 @@ void test_bloom(TestContext& ctx) {
 
     // Plates of the test's own: albedos dark, darker-grey and grey; SpecTeams
     // glowing fully, a fifth, and not at all (red, green and alpha 0).
-    const auto dir = std::filesystem::temp_directory_path() / "osc_bloom_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_bloom_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 4.0f);
     const auto flat = [](u8 r, u8 g, u8 b, u8 a) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r, g, b, a}; };

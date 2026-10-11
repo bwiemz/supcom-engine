@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "blueprints/blueprint_store.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
@@ -11,12 +12,15 @@
 #include "sim/manipulator.hpp"
 #include "sim/weapon.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/platoon.hpp"
 #include "sim/projectile.hpp"
 #include "sim/entity_registry.hpp"
 
 extern "C" {
 #include <lua.h>
 }
+
+#include <tuple>
 
 TEST_CASE("SmokeTestHarness records and deduplicates entries", "[smoke]") {
     osc::lua::SmokeTestHarness harness;
@@ -261,6 +265,8 @@ struct BuildRuleHarness {
             state, store, "test_experimental",
             {"MOBILE", "LAND", "EXPERIMENTAL"}, 1);
         store.expose_to_lua(state.raw());
+        REQUIRE(state.do_string(
+            "__blueprints.test_factory.General = {CommandCaps = {RULEUCC_Pause = true}}\n"));
     }
 };
 
@@ -482,6 +488,35 @@ TEST_CASE("A raised factory order whose build fails goes whole", "[session][rule
     CHECK(factory_orders(*f) == "test_experimental");
 }
 
+TEST_CASE("A factory guarding a factory sends the order it takes round as the guarded one repeats",
+          "[session][rules]") {
+    for (const bool guarded_repeats : {true, false}) {
+        CAPTURE(guarded_repeats);
+        BuildRuleHarness h;
+        REQUIRE(h.state.do_string(
+            "__blueprints.test_factory.Economy.BuildableCategory = {'MOBILE LAND'}\n"
+            "__blueprints.test_factory.General.CommandCaps.RULEUCC_Guard = true\n"
+            "__osc_a = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+            "IssueBuildFactory({__osc_a}, 'test_tank', 1)\n"
+            "IssueBuildFactory({__osc_a}, 'test_experimental', 1)\n"));
+        osc::sim::Unit* a = find_factory(h);
+        REQUIRE(a);
+        a->set_repeat_queue(guarded_repeats);
+        REQUIRE(h.state.do_string(std::string("local b = CreateUnit('test_factory', 1, 10, 0, 0)\n"
+                                              "moho.unit_methods.SetRepeatQueue(b, ") +
+                                  (guarded_repeats ? "false" : "true") +
+                                  ")\n"
+                                  "IssueFactoryAssist({b}, __osc_a)\n"
+                                  "__osc_b = b\n"));
+        h.sim.tick();
+        h.sim.tick();
+        REQUIRE(h.state.do_string(
+            "if not moho.unit_methods.IsUnitState(__osc_b, 'Building') then error('B idle') end"));
+        CHECK(factory_orders(*a) ==
+              (guarded_repeats ? "test_tank test_experimental" : "test_tank"));
+    }
+}
+
 namespace {
 
 osc::sim::Unit* find_unit(const BuildRuleHarness& h, const std::string& bp) {
@@ -498,13 +533,14 @@ osc::sim::Unit* find_unit(const BuildRuleHarness& h, const std::string& bp) {
 TEST_CASE("A factory's rally orders are apart from its build orders", "[session][rules]") {
     BuildRuleHarness h;
     REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
-                              "local tank = CreateUnit('test_tank', 1, 20, 0, 0)\n"
-                              "IssueBuildFactory({factory}, 'test_tank', 2)\n"
-                              "IssueFactoryRallyPoint({factory, tank}, {50, 0, 60})\n"));
+                              "tank = CreateUnit('test_tank', 1, 20, 0, 0)\n"));
     osc::sim::Unit* f = find_factory(h);
     osc::sim::Unit* tank = find_unit(h, "test_tank");
     REQUIRE(f);
     REQUIRE(tank);
+    f->add_command_cap("RULEUCC_Move");
+    REQUIRE(h.state.do_string("IssueBuildFactory({factory}, 'test_tank', 2)\n"
+                              "IssueFactoryRallyPoint({factory, tank}, {50, 0, 60})\n"));
     REQUIRE(f->rally_orders().size() == 2); // after its initial rally, as Moho's appends
     const auto& rally = f->rally_orders().back();
     CHECK(rally.type == osc::sim::CommandType::Move);
@@ -522,11 +558,12 @@ TEST_CASE("A factory's rally orders are apart from its build orders", "[session]
 
 TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[session][rules]") {
     BuildRuleHarness h;
-    REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
-                              "IssueFactoryRallyPoint({factory}, {50, 0, 60})\n"
-                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"));
     osc::sim::Unit* f = find_factory(h);
     REQUIRE(f);
+    f->add_command_cap("RULEUCC_Move");
+    REQUIRE(h.state.do_string("IssueFactoryRallyPoint({factory}, {50, 0, 60})\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
     // Then a guard order, which never ends: without a pathfinder here, a
     // move is done the tick it starts.
     osc::sim::UnitCommand guard;
@@ -1163,4 +1200,509 @@ TEST_CASE("A patrol whose point a unit stands on doesn't spin", "[session][rules
     h.sim.tick();
     REQUIRE(tank->command_queue().size() == 1);
     CHECK(tank->command_queue().front().type == osc::sim::CommandType::Patrol);
+}
+
+TEST_CASE("A paused factory holds its build without work, and the unit doesn't decay",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(f->is_building());
+    const osc::sim::Entity* tank = h.sim.entity_registry().find(f->build_target_id());
+    const osc::f32 frac = tank->fraction_complete();
+    f->set_paused(true);
+    for (int i = 0; i < 20; ++i) {
+        h.sim.tick();
+    }
+    CHECK(f->is_building());
+    CHECK(tank->fraction_complete() == frac);
+    f->set_paused(false);
+    h.sim.tick();
+    CHECK(tank->fraction_complete() > frac);
+}
+
+TEST_CASE("A factory paused before it starts makes its unit only on a retry after unpause",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_paused(true);
+    for (int i = 0; i < 15; ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.sim.entity_registry().count() == 1);
+    f->set_paused(false);
+    for (int i = 0; i < 5; ++i) {
+        h.sim.tick();
+        CHECK(h.sim.entity_registry().count() == 1);
+    }
+    h.sim.tick();
+    CHECK(h.sim.entity_registry().count() == 2);
+}
+
+TEST_CASE("A paused unit's enhancement waits", "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string(
+        "__blueprints.test_factory.Enhancements = {Gun = {BuildTime = 100, BuildCostMass = 1,"
+        " BuildCostEnergy = 1}}\n"
+        "CreateUnit('test_factory', 1, 0, 0, 0)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    osc::sim::UnitCommand enhance;
+    enhance.type = osc::sim::CommandType::Enhance;
+    enhance.blueprint_id = "Gun";
+    f->push_command(enhance, true);
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(f->is_enhancing());
+    const osc::f32 work = f->work_progress();
+    REQUIRE(work > 0.0f);
+    f->set_paused(true);
+    for (int i = 0; i < 5; ++i) {
+        h.sim.tick();
+    }
+    CHECK(f->is_enhancing());
+    CHECK(f->work_progress() == work);
+    f->set_paused(false);
+    h.sim.tick();
+    CHECK(f->work_progress() > work);
+}
+
+TEST_CASE("unit:SetPaused calls OnPaused, and a paused unit pays what its script leaves on",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local M = moho.unit_methods\n"
+                              "local function unit(maintenance)\n"
+                              "  local u = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "  u.Maintenance = maintenance\n"
+                              "  M.SetConsumptionPerSecondEnergy(u, maintenance + 20)\n"
+                              "  M.SetConsumptionActive(u, true)\n"
+                              "  u.OnPaused = function(self)\n"
+                              "    M.SetConsumptionPerSecondEnergy(self, self.Maintenance)\n"
+                              "    M.SetConsumptionActive(self, self.Maintenance > 0)\n"
+                              "  end\n"
+                              "  return u\n"
+                              "end\n"
+                              "local shield, builder = unit(5), unit(0)\n"
+                              "M.SetPaused(shield, true)\n"
+                              "M.SetPaused(builder, true)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(5.0));
+}
+
+TEST_CASE("unit:SetPaused pauses only a unit with RULEUCC_Pause or RULEUTC_GenericToggle",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    REQUIRE(
+        h.state.do_string("local M = moho.unit_methods\n"
+                          "local function paused(command, toggle)\n"
+                          "  local u = CreateUnit('test_tank', 1, 0, 0, 0)\n"
+                          "  if command then M.AddCommandCap(u, command) end\n"
+                          "  if toggle then M.AddToggleCap(u, toggle) end\n"
+                          "  M.SetPaused(u, true)\n"
+                          "  return M.IsPaused(u)\n"
+                          "end\n"
+                          "__osc_paused = tostring(paused()) .. ','\n"
+                          "  .. tostring(paused('RULEUCC_Pause')) .. ','\n"
+                          "  .. tostring(paused(nil, 'RULEUTC_GenericToggle')) .. ','\n"
+                          "  .. tostring(paused('RULEUCC_Stop', 'RULEUTC_ProductionToggle'))\n"));
+    lua_State* L = h.state.raw();
+    lua_getglobal(L, "__osc_paused");
+    CHECK(std::string(lua_tostring(L, -1)) == "false,true,true,false");
+    lua_pop(L, 1);
+}
+
+namespace {
+
+osc::sim::Unit* enhancing_factory(BuildRuleHarness& h) {
+    REQUIRE(h.state.do_string(
+        "__blueprints.test_factory.Enhancements = {Gun = {BuildTime = 100, BuildCostMass = 1,"
+        " BuildCostEnergy = 1}}\n"
+        "__osc_factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+        "local M = moho.unit_methods\n"
+        "__osc_factory.OnPaused = function(self) M.SetConsumptionActive(self, false) end\n"
+        "__osc_factory.OnUnpaused = function(self)\n"
+        "  if M.IsUnitState(self, 'Upgrading') then M.SetConsumptionActive(self, true) end\n"
+        "end\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    osc::sim::UnitCommand enhance;
+    enhance.type = osc::sim::CommandType::Enhance;
+    enhance.blueprint_id = "Gun";
+    f->push_command(enhance, true);
+    return f;
+}
+
+} // namespace
+
+TEST_CASE("An enhancement begun while paused pays without progress", "[session][rules][pause]") {
+    BuildRuleHarness h;
+    osc::sim::Unit* f = enhancing_factory(h);
+    f->set_paused(true);
+    for (int i = 0; i < 3; ++i) {
+        h.sim.tick();
+    }
+    REQUIRE(f->is_enhancing());
+    CHECK(f->work_progress() == 0.0f);
+    const double rate = f->build_rate() / 100.0;
+    CHECK(h.sim.get_army(0)->economy().energy.requested == Catch::Approx(rate));
+}
+
+TEST_CASE("An enhancing unit is Upgrading, so its OnUnpaused resumes paying",
+          "[session][rules][pause]") {
+    BuildRuleHarness h;
+    osc::sim::Unit* f = enhancing_factory(h);
+    h.sim.tick();
+    REQUIRE(f->is_enhancing());
+    REQUIRE(h.state.do_string("moho.unit_methods.SetPaused(__osc_factory, true)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested == 0.0);
+    REQUIRE(h.state.do_string("moho.unit_methods.SetPaused(__osc_factory, false)\n"));
+    h.sim.tick();
+    CHECK(h.sim.get_army(0)->economy().energy.requested > 0.0);
+}
+
+namespace {
+
+struct UpgradeHarness {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    osc::sim::SimState sim{state.raw(), &store};
+    osc::sim::Unit* factory = nullptr;
+
+    UpgradeHarness() {
+        osc::lua::register_moho_bindings(state, sim);
+        osc::lua::register_sim_bindings(state, sim);
+        sim.add_army("ARMY_1", "ARMY_1");
+        lua_State* L = state.raw();
+        for (const char* bp : {
+                 "return {BlueprintId = 'f1', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
+                 " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
+                 " BuildCostEnergy = 10, BuildableCategory = {'MOBILE TECH1', 'f2'}},"
+                 " General = {UpgradesTo = 'f2'}, Defense = {MaxHealth = 100}}",
+                 "return {BlueprintId = 'f2', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
+                 " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
+                 " BuildCostEnergy = 10, BuildableCategory = {'MOBILE', 'f3'}},"
+                 " General = {UpgradesFrom = 'f1', UpgradesTo = 'f3'}, Defense = {MaxHealth = "
+                 "100}}",
+                 "return {BlueprintId = 'f3', CategoriesHash = {STRUCTURE = true, FACTORY = true},"
+                 " Economy = {BuildRate = 20, BuildTime = 100, BuildCostMass = 10,"
+                 " BuildCostEnergy = 10, BuildableCategory = {'MOBILE'}},"
+                 " General = {UpgradesFrom = 'f2'}, Defense = {MaxHealth = 100}}",
+                 "return {BlueprintId = 't1', CategoriesHash = {MOBILE = true, TECH1 = true},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1},"
+                 " Defense = {MaxHealth = 10}}",
+                 "return {BlueprintId = 't2', CategoriesHash = {MOBILE = true, TECH2 = true},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1},"
+                 " Defense = {MaxHealth = 10}}",
+             }) {
+            REQUIRE(state.do_string(bp).ok());
+            store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+            lua_pop(L, 1);
+        }
+        store.expose_to_lua(L);
+        REQUIRE(state.do_string("CreateUnit('f1', 1, 0, 0, 0)").ok());
+        sim.entity_registry().for_each_unit(
+            [&](osc::sim::Entity& e) { factory = static_cast<osc::sim::Unit*>(&e); });
+        REQUIRE(factory);
+        factory->economy().production_mass = 100.0;
+        factory->economy().production_energy = 100.0;
+        factory->economy().production_active = true;
+    }
+
+    void queue(osc::sim::CommandType type, const char* bp) {
+        osc::sim::UnitCommand c;
+        c.type = type;
+        c.blueprint_id = bp;
+        factory->push_command(c, false);
+    }
+
+    std::string shown() const {
+        std::string s;
+        for (const auto& g : factory->factory_queue()) {
+            s += (s.empty() ? "" : " ") + g.blueprint_id + "x" + std::to_string(g.count);
+        }
+        return s;
+    }
+};
+
+} // namespace
+
+TEST_CASE("A factory's queue shows its upgrade orders", "[session][rules]") {
+    using osc::sim::CommandType;
+    UpgradeHarness h;
+    h.queue(CommandType::BuildFactory, "t1");
+    h.queue(CommandType::Upgrade, "f2");
+    h.queue(CommandType::BuildFactory, "t2");
+    CHECK(h.shown() == "t1x1 f2x1 t2x1");
+}
+
+TEST_CASE("Taking a queued upgrade off the factory's queue drops what only it led to",
+          "[session][rules]") {
+    using osc::sim::CommandType;
+    UpgradeHarness h;
+    h.queue(CommandType::BuildFactory, "t1");
+    h.queue(CommandType::Upgrade, "f2");
+    h.queue(CommandType::BuildFactory, "t2");
+    h.queue(CommandType::Upgrade, "f3");
+    h.queue(CommandType::BuildFactory, "t1");
+    REQUIRE(h.shown() == "t1x1 f2x1 t2x1 f3x1 t1x1");
+
+    h.factory->decrease_build_count(2, 1, h.sim.entity_registry(), h.state.raw());
+    CHECK(h.shown() == "t1x2");
+    CHECK(h.factory->command_queue().size() == 2);
+}
+
+TEST_CASE("Taking an upgrade under way off the factory's queue ends it", "[session][rules]") {
+    UpgradeHarness h;
+    h.queue(osc::sim::CommandType::Upgrade, "f2");
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 upgrade = h.factory->build_target_id();
+    REQUIRE(h.shown() == "f2x1");
+
+    h.factory->decrease_build_count(1, 1, h.sim.entity_registry(), h.state.raw());
+    CHECK(h.factory->command_queue().empty());
+    CHECK_FALSE(h.factory->is_building());
+    const osc::sim::Entity* left = h.sim.entity_registry().find(upgrade);
+    CHECK((!left || left->destroyed()));
+}
+
+TEST_CASE("A stopped upgrade takes its unfinished unit with it", "[session][rules]") {
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnFailedToBuild() __heard = __heard .. 'failed ' end\n"
+                           "function __f:OnStopBuild(u, order)\n"
+                           "  __heard = __heard .. 'stop ' .. order .. ' ' ..\n"
+                           "            tostring(u == __frame)\n"
+                           "end")
+                .ok());
+    h.queue(osc::sim::CommandType::Upgrade, "f2");
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 upgrade = h.factory->build_target_id();
+    lua_pushstring(L, "__frame");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.sim.entity_registry().find(upgrade)->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(
+        h.state.do_string("function __frame:OnFailedToBeBuilt() __heard = __heard .. 'frame ' end")
+            .ok());
+
+    SECTION("by Stop") {
+        osc::sim::UnitCommand stop;
+        stop.type = osc::sim::CommandType::Stop;
+        h.sim.route_command({h.factory->entity_id()}, stop, true);
+    }
+    SECTION("by taking its order off") {
+        h.factory->remove_command(h.factory->command_queue().front().command_id,
+                                  h.sim.entity_registry(), L);
+    }
+    h.sim.tick();
+
+    const osc::sim::Entity* left = h.sim.entity_registry().find(upgrade);
+    CHECK((!left || left->destroyed()));
+    CHECK_FALSE(h.factory->destroyed());
+    CHECK_FALSE(h.factory->is_building());
+    CHECK_FALSE(h.factory->economy().consumption_active);
+    CHECK(h.factory->work_progress() == 0.0f);
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) == "failed frame stop Upgrade true");
+    lua_pop(L, 1);
+}
+
+TEST_CASE("Every way of clearing the queue cancels the build or upgrade under way",
+          "[session][rules]") {
+    const auto [type, order] =
+        GENERATE(std::pair{osc::sim::CommandType::BuildFactory, std::string("FactoryBuild")},
+                 std::pair{osc::sim::CommandType::Upgrade, std::string("Upgrade")});
+    const std::string path =
+        GENERATE("a player's Stop", "IssueClearCommands({__f})", "__f:Stop()",
+                 "IssueToUnitClearCommands(__f)", "platoon:Stop()", "a new order");
+    CAPTURE(order, path);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    const auto run = [&](const std::string& code) {
+        const auto r = h.state.do_string(code);
+        INFO((r.ok() ? std::string() : r.error().message));
+        REQUIRE(r.ok());
+    };
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    run("__unit_class = {__index = function(_, k)\n"
+        "  return moho.unit_methods[k] or moho.entity_methods[k]\n"
+        "end}\n"
+        "setmetatable(__f, __unit_class)");
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnFailedToBuild() __heard = __heard .. 'failed ' end\n"
+                           "function __f:OnStopBuild(u, order)\n"
+                           "  __heard = __heard .. 'stop ' .. order .. ' ' ..\n"
+                           "            tostring(u == __frame)\n"
+                           "end")
+                .ok());
+    h.queue(type, type == osc::sim::CommandType::Upgrade ? "f2" : "t2");
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 frame = h.factory->build_target_id();
+    lua_pushstring(L, "__frame");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.sim.entity_registry().find(frame)->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("function __frame:OnFailedToBeBuilt()\n"
+                           "  __heard = __heard .. 'frame '\n"
+                           "  if not IsDestroyed(self) then self:Destroy() end\n"
+                           "end")
+                .ok());
+
+    if (path == "a player's Stop") {
+        osc::sim::UnitCommand stop;
+        stop.type = osc::sim::CommandType::Stop;
+        h.sim.route_command({h.factory->entity_id()}, stop, true);
+    } else if (path == "a new order") {
+        osc::sim::UnitCommand next;
+        next.type = osc::sim::CommandType::BuildFactory;
+        next.blueprint_id = "t1";
+        h.sim.route_command({h.factory->entity_id()}, next, true);
+    } else if (path == "platoon:Stop()") {
+        osc::sim::Platoon* platoon = h.sim.army_at(0)->create_platoon("");
+        platoon->add_unit(h.factory->entity_id());
+        platoon->set_unit_squad(h.factory->entity_id(), "Attack");
+        lua_pushstring(L, "__p");
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, platoon);
+        lua_rawset(L, -3);
+        lua_settable(L, LUA_GLOBALSINDEX);
+        run("moho.platoon_methods.Stop(__p)");
+    } else {
+        run(path);
+    }
+
+    const osc::sim::Entity* left = h.sim.entity_registry().find(frame);
+    CHECK((!left || left->destroyed()));
+    CHECK_FALSE(h.factory->destroyed());
+    CHECK(h.factory->build_target_id() == 0);
+    CHECK_FALSE(h.factory->economy().consumption_active);
+    CHECK(h.factory->work_progress() == 0.0f);
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) == "failed frame stop " + order + " true");
+    lua_pop(L, 1);
+
+    h.sim.tick();
+    CHECK(h.factory->build_target_id() != frame);
+}
+
+TEST_CASE("A factory's build and an upgrade tell OnStartBuild and OnStopBuild their order",
+          "[session][rules]") {
+    const auto [type, bp, order] =
+        GENERATE(std::tuple{osc::sim::CommandType::BuildFactory, "t1", "FactoryBuild"},
+                 std::tuple{osc::sim::CommandType::Upgrade, "f2", "Upgrade"});
+    CAPTURE(order);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnStartBuild(u, order)\n"
+                           "  __heard = __heard .. 'start ' .. tostring(order) .. ' '\n"
+                           "end\n"
+                           "function __f:OnStopBuild(u, order)\n"
+                           "  __heard = __heard .. 'stop ' .. tostring(order) .. ' '\n"
+                           "end")
+                .ok());
+    h.queue(type, bp);
+    for (int i = 0; i < 100 && !h.factory->command_queue().empty(); ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.factory->command_queue().empty());
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) ==
+          "start " + std::string(order) + " stop " + std::string(order) + " ");
+    lua_pop(L, 1);
+}
+
+TEST_CASE("A platoon's AttackTarget and GuardTarget go behind its units' orders",
+          "[session][rules]") {
+    const std::string call = GENERATE("AttackTarget", "GuardTarget");
+    CAPTURE(call);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    REQUIRE(h.state.do_string("__t = CreateUnit('t1', 1, 5, 0, 5)").ok());
+    osc::sim::Unit* tank = nullptr;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (&e != h.factory) {
+            tank = static_cast<osc::sim::Unit*>(&e);
+        }
+    });
+    REQUIRE(tank);
+    tank->add_command_cap("RULEUCC_Guard");
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {50.0f, 0.0f, 50.0f};
+    tank->push_command(move, false);
+    osc::sim::Platoon* platoon = h.sim.army_at(0)->create_platoon("");
+    platoon->add_unit(tank->entity_id());
+    platoon->set_unit_squad(tank->entity_id(), "Attack");
+    lua_pushstring(L, "__p");
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, platoon);
+    lua_rawset(L, -3);
+    lua_settable(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+
+    REQUIRE(h.state.do_string("moho.platoon_methods." + call + "(__p, __f)").ok());
+    REQUIRE(tank->command_queue().size() == 2);
+    CHECK(tank->command_queue().front().type == osc::sim::CommandType::Move);
+}
+
+TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
+          "[session][rules]") {
+    const std::string call = GENERATE("IssueStop({__f})", "IssueToUnitStop(__f)");
+    CAPTURE(call);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    h.queue(osc::sim::CommandType::BuildFactory, "t2");
+    h.sim.tick();
+    h.sim.tick();
+    REQUIRE(h.factory->is_building());
+    const osc::u32 frame = h.factory->build_target_id();
+
+    REQUIRE(h.state.do_string(call).ok());
+    REQUIRE(h.factory->command_queue().size() == 2);
+    CHECK(h.factory->command_queue().back().type == osc::sim::CommandType::Stop);
+    CHECK(h.factory->build_target_id() == frame);
+
+    for (int i = 0; i < 100 && !h.factory->command_queue().empty(); ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.factory->command_queue().empty());
+    const auto* built = static_cast<const osc::sim::Unit*>(h.sim.entity_registry().find(frame));
+    REQUIRE(built);
+    CHECK_FALSE(built->destroyed());
+    CHECK_FALSE(built->is_being_built());
 }

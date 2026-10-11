@@ -392,10 +392,10 @@ static int brain_GetListOfUnits(lua_State* L) {
         }
     }
     bool has_category = (cat_idx > 0);
-    // needBuilt / needIdle is the first boolean AFTER the category.
-    // If no category found, don't assume any filtering.
-    int built_idx = has_category ? cat_idx + 1 : -1;
-    bool need_built = (built_idx > 0) && lua_toboolean(L, built_idx) != 0;
+    // (category, needToBeIdle[, requireBuilt = true]), faf-re cfunc_CAiBrainGetListOfUnitsL.
+    const bool need_idle = has_category && lua_toboolean(L, cat_idx + 1) != 0;
+    const bool need_built =
+        has_category && (top < cat_idx + 2 || lua_toboolean(L, cat_idx + 2) != 0);
 
     auto entities = brain->get_units(sim->entity_registry());
     const std::optional<osc::lua::CategoryMatcher> category =
@@ -410,6 +410,9 @@ static int brain_GetListOfUnits(lua_State* L) {
         if (!entity->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(entity);
         if (need_built && unit->is_being_built()) continue;
+        if (need_idle && !unit->command_queue().empty()) {
+            continue;
+        }
         if (category && !category->matches(unit->category_bits())) continue;
 
         lua_pushnumber(L, idx++);
@@ -418,6 +421,100 @@ static int brain_GetListOfUnits(lua_State* L) {
     }
     return 1;
 }
+
+namespace {
+
+/// A name of Moho's that Lua gives in any case, with or without its prefix
+/// (gpg's REnumType::SetLexical); its index in `names`, or -1.
+template <size_t N>
+int parse_enum(std::string_view text, std::string_view prefix,
+               const std::array<std::string_view, N>& names) {
+    const auto same = [](std::string_view a, std::string_view b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) ==
+                          std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    if (text.size() > prefix.size() && same(text.substr(0, prefix.size()), prefix))
+        text.remove_prefix(prefix.size());
+    for (size_t i = 0; i < N; ++i)
+        if (same(text, names[i])) return static_cast<int>(i);
+    return -1;
+}
+
+enum class Alliance { Neutral, Ally, Enemy };
+Alliance alliance_with(const sim::SimState& sim, i32 army, i32 other) {
+    if (other == army || sim.is_ally(army, other)) {
+        return Alliance::Ally;
+    }
+    return sim.is_enemy(army, other) ? Alliance::Enemy : Alliance::Neutral;
+}
+
+bool known_to(const sim::SimState& sim, i32 army, const sim::Unit& u) {
+    return u.army() == army ||
+           (army >= 0 && sim.get_blip_snapshot(u.entity_id(), static_cast<u32>(army)));
+}
+
+/// faf-re func_GetUnitsAroundPoint's filter.
+bool around_point(const sim::SimState& sim, i32 army, const sim::Unit& u,
+                  std::optional<Alliance> alliance) {
+    if (u.destroyed() || u.is_dying()) {
+        return false;
+    }
+    if (alliance && alliance_with(sim, army, u.army()) != *alliance) {
+        return false;
+    }
+    return known_to(sim, army, u);
+}
+
+std::pair<i32, i32> cell_span(i32 lo, i32 hi, i32 min_width) {
+    const i32 start = std::clamp(lo >> 2, 0, 0xFFFF);
+    return {start, start + std::max(std::min(((hi + 3) >> 2) - start, 0xFFFF - start), min_width)};
+}
+
+/// faf-re func_GetUnitsAroundPoint: units on the 4x4 collision cells under the
+/// square 2r about (x, z), as func_Rect2fToInt16 and func_AABoxToRect cut them.
+std::vector<const sim::Unit*> units_on_cells_around(const sim::SimState& sim, f32 x, f32 z, f32 r) {
+    const auto [qx0, qx1] = cell_span(static_cast<i32>(x - r), static_cast<i32>(x + r), 1);
+    const auto [qz0, qz1] = cell_span(static_cast<i32>(z - r), static_cast<i32>(z + r), 1);
+    std::vector<const sim::Unit*> out;
+    sim.entity_registry().any_unit_collider(
+        static_cast<f32>(qx0 * 4), static_cast<f32>(qz0 * 4), static_cast<f32>(qx1 * 4),
+        static_cast<f32>(qz1 * 4), [&](const sim::Entity& e) {
+            const auto box = sim::collision_bounds(e);
+            if (!box) {
+                return false;
+            }
+            const auto [ux0, ux1] = cell_span(static_cast<i32>(std::floor(box->first.x)),
+                                              static_cast<i32>(std::ceil(box->second.x)), 0);
+            const auto [uz0, uz1] = cell_span(static_cast<i32>(std::floor(box->first.z)),
+                                              static_cast<i32>(std::ceil(box->second.z)), 0);
+            if (ux0 < qx1 && qx0 < ux1 && uz0 < qz1 && qz0 < uz1) {
+                out.push_back(static_cast<const sim::Unit*>(&e));
+            }
+            return false;
+        });
+    std::sort(out.begin(), out.end(), [](const sim::Unit* a, const sim::Unit* b) {
+        return a->entity_id() < b->entity_id();
+    });
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::optional<Alliance> alliance_arg(lua_State* L, int i) {
+    if (lua_type(L, i) != LUA_TSTRING) {
+        return std::nullopt;
+    }
+    const int a = parse_enum(lua_tostring(L, i), "ALLIANCE_",
+                             std::array<std::string_view, 3>{"Neutral", "Ally", "Enemy"});
+    if (a < 0) {
+        luaL_error(L, "Invalid enum value %s", lua_tostring(L, i));
+    }
+    return static_cast<Alliance>(a);
+}
+
+} // namespace
 
 static int brain_GetUnitsAroundPoint(lua_State* L) {
     // brain:GetUnitsAroundPoint(category, position, radius, teamIndex)
@@ -470,33 +567,14 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
 
     // Radius is first number after position
     int radius_arg = (pos_arg > 0) ? pos_arg + 1 : 4;
-    f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
-    if (radius <= 0) radius = 1.0f;
-
-    // teamIndex: "Ally", "Enemy", or nil/empty for own army
-    int team_arg = radius_arg + 1;
-    const char* team_filter = (lua_type(L, team_arg) == LUA_TSTRING)
-                                  ? lua_tostring(L, team_arg) : "";
-
-    // Collect units in radius
-    const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
+    const f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
+    const auto alliance = alliance_arg(L, radius_arg + 1);
 
     lua_newtable(L);
     int idx = 1;
-    for (auto* entity : units) {
-        auto* unit = static_cast<sim::Unit*>(entity);
-
-        // Filter by team relationship
-        i32 my_army = brain->index();
-        i32 their_army = unit->army();
-        if (std::strcmp(team_filter, "Enemy") == 0) {
-            if (!sim->is_enemy(my_army, their_army)) continue;
-        } else if (std::strcmp(team_filter, "Ally") == 0) {
-            if (!sim->is_ally(my_army, their_army) &&
-                their_army != my_army) continue;
-        } else {
-            // Default: own army only
-            if (their_army != my_army) continue;
+    for (const sim::Unit* unit : units_on_cells_around(*sim, px, pz, radius)) {
+        if (!around_point(*sim, brain->index(), *unit, alliance)) {
+            continue;
         }
 
         if (unit->lua_table_ref() < 0) continue;
@@ -1071,28 +1149,22 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
     }
 
     int radius_arg = (pos_arg > 0) ? pos_arg + 1 : 4;
-    f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
-    if (radius <= 0) radius = 1.0f;
-
-    int team_arg = radius_arg + 1;
-    const char* team_filter = (lua_type(L, team_arg) == LUA_TSTRING)
-                                  ? lua_tostring(L, team_arg) : "";
+    const f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
+    const auto alliance = alliance_arg(L, radius_arg + 1);
 
     const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
 
     int count = 0;
     for (auto* entity : units) {
         auto* unit = static_cast<sim::Unit*>(entity);
-
-        i32 my_army = brain->index();
-        i32 their_army = unit->army();
-        if (std::strcmp(team_filter, "Enemy") == 0) {
-            if (!sim->is_enemy(my_army, their_army)) continue;
-        } else if (std::strcmp(team_filter, "Ally") == 0) {
-            if (!sim->is_ally(my_army, their_army) &&
-                their_army != my_army) continue;
-        } else {
-            if (their_army != my_army) continue;
+        // faf-re func_EntitiesAroundPoint: centres strictly within the radius.
+        const f32 dx = unit->position().x - px;
+        const f32 dz = unit->position().z - pz;
+        if (dx * dx + dz * dz >= radius * radius) {
+            continue;
+        }
+        if (!around_point(*sim, brain->index(), *unit, alliance)) {
+            continue;
         }
 
         if (unit->lua_table_ref() < 0) continue;
@@ -2373,26 +2445,6 @@ static int brain_GetAttackVectors(lua_State* L) {
 
 namespace {
 
-/// A name of Moho's that Lua gives in any case, with or without its prefix
-/// (gpg's REnumType::SetLexical); its index in `names`, or -1.
-template <size_t N>
-int parse_enum(std::string_view text, std::string_view prefix,
-               const std::array<std::string_view, N>& names) {
-    const auto same = [](std::string_view a, std::string_view b) {
-        return a.size() == b.size() &&
-               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
-                   return std::tolower(static_cast<unsigned char>(x)) ==
-                          std::tolower(static_cast<unsigned char>(y));
-               });
-    };
-    if (text.size() > prefix.size() && same(text.substr(0, prefix.size()), prefix))
-        text.remove_prefix(prefix.size());
-    for (size_t i = 0; i < N; ++i)
-        if (same(text, names[i])) return static_cast<int>(i);
-    return -1;
-}
-
-enum class Alliance { Neutral, Ally, Enemy };
 enum class Compare { Closest, Furthest, HighestValue, LeastDefended };
 
 f32 dist_sq(const sim::Vector3& a, const sim::Vector3& b) {
@@ -2402,33 +2454,14 @@ f32 dist_sq(const sim::Vector3& a, const sim::Vector3& b) {
     return dx * dx + dy * dy + dz * dz;
 }
 
-/// Moho's func_GetUnitsAroundPoint: the live units whose footprints reach
-/// the square `reach` about `at`, of `alliance` to the brain's army, known
-/// to it (its own, or one it holds a blip of), in `category`.
 std::vector<const sim::Unit*> units_around(const sim::SimState& sim, i32 army,
                                            const osc::lua::CategoryMatcher& category,
                                            const sim::Vector3& at, f32 reach, Alliance alliance) {
     std::vector<const sim::Unit*> out;
-    constexpr f32 kSlack = sim::EntityRegistry::COLLIDER_REACH;
-    for (const sim::Entity* e :
-         sim.entity_registry().units_in_radius(at.x, at.z, reach * 1.4143f + kSlack)) {
-        const auto& u = static_cast<const sim::Unit&>(*e);
-        if (u.destroyed() || u.is_dying()) continue;
-        const f32 hx = u.footprint_size_x() * 0.5f;
-        const f32 hz = u.footprint_size_z() * 0.5f;
-        const auto& p = u.position();
-        if (p.x + hx < at.x - reach || p.x - hx > at.x + reach || p.z + hz < at.z - reach ||
-            p.z - hz > at.z + reach)
-            continue;
-        const i32 other = u.army();
-        const Alliance is = other == army || sim.is_ally(army, other) ? Alliance::Ally
-                            : sim.is_enemy(army, other)               ? Alliance::Enemy
-                                                                      : Alliance::Neutral;
-        if (is != alliance) continue;
-        if (other != army &&
-            (army < 0 || !sim.get_blip_snapshot(u.entity_id(), static_cast<u32>(army))))
-            continue;
-        if (category.matches(u.category_bits())) out.push_back(&u);
+    for (const sim::Unit* u : units_on_cells_around(sim, at.x, at.z, reach)) {
+        if (around_point(sim, army, *u, alliance) && category.matches(u->category_bits())) {
+            out.push_back(u);
+        }
     }
     return out;
 }

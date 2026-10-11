@@ -4,6 +4,7 @@
 #include "sim/entity.hpp" // Vector3, Quaternion
 
 #include <array>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,6 +22,10 @@ struct BoneInfo {
         1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; // column-major
 };
 
+struct MeshBounds {
+    Vector3 lo, hi;
+};
+
 /// Shared bone data for all units of the same blueprint.
 struct BoneData {
     std::vector<BoneInfo> bones;
@@ -34,6 +39,8 @@ struct BoneData {
     /// no such bone): the points on a unit of this kind that weapons aim
     /// at (Moho's target points, Unit::GetTargetPoint).
     std::vector<i32> target_bones;
+    /// The LOD0 mesh's vertices' box, in the model's own units
+    std::optional<MeshBounds> mesh_bounds;
 
     /// Look up bone index by name (case-insensitive). Returns -1 if not found.
     i32 find_bone(const std::string& name) const;

@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "blueprints/blueprint_store.hpp"
@@ -15,9 +16,11 @@
 #include "sim/unit_command.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -52,6 +55,30 @@ Unit* walker(SimState& sim, osc::f32 x, osc::f32 z) {
     auto* raw = u.get();
     sim.entity_registry().register_entity(std::move(u));
     return raw;
+}
+
+Unit* unfinished(SimState& sim, lua_State* L, osc::f32 health) {
+    const char* code = "__blueprints = {shed = {Economy = {BuildTime = 10, BuildCostMass = 5,"
+                       " BuildCostEnergy = 20}}}"
+                       " decayed = 0"
+                       " return {OnDecayed = function(self) decayed = decayed + 1 end}";
+    REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "shed") == 0);
+    REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+    Unit* u = walker(sim, 10.0f, 10.0f);
+    u->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    u->set_unit_id("shed");
+    u->set_is_being_built(true);
+    u->set_health(health);
+    u->set_fraction_complete(health / u->max_health());
+    u->set_creation_tick(sim.tick_count());
+    return u;
+}
+
+int decayed(lua_State* L) {
+    lua_getglobal(L, "decayed");
+    const int n = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return n;
 }
 
 osc::sim::UnitCommand move_to(osc::f32 x, osc::f32 z) {
@@ -104,6 +131,97 @@ TEST_CASE("A unit being built doesn't regenerate", "[sim]") {
     CHECK(u->health() > 50.0f);
 }
 
+TEST_CASE("An unfinished unit no one builds decays from its second tick to OnDecayed",
+          "[sim][build]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* u = unfinished(sim, g.L, 0.8f);
+    sim.tick();
+    CHECK(u->health() == 0.8f);
+    sim.tick();
+    CHECK(u->health() == Catch::Approx(0.3f));
+    CHECK(u->fraction_complete() == Catch::Approx(0.003f));
+    CHECK(decayed(g.L) == 0);
+    sim.tick();
+    CHECK(u->health() == 0.0f);
+    CHECK(decayed(g.L) == 1);
+}
+
+TEST_CASE("A repairer on an unfinished unit keeps it from decaying, paused too", "[sim][build]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* u = unfinished(sim, g.L, 50.0f);
+    Unit* builder = walker(sim, 12.0f, 10.0f);
+    builder->set_build_target_id(u->entity_id());
+    builder->set_paused(true);
+    for (int i = 0; i < 10; ++i) {
+        sim.tick();
+    }
+    CHECK(u->health() == 50.0f);
+    builder->set_build_target_id(0);
+    sim.tick();
+    CHECK(u->health() == 50.0f);
+    sim.tick();
+    CHECK(u->health() < 50.0f);
+}
+
+TEST_CASE("A paused unit moves as an unpaused one", "[sim][orders][pause]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* paused = walker(sim, 10.0f, 10.0f);
+    Unit* ctl = walker(sim, 10.0f, 30.0f);
+    paused->set_paused(true);
+    paused->push_command(move_to(60.0f, 10.0f), true);
+    ctl->push_command(move_to(60.0f, 30.0f), true);
+    for (int i = 0; i < 20; ++i) {
+        sim.tick();
+    }
+    CHECK(paused->position().x > 10.0f);
+    CHECK(paused->position().x == ctl->position().x);
+    CHECK(paused->command_queue().size() == 1);
+}
+
+TEST_CASE("A paused unit's capture costs energy as an unpaused one's", "[sim][orders][pause]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    const char* code = "__blueprints = {prize = {Economy = {BuildTime = 100,"
+                       " BuildCostEnergy = 500}}}";
+    REQUIRE(luaL_loadbuffer(g.L, code, std::strlen(code), "prize") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 0, 0) == 0);
+    Unit* captor = walker(sim, 10.0f, 10.0f);
+    captor->set_build_rate(10.0f);
+    captor->set_paused(true);
+    Unit* prize = walker(sim, 11.0f, 10.0f);
+    prize->set_army(1);
+    prize->set_unit_id("prize");
+    osc::sim::UnitCommand capture;
+    capture.type = CommandType::Capture;
+    capture.target_id = prize->entity_id();
+    capture.target_pos = prize->position();
+    captor->push_command(capture, true);
+    for (int i = 0; i < 5; ++i) {
+        sim.tick();
+    }
+    REQUIRE(captor->is_capturing());
+    CHECK(sim.get_army(0)->economy().energy.requested == Catch::Approx(100.0));
+    CHECK(captor->economy().energy_requested() == Catch::Approx(100.0));
+
+    captor->economy().consumption_energy = 0.0;
+    captor->economy().consumption_active = false;
+    captor->set_paused(false);
+    sim.tick();
+    CHECK(sim.get_army(0)->economy().energy.requested == Catch::Approx(100.0));
+}
+
 TEST_CASE("A unit being built holds its orders until it is finished", "[sim][orders]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -151,6 +269,22 @@ TEST_CASE("Of the units being built, only a factory can be selected", "[selectio
     factory.add_category("FACTORY");
     factory.set_is_being_built(true);
     CHECK(osc::renderer::selectable(factory));
+}
+
+TEST_CASE("FAF: a CQUEMOV unit being built takes orders and can be selected",
+          "[sim][orders][selection]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    Unit* extractor = walker(sim, 10.0f, 10.0f);
+    extractor->add_category("SELECTABLE");
+    extractor->add_category("CQUEMOV");
+    extractor->set_is_being_built(true);
+
+    CHECK(osc::renderer::selectable(*extractor));
+    CHECK(sim.route_command({extractor->entity_id()}, move_to(60.0f, 10.0f), true) != 0);
+    CHECK(extractor->command_queue().size() == 1);
 }
 
 TEST_CASE("A unit is made with its consumption off, for its script to switch on",

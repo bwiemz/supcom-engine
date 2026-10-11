@@ -51,6 +51,22 @@ enum class CommandType : u8 {
     AggressiveMove = 81,
 };
 
+/// Moho's CommandIsInstant: an order that takes no move of its own.
+inline bool instant_order(CommandType type) {
+    switch (type) {
+    case CommandType::Stop:
+    case CommandType::Dive:
+    case CommandType::BuildMobile:
+    case CommandType::Nuke:
+    case CommandType::Tactical:
+    case CommandType::Teleport:
+    case CommandType::Reclaim:
+    case CommandType::Capture:
+    case CommandType::Upgrade: return true;
+    default: return false;
+    }
+}
+
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
 enum class DockPhase : u8 {
     Reserve,  ///< asking the platform for a slot, heading for it meanwhile
@@ -73,6 +89,10 @@ struct UnitCommand {
     /// east 90: the engine's heading). Unset: from the group to the target.
     bool has_facing = false;
     f32 facing = 0;
+    /// The formation moves as one, at its slowest unit's pace (Moho's
+    /// FormMove); false: Moho's Move given a formation, each unit to its
+    /// slot at its own pace.
+    bool form_move = true;
     /// Held to this speed (a formation keeps its slowest unit's pace); 0:
     /// the unit's own. Set when a formation order is laid out.
     f32 speed_cap = 0;
@@ -146,9 +166,14 @@ struct UnitCommand {
     /// whether the factory is still busy rolling the unit off (runtime
     /// state; 0 while it builds). See Unit::order_build_in_place.
     i32 rolloff_wait = 0;
-    /// A build its army's unit cap stopped: ticks until it tries again, as
-    /// Moho's build tasks wait 10 at the cap (runtime state; 0 otherwise).
-    i32 cap_wait = 0;
+    /// A build or repair its army's unit cap or its unit's pause stopped:
+    /// ticks until it tries again, as Moho's tasks wait 10 there (runtime
+    /// state; 0 otherwise).
+    i32 task_wait = 0;
+    /// A sacrifice whose OnStartSacrifice has run: ticks until it gives
+    /// itself (Moho's task returns 10, which retail runs 9 ticks on).
+    /// Runtime state.
+    i32 sacrifice_wait = 0;
     /// A carrier's unload that launches its stored units (M206q; runtime
     /// state): those still to go, and ticks until the next leaves (-1: the
     /// launch has not started).

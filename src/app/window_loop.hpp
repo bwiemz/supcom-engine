@@ -188,6 +188,7 @@ private:
     int fps_frames = 0;
     double display_fps = 0.0;
     std::unordered_set<osc::u32> prev_selection;
+    std::vector<std::pair<osc::u32, osc::u32>> prev_selection_upgrades;
     /// --screenshot <png> [--screenshot-frame N]: render N frames on a
     /// fixed 60 Hz clock (so frame N is identical run to run), capture the
     /// presented image, write it, and exit. Used for golden-image tests and
@@ -235,6 +236,7 @@ private:
     /// it the game has nothing to do (M220a).
     bool gpgnet_done = false;
     osc::u32 gpgnet_logged_tick = 0;
+    bool command_graph_shown = false;
     /// OnFirstUpdate, once after the game's first tick (each game's).
     bool first_update_fired = false;
     std::optional<osc::u32>& world_ui_after_post_load = app.world_ui_after_post_load;

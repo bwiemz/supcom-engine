@@ -22,6 +22,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -36,10 +37,10 @@ namespace oc = osc::blueprints::occupancy;
 
 namespace {
 
-std::unique_ptr<osc::map::Terrain> flat_terrain(u32 size) {
+std::unique_ptr<osc::map::Terrain> flat_terrain(u32 size, f32 water) {
     std::vector<osc::u16> heights(static_cast<size_t>(size + 1) * (size + 1), 1280);
     osc::map::Heightmap hm(size, size, 1.0f / 128.0f, std::move(heights));
-    return std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false);
+    return std::make_unique<osc::map::Terrain>(std::move(hm), water, water > 0.0f);
 }
 
 /// A sim on a flat map with a 2x2 aircraft that lands a second after its
@@ -49,13 +50,13 @@ struct World {
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    explicit World(u32 size = 128) {
+    explicit World(u32 size = 128, f32 water = 0.0f) {
         osc::sim::GameSetup game;
         game.scenario = "/maps/test/test_scenario.lua";
         game.seed = 3;
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
-        sim.set_terrain(flat_terrain(size));
+        sim.set_terrain(flat_terrain(size, water));
         sim.build_pathfinding_grid();
         sim.add_army("ARMY_1", "ARMY_1");
         sim.set_game_setup(game);
@@ -78,6 +79,12 @@ struct World {
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = 5,"
                  " TransportHoverHeight = 3},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'pod', Categories = {'AIR', 'MOBILE', 'CANLANDONWATER'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
+                 "5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
                  "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
                  " Physics = {MotionType = 'RULEUMT_Land'}}",
@@ -93,7 +100,7 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"plane", "drone", "ferry", "tank"}) {
+        for (const char* id : {"plane", "drone", "ferry", "pod", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -312,6 +319,22 @@ TEST_CASE("An idle empty transport lands as any aircraft does", "[air_landing][t
     CHECK(ferry.vert_event() == "Bottom");
 }
 
+TEST_CASE("Over deep water a TRANSPORTATION or CANLANDONWATER aircraft lands on the water; "
+          "another finds no place",
+          "[air_landing][transport]") {
+    World w(64, 20.0f);
+    Unit& ferry = *w.make("ferry", 20.0f, 20.0f);
+    Unit& pod = *w.make("pod", 44.0f, 44.0f);
+    Unit& plane = *w.make("plane", 20.0f, 44.0f);
+    w.run_until([&] { return !ferry.is_air_unit() && !pod.is_air_unit(); }, 300);
+    CHECK(ferry.layer() == "Water");
+    CHECK(std::abs(ferry.position().x - 20.0f) < 1.0f);
+    CHECK(std::abs(ferry.position().z - 20.0f) < 1.0f);
+    CHECK(pod.layer() == "Water");
+    CHECK(plane.is_air_unit());
+    CHECK(plane.has_unit_state("CannotFindPlaceToLand"));
+}
+
 TEST_CASE("An idle transport with cargo comes down to its TransportHoverHeight and hovers there, "
           "refuelling",
           "[air_landing][transport]") {
@@ -379,13 +402,70 @@ TEST_CASE("A transport unloading comes down to its hover height as to a landing:
         [&] {
             down_seen = down_seen || ferry.vert_event() == "Down";
             if (ferry.cargo_ids().empty()) {
-                at_drop = ferry.vert_event();
                 return true;
             }
+            at_drop = ferry.vert_event();
             return false;
         },
         300);
     CHECK(dropped < 300);
     CHECK(down_seen);
     CHECK(at_drop == "Hover");
+}
+
+TEST_CASE("An aircraft flies one step a tick as it passes from one move to the next",
+          "[air_landing]") {
+    World w;
+    Unit& plane = *w.make("drone", 30.0f, 30.0f);
+    World::move(plane, 60.0f, 30.0f);
+    osc::sim::UnitCommand next;
+    next.type = osc::sim::CommandType::Move;
+    next.target_pos = {60.0f, 20.0f, 80.0f};
+    plane.push_command(next, false);
+    f32 longest = 0.0f;
+    int flew = 0;
+    for (; flew < 400 && !plane.command_queue().empty(); ++flew) {
+        const auto before = plane.position();
+        w.sim.tick();
+        const f32 dx = plane.position().x - before.x;
+        const f32 dz = plane.position().z - before.z;
+        longest = std::max(longest, std::sqrt(dx * dx + dz * dz));
+    }
+    CHECK(flew < 400);
+    CHECK(plane.position().z > 70.0f);
+    CHECK(longest <= 10.0f * 0.1f + 1e-3f);
+}
+
+TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_landing]") {
+    World queued;
+    World plain;
+    Unit& plane = *queued.make("drone", 30.0f, 30.0f);
+    Unit& reference = *plain.make("drone", 30.0f, 30.0f);
+    World::move(plane, 60.0f, 30.0f);
+    World::move(reference, 60.0f, 30.0f);
+    osc::sim::UnitCommand guard;
+    guard.type = osc::sim::CommandType::Guard;
+    guard.target_pos = {60.0f, 20.0f, 80.0f};
+    SECTION("a point") {}
+    SECTION("a unit") {
+        guard.target_id = queued.make("tank", 60.0f, 80.0f)->entity_id();
+    }
+    plane.push_command(guard, false);
+    // Both queues fly through the first goal; the reference's next Move
+    // already obeys the once-per-tick gate.
+    osc::sim::UnitCommand next = guard;
+    next.type = osc::sim::CommandType::Move;
+    next.target_id = 0;
+    reference.push_command(next, false);
+    bool handed_over = false;
+    for (int tick = 0; tick < 400 && !handed_over; ++tick) {
+        queued.sim.tick();
+        plain.sim.tick();
+        handed_over = plane.command_queue().front().type == osc::sim::CommandType::Guard;
+        INFO("tick " << tick);
+        CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
+        CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
+        CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+    }
+    REQUIRE(handed_over);
 }

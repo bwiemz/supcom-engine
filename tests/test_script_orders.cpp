@@ -365,8 +365,16 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
     const size_t at =
         bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
+    c.command.form_move = false;
+    std::vector<osc::u8> paced;
+    osc::sim::ByteWriter wf(paced);
+    osc::sim::write_command(wf, c);
+    const auto form = std::mismatch(marked.begin(), marked.end(), paced.begin());
+    const size_t form_move_at =
+        bytes.size() - plain.size() + static_cast<size_t>(form.first - marked.begin());
     bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(at),
                 bytes.begin() + static_cast<std::ptrdiff_t>(at) + 4);
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(form_move_at));
     const osc::u32 v10 = 10;
     std::memcpy(bytes.data() + 4, &v10, 4); // after "OSCR"
     osc::sim::Replay back;
@@ -401,4 +409,57 @@ TEST_CASE("IsUnitState reads the states a script sets", "[script_orders][lua]") 
         end
     )");
     if (!r) FAIL(r.error().message);
+}
+
+TEST_CASE("An unfinished unit with an upgrade queued is not Upgrading", "[script_orders][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    auto owned = std::make_unique<Unit>();
+    Unit* unit = owned.get();
+    unit->set_army(0);
+    unit->add_category("FACTORY");
+    unit->set_is_being_built(true);
+    sim.entity_registry().register_entity(std::move(owned));
+    osc::sim::UnitCommand upgrade;
+    upgrade.type = osc::sim::CommandType::Upgrade;
+    upgrade.blueprint_id = "ueb0201";
+    unit->push_command(upgrade, false);
+    sim.tick();
+    REQUIRE(unit->command_queue().size() == 1);
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, static_cast<osc::sim::Entity*>(unit));
+    lua_rawset(L, -3);
+    lua_setglobal(L, "unit");
+    const auto r = lua.do_string(R"(
+        if moho.unit_methods.IsUnitState(unit, 'Upgrading') then error('Upgrading') end
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
+}
+
+TEST_CASE("An engineer whose build waits at its site is Building", "[script_orders][lua][pause]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    Unit unit;
+    osc::sim::UnitCommand build;
+    build.type = CommandType::BuildMobile;
+    build.task_wait = 10;
+    unit.push_command(build, true);
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &unit);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "unit");
+    const auto r = lua.do_string(R"(
+        if not moho.unit_methods.IsUnitState(unit, 'Building') then error('not building') end
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
 }

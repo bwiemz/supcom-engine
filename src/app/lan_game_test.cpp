@@ -103,6 +103,12 @@ constexpr const char* kPressLaunch = R"(
     gui.launchGameButton.OnClick(gui.launchGameButton)
 )";
 
+u32 joiner_source_of(const lua::MpNetState& mp) {
+    const auto joiner = std::find_if(mp.clients.begin(), mp.clients.end(),
+                                     [](const lua::SessionClient& c) { return c.uid == 1; });
+    return static_cast<u32>(joiner - mp.clients.begin());
+}
+
 } // namespace
 
 LanGameTest::LanGameTest(bool host, std::string address, u16 port, u32 quit_at)
@@ -146,7 +152,8 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
     }
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
     // --lan-game-quit-at: the joiner leaves here; the host plays on
-    if (!host_ && quit_at_ > 0 && checked_at_ && sim->tick_count() >= quit_at_) {
+    const bool resumed = saw_pause_ && number_global(ui.raw(), "__osc_lan_resumed") >= 1;
+    if (!host_ && quit_at_ > 0 && checked_at_ && resumed && sim->tick_count() >= quit_at_) {
         spdlog::info("[lan-game] the joiner leaves at tick {}", sim->tick_count());
         check_chat(ui);
         check_pause(ui);
@@ -161,8 +168,9 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         check(ui, *sim);
         checked_at_ = frames_;
     }
-    const bool over =
-        checked_at_ && (sim->tick_count() >= kEndTick || frames_ - *checked_at_ > kWindDownFrames);
+    const bool alone = !host_ || quit_at_ == 0 || joiner_defeated(*sim);
+    const bool over = checked_at_ && ((alone && sim->tick_count() >= kEndTick) ||
+                                      frames_ - *checked_at_ > kWindDownFrames);
     if (over && !over_at_) over_at_ = frames_;
     // A frame or two more, so the frame's pumps (the disconnect dialog's
     // update) see what the lockstep did this frame
@@ -175,10 +183,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         // No one dropped; or, the joiner having left, it alone: its army
         // defeated, and retail's disconnect dialog shown and closed
         const auto& mp = lua::mp_net_state();
-        // The joiner's source: by slot, whichever it took
-        const auto joiner = std::find_if(mp.clients.begin(), mp.clients.end(),
-                                         [](const lua::SessionClient& c) { return c.uid == 1; });
-        const auto joiner_source = static_cast<u32>(joiner - mp.clients.begin());
+        const u32 joiner_source = joiner_source_of(mp);
         for (const u32 source : mp.all_sources) {
             const bool dropped = mp.session && mp.session->has_dropped(source);
             const bool left = quit_at_ > 0 && source == joiner_source;
@@ -187,11 +192,10 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
                              : fmt::format("source {}, which left, wasn't dropped", source));
         }
         if (host_ && quit_at_ > 0) {
-            const i32 army = mp.army_of(joiner_source);
-            const sim::ArmyBrain* gone =
-                army >= 0 ? sim->army_at(static_cast<size_t>(army)) : nullptr;
-            if (!gone || !gone->is_defeated())
-                fail(fmt::format("the joiner's army {} wasn't defeated", army));
+            if (!joiner_defeated(*sim)) {
+                fail(
+                    fmt::format("the joiner's army {} wasn't defeated", mp.army_of(joiner_source)));
+            }
             if (!dialog_seen_) fail("retail's disconnect dialog never opened");
             if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
         }
@@ -256,6 +260,13 @@ void LanGameTest::pause_frame(lua::LuaState& ui, const sim::SimState& sim) {
         if (auto s = ui.do_string("SessionResume() SetGameSpeed(2)"); !s)
             fail("resuming: " + s.error().message);
     }
+}
+
+bool LanGameTest::joiner_defeated(const sim::SimState& sim) {
+    const auto& mp = lua::mp_net_state();
+    const i32 army = mp.army_of(joiner_source_of(mp));
+    const sim::ArmyBrain* gone = army >= 0 ? sim.army_at(static_cast<size_t>(army)) : nullptr;
+    return gone && gone->is_defeated();
 }
 
 bool LanGameTest::disconnect_dialog_open(lua::LuaState& ui) {

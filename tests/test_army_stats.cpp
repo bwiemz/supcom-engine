@@ -14,12 +14,14 @@
 #include "vfs/virtual_file_system.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <cmath>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 TEST_CASE("ArmyBrain stat storage", "[army][stats]") {
     osc::sim::ArmyBrain brain;
@@ -98,8 +100,8 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
 }
 
-TEST_CASE("A paused unit keeps producing and its army pays for none of its work",
-          "[army][economy]") {
+TEST_CASE("A paused unit keeps producing, and its army pays what the unit asks",
+          "[army][economy][pause]") {
     osc::sim::EntityRegistry registry;
     osc::sim::ArmyBrain brain;
     brain.set_index(0);
@@ -107,27 +109,28 @@ TEST_CASE("A paused unit keeps producing and its army pays for none of its work"
     extractor->set_army(0);
     extractor->economy().production_mass = 2.0;
     extractor->economy().production_active = true;
-    extractor->pause(true);
-    auto builder = std::make_unique<osc::sim::Unit>();
-    builder->set_army(0);
-    builder->economy().consumption_mass = 4.0;
-    builder->economy().consumption_active = true;
-    builder->pause(true);
-    auto* b = builder.get();
+    extractor->set_paused(true);
+    auto shield = std::make_unique<osc::sim::Unit>();
+    shield->set_army(0);
+    shield->economy().consumption_mass = 4.0;
+    shield->economy().consumption_active = true;
+    shield->set_paused(true);
+    auto* s = shield.get();
     registry.register_entity(std::move(extractor));
-    registry.register_entity(std::move(builder));
+    registry.register_entity(std::move(shield));
 
     for (int i = 0; i < 10; ++i) {
         brain.update_economy(registry, 0.1);
     }
     CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 2.0) < 1e-9);
-    CHECK(brain.get_stat("Economy_TotalConsumed_Mass") == 0.0);
+    CHECK(brain.economy().mass.requested == 4.0);
+    CHECK(brain.get_stat("Economy_TotalConsumed_Mass") > 0.0);
 
-    b->pause(false);
+    s->economy().consumption_active = false;
     for (int i = 0; i < 10; ++i) {
         brain.update_economy(registry, 0.1);
     }
-    CHECK(std::abs(brain.get_stat("Economy_TotalConsumed_Mass") - 4.0) < 1e-9);
+    CHECK(brain.economy().mass.requested == 0.0);
 }
 
 TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",
@@ -970,4 +973,69 @@ TEST_CASE("A unit's resource fraction counts only what it asks for", "[economy]"
     CHECK(osc::sim::resource_fraction(builder, 0.3, 0.6) == 0.3);
 
     CHECK(osc::sim::resource_fraction(osc::sim::UnitEconomy{}, 0.1, 0.1) == 1.0);
+}
+
+TEST_CASE("GetUnitsAroundPoint finds units on the cells of its square, GetNumUnitsAroundPoint "
+          "centres strictly within its radius",
+          "[army][lua]") {
+    struct Row {
+        osc::f32 x, z, half, r;
+        bool listed;
+        bool counted;
+    };
+    const std::vector<Row> rows = {
+        {10.5f, 10.0f, 0.5f, 1.0f, true, true},   {11.8f, 10.0f, 0.5f, 1.0f, true, false},
+        {8.2f, 10.0f, 0.5f, 1.0f, true, false},   {11.5f, 11.5f, 0.25f, 1.0f, true, false},
+        {15.0f, 10.0f, 3.5f, 1.0f, true, false},  {13.0f, 10.0f, 0.5f, 1.0f, false, false},
+        {11.0f, 10.0f, 0.5f, 1.0f, true, false},  {10.0f, 10.0f, 0.5f, 0.0f, true, false},
+        {7.5f, 10.0f, 0.25f, 0.0f, false, false},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION("unit at " << row.x << "," << row.z << " half " << row.half << " r "
+                                   << row.r) {
+            osc::lua::LuaState lua;
+            osc::sim::SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            sim.add_army("ARMY_1", "ARMY_1");
+            lua_State* L = lua.raw();
+
+            auto unit = std::make_unique<osc::sim::Unit>();
+            unit->set_army(0);
+            unit->add_category("LAND");
+            unit->set_position({row.x, 0.0f, row.z});
+            osc::sim::CollisionShape box;
+            box.type = osc::sim::CollisionShapeType::BOX;
+            box.sx = row.half;
+            box.sy = 0.5f;
+            box.sz = row.half;
+            unit->set_default_collision_shape(box);
+            lua_newtable(L);
+            lua_pushstring(L, "_c_object");
+            lua_pushlightuserdata(L, unit.get());
+            lua_rawset(L, -3);
+            unit->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+            sim.entity_registry().register_entity(std::move(unit));
+
+            lua_newtable(L);
+            lua_pushstring(L, "_c_object");
+            lua_pushlightuserdata(L, sim.get_army(0));
+            lua_rawset(L, -3);
+            lua_setglobal(L, "brain");
+            lua_pushnumber(L, row.r);
+            lua_setglobal(L, "r");
+
+            const auto result = lua.do_string(R"(
+                local land = {__name = 'LAND'}
+                listed = table.getn(moho.aibrain_methods.GetUnitsAroundPoint(brain, land, {10, 0, 10}, r))
+                counted = moho.aibrain_methods.GetNumUnitsAroundPoint(brain, land, {10, 0, 10}, r)
+            )");
+            INFO((result.ok() ? std::string() : result.error().message));
+            REQUIRE(result.ok());
+            lua_getglobal(L, "listed");
+            CHECK(lua_tonumber(L, -1) == (row.listed ? 1.0 : 0.0));
+            lua_getglobal(L, "counted");
+            CHECK(lua_tonumber(L, -1) == (row.counted ? 1.0 : 0.0));
+            lua_pop(L, 2);
+        }
+    }
 }

@@ -290,15 +290,50 @@ static int platoon_DisbandOnIdle(lua_State* L) {
     return 0;
 }
 
+/// The platoon's units an order goes to, as Moho's CPlatoon orders pick
+/// them (faf-re CPlatoon::MoveToLocation, AttackTarget, Stop).
+static std::vector<u32> order_units(lua_State* L, const sim::SimState& sim,
+                                    const sim::Platoon& platoon, int squad_arg, int first, int last,
+                                    bool whole_in_formation) {
+    int only = -1;
+    if (lua_gettop(L) >= squad_arg) {
+        const char* name = lua_tostring(L, squad_arg);
+        if (!name) {
+            luaL_typerror(L, squad_arg, "string");
+            return {};
+        }
+        only = sim::Platoon::squad_class(name);
+        if (only < 0) {
+            luaL_error(L, "Invalid enum value %s", name);
+        }
+    }
+    const bool whole = whole_in_formation && !platoon.formation_override().empty();
+    std::vector<u32> ids;
+    for (u32 id : platoon.unit_ids()) {
+        const auto* e = sim.entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
+        }
+        const int c = sim::Platoon::squad_class(platoon.get_unit_squad(id));
+        const bool taken = only < 0 ? c >= 1 && c <= last : c == only && c >= first && c <= last;
+        if (whole || taken) {
+            ids.push_back(id);
+        }
+    }
+    return ids;
+}
+
 static int platoon_Stop(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
     if (!platoon || !sim) return 0;
 
-    for (u32 id : platoon->unit_ids()) {
+    const std::vector<u32> ids = order_units(L, *sim, *platoon, 2, 0, 5, false);
+    for (u32 id : ids) {
         auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->is_unit())
-            static_cast<sim::Unit*>(e)->clear_commands();
+        if (e && !e->destroyed() && e->is_unit()) {
+            static_cast<sim::Unit*>(e)->clear_commands(sim->entity_registry(), L);
+        }
     }
     return 0;
 }
@@ -309,12 +344,13 @@ static bool no_formation(const std::string& name) {
     return name.empty() || name == "NoFormation" || name == "None" || name == "none";
 }
 
-// platoon:MoveToLocation(position, useTransports), AggressiveMoveToLocation,
-// and MoveToTarget(unit): a move (an attack-move) for every unit, queued
+// platoon:MoveToLocation(position, useTransports[, squad]),
+// AggressiveMoveToLocation(position[, squad]) and MoveToTarget(unit,
+// useTransports[, squad]): a move (an attack-move) for the squad's units, queued
 // after its current orders (retail's AI queues one per waypoint of the route
 // it chose, after a Stop). Units move in the formation they were assigned
 // (the platoon's override first), each group laid out in its slots (M204).
-static int platoon_order_to(lua_State* L, sim::CommandType type) {
+static int platoon_order_to(lua_State* L, sim::CommandType type, int squad_arg) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
     if (!platoon || !sim || !lua_istable(L, 2)) {
@@ -342,9 +378,7 @@ static int platoon_order_to(lua_State* L, sim::CommandType type) {
 
     // One order per formation, in order of first appearance.
     std::vector<std::pair<std::string, std::vector<u32>>> groups;
-    for (u32 id : platoon->unit_ids()) {
-        auto* e = sim->entity_registry().find(id);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
+    for (u32 id : order_units(L, *sim, *platoon, squad_arg, 1, 5, true)) {
         std::string formation = platoon->unit_formation(id);
         if (no_formation(formation)) formation.clear();
         auto it = std::find_if(groups.begin(), groups.end(),
@@ -365,10 +399,10 @@ static int platoon_order_to(lua_State* L, sim::CommandType type) {
 }
 
 static int platoon_MoveToLocation(lua_State* L) {
-    return platoon_order_to(L, sim::CommandType::Move);
+    return platoon_order_to(L, sim::CommandType::Move, 4);
 }
 static int platoon_AggressiveMoveToLocation(lua_State* L) {
-    return platoon_order_to(L, sim::CommandType::AggressiveMove);
+    return platoon_order_to(L, sim::CommandType::AggressiveMove, 3);
 }
 
 static int platoon_Patrol(lua_State* L) {
@@ -396,10 +430,8 @@ static int platoon_Patrol(lua_State* L) {
     cmd.target_pos = pos;
     cmd.command_id = cmd_id;
 
-    for (u32 id : platoon->unit_ids()) {
-        auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->is_unit())
-            static_cast<sim::Unit*>(e)->push_command(cmd, false); // append
+    for (u32 id : order_units(L, *sim, *platoon, 3, 1, 5, true)) {
+        static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
     }
     lua_pushnumber(L, cmd_id);
     return 1;
@@ -421,10 +453,8 @@ static int platoon_AttackTarget(lua_State* L) {
     cmd.target_pos = target->position();
     cmd.command_id = cmd_id;
 
-    for (u32 id : platoon->unit_ids()) {
-        auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->is_unit())
-            static_cast<sim::Unit*>(e)->push_command(cmd, true);
+    for (u32 id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
+        static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
     }
     lua_pushnumber(L, cmd_id);
     return 1;
@@ -445,12 +475,10 @@ static int platoon_GuardTarget(lua_State* L) {
     cmd.command_id = cmd_id;
 
     bool queued = false;
-    for (u32 id : platoon->unit_ids()) {
-        auto* e = sim->entity_registry().find(id);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
-        auto* u = static_cast<sim::Unit*>(e);
+    for (u32 id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
+        auto* u = static_cast<sim::Unit*>(sim->entity_registry().find(id));
         if (!sim->takes_command(*u, cmd)) continue;
-        u->push_command(cmd, true);
+        u->push_command(cmd, false);
         queued = true;
     }
     // The command, or nil when none of its units took it (as Issue*).

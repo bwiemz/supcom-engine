@@ -10,6 +10,7 @@
 // in for the units and props, on SCMP_009's water.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
@@ -83,8 +84,8 @@ void test_water_reflection(TestContext& ctx) {
     }
     renderer::Renderer& r = shots.renderer();
 
-    const auto dir = std::filesystem::temp_directory_path() / "osc_water_reflection_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_water_reflection_test");
+    const auto& dir = scratch.path();
     write_wall_scm(dir / "wall.scm", kWallHalf, kWallHeight);
     // One whose normal faces the camera (+z).
     write_wall_scm(dir / "wall_facing.scm", kWallHalf, kWallHeight, 1.0f);

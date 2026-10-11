@@ -15,6 +15,7 @@
 #include "ui/world_view.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/temp_path.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -303,8 +304,7 @@ void write_dxt5(const std::filesystem::path& file, std::uint8_t left_alpha,
 
 TEST_CASE("UseAlphaHitTest hits a bitmap only where its frame's texel has alpha", "[ui][lua]") {
     namespace fs = std::filesystem;
-    const fs::path root_dir = fs::temp_directory_path() / "osc_alpha_hit_test";
-    fs::remove_all(root_dir);
+    const fs::path root_dir = osc::test::unique_temp_path("osc_alpha_hit_test");
     fs::create_directories(root_dir / "textures");
     write_dxt5(root_dir / "textures" / "half.dds", 255, 0);
     write_dxt5(root_dir / "textures" / "clear.dds", 0, 0);
@@ -697,6 +697,35 @@ TEST_CASE("A dragger's script errors are reported, as other UI callbacks' are",
     CHECK(osc::test_status::failure_count() == 3);
 }
 
+TEST_CASE("A dragger ends only on the release of the button it was posted for",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run(R"(
+        screen = box('screen', GetFrame(0), 0, 0, 100, 100, 1)
+        handled = {}
+        released = 0
+        PostDragger(GetFrame(0), 1, {OnRelease = function() released = released + 1 end})
+    )");
+    f.dispatch.on_cursor_pos(10, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("released == 0"));
+    CHECK(f.check("whos('ButtonRelease') == 'screen'"));
+
+    f.run("handled = {}");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("released == 1"));
+    CHECK(f.check("whos('ButtonRelease') == ''"));
+
+    f.run("PostDragger(GetFrame(0), 'RBUTTON', {OnRelease = function() released = 10 end})");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("released == 10"));
+    CHECK(f.check("not pcall(PostDragger, GetFrame(0), 'SPACE', {})"));
+}
+
 TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua][input]") {
     InputFixture f;
     f.run(R"(
@@ -1075,11 +1104,34 @@ TEST_CASE("An ItemList takes a press on a row and tells of the row under the mou
     )");
     REQUIRE(control_of(f.lua.raw(), "list")->scroll_top() == 3);
 
+    f.dispatch.on_cursor_pos(50, 40);
+    f.deliver();
+    CHECK(f.check("table.getn(over) == 0"));
+    CHECK(control_of(f.lua.raw(), "list")->hover_item() == -1);
+    f.dispatch.on_cursor_pos(50, 150);
+    f.deliver();
+    f.run("list:ShowMouseoverItem(true)");
+
     // Over its third shown row; along it, no news; off its side, none
     f.dispatch.on_cursor_pos(50, 40);
     f.dispatch.on_cursor_pos(60, 45);
     f.deliver();
     CHECK(f.check("table.concat(over, ',') == '5'"));
+    {
+        auto* list = control_of(f.lua.raw(), "list");
+        CHECK(list->hover_item() == 5);
+        list->set_selection(5);
+        list->set_item_mo_fg_color(0xFF00FF00);
+        list->set_item_mo_bg_color(0xFF0000FF);
+        list->set_item_sel_bg_color(0xFFFF0000);
+        const auto hovered = osc::ui::item_list_row_colors(*list, 5);
+        CHECK(hovered.fg == 0xFF00FF00);
+        CHECK(hovered.has_bg);
+        CHECK(hovered.bg == 0xFFFF0000);
+        list->set_selection(-1);
+        CHECK(osc::ui::item_list_row_colors(*list, 5).bg == 0xFF0000FF);
+        CHECK_FALSE(osc::ui::item_list_row_colors(*list, 4).has_bg);
+    }
 
     // A press there: its row, the Combo under it not told
     f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);

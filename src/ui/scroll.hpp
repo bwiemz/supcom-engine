@@ -39,6 +39,15 @@ f32 dragged_top(const ScrollValues& values, f32 track, f32 length, f32 start);
 /// The height an ItemList's rows are drawn at
 f32 item_list_row_height(const UIControl& list);
 
+struct ItemRowColors {
+    u32 fg = 0;
+    bool has_bg = false;
+    u32 bg = 0;
+};
+/// As Moho's CMauiItemList::Draw: the mouseover row's colours over the
+/// selection's.
+ItemRowColors item_list_row_colors(const UIControl& list, i32 row);
+
 /// The row of an ItemList `height` tall drawn at `at` below its top; -1 off
 /// its rows
 i32 item_list_row_at(const UIControl& list, f32 height, f32 at);

@@ -5,6 +5,7 @@
 
 #include "core/test_status.hpp"
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
@@ -187,8 +188,8 @@ void test_terrain_glow(TestContext& ctx) {
     // the glow is the ramp at u = 0.5 + 0.01 cos(Time / 8) (TerrainGlowPS
     // reads the offset swapped), plus 0.01. Two Times.
     {
-        const auto dir = std::filesystem::temp_directory_path() / "osc_terrain_glow_test";
-        std::filesystem::create_directories(dir);
+        const TempDir scratch("osc_terrain_glow_test");
+        const auto& dir = scratch.path();
         write_dds(
             dir / "ramp.dds", 1,
             [](int, u32 column, u32) {

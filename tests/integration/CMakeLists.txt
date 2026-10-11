@@ -14,6 +14,7 @@ add_executable(osc_integration
     runner/persist_test.cpp
     runner/wave_test.cpp
     runner/movie_test.cpp
+    runner/combo_click_test.cpp
     runner/edit_text_test.cpp
     runner/keymap_test.cpp
     runner/camera_moves_test.cpp
@@ -35,6 +36,7 @@ add_executable(osc_integration
     runner/unit_intel_test.cpp
     runner/intel_probe.cpp
     runner/strategic_icon_test.cpp
+    runner/economy_overlay_test.cpp
     runner/resource_icon_render_test.cpp
     runner/counter_intel_test.cpp
     runner/binding_tail_test.cpp
@@ -74,7 +76,8 @@ add_executable(osc_integration
     runner/yaw_only_test.cpp
     runner/air_attack_test.cpp
 )
-target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)
+target_include_directories(osc_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/runner ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_integration PRIVATE osc::warnings osc::app)
 # Beside opensupcom (on Windows with the same DLLs, which the cross-OS
 # check's artifact carries); crash backtraces show function names.

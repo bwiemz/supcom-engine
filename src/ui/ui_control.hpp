@@ -222,6 +222,8 @@ public:
     void set_show_selection(bool s) { show_selection_ = s; }
     bool show_mouseover() const { return show_mouseover_; }
     void set_show_mouseover(bool m) { show_mouseover_ = m; }
+    i32 hover_item() const { return hover_item_; }
+    void set_hover_item(i32 row) { hover_item_ = row; }
     i32 scroll_top() const { return scroll_top_; }
     void set_scroll_top(i32 t) { scroll_top_ = t; }
     u32 item_fg_color() const { return item_fg_color_; }
@@ -401,7 +403,8 @@ private:
     std::vector<std::string> items_;
     i32 selection_ = -1;
     bool show_selection_ = true;
-    bool show_mouseover_ = true;
+    bool show_mouseover_ = false;
+    i32 hover_item_ = -1;
     i32 scroll_top_ = 0;
     u32 item_fg_color_ = 0xFFFFFFFF;
     u32 item_bg_color_ = 0xFF000000;

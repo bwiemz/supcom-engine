@@ -90,6 +90,22 @@ bool Console::has(std::string_view name) const {
     return commands_.find(name) != commands_.end();
 }
 
+std::vector<std::string> Console::matches(std::string_view prefix) const {
+    std::vector<std::string> out;
+    if (prefix.empty()) {
+        return out;
+    }
+    for (auto it = commands_.lower_bound(prefix); it != commands_.end(); ++it) {
+        const std::string_view name = it->first;
+        if (name.size() < prefix.size() || NoCase{}(name.substr(0, prefix.size()), prefix) ||
+            NoCase{}(prefix, name.substr(0, prefix.size()))) {
+            break;
+        }
+        out.push_back(it->first);
+    }
+    return out;
+}
+
 void Console::execute(lua_State* L, std::string_view line) {
     std::string pending(line);
     std::vector<std::string> tokens;

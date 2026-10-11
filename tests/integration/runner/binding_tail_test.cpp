@@ -165,6 +165,41 @@ void test_binding_tail(TestContext& ctx) {
         local far = __osc_bt_far:GetBlip(1)
         if not far or not far:IsSeenEver(1) then error('the far generator forgotten') end
     )");
+    check("GetUnitsAroundPoint finds any army's units the brain knows of",
+          fmt::format(R"(
+        local brain = ArmyBrains[1]
+        local function has(list, unit)
+            for _, u in list do
+                if u == unit then return true end
+            end
+            return false
+        end
+        local remembered, forgotten = {{{0}, 0, {1}}}, {{{2}, 0, {1}}}
+        if not has(brain:GetUnitsAroundPoint(categories.STRUCTURE, remembered, 10), __osc_bt_far) then
+            error('a remembered enemy is not found')
+        end
+        if not has(brain:GetUnitsAroundPoint(categories.STRUCTURE, remembered, 10, 'Enemy'), __osc_bt_far) then
+            error('a remembered enemy is not an enemy')
+        end
+        if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, remembered, 10, 'Ally')) ~= 0 then
+            error('an enemy is an ally')
+        end
+        if brain:GetNumUnitsAroundPoint(categories.STRUCTURE, remembered, 10) ~= 1 then
+            error('a remembered enemy is not counted')
+        end
+        for _, alliance in {{'Enemy', 'Neutral'}} do
+            if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, forgotten, 10, alliance)) ~= 0 then
+                error('a forgotten ' .. alliance .. ' is found')
+            end
+        end
+        if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, forgotten, 10)) ~= 0 then
+            error('a forgotten enemy is found')
+        end
+        if not has(brain:GetUnitsAroundPoint(categories.MOBILE, {{{3}, 0, {4}}}, 4), __osc_bt_idle) then
+            error('its own unit is not found')
+        end
+    )",
+                      sx - 20, sz + 60, sx + 40, sx - 8, sz));
     check("FlushIntelInRect takes four numbers", R"(
         if pcall(FlushIntelInRect, 1, 2, 3) then error('three taken') end
         if pcall(FlushIntelInRect, 1, 2, 3, 'x') then error('a string taken') end
@@ -214,6 +249,67 @@ void test_binding_tail(TestContext& ctx) {
             error('vectors without an enemy')
         end
     )");
+
+    (void)spawn_unit(ctx, "__osc_bt_factory", "ueb0101", "ARMY_1", {sx - 30, sz - 20});
+    check("a factory builds a tank", R"(
+        IssueBuildFactory({__osc_bt_factory}, 'uel0201', 1)
+    )");
+    run(20);
+    check("GetListOfUnits(category, needToBeIdle, requireBuilt = true)", R"(
+        local brain = ArmyBrains[1]
+        local function has(list, unit)
+            for _, u in list do
+                if u == unit then return true end
+            end
+            return false
+        end
+        local tank = __osc_bt_factory:GetFocusUnit()
+        if not tank or not tank:IsBeingBuilt() then error('no tank being built') end
+        if has(brain:GetListOfUnits(categories.uel0201, false), tank) then
+            error('an unfinished unit is listed by default')
+        end
+        if has(brain:GetListOfUnits(categories.uel0201, false, true), tank) then
+            error('an unfinished unit is listed as built')
+        end
+        if not has(brain:GetListOfUnits(categories.uel0201, false, false), tank) then
+            error('an unfinished unit is not listed when allowed')
+        end
+        if has(brain:GetListOfUnits(categories.ueb0101, true), __osc_bt_factory) then
+            error('a busy factory is listed as idle')
+        end
+        if not has(brain:GetListOfUnits(categories.ueb0101, false), __osc_bt_factory) then
+            error('a busy factory is not listed')
+        end
+        if not has(brain:GetListOfUnits(categories.uea0107, true), __osc_bt_idle) then
+            error('an idle transport is not listed as idle')
+        end
+    )");
+
+    const auto queued = [&](u32 id) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        return e && e->is_unit() ? static_cast<const sim::Unit*>(e)->command_queue().size() : 0;
+    };
+    check("a platoon's move for one squad", fmt::format(R"(
+        __osc_bt_platoon:Stop()
+        __osc_bt_platoon:MoveToLocation({{{0}, 0, {1}}}, false, 'Scout')
+    )",
+                                                        sx, sz + 20));
+    t.check(first_order(transport) == sim::CommandType::Move, "the scout squad moves");
+    t.check(!first_order(marine), "the attack squad has no order");
+    t.check(!first_order(idle), "the unassigned transport has no order");
+    check("an attack-move for another squad, then a move for every squad",
+          fmt::format(R"(
+        __osc_bt_platoon:AggressiveMoveToLocation({{{0}, 0, {1}}}, 'attack')
+        __osc_bt_platoon:MoveToLocation({{{0}, 0, {2}}}, false)
+        if pcall(__osc_bt_platoon.Patrol, __osc_bt_platoon, {{{0}, 0, {1}}}, 'Scouts') then
+            error('an unknown squad taken')
+        end
+    )",
+                      sx, sz + 20, sz + 30));
+    t.check(first_order(marine) == sim::CommandType::AggressiveMove && queued(marine) == 2,
+            "the attack squad attack-moves, then moves");
+    t.check(queued(transport) == 2, "the scout squad moves twice");
+    t.check(!first_order(idle), "the unassigned transport still has no order");
 
     spdlog::info("=== BINDING TAIL TEST: {} passed, {} failed ===", t.pass, t.fail);
 }

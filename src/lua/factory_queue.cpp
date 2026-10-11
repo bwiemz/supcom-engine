@@ -13,9 +13,16 @@ extern "C" {
 namespace osc::lua {
 
 void FactoryQueueDisplay::set_current(lua_State* L, sim::Unit* factory) {
-    if (!factory) { lua_newtable(L); return; }
-    current_factory_id_ = factory->entity_id();
-    shown_ = factory->factory_queue();
+    static const sim::CategoryName kShowQueue{"SHOWQUEUE"};
+    clear();
+    if (factory && factory->has_category(kShowQueue)) {
+        current_factory_id_ = factory->entity_id();
+        shown_ = factory->factory_queue();
+    }
+    if (shown_.empty()) {
+        lua_pushnil(L);
+        return;
+    }
     push_queue_table(L, shown_);
 }
 

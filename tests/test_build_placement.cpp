@@ -73,6 +73,7 @@ Unit* spawn(SimState& sim, osc::i32 army, osc::f32 x, osc::f32 z) {
     auto u = std::make_unique<Unit>();
     u->set_army(army);
     u->set_position({x, 0.0f, z});
+    u->add_category("ENGINEER");
     auto* raw = u.get();
     sim.entity_registry().register_entity(std::move(u));
     return raw;

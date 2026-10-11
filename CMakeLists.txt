@@ -242,5 +242,6 @@ if(OSC_LINT AND OSC_BUILD_TESTS)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/clang_tidy_ratchet.py
                      -p ${CMAKE_BINARY_DIR}
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-    set_tests_properties(lint.clang_tidy PROPERTIES LABELS "lint" TIMEOUT 1800)
+    # The full-repository scan can exceed 30 minutes on small CI runners.
+    set_tests_properties(lint.clang_tidy PROPERTIES LABELS "lint" TIMEOUT 3600)
 endif()

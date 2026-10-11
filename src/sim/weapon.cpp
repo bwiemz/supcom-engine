@@ -109,20 +109,6 @@ bool is_underwater(const std::string& layer) {
 
 /// The water's surface, as Moho's target points compare to it: -10000 on a
 /// map without water (or with no terrain).
-/// A standard normal draw: Moho's CRandomStream::FRandGaussian, Marsaglia's
-/// polar method (which keeps the pair's second value for the next call;
-/// this draws a fresh pair each time).
-f32 gaussian(SimRandom& rng) {
-    f64 x = 0;
-    f64 s = 0;
-    do {
-        x = rng.next_double() * 2.0 - 1.0;
-        const f64 y = rng.next_double() * 2.0 - 1.0;
-        s = x * x + y * y;
-    } while (s >= 1.0 || s == 0.0);
-    return static_cast<f32>(x * std::sqrt(-2.0 * osc::dmath::log(s) / s));
-}
-
 /// `d` (of unit length) turned `heading` across and `pitch` up in its own
 /// frame, radians: the launch jitter of Moho's CreateProjectile.
 Vector3 turned(const Vector3& d, f32 heading, f32 pitch) {
@@ -611,6 +597,49 @@ bool Weapon::can_attack_ground(const Vector3& at, const map::Terrain* terrain) c
         else return false;
     }
     return (fire_target_layer_caps & layer) != 0;
+}
+
+bool can_attack_target(const Unit& unit, const Unit& target, bool range_check) {
+    const std::string& at = target.layer();
+    if (unit.is_mobile()) {
+        if (unit.auto_surface_mode()) {
+            if (at == "Air" && unit.has_category("OVERLAYANTIAIR")) {
+                return true;
+            }
+            if (at == "Land" && unit.has_category("OVERLAYDIRECTFIRE")) {
+                return true;
+            }
+        }
+        const std::string& motion = unit.motion_type();
+        const bool amphibious = motion == "RULEUMT_Amphibious";
+        if (unit.layer() == "Land" && is_underwater(at)) {
+            if ((amphibious || motion == "RULEUMT_AmphibiousFloating") &&
+                unit.has_category("OVERLAYANTINAVY")) {
+                return true;
+            }
+        } else if (unit.layer() == "Seabed" && at == "Land" && amphibious &&
+                   unit.has_category("OVERLAYDIRECTFIRE")) {
+            return true;
+        }
+    }
+    const f32 dx = target.position().x - unit.position().x;
+    const f32 dz = target.position().z - unit.position().z;
+    const f32 dist = std::sqrt(dx * dx + dz * dz);
+    const u8 layer = layer_to_bit(at);
+    for (const auto& w : unit.weapons()) {
+        if (w->fire_on_death || w->dummy || (w->fire_target_layer_caps & layer) == 0) {
+            continue;
+        }
+        if ((!w->restrict_only_allow.empty() &&
+             !w->restrict_only_allow.matches(target.categories())) ||
+            w->restrict_disallow.matches(target.categories())) {
+            continue;
+        }
+        if (unit.is_mobile() || !range_check || (w->min_range <= dist && dist <= w->max_range)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Weapon::in_firing_range(const Unit& owner, const Vector3& at) const {

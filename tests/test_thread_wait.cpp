@@ -7,6 +7,8 @@
 #include "sim/waitable.hpp"
 #include "ui/ui_control.hpp"
 
+#include <string>
+
 extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
@@ -262,4 +264,68 @@ TEST_CASE("The UI's KillThread ends a thread its ForkThread made", "[threads][ui
     tm.resume_all(4);
     REQUIRE(state.do_string("assert(n == before, 'ran on after KillThread')"));
     CHECK(tm.active_count() == 0);
+}
+
+TEST_CASE("A thread yielding n ticks runs again n - 1 ticks later as Moho's", "[threads]") {
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::ThreadManager tm(L);
+    lua_register(L, "Sleep", sleep_ticks);
+    REQUIRE(state.do_string(R"(
+        now = 0
+        function waits()
+            local a = now
+            Sleep(1)
+            one = now - a
+            a = now
+            Sleep(5)
+            five = now - a
+            a = now
+            Sleep(20)
+            twenty = now - a
+            a = now
+            Sleep(0)
+            zero = now - a
+        end
+    )"));
+    fork(tm, L, "waits");
+    for (osc::u32 tick = 1; tick <= 40; ++tick) {
+        REQUIRE(state.do_string("now = " + std::to_string(tick)));
+        tm.resume_all(tick);
+    }
+    CHECK(state.do_string("assert(one == 1, one)"));
+    CHECK(state.do_string("assert(five == 4, five)"));
+    CHECK(state.do_string("assert(twenty == 19, twenty)"));
+    CHECK(state.do_string("assert(zero == 0, zero)"));
+}
+
+TEST_CASE("A thread forked by a running thread runs the same tick after the rest", "[threads]") {
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::ThreadManager tm(L);
+    tm.register_in_registry(L);
+    lua_register(L, "Sleep", sleep_ticks);
+    lua_register(L, "ForkThread", [](lua_State* s) {
+        lua_pushstring(s, "osc_thread_mgr");
+        lua_rawget(s, LUA_REGISTRYINDEX);
+        auto* m = static_cast<osc::sim::ThreadManager*>(lua_touserdata(s, -1));
+        lua_pop(s, 1);
+        return m->fork_thread(s);
+    });
+    REQUIRE(state.do_string(R"(
+        now = 0
+        order = ''
+        function parent()
+            ForkThread(function() child_at = now order = order .. 'c' end)
+            order = order .. 'p'
+            Sleep(1)
+        end
+        function other() order = order .. 'o' end
+    )"));
+    fork(tm, L, "parent");
+    fork(tm, L, "other");
+    REQUIRE(state.do_string("now = 1"));
+    tm.resume_all(1);
+    CHECK(state.do_string("assert(child_at == 1, child_at)"));
+    CHECK(state.do_string("assert(order == 'poc', order)"));
 }

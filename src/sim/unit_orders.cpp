@@ -56,6 +56,11 @@ f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char*
     return value;
 }
 
+/// Ticks a build or repair waits at its army's unit cap, or paused, before
+/// trying again: Moho's tasks return 10 there (a task waits 9 ticks and runs
+/// on the 10th), the brain hearing OnUnitCapLimitReached at each try at the cap.
+constexpr i32 kTaskRetryTicks = 10;
+
 bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
                                   const SimContext& ctx) {
     if (!ctx.sim) return false;
@@ -64,7 +69,7 @@ bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
     if (!brain) return false;
 
     // (The unit cap is no rule of the order's: the unit's making checks it,
-    // and the builder waits it out -- start_build, kCapRetryTicks.)
+    // and the builder waits it out -- start_build, kTaskRetryTicks.)
     if (brain->is_build_restricted(cmd.blueprint_id)) {
         spdlog::info("Build blocked: army {} restricted blueprint {}", builder.army(),
                      cmd.blueprint_id);
@@ -235,12 +240,72 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     return made;
 }
 
-bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to) {
+// faf-re CAiPathNavigator's UpdateWaterFavorAltFootprintMode: the alt
+// footprint while it, and every FAVORSWATER unit given its order, are on
+// water and bound for water.
+void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
+    static const CategoryName kFavorsWater{"FAVORSWATER"};
+    if (has_category(kFavorsWater) && ctx.terrain) {
+        const map::Terrain& t = *ctx.terrain;
+        const f32 water = t.has_water() ? t.water_elevation() : -10000.0f;
+        const auto on_water = [&](const Vector3& p) {
+            return !(t.get_terrain_height(p.x, p.z) > water);
+        };
+        const auto destination = [&](const UnitCommand& c) {
+            const Entity* target = c.target_id != 0 ? ctx.registry.find(c.target_id) : nullptr;
+            return target ? target->position() : c.target_pos;
+        };
+        using_alt_footprint_ = false;
+        if (command_queue_.empty()) {
+            using_alt_footprint_ = on_water(position()) && on_water(goal);
+        } else {
+            const UnitCommand& order = command_queue_.front();
+            const auto keeps_to_water = [&](const Unit& u) {
+                const UnitCommand* own = nullptr;
+                for (const UnitCommand& c : u.command_queue_) {
+                    if (c.command_id == order.command_id) {
+                        own = &c;
+                        break;
+                    }
+                }
+                if (!own) {
+                    return true;
+                }
+                const UnitCommand& current = u.command_queue_.front();
+                return on_water(u.position()) && on_water(destination(*own)) &&
+                       (current.command_id == order.command_id || on_water(destination(current)));
+            };
+            bool all = keeps_to_water(*this);
+            if (all && order.command_id != 0) {
+                ctx.registry.for_each_unit([&](const Entity& e) {
+                    const auto& u = static_cast<const Unit&>(e);
+                    if (all && &u != this && !u.dying_ && !u.destroyed() &&
+                        u.has_category(kFavorsWater)) {
+                        all = keeps_to_water(u);
+                    }
+                });
+            }
+            using_alt_footprint_ = all;
+        }
+    }
+    if (!uses_alt_footprint()) {
+        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+        return;
+    }
+    const blueprints::Footprint& fp = footprint();
+    const bool afloat =
+        (fp.caps & (blueprints::occupancy::kLand | blueprints::occupancy::kSeabed)) == 0;
+    navigator_.set_goal(goal, ctx.pathfinder, position(), afloat ? std::string("Water") : layer_,
+                        std::max(naval_draft_, fp.min_water_depth), false);
+}
+
+bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through) {
+    navigator_.set_speed_through_goal(through);
     const Vector3 heading = navigator_.goal();
     if (!ferry_leg_set_ || std::abs(heading.x - to.x) > 1.0f || std::abs(heading.z - to.z) > 1.0f ||
         navigator_.status() == Navigator::Status::WaitingForPath) {
-        navigator_.set_goal(to, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(to, ctx);
         ferry_leg_set_ = true;
     }
     const bool going = nav_update(dt, ctx.terrain);
@@ -251,8 +316,7 @@ bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to) {
 bool Unit::approach_update(f64 dt, SimContext& ctx) {
     if (navigator_.status() == Navigator::Status::WaitingForPath) {
         const Vector3 goal = navigator_.goal();
-        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(goal, ctx);
     }
     return nav_update(dt, ctx.terrain);
 }
@@ -260,7 +324,8 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
-        (command_queue_.empty() || command_queue_.front().type != CommandType::BuildMobile)) {
+        (command_queue_.empty() || (command_queue_.front().type != CommandType::BuildMobile &&
+                                    command_queue_.front().task_wait <= 0))) {
         aim_builder_arms(nullptr, ctx.L);
     }
     // An attack run ends with its order: Moho's flight resets the combat
@@ -275,6 +340,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (!running) end_attack_run(*this);
     }
     while (!command_queue_.empty()) {
+        note_queue_head();
         // Orders run script callbacks, which may destroy this unit (it stays
         // allocated until the tick ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
@@ -323,7 +389,7 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
 
 OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     switch (cmd.type) {
-    case CommandType::Stop: return order_stop();
+    case CommandType::Stop: return order_stop(ctx.L);
     case CommandType::Move: return order_move(cmd, dt, ctx);
     case CommandType::Attack: return order_attack(cmd, dt, ctx);
     case CommandType::BuildMobile: return order_build_mobile(cmd, dt, ctx, econ_eff);
@@ -354,20 +420,24 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     }
 }
 
-OrderStep Unit::order_stop() {
+OrderStep Unit::order_stop(lua_State* L) {
     navigator_.abort_move();
     command_queue_.pop_front();
+    run_stop(L);
     return OrderStep::Next;
 }
 
 OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
-        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(cmd.target_pos, ctx);
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
         command_queue_.pop_front();
+        if (is_air_unit() &&
+            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
+            stop_air();
+        }
         return OrderStep::Next;
     }
     return OrderStep::Hold; // Still moving
@@ -460,8 +530,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         // Move toward target
         if (!navigator_.is_moving() || navigator_.goal().x != target->position().x ||
             navigator_.goal().z != target->position().z) {
-            navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                naval_draft_, is_amphibious() || is_hover());
+            set_path_goal(target->position(), ctx);
         }
         nav_update(dt, ctx.terrain);
     } else {
@@ -592,8 +661,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Hold;
     }
     if (!navigator_.is_moving() || navigator_.goal().x != goal.x || navigator_.goal().z != goal.z) {
-        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(goal, ctx);
     }
     nav_update(dt, ctx.terrain);
     return OrderStep::Hold;
@@ -602,6 +670,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    const u32 order_id = cmd.command_id;
     if (build_target_id_ == 0) {
         if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
             const BuildSiteProp site =
@@ -663,9 +732,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 return OrderStep::Next;
             }
             cmd.approached = true;
-            navigator_.set_goal(approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1),
-                                ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1), ctx);
         }
         if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
         // After the walk only range decides: the pathfinder may have moved
@@ -686,12 +753,14 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         }
 
         // Phase 2: Spawn skeleton unit
-        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        if (waits_out_task(cmd)) {
+            return OrderStep::Hold;
+        }
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (awaits_arm()) {
+        if (turns_to_face(cmd.target_pos) || awaits_arm() || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
@@ -705,6 +774,10 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 command_queue_.pop_front();
             return OrderStep::Next;
         }
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
         if (Entity* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
             wreck && !wreck->destroyed() && ctx.sim) {
             ctx.sim->notify_script_destroy(*wreck);
@@ -716,14 +789,28 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
         auto* built = registry.find(build_target_id_);
         if (bonus > 0.0f && built && !built->destroyed() && built->is_unit()) {
             materialize(static_cast<Unit&>(*built), bonus);
         }
     }
     // Phase 3: Progress the build
+    if (waits_out_task(cmd)) {
+        return OrderStep::Hold;
+    }
+    if (const Entity* site = registry.find(build_target_id_);
+        site && !site->destroyed() && waits_paused(cmd)) {
+        return OrderStep::Hold;
+    }
     if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
-        command_queue_.pop_front();
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        // Completion scripts may clear or replace the command referenced by cmd.
+        if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+            command_queue_.front().command_id == order_id)
+            command_queue_.pop_front();
         return OrderStep::Next;
     }
     return OrderStep::Hold;
@@ -740,10 +827,15 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     }
     if (build_target_id_ == 0) {
         // Factory: spawn immediately at own position
-        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        if (waits_out_task(cmd)) {
+            return OrderStep::Hold;
+        }
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
             command_queue_.pop_front();
             return OrderStep::Next;
+        }
+        if (waits_paused(cmd)) {
+            return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
         switch (start_build(cmd, registry, L)) {
@@ -777,20 +869,25 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     return OrderStep::Hold;
 }
 
-/// Ticks a build waits at its army's unit cap before trying again: Moho's
-/// build tasks return 10 there (a task waits 9 ticks and runs on the 10th),
-/// the brain hearing OnUnitCapLimitReached at each try.
-constexpr i32 kCapRetryTicks = 10;
+bool Unit::waits_out_task(UnitCommand& cmd) {
+    if (cmd.task_wait <= 0) {
+        return false;
+    }
+    --cmd.task_wait;
+    return cmd.task_wait > 0;
+}
 
-bool Unit::waits_out_unit_cap(UnitCommand& cmd) {
-    if (cmd.cap_wait <= 0) return false;
-    --cmd.cap_wait;
-    return cmd.cap_wait > 0;
+bool Unit::waits_paused(UnitCommand& cmd) const {
+    if (!paused_) {
+        return false;
+    }
+    cmd.task_wait = kTaskRetryTicks;
+    return true;
 }
 
 OrderStep Unit::hold_for_unit_cap(u32 command_id) {
     if (!command_queue_.empty() && command_queue_.front().command_id == command_id)
-        command_queue_.front().cap_wait = kCapRetryTicks;
+        command_queue_.front().task_wait = kTaskRetryTicks;
     return OrderStep::Hold;
 }
 
@@ -816,7 +913,7 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
     if (cmd.count > 1) {
         --cmd.count;
         cmd.rolloff_wait = 0;
-        cmd.cap_wait = 0;
+        cmd.task_wait = 0;
         return OrderStep::Next;
     }
     if (repeat_queue_) {
@@ -887,8 +984,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
-        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(cmd.target_pos, ctx);
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
         // An attack-move is one leg: Moho's dispatch removes the order when
@@ -950,11 +1046,10 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                navigator_.set_goal(approach_point(*this, target->position(),
-                                                   target->footprint_size_x() * 0.5f,
-                                                   target->footprint_size_z() * 0.5f),
-                                    ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(approach_point(*this, target->position(),
+                                             target->footprint_size_x() * 0.5f,
+                                             target->footprint_size_z() * 0.5f),
+                              ctx);
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
@@ -1091,11 +1186,10 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                navigator_.set_goal(approach_point(*this, rtarget->position(),
-                                                   runit.skirt_size_x() * 0.5f + 1,
-                                                   runit.skirt_size_z() * 0.5f + 1),
-                                    ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(approach_point(*this, rtarget->position(),
+                                             runit.skirt_size_x() * 0.5f + 1,
+                                             runit.skirt_size_z() * 0.5f + 1),
+                              ctx);
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
@@ -1124,7 +1218,7 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (awaits_arm()) {
+        if (turns_to_face(at) || awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         if (!start_repair(cmd, registry, L)) {
@@ -1164,12 +1258,14 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (awaits_arm()) {
+        if (turns_to_face(at) || awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         build_target_id_ = tid;
         build_command_id_ = cmd.command_id;
         build_released_with_order_ = true;
+        build_repairs_ = true;
+        build_order_ = "Repair";
         build_time_ = costs.time;
         build_cost_mass_ = costs.mass;
         build_cost_energy_ = costs.energy;
@@ -1227,11 +1323,10 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
                     return OrderStep::Next;
                 }
                 cmd.approached = true;
-                navigator_.set_goal(approach_point(*this, ctarget->position(),
-                                                   cunit.skirt_size_x() * 0.5f,
-                                                   cunit.skirt_size_z() * 0.5f),
-                                    ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(approach_point(*this, ctarget->position(),
+                                             cunit.skirt_size_x() * 0.5f,
+                                             cunit.skirt_size_z() * 0.5f),
+                              ctx);
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > kCaptureHold) {
@@ -1265,6 +1360,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
 }
 
 void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
+    assist_pending_bp_.clear();
     if (factory_assist_build_) {
         factory_assist_build_ = false;
         assist_rolloff_wait_ = 0;
@@ -1339,8 +1435,7 @@ void Unit::walk_to(const Vector3& goal, f64 dt, SimContext& ctx) {
     const Vector3 heading = navigator_.goal();
     if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
         std::abs(heading.z - goal.z) > 1.0f) {
-        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(goal, ctx);
     }
     nav_update(dt, ctx.terrain);
 }
@@ -1480,16 +1575,38 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             command_queue_.push_front(std::move(order));
             return OrderStep::Next;
         }
-        if (waits_out_unit_cap(cmd)) return OrderStep::Hold;
+        if (!assist_pending_bp_.empty()) {
+            if (waits_out_task(cmd) || waits_paused(cmd)) {
+                return OrderStep::Hold;
+            }
+            UnitCommand build;
+            build.type = CommandType::BuildFactory;
+            build.blueprint_id = assist_pending_bp_;
+            const u32 guard_id = cmd.command_id;
+            const BuildStart started = start_build(build, registry, L);
+            if (started == BuildStart::AtCap) {
+                return hold_for_unit_cap(guard_id);
+            }
+            assist_pending_bp_.clear();
+            factory_assist_build_ = started == BuildStart::Started;
+            if (factory_assist_build_) {
+                build_command_id_ = guard_id;
+            }
+            return OrderStep::Hold;
+        }
+        if (waits_out_task(cmd)) {
+            return OrderStep::Hold;
+        }
         const u32 guarded_factory = cmd.target_id;
         auto& queue = target_unit->command_queue_;
+        const bool repeats = target_unit->repeat_queue_;
         for (size_t i = 0; i < queue.size() && L; ++i) {
             if (queue[i].type != CommandType::BuildFactory) continue;
             // Not the guarded factory's own build, unless it has more to make
-            // than the one under way, or is all there is and this factory
-            // repeats (Moho's CUnitGuardTask).
+            // than the one under way, or is all there is and the guarded
+            // factory repeats (Moho's CUnitGuardTask).
             const bool spare = queue[i].count > 1;
-            if (i == 0 && !spare && !(queue.size() == 1 && repeat_queue_)) continue;
+            if (i == 0 && !spare && !(queue.size() == 1 && repeats)) continue;
             if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
             UnitCommand build;
             build.type = CommandType::BuildFactory;
@@ -1503,12 +1620,16 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             // fails after the take; such an order is dropped, repeating or
             // not, as the guarded factory drops it when it comes to it.
             if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
-            // A repeating assister sends the order round, its count back at
-            // its most (Moho's MoveCommandToBackOfQueue)
-            if (repeat_queue_ && !spare) {
+            // A repeating guarded factory has the order sent round, its count
+            // back at its most (Moho's MoveCommandToBackOfQueue)
+            if (repeats && !spare) {
                 UnitCommand round = taken;
                 round.count = std::max(round.max_count, 1);
                 queue.push_back(std::move(round));
+            }
+            if (waits_paused(cmd)) {
+                assist_pending_bp_ = build.blueprint_id;
+                break;
             }
             const u32 guard_id = cmd.command_id; // cmd may go with the scripts' changes
             const BuildStart started = start_build(build, registry, L);
@@ -1528,9 +1649,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                                 break;
                             }
                     } else {
-                        if (repeat_queue_ && !its.empty() &&
-                            its.back().command_id == taken.command_id)
+                        if (repeats && !its.empty() && its.back().command_id == taken.command_id) {
                             its.pop_back();
+                        }
                         its.insert(its.begin() +
                                        static_cast<std::ptrdiff_t>(std::min(i, its.size())),
                                    taken);
@@ -1545,6 +1666,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         return OrderStep::Hold;
     }
 
+    const bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
     // after factory assist, before build, reclaim and repair help).
     if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), dt, ctx))
@@ -1586,8 +1708,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
                 std::abs(heading.z - goal.z) > 1.0f) {
-                navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(goal, ctx);
             }
             nav_update(dt, ctx.terrain);
         }
@@ -1622,10 +1743,14 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 if (destroyed() || !in_registry()) {
                     return OrderStep::Gone;
                 }
-                if (!awaits_arm()) {
+                if (!turns_to_face(at) && !awaits_arm() && !task_waits && !waits_paused(cmd)) {
                     build_target_id_ = target_build_id;
                     build_command_id_ = cmd.command_id;
                     build_released_with_order_ = true;
+                    build_repairs_ =
+                        target_unit->command_queue_.empty() ||
+                        target_unit->command_queue_.front().type != CommandType::BuildMobile;
+                    build_order_ = build_repairs_ ? "Repair" : "MobileBuild";
                     build_time_ = target_unit->build_time();
                     build_cost_mass_ = target_unit->build_cost_mass();
                     build_cost_energy_ = target_unit->build_cost_energy();
@@ -1643,7 +1768,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                                  "building target #{}",
                                  entity_id(), cmd.target_id, target_build_id);
                     call_build_callback(ctx.L, "OnStartBuild", registry.find(target_build_id),
-                                        "Repair");
+                                        build_order_.c_str());
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
                     }
@@ -1707,13 +1832,15 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         if (within_reach(*target_unit, true, false)) {
-            const SiloBuild& missile = target_unit->silo_build();
-            const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
-            economy_.consumption_energy = missile.energy * per_second;
-            economy_.consumption_mass = missile.mass * per_second;
-            economy_.consumption_active = true;
             assisting_silo_ = true;
-            target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+            if (!paused_) {
+                const SiloBuild& missile = target_unit->silo_build();
+                const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
+                economy_.consumption_energy = missile.energy * per_second;
+                economy_.consumption_mass = missile.mass * per_second;
+                economy_.consumption_active = true;
+                target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+            }
         }
     } else {
         // Target not building/reclaiming — stop if we were
@@ -1734,7 +1861,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     if (destroyed() || !in_registry()) {
                         return OrderStep::Gone;
                     }
-                    if (!awaits_arm()) {
+                    if (!turns_to_face(at) && !awaits_arm() && !task_waits && !waits_paused(cmd)) {
                         UnitCommand repair_cmd;
                         repair_cmd.type = CommandType::Repair;
                         repair_cmd.target_id = cmd.target_id;
@@ -1782,8 +1909,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
                 std::abs(heading.z - goal.z) > 1.0f) {
-                navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
-                                    is_amphibious() || is_hover());
+                set_path_goal(goal, ctx);
             }
             nav_update(dt, ctx.terrain);
         } else if (navigator_.is_moving()) {
@@ -2021,8 +2147,7 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
         const Vector3 goal = navigator_.goal();
         if (!navigator_.is_moving() || std::abs(goal.x - pickup_center_.x) > 1.0f ||
             std::abs(goal.z - pickup_center_.z) > 1.0f) {
-            navigator_.set_goal(pickup_center_, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(pickup_center_, ctx);
         }
         if (nav_update(dt, ctx.terrain)) return OrderStep::Hold;
         navigator_.abort_move();
@@ -2069,10 +2194,7 @@ void Unit::finish_pickup(bool completed, lua_State* L) {
 
 void Unit::abandon_beam_up(const map::Terrain* terrain, lua_State* L) {
     beam_up_ticks_ = 0;
-    Vector3 at = position();
-    if (terrain) at.y = ground_y(terrain, at.x, at.z);
-    set_position(at);
-    set_orientation(euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
+    stand_on_ground(terrain, position(), euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
     note_snap();
     call_lua_method(L, "OnStopTransportBeamUp");
 }
@@ -2085,6 +2207,7 @@ void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
     else if (alt > altitude) alt = std::max(alt - climb, altitude);
     current_altitude_ = alt;
     current_airspeed_ = 0.0f;
+    air_velocity_ = {};
     Vector3 at = position();
     at.y = air_floor(terrain, at.x, at.z) + alt;
     set_position(at);
@@ -2176,10 +2299,8 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             if (transport->destroyed() || !transport->in_registry() || transport->is_dying()) {
                 // The transport went while the unit rose: it comes back down.
-                Vector3 at = position();
-                if (ctx.terrain) at.y = ground_y(ctx.terrain, at.x, at.z);
-                set_position(at);
-                set_orientation(euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
+                stand_on_ground(ctx.terrain, position(),
+                                euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
                 note_snap();
                 return finish_order();
             }
@@ -2208,8 +2329,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         const Vector3 goal = navigator_.goal();
         if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
             std::abs(goal.z - at.z) > 1.0f) {
-            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(at, ctx);
         }
         nav_update(dt, ctx.terrain);
     };
@@ -2275,8 +2395,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
         set_unit_state("TransportUnloading", true);
         if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
             navigator_.goal().z != cmd.target_pos.z) {
-            navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(cmd.target_pos, ctx);
         }
         // Flown, for an aircraft (the ground navigator had dragged transports
         // along the ground).
@@ -2395,8 +2514,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             const f32 ox = dist > 1e-3f ? -dx / dist : 0.0f;
             const f32 oz = dist > 1e-3f ? -dz / dist : -1.0f;
             const f32 back = weapon->min_range * 1.1f;
-            navigator_.set_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx.pathfinder,
-                                position(), layer_, naval_draft_, is_amphibious() || is_hover());
+            set_path_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx);
         }
         nav_update(dt, ctx.terrain);
         return OrderStep::Hold;
@@ -2409,8 +2527,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Next;
         }
         if (!navigator_.is_moving() || navigator_.goal().x != at.x || navigator_.goal().z != at.z) {
-            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_,
-                                is_amphibious() || is_hover());
+            set_path_goal(at, ctx);
         }
         nav_update(dt, ctx.terrain);
     } else {
@@ -2497,53 +2614,116 @@ void Unit::donate_sacrifice(Unit& target, lua_State* L) {
     materialize(target, step);
 }
 
+namespace {
+
+bool sacrifice_upgrading(const Unit& u) {
+    return u.has_unit_state("Upgrading") || u.is_enhancing() ||
+           (!u.command_queue().empty() && u.command_queue().front().type == CommandType::Upgrade);
+}
+
+Unit* live_unit(EntityRegistry& registry, u32 id) {
+    Entity* e = id != 0 ? registry.find(id) : nullptr;
+    if (!e || e->destroyed() || !e->is_unit()) {
+        return nullptr;
+    }
+    return static_cast<Unit*>(e);
+}
+
+} // namespace
+
+void Unit::destroy_through_script(EntityRegistry& registry, lua_State* L) {
+    const u32 id = entity_id();
+    call_lua_method(L, "Destroy");
+    Entity* self = registry.find(id);
+    if (self && !self->destroyed()) {
+        mark_destroyed();
+        registry.unregister_entity(id);
+    }
+}
+
+// Moho's IAiCommandDispatchImpl hands the order to a CUnitSacrificeTask only
+// for these targets; faf-re CUnitSacrificeTask.cpp for the task.
 OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    // Move to target, then sacrifice (transfer mass value, kill self)
-    if (cmd.target_id == 0) {
+    const auto give_up = [&] {
+        end_approach(cmd);
         command_queue_.pop_front();
         return OrderStep::Next;
-    }
-    auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed() || !target->is_unit()) {
-        call_lua_method(L, "OnStopSacrifice");
-        set_unit_state("Sacrificing", false);
-        release_navigator(); // its walk to the target ends too
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    auto* target_unit = static_cast<Unit*>(target);
-    // Move into range
-    constexpr f32 sacrifice_range = 5.0f;
-    f32 sdx = target->position().x - position().x;
-    f32 sdz = target->position().z - position().z;
-    f32 sdist2 = sdx * sdx + sdz * sdz;
-    if (sdist2 > sacrifice_range * sacrifice_range) {
-        if (!navigator_.is_moving()) {
-            navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                naval_draft_, is_amphibious() || is_hover());
+    };
+    if (!cmd.approached) {
+        Unit* target = live_unit(registry, cmd.target_id);
+        if (!target) {
+            return give_up();
         }
-        navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-        // Fire OnStartSacrifice on first tick
-        if (!has_unit_state("Sacrificing")) {
-            set_unit_state("Sacrificing", true);
-            call_lua_method_with_entity(L, "OnStartSacrifice", target);
+        if (!target->is_being_built() && !sacrifice_upgrading(*target) &&
+            target->health() >= target->max_health()) {
+            Unit* focus =
+                target->is_building() ? live_unit(registry, target->build_target_id()) : nullptr;
+            if (!focus) {
+                return give_up();
+            }
+            cmd.target_id = focus->entity_id();
         }
+    }
+    if (cmd.approached && !cmd.started && approach_update(dt, ctx)) {
         return OrderStep::Hold;
     }
-    navigator_.abort_move();
-    donate_sacrifice(*target_unit, L);
-    // Fire OnStopSacrifice then kill self
-    call_lua_method_with_entity(L, "OnStopSacrifice", target);
-    set_unit_state("Sacrificing", false);
-    set_health(0);
-    mark_destroyed();
-    {
-        u32 eid = entity_id();
-        registry.unregister_entity(eid);
+    Unit* target = live_unit(registry, cmd.target_id);
+    if (!target || target->layer() == "Air" || target->is_dying()) {
+        if (cmd.started) {
+            sacrifice_order_ = 0;
+            destroy_through_script(registry, L);
+            return OrderStep::Gone;
+        }
+        return give_up();
     }
-    return OrderStep::Gone; // unit is dead, stop processing
+    if (!cmd.approached) {
+        Unit* go_to = target;
+        Unit* creator =
+            target->is_being_built() ? live_unit(registry, target->creator_id()) : nullptr;
+        if (creator && creator->has_category("FACTORY")) {
+            go_to = creator;
+        } else if (sacrifice_upgrading(*target)) {
+            if (Unit* next = live_unit(registry, target->build_target_id())) {
+                cmd.target_id = next->entity_id();
+                go_to = next;
+            }
+        }
+        if (effective_speed() <= 0) {
+            return give_up();
+        }
+        cmd.approached = true;
+        set_path_goal(approach_point(*this, go_to->position(), go_to->skirt_size_x() * 0.5f,
+                                     go_to->skirt_size_z() * 0.5f),
+                      ctx);
+        return OrderStep::Hold;
+    }
+    if (!cmd.started) {
+        if (work_gap(*this, target->position(), footprint_extent(*target)) > max_build_distance_) {
+            return give_up();
+        }
+        if (target->is_enhancing() &&
+            (target->is_paused() || std::max(target->economy().mass_requested(),
+                                             target->economy().energy_requested()) <= 0.0)) {
+            return give_up();
+        }
+        cmd.started = true;
+        cmd.sacrifice_wait = 9;
+        sacrifice_order_ = cmd.command_id;
+        call_lua_method_with_entity(L, "OnStartSacrifice", target);
+        return OrderStep::Hold;
+    }
+    if (--cmd.sacrifice_wait > 0) {
+        return OrderStep::Hold;
+    }
+    sacrifice_order_ = 0;
+    donate_sacrifice(*target, L);
+    call_lua_method_with_entity(L, "OnStopSacrifice", target);
+    if (!destroyed() && in_registry()) {
+        destroy_through_script(registry, L);
+    }
+    return OrderStep::Gone;
 }
 
 OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
@@ -2673,7 +2853,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (ferry_phase_ == FerryPhase::Out) {
         // Out along the waypoints, then to the drop-off.
         if (ferry_index_ < route - 1) {
-            if (!ferry_fly(dt, ctx, point(ferry_index_))) ++ferry_index_;
+            if (!ferry_fly(dt, ctx, point(ferry_index_), true)) ++ferry_index_;
             return OrderStep::Hold;
         }
         ferry_phase_ = FerryPhase::Unload;
@@ -2697,7 +2877,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     // Back along the waypoints, then to the beacon to load again.
     if (ferry_index_ > 1) {
-        if (!ferry_fly(dt, ctx, point(ferry_index_ - 1))) --ferry_index_;
+        if (!ferry_fly(dt, ctx, point(ferry_index_ - 1), true)) --ferry_index_;
         return OrderStep::Hold;
     }
     if (!ferry_fly(dt, ctx, home)) {
@@ -2742,8 +2922,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - ferry->position().x) > 1.0f ||
                 std::abs(heading.z - ferry->position().z) > 1.0f) {
-                navigator_.set_goal(ferry->position(), ctx.pathfinder, position(), layer_,
-                                    naval_draft_, is_amphibious() || is_hover());
+                set_path_goal(ferry->position(), ctx);
             }
             nav_update(dt, ctx.terrain);
             return OrderStep::Hold;
@@ -2758,8 +2937,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         return OrderStep::Hold;
     }
     if (!navigator_.is_moving()) {
-        navigator_.set_goal(beacon->position(), ctx.pathfinder, position(), layer_, naval_draft_,
-                            is_amphibious() || is_hover());
+        set_path_goal(beacon->position(), ctx);
     }
     if (!nav_update(dt, ctx.terrain) && effective_speed() > 0 &&
         navigator_.status() == Navigator::Status::Idle) {

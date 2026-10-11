@@ -15,13 +15,11 @@
 
 G BaseManagerReclaimThread  # not Moho's: a BaseManager method called bare
 G ClearQueueGrid            # not Moho's
-G ConTextMatches
 G ERROR                     # not Moho's: a retail typo (error)
 G ExecLuaInSim
 G GetArmy                   # not Moho's as a global (a method of units and brains)
 G InternalCreateMesh
 G IssueEnhance              # not Moho's
-G RemoveProfileDirectories
 G SetQueueGrid              # not Moho's
 G SetQueueState             # not Moho's
 G SetUIControlsAlpha

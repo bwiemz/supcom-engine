@@ -109,7 +109,10 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
     // Vertices skin only to the first `weighted` bones; the rest -- muzzles,
     // attach points, effect bones -- follow them and are what scripts name
     // (Weapon.SetupTurret validates e.g. Right_Arm_Muzzle). Parse them all.
-    reader.skip(7 * 4);
+    const u32 vert_offset = reader.read_u32();
+    reader.skip(4);
+    const u32 vert_count = reader.read_u32();
+    reader.skip(4 * 4);
     const u32 total_bone_count = reader.read_u32();
     u32 bone_count = total_bone_count != 0 ? total_bone_count : weighted_bone_count;
 
@@ -229,6 +232,23 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
                 parent.world_position.y + rotated.y,
                 parent.world_position.z + rotated.z};
         }
+    }
+
+    static constexpr size_t kVertexSize = 68;
+    if (vert_count > 0 &&
+        vert_offset + static_cast<size_t>(vert_count) * kVertexSize <= file_data.size()) {
+        reader.seek(vert_offset);
+        MeshBounds box;
+        for (u32 i = 0; i < vert_count; ++i) {
+            const Vector3 p{reader.read_f32(), reader.read_f32(), reader.read_f32()};
+            reader.skip(kVertexSize - 12);
+            if (i == 0) {
+                box = {p, p};
+            }
+            box.lo = {std::min(box.lo.x, p.x), std::min(box.lo.y, p.y), std::min(box.lo.z, p.z)};
+            box.hi = {std::max(box.hi.x, p.x), std::max(box.hi.y, p.y), std::max(box.hi.z, p.z)};
+        }
+        result.mesh_bounds = box;
     }
 
     spdlog::debug("SCM: parsed {} bones", bone_count);

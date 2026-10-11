@@ -10,6 +10,7 @@
 // camera, so where they sit on the screen is exact.
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "intel_probe.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
@@ -109,8 +110,8 @@ void test_refract_render(TestContext& ctx) {
     const f32 z0 = spot->z;
     const f32 ground = terrain.get_terrain_height(x0, z0);
 
-    const auto dir = std::filesystem::temp_directory_path() / "osc_refract_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_refract_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 16.0f);
     write_dds(dir / "plate_normals.dds", 1,
               [](int, u32, u32) { return std::array<u8, 4>{0, 128, 0, 128}; });

@@ -42,7 +42,7 @@ set(OSC_DATA_TESTS_GATE
     enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test
     feedback-render-test focus-army-test footfall-test full-smoke-test ghost-render-test hull-facing-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
-    jammer-blip-test jammer-test keyboard-test keymap-test
+    economy-overlay-test jammer-blip-test jammer-test keyboard-test keymap-test
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test need-unpack-test normal-test notify-upgrade-test
     onframe-test particle-render-test path-test phase2-test phase3-test placement-layers-test phase4-test phase5-test
@@ -64,7 +64,7 @@ set(OSC_DATA_TESTS_RETAIL_GAP
 
 # Front-end flows that must boot without --map.
 set(OSC_DATA_TESTS_NO_MAP_GATE
-    audio-data-test edit-text-test lan-screen-test lobby-flow-test movie-test
+    audio-data-test combo-click-test edit-text-test lan-screen-test lobby-flow-test movie-test
 )
 set(OSC_DATA_TESTS_NO_MAP_RETAIL_GAP
 )

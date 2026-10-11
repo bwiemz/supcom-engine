@@ -193,3 +193,28 @@ TEST_CASE("The sim rate: an integer game speed, 10^(rate/10) times normal", "[ui
     CHECK(rate_after("ConExecute('UI_Lua SetGameSpeed(5)')") == 5);
     CHECK(rate_after("ConExecuteSave('UI_Lua SetGameSpeed(6) ; WLD_DecreaseSimRate')") == 5);
 }
+
+TEST_CASE("ConTextMatches lists the console's names starting with the text", "[ui][console]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+    Console console;
+    for (const char* name : {"UI_Lua", "ui_ShowRenameDialog", "UI_TrackUnit", "WLD_GameSpeed"}) {
+        console.add(name, [](lua_State*, const std::vector<std::string>&) {});
+    }
+    CHECK(console.matches("ui_") == Tokens{"UI_Lua", "ui_ShowRenameDialog", "UI_TrackUnit"});
+    CHECK(console.matches("UI_T") == Tokens{"UI_TrackUnit"});
+    CHECK(console.matches("").empty());
+    CHECK(console.matches("x").empty());
+
+    lua_State* L = lua.raw();
+    lua_pushstring(L, "__osc_console");
+    lua_pushlightuserdata(L, &console);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(lua.do_string("local m = ConTextMatches('wld') "
+                          "assert(table.getn(m) == 1 and m[1] == 'WLD_GameSpeed') "
+                          "assert(table.getn(ConTextMatches('')) == 0)")
+                .ok());
+}

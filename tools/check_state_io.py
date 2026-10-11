@@ -56,6 +56,7 @@ TYPES: list[tuple[str, str]] = [
     ("src/sim/manipulator.hpp", "CollisionDetectorManipulator"),
     ("src/sim/manipulator.hpp", "FootPlantManipulator"),
     ("src/sim/manipulator.hpp", "StorageManipulator"),
+    ("src/sim/manipulator.hpp", "ThrustManipulator"),
     ("src/sim/transport_slots.hpp", "TransportLayout"),
     ("src/sim/transport_slots.hpp", "TransportSlots"),
     ("src/sim/transport_slots.hpp", "TransportSlots::Slot"),

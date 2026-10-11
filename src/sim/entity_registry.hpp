@@ -19,6 +19,8 @@ class EntityRegistry {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
     static constexpr u32 CELL_SIZE = 32;
+    /// Props have their own, finer grid: a forest puts hundreds in a CELL_SIZE cell.
+    static constexpr u32 PROP_CELL_SIZE = 4;
 
     EntityRegistry();
     ~EntityRegistry();
@@ -116,6 +118,10 @@ public:
             const_cast<void*>(static_cast<const void*>(&visit)));
     }
 
+    /// Into `out`, in ascending id order: every live prop with a collision
+    /// shape that could reach the rectangle [x0, x1] x [z0, z1].
+    void props_touching(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<Entity*>& out) const;
+
     /// Called by Entity::set_collision_shape.
     void notify_collision_shape_changed(const Entity& entity);
 
@@ -195,6 +201,9 @@ private:
         Entity* entity;
     };
     std::vector<std::vector<UnitRef>> unit_cells_;
+    u32 prop_grid_width_ = 0;
+    u32 prop_grid_height_ = 0;
+    std::vector<std::vector<UnitRef>> prop_cells_;
     /// Entities whose shape reaches beyond COLLIDER_REACH, in id order.
     std::set<u32> large_colliders_;
 
@@ -204,6 +213,9 @@ private:
     size_t cell_index(i32 cx, i32 cz) const;
     void grid_insert(Entity& entity, i32 cx, i32 cz);
     void grid_remove(const Entity& entity, i32 cx, i32 cz);
+    i32 prop_cell_index(f32 wx, f32 wz) const;
+    void prop_cell_update(Entity& entity);
+    void prop_cell_remove(Entity& entity);
 };
 
 } // namespace osc::sim

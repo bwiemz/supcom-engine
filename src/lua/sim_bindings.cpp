@@ -752,6 +752,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (lua_isnumber(L, -1))
                     unit->set_max_build_distance(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+                lua_pushstring(L, "NeedToFaceTargetToBuild");
+                lua_gettable(L, -2);
+                unit->set_need_to_face_target_to_build(lua_toboolean(L, -1) != 0);
+                lua_pop(L, 1);
             }
             lua_pop(L, 2);
         }
@@ -1121,18 +1125,30 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 if (lua_isnumber(L, -1))
                     unit->set_layer_change_offset(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+                lua_pushstring(L, "RaisedPlatforms");
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    std::vector<f32> quads;
+                    const int n = luaL_getn(L, -1);
+                    for (int i = 1; i <= n; ++i) {
+                        lua_rawgeti(L, -1, i);
+                        quads.push_back(static_cast<f32>(lua_tonumber(L, -1)));
+                        lua_pop(L, 1);
+                    }
+                    unit->set_raised_platforms(std::move(quads));
+                }
+                lua_pop(L, 1);
+                lua_pushstring(L, "StandUpright");
+                lua_gettable(L, -2);
+                const bool stand_upright = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                lua_pushstring(L, "SinkLower");
+                lua_gettable(L, -2);
+                const bool sink_lower = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                unit->set_ground_snap_flags(stand_upright, sink_lower);
             }
             lua_pop(L, 2);
-        }
-        // A structure that can stand only under the surface (the Cybran
-        // HARMS: BuildOnLayerCaps Sub alone) is on the Sub layer, as Moho
-        // gives it the layer its placement allows.
-        if (!unit->is_mobile()) {
-            if (auto* sim = get_sim(L)) {
-                const sim::PlacementRules& rules = structure_rules(L, *sim, unit->unit_id());
-                if (rules.on_sub && !rules.on_land && !rules.on_water && !rules.on_seabed)
-                    unit->set_layer("Sub");
-            }
         }
 
         // Its footprints, as Moho resolves them (RUnitBlueprintPhysics::
@@ -1180,6 +1196,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                                   (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
             unit->set_footprints(blueprints::resolve_unit_footprints(
                 store->footprint_classes(), own, unit->motion_type(), alt_motion, build_caps));
+            if (!unit->is_mobile() && sim->terrain()) {
+                unit->set_layer(sim::starting_layer(unit->footprint().caps,
+                                                    unit->has_category("EXPERIMENTAL"),
+                                                    *sim->terrain(), x, z));
+            }
         }
 
         // Read Physics.Elevation for naval units (negative = draft below water surface)
@@ -1204,6 +1225,19 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 lua_pop(L, 1);
             }
             lua_pop(L, 2);
+        }
+
+        if (unit->motion_type() == "RULEUMT_SurfacingSub") {
+            auto* sim = get_sim(L);
+            if (sim && sim->terrain() &&
+                std::strcmp(sim::starting_layer(unit->footprint().caps,
+                                                unit->has_category("EXPERIMENTAL"), *sim->terrain(),
+                                                x, z),
+                            "Sub") == 0) {
+                unit->start_submerged();
+                unit->set_position(
+                    {x, sim->terrain()->water_elevation() + unit->sub_elevation(), z});
+            }
         }
 
         // Read Physics.Elevation for air units (target flight altitude)
@@ -1313,8 +1347,14 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 rules.predict_ahead_for_bomb_drop = number("PredictAheadForBombDrop", 0.0f);
                 rules.k_turn = number("KTurn", 3.0f);
                 rules.k_turn_damping = number("KTurnDamping", 3.0f);
+                rules.k_roll = number("KRoll", 3.0f);
+                rules.k_roll_damping = number("KRollDamping", 3.0f);
+                rules.bank_forward = flag("BankForward");
                 rules.k_move = number("KMove", 1.0f);
                 rules.k_move_damping = number("KMoveDamping", 1.0f);
+                rules.k_lift = number("KLift", 1.0f);
+                rules.k_lift_damping = number("KLiftDamping", 1.0f);
+                rules.lift_factor = number("LiftFactor", 5.0f);
                 // A hovering aircraft's circling (CalcCirclingOrientation).
                 rules.hover_over_attack = flag("HoverOverAttack");
                 {
@@ -1402,6 +1442,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
             }
             lua_pop(L, 2); // General (or nil) + bp table
             unit->snapshot_command_caps(); // what RestoreCommandCaps returns to
+            unit->snapshot_toggle_caps();
         }
 
         // Read Physics.FuelUseTime for air units
@@ -1550,6 +1591,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
         // Initialize heading and orientation
         unit_ptr->set_heading(0);
         unit_ptr->set_orientation(sim::euler_to_quat(0, 0, 0));
+        unit_ptr->set_air_facing({0.0f, 0.0f, 1.0f});
     }
 
     spdlog::debug("Created unit {} (entity #{}) at ({}, {}, {})",
@@ -1650,6 +1692,9 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     if (id == 0) return 0;
     if (auto* made = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
         made->set_orientation(orientation);
+        if (made->is_air_unit()) {
+            made->set_air_facing(sim::forward_of(orientation));
+        }
         if (place_of) {
             made->set_position(pos);
             made->set_layer(place_of->layer());
@@ -1765,10 +1810,11 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
 
 /// Internal: create a unit in "being built" state.
 /// Called from C++ build processing via Lua registry.
-/// Args: (bp_id, army_1based, x, y, z[, capped]); y nil: where the structure
-/// stands at (x, z) -- on the ground, the water or the seabed, as Moho
-/// places it. capped (default true): held to the army's unit cap, its brain
-/// told when over it (an upgrade passes false: Moho makes those uncapped).
+/// Args: (bp_id, army_1based, x, y, z[, capped[, builder_id]]); y nil: where
+/// the structure stands at (x, z) -- on the ground, the water or the seabed,
+/// as Moho places it. capped (default true): held to the army's unit cap, its
+/// brain told when over it (an upgrade passes false: Moho makes those
+/// uncapped). builder_id: its creator.
 /// Returns: entity_id, lua_table (2 values); nil, nil -- or nil, "cap" when
 /// the army is at its cap.
 static int l_create_building_unit(lua_State* L) {
@@ -1795,7 +1841,13 @@ static int l_create_building_unit(lua_State* L) {
 
     // Lua table on top of stack
     int tbl = lua_gettop(L);
-    if (auto* sim = get_sim(L)) tell_initial_auto_mode(L, *sim, id, tbl);
+    if (auto* sim = get_sim(L)) {
+        auto* built = sim->entity_registry().find(id);
+        if (lua_isnumber(L, 7) && built && built->is_unit()) {
+            static_cast<sim::Unit*>(built)->set_creator_id(static_cast<u32>(lua_tonumber(L, 7)));
+        }
+        tell_initial_auto_mode(L, *sim, id, tbl);
+    }
 
     // OnPreCreate
     lua_pushstring(L, "OnPreCreate");
@@ -2096,6 +2148,9 @@ static int l_Warp(lua_State* L) {
         lua_pop(L, 1);
         entity->set_position(v);
         entity->note_snap();
+        if (entity->is_unit()) {
+            static_cast<sim::Unit*>(entity)->reset_lift_ground();
+        }
     }
     // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
     if (lua_istable(L, 3)) {
@@ -3703,13 +3758,14 @@ static int l_CreateRotator(lua_State* L) {
 }
 
 // ====================================================================
-// CreateAnimator(unit [, looping])
+// CreateAnimator(unit [, bindGoalUnit])
 // ====================================================================
 static int l_CreateAnimator(lua_State* L) {
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
 
     auto manip = std::make_unique<sim::AnimManipulator>();
+    manip->set_motion_scaled(lua_gettop(L) > 1 && lua_toboolean(L, 2) != 0);
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);
@@ -3982,13 +4038,25 @@ static int l_CreateStorageManip(lua_State* L) {
 }
 
 // ====================================================================
-// CreateThrustController(unit) -> thrust manipulator (visual)
+// CreateThrustController(unit, label, thrustBone)
 // ====================================================================
 static int l_CreateThrustController(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 3) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "CreateThrustController(unit, label, thrustBone)", 3, n);
+    }
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
+    const i32 bone = manip_resolve_bone(unit, L, 3);
 
     auto manip = std::make_unique<sim::ThrustManipulator>();
+    manip->set_bone_index(bone);
+    const sim::BoneData* bd = unit->bone_data();
+    if (bd && bd->is_valid(bone)) {
+        manip->set_rest(
+            sim::quat_rotate(bd->bones[static_cast<size_t>(bone)].local_rotation, {0, 0, 1}));
+    }
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);
@@ -4295,7 +4363,8 @@ static void restrict_army_builds(lua_State* L, bool restrict) {
     if (!sim || !sim->blueprint_store()) {
         return;
     }
-    auto* brain = sim->get_army(resolve_army(L, 1, sim));
+    const i32 army = resolve_army(L, 1, sim);
+    auto* brain = sim->get_army(army);
     if (!brain) {
         return;
     }
@@ -4318,6 +4387,11 @@ static void restrict_army_builds(lua_State* L, bool restrict) {
     } else {
         brain->remove_build_restriction(ids);
     }
+    sim->entity_registry().for_each_unit([army](sim::Entity& e) {
+        if (e.army() == army) {
+            e.request_ui_refresh();
+        }
+    });
 }
 
 // Helper: create a simple category table with __name and metatable
@@ -5397,9 +5471,52 @@ static u32 route_units_command(lua_State* L, int table_idx, const sim::UnitComma
     return ids.empty() ? 0 : sim->route_command(ids, cmd, clear);
 }
 
-/// What an Issue* returns: the command its units took (its id, the handle
-/// IsCommandDone and platoon:IsCommandsActive take), or nil when none took
-/// it -- as Moho returns the issued CUnitCommand's object, or nil.
+// Moho's func_Validate_IssueCommand; factories_only is IssueFactoryAssist's filter.
+static std::vector<u32> units_with_command_cap(lua_State* L, const std::string& cap,
+                                               bool factories_only = false) {
+    auto* sim = get_sim(L);
+    auto ids = collect_unit_ids(L, 1);
+    const bool movement = cap == "RULEUCC_Move" || cap == "RULEUCC_Guard" ||
+                          cap == "RULEUCC_Patrol" || cap == "RULEUCC_Ferry";
+    std::erase_if(ids, [&](u32 id) {
+        const sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
+        if (!e || !e->is_unit()) {
+            return true;
+        }
+        const auto& unit = static_cast<const sim::Unit&>(*e);
+        if (!unit.has_command_cap(cap)) {
+            return true;
+        }
+        if (factories_only) {
+            return !unit.has_category("FACTORY");
+        }
+        return movement && unit.keeps_rally_orders();
+    });
+    return ids;
+}
+
+static u32 route_capable_command(lua_State* L, const std::string& cap, const sim::UnitCommand& cmd,
+                                 bool factories_only = false) {
+    auto* sim = get_sim(L);
+    const auto ids = units_with_command_cap(L, cap, factories_only);
+    return !sim || ids.empty() ? 0 : sim->route_command(ids, cmd, false);
+}
+
+// faf-re cfunc_IssueRepairL and its siblings: the target never takes its own order.
+static void route_capable_command_but_target(lua_State* L, const std::string& cap,
+                                             const sim::UnitCommand& cmd) {
+    auto* sim = get_sim(L);
+    auto ids = units_with_command_cap(L, cap);
+    std::erase(ids, cmd.target_id);
+    if (sim && !ids.empty()) {
+        sim->route_command(ids, cmd, false);
+    }
+}
+
+/// What IssueMove and the other Issue* that return their command return: the
+/// command its units took (its id, the handle IsCommandDone and
+/// platoon:IsCommandsActive take), or nil when none took it -- as Moho returns
+/// the issued CUnitCommand's object, or nil.
 static int push_command_handle(lua_State* L, u32 command_id) {
     if (command_id != 0) lua_pushnumber(L, command_id);
     else lua_pushnil(L);
@@ -5448,7 +5565,7 @@ static int l_IssueMove(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
 // IssueAggressiveMove(units_table, position): an attack-move.
@@ -5456,7 +5573,7 @@ static int l_IssueAggressiveMove(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::AggressiveMove;
     cmd.target_pos = extract_position(L, 2);
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
 // IssueFormMove(units, position, formation, degrees) and
@@ -5472,7 +5589,7 @@ static int form_order(lua_State* L, sim::CommandType type) {
         cmd.has_facing = true;
         cmd.facing = static_cast<f32>(lua_tonumber(L, 4)) * 3.14159265358979f / 180.0f;
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 static int l_IssueFormMove(lua_State* L) {
     return form_order(L, sim::CommandType::Move);
@@ -5481,21 +5598,26 @@ static int l_IssueFormAggressiveMove(lua_State* L) {
     return form_order(L, sim::CommandType::AggressiveMove);
 }
 
-// IssueStop(units_table) — routed as a Stop command so a networked player's
-// stop is broadcast + scheduled; single-player still clears immediately via
-// route_command's direct Stop branch.
+// IssueStop(units_table): a Stop at the back of each queue (faf-re
+// cfunc_IssueStopL issues it without clearing).
 static int l_IssueStop(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Stop;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
-// IssueClearCommands(units_table) — same clear semantics as Stop here.
 static int l_IssueClearCommands(lua_State* L) {
-    sim::UnitCommand cmd;
-    cmd.type = sim::CommandType::Stop;
-    route_units_command(L, 1, cmd, true);
+    auto* sim = get_sim(L);
+    if (!sim) {
+        return 0;
+    }
+    for (const u32 id : collect_unit_ids(L, 1)) {
+        auto* e = sim->entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) {
+            static_cast<sim::Unit*>(e)->clear_commands(sim->entity_registry(), L);
+        }
+    }
     return 0;
 }
 
@@ -5516,14 +5638,22 @@ static sim::Unit* extract_unit(lua_State* L, int idx) {
 // IssueToUnitClearCommands(unit)
 static int l_IssueToUnitClearCommands(lua_State* L) {
     auto* u = extract_unit(L, 1);
-    if (u) u->clear_commands();
+    auto* sim = get_sim(L);
+    if (u && sim) {
+        u->clear_commands(sim->entity_registry(), L);
+    }
     return 0;
 }
 
-// IssueToUnitStop(unit)
+// IssueToUnitStop(unit): FAF's SimHooks.lua IssueStop for one unit.
 static int l_IssueToUnitStop(lua_State* L) {
     auto* u = extract_unit(L, 1);
-    if (u) u->clear_commands();
+    auto* sim = get_sim(L);
+    if (u && sim) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Stop;
+        sim->route_command({u->entity_id()}, cmd, false);
+    }
     return 0;
 }
 
@@ -5567,7 +5697,12 @@ static int l_IssueAttack(lua_State* L) {
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Attack", cmd));
+}
+
+static int l_IssueFormAttack(lua_State* L) {
+    l_IssueAttack(L);
+    return 0;
 }
 
 // IssueGuard(units_table, target_entity)
@@ -5587,10 +5722,22 @@ static int l_IssueGuard(lua_State* L) {
         cmd.target_id = target->entity_id();
         cmd.target_pos = target->position();
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Guard", cmd);
+    return 0;
 }
 
-static int l_IssueFactoryAssist(lua_State* L) { return l_IssueGuard(L); }
+static int l_IssueFactoryAssist(lua_State* L) {
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed() || !target->is_unit()) {
+        return 0;
+    }
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Guard;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+    route_capable_command(L, "RULEUCC_Guard", cmd, true);
+    return 0;
+}
 
 // IssueRepair(units_table, target_entity)
 static int l_IssueRepair(lua_State* L) {
@@ -5604,7 +5751,8 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command_but_target(L, "RULEUCC_Repair", cmd);
+    return 0;
 }
 
 // IssueCapture(units_table, target)
@@ -5619,7 +5767,8 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command_but_target(L, "RULEUCC_Capture", cmd);
+    return 0;
 }
 
 static int l_IssueDive(lua_State* L) {
@@ -5745,7 +5894,8 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
 /// 4. The repeat flag carries over, `to` told OnStartRepeatQueue or
 ///    OnStopRepeatQueue as it turns on or off.
 /// 5. `to` keeps `from`'s share of health.
-/// 6. Units guarding `from` guard `to`.
+/// Units guarding `from` do not guard `to`: their orders name `from`, which
+/// dies right after (retail: they go idle as the upgrade finishes).
 /// (Moho also queues the pair for the allies' UI; the engine's selection
 /// follows an upgrade on its own.)
 static int l_NotifyUpgrade(lua_State* L) {
@@ -5806,6 +5956,7 @@ static int l_NotifyUpgrade(lua_State* L) {
     const bool repeat = from->repeat_queue();
     const bool was = to->repeat_queue();
     to->set_repeat_queue(repeat);
+    to->request_ui_refresh();
     if (repeat && !was) to->call_lua_method(L, "OnStartRepeatQueue");
     else if (!repeat && was) to->call_lua_method(L, "OnStopRepeatQueue");
 
@@ -5817,10 +5968,6 @@ static int l_NotifyUpgrade(lua_State* L) {
         const f32 health = to->max_health() * (from->health() / from->max_health());
         if (health != to->health()) to->set_health(health);
     }
-    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
-        if (!e.destroyed() && e.is_unit())
-            static_cast<sim::Unit&>(e).retarget_guard(from_id, to_id);
-    });
     return 0;
 }
 
@@ -5874,7 +6021,8 @@ static int l_IssueUpgrade(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Upgrade;
     cmd.blueprint_id = bp_id;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_units_command(L, 1, cmd, false);
+    return 0;
 }
 
 // IssueScript(units, args): a Script order (M206w) after what each unit
@@ -5887,7 +6035,8 @@ static int l_IssueScript(lua_State* L) {
     auto bytes = sim::lua_to_bytes(L, 2);
     if (!bytes) return luaL_error(L, "IssueScript: its table can't be carried (nested too deep)");
     cmd.script_args = std::move(*bytes);
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_units_command(L, 1, cmd, false);
+    return 0;
 }
 
 // IssueEnhancement(units_table, enhancementName): the engine's own (retail
@@ -5922,7 +6071,8 @@ static int l_IssueBuildMobile(lua_State* L) {
     cmd.target_pos = target_pos;
     cmd.blueprint_id = bp_id;
 
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_units_command(L, 1, cmd, false);
+    return 0;
 }
 
 // IssueBuildFactory(units_table, blueprintId, count)
@@ -5934,9 +6084,10 @@ static int l_IssueBuildFactory(lua_State* L) {
     cmd.type = sim::CommandType::BuildFactory;
     cmd.blueprint_id = bp_id;
 
-    u32 issued = 0;
-    for (int i = 0; i < count; i++) issued = route_units_command(L, 1, cmd, false);
-    return push_command_handle(L, issued);
+    for (int i = 0; i < count; i++) {
+        route_units_command(L, 1, cmd, false);
+    }
+    return 0;
 }
 
 // IssueMoveOffFactory(units_table, position) — clears commands, issues Move
@@ -5945,7 +6096,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    return push_command_handle(L, route_capable_command(L, "RULEUCC_Move", cmd));
 }
 
 // IssueFactoryRallyPoint(units_table, position): a Move, after their other
@@ -5962,13 +6113,19 @@ static int l_IssueFactoryRallyPoint(lua_State* L) {
         L, 1,
         [](sim::Unit* u, void* c) {
             auto& r = *static_cast<Rally*>(c);
-            if (!u->keeps_rally_orders()) return;
+            if (!u->keeps_rally_orders() || !u->has_command_cap("RULEUCC_Move")) {
+                return;
+            }
             // One command id for them all, taken only if a factory gets it.
             if (r.move.command_id == 0 && r.sim) r.move.command_id = r.sim->next_command_id();
             u->add_rally_order(r.move);
         },
         &rally);
-    return 0;
+    if (rally.move.command_id == 0) {
+        return 0;
+    }
+    lua_pushnumber(L, rally.move.command_id);
+    return 1;
 }
 
 // IssueClearFactoryCommands(units_table): clears each factory's rally orders
@@ -5992,7 +6149,8 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command_but_target(L, "RULEUCC_Reclaim", cmd);
+    return 0;
 }
 
 // CreateProp(position, blueprint_path) -> prop Lua table
@@ -6242,7 +6400,8 @@ static int l_IssuePatrol(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Patrol;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Patrol", cmd);
+    return 0;
 }
 
 // Stub for unimplemented order types — just does nothing
@@ -6263,7 +6422,8 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_units_command(L, 1, cmd, false);
+    return 0;
 }
 
 // IssueTransportUnload(transports_table, position)
@@ -6275,7 +6435,8 @@ static int l_IssueTransportUnload(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = target_pos;
 
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Transport", cmd);
+    return 0;
 }
 
 // IssueTransportUnloadSpecific(transports, category, position): the
@@ -6300,7 +6461,8 @@ static int l_IssueTransportUnloadSpecific(lua_State* L) {
         }
     }
     if (cmd.unload_ids.empty()) return 0;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Transport", cmd);
+    return 0;
 }
 
 // IssueNuke(units_table, position): launch a nuke at the position. Like
@@ -6310,7 +6472,8 @@ static int l_IssueNuke(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Nuke;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Nuke", cmd);
+    return 0;
 }
 
 // IssueTactical(units_table, target): launch a tactical missile at a unit or
@@ -6327,7 +6490,8 @@ static int l_IssueTactical(lua_State* L) {
     } else {
         cmd.target_pos = extract_position(L, 2);
     }
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Tactical", cmd);
+    return 0;
 }
 
 // IssueSiloBuildNuke(units) / IssueSiloBuildTactical(units): one missile
@@ -6335,13 +6499,15 @@ static int l_IssueTactical(lua_State* L) {
 static int l_IssueSiloBuildNuke(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::SiloBuildNuke;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_units_command(L, 1, cmd, false);
+    return 0;
 }
 
 static int l_IssueSiloBuildTactical(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::SiloBuildTactical;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_units_command(L, 1, cmd, false);
+    return 0;
 }
 
 // IssueOvercharge(units_table, target_entity) — overcharge attack
@@ -6353,7 +6519,8 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Overcharge", cmd);
+    return 0;
 }
 
 // IssueSacrifice(units_table, target_entity) — sacrifice unit to build target
@@ -6365,7 +6532,8 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command_but_target(L, "RULEUCC_Sacrifice", cmd);
+    return 0;
 }
 
 // IssueTeleport(units_table, location) — teleport to position
@@ -6374,7 +6542,8 @@ static int l_IssueTeleport(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Teleport;
     cmd.target_pos = target_pos;
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Teleport", cmd);
+    return 0;
 }
 
 // CreateVisibleAreaAtPoint(army, x, y, z, radius, lifetime) — temporary vision (scrying)
@@ -6423,7 +6592,8 @@ static int l_IssueFerry(lua_State* L) {
     cmd.type = sim::CommandType::Ferry;
     cmd.target_pos = target_pos;
     // Ferry appends like Patrol, doesn't clear
-    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+    route_capable_command(L, "RULEUCC_Ferry", cmd);
+    return 0;
 }
 
 // ====================================================================
@@ -6496,7 +6666,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueFormMove", l_IssueFormMove);
     state.register_function("IssueFormAggressiveMove", l_IssueFormAggressiveMove);
     state.register_function("IssueFormPatrol", l_IssuePatrol);
-    state.register_function("IssueFormAttack", l_IssueAttack);
+    state.register_function("IssueFormAttack", l_IssueFormAttack);
 
     // SubmitXMLArmyStats(): uploads end-of-game stats to the online service
     // (GPGNet). Offline there is nowhere to send them, so this is faithfully

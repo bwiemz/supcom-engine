@@ -214,7 +214,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
         w.u32v(c.entity_id);
         w.i32v(c.bone);
     }
-    // grid_cell_x_, grid_cell_z_, registry_: the registry's, set as it takes the entity
+    // grid_cell_x_, grid_cell_z_, prop_cell_, registry_: the registry's, set as it takes the entity
     w.b(e.script_destroy_notified_);
     w.b(e.script_owns_death_);
     w.b(e.is_collision_beam_);
@@ -257,6 +257,7 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.do_not_target_ = r.b();
     e.reclaimable_ = r.b();
     e.custom_name_ = r.str();
+    // ui_refresh_requests_ isn't saved: the selection's refresh only looks for a change in it
     e.strategic_underlay_ = r.str();
     e.scale_x_ = r.f32v();
     e.scale_y_ = r.f32v();
@@ -306,6 +307,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.str(c.formation);
     w.b(c.has_facing);
     w.f32v(c.facing);
+    w.b(c.form_move);
     w.f32v(c.speed_cap);
     w.b(c.formed);
     save_ids(w, c.unload_ids);
@@ -328,7 +330,8 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.u32v(c.beacon_id);
     w.u32v(c.assigned_id);
     w.i32v(c.rolloff_wait);
-    w.i32v(c.cap_wait);
+    w.i32v(c.task_wait);
+    w.i32v(c.sacrifice_wait);
     w.i32v(c.count);
     w.i32v(c.max_count);
     save_ids(w, c.launch_queue);
@@ -356,6 +359,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.formation = r.str();
     c.has_facing = r.b();
     c.facing = r.f32v();
+    c.form_move = r.b();
     c.speed_cap = r.f32v();
     c.formed = r.b();
     c.unload_ids = load_ids(r);
@@ -378,7 +382,8 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.beacon_id = r.u32v();
     c.assigned_id = r.u32v();
     c.rolloff_wait = r.i32v();
-    c.cap_wait = r.i32v();
+    c.task_wait = r.i32v();
+    c.sacrifice_wait = r.i32v();
     c.count = r.i32v();
     c.max_count = r.i32v();
     c.launch_queue = load_ids(r);
@@ -404,6 +409,8 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.vec3(n.goal_);
     enum8(w, n.status_);
     w.b(n.speed_through_goal_);
+    w.vec3(n.air_hold_);
+    w.b(n.air_hold_set_);
     w.size(n.waypoints_.size());
     for (const Vector3& p : n.waypoints_) w.vec3(p);
     w.u64v(n.waypoint_index_);
@@ -438,6 +445,8 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.goal_ = r.vec3();
     n.status_ = enum8<Navigator::Status>(r);
     n.speed_through_goal_ = r.b();
+    n.air_hold_ = r.vec3();
+    n.air_hold_set_ = r.b();
     n.waypoints_.resize(r.size(12));
     for (Vector3& p : n.waypoints_) p = r.vec3();
     n.waypoint_index_ = static_cast<size_t>(r.u64v());
@@ -698,6 +707,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.f32v(x.duration_);
         w.b(x.looping_);
         w.b(x.directional_);
+        w.b(x.motion_scaled_);
         w.b(x.finished_);
         // sca_data_: from the animation cache, if the play found it
         w.b(x.sca_data_ != nullptr);
@@ -747,6 +757,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.b(x.has_target_);
         w.b(x.on_target_);
         w.b(x.builder_arm_);
+        w.b(x.tracking_);
         w.b(x.yaw_only_on_target_);
         break;
     }
@@ -784,7 +795,19 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.vec3(x.current_);
         break;
     }
-    case ManipKind::Thrust: break;
+    case ManipKind::Thrust: {
+        const auto& x = static_cast<const ThrustManipulator&>(m);
+        w.vec3(x.cap_min_);
+        w.vec3(x.cap_max_);
+        w.f32v(x.turn_force_mult_);
+        w.f32v(x.turn_speed_);
+        w.vec3(x.rest_);
+        w.quat(x.orientation_);
+        w.vec3(x.force_);
+        w.vec3(x.last_velocity_);
+        w.b(x.has_last_velocity_);
+        break;
+    }
     case ManipKind::BoneEntity: {
         const auto& x = static_cast<const BoneEntityManipulator&>(m); // sim_: the loading sim
         w.u32v(x.target_id_);
@@ -828,6 +851,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->duration_ = r.f32v();
         x->looping_ = r.b();
         x->directional_ = r.b();
+        x->motion_scaled_ = r.b();
         x->finished_ = r.b();
         if (r.b()) {
             x->sca_data_ = sim.anim_cache() ? sim.anim_cache()->get(x->current_anim_) : nullptr;
@@ -881,6 +905,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         x->has_target_ = r.b();
         x->on_target_ = r.b();
         x->builder_arm_ = r.b();
+        x->tracking_ = r.b();
         x->yaw_only_on_target_ = r.b();
         m = std::move(x);
         break;
@@ -923,7 +948,20 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         m = std::move(x);
         break;
     }
-    case ManipKind::Thrust: m = std::make_unique<ThrustManipulator>(); break;
+    case ManipKind::Thrust: {
+        auto x = std::make_unique<ThrustManipulator>();
+        x->cap_min_ = r.vec3();
+        x->cap_max_ = r.vec3();
+        x->turn_force_mult_ = r.f32v();
+        x->turn_speed_ = r.f32v();
+        x->rest_ = r.vec3();
+        x->orientation_ = r.quat();
+        x->force_ = r.vec3();
+        x->last_velocity_ = r.vec3();
+        x->has_last_velocity_ = r.b();
+        m = std::move(x);
+        break;
+    }
     case ManipKind::BoneEntity: {
         const u32 target = r.u32v();
         const i32 target_bone = r.i32v();
@@ -955,6 +993,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.max_build_distance_);
     w.f32v(u.guard_scan_radius_);
     w.b(u.need_unpack_);
+    w.b(u.need_to_face_target_to_build_);
     w.f32v(u.guard_return_radius_);
     w.f32v(u.attack_angle_);
     w.b(u.slaved_turning_);
@@ -963,6 +1002,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.str(u.layer_);
     w.str(u.motion_type_);
     w.f32v(u.layer_change_offset_);
+    w.size(u.raised_platforms_.size());
+    for (f32 v : u.raised_platforms_) {
+        w.f32v(v);
+    }
+    w.b(u.stand_upright_);
+    w.b(u.sink_lower_);
     for (const blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         w.u8v(fp->size_x);
         w.u8v(fp->size_z);
@@ -974,6 +1019,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     }
     w.i32v(u.footprints_.main_class);
     w.i32v(u.footprints_.alt_class);
+    w.b(u.using_alt_footprint_);
+    w.b(u.force_alt_footprint_);
     w.f32v(u.naval_draft_);
     w.u32v(u.jammer_blips_);
     w.f32v(u.jam_radius_min_);
@@ -1000,6 +1047,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.silo_energy);
     w.f64v(ec.dock_repair_mass);
     w.f64v(ec.dock_repair_energy);
+    w.f64v(ec.capture_energy);
     save_strings(w, u.categories_);
     // category_bits_: interned from categories_ (the ids are this process's)
     w.size(u.command_queue_.size());
@@ -1060,6 +1108,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u16v(u.script_bits_);
     w.u32v(u.creation_tick_);
     save_strings(w, u.toggle_caps_);
+    save_strings(w, u.original_toggle_caps_);
     w.f32v(u.surface_threat_);
     w.f32v(u.air_threat_);
     w.f32v(u.sub_threat_);
@@ -1083,9 +1132,14 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.factory_assist_build_);
     // auto_attack_target_ isn't saved: a weapon sets it and the unit uses it
     // in the same update.
+    // air_stepped_ isn't saved: each update clears it before it is read.
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
+    w.b(u.build_repairs_);
+    w.str(u.build_order_);
     w.i32v(u.assist_rolloff_wait_);
+    w.str(u.assist_pending_bp_);
+    w.u32v(u.sacrifice_order_);
     save_strings(w, u.unit_states_);
     w.f32v(u.shield_ratio_);
     save_i32_set(w, u.hidden_bones_);
@@ -1232,23 +1286,23 @@ void StateIO::save(StateWriter& w, const Unit& u) {
                         ar.break_off_distance})
         w.f32v(v);
     w.b(ar.break_off_if_near_new_target);
-    for (const f32 v :
-         {ar.random_break_off_distance_mult, ar.random_min_change_combat_state_time,
-          ar.random_max_change_combat_state_time, ar.predict_ahead_for_bomb_drop,
-          ar.attack_elevation, ar.k_turn, ar.k_turn_damping, ar.k_move, ar.k_move_damping})
+    for (const f32 v : {ar.random_break_off_distance_mult, ar.random_min_change_combat_state_time,
+                        ar.random_max_change_combat_state_time, ar.predict_ahead_for_bomb_drop,
+                        ar.attack_elevation, ar.k_turn, ar.k_turn_damping, ar.k_move,
+                        ar.k_move_damping, ar.k_lift, ar.k_lift_damping, ar.lift_factor})
         w.f32v(v);
     w.b(ar.hover_over_attack);
     w.b(ar.circling_dir_change);
-    for (const f32 v : {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
-                        ar.circling_radius_max, ar.circling_radius_vs_air_mult,
-                        ar.circling_elevation_ratio, ar.circling_change_frequency, ar.bank_factor})
+    for (const f32 v :
+         {ar.circling_min_airspeed, ar.circling_turn_mult, ar.circling_radius_min,
+          ar.circling_radius_max, ar.circling_radius_vs_air_mult, ar.circling_elevation_ratio,
+          ar.circling_change_frequency, ar.bank_factor, ar.k_roll, ar.k_roll_damping})
         w.f32v(v);
+    w.b(ar.bank_forward);
     const AirCombatState& ac = u.air_combat_;
     w.u8v(ac.state);
     w.u32v(ac.timeout_tick);
     w.i32v(ac.sustained_turn_ticks);
-    w.f32v(ac.yaw_rate);
-    w.vec3(ac.velocity);
     w.b(ac.flying);
     w.b(ac.circle_reverse);
     w.f32v(ac.circle_elevation);
@@ -1263,6 +1317,14 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.turn_rate_rad_);
     w.f32v(u.accel_rate_);
     w.f32v(u.climb_rate_);
+    w.f32v(u.lift_velocity_);
+    w.f32v(u.lift_ground_);
+    w.b(u.lift_ground_set_);
+    w.u32v(u.lift_tick_);
+    w.vec3(u.air_velocity_);
+    w.vec3(u.air_dv_);
+    w.vec3(u.air_spin_);
+    w.vec3(u.air_facing_);
     w.f32v(u.elevation_target_);
     w.b(u.fly_in_water_);
     enum8(w, u.vert_motion_);
@@ -1276,6 +1338,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.crash_spin_rate_);
     w.u32v(u.creator_id_);
     w.vec3(u.tick_position_);
+    w.quat(u.tick_orientation_);
     w.b(u.tick_position_set_);
     w.b(u.moved_last_tick_);
     w.b(u.auto_overcharge_);
@@ -1314,6 +1377,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.max_build_distance_ = r.f32v();
     u.guard_scan_radius_ = r.f32v();
     u.need_unpack_ = r.b();
+    u.need_to_face_target_to_build_ = r.b();
     u.guard_return_radius_ = r.f32v();
     u.attack_angle_ = r.f32v();
     u.slaved_turning_ = r.b();
@@ -1322,6 +1386,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.layer_ = r.str();
     u.motion_type_ = r.str();
     u.layer_change_offset_ = r.f32v();
+    u.raised_platforms_.resize(r.size(4));
+    for (f32& v : u.raised_platforms_) {
+        v = r.f32v();
+    }
+    u.stand_upright_ = r.b();
+    u.sink_lower_ = r.b();
     for (blueprints::Footprint* fp : {&u.footprints_.main, &u.footprints_.alt}) {
         fp->size_x = r.u8v();
         fp->size_z = r.u8v();
@@ -1333,6 +1403,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     }
     u.footprints_.main_class = r.i32v();
     u.footprints_.alt_class = r.i32v();
+    u.using_alt_footprint_ = r.b();
+    u.force_alt_footprint_ = r.b();
     u.naval_draft_ = r.f32v();
     u.jammer_blips_ = r.u32v();
     u.jam_radius_min_ = r.f32v();
@@ -1360,6 +1432,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.silo_energy = r.f64v();
     ec.dock_repair_mass = r.f64v();
     ec.dock_repair_energy = r.f64v();
+    ec.capture_energy = r.f64v();
     u.categories_ = load_strings<std::unordered_set<std::string>>(r);
     u.category_bits_ = {};
     for (const std::string& c : u.categories_) u.category_bits_.set(CategoryIds::intern(c));
@@ -1424,6 +1497,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.script_bits_ = r.u16v();
     u.creation_tick_ = r.u32v();
     u.toggle_caps_ = load_strings<std::unordered_set<std::string>>(r);
+    // noted_head_ isn't saved: a loaded unit's queue head is noted afresh
+    u.original_toggle_caps_ = load_strings<std::unordered_set<std::string>>(r);
     u.surface_threat_ = r.f32v();
     u.air_threat_ = r.f32v();
     u.sub_threat_ = r.f32v();
@@ -1448,7 +1523,11 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.factory_assist_build_ = r.b();
     u.build_command_id_ = r.u32v();
     u.build_released_with_order_ = r.b();
+    u.build_repairs_ = r.b();
+    u.build_order_ = r.str();
     u.assist_rolloff_wait_ = r.i32v();
+    u.assist_pending_bp_ = r.str();
+    u.sacrifice_order_ = r.u32v();
     u.unit_states_ = load_strings<std::unordered_set<std::string>>(r);
     u.shield_ratio_ = r.f32v();
     u.hidden_bones_ = load_i32_set(r);
@@ -1602,23 +1681,23 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
                    &ar.break_off_distance})
         *v = r.f32v();
     ar.break_off_if_near_new_target = r.b();
-    for (f32* v :
-         {&ar.random_break_off_distance_mult, &ar.random_min_change_combat_state_time,
-          &ar.random_max_change_combat_state_time, &ar.predict_ahead_for_bomb_drop,
-          &ar.attack_elevation, &ar.k_turn, &ar.k_turn_damping, &ar.k_move, &ar.k_move_damping})
+    for (f32* v : {&ar.random_break_off_distance_mult, &ar.random_min_change_combat_state_time,
+                   &ar.random_max_change_combat_state_time, &ar.predict_ahead_for_bomb_drop,
+                   &ar.attack_elevation, &ar.k_turn, &ar.k_turn_damping, &ar.k_move,
+                   &ar.k_move_damping, &ar.k_lift, &ar.k_lift_damping, &ar.lift_factor})
         *v = r.f32v();
     ar.hover_over_attack = r.b();
     ar.circling_dir_change = r.b();
-    for (f32* v : {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
-                   &ar.circling_radius_max, &ar.circling_radius_vs_air_mult,
-                   &ar.circling_elevation_ratio, &ar.circling_change_frequency, &ar.bank_factor})
+    for (f32* v :
+         {&ar.circling_min_airspeed, &ar.circling_turn_mult, &ar.circling_radius_min,
+          &ar.circling_radius_max, &ar.circling_radius_vs_air_mult, &ar.circling_elevation_ratio,
+          &ar.circling_change_frequency, &ar.bank_factor, &ar.k_roll, &ar.k_roll_damping})
         *v = r.f32v();
+    ar.bank_forward = r.b();
     AirCombatState& ac = u.air_combat_;
     ac.state = r.u8v();
     ac.timeout_tick = r.u32v();
     ac.sustained_turn_ticks = r.i32v();
-    ac.yaw_rate = r.f32v();
-    ac.velocity = r.vec3();
     ac.flying = r.b();
     ac.circle_reverse = r.b();
     ac.circle_elevation = r.f32v();
@@ -1633,6 +1712,14 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.turn_rate_rad_ = r.f32v();
     u.accel_rate_ = r.f32v();
     u.climb_rate_ = r.f32v();
+    u.lift_velocity_ = r.f32v();
+    u.lift_ground_ = r.f32v();
+    u.lift_ground_set_ = r.b();
+    u.lift_tick_ = r.u32v();
+    u.air_velocity_ = r.vec3();
+    u.air_dv_ = r.vec3();
+    u.air_spin_ = r.vec3();
+    u.air_facing_ = r.vec3();
     u.elevation_target_ = r.f32v();
     u.fly_in_water_ = r.b();
     u.vert_motion_ = enum8<Unit::VertMotion>(r);
@@ -1646,6 +1733,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.crash_spin_rate_ = r.f32v();
     u.creator_id_ = r.u32v();
     u.tick_position_ = r.vec3();
+    u.tick_orientation_ = r.quat();
     u.tick_position_set_ = r.b();
     u.moved_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();
@@ -1776,18 +1864,36 @@ void StateIO::save(StateWriter& w, const Prop& p) {
     // untargetable, reclaimable_category, obstructs_building, reclaim_mass_max,
     // reclaim_energy_max: its blueprint's (read_prop_blueprint)
     w.f32v(p.sink_rate);
+    w.b(p.fall_motor);
+    w.b(p.fall_breaks);
+    w.f32v(p.fall_direction);
+    w.f32v(p.fall_angle);
+    w.f32v(p.fall_speed);
+    w.f32v(p.fall_size_x);
     w.size(p.pose.size());
     for (const auto& m : p.pose)
         for (f32 v : m) w.f32v(v);
+    w.i32v(p.bounded_priority);
+    w.i32v(p.bounded_tick);
+    w.b(p.bounded_handle != -1);
 }
 
 void StateIO::load(StateReader& r, Prop& p) {
     load(r, static_cast<Entity&>(p));
     r.tag("PROP");
     p.sink_rate = r.f32v();
+    p.fall_motor = r.b();
+    p.fall_breaks = r.b();
+    p.fall_direction = r.f32v();
+    p.fall_angle = r.f32v();
+    p.fall_speed = r.f32v();
+    p.fall_size_x = r.f32v();
     p.pose.resize(r.size(64));
     for (auto& m : p.pose)
         for (f32& v : m) v = r.f32v();
+    p.bounded_priority = r.i32v();
+    p.bounded_tick = r.i32v();
+    p.bounded_handle = r.b() ? 0 : -1;
 }
 
 void StateIO::save(StateWriter& w, const Shield& s) {

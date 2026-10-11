@@ -20,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim { class Manipulator; }
@@ -81,16 +82,16 @@ struct UnitEconomy {
     /// aircraft is damaged.
     f64 dock_repair_mass = 0.0;
     f64 dock_repair_energy = 0.0;
+    /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's.
+    f64 capture_energy = 0.0;
 
     /// Moho's mMaintainenceCost: a silo's missile under way asks through it
     /// too (CAiSiloBuildImpl).
     f64 mass_requested() const { return consumption_mass + silo_mass; }
-    f64 energy_requested() const { return consumption_energy + silo_energy; }
-    f64 mass_consumed(bool paused) const {
-        return (consumption_active && !paused ? consumption_mass : 0.0) + silo_mass;
-    }
-    f64 energy_consumed(bool paused) const {
-        return (consumption_active && !paused ? consumption_energy : 0.0) + silo_energy;
+    f64 energy_requested() const { return consumption_energy + silo_energy + capture_energy; }
+    f64 mass_consumed() const { return (consumption_active ? consumption_mass : 0.0) + silo_mass; }
+    f64 energy_consumed() const {
+        return (consumption_active ? consumption_energy : 0.0) + silo_energy + capture_energy;
     }
 };
 
@@ -125,8 +126,14 @@ struct AirCombatRules {
     f32 attack_elevation = 0.0f;                    ///< 0: Physics.Elevation
     f32 k_turn = 3.0f;
     f32 k_turn_damping = 3.0f;
+    f32 k_roll = 3.0f;
+    f32 k_roll_damping = 3.0f;
+    bool bank_forward = false;
     f32 k_move = 1.0f;
     f32 k_move_damping = 1.0f;
+    f32 k_lift = 1.0f;
+    f32 k_lift_damping = 1.0f;
+    f32 lift_factor = 5.0f;
     /// A hovering aircraft's circling (Moho's CalcCirclingOrientation):
     /// HoverOverAttack ones never circle. The rest circle a target, or
     /// what they work on, at a radius that changes now and then.
@@ -142,14 +149,11 @@ struct AirCombatRules {
     f32 bank_factor = 0.5f;                 ///< how far it leans into a change of speed
 };
 
-/// Its attack run under way: Moho's CUnitMotion combat state, and the
-/// combat flight's yaw rate and velocity (the airframe's lag).
+/// Its attack run under way: Moho's CUnitMotion combat state.
 struct AirCombatState {
     u8 state = 0;         ///< EAirCombatState: 0 None .. 7 ReturnToMap
     u32 timeout_tick = 0; ///< until when a turn or break-off holds
     i32 sustained_turn_ticks = 0;
-    f32 yaw_rate = 0.0f; ///< rad/s
-    Vector3 velocity{};  ///< per second, horizontal
     bool flying = false; ///< the combat flight has the airframe
     /// Circling (a hovering aircraft's), drawn again at each timeout: the
     /// way round (Moho's -90 degree yaw of the tangent when set, +90 not), its
@@ -234,6 +238,8 @@ public:
     /// looks for no targets while it moves (see begin_order).
     bool need_unpack() const { return need_unpack_; }
     void set_need_unpack(bool b) { need_unpack_ = b; }
+    bool need_to_face_target_to_build() const { return need_to_face_target_to_build_; }
+    void set_need_to_face_target_to_build(bool b) { need_to_face_target_to_build_ = b; }
 
     const std::string& layer() const { return layer_; }
     void set_layer(const std::string& l) { layer_ = l; }
@@ -286,6 +292,10 @@ public:
     /// roll-off move its script gives it. Only an immobile FACTORY keeps
     /// them.
     bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    // FAF's CQUEMOV: FA-Binary-Patches hooks/BuildUnit.cpp, section/SelectUnit.cpp
+    bool takes_orders_unfinished() const {
+        return has_category("FACTORY") || has_category("CQUEMOV");
+    }
     const std::vector<UnitCommand>& rally_orders() const { return rally_orders_; }
     void add_rally_order(const UnitCommand& cmd) { rally_orders_.push_back(cmd); }
     void clear_rally_orders() { rally_orders_.clear(); }
@@ -301,12 +311,21 @@ public:
 
     // Build state (builder side) — tracks what this unit is constructing
     u32 build_target_id() const { return build_target_id_; }
-    void set_build_target_id(u32 id) { build_target_id_ = id; }
+    void set_build_target_id(u32 id) {
+        build_target_id_ = id;
+        build_repairs_ = false;
+    }
     bool is_building() const { return build_target_id_ != 0; }
+    /// Its build is help to an unfinished unit, which Moho's CUnitRepairTask
+    /// runs: Repairing, not Building.
+    bool build_repairs() const { return build_target_id_ != 0 && build_repairs_; }
     /// This factory's build came from the queue of a factory it guards
     /// (M206h): the guard order runs it, and cancels it when it ends.
     bool factory_assist_build() const { return factory_assist_build_; }
     i32 assist_rolloff_wait() const { return assist_rolloff_wait_; }
+    const std::string& assist_pending_bp() const { return assist_pending_bp_; }
+    /// The sacrifice order whose OnStartSacrifice has run (0: none).
+    u32 sacrifice_order() const { return sacrifice_order_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -321,10 +340,14 @@ public:
 
     // Pause state
     bool is_paused() const { return paused_; }
-    void set_paused(bool p) { paused_ = p; }
-    /// Pause or resume the unit's work, as unit:SetPaused does. Moho's paused
-    /// unit keeps producing; its army pays for none of its work meanwhile.
-    void pause(bool p) { paused_ = p; }
+    void set_paused(bool p) {
+        paused_ = p;
+        request_ui_refresh();
+    }
+    /// Pause or resume the unit's work, as unit:SetPaused does: only a unit with
+    /// RULEUCC_Pause or RULEUTC_GenericToggle; its script hears OnPaused or
+    /// OnUnpaused on a change.
+    void pause(lua_State* L, bool p);
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }
@@ -352,7 +375,12 @@ public:
     void set_block_command_queue(bool b) { block_command_queue_ = b; }
 
     i32 fire_state() const { return fire_state_; }
-    void set_fire_state(i32 s) { fire_state_ = s; }
+    void set_fire_state(i32 s) {
+        if (fire_state_ != s) {
+            fire_state_ = s;
+            request_ui_refresh();
+        }
+    }
 
     // Script bits (9 toggles, bits 0-8)
     u16 script_bits() const { return script_bits_; }
@@ -363,13 +391,15 @@ public:
         return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
     }
     void set_script_bit(i32 bit, bool value) {
-        if (bit < 0 || bit > 8) return;
-        if (value) script_bits_ |= static_cast<u16>(1u << bit);
-        else       script_bits_ &= static_cast<u16>(~(1u << bit));
+        if (get_script_bit(bit) != value) {
+            toggle_script_bit(bit);
+        }
     }
     void toggle_script_bit(i32 bit) {
-        if (bit >= 0 && bit <= 8)
+        if (bit >= 0 && bit <= 8) {
             script_bits_ ^= static_cast<u16>(1u << bit);
+            request_ui_refresh();
+        }
     }
 
     // Toggle caps (which RULEUTC_* toggles this unit supports)
@@ -378,6 +408,8 @@ public:
     }
     void add_toggle_cap(const std::string& cap) { toggle_caps_.insert(cap); }
     void remove_toggle_cap(const std::string& cap) { toggle_caps_.erase(cap); }
+    void restore_toggle_caps() { toggle_caps_ = original_toggle_caps_; }
+    void snapshot_toggle_caps() { original_toggle_caps_ = toggle_caps_; }
 
     // Layer change with Lua OnLayerChange(new, old) callback
     void set_layer_with_callback(const std::string& new_layer, lua_State* L);
@@ -442,6 +474,9 @@ public:
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
     /// the order in progress cancels it (cancel_factory_build).
     void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// Moho's CUnitCommand::DecreaseCount, an upgrade order gone: the builds
+    /// and upgrades queued after it that no upgrade still leads to go too.
+    void prune_upgrade_chain(lua_State* L);
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
     void remove_command(u32 id, EntityRegistry& registry, lua_State* L);
@@ -449,13 +484,18 @@ public:
     /// factory queue (1-based, as factory_queue() groups it), after the
     /// group's last order. An index past the queue changes nothing.
     void increase_build_count(int index, int count);
-    /// A factory's build under way is cancelled: the factory hears
-    /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
+    /// A factory's build under way is cancelled, as Moho's ~CFactoryBuildTask ends it unfinished.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
+    /// An upgrade under way is cancelled, as Moho's ~CUnitUpgradeTask ends it unfinished.
+    void cancel_upgrade(EntityRegistry& registry, lua_State* L);
     /// True while a factory order is under way.
     bool building_factory_order() const {
         return build_target_id_ != 0 && !command_queue_.empty() &&
                command_queue_.front().type == CommandType::BuildFactory;
+    }
+    bool upgrading() const {
+        return build_target_id_ != 0 && !command_queue_.empty() &&
+               command_queue_.front().type == CommandType::Upgrade;
     }
 
     // Command queue
@@ -488,19 +528,12 @@ public:
     /// `cmd` at the back of the queue as it is (NotifyUpgrade's copy of an
     /// old unit's orders, a patrol's points in their order).
     void append_command(const UnitCommand& cmd) { command_queue_.push_back(cmd); }
-    /// A unit guarding `from` (its current order a Guard of it, or a fight
-    /// for that Guard) guards `to`.
-    void retarget_guard(u32 from, u32 to) {
-        for (UnitCommand& c : command_queue_) {
-            if (c.from_guard) {
-                if (c.leash_anchor_id == from) c.leash_anchor_id = to;
-                continue;
-            }
-            if (c.type == CommandType::Guard && c.target_id == from) c.target_id = to;
-            return;
-        }
-    }
     void clear_commands(const char* source = "?");
+    /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
+    /// taken off the queue sets the unit's UI refresh flag.
+    void note_queue_head();
+    /// Moho's ClearCommandQueue: the head order's build, upgrade or enhancement ends with it.
+    void clear_commands(EntityRegistry& registry, lua_State* L);
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {
@@ -547,6 +580,9 @@ public:
 
     /// Assist helpers (Guard command)
     void stop_assisting(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
+    /// A build that ends with its order, let go (faf-re ~CUnitMobileBuildTask,
+    /// ~CUnitRepairTask): OnStopBuild, then OnFailedToBuild for a mobile build.
+    void release_build(lua_State* L, EntityRegistry& registry);
     void call_build_callback(lua_State* L, const char* method, Entity* target, const char* order);
     bool progress_build_assist(f64 dt, EntityRegistry& registry,
                                 f32 efficiency = 1.0f);
@@ -564,6 +600,7 @@ public:
     static bool reclaim_wears_down(const Entity& target);
     bool reclaim_arm_ready(const Entity& target) const;
     bool awaits_arm();
+    bool turns_to_face(const Vector3& at);
     bool arm_awaited() const { return arm_awaited_; }
     bool wear_down(Unit& target) const;
     u32 reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State* L);
@@ -669,6 +706,10 @@ public:
     /// StopSiloBuild: the missile under way is abandoned and the builds
     /// ordered are dropped.
     void stop_silo_build();
+    /// What a Stop order does as it reaches the head (faf-re
+    /// IAiCommandDispatchImpl::Stop): a silo's auto mode goes off and its
+    /// missile under way is dropped, with the builds ordered.
+    void run_stop(lua_State* L);
     /// GiveNukeSiloAmmo(blocks, true), FAF's: the missile under way, else the
     /// next one, has `blocks` of its 10 * BuildTime / build rate done.
     void set_silo_blocks(i32 blocks);
@@ -768,8 +809,10 @@ public:
     void set_bank_angle(f32 b) { bank_angle_ = b; }
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
+    bool take_air_step() { return !std::exchange(air_stepped_, true); }
     f32 current_altitude() const { return current_altitude_; }
     void set_current_altitude(f32 a) { current_altitude_ = a; }
+    void fly_on_from_here(const map::Terrain* terrain);
     f32 max_airspeed() const { return max_airspeed_; }
     void set_max_airspeed(f32 s) { max_airspeed_ = s; }
     f32 turn_rate_rad() const { return turn_rate_rad_; }
@@ -784,6 +827,12 @@ public:
     /// How far under the water's surface a sub is (M206o): 0 at the surface,
     /// down to its Physics.Elevation when dived.
     f32 sub_elevation() const { return sub_elevation_; }
+    /// Moho's CUnitMotion for a unit made on the Sub layer.
+    void start_submerged() {
+        set_layer("Sub");
+        sub_elevation_ = elevation_target_;
+        vert_event_ = "Bottom";
+    }
     /// Whether it is on its way down or up (Moho's MovingDown/MovingUp).
     bool diving() const { return vert_motion_ == VertMotion::Down; }
     bool surfacing() const { return vert_motion_ == VertMotion::Up; }
@@ -801,6 +850,42 @@ public:
     /// water's surface above it unless it flies in water (Moho's CUnitMotion
     /// samples max(terrain, water) for fliers).
     f32 air_floor(const map::Terrain* terrain, f32 x, f32 z) const;
+    /// Its ground to fly over (Moho's mTargetElevation), moved toward the
+    /// highest ground within `look_distance` ahead; the factor rising
+    /// ground puts on its speed.
+    f32 track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 tick, f32 dt,
+                          bool landing = false);
+    f32 lift_ground() const { return lift_ground_; }
+    u32 next_lift_tick() const { return lift_tick_ + 1; }
+    /// Its height after a step climbing toward `want` over it, under KLift
+    /// and KLiftDamping (ComputeAirControl), its wings' lift if winged; not
+    /// under `floor_after`.
+    f32 lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
+                    const EntityRegistry* registry, f32 dt);
+    /// Moho's CalcTransportLoadFactor: its mass with its cargo's over its own.
+    f32 transport_load_factor(const EntityRegistry& registry) const;
+    void reset_lift_ground() { lift_ground_set_ = false; }
+    const Vector3& air_velocity() const { return air_velocity_; }
+    f32 lift_velocity() const { return lift_velocity_; }
+    void set_air_velocity(const Vector3& v) {
+        air_dv_.x = v.x - air_velocity_.x;
+        air_dv_.z = v.z - air_velocity_.z;
+        air_velocity_ = v;
+    }
+    /// Its last tick's change of velocity (CalcHoverOrientation's).
+    const Vector3& air_dv() const { return air_dv_; }
+    /// Its angular momentum per unit mass, in world axes.
+    const Vector3& air_spin() const { return air_spin_; }
+    void set_air_spin(const Vector3& w) { air_spin_ = w; }
+    /// Its turn rate about the vertical, and its spin set to just that.
+    f32 air_turn_rate() const;
+    void set_air_turn_rate(f32 rate);
+    /// Unit::PredictAheadBomb a second on: its velocity turned each tick by its turn rate.
+    Vector3 air_stop_point() const;
+    /// Moho's mFormationVec: the way it faces once at its goal.
+    const Vector3& air_facing() const { return air_facing_; }
+    void set_air_facing(const Vector3& f) { air_facing_ = f; }
+    bool flew_at(u32 tick) const { return lift_tick_ == tick; }
 
     // Motion type (from blueprint Physics.MotionType)
     const std::string& motion_type() const { return motion_type_; }
@@ -808,13 +893,22 @@ public:
     /// Its footprints as Moho resolves them from its blueprint (roadmap item
     /// 4): a mobile unit's is the footprint class nearest its size for its
     /// motion type's caps, a structure's its own with the layers it may be
-    /// built on. The alt one is for its AltMotionType.
-    const blueprints::Footprint& footprint() const { return footprints_.main; }
+    /// built on. The alt one is for its AltMotionType, and is the one it has
+    /// while it uses it (Moho's Entity::GetFootprint).
+    const blueprints::Footprint& footprint() const {
+        return uses_alt_footprint() ? footprints_.alt : footprints_.main;
+    }
     const blueprints::Footprint& alt_footprint() const { return footprints_.alt; }
     /// The footprint class it paths as (-1: none, as a structure or a flier).
-    i32 footprint_class() const { return footprints_.main_class; }
+    i32 footprint_class() const {
+        return uses_alt_footprint() ? footprints_.alt_class : footprints_.main_class;
+    }
     i32 alt_footprint_class() const { return footprints_.alt_class; }
     void set_footprints(const blueprints::UnitFootprints& f) { footprints_ = f; }
+    bool uses_alt_footprint() const { return using_alt_footprint_ || force_alt_footprint_; }
+    void set_force_alt_footprint(bool on) { force_alt_footprint_ = on; }
+    /// Moho's CAiPathNavigator::RequestPath.
+    void set_path_goal(const Vector3& goal, const SimContext& ctx);
     f32 naval_draft() const { return naval_draft_; }
     void set_naval_draft(f32 d) { naval_draft_ = d; }
     bool is_amphibious() const {
@@ -827,9 +921,31 @@ public:
     bool walks_seabed() const {
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_Land";
     }
-    /// The height it stands at on the ground at (x, z): the terrain, under
-    /// the water too, for one that walks the seabed; else the surface.
-    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const;
+    struct GroundStance {
+        f32 y;
+        Quaternion orientation;
+    };
+    /// Its height with its centre at (x, z), and `facing` tilted to the
+    /// ground under its box.
+    GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z,
+                               const Quaternion& facing) const;
+    f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
+        return ground_stance(terrain, x, z, orientation()).y;
+    }
+    void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing);
+    bool snaps_to_ground() const {
+        return !can_fly() && (is_hover() || layer_ == "Land" || layer_ == "Seabed");
+    }
+    /// Physics.StandUpright and Physics.SinkLower.
+    void set_ground_snap_flags(bool stand_upright, bool sink_lower) {
+        stand_upright_ = stand_upright;
+        sink_lower_ = sink_lower;
+    }
+    /// Physics.RaisedPlatforms: quads of four (x, z, height) corners.
+    void set_raised_platforms(std::vector<f32> quads) { raised_platforms_ = std::move(quads); }
+    /// Moho's Unit::DistanceToOccupiedRect: its deck's height at (x, z), 0 off it.
+    f32 raised_platform_height(f32 x, f32 z) const;
+    const Unit* raised_platform() const;
     /// Physics.LayerChangeOffsetHeight: how far above (+) or below (-) the
     /// water's surface the ground must lie for it to count as under water.
     f32 layer_change_offset() const { return layer_change_offset_; }
@@ -874,8 +990,11 @@ public:
             tick_position_set_ &&
             (p.x != tick_position_.x || p.y != tick_position_.y || p.z != tick_position_.z);
         tick_position_ = p;
+        tick_orientation_ = orientation();
         tick_position_set_ = true;
     }
+    /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
+    f32 anim_motion_scale(f32 dt) const;
     void set_creator_id(u32 id) { creator_id_ = id; }
     bool auto_overcharge() const { return auto_overcharge_; }
     void set_auto_overcharge(bool b) { auto_overcharge_ = b; }
@@ -894,7 +1013,10 @@ public:
     /// (order_build_in_place), and one taken from a guarded factory goes to
     /// the back of that factory's (order_guard).
     bool repeat_queue() const { return repeat_queue_; }
-    void set_repeat_queue(bool v) { repeat_queue_ = v; }
+    void set_repeat_queue(bool v) {
+        repeat_queue_ = v;
+        request_ui_refresh();
+    }
     /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
     /// do not surface by themselves yet.
     bool auto_surface_mode() const { return auto_surface_mode_; }
@@ -1285,6 +1407,10 @@ private:
     /// Move along the navigator's path, no faster than `speed_cap` if set (a
     /// formation keeping its slowest unit's pace).
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    /// Moho's CAiNavigatorAir::AbortMove for an aircraft.
+    void stop_air();
+    /// Moho's Unit::UpdateSpeedThroughStatus.
+    void update_speed_through();
     /// Walk toward work out of reach (the goal set when the order sent the
     /// unit): nav_update, first asking again for a path the pathfinder put
     /// off (the navigator keeps a throttled request without retrying it).
@@ -1318,10 +1444,12 @@ private:
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
     void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    void tend_unfinished(SimContext& ctx);
+    void decay(lua_State* L);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
-    OrderStep order_stop();
+    OrderStep order_stop(lua_State* L);
     OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// Close to the best weapon's range of the target, and stay on it.
     OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);
@@ -1336,14 +1464,17 @@ private:
     OrderStep end_factory_build_order(UnitCommand& cmd);
     /// A sacrifice's donation to `target` (Moho's CUnitSacrificeTask).
     void donate_sacrifice(Unit& target, lua_State* L);
+    void destroy_through_script(EntityRegistry& registry, lua_State* L);
     /// Whether a factory whose unit is built still holds for the roll-off,
     /// counting `wait` down (see the definition).
     bool holds_for_rolloff(i32& wait) const;
-    /// Whether a build its army's unit cap stopped still waits, counting
-    /// its cap_wait down (it tries again once that runs out).
-    static bool waits_out_unit_cap(UnitCommand& cmd);
+    /// Whether a task the unit cap or a pause stopped still waits, counting
+    /// its task_wait down (it tries again once that runs out).
+    static bool waits_out_task(UnitCommand& cmd);
+    /// Whether the unit is paused, `cmd` then waiting kTaskRetryTicks.
+    bool waits_paused(UnitCommand& cmd) const;
     /// A build its army's unit cap stopped: the order `command_id` (if
-    /// still at the head -- the brain's scripts ran) waits kCapRetryTicks.
+    /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
     OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
@@ -1506,14 +1637,20 @@ private:
     f32 guard_scan_radius_ = 25.0f;
     f32 attack_angle_ = 0.0f;      // AI.AttackAngle, degrees
     bool slaved_turning_ = false;  // turning to a slaved target (Moho's hysteresis)
-    Vector3 attack_facing_;        // a parked attack's facing; zero: none
+    Vector3 attack_facing_;        // a parked attack's or a build's facing; zero: none
     bool turned_in_place_ = false; // this tick
     f32 guard_return_radius_ = 50.0f;
     bool need_unpack_ = false;
+    bool need_to_face_target_to_build_ = false;
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 layer_change_offset_ = -0.1f; // Physics.LayerChangeOffsetHeight (Moho's default)
+    std::vector<f32> raised_platforms_;
+    bool stand_upright_ = false;
+    bool sink_lower_ = false;
     blueprints::UnitFootprints footprints_;
+    bool using_alt_footprint_ = false;
+    bool force_alt_footprint_ = false;
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     u32 jammer_blips_ = 0;          // Intel.JammerBlips
     f32 jam_radius_min_ = 0, jam_radius_max_ = 0; // Intel.JamRadius
@@ -1524,6 +1661,7 @@ private:
     std::unordered_set<std::string> categories_;
     CategoryBits category_bits_; // categories_, as ids
     std::deque<UnitCommand> command_queue_;
+    std::optional<std::pair<u32, CommandType>> noted_head_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
     std::vector<UnitCommand> rally_orders_; // see rally_orders()
     u32 build_target_id_ = 0;     // entity ID of unit being built
@@ -1567,6 +1705,7 @@ private:
     u16 script_bits_ = 0;        // 9 toggle bits (0-8)
     u32 creation_tick_ = 0;      // the tick it was made (Moho's mCreationTick)
     std::unordered_set<std::string> toggle_caps_; // RULEUTC_* toggle capabilities
+    std::unordered_set<std::string> original_toggle_caps_;
     f32 surface_threat_ = 0;
     f32 air_threat_ = 0;
     f32 sub_threat_ = 0;
@@ -1596,7 +1735,12 @@ private:
     /// by its own paths (stop_unit, end_guard_build), an upgrade by its own.
     u32 build_command_id_ = 0;
     bool build_released_with_order_ = false;
+    bool build_repairs_ = false;
+    std::string build_order_;     ///< the order OnStartBuild was given, for OnStopBuild
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
+    /// A paused factory's order taken from the factory it guards, not begun.
+    std::string assist_pending_bp_;
+    u32 sacrifice_order_ = 0;
     std::unordered_set<std::string> unit_states_; // generic string-based states
     // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's
     // SSTIUnitVariableData (the UI shows a shield bar above 0).
@@ -1712,7 +1856,7 @@ private:
     /// already keeps there, else a new one from AI.BeaconName. 0 without one.
     u32 ferry_beacon(SimContext& ctx, UnitCommand& head);
     /// Fly a ferry leg toward `to`; true while under way.
-    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to);
+    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through = false);
     /// A teleport or an OverCharge whose order went unfinished: the script
     /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
     void settle_interrupted_orders(lua_State* L);
@@ -1754,11 +1898,20 @@ private:
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
+    bool air_stepped_ = false;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)
     f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
+    f32 lift_velocity_ = 0.0f;
+    Vector3 air_velocity_{};
+    Vector3 air_dv_{};
+    Vector3 air_spin_{};
+    Vector3 air_facing_{};
+    f32 lift_ground_ = 0.0f;
+    bool lift_ground_set_ = false;
+    u32 lift_tick_ = 0;
     f32 elevation_target_ = 18.0f; // target altitude above its air floor, from Physics.Elevation
     bool fly_in_water_ = false;    // Air.FlyInWater
     // Diving and surfacing (M206o).
@@ -1776,6 +1929,7 @@ private:
     // Misc flags
     u32 creator_id_ = 0;
     Vector3 tick_position_{};        // where it stood as this tick began
+    Quaternion tick_orientation_{};
     bool tick_position_set_ = false; // (none before its first tick)
     bool moved_last_tick_ = false;
     bool auto_overcharge_ = false;

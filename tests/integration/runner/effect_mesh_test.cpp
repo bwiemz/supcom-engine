@@ -10,6 +10,7 @@
 // red and green 0: a lit albedo shows as itself).
 
 #include "integration_tests.hpp"
+#include "support/temp_path.hpp"
 #include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
@@ -90,8 +91,8 @@ void test_effect_meshes(TestContext& ctx) {
     }
 
     // The plates' files.
-    const auto dir = std::filesystem::temp_directory_path() / "osc_effect_mesh_test";
-    std::filesystem::create_directories(dir);
+    const TempDir scratch("osc_effect_mesh_test");
+    const auto& dir = scratch.path();
     write_plate_scm(dir / "plate.scm", 4.0f);
     const auto flat = [](u8 r_, u8 g_, u8 b_, u8 a_) {
         return [=](int, u32, u32) { return std::array<u8, 4>{r_, g_, b_, a_}; };

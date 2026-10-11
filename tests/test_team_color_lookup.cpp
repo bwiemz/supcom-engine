@@ -1,8 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "lua/lua_state.hpp"
+#include "lua/user_bindings.hpp"
+#include "renderer/renderer.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "sim/world_snapshot.hpp"
+
+#include <lua.h>
 
 using namespace osc;
 using namespace osc::renderer;
@@ -56,4 +61,24 @@ TEST_CASE("The row is clamped below the player colours' count (M211c)", "[render
     CHECK_THAT(team_color_lookup(&violet, colors), WithinAbs(1.5 / 2, 1e-6));
     // Without GameColors, one row: Moho counts at least one.
     CHECK_THAT(team_color_lookup(&violet, sim::GameColors{}), WithinAbs(0.5, 1e-6));
+}
+
+TEST_CASE("TeamColorMode sets the session's mode and FAF's string its palette", "[renderer][ui]") {
+    lua::LuaState state;
+    lua::register_user_bindings(state);
+    Renderer r;
+    lua_State* L = state.raw();
+    lua_pushstring(L, "__osc_renderer");
+    lua_pushlightuserdata(L, &r);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    REQUIRE(state.do_string("TeamColorMode(true)").ok());
+    CHECK(r.team_color_mode());
+    REQUIRE(state.do_string("TeamColorMode('ff4169e1,FFE80A0A,ff006400')").ok());
+    CHECK(r.team_color_mode());
+    CHECK(r.team_palette() == std::vector<u32>{0xFF4169E1u, 0xFFE80A0Au, 0xFF006400u});
+    REQUIRE(state.do_string("TeamColorMode(false)").ok());
+    CHECK_FALSE(r.team_color_mode());
+    CHECK_FALSE(state.do_string("TeamColorMode(1)").ok());
+    CHECK_FALSE(state.do_string("TeamColorMode()").ok());
 }

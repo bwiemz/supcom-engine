@@ -171,13 +171,10 @@ void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
 }
 
 CommandRecord command_record(const UnitCommand& c, bool pending) {
-    return {c.type,
-            c.target_id,
-            c.target_pos,
-            c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(),
-            pending,
-            c.from_guard,
-            pending ? 0u : c.command_id};
+    return {c.type,       c.target_id,
+            c.target_pos, c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(),
+            pending,      c.from_guard,
+            c.command_id};
 }
 
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
@@ -225,8 +222,8 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
         static_cast<f32>((u.producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
     r.energy_produced =
         static_cast<f32>((u.producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
-    r.mass_consumed = static_cast<f32>(econ.mass_consumed(u.is_paused()));
-    r.energy_consumed = static_cast<f32>(econ.energy_consumed(u.is_paused()));
+    r.mass_consumed = static_cast<f32>(econ.mass_consumed());
+    r.energy_consumed = static_cast<f32>(econ.energy_consumed());
     r.mass_requested = static_cast<f32>(econ.mass_requested());
     r.energy_requested = static_cast<f32>(econ.energy_requested());
     r.nuke_silo_max = u.silo_max_storage(true);
@@ -498,8 +495,16 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
                     econ.energy.requested};
         a.mass_efficiency = brain->mass_efficiency();
         a.energy_efficiency = brain->energy_efficiency();
-        for (i32 j = 0; j < static_cast<i32>(sim.army_count()) && j < 32; ++j)
-            if (j != static_cast<i32>(i) && brain->is_ally(j)) a.allies |= 1u << j;
+        for (i32 j = 0; j < static_cast<i32>(sim.army_count()) && j < 32; ++j) {
+            if (j == static_cast<i32>(i)) {
+                continue;
+            }
+            if (brain->is_ally(j)) {
+                a.allies |= 1u << j;
+            } else if (brain->is_enemy(j)) {
+                a.enemies |= 1u << j;
+            }
+        }
         a.start_x = brain->start_position().x;
         a.start_z = brain->start_position().z;
     }
@@ -569,6 +574,9 @@ void WorldHistory::capture(const SimState& sim) {
         events_.deaths.push_back({d.x, d.y, d.z, d.scale, d.army});
     for (const auto& s : sim.camera_shake_events())
         events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
+    for (const auto& f : sim.camera_follow_events()) {
+        events_.camera_follows.push_back({f.source, f.projectile, f.timeout});
+    }
     for (const auto& f : sim.intel_flush_events())
         events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
     for (const auto& r : sim.sound_requests())

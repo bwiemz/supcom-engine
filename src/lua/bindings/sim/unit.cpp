@@ -216,9 +216,10 @@ static int unit_IsUnitState(lua_State* L) {
     bool result = false;
     if (u) {
         if (std::strcmp(state, "Building") == 0) {
-            result = u->is_building() ||
-                     (u->arm_awaited() && !u->command_queue().empty() &&
-                      u->command_queue().front().type == sim::CommandType::BuildMobile);
+            result = (u->is_building() && !u->build_repairs()) ||
+                     (!u->command_queue().empty() &&
+                      u->command_queue().front().type == sim::CommandType::BuildMobile &&
+                      (u->arm_awaited() || u->command_queue().front().task_wait > 0));
         } else if (std::strcmp(state, "Moving") == 0) result = u->is_moving();
         else if (std::strcmp(state, "BeingBuilt") == 0)
             result = u->is_being_built();
@@ -227,15 +228,16 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Reclaiming") == 0)
             result = u->is_reclaiming();
         else if (std::strcmp(state, "Repairing") == 0)
-            result = u->is_repairing();
+            result = u->is_repairing() || u->build_repairs();
         else if (std::strcmp(state, "Busy") == 0)
             result = u->busy();
         else if (std::strcmp(state, "BlockCommandQueue") == 0)
             result = u->block_command_queue();
-        else if (std::strcmp(state, "Upgrading") == 0)
+        else if (std::strcmp(state, "Upgrading") == 0) {
             result = !u->command_queue().empty() &&
-                     u->command_queue().front().type == sim::CommandType::Upgrade;
-        else if (std::strcmp(state, "Patrolling") == 0) {
+                     u->command_queue().front().type == sim::CommandType::Upgrade &&
+                     u->command_queue().front().begun;
+        } else if (std::strcmp(state, "Patrolling") == 0) {
             // An attack-move is a patrol task too (Moho's Patrolling state)
             result = !u->command_queue().empty() &&
                      (u->command_queue().front().type == sim::CommandType::Patrol ||
@@ -589,6 +591,16 @@ static int unit_SetSpeedMult(lua_State* L) {
     if (!u) return 0;
     f32 mult = static_cast<f32>(luaL_checknumber(L, 2));
     u->set_speed_mult(mult);
+    return 0;
+}
+
+// FAF's ForceAltFootprint(self, bool) (FA-Binary-Patches EntityGetFootprint.cpp)
+static int unit_ForceAltFootprint(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) {
+        return 0;
+    }
+    u->set_force_alt_footprint(lua_toboolean(L, 2) != 0);
     return 0;
 }
 
@@ -1158,6 +1170,7 @@ static int unit_AddToggleCap(lua_State* L) {
     auto* u = check_unit(L);
     if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->add_toggle_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
     }
     return 0;
 }
@@ -1167,6 +1180,15 @@ static int unit_RemoveToggleCap(lua_State* L) {
     auto* u = check_unit(L);
     if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->remove_toggle_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
+    }
+    return 0;
+}
+
+static int unit_RestoreToggleCaps(lua_State* L) {
+    if (auto* u = check_unit(L)) {
+        u->restore_toggle_caps();
+        u->request_ui_refresh();
     }
     return 0;
 }
@@ -1362,14 +1384,18 @@ static int unit_SetShieldRatio(lua_State* L) {
 // unit:Stop() — clear command queue
 static int unit_Stop(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->clear_commands();
+    auto* sim = get_sim(L);
+    if (u && sim) {
+        u->clear_commands(sim->entity_registry(), L);
+    }
     return 0;
 }
 
-// unit:SetPaused(bool) — set/clear pause flag + economy
 static int unit_SetPaused(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->pause(lua_toboolean(L, 2) != 0);
+    if (u) {
+        u->pause(L, lua_toboolean(L, 2) != 0);
+    }
     return 0;
 }
 
@@ -1897,21 +1923,27 @@ static int unit_SetBuildingUnit(lua_State* L) {
 
 static int unit_AddCommandCap(lua_State* L) {
     auto* u = check_unit(L);
-    if (u && lua_type(L, 2) == LUA_TSTRING)
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->add_command_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RemoveCommandCap(lua_State* L) {
     auto* u = check_unit(L);
-    if (u && lua_type(L, 2) == LUA_TSTRING)
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
         u->remove_command_cap(lua_tostring(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RestoreCommandCaps(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->restore_command_caps();
+    if (auto* u = check_unit(L)) {
+        u->restore_command_caps();
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
@@ -1925,20 +1957,26 @@ static sim::CategoryExpr restriction_arg(lua_State* L, int index) {
 }
 
 static int unit_AddBuildRestriction(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->add_build_restriction(restriction_arg(L, 2));
+    if (auto* u = check_unit(L)) {
+        u->add_build_restriction(restriction_arg(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RemoveBuildRestriction(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->remove_build_restriction(restriction_arg(L, 2));
+    if (auto* u = check_unit(L)) {
+        u->remove_build_restriction(restriction_arg(L, 2));
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
 static int unit_RestoreBuildRestrictions(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->restore_build_restrictions();
+    if (auto* u = check_unit(L)) {
+        u->restore_build_restrictions();
+        u->request_ui_refresh();
+    }
     return 0;
 }
 
@@ -2117,8 +2155,8 @@ static int unit_GetEconData(lua_State* L) {
     };
     set("massProduced", (u->producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
     set("energyProduced", (u->producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
-    set("massConsumed", econ.mass_consumed(u->is_paused()));
-    set("energyConsumed", econ.energy_consumed(u->is_paused()));
+    set("massConsumed", econ.mass_consumed());
+    set("energyConsumed", econ.energy_consumed());
     set("massRequested", econ.mass_requested());
     set("energyRequested", econ.energy_requested());
     return 1;
@@ -2388,6 +2426,7 @@ const MethodEntry unit_methods[] = {
     {"IsMoving",                    unit_IsMoving},
     {"GetNavigator",                unit_GetNavigator},
     {"SetSpeedMult",                unit_SetSpeedMult},
+    {"ForceAltFootprint",           unit_ForceAltFootprint},
     {"SetAccMult",                  unit_SetAccMult},
     {"SetTurnMult",                 unit_SetTurnMult},
     {"SetBreakOffDistanceMult",     unit_SetBreakOffDistanceMult},
@@ -2472,6 +2511,7 @@ const MethodEntry unit_methods[] = {
     {"ResetSpeedAndAccel",          unit_ResetSpeedAndAccel},
     {"AddToggleCap",                unit_AddToggleCap},
     {"RemoveToggleCap",             unit_RemoveToggleCap},
+    {"RestoreToggleCaps",           unit_RestoreToggleCaps},
     {"TestCommandCaps",             unit_TestCommandCaps},
     {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},

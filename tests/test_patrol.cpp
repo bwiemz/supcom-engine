@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "renderer/input_handler.hpp"
@@ -24,7 +26,9 @@ extern "C" {
 }
 
 #include <cmath>
+#include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -760,6 +764,42 @@ TEST_CASE("The reclaim cursor and right-click pass over what is not RECLAIMABLE"
     CHECK(input.click_in_command_mode(sim, mode, 60.0f, 10.0f, false));
 }
 
+TEST_CASE("An upgrade's unfinished unit is hovered as the structure upgrading", "[hover]") {
+    LuaGuard g;
+    osc::blueprints::BlueprintStore store(g.L);
+    for (const char* bp : {"return {BlueprintId = 'tier1', General = {UpgradesFrom = 'none'}}",
+                           "return {BlueprintId = 'tier2', General = {UpgradesFrom = 'tier1'}}"}) {
+        REQUIRE(luaL_loadbuffer(g.L, bp, std::strlen(bp), "bp") == 0);
+        REQUIRE(lua_pcall(g.L, 0, 1, 0) == 0);
+        store.register_blueprint(g.L, osc::blueprints::BlueprintType::Unit, lua_gettop(g.L));
+        lua_pop(g.L, 1);
+    }
+    SimState sim(g.L, &store);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->add_command_cap("RULEUCC_Repair");
+    eng->add_command_cap("RULEUCC_Guard");
+    eng->add_command_cap("RULEUCC_Move");
+    Unit* old = still(sim, 0, 40.0f, 40.0f);
+    old->set_blueprint_id("tier1");
+    old->set_size_xz(4.0f, 4.0f);
+    old->set_size_y(1.0f);
+    Unit* next = still(sim, 0, 40.0f, 40.0f);
+    next->set_blueprint_id("tier2");
+    next->set_size_xz(5.0f, 5.0f);
+    next->set_size_y(3.0f);
+    next->set_is_being_built(true);
+    next->set_creator_id(old->entity_id());
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({eng->entity_id()});
+    const auto orders = input.right_click_orders(sim, 40.0f, 40.0f);
+    REQUIRE(orders.size() == 1);
+    CHECK(orders.front().first.type == CommandType::Guard);
+    CHECK(orders.front().first.target_id == old->entity_id());
+}
+
 TEST_CASE("Past zoom 150 the cursor passes over props", "[reclaim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -831,4 +871,569 @@ TEST_CASE("Capture is offered only on a capturable unit that rides nothing", "[c
     CHECK_FALSE(input.click_in_command_mode(sim, mode, 40.0f, 40.0f, false));
     eng->add_command_cap("RULEUCC_Reclaim");
     CHECK(input.right_button_order(sim, 70.0f, 10.0f) == CommandType::Reclaim);
+}
+
+TEST_CASE("A right click attacks only an enemy a selected weapon can hit", "[attack]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    tank->add_command_cap("RULEUCC_Attack");
+    tank->add_command_cap("RULEUCC_Move");
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 20.0f;
+    gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land|Water");
+    tank->add_weapon(std::move(gun));
+    Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    enemy->add_category("RECLAIMABLE");
+    Unit* bomber = still(sim, 1, 40.0f, 40.0f);
+    bomber->set_layer("Air");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    input.set_selected({tank->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Attack);
+    CHECK(input.right_button_order(sim, 43.0f, 10.0f) == CommandType::Move);
+    const auto issued = input.right_click_at(sim, 40.0f, 10.0f, false);
+    REQUIRE(issued.size() == 1);
+    CHECK(issued.front().type == "Attack");
+    CHECK(issued.front().target_id == enemy->entity_id());
+
+    Unit* eng = engineer(sim, 10.0f, 20.0f);
+    eng->add_command_cap("RULEUCC_Capture");
+    eng->add_command_cap("RULEUCC_Reclaim");
+    eng->add_command_cap("RULEUCC_Move");
+    input.set_selected({eng->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 10.0f) == CommandType::Capture);
+    input.set_selected({tank->entity_id()});
+    CHECK_FALSE(input.right_button_order(sim, 40.0f, 40.0f));
+    CHECK(input.right_click_invalid(sim, 40.0f, 40.0f));
+    CHECK(input.right_click_at(sim, 40.0f, 40.0f, false).empty());
+
+    Unit* flak = walker(sim, 12.0f, 10.0f);
+    flak->set_motion_type("RULEUMT_Land");
+    flak->add_command_cap("RULEUCC_Attack");
+    auto aa = std::make_unique<osc::sim::Weapon>();
+    aa->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    flak->add_weapon(std::move(aa));
+    input.set_selected({tank->entity_id(), flak->entity_id()});
+    CHECK(input.right_button_order(sim, 40.0f, 40.0f) == CommandType::Attack);
+    CHECK_FALSE(input.right_click_invalid(sim, 40.0f, 40.0f));
+}
+
+TEST_CASE("A right click gives the whole selection one order", "[attack][capture]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* tank = walker(sim, 10.0f, 10.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    tank->add_command_cap("RULEUCC_Attack");
+    tank->add_command_cap("RULEUCC_Move");
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 20.0f;
+    gun->fire_target_layer_caps = osc::sim::parse_layer_caps("Land|Water");
+    tank->add_weapon(std::move(gun));
+    Unit* eng = engineer(sim, 12.0f, 10.0f);
+    eng->set_motion_type("RULEUMT_Land");
+    eng->add_command_cap("RULEUCC_Move");
+    eng->add_command_cap("RULEUCC_Capture");
+    eng->add_command_cap("RULEUCC_Reclaim");
+    Unit* flak = walker(sim, 14.0f, 10.0f);
+    flak->set_motion_type("RULEUMT_Land");
+    flak->add_command_cap("RULEUCC_Attack");
+    auto aa = std::make_unique<osc::sim::Weapon>();
+    aa->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    flak->add_weapon(std::move(aa));
+    const Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    rock(sim, 70.0f, 40.0f, 10.0f, 0.0f);
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    const auto one_order = [&](osc::f32 x, osc::f32 z) {
+        const auto orders = input.right_click_orders(sim, x, z);
+        REQUIRE(orders.size() == 1);
+        return orders.front();
+    };
+
+    input.set_selected({tank->entity_id(), eng->entity_id()});
+    auto order = one_order(40.0f, 10.0f);
+    CHECK(order.first.type == CommandType::Attack);
+    CHECK(order.first.target_id == enemy->entity_id());
+    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), eng->entity_id()});
+    order = one_order(70.0f, 40.0f);
+    CHECK(order.first.type == CommandType::Reclaim);
+    CHECK(order.second.size() == 2);
+
+    input.set_selected({eng->entity_id(), flak->entity_id()});
+    order = one_order(40.0f, 10.0f);
+    CHECK(order.first.type == CommandType::Capture);
+    CHECK(order.second == std::vector<osc::u32>{eng->entity_id(), flak->entity_id()});
+}
+
+TEST_CASE("A right click on an own unit gives the whole selection one order",
+          "[guard][transport]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    const auto mobile = [&](osc::f32 x, osc::f32 z, const char* motion) {
+        Unit* u = walker(sim, x, z);
+        u->set_motion_type(motion);
+        for (const char* cap : {"RULEUCC_Move", "RULEUCC_Guard", "RULEUCC_CallTransport"}) {
+            u->add_command_cap(cap);
+        }
+        return u;
+    };
+    Unit* eng = mobile(10.0f, 10.0f, "RULEUMT_Land");
+    eng->add_command_cap("RULEUCC_Repair");
+    Unit* tank = mobile(12.0f, 10.0f, "RULEUMT_Land");
+    Unit* fighter = mobile(14.0f, 10.0f, "RULEUMT_Air");
+    Unit* frame = still(sim, 0, 40.0f, 10.0f);
+    frame->set_is_being_built(true);
+    Unit* factory = still(sim, 0, 40.0f, 40.0f);
+    factory->add_category("FACTORY");
+    factory->set_is_being_built(true);
+    Unit* damaged = still(sim, 0, 70.0f, 10.0f);
+    damaged->set_health(50.0f);
+    Unit* transport = mobile(70.0f, 40.0f, "RULEUMT_Air");
+    transport->add_category("TRANSPORTATION");
+    Unit* pad = still(sim, 0, 100.0f, 10.0f);
+    pad->add_category("AIRSTAGINGPLATFORM");
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    const auto one_order = [&](const Unit& on) {
+        const auto orders = input.right_click_orders(sim, on.position().x, on.position().z);
+        REQUIRE(orders.size() == 1);
+        CHECK(orders.front().first.target_id == on.entity_id());
+        return orders.front();
+    };
+
+    input.set_selected({eng->entity_id(), tank->entity_id()});
+    auto order = one_order(*frame);
+    CHECK(order.first.type == CommandType::Repair);
+    CHECK(order.second == std::vector<osc::u32>{eng->entity_id(), tank->entity_id()});
+    CHECK(one_order(*factory).first.type == CommandType::Guard);
+    CHECK(one_order(*damaged).first.type == CommandType::Guard);
+
+    input.set_selected({tank->entity_id(), fighter->entity_id()});
+    order = one_order(*transport);
+    CHECK(order.first.type == CommandType::TransportLoad);
+    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), fighter->entity_id()});
+    order = one_order(*pad);
+    CHECK(order.first.type == CommandType::TransportLoad);
+    CHECK(order.second == std::vector<osc::u32>{tank->entity_id(), fighter->entity_id()});
+
+    input.set_selected({tank->entity_id()});
+    const auto orders = input.right_click_orders(sim, tank->position().x, tank->position().z);
+    REQUIRE(orders.size() == 1);
+    CHECK(orders.front().first.type == CommandType::Move);
+    CHECK(orders.front().second == std::vector<osc::u32>{tank->entity_id()});
+}
+
+TEST_CASE("A load order goes only to a unit its transport can carry", "[transport]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    two_armies(sim);
+    const auto mobile = [&](osc::f32 x, const char* motion) {
+        Unit* u = walker(sim, x, 10.0f);
+        u->set_motion_type(motion);
+        u->add_command_cap("RULEUCC_CallTransport");
+        return u;
+    };
+    Unit* tank = mobile(10.0f, "RULEUMT_Land");
+    Unit* fighter = mobile(12.0f, "RULEUMT_Air");
+    fighter->add_category("AIR");
+    Unit* acu = mobile(14.0f, "RULEUMT_Land");
+    acu->add_category("COMMAND");
+    Unit* walker_only = walker(sim, 16.0f, 10.0f);
+    walker_only->set_motion_type("RULEUMT_Land");
+    Unit* transport = mobile(40.0f, "RULEUMT_Air");
+    transport->add_category("AIR");
+    transport->add_category("TRANSPORTATION");
+    transport->add_command_cap("RULEUCC_Transport");
+    Unit* pad = still(sim, 0, 60.0f, 10.0f);
+    pad->add_category("AIRSTAGINGPLATFORM");
+    pad->add_command_cap("RULEUCC_Transport");
+    Unit* beacon = still(sim, 0, 80.0f, 10.0f);
+    beacon->add_category("FERRYBEACON");
+    const Unit* other = still(sim, 0, 90.0f, 10.0f);
+    const auto takes = [&](const Unit& u, CommandType type, const Unit& onto) {
+        osc::sim::UnitCommand load;
+        load.type = type;
+        load.target_id = onto.entity_id();
+        return sim.takes_command(u, load);
+    };
+    CHECK(takes(*tank, CommandType::TransportLoad, *transport));
+    CHECK(takes(*transport, CommandType::TransportLoad, *transport));
+    CHECK_FALSE(takes(*fighter, CommandType::TransportLoad, *transport));
+    CHECK_FALSE(takes(*walker_only, CommandType::TransportLoad, *transport));
+    CHECK_FALSE(takes(*acu, CommandType::TransportLoad, *transport));
+    transport->add_category("CANTRANSPORTCOMMANDER");
+    CHECK(takes(*acu, CommandType::TransportLoad, *transport));
+    CHECK(takes(*fighter, CommandType::TransportLoad, *pad));
+    CHECK(takes(*fighter, CommandType::Dock, *pad));
+    CHECK_FALSE(takes(*tank, CommandType::TransportLoad, *pad));
+    CHECK_FALSE(takes(*tank, CommandType::TransportLoad, *other));
+    CHECK(takes(*tank, CommandType::WaitForFerry, *beacon));
+    CHECK_FALSE(takes(*transport, CommandType::WaitForFerry, *beacon));
+}
+
+TEST_CASE("An attack order goes to no unarmed structure and onto no ally", "[attack]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    two_armies(sim);
+    Unit* factory = still(sim, 0, 10.0f, 10.0f);
+    Unit* tank = walker(sim, 12.0f, 10.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    const Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    const Unit* own = still(sim, 0, 40.0f, 40.0f);
+    osc::sim::UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = enemy->entity_id();
+    CHECK(sim.takes_command(*tank, attack));
+    CHECK_FALSE(sim.takes_command(*factory, attack));
+    auto dummy = std::make_unique<osc::sim::Weapon>();
+    dummy->dummy = true;
+    factory->add_weapon(std::move(dummy));
+    CHECK_FALSE(sim.takes_command(*factory, attack));
+    factory->add_weapon(std::make_unique<osc::sim::Weapon>());
+    CHECK(sim.takes_command(*factory, attack));
+    attack.target_id = own->entity_id();
+    CHECK_FALSE(sim.takes_command(*tank, attack));
+}
+
+TEST_CASE("A unit with no weapon takes an attack order and drops it when it comes up", "[attack]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 20.0f);
+    eng->set_motion_type("RULEUMT_Land");
+    Unit* tank = walker(sim, 12.0f, 10.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 5.0f;
+    tank->add_weapon(std::move(gun));
+    const Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    osc::sim::UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = {60.0f, 0.0f, 20.0f};
+    osc::sim::UnitCommand attack;
+    attack.type = CommandType::Attack;
+    attack.target_id = enemy->entity_id();
+    attack.target_pos = enemy->position();
+    const std::vector<osc::u32> both{eng->entity_id(), tank->entity_id()};
+
+    sim.route_command({eng->entity_id()}, move, true);
+    sim.tick();
+    CHECK(sim.route_command(both, attack, true) != 0);
+    CHECK(eng->command_queue().size() == 1);
+    sim.tick();
+    CHECK(eng->command_queue().empty());
+    CHECK(tank->command_queue().size() == 1);
+
+    sim.route_command({eng->entity_id()}, move, true);
+    sim.tick();
+    sim.route_command(both, attack, false);
+    REQUIRE(eng->command_queue().size() == 2);
+    CHECK(eng->command_queue().back().type == CommandType::Attack);
+    sim.tick();
+    CHECK(eng->command_queue().size() == 2);
+    for (int i = 0; i < 400 && eng->command_queue().size() == 2; ++i) {
+        sim.tick();
+    }
+    sim.tick();
+    CHECK(eng->command_queue().empty());
+}
+
+TEST_CASE("IssueAttack goes only to units with the Attack command", "[attack][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->set_motion_type("RULEUMT_Land");
+    Unit* tank = walker(sim, 12.0f, 10.0f);
+    tank->set_motion_type("RULEUMT_Land");
+    tank->add_command_cap("RULEUCC_Attack");
+    tank->add_weapon(std::make_unique<osc::sim::Weapon>());
+    const Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+    lua_State* L = lua.raw();
+    const auto global = [&](const char* name, const Unit* u) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, static_cast<osc::sim::Entity*>(const_cast<Unit*>(u)));
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    global("eng", eng);
+    global("tank", tank);
+    global("enemy", enemy);
+    const auto r = lua.do_string(R"(
+        if IssueAttack({eng}, enemy) ~= nil then error('the engineer took it') end
+        if IssueAttack({eng, tank}, enemy) == nil then error('the tank did not take it') end
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
+    CHECK(eng->command_queue().empty());
+    REQUIRE(tank->command_queue().size() == 1);
+    CHECK(tank->command_queue().front().target_id == enemy->entity_id());
+}
+
+TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {
+    struct Row {
+        const char* issue;
+        const char* cap;
+    };
+    const std::vector<Row> rows = {
+        {"function(u) return IssueMove(u, {20, 0, 20}) end", "RULEUCC_Move"},
+        {"function(u) return IssueMoveOffFactory(u, {20, 0, 20}) end", "RULEUCC_Move"},
+        {"function(u) return IssueAggressiveMove(u, {20, 0, 20}) end", "RULEUCC_Move"},
+        {"function(u) return IssueFormMove(u, {20, 0, 20}, 'NoFormation', 0) end", "RULEUCC_Move"},
+        {"function(u) return IssueFormAggressiveMove(u, {20, 0, 20}, 'NoFormation', 0) end",
+         "RULEUCC_Move"},
+        {"function(u) return IssuePatrol(u, {20, 0, 20}) end", "RULEUCC_Patrol"},
+        {"function(u) return IssueFormPatrol(u, {20, 0, 20}, 'NoFormation', 0) end",
+         "RULEUCC_Patrol"},
+        {"function(u) return IssueGuard(u, friend) end", "RULEUCC_Guard"},
+        {"function(u) return IssueAttack(u, enemy) end", "RULEUCC_Attack"},
+        {"function(u) return IssueFormAttack(u, enemy, 'NoFormation', 0) end", "RULEUCC_Attack"},
+        {"function(u) return IssueRepair(u, friend) end", "RULEUCC_Repair"},
+        {"function(u) return IssueCapture(u, enemy) end", "RULEUCC_Capture"},
+        {"function(u) return IssueReclaim(u, rock) end", "RULEUCC_Reclaim"},
+        {"function(u) return IssueSacrifice(u, friend) end", "RULEUCC_Sacrifice"},
+        {"function(u) return IssueOverCharge(u, enemy) end", "RULEUCC_Overcharge"},
+        {"function(u) return IssueNuke(u, {20, 0, 20}) end", "RULEUCC_Nuke"},
+        {"function(u) return IssueTactical(u, {20, 0, 20}) end", "RULEUCC_Tactical"},
+        {"function(u) return IssueTeleport(u, {20, 0, 20}) end", "RULEUCC_Teleport"},
+        {"function(u) return IssueFerry(u, {20, 0, 20}) end", "RULEUCC_Ferry"},
+        {"function(u) return IssueTransportUnload(u, {20, 0, 20}) end", "RULEUCC_Transport"},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.issue) {
+            osc::lua::LuaState lua;
+            SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            osc::lua::register_sim_bindings(lua, sim);
+            two_armies(sim);
+            Unit* without = still(sim, 0, 10.0f, 10.0f);
+            without->set_motion_type("RULEUMT_Land");
+            Unit* with = still(sim, 0, 12.0f, 10.0f);
+            with->set_motion_type("RULEUMT_Land");
+            with->add_command_cap(row.cap);
+            for (Unit* u : {without, with}) {
+                for (const char* category : {"REPAIR", "CAPTURE", "RECLAIM"}) {
+                    u->add_category(category);
+                }
+            }
+            lua_State* L = lua.raw();
+            const auto global = [&](const char* name, osc::sim::Entity* e) {
+                lua_newtable(L);
+                lua_pushstring(L, "_c_object");
+                lua_pushlightuserdata(L, e);
+                lua_rawset(L, -3);
+                lua_setglobal(L, name);
+            };
+            global("without", without);
+            global("with", with);
+            global("friend", still(sim, 0, 14.0f, 10.0f));
+            global("enemy", still(sim, 1, 40.0f, 10.0f));
+            global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
+            const auto r = lua.do_string(std::string("local issue = ") + row.issue + R"(
+                if issue({without}) ~= nil then error('a unit without the command took it') end
+                issue({with})
+            )");
+            if (!r) {
+                FAIL(r.error().message);
+            }
+            CHECK(without->command_queue().empty());
+            CHECK_FALSE(with->command_queue().empty());
+        }
+    }
+}
+
+TEST_CASE(
+    "A factory that can't move takes no Move, Patrol or Guard, and alone takes IssueFactoryAssist",
+    "[lua][factory]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    two_armies(sim);
+    Unit* factory = still(sim, 0, 10.0f, 10.0f);
+    Unit* other = still(sim, 0, 20.0f, 10.0f);
+    for (Unit* u : {factory, other}) {
+        u->add_category("FACTORY");
+        u->add_command_cap("RULEUCC_Move");
+        u->add_command_cap("RULEUCC_Patrol");
+        u->add_command_cap("RULEUCC_Guard");
+    }
+    Unit* eng = still(sim, 0, 14.0f, 10.0f);
+    eng->set_motion_type("RULEUMT_Land");
+    eng->add_command_cap("RULEUCC_Guard");
+    lua_State* L = lua.raw();
+    const auto global = [&](const char* name, const Unit* u) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, static_cast<osc::sim::Entity*>(const_cast<Unit*>(u)));
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    global("factory", factory);
+    global("other", other);
+    global("eng", eng);
+    const auto r = lua.do_string(R"(
+        if IssueMove({factory}, {30, 0, 30}) ~= nil then error('move') end
+        if IssuePatrol({factory}, {30, 0, 30}) ~= nil then error('patrol') end
+        if IssueGuard({factory}, other) ~= nil then error('guard') end
+        if IssueFactoryAssist({eng}, other) ~= nil then error('engineer assist') end
+        IssueFactoryAssist({factory, eng}, other)
+    )");
+    if (!r) {
+        FAIL(r.error().message);
+    }
+    REQUIRE(factory->command_queue().size() == 1);
+    CHECK(factory->command_queue().front().type == CommandType::Guard);
+    CHECK(eng->command_queue().empty());
+}
+
+TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return their command",
+          "[lua]") {
+    struct Row {
+        const char* issue;
+        const char* cap;
+        bool returns_command;
+    };
+    const std::vector<Row> rows = {
+        {"IssueMove({with}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueMoveOffFactory({with}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueAggressiveMove({with}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueFormMove({with}, {20, 0, 20}, 'NoFormation', 0)", "RULEUCC_Move", true},
+        {"IssueFormAggressiveMove({with}, {20, 0, 20}, 'NoFormation', 0)", "RULEUCC_Move", true},
+        {"IssueAttack({with}, enemy)", "RULEUCC_Attack", true},
+        {"IssueDive({with})", "RULEUCC_Dive", true},
+        {"IssueFactoryRallyPoint({factory}, {20, 0, 20})", "RULEUCC_Move", true},
+        {"IssueFormAttack({with}, enemy, 'NoFormation', 0)", "RULEUCC_Attack", false},
+        {"IssuePatrol({with}, {20, 0, 20})", "RULEUCC_Patrol", false},
+        {"IssueFormPatrol({with}, {20, 0, 20}, 'NoFormation', 0)", "RULEUCC_Patrol", false},
+        {"IssueGuard({with}, friend)", "RULEUCC_Guard", false},
+        {"IssueFactoryAssist({factory}, other)", "RULEUCC_Guard", false},
+        {"IssueRepair({with}, friend)", "RULEUCC_Repair", false},
+        {"IssueCapture({with}, enemy)", "RULEUCC_Capture", false},
+        {"IssueReclaim({with}, rock)", "RULEUCC_Reclaim", false},
+        {"IssueSacrifice({with}, friend)", "RULEUCC_Sacrifice", false},
+        {"IssueOverCharge({with}, enemy)", "RULEUCC_Overcharge", false},
+        {"IssueNuke({with}, {20, 0, 20})", "RULEUCC_Nuke", false},
+        {"IssueTactical({with}, {20, 0, 20})", "RULEUCC_Tactical", false},
+        {"IssueTeleport({with}, {20, 0, 20})", "RULEUCC_Teleport", false},
+        {"IssueFerry({with}, {20, 0, 20})", "RULEUCC_Ferry", false},
+        {"IssueTransportUnload({with}, {20, 0, 20})", "RULEUCC_Transport", false},
+        {"IssueUpgrade({with}, 'uel0001')", "RULEUCC_Move", false},
+        {"IssueScript({with}, {TaskName = 'EnhanceTask'})", "RULEUCC_Move", false},
+        {"IssueBuildMobile({with}, {20, 0, 20}, 'uel0001', {})", "RULEUCC_Move", false},
+        {"IssueBuildFactory({with}, 'uel0001', 1)", "RULEUCC_Move", false},
+    };
+    for (const auto& row : rows) {
+        DYNAMIC_SECTION(row.issue) {
+            osc::lua::LuaState lua;
+            SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            osc::lua::register_sim_bindings(lua, sim);
+            two_armies(sim);
+            Unit* with = still(sim, 0, 12.0f, 10.0f);
+            with->set_motion_type("RULEUMT_Land");
+            with->add_command_cap(row.cap);
+            for (const char* category : {"ENGINEER", "REPAIR", "CAPTURE", "RECLAIM"}) {
+                with->add_category(category);
+            }
+            Unit* factory = still(sim, 0, 30.0f, 10.0f);
+            Unit* other = still(sim, 0, 40.0f, 10.0f);
+            for (Unit* u : {factory, other}) {
+                u->add_category("FACTORY");
+                u->add_command_cap(row.cap);
+            }
+            lua_State* L = lua.raw();
+            const auto global = [&](const char* name, osc::sim::Entity* e) {
+                lua_newtable(L);
+                lua_pushstring(L, "_c_object");
+                lua_pushlightuserdata(L, e);
+                lua_rawset(L, -3);
+                lua_setglobal(L, name);
+            };
+            global("with", with);
+            global("factory", factory);
+            global("other", other);
+            global("friend", still(sim, 0, 14.0f, 10.0f));
+            global("enemy", still(sim, 1, 60.0f, 10.0f));
+            global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
+            const auto r = lua.do_string(std::string(R"(
+                local function results(...) return arg.n, arg[1] end
+                n, command = results()") +
+                                         row.issue + ")");
+            if (!r) {
+                FAIL(r.error().message);
+            }
+            const bool taken = !with->command_queue().empty() ||
+                               !factory->command_queue().empty() ||
+                               !factory->rally_orders().empty();
+            CHECK(taken);
+            lua_getglobal(L, "n");
+            CHECK(lua_tonumber(L, -1) == (row.returns_command ? 1 : 0));
+            lua_pop(L, 1);
+            if (row.returns_command) {
+                const auto done = lua.do_string("assert(not IsCommandDone(command))");
+                if (!done) {
+                    FAIL(done.error().message);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Repair, Sacrifice, Reclaim and Capture leave their target out of the units ordered",
+          "[lua]") {
+    const std::vector<std::pair<const char*, const char*>> rows = {
+        {"IssueRepair", "RULEUCC_Repair"},
+        {"IssueSacrifice", "RULEUCC_Sacrifice"},
+        {"IssueReclaim", "RULEUCC_Reclaim"},
+        {"IssueCapture", "RULEUCC_Capture"},
+    };
+    for (const auto& [issue, cap] : rows) {
+        DYNAMIC_SECTION(issue) {
+            osc::lua::LuaState lua;
+            SimState sim(lua.raw(), nullptr);
+            osc::lua::register_moho_bindings(lua, sim);
+            osc::lua::register_sim_bindings(lua, sim);
+            two_armies(sim);
+            Unit* a = still(sim, 0, 10.0f, 10.0f);
+            Unit* b = still(sim, 0, 12.0f, 10.0f);
+            for (Unit* u : {a, b}) {
+                u->set_motion_type("RULEUMT_Land");
+                u->add_command_cap(cap);
+                for (const char* category : {"RECLAIMABLE", "REPAIR", "CAPTURE", "RECLAIM"}) {
+                    u->add_category(category);
+                }
+            }
+            lua_State* L = lua.raw();
+            const auto global = [&](const char* name, osc::sim::Entity* e) {
+                lua_newtable(L);
+                lua_pushstring(L, "_c_object");
+                lua_pushlightuserdata(L, e);
+                lua_rawset(L, -3);
+                lua_setglobal(L, name);
+            };
+            global("a", a);
+            global("b", b);
+            const auto r = lua.do_string(std::string(issue) + "({a}, a) " + issue + "({a, b}, a)");
+            if (!r) {
+                FAIL(r.error().message);
+            }
+            CHECK(a->command_queue().empty());
+            REQUIRE(b->command_queue().size() == 1);
+            CHECK(b->command_queue().front().target_id == a->entity_id());
+        }
+    }
 }

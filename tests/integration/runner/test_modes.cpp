@@ -12,6 +12,7 @@
 #include "options_test.hpp"
 #include "keymap_test.hpp"
 #include "movie_test.hpp"
+#include "combo_click_test.hpp"
 #include "edit_text_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
@@ -150,6 +151,7 @@ constexpr Mode kModesBefore[] = {
     {"--unit-intel-test", test_unit_intel, false},
     {"--effect-intel-test", test_effect_intel, false},
     {"--strategic-icon-test", test_strategic_icons, false},
+    {"--economy-overlay-test", test_economy_overlay, false},
     {"--resource-icon-render-test", test_resource_icon_render, false},
     {"--counter-intel-test", test_counter_intel, false},
     {"--beam-render-test", test_beam_render, false},
@@ -276,6 +278,7 @@ constexpr const char* kOwnModes[] = {
     "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
     "--options-test",         "--lan-screen-test",   "--edit-text-test",    "--focus-army-test",
+    "--combo-click-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -363,6 +366,7 @@ void IntegrationModes::print_usage() const {
               << "  --unit-intel-test  Units seen through the player's intel (fog of war)\n"
               << "  --effect-intel-test Effects, beams, shields and clicks through intel\n"
               << "  --strategic-icon-test FA's strategic icons\n"
+              << "  --economy-overlay-test RenderOverlayEconomy's per-unit readout\n"
               << "  --resource-icon-render-test The deposits' icons and their pulsing glow\n"
               << "  --counter-intel-test Cloak, stealth, the water, and maybe-dead structures\n"
               << "  --beam-render-test FA's beams: strips, colours, UV scroll, blends, LOD\n"
@@ -444,6 +448,7 @@ void IntegrationModes::print_usage() const {
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
+              << "  --combo-click-test A combo's list closes on a click outside; Cancel clicks\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -539,6 +544,14 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         }
         osc::test::run_movie_test(e);
         return finish_test_run("movie-test");
+    }
+    if (has("--combo-click-test")) {
+        if (!e.map_path.empty()) {
+            spdlog::error("--combo-click-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        osc::test::run_combo_click_test(e);
+        return finish_test_run("combo-click-test");
     }
     if (has("--edit-text-test")) {
         if (!e.map_path.empty()) {
@@ -1203,6 +1216,7 @@ void IntegrationModes::headless(Engine& e) {
         // select units (SelectUnits) and drive the selection UI.
         osc::renderer::InputHandler headless_input;
         std::unordered_set<osc::u32> prev_sel;
+        std::vector<std::pair<osc::u32, osc::u32>> prev_sel_upgrades;
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushlightuserdata(uL, &headless_input);
@@ -1220,7 +1234,8 @@ void IntegrationModes::headless(Engine& e) {
             for (int i = 0; i < n; ++i) {
                 pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager, beat_registry,
                                              ui_registry, 1, frames);
-                dispatch_selection_change(uL, prev_sel, headless_input.selected(),
+                dispatch_selection_change(uL, prev_sel, prev_sel_upgrades, *sim_state,
+                                          headless_input.selected(),
                                           headless_input.take_selection_event());
             }
         };
@@ -1244,6 +1259,7 @@ void IntegrationModes::headless(Engine& e) {
              {},
              {},
              [&](const std::string& bp) { return osc::app::ui_blueprint_footprint(uL, bp); },
+             {},
              {},
              {}});
         // A world click as the input handler makes it under FA's command mode.
