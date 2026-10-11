@@ -56,15 +56,16 @@ def run(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def load_args(game_args: list[str]) -> list[str]:
-    """The game args a load keeps: the run's length, the player's scripted
-    orders and --moho-pathing (a save's history doesn't record the switch,
-    so a catch-up must be given it). The map, armies and seed come from the
+    """The game args a load keeps: the game's data (--init, --fa-path,
+    --faf-data), the run's length, the player's scripted orders and
+    --moho-pathing (a save's history doesn't record the switch, so a
+    catch-up must be given it). The map, armies and seed come from the
     save."""
     kept: list[str] = []
     i = 0
     while i < len(game_args):
         arg = game_args[i]
-        if arg == "--ticks":
+        if arg in ("--ticks", "--init", "--fa-path", "--faf-data"):
             kept += game_args[i : i + 2]
             i += 2
             continue
@@ -166,6 +167,11 @@ def main(argv: list[str]) -> int:
         return 2
     exe, diff_tool = Path(argv[0]), Path(argv[1])
     game_args = argv[argv.index("--") + 1 :]
+    if "--faf-data" in game_args:
+        faf_data = game_args[game_args.index("--faf-data") + 1]
+        if not faf_data or not Path(faf_data).is_dir():
+            print("no FAF data (OSC_FAF_DATA): skipped")
+            return SKIPPED
     load_mode = ["--load-by-replay"] if by_replay else []
     with tempfile.TemporaryDirectory(prefix="osc-save-load-") as tmp:
         d = Path(tmp)
