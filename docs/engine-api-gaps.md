@@ -35,7 +35,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `PrefersPrimaryWeaponTarget` makes a weapon take the primary's target when it can hit it; `StopOnPrimaryWeaponBusy` makes one drop its target while the primary has one. The engine targets each weapon alone | A unit's other weapons don't share its primary's target: 73 weapons on 36 units (ships, gunships, ASF, Fatboy, Monkeylord); Janus and Notha keep firing their second weapon | faf-re `CAcquireTargetTask`; engine `weapon.cpp` | Open |
 
 ## Categories
 
@@ -100,6 +99,7 @@ How to read it:
 | The engine's own HUD text (`--legacy-hud`'s economy bar and selection panel, the profiler overlay) stands on its font's baseline | [#575](https://github.com/bwiemz/supcom-engine/pull/575) |
 | `UNTARGETABLE` on units: the cursor passes through one that is neither `SELECTABLE` nor `FERRYBEACON` (URA0001, URB5206, XSC9010/9011, the Othuy XSL0402) | this PR |
 | Projectile `Physics.LeadTarget` defaults to true (homing missiles and torpedoes lead a moving target) | this PR |
+| `PrefersPrimaryWeaponTarget` (a weapon takes its primary's target when it can hit it) and `StopOnPrimaryWeaponBusy` (it drops its target while the primary has one): ships, gunships, ASF, experimentals; Janus and Notha bombs | this PR |
 | `AddBuildRestriction(army, category)` keeps a category's blueprints on the army; `GetUnitCommandData` reads them (campaign and tutorial restrictions) | [#479](https://github.com/bwiemz/supcom-engine/pull/479) |
 | `SetArmyColorIndex` and the civilian army's colour | [#457](https://github.com/bwiemz/supcom-engine/pull/457) |
 | `ChangeUnitArmy` keeps commanders and units being built | [#471](https://github.com/bwiemz/supcom-engine/pull/471) |
