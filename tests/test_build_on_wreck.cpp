@@ -310,3 +310,101 @@ TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame 
     REQUIRE(w.built());
     CHECK(w.built()->is_being_built());
 }
+
+TEST_CASE("A build callback can clear its orders without stopping the build twice", "[build]") {
+    WreckSite w(R"(
+        __stops = 0
+        __failed = 0
+        function Engineer:OnStopBuild(u, order)
+            __stops = __stops + 1
+            if __stops == 1 and not __starting then __clear() end
+        end
+        function Engineer:OnFailedToBuild() __failed = __failed + 1 end
+    )");
+    lua_pushlightuserdata(w.L, &w);
+    lua_pushcclosure(
+        w.L,
+        [](lua_State* L) {
+            auto* site = static_cast<WreckSite*>(lua_touserdata(L, lua_upvalueindex(1)));
+            site->engineer->clear_commands(site->sim.entity_registry(), L);
+            lua_getglobal(L, "__replace");
+            const bool replace = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            if (replace) {
+                UnitCommand guard;
+                guard.type = CommandType::Guard;
+                guard.command_id = 12345;
+                guard.target_pos = {1000.0f, 0.0f, 1000.0f};
+                site->engineer->push_command(guard, false);
+            }
+            return 0;
+        },
+        1);
+    lua_setglobal(w.L, "__clear");
+    w.build("ueb1103");
+    int failures = 0;
+    SECTION("an incomplete build is cancelled") {
+        w.sim.tick();
+        REQUIRE(w.built());
+        w.engineer->clear_commands(w.sim.entity_registry(), w.L);
+        failures = 1;
+        CHECK(w.built()->is_being_built());
+    }
+    SECTION("OnStartBuild replaces the queue") {
+        lua_pushboolean(w.L, true);
+        lua_setglobal(w.L, "__replace");
+        lua_getglobal(w.L, "Engineer");
+        lua_pushstring(w.L, "OnStartBuild");
+        const std::string callback = "return function(self, target, order) __starting = true; "
+                                     "__clear(); __starting = false end";
+        REQUIRE(luaL_loadbuffer(w.L, callback.c_str(), callback.size(), "callback") == 0);
+        REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+        lua_rawset(w.L, -3);
+        lua_pop(w.L, 1);
+        w.sim.tick();
+        failures = 1;
+        REQUIRE(w.built());
+        CHECK(w.built()->is_being_built());
+        REQUIRE(w.engineer->command_queue().size() == 1);
+        CHECK(w.engineer->command_queue().front().command_id == 12345);
+    }
+    SECTION("the build finishes") {
+        SECTION("OnStopBuild clears the queue") {}
+        SECTION("OnStopBuild replaces the queue") {
+            lua_pushboolean(w.L, true);
+            lua_setglobal(w.L, "__replace");
+        }
+        SECTION("OnStopBeingBuilt clears the builder's queue first") {
+            w.sim.tick();
+            REQUIRE(w.built());
+            lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.built()->lua_table_ref());
+            lua_pushstring(w.L, "OnStopBeingBuilt");
+            const std::string callback = "return function(self, builder) __clear() end";
+            REQUIRE(luaL_loadbuffer(w.L, callback.c_str(), callback.size(), "callback") == 0);
+            REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
+            lua_rawset(w.L, -3);
+            lua_pop(w.L, 1);
+        }
+        for (int tick = 0; tick < 200 && (!w.built() || w.built()->is_being_built()); ++tick) {
+            w.sim.tick();
+        }
+        REQUIRE(w.built());
+        CHECK_FALSE(w.built()->is_being_built());
+        lua_getglobal(w.L, "__replace");
+        if (lua_toboolean(w.L, -1)) {
+            REQUIRE(w.engineer->command_queue().size() == 1);
+            CHECK(w.engineer->command_queue().front().command_id == 12345);
+        } else {
+            CHECK(w.engineer->command_queue().empty());
+        }
+        lua_pop(w.L, 1);
+    }
+    lua_getglobal(w.L, "__stops");
+    CHECK(lua_tonumber(w.L, -1) == 1);
+    lua_pop(w.L, 1);
+    lua_getglobal(w.L, "__failed");
+    CHECK(lua_tonumber(w.L, -1) == failures);
+    lua_pop(w.L, 1);
+    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->economy().consumption_active);
+}

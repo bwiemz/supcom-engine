@@ -1225,8 +1225,23 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
 
 void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
                         map::PathfindingGrid* grid) {
-    if (success && build_target_id_ != 0) {
-        auto* target = registry.find(build_target_id_);
+    // Retire the task before any script can clear or replace the builder's
+    // orders. Keep its target and callback name locally for completion.
+    const u32 target_id = std::exchange(build_target_id_, 0);
+    const std::string order = std::exchange(build_order_, std::string());
+    build_command_id_ = 0;
+    build_released_with_order_ = false;
+    build_repairs_ = false;
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = 0;
+    economy_.consumption_active = false;
+    build_time_ = 0;
+    build_cost_mass_ = 0;
+    build_cost_energy_ = 0;
+    work_progress_ = 0.0f;
+
+    if (success && target_id != 0) {
+        auto* target = registry.find(target_id);
         // Completed once: another builder (or a repairer) may have finished
         // it already this tick.
         if (target && target->is_unit() && static_cast<Unit*>(target)->is_being_built()) {
@@ -1236,8 +1251,8 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             target_unit->set_fraction_complete(1.0f);
             target_unit->set_health(target_unit->max_health());
 
-            spdlog::info("finish_build: entity #{} completed building target #{}",
-                         entity_id(), build_target_id_);
+            spdlog::info("finish_build: entity #{} completed building target #{}", entity_id(),
+                         target_id);
 
             // A unit built by its army (Moho's Units_History)
             lua_pushstring(L, "osc_sim_state");
@@ -1280,7 +1295,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
 
         // Re-validate target after OnStopBeingBuilt callback
         // (Lua callback may have destroyed the entity)
-        target = registry.find(build_target_id_);
+        target = registry.find(target_id);
 
         // The completed structure now blocks paths until it is removed
         // (after re-validation — only if target survived OnStopBeingBuilt)
@@ -1293,7 +1308,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         }
 
         // Fire adjacency callbacks for newly completed structure
-        target = registry.find(build_target_id_);
+        target = registry.find(target_id);
         if (target && !target->destroyed() && target->is_unit()) {
             static_cast<Unit*>(target)->fire_adjacency_callbacks(registry, L);
         }
@@ -1301,7 +1316,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // Auto-add completed unit to its army's ArmyPool platoon.
         // Original GPG engine auto-assigns every completed unit to ArmyPool;
         // AI managers (PlatoonFormManager, FactoryBuilderManager) rely on this.
-        target = registry.find(build_target_id_);
+        target = registry.find(target_id);
         if (target && !target->destroyed() && target->is_unit()) {
             auto* completed = static_cast<Unit*>(target);
             lua_pushstring(L, "osc_sim_state");
@@ -1312,19 +1327,18 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
                 auto* brain = sim->get_army(completed->army());
                 if (brain) {
                     auto* pool = brain->find_platoon_by_name("ArmyPool");
-                    if (pool && !pool->has_unit(build_target_id_)) {
-                        pool->add_unit(build_target_id_);
+                    if (pool && !pool->has_unit(target_id)) {
+                        pool->add_unit(target_id);
                     }
                 }
             }
         }
 
-        const std::string order = std::exchange(build_order_, std::string());
-        call_build_callback(L, "OnStopBuild", registry.find(build_target_id_),
+        call_build_callback(L, "OnStopBuild", registry.find(target_id),
                             order.empty() ? nullptr : order.c_str());
-    } else if (build_target_id_ != 0) {
-        spdlog::debug("finish_build: entity #{} failed/cancelled build of target #{}",
-                      entity_id(), build_target_id_);
+    } else if (target_id != 0) {
+        spdlog::debug("finish_build: entity #{} failed/cancelled build of target #{}", entity_id(),
+                      target_id);
 
         // Call builder:OnFailedToBuild()
         if (lua_table_ref() >= 0) {
@@ -1345,18 +1359,6 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             lua_pop(L, 1); // builder_tbl
         }
     }
-
-    // Clear builder's economy drain
-    economy_.consumption_mass = 0;
-    economy_.consumption_energy = 0;
-    economy_.consumption_active = false;
-
-    build_target_id_ = 0;
-    build_time_ = 0;
-    build_cost_mass_ = 0;
-    build_cost_energy_ = 0;
-    work_progress_ = 0.0f;
-    build_order_.clear();
 }
 
 void Unit::call_build_callback(lua_State* L, const char* method, Entity* target,
@@ -1385,19 +1387,23 @@ void Unit::call_build_callback(lua_State* L, const char* method, Entity* target,
 }
 
 void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
+    const u32 target_id = std::exchange(build_target_id_, 0);
     const std::string order = std::exchange(build_order_, std::string());
-    if (L && registry && build_target_id_ != 0) {
-        call_build_callback(L, "OnStopBuild", registry->find(build_target_id_),
-                            order.empty() ? nullptr : order.c_str());
-    }
+    build_command_id_ = 0;
+    build_released_with_order_ = false;
+    build_repairs_ = false;
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
     economy_.consumption_active = false;
-    build_target_id_ = 0;
     build_time_ = 0;
     build_cost_mass_ = 0;
     build_cost_energy_ = 0;
     work_progress_ = 0.0f;
+    // A callback may clear the queue again or begin a new task.
+    if (L && registry && target_id != 0) {
+        call_build_callback(L, "OnStopBuild", registry->find(target_id),
+                            order.empty() ? nullptr : order.c_str());
+    }
 }
 
 void Unit::release_build(lua_State* L, EntityRegistry& registry) {

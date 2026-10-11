@@ -670,6 +670,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    const u32 order_id = cmd.command_id;
     if (build_target_id_ == 0) {
         if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
             const BuildSiteProp site =
@@ -773,6 +774,10 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 command_queue_.pop_front();
             return OrderStep::Next;
         }
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
         if (Entity* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
             wreck && !wreck->destroyed() && ctx.sim) {
             ctx.sim->notify_script_destroy(*wreck);
@@ -784,6 +789,9 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
         auto* built = registry.find(build_target_id_);
         if (bonus > 0.0f && built && !built->destroyed() && built->is_unit()) {
             materialize(static_cast<Unit&>(*built), bonus);
@@ -798,7 +806,11 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
         return OrderStep::Hold;
     }
     if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
-        command_queue_.pop_front();
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        // Completion scripts may clear or replace the command referenced by cmd.
+        if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+            command_queue_.front().command_id == order_id)
+            command_queue_.pop_front();
         return OrderStep::Next;
     }
     return OrderStep::Hold;
