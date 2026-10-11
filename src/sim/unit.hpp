@@ -557,6 +557,9 @@ public:
 
     /// Assist helpers (Guard command)
     void stop_assisting(lua_State* L = nullptr, EntityRegistry* registry = nullptr);
+    /// A build that ends with its order, let go (faf-re ~CUnitMobileBuildTask,
+    /// ~CUnitRepairTask): OnStopBuild, then OnFailedToBuild for a mobile build.
+    void release_build(lua_State* L, EntityRegistry& registry);
     void call_build_callback(lua_State* L, const char* method, Entity* target, const char* order);
     bool progress_build_assist(f64 dt, EntityRegistry& registry,
                                 f32 efficiency = 1.0f);
@@ -1610,6 +1613,7 @@ private:
     /// by its own paths (stop_unit, end_guard_build), an upgrade by its own.
     u32 build_command_id_ = 0;
     bool build_released_with_order_ = false;
+    std::string build_order_;     ///< the order OnStartBuild was given, for OnStopBuild
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     std::unordered_set<std::string> unit_states_; // generic string-based states
     // Shield health ratio (0-1); 0 until a shield sets it, as in Moho's

@@ -426,7 +426,7 @@ static int platoon_AttackTarget(lua_State* L) {
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit())
-            static_cast<sim::Unit*>(e)->push_command(cmd, true);
+            static_cast<sim::Unit*>(e)->push_command(cmd, false);
     }
     lua_pushnumber(L, cmd_id);
     return 1;
@@ -452,7 +452,7 @@ static int platoon_GuardTarget(lua_State* L) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* u = static_cast<sim::Unit*>(e);
         if (!sim->takes_command(*u, cmd)) continue;
-        u->push_command(cmd, true);
+        u->push_command(cmd, false);
         queued = true;
     }
     // The command, or nil when none of its units took it (as Issue*).

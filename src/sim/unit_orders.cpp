@@ -1171,6 +1171,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         build_target_id_ = tid;
         build_command_id_ = cmd.command_id;
         build_released_with_order_ = true;
+        build_order_ = "Repair";
         build_time_ = costs.time;
         build_cost_mass_ = costs.mass;
         build_cost_energy_ = costs.energy;
@@ -1627,6 +1628,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                     build_target_id_ = target_build_id;
                     build_command_id_ = cmd.command_id;
                     build_released_with_order_ = true;
+                    build_order_ = "Repair";
                     build_time_ = target_unit->build_time();
                     build_cost_mass_ = target_unit->build_cost_mass();
                     build_cost_energy_ = target_unit->build_cost_energy();
