@@ -5598,21 +5598,26 @@ static int l_IssueFormAggressiveMove(lua_State* L) {
     return form_order(L, sim::CommandType::AggressiveMove);
 }
 
-// IssueStop(units_table) — routed as a Stop command so a networked player's
-// stop is broadcast + scheduled; single-player still clears immediately via
-// route_command's direct Stop branch.
+// IssueStop(units_table): a Stop at the back of each queue (faf-re
+// cfunc_IssueStopL issues it without clearing).
 static int l_IssueStop(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Stop;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
-// IssueClearCommands(units_table) — same clear semantics as Stop here.
 static int l_IssueClearCommands(lua_State* L) {
-    sim::UnitCommand cmd;
-    cmd.type = sim::CommandType::Stop;
-    route_units_command(L, 1, cmd, true);
+    auto* sim = get_sim(L);
+    if (!sim) {
+        return 0;
+    }
+    for (const u32 id : collect_unit_ids(L, 1)) {
+        auto* e = sim->entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) {
+            static_cast<sim::Unit*>(e)->clear_commands(sim->entity_registry(), L);
+        }
+    }
     return 0;
 }
 
@@ -5640,12 +5645,14 @@ static int l_IssueToUnitClearCommands(lua_State* L) {
     return 0;
 }
 
-// IssueToUnitStop(unit)
+// IssueToUnitStop(unit): FAF's SimHooks.lua IssueStop for one unit.
 static int l_IssueToUnitStop(lua_State* L) {
     auto* u = extract_unit(L, 1);
     auto* sim = get_sim(L);
     if (u && sim) {
-        u->clear_commands(sim->entity_registry(), L);
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Stop;
+        sim->route_command({u->entity_id()}, cmd, false);
     }
     return 0;
 }

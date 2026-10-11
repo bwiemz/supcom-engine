@@ -156,6 +156,36 @@ TEST_CASE("route_command Stop clears the queue directly in single-player",
     CHECK(unit_of(sim, id)->command_queue().empty());
 }
 
+TEST_CASE("A Stop given without clearing waits behind the orders before it", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    sim.route_command({id}, move_to(100.0f, 0.0f), true);
+
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, false);
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 2);
+    sim.tick();
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 2);
+    CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
+    CHECK(unit_of(sim, id)->command_queue().back().type == CommandType::Stop);
+}
+
+TEST_CASE("A Stop at the head leaves the orders after it", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, false);
+    sim.route_command({id}, move_to(100.0f, 0.0f), false);
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 2);
+    sim.tick();
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
+    CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
+}
+
 TEST_CASE("route_command Stop goes to the sink for a networked human", "[routing]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
