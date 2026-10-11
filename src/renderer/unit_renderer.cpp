@@ -430,6 +430,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
                 inst.parameter = remembered
                                      ? recon_->frozen_fraction(entity.id, entity.fraction_complete)
                                      : entity.fraction_complete;
+            if (gpu->scrolling) {
+                const sim::Scroll scroll = view.scroll(entity);
+                inst.scroll_u = scroll.u;
+                inst.scroll_v = scroll.v;
+            }
 
             // Only a unit is reflected: Moho clears the flag for every other
             // entity's mesh instance, and a wreck is a prop; a remembered
@@ -641,6 +646,8 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r,
     inst.color_lookup = team_color_lookup(nullptr, game_colors_);
     inst.shader_time = 0.0f;
     inst.parameter = 1.0f;
+    inst.scroll_u = 0.0f;
+    inst.scroll_v = 0.0f;
 
     // Find existing group for this mesh or create new one
     MeshDrawGroup* target = nullptr;

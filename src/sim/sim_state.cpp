@@ -1834,6 +1834,7 @@ void SimState::update_entities() {
     for (u32 id : ids) {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
+        e->tick_scroller();
         if (e->is_unit()) {
             collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
             if (e->destroyed()) {

@@ -41,6 +41,7 @@ struct MeshInstance {
     f32 color_lookup; // the row of the mesh's lookup texture (team_color_lookup)
     f32 shader_time;  // FA's material.x: the tick its mesh instance was made (mod 36000)
     f32 parameter; // FA's material.y: the fraction complete (M211f), or a shield's health (M211k)
+    f32 scroll_u, scroll_v; // FA's material.zw: the texture scroll, on a Scrolling LOD
 };
 
 /// FA's colorLookup (UserUnit::CreateMeshInstance), the row a mesh's lookup

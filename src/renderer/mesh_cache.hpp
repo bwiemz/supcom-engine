@@ -195,6 +195,7 @@ struct GPUMesh {
     /// The mesh blueprint's SortOrder: Moho draws meshes by it, smallest
     /// first (MeshBatchKeyLess; M211k).
     f32 sort_order = 0.0f;
+    bool scrolling = false;
 };
 
 /// A single LOD level: mesh data + camera distance cutoff.
@@ -292,6 +293,11 @@ private:
     /// Returns empty string if not found.
     std::string read_lod_string_field(const std::string& mesh_bp_id, i32 lod_index,
                                       const char* field_name, lua_State* L);
+    bool read_lod_flag(const std::string& mesh_bp_id, i32 lod_index, const char* field_name,
+                       lua_State* L);
+    /// Pushes the LOD's field, returning how many values to pop (0 if none).
+    int push_lod_field(const std::string& mesh_bp_id, i32 lod_index, const char* field_name,
+                       lua_State* L);
 
     /// Upload a single SCM mesh to GPU buffers. Returns empty GPUMesh on failure.
     GPUMesh upload_scm_mesh(const std::string& mesh_path);

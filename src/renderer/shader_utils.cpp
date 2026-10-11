@@ -1321,6 +1321,7 @@ layout(location = 12) in float inColorLookup;
 layout(location = 13) in float inShaderTime;
 // Per-instance: the fraction complete (FA's material.y for the build techniques, M211f)
 layout(location = 14) in float inParameter;
+layout(location = 15) in vec2 inScroll;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -1417,7 +1418,13 @@ void main() {
     fragColorLookup = inColorLookup;
     fragShaderTime = inShaderTime;
     fragParameter = inParameter;
+    // ComputeScrolledTexcoord
     fragUV = inUV;
+    if (inUV.y > 0.95) {
+        fragUV.x += inScroll.x;
+    } else if (inUV.y > 0.90) {
+        fragUV.x += inScroll.y;
+    }
 }
 )glsl";
 

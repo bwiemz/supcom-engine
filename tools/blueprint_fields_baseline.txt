@@ -19,7 +19,6 @@ PositionY
 QuickSelectPriority
 ReTargetOnMiss
 RepairRate
-Scrolling
 ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette
