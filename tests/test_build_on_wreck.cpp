@@ -267,3 +267,46 @@ TEST_CASE("A builder that must face its site turns to it before it builds", "[bu
     REQUIRE(w.built());
     CHECK(std::abs(osc::sim::quat_yaw(w.engineer->orientation())) < 0.32f);
 }
+
+namespace {
+
+constexpr const char* kHeard = R"(
+    __heard = ''
+    function Engineer:OnStartBuild(u, order) __heard = __heard .. 'start ' .. tostring(order) .. ' ' end
+    function Engineer:OnStopBuild(u, order) __heard = __heard .. 'stop ' .. tostring(order) .. ' ' end
+    function Engineer:OnFailedToBuild() __heard = __heard .. 'failed ' end
+)";
+
+std::string heard(lua_State* L) {
+    lua_getglobal(L, "__heard");
+    std::string s = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("A mobile build tells OnStartBuild and OnStopBuild its order", "[build]") {
+    WreckSite w(kHeard);
+    w.build("ueb1103");
+    for (int i = 0; i < 200 && !w.engineer->command_queue().empty(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.built());
+    CHECK_FALSE(w.built()->is_being_built());
+    CHECK(heard(w.L) == "start MobileBuild stop MobileBuild ");
+}
+
+TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame left", "[build]") {
+    WreckSite w(kHeard);
+    w.build("ueb1103");
+    w.sim.tick();
+    REQUIRE(w.built());
+    REQUIRE(w.engineer->build_target_id() == w.built_id);
+    w.engineer->clear_commands(w.sim.entity_registry(), w.L);
+    CHECK(w.engineer->build_target_id() == 0);
+    CHECK_FALSE(w.engineer->economy().consumption_active);
+    CHECK(heard(w.L) == "start MobileBuild stop MobileBuild failed ");
+    REQUIRE(w.built());
+    CHECK(w.built()->is_being_built());
+}

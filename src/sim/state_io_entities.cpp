@@ -1136,6 +1136,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
     w.b(u.build_repairs_);
+    w.str(u.build_order_);
     w.i32v(u.assist_rolloff_wait_);
     w.str(u.assist_pending_bp_);
     w.u32v(u.sacrifice_order_);
@@ -1523,6 +1524,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.build_command_id_ = r.u32v();
     u.build_released_with_order_ = r.b();
     u.build_repairs_ = r.b();
+    u.build_order_ = r.str();
     u.assist_rolloff_wait_ = r.i32v();
     u.assist_pending_bp_ = r.str();
     u.sacrifice_order_ = r.u32v();

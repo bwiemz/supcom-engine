@@ -145,6 +145,9 @@ void Unit::clear_commands(EntityRegistry& registry, lua_State* L) {
     if (!destroyed() && is_enhancing()) {
         cancel_enhance(L);
     }
+    if (!destroyed() && build_target_id_ != 0 && build_released_with_order_) {
+        release_build(L, registry);
+    }
 }
 
 namespace {
@@ -730,7 +733,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
         // the old one.
         if (build_target_id_ != 0 && build_released_with_order_ &&
             !(head && head->command_id == build_command_id_)) {
-            stop_assisting(ctx.L, &ctx.registry);
+            release_build(ctx.L, ctx.registry);
             if (destroyed() || !in_registry()) return;
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
@@ -1133,9 +1136,10 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
     // which still reads UnitBeingBuilt afterwards.
 
     // Call builder:OnStartBuild(target, order_type)
-    const char* order_str = "UnitBuild";
+    const char* order_str = "FactoryBuild";
     if (cmd.type == CommandType::BuildMobile) order_str = "MobileBuild";
     else if (cmd.type == CommandType::Upgrade) order_str = "Upgrade";
+    build_order_ = order_str;
     if (lua_table_ref() >= 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
         int builder_tbl = lua_gettop(L);
@@ -1315,27 +1319,9 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             }
         }
 
-        // Call builder:OnStopBuild(target)
-        target = registry.find(build_target_id_);
-        if (lua_table_ref() >= 0 && target && !target->destroyed() &&
-            target->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-            int builder_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnStopBuild");
-            lua_gettable(L, builder_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, builder_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnStopBuild error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // builder_tbl
-        }
+        const std::string order = std::exchange(build_order_, std::string());
+        call_build_callback(L, "OnStopBuild", registry.find(build_target_id_),
+                            order.empty() ? nullptr : order.c_str());
     } else if (build_target_id_ != 0) {
         spdlog::debug("finish_build: entity #{} failed/cancelled build of target #{}",
                       entity_id(), build_target_id_);
@@ -1370,6 +1356,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
     build_cost_mass_ = 0;
     build_cost_energy_ = 0;
     work_progress_ = 0.0f;
+    build_order_.clear();
 }
 
 void Unit::call_build_callback(lua_State* L, const char* method, Entity* target,
@@ -1398,8 +1385,10 @@ void Unit::call_build_callback(lua_State* L, const char* method, Entity* target,
 }
 
 void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
+    const std::string order = std::exchange(build_order_, std::string());
     if (L && registry && build_target_id_ != 0) {
-        call_build_callback(L, "OnStopBuild", registry->find(build_target_id_), nullptr);
+        call_build_callback(L, "OnStopBuild", registry->find(build_target_id_),
+                            order.empty() ? nullptr : order.c_str());
     }
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
@@ -1409,6 +1398,14 @@ void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
     build_cost_mass_ = 0;
     build_cost_energy_ = 0;
     work_progress_ = 0.0f;
+}
+
+void Unit::release_build(lua_State* L, EntityRegistry& registry) {
+    const bool mobile = build_order_ == "MobileBuild";
+    stop_assisting(L, &registry);
+    if (mobile && !destroyed()) {
+        call_lua_method(L, "OnFailedToBuild");
+    }
 }
 
 bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
@@ -1902,26 +1899,8 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     economy_.consumption_active = false;
 
     // Call builder:OnStopBuild(target) — FA handles OnStopRepair inside
-    if (target_id != 0 && lua_table_ref() >= 0) {
-        auto* target = registry.find(target_id);
-        if (target && !target->destroyed() && target->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-            int builder_tbl = lua_gettop(L);
-            lua_pushstring(L, "OnStopBuild");
-            lua_gettable(L, builder_tbl);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, builder_tbl);
-                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnStopBuild(repair) error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // builder_tbl
-        }
+    if (target_id != 0) {
+        call_build_callback(L, "OnStopBuild", registry.find(target_id), "Repair");
     }
 }
 

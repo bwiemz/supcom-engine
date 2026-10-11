@@ -20,6 +20,8 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <tuple>
+
 TEST_CASE("SmokeTestHarness records and deduplicates entries", "[smoke]") {
     osc::lua::SmokeTestHarness harness;
 
@@ -1604,6 +1606,75 @@ TEST_CASE("Every way of clearing the queue cancels the build or upgrade under wa
 
     h.sim.tick();
     CHECK(h.factory->build_target_id() != frame);
+}
+
+TEST_CASE("A factory's build and an upgrade tell OnStartBuild and OnStopBuild their order",
+          "[session][rules]") {
+    const auto [type, bp, order] =
+        GENERATE(std::tuple{osc::sim::CommandType::BuildFactory, "t1", "FactoryBuild"},
+                 std::tuple{osc::sim::CommandType::Upgrade, "f2", "Upgrade"});
+    CAPTURE(order);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+    REQUIRE(h.state
+                .do_string("__heard = ''\n"
+                           "function __f:OnStartBuild(u, order)\n"
+                           "  __heard = __heard .. 'start ' .. tostring(order) .. ' '\n"
+                           "end\n"
+                           "function __f:OnStopBuild(u, order)\n"
+                           "  __heard = __heard .. 'stop ' .. tostring(order) .. ' '\n"
+                           "end")
+                .ok());
+    h.queue(type, bp);
+    for (int i = 0; i < 100 && !h.factory->command_queue().empty(); ++i) {
+        h.sim.tick();
+    }
+    CHECK(h.factory->command_queue().empty());
+    lua_pushstring(L, "__heard");
+    lua_gettable(L, LUA_GLOBALSINDEX);
+    CHECK(std::string(lua_tostring(L, -1)) ==
+          "start " + std::string(order) + " stop " + std::string(order) + " ");
+    lua_pop(L, 1);
+}
+
+TEST_CASE("A platoon's AttackTarget and GuardTarget go behind its units' orders",
+          "[session][rules]") {
+    const std::string call = GENERATE("AttackTarget", "GuardTarget");
+    CAPTURE(call);
+    UpgradeHarness h;
+    lua_State* L = h.state.raw();
+    REQUIRE(h.state.do_string("__t = CreateUnit('t1', 1, 5, 0, 5)").ok());
+    osc::sim::Unit* tank = nullptr;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (&e != h.factory) {
+            tank = static_cast<osc::sim::Unit*>(&e);
+        }
+    });
+    REQUIRE(tank);
+    tank->add_command_cap("RULEUCC_Guard");
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {50.0f, 0.0f, 50.0f};
+    tank->push_command(move, false);
+    osc::sim::Platoon* platoon = h.sim.army_at(0)->create_platoon("");
+    platoon->add_unit(tank->entity_id());
+    platoon->set_unit_squad(tank->entity_id(), "Attack");
+    lua_pushstring(L, "__p");
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, platoon);
+    lua_rawset(L, -3);
+    lua_settable(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+
+    REQUIRE(h.state.do_string("moho.platoon_methods." + call + "(__p, __f)").ok());
+    REQUIRE(tank->command_queue().size() == 2);
+    CHECK(tank->command_queue().front().type == osc::sim::CommandType::Move);
 }
 
 TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
