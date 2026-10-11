@@ -1306,7 +1306,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     save_strings(w, u.original_command_caps_);
     save(w, u.build_restriction_);
     w.i32v(u.selection_priority_);
-    w.f32v(u.elevation_override_);
+    w.f32v(u.blueprint_elevation_);
     w.b(u.dying_);
     w.b(u.transferred_);
     w.size(u.on_unit_built_callbacks_.size());
@@ -1684,7 +1684,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.original_command_caps_ = load_strings<std::unordered_set<std::string>>(r);
     load(r, u.build_restriction_);
     u.selection_priority_ = r.i32v();
-    u.elevation_override_ = r.f32v();
+    u.blueprint_elevation_ = r.f32v();
     u.dying_ = r.b();
     u.transferred_ = r.b();
     u.on_unit_built_callbacks_.resize(r.size(8));

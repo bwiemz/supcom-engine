@@ -1192,7 +1192,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1)) {
                     f32 elev = static_cast<f32>(lua_tonumber(L, -1));
-                    unit->set_elevation_target(elev);
+                    unit->set_blueprint_elevation(elev);
                     unit->set_naval_draft(std::abs(elev));
                 }
                 lua_pop(L, 1);
@@ -1215,7 +1215,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
                 lua_pushstring(L, "Elevation");
                 lua_rawget(L, -2);
                 if (lua_isnumber(L, -1)) {
-                    unit->set_elevation_target(static_cast<f32>(lua_tonumber(L, -1)));
+                    unit->set_blueprint_elevation(static_cast<f32>(lua_tonumber(L, -1)));
                 }
                 lua_pop(L, 1);
             }

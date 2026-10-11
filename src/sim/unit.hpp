@@ -987,11 +987,14 @@ public:
     /// What it may not build (empty: no restriction)
     const CategoryExpr& build_restriction() const { return build_restriction_; }
 
-    // Elevation override
-    f32 elevation_override() const { return elevation_override_; }
-    void set_elevation_override(f32 e) { elevation_override_ = e; }
-    bool has_elevation_override() const { return elevation_override_ >= 0; }
-    void clear_elevation_override() { elevation_override_ = -1.0f; }
+    /// Moho's UnitAttributes::spawnElevationOffset: Physics.Elevation, or
+    /// what SetElevation gave it.
+    void set_elevation(f32 e) { elevation_target_ = e; }
+    void set_blueprint_elevation(f32 e) {
+        blueprint_elevation_ = e;
+        elevation_target_ = e;
+    }
+    void revert_elevation() { elevation_target_ = blueprint_elevation_; }
 
     i32 transport_class() const { return transport_class_; }
     void set_transport_class(i32 c) { transport_class_ = c; }
@@ -1847,8 +1850,7 @@ private:
     std::unordered_set<std::string> original_command_caps_;
     // Build restrictions
     CategoryExpr build_restriction_;
-    // Elevation override
-    f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
+    f32 blueprint_elevation_ = 18.0f;
     bool dying_ = false;             ///< killed; see begin_dying
     bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)

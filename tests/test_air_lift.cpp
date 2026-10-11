@@ -185,3 +185,23 @@ TEST_CASE("The ground it flies over follows the highest ground ahead, by LiftFac
     CHECK(osc::sim::rising_ground_slowdown(5.0f, 10.0f) == Approx(0.25f));
     CHECK(osc::sim::rising_ground_slowdown(20.0f, 10.0f) == Approx(0.04f));
 }
+
+TEST_CASE("An aircraft flies at the height SetElevation gives it, and back at RevertElevation's",
+          "[air_lift]") {
+    World w;
+    Unit& gunship = w.make("gunship");
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::Move;
+    cmd.target_pos = {120.0f, 20.0f, 64.0f};
+    gunship.push_command(cmd, true);
+    auto height_after = [&](int ticks) {
+        for (int t = 0; t < ticks; ++t) {
+            w.sim.tick();
+        }
+        return gunship.position().y - 10.0f;
+    };
+    REQUIRE(w.state.do_string("made:SetElevation(1)").ok());
+    CHECK(height_after(40) < 3.0f);
+    REQUIRE(w.state.do_string("made:RevertElevation()").ok());
+    CHECK(height_after(40) > 8.0f);
+}
