@@ -32,10 +32,6 @@ ReTargetOnMiss
 RepairRate
 RotationalVelocity
 Scrolling
-SelectionMeshScaleX
-SelectionMeshScaleZ
-SelectionMeshUseTopAmount
-SelectionYOffset
 ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette

@@ -6,6 +6,7 @@
 
 #include "blueprints/blueprint_store.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
 #include "sim/prop.hpp"
@@ -1497,14 +1498,27 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
         const auto& unit = static_cast<const sim::Unit&>(*e);
         const sim::Vector3 pos = view_.position(*e);
         const sim::Quaternion orient = view_.orientation(*e);
-        const sim::Vector3 half{std::max(unit.size_x(), 0.5f) * 0.5f,
-                                std::max(unit.size_y(), 0.5f) * 0.5f,
-                                std::max(unit.size_z(), 0.5f) * 0.5f};
-        const sim::Vector3 up = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
-        const sim::Vector3 centre{pos.x + up.x, pos.y + up.y, pos.z + up.z};
-        const bool by_ray =
-            !tolerant || (unit.is_mobile() && mode_hooks_.oob_test_zoom &&
-                          mode_hooks_.oob_test_zoom(unit.blueprint_id()) > camera_zoom_);
+        sim::Vector3 lo{-std::max(unit.size_x(), 0.5f) * 0.5f, 0.0f,
+                        -std::max(unit.size_z(), 0.5f) * 0.5f};
+        sim::Vector3 hi{-lo.x, std::max(unit.size_y(), 0.5f), -lo.z};
+        const sim::BoneData* model = unit.bone_data();
+        if (model && model->mesh_bounds) {
+            const sim::Vector3 s{model->model_scale * e->scale_x(),
+                                 model->model_scale * e->scale_y(),
+                                 model->model_scale * e->scale_z()};
+            lo = {s.x * model->mesh_bounds->lo.x, s.y * model->mesh_bounds->lo.y,
+                  s.z * model->mesh_bounds->lo.z};
+            hi = {s.x * model->mesh_bounds->hi.x, s.y * model->mesh_bounds->hi.y,
+                  s.z * model->mesh_bounds->hi.z};
+        }
+        const sim::Vector3 half{(hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f};
+        const sim::Vector3 mid = sim::quat_rotate(
+            orient, {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f});
+        const sim::Vector3 centre{pos.x + mid.x, pos.y + mid.y, pos.z + mid.z};
+        const PickBlueprint pick = tolerant && mode_hooks_.pick_blueprint
+                                       ? mode_hooks_.pick_blueprint(unit.blueprint_id())
+                                       : PickBlueprint{};
+        const bool by_ray = !tolerant || (unit.is_mobile() && pick.oob_test_zoom > camera_zoom_);
         std::optional<f32> t;
         if (by_ray) {
             t = ray_box_distance(ray, centre, orient, half);
@@ -1512,12 +1526,19 @@ u32 InputHandler::unit_under(sim::SimState& sim, f32 wx, f32 wz, bool own_only) 
             const sim::Vector3 ax = sim::quat_rotate(orient, {half.x, 0.0f, 0.0f});
             const sim::Vector3 ay = sim::quat_rotate(orient, {0.0f, half.y, 0.0f});
             const sim::Vector3 az = sim::quat_rotate(orient, {0.0f, 0.0f, half.z});
-            const sim::Vector3 ext{std::abs(ax.x) + std::abs(ay.x) + std::abs(az.x),
-                                   std::abs(ax.y) + std::abs(ay.y) + std::abs(az.y),
-                                   std::abs(ax.z) + std::abs(ay.z) + std::abs(az.z)};
-            if (solid_meets_box(*cursor_solid_,
-                                {centre.x - ext.x, centre.y - ext.y, centre.z - ext.z},
-                                {centre.x + ext.x, centre.y + ext.y, centre.z + ext.z})) {
+            const sim::Vector3 ext{
+                (std::abs(ax.x) + std::abs(ay.x) + std::abs(az.x)) * pick.mesh_scale_x,
+                std::abs(ax.y) + std::abs(ay.y) + std::abs(az.y),
+                (std::abs(ax.z) + std::abs(ay.z) + std::abs(az.z)) * pick.mesh_scale_z};
+            sim::Vector3 box_lo{centre.x - ext.x, centre.y - ext.y, centre.z - ext.z};
+            sim::Vector3 box_hi{centre.x + ext.x, centre.y + ext.y, centre.z + ext.z};
+            const f32 height = box_hi.y - box_lo.y;
+            if (pick.use_top_amount <= 0.0f) {
+                box_hi.y -= height * pick.y_offset;
+            } else {
+                box_lo.y += (1.0f - pick.use_top_amount) * height;
+            }
+            if (solid_meets_box(*cursor_solid_, box_lo, box_hi)) {
                 t = 0.0f;
             }
         }

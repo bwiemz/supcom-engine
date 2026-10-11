@@ -54,19 +54,29 @@ std::array<osc::f32, 2> ui_blueprint_footprint(lua_State* uiL, const std::string
     return {fx > 0 ? fx : 1.0f, fz > 0 ? fz : 1.0f};
 }
 
-osc::f32 ui_blueprint_oob_test_zoom(lua_State* uiL, const std::string& bp_id) {
+osc::renderer::PickBlueprint ui_blueprint_pick(lua_State* uiL, const std::string& bp_id) {
+    osc::renderer::PickBlueprint pick;
     auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
     auto* entry = store ? store->find(bp_id) : nullptr;
     if (!entry) {
-        return 0.0f;
+        return pick;
     }
     store->push_lua_table(*entry, uiL);
-    lua_pushstring(uiL, "UseOOBTestZoom");
-    lua_rawget(uiL, -2);
-    const osc::f32 zoom =
-        lua_isnumber(uiL, -1) ? static_cast<osc::f32>(lua_tonumber(uiL, -1)) : 0.0f;
-    lua_pop(uiL, 2);
-    return zoom;
+    const auto read = [&](const char* key, osc::f32& out) {
+        lua_pushstring(uiL, key);
+        lua_rawget(uiL, -2);
+        if (lua_isnumber(uiL, -1)) {
+            out = static_cast<osc::f32>(lua_tonumber(uiL, -1));
+        }
+        lua_pop(uiL, 1);
+    };
+    read("UseOOBTestZoom", pick.oob_test_zoom);
+    read("SelectionYOffset", pick.y_offset);
+    read("SelectionMeshUseTopAmount", pick.use_top_amount);
+    read("SelectionMeshScaleX", pick.mesh_scale_x);
+    read("SelectionMeshScaleZ", pick.mesh_scale_z);
+    lua_pop(uiL, 1);
+    return pick;
 }
 
 /// The structure a build mode places, from the UI state's blueprint store:
