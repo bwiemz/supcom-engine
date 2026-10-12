@@ -5724,8 +5724,28 @@ static int l_IssueAttack(lua_State* L) {
     return push_command_handle(L, route_capable_command(L, "RULEUCC_Attack", cmd));
 }
 
+// IssueFormAttack(units, target, formation, degrees): an attack laid out in a
+// /lua/formations.lua formation about the target, facing `degrees` as
+// IssueFormMove's do (faf-re cfunc_IssueFormAttackL: UNITCOMMAND_FormAttack).
+// Unlike IssueAttack it returns nothing.
 static int l_IssueFormAttack(lua_State* L) {
-    l_IssueAttack(L);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Attack;
+    if (lua_istable(L, 2) && !is_object_handle(L, 2)) {
+        cmd.target_pos = extract_position(L, 2);
+    } else {
+        auto* target = extract_entity(L, 2);
+        if (!target || target->destroyed()) return 0;
+        cmd.target_id = target->entity_id();
+        cmd.target_pos = target->position();
+    }
+    if (lua_type(L, 3) == LUA_TSTRING) cmd.formation = lua_tostring(L, 3);
+    if (lua_isnumber(L, 4)) {
+        cmd.has_facing = true;
+        cmd.facing = static_cast<f32>(lua_tonumber(L, 4)) * 3.14159265358979f / 180.0f;
+    }
+    cmd.form_attack = true;
+    route_capable_command(L, "RULEUCC_Attack", cmd);
     return 0;
 }
 

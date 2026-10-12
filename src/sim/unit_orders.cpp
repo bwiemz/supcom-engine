@@ -490,6 +490,19 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             }
         }
     }
+    // A FormAttack's unit with no weapon that can hit its target gives the
+    // order up, unless it is DIRECTFIRE (CUnitAttackTargetTask::TaskTick's
+    // first test, every tick: its attacker's target weapon is gone).
+    if (cmd.form_attack && !has_category("DIRECTFIRE")) {
+        const bool can_hit = std::any_of(weapons_.begin(), weapons_.end(), [&](const auto& w) {
+            return w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim);
+        });
+        if (!can_hit) {
+            release_navigator();
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+    }
     // A winged aircraft flies at its target and, once within a weapon's
     // reach or its EngageDistance, makes its runs: Moho's attack task hands
     // the target to the attacker and CalcMoveAir flies the combat tactics
@@ -527,13 +540,23 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
     }
     if (dist2 > range2) {
-        // Move toward target
-        if (!navigator_.is_moving() || navigator_.goal().x != target->position().x ||
-            navigator_.goal().z != target->position().z) {
-            set_path_goal(target->position(), ctx);
+        // Move toward target: a FormAttack's unit toward its slot about it,
+        // the formation centred on the target wherever it goes (Moho's
+        // attack task, Update: SetCoords, GetAdjustedFormationPosition)
+        Vector3 goal = target->position();
+        if (cmd.has_slot && is_mobile()) {
+            goal.x += cmd.slot_offset.x;
+            goal.z += cmd.slot_offset.z;
+        }
+        if (!navigator_.is_moving() || navigator_.goal().x != goal.x ||
+            navigator_.goal().z != goal.z) {
+            set_path_goal(goal, ctx);
         }
         nav_update(dt, ctx.terrain);
     } else {
+        // In reach, the formation is dropped: from now on the unit attacks
+        // as a plain attack does (TaskTick's Processing: mFormation = null).
+        cmd.has_slot = false;
         navigator_.abort_move();
         // Parked, every 9 ticks it asks to face its target AttackAngle off
         // the bow (Moho's attack task, Complete: SetFacing, return 10).
@@ -572,19 +595,21 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
     }
     // A formation's attack (IssueFormAttack; Moho's CreateRespectFormation)
-    // with no weapon that can hit the point ends at once (TaskTick's first
-    // test), going round like the rest when another order follows; a plain
-    // attack's unit goes to the point and stays.
+    // with no weapon that can hit the point ends at once, unless its unit is
+    // DIRECTFIRE (TaskTick's first test), going round like the rest when
+    // another order follows; a plain attack's unit goes to the point and
+    // stays.
     const bool spent = weapon && cmd.engaged && weapon->ground_from_order &&
                        weapon->has_ground_target && weapon->ground_target.x == at.x &&
                        weapon->ground_target.z == at.z &&
                        static_cast<i64>(weapon->shots_at_target) >= weapon->attack_ground_tries;
-    if (!weapon && !cmd.formation.empty() && command_queue_.size() < 2) {
+    const bool form_attack_unarmed = !weapon && cmd.form_attack && !has_category("DIRECTFIRE");
+    if (form_attack_unarmed && command_queue_.size() < 2) {
         navigator_.abort_move();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    if (command_queue_.size() >= 2 && (spent || (!weapon && !cmd.formation.empty()))) {
+    if (command_queue_.size() >= 2 && (spent || form_attack_unarmed)) {
         navigator_.abort_move();
         auto finished = std::move(cmd); // cmd is the element pop_front destroys
         finished.begun = false;
@@ -643,13 +668,19 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (weapon && weapon->in_firing_range(*this, at)) {
         navigator_.abort_move();
         cmd.engaged = true;
+        cmd.has_slot = false; // the formation dropped, as on a unit
         return OrderStep::Hold;
     }
     // Out of range it goes toward the point; inside its weapon's minimum
     // range it backs off GuardScanRadius from the point (the task's
     // Starting state). With no weapon that can hit the point it goes there
     // and stays.
+    // A FormAttack's unit heads for its slot about the point.
     Vector3 goal = at;
+    if (cmd.has_slot) {
+        goal.x += cmd.slot_offset.x;
+        goal.z += cmd.slot_offset.z;
+    }
     if (weapon && dist2 < weapon->min_range * weapon->min_range && dist2 > 0) {
         const f32 dist = std::sqrt(dist2);
         goal = {at.x - dx / dist * guard_scan_radius_, at.y, at.z - dz / dist * guard_scan_radius_};

@@ -398,6 +398,9 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.leash_armed);
     w.u32v(c.leash_anchor_id);
     w.vec3(c.leash_anchor_pos);
+    w.b(c.form_attack);
+    w.b(c.has_slot);
+    w.vec3(c.slot_offset);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -450,6 +453,9 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.leash_armed = r.b();
     c.leash_anchor_id = r.u32v();
     c.leash_anchor_pos = r.vec3();
+    c.form_attack = r.b();
+    c.has_slot = r.b();
+    c.slot_offset = r.vec3();
 }
 
 // ------------------------------------------------------------- Navigator
