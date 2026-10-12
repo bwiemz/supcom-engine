@@ -11,5 +11,6 @@ Name a record `YYYY-MM-DD-<short sha>.md`. A record covers:
 - **Flows:** campaign, tutorial, outro, mods, save/load (skirmish, campaign, replay), replay, determinism, lobby and network. They are gate tests, called out by name.
 - **FAF client:** the custom-game harness, `tools/faf_custom_game.py <opensupcom> [--ticks N]`: on a scratch copy of the FAF install, a scripted GPGNet client hosts SCMP_009 with an AI and plays it to a tick.
 - **Not covered:** what needs a person, such as a real display, audio, Steam or the Deck.
+- **Against the original game:** the questions only the original can answer are probes in `tools/moho_probes/` (its README lists them with the engine's answers), run the same way on both.
 
 How to run each step is in the record itself.
