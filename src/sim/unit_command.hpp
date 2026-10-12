@@ -100,6 +100,18 @@ struct UnitCommand {
     /// order's command_id, as Moho's share a formation instance, and so
     /// move in one formation layer.
     bool formed = false;
+    /// Moho's FormAttack (IssueFormAttack): the order keeps its formation,
+    /// each unit heading for its slot about the target until a weapon can
+    /// reach the target; one with no weapon that can hit it gives the order
+    /// up (faf-re CAttackTargetTask::CreateRespectFormation). A plain Attack
+    /// given a formation (a platoon's) is not one.
+    bool form_attack = false;
+    /// A formation attack's slot, as an offset from its target: the sim sets
+    /// it as it lays the order out, Moho's formation centred on the target.
+    /// Cleared once the unit's weapon can reach the target (Moho drops the
+    /// formation then).
+    bool has_slot = false;
+    Vector3 slot_offset;
     /// A TransportUnload's cargo to drop, chosen when the order is issued
     /// (IssueTransportUnloadSpecific's category, as Moho's
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The

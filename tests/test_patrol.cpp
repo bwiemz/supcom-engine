@@ -1183,6 +1183,157 @@ TEST_CASE("IssueAttack goes only to units with the Attack command", "[attack][lu
     CHECK(tank->command_queue().front().target_id == enemy->entity_id());
 }
 
+namespace {
+
+/// A world for IssueFormAttack: two armies on flat ground, a Lua state with
+/// the sim's bindings, and /lua/formations.lua standing in as one formation,
+/// Line: two slots side by side (x across the formation).
+struct FormAttackWorld {
+    osc::lua::LuaState lua;
+    SimState sim{lua.raw(), nullptr};
+    FormAttackWorld() {
+        osc::lua::register_moho_bindings(lua, sim);
+        osc::lua::register_sim_bindings(lua, sim);
+        flat(sim);
+        two_armies(sim);
+        const auto r = lua.do_string(
+            "function import(path) return { Line = function(units) return { { -1, 0 }, { 1, 0 } "
+            "} end } end");
+        REQUIRE(r);
+    }
+    Unit* tank(osc::f32 x, osc::f32 z, osc::f32 range) {
+        Unit* u = walker(sim, x, z);
+        u->set_motion_type("RULEUMT_Land");
+        u->add_command_cap("RULEUCC_Attack");
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = range;
+        u->add_weapon(std::move(gun));
+        // Its script object, which a formation's script is handed
+        lua_newtable(lua.raw());
+        u->set_lua_table_ref(luaL_ref(lua.raw(), LUA_REGISTRYINDEX));
+        return u;
+    }
+    void global(const char* name, const Unit* u) {
+        lua_State* L = lua.raw();
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, static_cast<osc::sim::Entity*>(const_cast<Unit*>(u)));
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    }
+    void run(const char* chunk) {
+        const auto r = lua.do_string(chunk);
+        if (!r) FAIL(r.error().message);
+    }
+};
+
+} // namespace
+
+TEST_CASE("IssueFormAttack lays its units out about the target, each heading for its slot",
+          "[attack][lua][formation]") {
+    // faf-re cfunc_IssueFormAttackL issues UNITCOMMAND_FormAttack; its
+    // attack task centres the formation on the target and sends each unit to
+    // its place in it (SetCoords, GetAdjustedFormationPosition).
+    FormAttackWorld w;
+    Unit* a = w.tank(10.0f, 10.0f, 5.0f);
+    Unit* b = w.tank(10.0f, 14.0f, 5.0f);
+    const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
+    w.global("a", a);
+    w.global("b", b);
+    w.global("enemy", enemy);
+    // Facing east (90): the formation lies across, north-south.
+    w.run("if IssueFormAttack({a, b}, enemy, 'Line', 90) ~= nil then error('it returned') end");
+
+    for (const Unit* u : {a, b}) {
+        REQUIRE(u->command_queue().size() == 1);
+        const auto& cmd = u->command_queue().front();
+        CHECK(cmd.type == CommandType::Attack);
+        CHECK(cmd.target_id == enemy->entity_id());
+        CHECK(cmd.form_attack);
+        REQUIRE(cmd.has_slot);
+        CHECK(std::abs(cmd.slot_offset.x) < 1e-3f);
+        CHECK(std::abs(cmd.slot_offset.z) > 1.0f);
+    }
+    const auto& sa = a->command_queue().front().slot_offset;
+    const auto& sb = b->command_queue().front().slot_offset;
+    CHECK(std::abs(sa.z + sb.z) < 1e-3f); // either side of the target
+    CHECK(a->command_queue().front().command_id == b->command_queue().front().command_id);
+
+    // Each heads for the target plus its own offset, not for the target.
+    for (int i = 0; i < 3; ++i) w.sim.tick();
+    for (const Unit* u : {a, b}) {
+        const auto& slot = u->command_queue().front().slot_offset;
+        CHECK(u->navigator().goal().x == enemy->position().x + slot.x);
+        CHECK(u->navigator().goal().z == enemy->position().z + slot.z);
+    }
+}
+
+TEST_CASE("A FormAttack's unit drops its slot once its weapon reaches the target",
+          "[attack][lua][formation]") {
+    // TaskTick's Processing: in reach, the task drops the formation and the
+    // unit attacks as any other.
+    FormAttackWorld w;
+    Unit* a = w.tank(10.0f, 10.0f, 30.0f);
+    Unit* b = w.tank(10.0f, 14.0f, 30.0f);
+    const Unit* enemy = still(w.sim, 1, 30.0f, 12.0f);
+    w.global("a", a);
+    w.global("b", b);
+    w.global("enemy", enemy);
+    w.run("IssueFormAttack({a, b}, enemy, 'Line', 90)");
+    REQUIRE(a->command_queue().front().has_slot);
+    w.sim.tick();
+    REQUIRE(a->command_queue().size() == 1);
+    CHECK(a->command_queue().front().form_attack);
+    CHECK_FALSE(a->command_queue().front().has_slot);
+}
+
+TEST_CASE("A TARGETCHASER in a FormAttack heads for the target itself",
+          "[attack][lua][formation]") {
+    // CUnitAttackTargetTask's constructor drops the formation for a
+    // TARGETCHASER (and for a unit that can't move).
+    FormAttackWorld w;
+    Unit* a = w.tank(10.0f, 10.0f, 5.0f);
+    Unit* chaser = w.tank(10.0f, 14.0f, 5.0f);
+    chaser->add_category("TARGETCHASER");
+    const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
+    w.global("a", a);
+    w.global("chaser", chaser);
+    w.global("enemy", enemy);
+    w.run("IssueFormAttack({a, chaser}, enemy, 'Line', 90)");
+    REQUIRE(chaser->command_queue().front().has_slot);
+    for (int i = 0; i < 3; ++i) w.sim.tick();
+    CHECK_FALSE(chaser->command_queue().front().has_slot);
+    CHECK(chaser->navigator().goal().x == enemy->position().x);
+    CHECK(chaser->navigator().goal().z == enemy->position().z);
+    CHECK(a->command_queue().front().has_slot);
+}
+
+TEST_CASE("A FormAttack's unit with no weapon that can hit its target gives it up",
+          "[attack][lua][formation]") {
+    // TaskTick's first test: no target weapon, on a FormAttack, ends the
+    // task -- unless the unit is DIRECTFIRE. A plain attack's unit carries on.
+    FormAttackWorld w;
+    Unit* aa = w.tank(10.0f, 10.0f, 20.0f);
+    aa->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    Unit* direct = w.tank(10.0f, 14.0f, 20.0f);
+    direct->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    direct->add_category("DIRECTFIRE");
+    Unit* plain = w.tank(10.0f, 18.0f, 20.0f);
+    plain->weapons().front()->fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
+    w.global("aa", aa);
+    w.global("direct", direct);
+    w.global("plain", plain);
+    w.global("enemy", enemy);
+    w.run("IssueFormAttack({aa}, enemy, 'Line', 90) IssueFormAttack({direct}, enemy, 'Line', 90) "
+          "IssueAttack({plain}, enemy)");
+    REQUIRE(aa->command_queue().size() == 1);
+    w.sim.tick();
+    CHECK(aa->command_queue().empty());
+    CHECK(direct->command_queue().size() == 1);
+    CHECK(plain->command_queue().size() == 1);
+}
+
 TEST_CASE("Each Issue order goes only to units with its command", "[lua]") {
     struct Row {
         const char* issue;

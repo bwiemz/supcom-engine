@@ -1113,6 +1113,24 @@ SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitComma
             return out;
         }
     }
+    // A FormAttack's formation is centred on its target, a unit or a point
+    // (Moho's attack task sets the formation's coords there); each unit keeps
+    // its slot as an offset from it, so the slots follow a target that moves.
+    if (command.form_attack && !command.formation.empty() && command.type == CommandType::Attack) {
+        const auto slots = plan_formation(
+            L_, entity_registry_, terrain_.get(), unit_ids, command.formation, command.target_pos,
+            command.has_facing ? std::optional<f32>(command.facing) : std::nullopt);
+        if (!slots.empty()) {
+            for (const auto& slot : slots) {
+                UnitCommand cmd = command;
+                cmd.has_slot = true;
+                cmd.slot_offset = {slot.position.x - command.target_pos.x, 0.0f,
+                                   slot.position.z - command.target_pos.z};
+                out.emplace_back(slot.unit_id, std::move(cmd));
+            }
+            return out;
+        }
+    }
     for (const u32 id : unit_ids) out.emplace_back(id, command);
     return out;
 }
@@ -3555,6 +3573,11 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix_f32(cmd.speed_cap);
                 orders.mix_f32(cmd.facing);
                 mix_str(orders, cmd.formation);
+            }
+            // A FormAttack, and its slot until it is dropped, only then.
+            if (cmd.form_attack) {
+                orders.mix(0x46415454u | (cmd.has_slot ? 1ull << 32 : 0u)); // "FATT"
+                if (cmd.has_slot) mix_vec(orders, cmd.slot_offset);
             }
             // A winged attack within reach, flying its runs, only then.
             if (cmd.engaged) orders.mix(0x454e4744u); // "ENGD"

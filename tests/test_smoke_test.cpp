@@ -1677,6 +1677,45 @@ TEST_CASE("A platoon's AttackTarget and GuardTarget go behind its units' orders"
     CHECK(tank->command_queue().front().type == osc::sim::CommandType::Move);
 }
 
+TEST_CASE("A platoon's FindClosestUnit reads its alliance in any case, as SCR_GetEnum",
+          "[session][platoon]") {
+    // Retail's AttackForceAI asks FindClosestUnit('attack', 'enemy', ...);
+    // compared exactly, 'enemy' matched no alliance and the platoon was
+    // handed its own closest unit to attack.
+    UpgradeHarness h;
+    h.sim.add_army("ARMY_2", "ARMY_2");
+    lua_State* L = h.state.raw();
+    REQUIRE(h.state
+                .do_string("__mine = CreateUnit('t1', 1, 5, 0, 5) "
+                           "__theirs = CreateUnit('t1', 2, 40, 0, 40)")
+                .ok());
+    osc::sim::Platoon* platoon = h.sim.army_at(0)->create_platoon("");
+    platoon->add_unit(h.factory->entity_id());
+    platoon->set_unit_squad(h.factory->entity_id(), "Attack");
+    lua_pushstring(L, "__p");
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, platoon);
+    lua_rawset(L, -3);
+    lua_settable(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "__f");
+    lua_rawgeti(L, LUA_REGISTRYINDEX, h.factory->lua_table_ref());
+    lua_settable(L, LUA_GLOBALSINDEX);
+
+    const auto r = h.state.do_string(R"(
+        local find = moho.platoon_methods.FindClosestUnit
+        for _, name in {'enemy', 'Enemy', 'ENEMY', 'ALLIANCE_Enemy'} do
+            if find(__p, 'Attack', name, true, nil) ~= __theirs then
+                error(name .. ': not the enemy')
+            end
+        end
+        local own = find(__p, 'attack', 'ally', true, nil)
+        if own ~= __f and own ~= __mine then error('ally: not its own army') end
+        if pcall(find, __p, 'Attack', 'bogus', true, nil) then error('bogus was taken') end
+    )");
+    if (!r) FAIL(r.error().message);
+}
+
 TEST_CASE("IssueStop queues a Stop behind the build under way, which finishes",
           "[session][rules]") {
     const std::string call = GENERATE("IssueStop({__f})", "IssueToUnitStop(__f)");

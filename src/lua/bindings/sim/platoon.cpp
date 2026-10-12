@@ -8,6 +8,7 @@
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
+#include "lua/enum_args.hpp"
 #include "video/video_decoder.hpp"
 #include "map/scmap_parser.hpp"
 #include "lua/factory_queue.hpp"
@@ -606,6 +607,13 @@ static int platoon_Destroy(lua_State* L) {
 // Platoon targeting / threat methods
 // ====================================================================
 
+/// How `army` stands to `other`, as Moho's EAlliance numbers it: its own and
+/// its allies' Ally (1), an enemy's Enemy (2), anyone else's Neutral (0).
+static int alliance_with(const sim::SimState& sim, i32 army, i32 other) {
+    if (other == army || sim.is_ally(army, other)) return 1;
+    return sim.is_enemy(army, other) ? 2 : 0;
+}
+
 // platoon:FindClosestUnit(squad, allyStatus, isUnit, category)
 // Returns closest matching unit Lua table, or nil.
 static int platoon_FindClosestUnit(lua_State* L) {
@@ -615,7 +623,11 @@ static int platoon_FindClosestUnit(lua_State* L) {
 
     // arg 2 = squad (string, currently unused for position — we use platoon center)
     // arg 3 = allyStatus ("Enemy", "Ally", etc.)
+    // The alliance asked for, as SCR_GetEnum reads it: any case, its prefix
+    // optional (retail's AI asks for 'enemy').
     const char* ally_status = lua_isstring(L, 3) ? lua_tostring(L, 3) : "Enemy";
+    const int alliance = parse_enum(ally_status, "ALLIANCE_", kAllianceNames);
+    if (alliance < 0) return luaL_error(L, "Invalid enum value %s", ally_status);
     // arg 4 = isUnit (boolean, ignored — we only have units)
     // arg 5 = category (Lua table)
     int cat_idx = lua_istable(L, 5) ? 5 : 0;
@@ -638,15 +650,8 @@ static int platoon_FindClosestUnit(lua_State* L) {
         if (!e.is_unit() || e.destroyed()) return;
         auto* unit = static_cast<const sim::Unit*>(&e);
 
-        // Filter by team relationship
-        if (std::strcmp(ally_status, "Enemy") == 0) {
-            if (!sim->is_enemy(my_army, unit->army())) return;
-        } else if (std::strcmp(ally_status, "Ally") == 0) {
-            if (!sim->is_ally(my_army, unit->army()) &&
-                unit->army() != my_army) return;
-        } else {
-            if (unit->army() != my_army) return;
-        }
+        // Filter by team relationship (Moho's GetAllianceWith == alliance)
+        if (alliance_with(*sim, my_army, unit->army()) != alliance) return;
 
         // Filter by category
         if (category && !category->matches(unit->category_bits())) return;
@@ -675,7 +680,11 @@ static int platoon_FindPrioritizedUnit(lua_State* L) {
     auto* sim = get_sim(L);
     if (!platoon || !sim) { lua_pushnil(L); return 1; }
 
+    // The alliance asked for, as SCR_GetEnum reads it: any case, its prefix
+    // optional (retail's AI asks for 'enemy').
     const char* ally_status = lua_isstring(L, 3) ? lua_tostring(L, 3) : "Enemy";
+    const int alliance = parse_enum(ally_status, "ALLIANCE_", kAllianceNames);
+    if (alliance < 0) return luaL_error(L, "Invalid enum value %s", ally_status);
     // arg 4 = isUnit (ignored)
 
     // arg 5 = position table
@@ -706,14 +715,7 @@ static int platoon_FindPrioritizedUnit(lua_State* L) {
         if (!entity || !entity->is_unit() || entity->destroyed()) continue;
         auto* unit = static_cast<sim::Unit*>(entity);
 
-        if (std::strcmp(ally_status, "Enemy") == 0) {
-            if (!sim->is_enemy(my_army, unit->army())) continue;
-        } else if (std::strcmp(ally_status, "Ally") == 0) {
-            if (!sim->is_ally(my_army, unit->army()) &&
-                unit->army() != my_army) continue;
-        } else {
-            if (unit->army() != my_army) continue;
-        }
+        if (alliance_with(*sim, my_army, unit->army()) != alliance) continue;
 
         f32 dx = unit->position().x - px;
         f32 dz = unit->position().z - pz;

@@ -13,7 +13,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `IssueFormAttack(units, target, formation, heading)` attacks in formation in retail; the engine's is a plain `IssueAttack` | A skirmish AI attack platoon's final push on a nearby target goes in without a formation | faf-re `cfunc_IssueFormAttack` (`sim/CCommandLuaFunctionRegistrations.cpp`); retail `/lua/platoon.lua` AttackForceAI; engine `sim_bindings.cpp` IssueFormAttack | Open |
 | FAF: sim `Unit:GetCommandQueue()` gives Moho's command numbers, `x,y,z`, `targetId` and `blueprintId`; the engine gives its own numbers and positions only for Move and Attack | FAF: "copy orders" and "distribute orders" mis-map every order whose number differs (a build reads as Repair, an upgrade as attack-move) and error on capture and later orders | FA-Binary-Patches `section/SimGetCommandQueue.cpp`; FAF `/lua/sim/commands/shared.lua:237`, `copy-queue.lua:72`, `distribute-queue.lua:77-84`; engine `bindings/sim/unit.cpp` GetCommandQueue, `sim/unit_command.hpp` | Open |
 | FAF: `SetCommandSource(army, source, bool)` is a no-op | FAF: with the Union army option, orders to an ally's units are dropped; with Common army, the merged players can't command the team army | FA-Binary-Patches `section/SimSetCommandSource.cpp`; FAF `/lua/simInit.lua:461-526`; engine `sim_bindings.cpp` stub_noop, `sim/sim_state.cpp` source armies | Open |
 | FAF: sim `SessionIsReplay()` is always false | FAF: in a replay, once the viewer focuses a player, the score sent to the UI holds only that player's and allies' details | FA-Binary-Patches `section/SimIsReplay.cpp`; FAF `/lua/sim/score.lua:288`; engine `sim_bindings.cpp` stub_false | Open |
@@ -61,6 +60,8 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| A platoon's `FindClosestUnit` and `FindPrioritizedUnit` read their alliance as `SCR_GetEnum` does (any case, prefix optional): retail's AI asks for `'enemy'`, which matched nothing, so `AttackForceAI`'s final push was handed its own closest unit and its attack was refused | [#605](https://github.com/bwiemz/supcom-engine/pull/605) |
+| `IssueFormAttack(units, target, formation, heading)` attacks in formation (`UNITCOMMAND_FormAttack`): the formation centred on the target, a unit or a point, each unit heads for its slot until its weapon reaches the target, then attacks as any other; one with no weapon that can hit the target gives the order up unless it is `DIRECTFIRE`. It returns nothing | [#605](https://github.com/bwiemz/supcom-engine/pull/605) |
 | `_c_CreateDecal` (`UserDecal`): the area-weapon and nuke target reticle follows the cursor | [#502](https://github.com/bwiemz/supcom-engine/pull/502) |
 | `GetBoneDirection(bone)` returns three numbers, not a vector table: retail's Lua destructures `v.x, v.y, v.z = GetBoneDirection(b)`, so the Scathis's `CreateProjectileAtMuzzle` errored in `GetAngleInBetween` and the weapon never fired | [#509](https://github.com/bwiemz/supcom-engine/pull/509) |
 | A right click on an enemy is an attack only if a selected unit can hit it (`UserUnit:CanAttackTarget`); on one none can, the cursor is `RULEUCC_Invalid` and no order is given (tanks on a bomber) | [#531](https://github.com/bwiemz/supcom-engine/pull/531) |
