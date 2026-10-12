@@ -17,6 +17,7 @@ add_executable(osc_integration
     runner/combo_click_test.cpp
     runner/edit_text_test.cpp
     runner/keymap_test.cpp
+    runner/pathing_evidence_test.cpp
     runner/camera_moves_test.cpp
     runner/window_test.cpp
     runner/options_test.cpp
@@ -151,7 +152,8 @@ endforeach()
 # The modes whose checks Moho's pathing changes (--moho-pathing, off by
 # default), again with it: each holds its expectations both ways until the
 # flag is the default.
-foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test)
+foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test
+             shore-test choke-test)
     add_test(NAME data.moho.${mode}
              COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode} --moho-pathing)
     set_tests_properties(data.moho.${mode} PROPERTIES

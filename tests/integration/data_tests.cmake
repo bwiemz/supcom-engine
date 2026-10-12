@@ -32,7 +32,7 @@ set(OSC_DATA_TESTS_GATE
     army-colors-test audio-test
     beam-render-test beam-test beam-weapon-test binding-tail-test bitmap-test blend-test bone-test border-render-test build-test
     camera-test
-    camera-moves-test window-test options-test canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test collision-test combat-test
+    camera-moves-test window-test options-test canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test choke-test collision-test combat-test
     construction-test controls-test counter-intel-test decal-render-test cursor-render-test damage-test decal-test
     death-test decalsplat-test defence-test destroyed-handle-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
@@ -50,7 +50,7 @@ set(OSC_DATA_TESTS_GATE
     runtime-decal-test terrain-normal-render-test
     repair-test resource-icon-render-test right-click-test scale-test scissor-test scroll-render-test scrollbar-render-test selection-render-test session-command-test shadow-test
     mesh-capacity-test shield-render-test shield-test silo-test sky-test skirt-render-test smoke-test spatial-test strata-test
-    specular-test stall-test stats-test steer-test strategic-icon-test stress-test stub-test targeting-test
+    specular-test stall-test stats-test shore-test steer-test strategic-icon-test stress-test stub-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
     tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test

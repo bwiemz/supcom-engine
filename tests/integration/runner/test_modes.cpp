@@ -11,6 +11,7 @@
 #include "window_test.hpp"
 #include "options_test.hpp"
 #include "keymap_test.hpp"
+#include "pathing_evidence_test.hpp"
 #include "movie_test.hpp"
 #include "combo_click_test.hpp"
 #include "edit_text_test.hpp"
@@ -188,6 +189,8 @@ constexpr Mode kModesBefore[] = {
     {"--drive-test", test_drive, false},
     {"--steer-test", test_steer, false},
     {"--crowd-test", test_crowd, false},
+    {"--shore-test", test_shore, false},
+    {"--choke-test", test_choke, false},
     {"--formation-test", test_formation, false},
     {"--missile-test", test_missile, false},
     {"--defence-test", test_defence, false},
@@ -402,6 +405,8 @@ void IntegrationModes::print_usage() const {
               << "  --area-test        Blasts reach what stands in them; shields absorb\n"
               << "  --drive-test       Ground units turn, accelerate and brake\n"
               << "  --crowd-test       Ground units keep apart\n"
+              << "  --shore-test       Hover, amphibious and land units across a bay\n"
+              << "  --choke-test       A crowd through a wall's gap; a big unit over it\n"
               << "  --formation-test   Groups move in formation\n"
               << "  --missile-test     Silos build missiles; launchers fire them\n"
               << "  --defence-test     Anti-missile weapons shoot missiles down\n"
