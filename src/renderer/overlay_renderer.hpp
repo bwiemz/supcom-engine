@@ -14,6 +14,7 @@
 
 namespace osc::sim {
 class FrameView;
+struct WorldSnapshot;
 struct WorldEvents;
 struct EntityRecord;
 struct Vector3;
@@ -137,6 +138,37 @@ private:
                    f32 r, f32 g, f32 b, f32 a);
     /// A quad from (left, top) to (right, bottom) in an 0xAARRGGBB colour.
     void emit_argb(f32 left, f32 top, f32 right, f32 bottom, u32 argb);
+    // The frame's overlays, in update's order. `vp_matrix`, `sw` and `sh`
+    // project world to screen.
+    /// The adjacency outlines while placing a build (`ghost` and its line):
+    /// each site's pad and the pads of the structures standing or under way
+    /// that the player sees (structure_pads), bright where a site that can be
+    /// built and a structure would be adjacent, dim otherwise; a site that
+    /// can't be built is dim magenta.
+    void add_build_ghost(const sim::FrameView& view, const BuildGhost& ghost,
+                         const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh);
+    /// Each unit in view: its lifebars, veterancy chevrons, cargo dots and
+    /// silo ammo dots.
+    void add_unit_overlays(const sim::FrameView& view, const sim::WorldSnapshot& snap,
+                           const Camera& camera, const std::array<f32, 16>& vp_matrix,
+                           const std::unordered_set<u32>* selected_ids, const Frustum* frustum,
+                           f32 sw, f32 sh, f32 cam_dist);
+    /// The selected units' intel range rings (radar, sonar, omni, vision).
+    void add_intel_rings(const sim::FrameView& view, const sim::WorldSnapshot& snap,
+                         const std::array<f32, 16>& vp_matrix,
+                         const std::unordered_set<u32>* selected_ids, f32 sw, f32 sh);
+    /// Collision beams not drawn as FA's (BeamRenderer), as lines, within 600
+    /// of the eye.
+    void add_beams(const sim::FrameView& view, const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh,
+                   f32 eye_x, f32 eye_z);
+    /// The effects (IEffect) no other renderer draws or leaves out, as
+    /// billboards: not decals or splats, nor the beams, trails and emitters
+    /// drawn as FA's.
+    void add_effect_particles(const sim::FrameView& view, const sim::WorldSnapshot& snap,
+                              const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh, f32 eye_x,
+                              f32 eye_z);
+    /// The game-over banner: `game_result` says which.
+    void add_game_over_banner(i32 game_result, f32 sw, f32 sh);
     /// A unit's lifebar stack, as Moho's DrawUnitLifebars (faf-re), if it
     /// gets one; `sim_time` in ticks.
     void emit_lifebars(const sim::EntityRecord& e, const sim::Vector3& pos, const Camera& camera,
