@@ -308,15 +308,32 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
-    # Under FAF's Lua: each load runs on the game's own data folder too.
-    set(OSC_FAF_DATA "" CACHE PATH "A FAF data folder (bin/init_faf.lua) for data.save_load_faf")
+    # Under FAF's Lua: each load runs on the game's own data folder too,
+    # restored from its snapshot and caught up from its history. Left
+    # empty, the folder is FAF's client's own (~/.faforever) where it is
+    # installed; without one, both skip.
+    set(OSC_FAF_DATA "" CACHE PATH
+        "A FAF data folder (bin/init_faf.lua) for data.save_load_faf and data.save_load_replay_faf")
+    set(_osc_faf_data "${OSC_FAF_DATA}")
+    if(NOT _osc_faf_data AND EXISTS "$ENV{HOME}/.faforever/bin/init_faf.lua")
+        set(_osc_faf_data "$ENV{HOME}/.faforever")
+    endif()
     add_test(NAME data.save_load_faf
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
                      $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
-                     -- --faf-data "${OSC_FAF_DATA}" --map ${OSC_TEST_MAP} --ai-skirmish
+                     -- --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP} --ai-skirmish
                      --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders)
     set_tests_properties(data.save_load_faf PROPERTIES
-        LABELS "data"
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
+    add_test(NAME data.save_load_replay_faf
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py --by-replay
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP} --ai-skirmish
+                     --ai-armies 4 --ticks 1200 --seed 4242 --scripted-orders)
+    set_tests_properties(data.save_load_replay_faf PROPERTIES
+        LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
 
