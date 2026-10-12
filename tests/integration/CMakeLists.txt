@@ -495,11 +495,15 @@ set_tests_properties(data.golden.map_select_paged PROPERTIES
 
 # A held mouse, through the window's input (--mouse): the commander picked,
 # T1 walls picked from its construction panel, and the left button held in
-# a drag east, the wall's line drawn as ghosts
+# a drag east, the wall's line drawn as ghosts. The wall is the panel's 8th
+# icon (x 890): it shares BuildIconSortPriority 130 with the torpedo
+# launcher beside it, and retail's FormatData sort leaves such a tie in the
+# order the engine lists them -- at x 940 the drag lays torpedo launchers,
+# red on land.
 add_test(NAME data.golden.build_drag
          COMMAND opensupcom --map ${OSC_TEST_MAP} --camera 672,346,60
                  --mouse "610 move 800,430" --mouse "612 press left" --mouse "614 release left"
-                 --mouse "620 move 940,812" --mouse "622 press left" --mouse "624 release left"
+                 --mouse "620 move 890,812" --mouse "622 press left" --mouse "624 release left"
                  --mouse "630 move w664,341" --mouse "632 press left"
                  --mouse "636 move w668,341" --mouse "640 move w672,341"
                  --mouse "644 move w676,341"
