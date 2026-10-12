@@ -1548,6 +1548,27 @@ private:
                                         Unit& target);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A factory guarding a factory takes work from its queue (Moho's guard
+    /// task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).
+    /// Each time it is free: the first of the guarded factory's build orders
+    /// it can build, other than the one being built, leaves that queue
+    /// (repeating, it goes to the back) and this factory builds the unit
+    /// itself (M206h). Moho also takes a repeating assister's pick of a
+    /// queue's only order, whose count it then restarts; without counts or
+    /// repeat queues here, that would only build a duplicate, so the head
+    /// is never taken.
+    OrderStep guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt, SimContext& ctx,
+                                  f32 econ_eff);
+    /// A guard's move after its help this tick (Moho's CUnitGuardTask). A
+    /// hovering aircraft flies as a winged one, never hanging still
+    /// (flies_winged_on_guard): to `winged_goal` when its help set one, else
+    /// round the wreck or unit it reclaims or captures (which don't make it
+    /// hover), else round `target`. Any other unit not `working` follows: an
+    /// engineer stays put within twice its MaxBuildDistance of `target`,
+    /// other units within 10; past that, it comes back to just clear of it.
+    /// Never ends: Hold.
+    OrderStep guard_follow(const Unit& target, bool working,
+                           const std::optional<Vector3>& winged_goal, f64 dt, SimContext& ctx);
     /// A guard order ends: a factory's assisted build (M206h) is cancelled,
     /// as a factory's build is when its order goes; an assist just stops.
     void end_guard_build(EntityRegistry& registry, lua_State* L);

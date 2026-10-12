@@ -1566,139 +1566,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     }
     auto* target_unit = static_cast<Unit*>(target);
 
-    // A factory guarding a factory takes work from its queue (Moho's guard
-    // task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).
-    // Each time it is free: the first of the guarded factory's build orders
-    // it can build, other than the one being built, leaves that queue
-    // (repeating, it goes to the back) and this factory builds the unit
-    // itself (M206h). Moho also takes a repeating assister's pick of a
-    // queue's only order, whose count it then restarts; without counts or
-    // repeat queues here, that would only build a duplicate, so the head
-    // is never taken.
-    if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY")) {
-        if (factory_assist_build_) {
-            // Its unit built, it rolls it off as a build of its own does.
-            if (assist_rolloff_wait_ > 0) {
-                if (!holds_for_rolloff(assist_rolloff_wait_)) factory_assist_build_ = false;
-                return OrderStep::Hold;
-            }
-            const u32 built_id = build_target_id_;
-            const u32 guarded_id = cmd.target_id; // cmd may go with the scripts' changes
-            bool built = false;
-            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
-                // Built for the guarded factory, the unit takes its rally
-                // orders: Moho's guard task hands the build task that
-                // factory as the one whose orders the unit takes.
-                if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
-                if (built) assist_rolloff_wait_ = 2;
-                else factory_assist_build_ = false; // failed: free again
-            }
-            return OrderStep::Hold;
-        }
-        // Its own builds and upgrades come first: Moho's guard task dispatches
-        // them from the guarding factory's queue before the guarded one's.
-        // Only the head order runs here, so the first of them moves ahead of
-        // the guard and runs; the guard carries on when it is done. (Moho's
-        // queue shows the guard first all the while.)
-        for (size_t i = 1; i < command_queue_.size(); ++i) {
-            const CommandType own = command_queue_[i].type;
-            if (own != CommandType::BuildFactory && own != CommandType::Upgrade) continue;
-            UnitCommand order = std::move(command_queue_[i]);
-            command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(i));
-            // The erase may leave cmd (the guard) dangling: it is not used again.
-            command_queue_.push_front(std::move(order));
-            return OrderStep::Next;
-        }
-        if (!assist_pending_bp_.empty()) {
-            if (waits_out_task(cmd) || waits_paused(cmd)) {
-                return OrderStep::Hold;
-            }
-            UnitCommand build;
-            build.type = CommandType::BuildFactory;
-            build.blueprint_id = assist_pending_bp_;
-            const u32 guard_id = cmd.command_id;
-            const BuildStart started = start_build(build, registry, L);
-            if (started == BuildStart::AtCap) {
-                return hold_for_unit_cap(guard_id);
-            }
-            assist_pending_bp_.clear();
-            factory_assist_build_ = started == BuildStart::Started;
-            if (factory_assist_build_) {
-                build_command_id_ = guard_id;
-            }
-            return OrderStep::Hold;
-        }
-        if (waits_out_task(cmd)) {
-            return OrderStep::Hold;
-        }
-        const u32 guarded_factory = cmd.target_id;
-        auto& queue = target_unit->command_queue_;
-        const bool repeats = target_unit->repeat_queue_;
-        for (size_t i = 0; i < queue.size() && L; ++i) {
-            if (queue[i].type != CommandType::BuildFactory) continue;
-            // Not the guarded factory's own build, unless it has more to make
-            // than the one under way, or is all there is and the guarded
-            // factory repeats (Moho's CUnitGuardTask).
-            const bool spare = queue[i].count > 1;
-            if (i == 0 && !spare && !(queue.size() == 1 && repeats)) continue;
-            if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
-            UnitCommand build;
-            build.type = CommandType::BuildFactory;
-            build.blueprint_id = queue[i].blueprint_id;
-            const UnitCommand taken = queue[i];
-            // One of an order with more is counted off it; else the order
-            // is taken.
-            if (spare) --queue[i].count;
-            else queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
-            // Taken even if the lobby's rules forbid it, as Moho's build task
-            // fails after the take; such an order is dropped, repeating or
-            // not, as the guarded factory drops it when it comes to it.
-            if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
-            // A repeating guarded factory has the order sent round, its count
-            // back at its most (Moho's MoveCommandToBackOfQueue)
-            if (repeats && !spare) {
-                UnitCommand round = taken;
-                round.count = std::max(round.max_count, 1);
-                queue.push_back(std::move(round));
-            }
-            if (waits_paused(cmd)) {
-                assist_pending_bp_ = build.blueprint_id;
-                break;
-            }
-            const u32 guard_id = cmd.command_id; // cmd may go with the scripts' changes
-            const BuildStart started = start_build(build, registry, L);
-            if (started == BuildStart::AtCap) {
-                // At the army's unit cap the order goes back where it was
-                // (Moho's build task holds it, waiting), and the factory
-                // tries again later.
-                auto* guarded = registry.find(guarded_factory);
-                if (guarded && !guarded->destroyed() && guarded->is_unit()) {
-                    auto& its = static_cast<Unit*>(guarded)->command_queue_;
-                    if (spare) {
-                        // Counted back onto its order, if it is still there
-                        for (UnitCommand& c : its)
-                            if (c.command_id == taken.command_id &&
-                                c.type == CommandType::BuildFactory) {
-                                ++c.count;
-                                break;
-                            }
-                    } else {
-                        if (repeats && !its.empty() && its.back().command_id == taken.command_id) {
-                            its.pop_back();
-                        }
-                        its.insert(its.begin() +
-                                       static_cast<std::ptrdiff_t>(std::min(i, its.size())),
-                                   taken);
-                    }
-                }
-                return hold_for_unit_cap(guard_id);
-            }
-            factory_assist_build_ = started == BuildStart::Started;
-            if (factory_assist_build_) build_command_id_ = guard_id; // the guard's
-            break;
-        }
-        return OrderStep::Hold;
-    }
+    // A factory guarding a factory takes work from its queue.
+    if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY"))
+        return guard_factory_queue(cmd, *target_unit, dt, ctx, econ_eff);
 
     const bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
@@ -1912,12 +1782,139 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
     }
 
-    // Otherwise follow: an engineer stays put within twice its
-    // MaxBuildDistance of what it guards (Moho's CUnitGuardTask),
-    // other units within 10; past that, back just clear of it.
-    // A hovering aircraft with nothing to do flies as a winged one round
-    // what it guards (or the wreck or unit it reclaims or captures for it,
-    // which don't make it hover), never hanging still (flies_winged_on_guard).
+    return guard_follow(*target_unit, working, winged_goal, dt, ctx);
+}
+
+OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt, SimContext& ctx,
+                                    f32 econ_eff) {
+    auto& registry = ctx.registry;
+    auto* L = ctx.L;
+    if (factory_assist_build_) {
+        // Its unit built, it rolls it off as a build of its own does.
+        if (assist_rolloff_wait_ > 0) {
+            if (!holds_for_rolloff(assist_rolloff_wait_)) factory_assist_build_ = false;
+            return OrderStep::Hold;
+        }
+        const u32 built_id = build_target_id_;
+        const u32 guarded_id = cmd.target_id; // cmd may go with the scripts' changes
+        bool built = false;
+        if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
+            // Built for the guarded factory, the unit takes its rally
+            // orders: Moho's guard task hands the build task that
+            // factory as the one whose orders the unit takes.
+            if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
+            if (built) assist_rolloff_wait_ = 2;
+            else factory_assist_build_ = false; // failed: free again
+        }
+        return OrderStep::Hold;
+    }
+    // Its own builds and upgrades come first: Moho's guard task dispatches
+    // them from the guarding factory's queue before the guarded one's.
+    // Only the head order runs here, so the first of them moves ahead of
+    // the guard and runs; the guard carries on when it is done. (Moho's
+    // queue shows the guard first all the while.)
+    for (size_t i = 1; i < command_queue_.size(); ++i) {
+        const CommandType own = command_queue_[i].type;
+        if (own != CommandType::BuildFactory && own != CommandType::Upgrade) continue;
+        UnitCommand order = std::move(command_queue_[i]);
+        command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(i));
+        // The erase may leave cmd (the guard) dangling: it is not used again.
+        command_queue_.push_front(std::move(order));
+        return OrderStep::Next;
+    }
+    if (!assist_pending_bp_.empty()) {
+        if (waits_out_task(cmd) || waits_paused(cmd)) {
+            return OrderStep::Hold;
+        }
+        UnitCommand build;
+        build.type = CommandType::BuildFactory;
+        build.blueprint_id = assist_pending_bp_;
+        const u32 guard_id = cmd.command_id;
+        const BuildStart started = start_build(build, registry, L);
+        if (started == BuildStart::AtCap) {
+            return hold_for_unit_cap(guard_id);
+        }
+        assist_pending_bp_.clear();
+        factory_assist_build_ = started == BuildStart::Started;
+        if (factory_assist_build_) {
+            build_command_id_ = guard_id;
+        }
+        return OrderStep::Hold;
+    }
+    if (waits_out_task(cmd)) {
+        return OrderStep::Hold;
+    }
+    const u32 guarded_factory = cmd.target_id;
+    auto& queue = target_unit.command_queue_;
+    const bool repeats = target_unit.repeat_queue_;
+    for (size_t i = 0; i < queue.size() && L; ++i) {
+        if (queue[i].type != CommandType::BuildFactory) continue;
+        // Not the guarded factory's own build, unless it has more to make
+        // than the one under way, or is all there is and the guarded
+        // factory repeats (Moho's CUnitGuardTask).
+        const bool spare = queue[i].count > 1;
+        if (i == 0 && !spare && !(queue.size() == 1 && repeats)) continue;
+        if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
+        UnitCommand build;
+        build.type = CommandType::BuildFactory;
+        build.blueprint_id = queue[i].blueprint_id;
+        const UnitCommand taken = queue[i];
+        // One of an order with more is counted off it; else the order
+        // is taken.
+        if (spare) --queue[i].count;
+        else queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
+        // Taken even if the lobby's rules forbid it, as Moho's build task
+        // fails after the take; such an order is dropped, repeating or
+        // not, as the guarded factory drops it when it comes to it.
+        if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
+        // A repeating guarded factory has the order sent round, its count
+        // back at its most (Moho's MoveCommandToBackOfQueue)
+        if (repeats && !spare) {
+            UnitCommand round = taken;
+            round.count = std::max(round.max_count, 1);
+            queue.push_back(std::move(round));
+        }
+        if (waits_paused(cmd)) {
+            assist_pending_bp_ = build.blueprint_id;
+            break;
+        }
+        const u32 guard_id = cmd.command_id; // cmd may go with the scripts' changes
+        const BuildStart started = start_build(build, registry, L);
+        if (started == BuildStart::AtCap) {
+            // At the army's unit cap the order goes back where it was
+            // (Moho's build task holds it, waiting), and the factory
+            // tries again later.
+            auto* guarded = registry.find(guarded_factory);
+            if (guarded && !guarded->destroyed() && guarded->is_unit()) {
+                auto& its = static_cast<Unit*>(guarded)->command_queue_;
+                if (spare) {
+                    // Counted back onto its order, if it is still there
+                    for (UnitCommand& c : its)
+                        if (c.command_id == taken.command_id &&
+                            c.type == CommandType::BuildFactory) {
+                            ++c.count;
+                            break;
+                        }
+                } else {
+                    if (repeats && !its.empty() && its.back().command_id == taken.command_id) {
+                        its.pop_back();
+                    }
+                    its.insert(its.begin() + static_cast<std::ptrdiff_t>(std::min(i, its.size())),
+                               taken);
+                }
+            }
+            return hold_for_unit_cap(guard_id);
+        }
+        factory_assist_build_ = started == BuildStart::Started;
+        if (factory_assist_build_) build_command_id_ = guard_id; // the guard's
+        break;
+    }
+    return OrderStep::Hold;
+}
+
+OrderStep Unit::guard_follow(const Unit& target, bool working,
+                             const std::optional<Vector3>& winged_goal, f64 dt, SimContext& ctx) {
+    auto& registry = ctx.registry;
     if (flies_winged_on_guard(*this) && ctx.sim && !destroyed() && in_registry()) {
         const Entity* focus = is_reclaiming()  ? registry.find(reclaim_target_id_)
                               : is_capturing() ? registry.find(capture_target_id_)
@@ -1926,20 +1923,20 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             winged_goal ? *winged_goal
             : focus && !focus->destroyed()
                 ? focus->position()
-                : approach_point(*this, target->position(), target_unit->skirt_size_x() * 0.5f,
-                                 target_unit->skirt_size_z() * 0.5f);
+                : approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
+                                 target.skirt_size_z() * 0.5f);
         navigator_.abort_move();
         fly_winged_to(*this, goal, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
         return OrderStep::Hold;
     }
     if (!working && !destroyed() && in_registry()) {
         const f32 follow = has_category("ENGINEER") ? 2 * max_build_distance_ : 10.0f;
-        const f32 gdx = target->position().x - position().x;
-        const f32 gdz = target->position().z - position().z;
+        const f32 gdx = target.position().x - position().x;
+        const f32 gdz = target.position().z - position().z;
         if (gdx * gdx + gdz * gdz > follow * follow) {
             const Vector3 goal =
-                approach_point(*this, target->position(), target_unit->skirt_size_x() * 0.5f,
-                               target_unit->skirt_size_z() * 0.5f);
+                approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
+                               target.skirt_size_z() * 0.5f);
             const Vector3 heading = navigator_.goal();
             if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
                 std::abs(heading.z - goal.z) > 1.0f) {
