@@ -267,6 +267,18 @@ def render_save(exe: Path, tick: int) -> tuple[int, list[str]]:
     return 0, ["--user-dir", str(user), "--load", str(save)]
 
 
+def run_outcome(code: int, has_report: bool) -> str:
+    """What a timed run's exit says of it: "ok"; "checks" -- the game ran
+    and wrote its report, but its own checks failed, as a script error of
+    retail's makes them (the pinned late game meets retail's engineer-platoon
+    race): its timing still stands; "skipped" (no game data); or "failed"."""
+    if code == SKIPPED:
+        return "skipped"
+    if not has_report or code not in (0, 1):
+        return "failed"
+    return "ok" if code == 0 else "checks"
+
+
 def fastest(report: Report) -> float:
     """What `run` keeps the least of: sim time, or a render scene's CPU p50."""
     return number(report, ("cpu", "p50_ms") if is_render(report) else ("ticks", "total_ms"))
@@ -296,13 +308,19 @@ def run(exe: Path, scenario: str, repeat: int) -> tuple[int, Report | None]:
                 timeout=TIMEOUT_SECONDS,
                 check=False,
             )
-            if proc.returncode == SKIPPED:
+            outcome = run_outcome(proc.returncode, report_file.exists())
+            if outcome == "skipped":
                 print("no game data: skipped")
                 return SKIPPED, None
-            if proc.returncode != 0 or not report_file.exists():
+            if outcome == "failed":
                 print(f"run {i + 1} failed: exit {proc.returncode}")
                 print(proc.stdout[-2000:])
                 return 1, None
+            if outcome == "checks":
+                print(f"run {i + 1}: the game's own checks failed; its timing is kept:")
+                for line in proc.stdout.splitlines():
+                    if "[FAIL]" in line or "Thread error" in line:
+                        print("  " + line.strip()[:200])
             report = cast("Report", json.loads(report_file.read_text(encoding="utf-8")))
             if is_render(report):
                 print(
@@ -389,6 +407,16 @@ def self_test() -> int:
         (version_build("OpenSupCom 0.1.0") is None, True),
         (save_name(6000, "cc67ae41") == "scmp009-4ai-4242-t6000-cc67ae41.SCFAsave", True),
         (save_name(6000, None) == "scmp009-4ai-4242-t6000.SCFAsave", True),
+    ]
+    # A run's exit: its timing stands when the game wrote its report, even if
+    # the game's own checks failed (a script error of retail's)
+    cases += [
+        (run_outcome(0, True), "ok"),
+        (run_outcome(1, True), "checks"),
+        (run_outcome(1, False), "failed"),
+        (run_outcome(0, False), "failed"),
+        (run_outcome(-11, True), "failed"),  # a crash
+        (run_outcome(SKIPPED, False), "skipped"),
     ]
     failed = [i for i, (got, want) in enumerate(cases) if got != want]
     for i in failed:
