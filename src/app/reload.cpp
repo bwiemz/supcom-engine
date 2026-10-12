@@ -20,7 +20,11 @@ namespace osc::app {
 
 osc::sim::GameSetup launch_setup(lua_State* uiL, const osc::sim::Replay* replay,
                                  const std::string& scenario, osc::u64 seed) {
-    if (replay) return replay->setup; // the recorded game's own
+    if (replay) { // the recorded game's own
+        osc::sim::GameSetup setup = replay->setup;
+        setup.moho_pathing = recorded_moho_pathing(*replay);
+        return setup;
+    }
     osc::sim::GameSetup setup;
     lua_pushstring(uiL, "__osc_front_end_data");
     lua_rawget(uiL, LUA_REGISTRYINDEX);
@@ -35,6 +39,7 @@ osc::sim::GameSetup launch_setup(lua_State* uiL, const osc::sim::Replay* replay,
     setup.scenario = scenario;
     setup.seed = seed;
     setup.moho_random = g_moho_random;
+    setup.moho_pathing = g_moho_pathing;
     return setup;
 }
 
@@ -150,7 +155,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     sim_state->set_checksum_trace(g_checksum_trace);
     sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
     sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
-    sim_state->set_moho_pathing(g_moho_pathing);
+    sim_state->set_moho_pathing(setup.moho_pathing);
     sim_state->set_moho_random(setup.moho_random);
     spdlog::info("Game seed {:#018x}{}", seed, setup.moho_random ? ", Moho's random stream" : "");
 

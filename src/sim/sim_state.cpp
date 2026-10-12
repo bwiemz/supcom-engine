@@ -1147,6 +1147,10 @@ void SimState::queue_replay(const Replay& replay) {
 
 void SimState::adopt_history(const Replay& saved) {
     recorded_replay_ = saved;
+    // The pathing the restored game plays with is the snapshot's; a history
+    // older than replay format 16 doesn't record it, and a later save of
+    // this game must.
+    recorded_replay_.setup.moho_pathing = moho_pathing_;
     std::erase_if(recorded_replay_.commands,
                   [&](const ScheduledCommand& c) { return c.exec_tick > saved.final_tick; });
     recording_ = true;
