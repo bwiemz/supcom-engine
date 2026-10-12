@@ -356,59 +356,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
 
-    if (ghost) {
-        constexpr f32 kDim = 216.0f / 255.0f;
-        const auto pads = structure_pads(view, recon_);
-        std::vector<sim::StructureSite> pad_sites;
-        pad_sites.reserve(pads.size());
-        for (const auto& pad : pads) {
-            pad_sites.push_back(pad.first);
-        }
-        std::vector<const BuildGhost*> ghost_sites{ghost};
-        for (const BuildGhost& site : ghost->line) {
-            ghost_sites.push_back(&site);
-        }
-        std::vector<bool> lit(pad_sites.size(), false);
-        std::vector<bool> ghost_lit(ghost_sites.size(), false);
-        for (size_t ghost_index = 0; ghost_index < ghost_sites.size(); ++ghost_index) {
-            const BuildGhost& site = *ghost_sites[ghost_index];
-            if (!site.valid) continue;
-            const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
-            const auto site_lit = adjacency_lit(pad_sites, site_pad);
-            for (size_t pad_index = 0; pad_index < site_lit.size(); ++pad_index) {
-                lit[pad_index] = lit[pad_index] || site_lit[pad_index];
-                ghost_lit[ghost_index] = ghost_lit[ghost_index] || site_lit[pad_index];
-            }
-        }
-        const auto outline = [&](const sim::StructureSite& pad, f32 y, f32 r, f32 g, f32 a) {
-            const std::array<std::array<f32, 2>, 4> corners = {
-                {{pad.x0, pad.z0}, {pad.x1, pad.z0}, {pad.x1, pad.z1}, {pad.x0, pad.z1}}};
-            std::array<f32, 4> xs{};
-            std::array<f32, 4> ys{};
-            for (size_t i = 0; i < 4; ++i) {
-                if (!world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
-                                     ys[i])) {
-                    return;
-                }
-            }
-            emit_outline(xs, ys, r, g, 0.0f, a);
-        };
-        for (size_t i = 0; i < ghost_sites.size(); ++i) {
-            const BuildGhost& site = *ghost_sites[i];
-            const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
-            if (!site.valid) {
-                outline(site_pad, site.y, kDim, 0.0f, kDim);
-            } else if (ghost_lit[i]) {
-                outline(site_pad, site.y, 0.0f, 1.0f, 1.0f);
-            } else {
-                outline(site_pad, site.y, 0.0f, kDim, kDim);
-            }
-        }
-        for (size_t i = 0; i < pads.size(); ++i) {
-            outline(pads[i].first, pads[i].second, 0.0f, lit[i] ? 1.0f : kDim,
-                    lit[i] ? 1.0f : kDim);
-        }
-    }
+    if (ghost) add_build_ghost(view, *ghost, vp_matrix, sw, sh);
 
     // A death draws nothing of the engine's own: its effects are the unit
     // script's (FA's CreateDefault*Explosion emitters, through the particle
@@ -416,7 +364,80 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     // showed as a square.
     events.deaths.clear();
 
-    // Iterate all entities for health bars + selection circles
+    add_unit_overlays(view, snap, camera, vp_matrix, selected_ids, frustum, sw, sh, cam_dist);
+    if (selected_ids && !selected_ids->empty() && cam_dist < 600.0f)
+        add_intel_rings(view, snap, vp_matrix, selected_ids, sw, sh);
+    if (cam_dist < 600.0f) add_beams(view, vp_matrix, sw, sh, eye_x, eye_z);
+    if (cam_dist < 600.0f && quad_count_ < MAX_OVERLAY_QUADS)
+        add_effect_particles(view, snap, vp_matrix, sw, sh, eye_x, eye_z);
+    if (game_result != 0) add_game_over_banner(game_result, sw, sh);
+
+    // Upload to GPU
+    if (!quads_.empty() && instance_mapped_[fi_]) {
+        u32 count = std::min(quad_count_, MAX_OVERLAY_QUADS);
+        std::memcpy(instance_mapped_[fi_], quads_.data(),
+                    count * sizeof(UIInstance));
+    }
+}
+
+void OverlayRenderer::add_build_ghost(const sim::FrameView& view, const BuildGhost& ghost,
+                                      const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh) {
+    constexpr f32 kDim = 216.0f / 255.0f;
+    const auto pads = structure_pads(view, recon_);
+    std::vector<sim::StructureSite> pad_sites;
+    pad_sites.reserve(pads.size());
+    for (const auto& pad : pads) {
+        pad_sites.push_back(pad.first);
+    }
+    std::vector<const BuildGhost*> ghost_sites{&ghost};
+    for (const BuildGhost& site : ghost.line) {
+        ghost_sites.push_back(&site);
+    }
+    std::vector<bool> lit(pad_sites.size(), false);
+    std::vector<bool> ghost_lit(ghost_sites.size(), false);
+    for (size_t ghost_index = 0; ghost_index < ghost_sites.size(); ++ghost_index) {
+        const BuildGhost& site = *ghost_sites[ghost_index];
+        if (!site.valid) continue;
+        const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
+        const auto site_lit = adjacency_lit(pad_sites, site_pad);
+        for (size_t pad_index = 0; pad_index < site_lit.size(); ++pad_index) {
+            lit[pad_index] = lit[pad_index] || site_lit[pad_index];
+            ghost_lit[ghost_index] = ghost_lit[ghost_index] || site_lit[pad_index];
+        }
+    }
+    const auto outline = [&](const sim::StructureSite& pad, f32 y, f32 r, f32 g, f32 a) {
+        const std::array<std::array<f32, 2>, 4> corners = {
+            {{pad.x0, pad.z0}, {pad.x1, pad.z0}, {pad.x1, pad.z1}, {pad.x0, pad.z1}}};
+        std::array<f32, 4> xs{};
+        std::array<f32, 4> ys{};
+        for (size_t i = 0; i < 4; ++i) {
+            if (!world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
+                                 ys[i])) {
+                return;
+            }
+        }
+        emit_outline(xs, ys, r, g, 0.0f, a);
+    };
+    for (size_t i = 0; i < ghost_sites.size(); ++i) {
+        const BuildGhost& site = *ghost_sites[i];
+        const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
+        if (!site.valid) {
+            outline(site_pad, site.y, kDim, 0.0f, kDim);
+        } else if (ghost_lit[i]) {
+            outline(site_pad, site.y, 0.0f, 1.0f, 1.0f);
+        } else {
+            outline(site_pad, site.y, 0.0f, kDim, kDim);
+        }
+    }
+    for (size_t i = 0; i < pads.size(); ++i) {
+        outline(pads[i].first, pads[i].second, 0.0f, lit[i] ? 1.0f : kDim, lit[i] ? 1.0f : kDim);
+    }
+}
+
+void OverlayRenderer::add_unit_overlays(const sim::FrameView& view, const sim::WorldSnapshot& snap,
+                                        const Camera& camera, const std::array<f32, 16>& vp_matrix,
+                                        const std::unordered_set<u32>* selected_ids,
+                                        const Frustum* frustum, f32 sw, f32 sh, f32 cam_dist) {
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit) continue;
         if (recon_ && recon_->sight(entity) != Sight::Seen) continue;
@@ -506,263 +527,263 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             }
         }
     }
+}
 
-    // --- Intel range circles (radar/sonar/omni for selected units) ---
-    if (selected_ids && !selected_ids->empty() && cam_dist < 600.0f) {
-        constexpr u32 INTEL_SEGMENTS = 24;
-        constexpr f32 INTEL_LINE_THICK = 1.5f;
-        constexpr f32 PI2 = 6.2831853f;
+void OverlayRenderer::add_intel_rings(const sim::FrameView& view, const sim::WorldSnapshot& snap,
+                                      const std::array<f32, 16>& vp_matrix,
+                                      const std::unordered_set<u32>* selected_ids, f32 sw, f32 sh) {
+    constexpr u32 INTEL_SEGMENTS = 24;
+    constexpr f32 INTEL_LINE_THICK = 1.5f;
+    constexpr f32 PI2 = 6.2831853f;
 
-        for (u32 uid : *selected_ids) {
-            auto* e = view.find(uid);
-            if (!e || !e->is_unit) continue;
-            auto pos = view.position(*e);
+    for (u32 uid : *selected_ids) {
+        auto* e = view.find(uid);
+        if (!e || !e->is_unit) continue;
+        auto pos = view.position(*e);
 
-            for (const auto& intel : snap.intel_of(*e)) {
-                // Captured with a radius of at least 1; ringed when on.
-                const std::string& type = intel.type;
-                if (!intel.enabled || !intel_ring_types_.count(type)) continue;
+        for (const auto& intel : snap.intel_of(*e)) {
+            // Captured with a radius of at least 1; ringed when on.
+            const std::string& type = intel.type;
+            if (!intel.enabled || !intel_ring_types_.count(type)) continue;
 
-                // Color by intel type
-                f32 cr = 0, cg = 0, cb = 0, ca = 0.35f;
-                if (type == "Radar")       { cg = 0.8f; cb = 0.3f; }
-                else if (type == "Sonar")  { cg = 0.4f; cb = 0.9f; }
-                else if (type == "Omni")   { cr = 0.9f; cg = 0.9f; cb = 0.3f; }
-                else if (type == "Vision") { cg = 0.6f; ca = 0.2f; }
-                else continue; // skip unknown intel types
+            // Color by intel type
+            f32 cr = 0, cg = 0, cb = 0, ca = 0.35f;
+            if (type == "Radar") {
+                cg = 0.8f;
+                cb = 0.3f;
+            } else if (type == "Sonar") {
+                cg = 0.4f;
+                cb = 0.9f;
+            } else if (type == "Omni") {
+                cr = 0.9f;
+                cg = 0.9f;
+                cb = 0.3f;
+            } else if (type == "Vision") {
+                cg = 0.6f;
+                ca = 0.2f;
+            } else continue; // skip unknown intel types
 
-                f32 radius = intel.radius;
-                f32 prev_sx2 = 0, prev_sy2 = 0;
-                bool prev_valid2 = false;
+            f32 radius = intel.radius;
+            f32 prev_sx2 = 0, prev_sy2 = 0;
+            bool prev_valid2 = false;
 
-                for (u32 i = 0; i <= INTEL_SEGMENTS; i++) {
-                    f32 angle = PI2 * static_cast<f32>(i) / INTEL_SEGMENTS;
-                    f32 wx = pos.x + radius * std::cos(angle);
-                    f32 wz = pos.z + radius * std::sin(angle);
+            for (u32 i = 0; i <= INTEL_SEGMENTS; i++) {
+                f32 angle = PI2 * static_cast<f32>(i) / INTEL_SEGMENTS;
+                f32 wx = pos.x + radius * std::cos(angle);
+                f32 wz = pos.z + radius * std::sin(angle);
 
-                    f32 sx_pt = 0, sy_pt = 0;
-                    bool valid = world_to_screen(wx, pos.y, wz,
-                                                  vp_matrix, sw, sh,
-                                                  sx_pt, sy_pt);
+                f32 sx_pt = 0, sy_pt = 0;
+                bool valid = world_to_screen(wx, pos.y, wz, vp_matrix, sw, sh, sx_pt, sy_pt);
 
-                    if (valid && prev_valid2 && i > 0) {
-                        f32 ldx = sx_pt - prev_sx2;
-                        f32 ldy = sy_pt - prev_sy2;
-                        f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-                        if (len >= 1.0f) {
-                            emit_line(prev_sx2, prev_sy2, sx_pt, sy_pt, INTEL_LINE_THICK, cr, cg,
-                                      cb, ca);
-                        }
+                if (valid && prev_valid2 && i > 0) {
+                    f32 ldx = sx_pt - prev_sx2;
+                    f32 ldy = sy_pt - prev_sy2;
+                    f32 len = std::sqrt(ldx * ldx + ldy * ldy);
+                    if (len >= 1.0f) {
+                        emit_line(prev_sx2, prev_sy2, sx_pt, sy_pt, INTEL_LINE_THICK, cr, cg, cb,
+                                  ca);
                     }
-
-                    prev_sx2 = sx_pt;
-                    prev_sy2 = sy_pt;
-                    prev_valid2 = valid;
                 }
+
+                prev_sx2 = sx_pt;
+                prev_sy2 = sy_pt;
+                prev_valid2 = valid;
             }
         }
     }
+}
 
-    // --- CollisionBeam rendering ---
-    if (cam_dist < 600.0f) {
-        for (const sim::EntityRecord& entity : view.entities()) {
-            if (!entity.is_collision_beam || !entity.beam_enabled) continue;
-            if (beams_ && beams_->drew_on_entity(entity.id)) continue; // drawn as FA's
+void OverlayRenderer::add_beams(const sim::FrameView& view, const std::array<f32, 16>& vp_matrix,
+                                f32 sw, f32 sh, f32 eye_x, f32 eye_z) {
+    for (const sim::EntityRecord& entity : view.entities()) {
+        if (!entity.is_collision_beam || !entity.beam_enabled) continue;
+        if (beams_ && beams_->drew_on_entity(entity.id)) continue; // drawn as FA's
 
-            auto src_pos = view.position(entity);
-            auto dst_pos = view.beam_end(entity);
-            // A beam shows where the player's army sees either end
-            // (CEfxBeam::CanSeeCam; M215b).
-            if (recon_ && !recon_->sees_beam(view, src_pos, dst_pos)) continue;
+        auto src_pos = view.position(entity);
+        auto dst_pos = view.beam_end(entity);
+        // A beam shows where the player's army sees either end
+        // (CEfxBeam::CanSeeCam; M215b).
+        if (recon_ && !recon_->sees_beam(view, src_pos, dst_pos)) continue;
 
-            f32 dx = src_pos.x - eye_x;
-            f32 dz = src_pos.z - eye_z;
-            if (dx * dx + dz * dz > 600.0f * 600.0f) continue;
+        f32 dx = src_pos.x - eye_x;
+        f32 dz = src_pos.z - eye_z;
+        if (dx * dx + dz * dz > 600.0f * 600.0f) continue;
 
+        f32 sx0, sy0, sx1, sy1;
+        if (!world_to_screen(src_pos.x, src_pos.y, src_pos.z, vp_matrix, sw, sh, sx0, sy0))
+            continue;
+        if (!world_to_screen(dst_pos.x, dst_pos.y, dst_pos.z, vp_matrix, sw, sh, sx1, sy1))
+            continue;
+
+        f32 ldx = sx1 - sx0, ldy = sy1 - sy0;
+        f32 len = std::sqrt(ldx * ldx + ldy * ldy);
+        if (len < 2.0f) continue;
+
+        constexpr f32 BEAM_THICK = 3.5f; // thicker for weapons
+        // Red/orange for weapon beams
+        emit_line(sx0, sy0, sx1, sy1, BEAM_THICK, 1.0f, 0.4f, 0.1f, 0.8f);
+    }
+}
+
+void OverlayRenderer::add_effect_particles(const sim::FrameView& view,
+                                           const sim::WorldSnapshot& snap,
+                                           const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh,
+                                           f32 eye_x, f32 eye_z) {
+    for (const sim::EffectRecord& fx : snap.effects) {
+        const sim::EffectRecord* fx_ptr = &fx;
+
+        auto type = fx_ptr->type;
+
+        // Skip decals/splats (handled by decal renderer)
+        if (type == sim::EffectType::DECAL || type == sim::EffectType::SPLAT) continue;
+        // And beams the beam renderer draws as FA does (M214a).
+        if (beams_ && beams_->drew_effect(fx_ptr->id)) continue;
+        // And trails the trail renderer draws, or left out at this
+        // fidelity (M214b).
+        if (trails_ && (trails_->draws_effect(fx_ptr->id) || trails_->unmade(fx_ptr->id))) continue;
+        // And emitters and lights the particle system draws (M214c).
+        // (One it never made, CreateIfVisible or left out at this
+        // fidelity, shows nothing at all.)
+        if (particles_ && (particles_->draws_effect(fx_ptr->id) || particles_->unmade(fx_ptr->id)))
+            continue;
+
+        // Resolve effect world position from parent entity + offset
+        f32 wx = fx_ptr->offset_x;
+        f32 wy = fx_ptr->offset_y;
+        f32 wz = fx_ptr->offset_z;
+
+        if (fx_ptr->entity_id > 0) {
+            auto* parent = view.find(fx_ptr->entity_id);
+            if (!parent) continue;
+            auto pp = view.position(*parent);
+            wx += pp.x;
+            wy += pp.y;
+            wz += pp.z;
+        }
+
+        // Distance cull
+        f32 dx = wx - eye_x;
+        f32 dz = wz - eye_z;
+        if (dx * dx + dz * dz > 500.0f * 500.0f) continue;
+
+        // Beam entity-to-entity: draw line between two entities
+        if (type == sim::EffectType::BEAM_ENTITY_TO_ENTITY) {
+            if (fx_ptr->target_entity_id == 0) continue;
+            auto* target = view.find(fx_ptr->target_entity_id);
+            if (!target) continue;
+
+            auto tp = view.position(*target);
+            if (recon_ && !recon_->sees_beam(view, {wx, wy, wz}, tp)) continue;
             f32 sx0, sy0, sx1, sy1;
-            if (!world_to_screen(src_pos.x, src_pos.y, src_pos.z,
-                                  vp_matrix, sw, sh, sx0, sy0))
-                continue;
-            if (!world_to_screen(dst_pos.x, dst_pos.y, dst_pos.z,
-                                  vp_matrix, sw, sh, sx1, sy1))
-                continue;
+            if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0)) continue;
+            if (!world_to_screen(tp.x, tp.y, tp.z, vp_matrix, sw, sh, sx1, sy1)) continue;
 
-            f32 ldx = sx1 - sx0, ldy = sy1 - sy0;
-            f32 len = std::sqrt(ldx * ldx + ldy * ldy);
+            f32 ldx2 = sx1 - sx0, ldy2 = sy1 - sy0;
+            f32 len = std::sqrt(ldx2 * ldx2 + ldy2 * ldy2);
             if (len < 2.0f) continue;
 
-            constexpr f32 BEAM_THICK = 3.5f; // thicker for weapons
-            // Red/orange for weapon beams
-            emit_line(sx0, sy0, sx1, sy1, BEAM_THICK, 1.0f, 0.4f, 0.1f, 0.8f);
+            f32 thick = fx_ptr->thickness;
+            if (thick < 1.0f) thick = 2.0f;
+            emit_line(sx0, sy0, sx1, sy1, thick, 0.8f, 0.9f, 1.0f, 0.6f); // pale blue beam
+            continue;
         }
-    }
 
-    // --- VFX/emitter particle rendering (billboard particles for IEffect) ---
-    if (cam_dist < 600.0f && quad_count_ < MAX_OVERLAY_QUADS) {
-        for (const sim::EffectRecord& fx : snap.effects) {
-            const sim::EffectRecord* fx_ptr = &fx;
+        // Attached beam: draw a line from entity in forward direction
+        if (type == sim::EffectType::ATTACHED_BEAM) {
+            f32 beam_len = fx_ptr->length;
+            if (beam_len < 1.0f) beam_len = 5.0f;
 
-            auto type = fx_ptr->type;
-
-            // Skip decals/splats (handled by decal renderer)
-            if (type == sim::EffectType::DECAL || type == sim::EffectType::SPLAT)
-                continue;
-            // And beams the beam renderer draws as FA does (M214a).
-            if (beams_ && beams_->drew_effect(fx_ptr->id)) continue;
-            // And trails the trail renderer draws, or left out at this
-            // fidelity (M214b).
-            if (trails_ && (trails_->draws_effect(fx_ptr->id) || trails_->unmade(fx_ptr->id)))
-                continue;
-            // And emitters and lights the particle system draws (M214c).
-            // (One it never made, CreateIfVisible or left out at this
-            // fidelity, shows nothing at all.)
-            if (particles_ &&
-                (particles_->draws_effect(fx_ptr->id) || particles_->unmade(fx_ptr->id)))
-                continue;
-
-            // Resolve effect world position from parent entity + offset
-            f32 wx = fx_ptr->offset_x;
-            f32 wy = fx_ptr->offset_y;
-            f32 wz = fx_ptr->offset_z;
-
+            f32 sx0, sy0, sx1, sy1;
+            if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0)) continue;
+            // Use entity heading to orient the beam
+            f32 fwd_x = 0.0f, fwd_y = 0.0f, fwd_z = 1.0f;
             if (fx_ptr->entity_id > 0) {
-                auto* parent = view.find(fx_ptr->entity_id);
-                if (!parent) continue;
-                auto pp = view.position(*parent);
-                wx += pp.x;
-                wy += pp.y;
-                wz += pp.z;
+                auto* beam_parent = view.find(fx_ptr->entity_id);
+                if (beam_parent) {
+                    const auto q = view.orientation(*beam_parent);
+                    fwd_x = 2.0f * (q.x * q.z + q.w * q.y);
+                    fwd_y = 2.0f * (q.y * q.z - q.w * q.x);
+                    fwd_z = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+                }
             }
+            if (recon_ && !recon_->sees_beam(view, {wx, wy, wz},
+                                             {wx + fwd_x * beam_len, wy + fwd_y * beam_len,
+                                              wz + fwd_z * beam_len}))
+                continue;
+            if (!world_to_screen(wx + fwd_x * beam_len, wy + fwd_y * beam_len,
+                                 wz + fwd_z * beam_len, vp_matrix, sw, sh, sx1, sy1))
+                continue;
 
-            // Distance cull
-            f32 dx = wx - eye_x;
-            f32 dz = wz - eye_z;
-            if (dx * dx + dz * dz > 500.0f * 500.0f) continue;
-
-            // Beam entity-to-entity: draw line between two entities
-            if (type == sim::EffectType::BEAM_ENTITY_TO_ENTITY) {
-                if (fx_ptr->target_entity_id == 0) continue;
-                auto* target = view.find(fx_ptr->target_entity_id);
-                if (!target) continue;
-
-                auto tp = view.position(*target);
-                if (recon_ && !recon_->sees_beam(view, {wx, wy, wz}, tp)) continue;
-                f32 sx0, sy0, sx1, sy1;
-                if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0))
-                    continue;
-                if (!world_to_screen(tp.x, tp.y, tp.z, vp_matrix, sw, sh, sx1, sy1))
-                    continue;
-
-                f32 ldx2 = sx1 - sx0, ldy2 = sy1 - sy0;
-                f32 len = std::sqrt(ldx2 * ldx2 + ldy2 * ldy2);
-                if (len < 2.0f) continue;
-
+            f32 ldx2 = sx1 - sx0, ldy2 = sy1 - sy0;
+            f32 len = std::sqrt(ldx2 * ldx2 + ldy2 * ldy2);
+            if (len >= 2.0f) {
                 f32 thick = fx_ptr->thickness;
                 if (thick < 1.0f) thick = 2.0f;
-                emit_line(sx0, sy0, sx1, sy1, thick, 0.8f, 0.9f, 1.0f, 0.6f); // pale blue beam
-                continue;
+                emit_line(sx0, sy0, sx1, sy1, thick, 0.6f, 0.8f, 1.0f, 0.5f);
             }
-
-            // Attached beam: draw a line from entity in forward direction
-            if (type == sim::EffectType::ATTACHED_BEAM) {
-                f32 beam_len = fx_ptr->length;
-                if (beam_len < 1.0f) beam_len = 5.0f;
-
-                f32 sx0, sy0, sx1, sy1;
-                if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0))
-                    continue;
-                // Use entity heading to orient the beam
-                f32 fwd_x = 0.0f, fwd_y = 0.0f, fwd_z = 1.0f;
-                if (fx_ptr->entity_id > 0) {
-                    auto* beam_parent = view.find(fx_ptr->entity_id);
-                    if (beam_parent) {
-                        const auto q = view.orientation(*beam_parent);
-                        fwd_x = 2.0f * (q.x * q.z + q.w * q.y);
-                        fwd_y = 2.0f * (q.y * q.z - q.w * q.x);
-                        fwd_z = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
-                    }
-                }
-                if (recon_ && !recon_->sees_beam(view, {wx, wy, wz},
-                                                 {wx + fwd_x * beam_len, wy + fwd_y * beam_len,
-                                                  wz + fwd_z * beam_len}))
-                    continue;
-                if (!world_to_screen(wx + fwd_x * beam_len,
-                                      wy + fwd_y * beam_len,
-                                      wz + fwd_z * beam_len,
-                                      vp_matrix, sw, sh, sx1, sy1))
-                    continue;
-
-                f32 ldx2 = sx1 - sx0, ldy2 = sy1 - sy0;
-                f32 len = std::sqrt(ldx2 * ldx2 + ldy2 * ldy2);
-                if (len >= 2.0f) {
-                    f32 thick = fx_ptr->thickness;
-                    if (thick < 1.0f) thick = 2.0f;
-                    emit_line(sx0, sy0, sx1, sy1, thick, 0.6f, 0.8f, 1.0f, 0.5f);
-                }
-                continue;
-            }
-
-            // An emitter shows where the player's army sees it
-            // (CEfxEmitter::CanSeeCam; M215b).
-            if (recon_ && !recon_->sees_at(view, -1, wx, wz)) continue;
-
-            // Project position for particle effects
-            f32 sx_fx, sy_fx;
-            if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx_fx, sy_fx))
-                continue;
-
-            // Emitter particles: small colored dot at effect position
-            f32 psize = 4.0f * fx_ptr->scale;
-            // Color by army (simple hash)
-            f32 pr = 0.7f, pg = 0.7f, pb = 0.7f;
-            if (const auto* brain = snap.army(fx_ptr->army)) {
-                if (brain->has_color) {
-                    pr = brain->r / 255.0f;
-                    pg = brain->g / 255.0f;
-                    pb = brain->b / 255.0f;
-                }
-            }
-
-            emit_quad(sx_fx - psize * 0.5f, sy_fx - psize * 0.5f,
-                      psize, psize, pr, pg, pb, 0.7f);
+            continue;
         }
+
+        // An emitter shows where the player's army sees it
+        // (CEfxEmitter::CanSeeCam; M215b).
+        if (recon_ && !recon_->sees_at(view, -1, wx, wz)) continue;
+
+        // Project position for particle effects
+        f32 sx_fx, sy_fx;
+        if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx_fx, sy_fx)) continue;
+
+        // Emitter particles: small colored dot at effect position
+        f32 psize = 4.0f * fx_ptr->scale;
+        // Color by army (simple hash)
+        f32 pr = 0.7f, pg = 0.7f, pb = 0.7f;
+        if (const auto* brain = snap.army(fx_ptr->army)) {
+            if (brain->has_color) {
+                pr = brain->r / 255.0f;
+                pg = brain->g / 255.0f;
+                pb = brain->b / 255.0f;
+            }
+        }
+
+        emit_quad(sx_fx - psize * 0.5f, sy_fx - psize * 0.5f, psize, psize, pr, pg, pb, 0.7f);
     }
+}
 
-    // --- Game over banner ---
-    if (game_result != 0) {
-        // Full-screen dark overlay
-        emit_quad(0, 0, sw, sh, 0.0f, 0.0f, 0.0f, 0.5f);
+void OverlayRenderer::add_game_over_banner(i32 game_result, f32 sw, f32 sh) {
+    // Full-screen dark overlay
+    emit_quad(0, 0, sw, sh, 0.0f, 0.0f, 0.0f, 0.5f);
 
-        // Centered banner bar
-        f32 banner_w = 400.0f;
-        f32 banner_h = 60.0f;
-        f32 bx = (sw - banner_w) * 0.5f;
-        f32 by = sh * 0.35f;
+    // Centered banner bar
+    f32 banner_w = 400.0f;
+    f32 banner_h = 60.0f;
+    f32 bx = (sw - banner_w) * 0.5f;
+    f32 by = sh * 0.35f;
 
-        // Banner background
-        emit_quad(bx, by, banner_w, banner_h, 0.05f, 0.05f, 0.1f, 0.9f);
+    // Banner background
+    emit_quad(bx, by, banner_w, banner_h, 0.05f, 0.05f, 0.1f, 0.9f);
 
-        // Color accent stripe at top of banner
-        f32 ar = 0, ag = 0, ab = 0;
-        if (game_result == 1) { ag = 0.8f; ab = 0.2f; } // victory = green
-        if (game_result == 2) { ar = 0.9f; ag = 0.1f; } // defeat = red
-        if (game_result == 3) { ar = 0.5f; ag = 0.5f; ab = 0.5f; } // draw = grey
-        emit_quad(bx, by, banner_w, 4.0f, ar, ag, ab, 1.0f);
+    // Color accent stripe at top of banner
+    f32 ar = 0, ag = 0, ab = 0;
+    if (game_result == 1) {
+        ag = 0.8f;
+        ab = 0.2f;
+    } // victory = green
+    if (game_result == 2) {
+        ar = 0.9f;
+        ag = 0.1f;
+    } // defeat = red
+    if (game_result == 3) {
+        ar = 0.5f;
+        ag = 0.5f;
+        ab = 0.5f;
+    } // draw = grey
+    emit_quad(bx, by, banner_w, 4.0f, ar, ag, ab, 1.0f);
 
-        // Sub-banner hint: "Press R to restart"
-        f32 hint_w = 200.0f;
-        f32 hint_h = 24.0f;
-        f32 hx = (sw - hint_w) * 0.5f;
-        f32 hy = by + banner_h + 10.0f;
-        emit_quad(hx, hy, hint_w, hint_h, 0.1f, 0.1f, 0.15f, 0.7f);
-    }
-
-    // Upload to GPU
-    if (!quads_.empty() && instance_mapped_[fi_]) {
-        u32 count = std::min(quad_count_, MAX_OVERLAY_QUADS);
-        std::memcpy(instance_mapped_[fi_], quads_.data(),
-                    count * sizeof(UIInstance));
-    }
+    // Sub-banner hint: "Press R to restart"
+    f32 hint_w = 200.0f;
+    f32 hint_h = 24.0f;
+    f32 hx = (sw - hint_w) * 0.5f;
+    f32 hy = by + banner_h + 10.0f;
+    emit_quad(hx, hy, hint_w, hint_h, 0.1f, 0.1f, 0.15f, 0.7f);
 }
 
 void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
