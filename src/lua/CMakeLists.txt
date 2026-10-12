@@ -29,6 +29,7 @@ add_library(osc_lua STATIC
     net_lobby.cpp
     session_clients.cpp
     sim_bindings.cpp
+    unit_blueprint.cpp
     sim_loader.cpp
     sim_sync.cpp
     script_loader.cpp
