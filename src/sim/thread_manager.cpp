@@ -418,25 +418,23 @@ void ThreadManager::wake(Waitable& w, u32 current_tick) {
 }
 
 void ThreadManager::cleanup_dead_threads() {
-    // Remove dead threads and release their registry refs
-    auto it = threads_.begin();
-    while (it != threads_.end()) {
-        if (it->dead) {
-            // The handle's ref first: Lua reuses the last one freed, and
-            // the next thread forked takes the coroutine's.
-            if (it->wrapper_ref >= 0) {
-                luaL_unref(L_, LUA_REGISTRYINDEX, it->wrapper_ref);
-                it->wrapper_ref = -2;
-            }
-            if (it->lua_ref >= 0) {
-                luaL_unref(L_, LUA_REGISTRYINDEX, it->lua_ref);
-                it->lua_ref = -2; // LUA_NOREF — prevent double-unref
-            }
-            it = threads_.erase(it);
-        } else {
-            ++it;
+    // Release dead threads' registry refs, in order: the handle's first, as
+    // Lua reuses the last one freed and the next thread forked takes the
+    // coroutine's. Then drop them in one pass, the live ones keeping their
+    // order (erasing each where it stood cost a move of the rest: a late
+    // game holds thousands of threads, and dozens end in a tick).
+    for (ThreadEntry& t : threads_) {
+        if (!t.dead) continue;
+        if (t.wrapper_ref >= 0) {
+            luaL_unref(L_, LUA_REGISTRYINDEX, t.wrapper_ref);
+            t.wrapper_ref = -2;
+        }
+        if (t.lua_ref >= 0) {
+            luaL_unref(L_, LUA_REGISTRYINDEX, t.lua_ref);
+            t.lua_ref = -2; // LUA_NOREF — prevent double-unref
         }
     }
+    std::erase_if(threads_, [](const ThreadEntry& t) { return t.dead; });
 }
 
 } // namespace osc::sim
