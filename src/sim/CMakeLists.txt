@@ -74,6 +74,7 @@ add_library(osc_sim STATIC
     prop_script.cpp
     build_info.cpp
     sim_callbacks.cpp
+    sim_checksum.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
 
