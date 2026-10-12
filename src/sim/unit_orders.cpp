@@ -445,6 +445,9 @@ OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 
 OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
+    // A structure or a TARGETCHASER keeps no slot in its formation (Moho's
+    // attack task drops the formation as it starts for them).
+    if (cmd.has_slot && (!is_mobile() || has_category("TARGETCHASER"))) cmd.has_slot = false;
     // Attack: move toward target if out of weapon range, else stop
     if (cmd.target_id == 0) return order_attack_ground(cmd, dt, ctx);
     auto* target = registry.find(cmd.target_id);
@@ -544,7 +547,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         // the formation centred on the target wherever it goes (Moho's
         // attack task, Update: SetCoords, GetAdjustedFormationPosition)
         Vector3 goal = target->position();
-        if (cmd.has_slot && is_mobile()) {
+        if (cmd.has_slot) {
             goal.x += cmd.slot_offset.x;
             goal.z += cmd.slot_offset.z;
         }

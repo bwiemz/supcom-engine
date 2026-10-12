@@ -1287,6 +1287,27 @@ TEST_CASE("A FormAttack's unit drops its slot once its weapon reaches the target
     CHECK_FALSE(a->command_queue().front().has_slot);
 }
 
+TEST_CASE("A TARGETCHASER in a FormAttack heads for the target itself",
+          "[attack][lua][formation]") {
+    // CUnitAttackTargetTask's constructor drops the formation for a
+    // TARGETCHASER (and for a unit that can't move).
+    FormAttackWorld w;
+    Unit* a = w.tank(10.0f, 10.0f, 5.0f);
+    Unit* chaser = w.tank(10.0f, 14.0f, 5.0f);
+    chaser->add_category("TARGETCHASER");
+    const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
+    w.global("a", a);
+    w.global("chaser", chaser);
+    w.global("enemy", enemy);
+    w.run("IssueFormAttack({a, chaser}, enemy, 'Line', 90)");
+    REQUIRE(chaser->command_queue().front().has_slot);
+    for (int i = 0; i < 3; ++i) w.sim.tick();
+    CHECK_FALSE(chaser->command_queue().front().has_slot);
+    CHECK(chaser->navigator().goal().x == enemy->position().x);
+    CHECK(chaser->navigator().goal().z == enemy->position().z);
+    CHECK(a->command_queue().front().has_slot);
+}
+
 TEST_CASE("A FormAttack's unit with no weapon that can hit its target gives it up",
           "[attack][lua][formation]") {
     // TaskTick's first test: no target weapon, on a FormAttack, ends the
