@@ -130,7 +130,11 @@ function ProbeMain()
     local armies = ListArmies()
     local me = armies[1]
     for _, other in armies do
-        if other ~= me then SetAlliance(me, other, 'Neutral') end
+        -- Both ways, whichever way SetAlliance sets it
+        if other ~= me then
+            SetAlliance(me, other, 'Neutral')
+            SetAlliance(other, me, 'Neutral')
+        end
     end
     probe('start armies=%d', table.getn(armies))
     ForkThread(ProbeUnitsAroundPoint, me)
