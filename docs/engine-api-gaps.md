@@ -1,6 +1,6 @@
 # Engine API gaps
 
-Engine API that retail's Lua and data use and the engine doesn't support, or supports in part, with what FAF adds on top. Found by audits of the bindings' optional and flag arguments, the callbacks' return values, the data's flags and categories, the parity-ratchet baselines and FAF's executable patches, and by play. Checked against main at 6570e4c6 (2026-10-09).
+Engine API that retail's Lua and data use and the engine doesn't support, or supports in part, with what FAF adds on top. Found by audits of the bindings' optional and flag arguments, the callbacks' return values, the data's flags and categories, the parity-ratchet baselines and FAF's executable patches, and by play. Checked against main at 10e85994 (2026-10-12).
 
 How to read it:
 - Each group lists retail's gaps first, ranked by how visible they are in play, then FAF's additions.

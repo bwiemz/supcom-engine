@@ -17,7 +17,6 @@ IssuePause stub_noop
 MetaImpact stub_noop
 RefreshSteamGames l_RefreshSteamGames
 SessionIsReplay stub_false
-SetActiveBuildTemplate l_SetActiveBuildTemplate
 SetArmyShowScore stub_noop
 SetAuxiliaryParameter worldmesh_SetAuxiliaryParameter
 SetColor worldmesh_SetColor

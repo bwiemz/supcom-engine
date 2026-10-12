@@ -2998,17 +2998,6 @@ static int l_ClearBuildTemplates(lua_State* L) {
     return 0;
 }
 
-/// GetActiveBuildTemplate() — returns nil (no active template).
-static int l_GetActiveBuildTemplate(lua_State* L) {
-    lua_pushnil(L);
-    return 1;
-}
-
-/// SetActiveBuildTemplate(template) — stub; build templates not needed for basic build mode.
-static int l_SetActiveBuildTemplate(lua_State* /*L*/) {
-    return 0;
-}
-
 /// AddCommandFeedbackBlip(meshInfo, duration): an order's mark. The UI state
 /// beside a renderer has user_bindings.cpp's, which draws it; this one stands
 /// in where there is none (a headless run).
@@ -4750,8 +4739,6 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Build mode / command mode globals (M139)
     state.register_function("ClearBuildTemplates",      l_ClearBuildTemplates);
-    state.register_function("GetActiveBuildTemplate",   l_GetActiveBuildTemplate);
-    state.register_function("SetActiveBuildTemplate",   l_SetActiveBuildTemplate);
     state.register_function("AddCommandFeedbackBlip",   l_AddCommandFeedbackBlip);
     state.register_function("GetUnitById", l_GetUnitById);
     state.register_function("IN_AddKeyMapTable",        l_IN_AddKeyMapTable);

@@ -31,6 +31,22 @@ Sources:
 - **The shell's `grep` skips files.** It is a ugrep wrapper run with `-I`, which silently skips ISO-8859 files, and many retail `.lua`/`.bp` files are ISO-8859. Use `command grep -a` or Python.
 - **faf-re decompiles FAF's patched exe.** A few behaviours exist only there (SetCommandSource, SetCustomRender, the sim-lane SessionIsReplay) or only in retail's exe (flier ground collision, GroundCollisionOffset). The rows flag these.
 
+## Status at 10e85994 (2026-10-12)
+
+Each row below was checked against the three baselines at main 10e85994, with the dead `SetActiveBuildTemplate` stub removed: a row whose item has left its baseline is done (fixed, or a stub found dead), one moved to an `_accepted` list is accepted as it is, and the rest are left. The tables further down still describe the engine as it was at bc9c7b1c.
+
+| List | Rows | Done | Accepted | Left |
+|---|---|---|---|---|
+| Retail hooks | 55 | 34 | 0 | 21 |
+| Lua stubs | 79 | 31 | 17 | 31 |
+| Blueprint fields | 119 | 90 | 4 | 25 |
+| **All** | **253** | **155** | **21** | **77** |
+
+**Left, by severity:**
+- **HIGH: none.**
+- **MEDIUM, 14:** Command-source attribution (`GetCurrentCommandSource`); Effect/debris spawn and motion (`DirectionY`, `MinBounceCount`, `MaxBounceCount`, `BounceVelDamp`); Engine-to-uimain (`/lua/ui/uimain.lua:StopCursorText`); FAF command sources (`SetCommandSource`); FAF world-view custom render (`SetCustomRender`); Ground steering limits (`MaxSteerForce`); Transport cargo death (`OnAttachedKilled`); Unit VO notifications (`OnDamageBy`, `OnNukeArmed`); Weapon target sharing and prep (`NeedPrep`, `ReTargetOnMiss`).
+- **LOW, 63:** AIBrain no-callers (`SetGreaterOf`); Aim / on-target rules (`AimsStraightOnDisable`); Air: footprint and ground contact (`GroundCollisionOffset`); Army setup / unit cap (`SetArmyShowScore`); Build arm & build lifecycle (`OnAssignedFocusEntity`, `OnBeingBuiltProgress`, `OnBuildProgress`); Dead / equivalent (`OnAnimationFinished`, `OnAnimationFrame`, `OnIconsVisible`, `OnSpecialAction`, `OnStart`, `OnSubtitle`, `OnTerrainTypeChange`, `/lua/UserScriptCommand.lua:VerifyScriptCommand`, `/lua/ui/game/gamemain.lua:OnDetectAdjacencyBonus`, `/lua/user/prefs.lua:GetOption`); Debug / console / online (`SetTargetHead`, `SimConExecute`, `SpecFootprints`, `SubmitXMLArmyStats`); Effect/debris spawn and motion (`DirectionX`, `DirectionZ`, `PositionY`, `StayUpright`); Engine-to-uimain (`/lua/ui/uimain.lua:OnApplicationResize`, `/lua/ui/uimain.lua:StartHostLobbyUI`, `/lua/ui/uimain.lua:StartJoinLobbyUI`, `/lua/ui/uimain.lua:ToggleConsole`); Ground steering limits (`CatchUpAcc`); Loading / benchmark (`BlueprintLoaderUpdateProgress` (sim and UI lanes), `BeginLoggingStats`, `EndLoggingStats`); Mesh render: water straddle (`StraddleWater`); Minor cosmetics (`Silhouette`, `SpawnRandomRotation`, `PlaceholderMeshName`, `QuickSelectPriority`, `RepairRate`, `ShowAssistRangeOnSelect`, `ShowIntelOnSelect`); Salem walking destroyer (`LayerTransitionDuration`); Session queries in sim state (`SessionIsReplay`); Sim debug tools (`DrawCircle`, `DrawLine`, `DrawLinePop`, `DebugGetSelection`); Steam (`InternalStartSteamDiscoveryService`, `RefreshSteamGames`); Structure placement (`LAYER_Air`); UI WorldMesh (`SetAuxiliaryParameter`, `SetColor`, `SetFractionCompleteParameter`, `SetFractionHealthParameter`, `SetScale`); UI session housekeeping (`CameraReset`, `FlushEvents`, `Destroy`); Unused Moho API (`AITarget`, `IssuePause`, `MetaImpact`); Weapon target sharing and prep (`IgnoreIfDisabled`).
+
 ## After PR 0 (ratchet hygiene)
 
 PR 0 took the LOW items that are not gaps off the baselines, so each baseline now counts work left to do:
