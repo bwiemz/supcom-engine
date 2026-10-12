@@ -60,6 +60,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| A platoon's `FindClosestUnit` and `FindPrioritizedUnit` read their alliance as `SCR_GetEnum` does (any case, prefix optional): retail's AI asks for `'enemy'`, which matched nothing, so `AttackForceAI`'s final push was handed its own closest unit and its attack was refused | PRNUM |
 | `IssueFormAttack(units, target, formation, heading)` attacks in formation (`UNITCOMMAND_FormAttack`): the formation centred on the target, a unit or a point, each unit heads for its slot until its weapon reaches the target, then attacks as any other; one with no weapon that can hit the target gives the order up unless it is `DIRECTFIRE`. It returns nothing | PRNUM |
 | `_c_CreateDecal` (`UserDecal`): the area-weapon and nuke target reticle follows the cursor | [#502](https://github.com/bwiemz/supcom-engine/pull/502) |
 | `GetBoneDirection(bone)` returns three numbers, not a vector table: retail's Lua destructures `v.x, v.y, v.z = GetBoneDirection(b)`, so the Scathis's `CreateProjectileAtMuzzle` errored in `GetAngleInBetween` and the weapon never fired | [#509](https://github.com/bwiemz/supcom-engine/pull/509) |

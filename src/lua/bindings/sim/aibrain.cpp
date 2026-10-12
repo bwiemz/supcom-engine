@@ -9,6 +9,7 @@
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
+#include "lua/enum_args.hpp"
 #include "video/video_decoder.hpp"
 #include "map/scmap_parser.hpp"
 #include "lua/factory_queue.hpp"
@@ -424,25 +425,6 @@ static int brain_GetListOfUnits(lua_State* L) {
 
 namespace {
 
-/// A name of Moho's that Lua gives in any case, with or without its prefix
-/// (gpg's REnumType::SetLexical); its index in `names`, or -1.
-template <size_t N>
-int parse_enum(std::string_view text, std::string_view prefix,
-               const std::array<std::string_view, N>& names) {
-    const auto same = [](std::string_view a, std::string_view b) {
-        return a.size() == b.size() &&
-               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
-                   return std::tolower(static_cast<unsigned char>(x)) ==
-                          std::tolower(static_cast<unsigned char>(y));
-               });
-    };
-    if (text.size() > prefix.size() && same(text.substr(0, prefix.size()), prefix))
-        text.remove_prefix(prefix.size());
-    for (size_t i = 0; i < N; ++i)
-        if (same(text, names[i])) return static_cast<int>(i);
-    return -1;
-}
-
 enum class Alliance { Neutral, Ally, Enemy };
 Alliance alliance_with(const sim::SimState& sim, i32 army, i32 other) {
     if (other == army || sim.is_ally(army, other)) {
@@ -506,8 +488,7 @@ std::optional<Alliance> alliance_arg(lua_State* L, int i) {
     if (lua_type(L, i) != LUA_TSTRING) {
         return std::nullopt;
     }
-    const int a = parse_enum(lua_tostring(L, i), "ALLIANCE_",
-                             std::array<std::string_view, 3>{"Neutral", "Ally", "Enemy"});
+    const int a = parse_enum(lua_tostring(L, i), "ALLIANCE_", kAllianceNames);
     if (a < 0) {
         luaL_error(L, "Invalid enum value %s", lua_tostring(L, i));
     }
@@ -2499,8 +2480,7 @@ static int brain_PickBestAttackVector(lua_State* L) {
     };
     const std::string squad{name_at(3)};
     const int squad_class = sim::Platoon::squad_class(squad);
-    const int alliance = parse_enum(name_at(4), "ALLIANCE_",
-                                    std::array<std::string_view, 3>{"Neutral", "Ally", "Enemy"});
+    const int alliance = parse_enum(name_at(4), "ALLIANCE_", kAllianceNames);
     const int compare = parse_enum(
         name_at(5), "COMPARE_",
         std::array<std::string_view, 4>{"Closest", "Furthest", "HighestValue", "LeastDefended"});
