@@ -71,10 +71,21 @@ std::ofstream* g_rng_trace = nullptr;
 osc::u32 g_rng_trace_from = 0;
 osc::u32 g_rng_trace_to = 0xFFFFFFFFu;
 
-/// --moho-pathing: ground units path as Moho's do (roadmap item 4c-2c; see
-/// SimState::moho_pathing). A development switch, off by default: a replay
-/// doesn't record it, so play one back with the switch it was made with.
+/// --moho-pathing: a new game's ground units path as Moho's do (roadmap item
+/// 4c-2c; see SimState::moho_pathing). A development switch, off by default;
+/// its setup records it, so its replays and saves play back with it.
 bool g_moho_pathing = false;
+
+/// The pathing a recorded game (a replay, or a save's history) plays with:
+/// the one it records (replay format 16 on), whatever the switch says; an
+/// older recording doesn't say, so the switch decides, as it had to then.
+bool recorded_moho_pathing(const sim::Replay& recording) {
+    if (recording.version < 16) return g_moho_pathing;
+    if (g_moho_pathing != recording.setup.moho_pathing)
+        spdlog::info("--moho-pathing: the recording was made with Moho pathing {}, and plays so",
+                     recording.setup.moho_pathing ? "on" : "off");
+    return recording.setup.moho_pathing;
+}
 
 /// --moho-random: a new game draws from Moho's MT19937 stream (SimRandom::set_mt19937); its
 /// setup records it, so its replays and saves play back with it.

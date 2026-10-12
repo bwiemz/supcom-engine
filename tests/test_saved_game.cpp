@@ -21,6 +21,7 @@ extern "C" {
 #include <vector>
 
 using osc::sim::CommandType;
+using osc::sim::Replay;
 using osc::sim::SavedGame;
 using osc::sim::SaveLoadError;
 using osc::sim::SimState;
@@ -295,6 +296,27 @@ TEST_CASE("A snapshot holds Moho's random stream where the game left it", "[save
     REQUIRE(osc::sim::load_snapshot(d, plain.snapshot).empty());
     CHECK_FALSE(d.moho_random());
     CHECK(d.random().next_u64() == c.random().next_u64());
+}
+
+TEST_CASE("A restored game's history records the pathing it plays with", "[savegame]") {
+    // A save from before replay format 16 doesn't say; its snapshot does,
+    // and a save of the restored game must carry it.
+    Replay old;
+    old.version = 15;
+    old.has_setup = true;
+    old.setup.scenario = "/maps/x/x_scenario.lua";
+    REQUIRE_FALSE(old.setup.moho_pathing);
+
+    LuaGuard g;
+    SimState s(g.L, nullptr);
+    s.set_moho_pathing(true); // as load_snapshot leaves it
+    s.adopt_history(old);
+    CHECK(s.recorded_replay().setup.moho_pathing);
+
+    Replay again;
+    REQUIRE(Replay::deserialize(s.recorded_replay().serialize(), again));
+    CHECK(again.version == Replay::kVersion);
+    CHECK(again.setup.moho_pathing);
 }
 
 TEST_CASE("A damaged snapshot is refused before anything loads", "[savegame]") {
