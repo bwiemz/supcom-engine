@@ -21,7 +21,7 @@ struct ScmapStratum {
 struct ScmapProp {
     std::string blueprint_path; // e.g. "/env/evergreen/props/trees/pine06_prop.bp"
     f32 px, py, pz;            // world position
-    f32 rot[9];                // 3x3 rotation matrix (row-major: rotX, rotY, rotZ)
+    f32 rot[9];                // turned axes rotX, rotY, rotZ: the rotation's columns
     f32 sx, sy, sz;            // scale
 };
 
