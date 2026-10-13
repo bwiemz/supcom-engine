@@ -1268,6 +1268,30 @@ TEST_CASE("IssueFormAttack lays its units out about the target, each heading for
     }
 }
 
+TEST_CASE("A FormAttack in a formation the formations module lacks attacks without one",
+          "[attack][lua][formation]") {
+    // Retail's AI issues IssueFormAttack(units, target, 'NoFormation', 0),
+    // and /lua/formations.lua has no such function. Its module table errors
+    // on a name it lacks (FA's strict modules); the formation is read raw,
+    // and none is taken, as Moho takes an unknown one.
+    FormAttackWorld w;
+    w.run("local formations = { Line = function(units) return { { -1, 0 }, { 1, 0 } } end }\n"
+          "setmetatable(formations, { __index = function(t, k) error('no ' .. k) end })\n"
+          "function import(path) return formations end");
+    Unit* a = w.tank(10.0f, 10.0f, 5.0f);
+    Unit* b = w.tank(10.0f, 14.0f, 5.0f);
+    const Unit* enemy = still(w.sim, 1, 60.0f, 12.0f);
+    w.global("a", a);
+    w.global("b", b);
+    w.global("enemy", enemy);
+    w.run("IssueFormAttack({a, b}, enemy, 'NoFormation', 0)");
+    for (const Unit* u : {a, b}) {
+        REQUIRE(u->command_queue().size() == 1);
+        CHECK(u->command_queue().front().form_attack);
+        CHECK_FALSE(u->command_queue().front().has_slot);
+    }
+}
+
 TEST_CASE("A FormAttack's unit drops its slot once its weapon reaches the target",
           "[attack][lua][formation]") {
     // TaskTick's Processing: in reach, the task drops the formation and the
