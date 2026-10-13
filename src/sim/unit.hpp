@@ -188,6 +188,10 @@ enum class OrderStep : u8 {
 /// right): Moho's ApplyCommonMoveAttackAngle.
 f32 attack_angle_heading(f32 bearing, f32 heading, f32 attack_angle);
 
+/// `q` turned the shortest way that puts its up along `normal`, the turn
+/// before it: Moho's COORDS_Tilt. `q` unchanged for a zero normal.
+Quaternion tilt_to(const Quaternion& q, const Vector3& normal);
+
 class Unit : public Entity {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
