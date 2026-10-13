@@ -684,9 +684,34 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         goal.x += cmd.slot_offset.x;
         goal.z += cmd.slot_offset.z;
     }
-    if (weapon && dist2 < weapon->min_range * weapon->min_range && dist2 > 0) {
+    const bool backs_off = weapon && dist2 < weapon->min_range * weapon->min_range && dist2 > 0;
+    if (backs_off) {
         const f32 dist = std::sqrt(dist2);
         goal = {at.x - dx / dist * guard_scan_radius_, at.y, at.z - dz / dist * guard_scan_radius_};
+    }
+    // A unit on the ground with a weapon for the point is given the square of
+    // side its weapon's MaxRadius about the point (Moho's SetWeaponGoal, set
+    // as the task starts): it makes for the square's nearest part and stops
+    // once in range, so a group keeps its breadth. In retail FA six Strikers
+    // attacking one point stopped 11 apart, having driven straight on. (Moho
+    // centres a formation's square on each unit's slot; a FormAttack's unit
+    // makes for its slot here until that is probed, since a square about a
+    // slot can stop it short of the point's range.) An aircraft is given the
+    // point.
+    if (weapon && !backs_off && !can_fly() && !cmd.has_slot) {
+        const i32 side = static_cast<i32>(weapon->max_range);
+        const f32 x0 = static_cast<f32>(std::lrint(goal.x - static_cast<f32>(side) * 0.5f));
+        const f32 z0 = static_cast<f32>(std::lrint(goal.z - static_cast<f32>(side) * 0.5f));
+        const f32 x1 = x0 + static_cast<f32>(side);
+        const f32 z1 = z0 + static_cast<f32>(side);
+        const Vector3 heading = navigator_.goal();
+        if (!navigator_.is_moving() || heading.x < x0 || heading.x > x1 || heading.z < z0 ||
+            heading.z > z1) {
+            set_path_goal(
+                {std::clamp(position().x, x0, x1), at.y, std::clamp(position().z, z0, z1)}, ctx);
+        }
+        nav_update(dt, ctx.terrain);
+        return OrderStep::Hold;
     }
     const f32 gx = goal.x - position().x;
     const f32 gz = goal.z - position().z;
