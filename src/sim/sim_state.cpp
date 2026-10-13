@@ -533,6 +533,12 @@ bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevat
     if (path_tables_) {
         path_tables_->dirty({lo_x, lo_z, flat->x1, flat->z1});
     }
+    // The default pathing's cells there are classed afresh (structures
+    // stay marked on them).
+    if (pathfinding_grid_) {
+        pathfinding_grid_->refresh_terrain(terrain_->heightmap(), flat->x0, flat->z0, flat->x1,
+                                           flat->z1);
+    }
     const f32 mid_x = static_cast<f32>(lo_x + flat->x1) * 0.5f;
     const f32 mid_z = static_cast<f32>(lo_z + flat->z1) * 0.5f;
     const auto reach_x = static_cast<f32>(flat->x1 - lo_x);

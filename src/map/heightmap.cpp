@@ -31,6 +31,20 @@ Heightmap::Heightmap(u32 map_width, u32 map_height, f32 scale,
         tiers_[t].max.assign(static_cast<size_t>(tiers_[t].width) * tiers_[t].height, 0);
     }
     update_tiers(0, 0, static_cast<i32>(grid_width_), static_cast<i32>(grid_height_));
+    recompute_digest();
+}
+
+u64 Heightmap::point_hash(size_t index, u16 raw) {
+    // splitmix64's finaliser over the point and its height
+    u64 z = (static_cast<u64>(index) << 16 | raw) + 0x9e3779b97f4a7c15ull;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+    return z ^ (z >> 31);
+}
+
+void Heightmap::recompute_digest() {
+    digest_ = 0;
+    for (size_t i = 0; i < data_.size(); ++i) digest_ += point_hash(i, data_[i]);
 }
 
 void Heightmap::update_tiers(i32 x0, i32 z0, i32 x1, i32 z1) {
@@ -110,8 +124,8 @@ void Heightmap::set_rect(i32 x0, i32 z0, i32 x1, i32 z1, f32 elevation) {
     const f32 raw = std::clamp(elevation / scale_, 0.0f, 65535.0f);
     const auto value = static_cast<u16>(raw);
     for (i32 z = z0; z < z1; ++z) {
-        const auto row = data_.begin() + static_cast<std::ptrdiff_t>(z) * grid_width_;
-        std::fill(row + x0, row + x1, value);
+        const size_t row = static_cast<size_t>(z) * grid_width_;
+        for (i32 x = x0; x < x1; ++x) set_point(row + static_cast<size_t>(x), value);
     }
     max_height_ = std::max(max_height_, static_cast<f32>(value) * scale_);
     update_tiers(x0, z0, x1, z1);
@@ -129,9 +143,11 @@ void Heightmap::copy_rect(const Heightmap& from, i32 x0, i32 z0, i32 x1, i32 z1)
         return;
     }
     for (i32 z = z0; z < z1; ++z) {
-        const auto offset = static_cast<std::ptrdiff_t>(z) * grid_width_;
-        std::copy(from.data_.begin() + offset + x0, from.data_.begin() + offset + x1,
-                  data_.begin() + offset + x0);
+        const size_t row = static_cast<size_t>(z) * grid_width_;
+        for (i32 x = x0; x < x1; ++x) {
+            const size_t i = row + static_cast<size_t>(x);
+            set_point(i, from.data_[i]);
+        }
     }
     max_height_ = std::max(max_height_, from.max_height_);
     update_tiers(x0, z0, x1, z1);
@@ -145,6 +161,7 @@ void Heightmap::reset() {
     original_.clear();
     max_height_ = static_cast<f32>(*std::max_element(data_.begin(), data_.end())) * scale_;
     update_tiers(0, 0, static_cast<i32>(grid_width_), static_cast<i32>(grid_height_));
+    recompute_digest();
 }
 
 f32 Heightmap::get_height(f32 x, f32 z) const {

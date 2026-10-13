@@ -1,5 +1,6 @@
 #include "sim/sim_state.hpp"
 
+#include "map/terrain.hpp"
 #include "sim/fnv.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/path_search.hpp"
@@ -508,8 +509,8 @@ void mix_weapon(Fnv& weapons, const Weapon& w) {
 } // namespace
 
 std::array<u64, SimState::ChecksumParts::kCount> SimState::ChecksumParts::values() const {
-    return {rng,     armies,      entities, units,          orders, navigation,
-            weapons, projectiles, shields,  economy_events, threads};
+    return {rng,     armies,      entities, units,          orders,  navigation,
+            weapons, projectiles, shields,  economy_events, threads, terrain};
 }
 
 u32 SimState::ChecksumParts::total() const {
@@ -590,6 +591,10 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         threads.mix(static_cast<u64>(static_cast<u32>(wake)));
     });
     parts.threads = threads.h;
+
+    // The ground: two games whose heights differ anywhere (a flattening, a
+    // load that restored it otherwise) differ here, away from any unit.
+    parts.terrain = terrain_ ? terrain_->heightmap().digest() : 0;
     return parts;
 }
 

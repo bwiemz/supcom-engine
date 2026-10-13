@@ -5,6 +5,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
+#include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "sim/game_setup.hpp"
 #include "sim/saved_game.hpp"
@@ -39,16 +40,28 @@ std::unique_ptr<osc::map::Terrain> slope() {
                                                false);
 }
 
+/// A flat 64 x 64 seabed at height 0 under water 4 deep.
+std::unique_ptr<osc::map::Terrain> sea() {
+    std::vector<osc::u16> heights(65 * 65, 0);
+    return std::make_unique<osc::map::Terrain>(osc::map::Heightmap(64, 64, kScale, heights), 4.0f,
+                                               true);
+}
+
 struct World {
     osc::lua::LuaState state;
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    World() {
+    explicit World(std::unique_ptr<osc::map::Terrain> terrain = slope()) {
         osc::lua::register_moho_bindings(state, sim);
         osc::lua::register_sim_bindings(state, sim);
-        sim.set_terrain(slope());
+        sim.set_terrain(std::move(terrain));
         sim.add_army("ARMY_1", "ARMY_1");
+    }
+
+    /// The default pathing's grid cell (gx, gz), for a land unit
+    bool land_passes(osc::u32 gx, osc::u32 gz) const {
+        return sim.pathfinding_grid()->is_passable_for(gx, gz, "Land");
     }
 
     f32 height(int x, int z) const {
@@ -154,4 +167,111 @@ TEST_CASE("Flattened ground is the look-ahead's highest ground, until it is rese
     CHECK(hm.look_ahead_max(11.0f, 11.0f, 64.0f) == 100.0f);
     w.sim.terrain()->set_flattenings({});
     CHECK(hm.look_ahead_max(11.0f, 11.0f, 8.0f) == before);
+}
+
+TEST_CASE("FlattenMapRect classes the default pathing's cells under it afresh", "[terrain]") {
+    // The slope rises a unit a point, too steep for a cell 2 points across
+    // (0.75 a unit); flattened, cell (5, 5), points 10-12, is level.
+    World w;
+    w.sim.build_pathfinding_grid();
+    REQUIRE_FALSE(w.land_passes(5, 5));
+    const auto before = w.sim.pathfinding_grid()->version();
+    REQUIRE(w.state.do_string("FlattenMapRect(10, 10, 2, 2, 11)").ok());
+    CHECK(w.land_passes(5, 5));
+    CHECK(w.sim.pathfinding_grid()->version() != before); // the pathfinder's labels go stale
+    CHECK_FALSE(w.land_passes(8, 5));                     // away from it, as it was
+}
+
+TEST_CASE("FlattenMapRect's raised seabed shuts a ship whose draft it no longer has", "[terrain]") {
+    World w(sea());
+    w.sim.build_pathfinding_grid();
+    const auto& grid = *w.sim.pathfinding_grid();
+    REQUIRE(grid.water_depth(5, 5) == 4.0f);
+    REQUIRE(grid.is_passable_for(5, 5, "Water", 2.0f, false));
+    REQUIRE(w.sim.flatten_map_rect(10, 10, 2, 2, 3.0f));
+    CHECK(grid.water_depth(5, 5) == 1.0f);
+    CHECK_FALSE(grid.is_passable_for(5, 5, "Water", 2.0f, false));
+    CHECK(grid.is_passable_for(5, 5, "Water", 0.5f, false));
+}
+
+TEST_CASE("A structure on flattened ground still blocks it, and leaves the new ground",
+          "[terrain]") {
+    World w;
+    w.sim.build_pathfinding_grid();
+    auto& grid = *w.sim.pathfinding_grid();
+    grid.mark_obstacle(11.0f, 11.0f, 2.0f, 2.0f);
+    REQUIRE(w.state.do_string("FlattenMapRect(10, 10, 2, 2, 11)").ok());
+    CHECK_FALSE(w.land_passes(5, 5));
+    CHECK(grid.terrain_passable_for(5, 5, "Land", 0.0f, false));
+    grid.clear_obstacle(11.0f, 11.0f, 2.0f, 2.0f);
+    CHECK(w.land_passes(5, 5));
+}
+
+TEST_CASE("A load's ground is the default pathing's, not the boot's", "[terrain]") {
+    osc::sim::GameSetup game;
+    game.scenario = "/maps/test/test_scenario.lua";
+    game.seed = 3;
+    World saved;
+    saved.sim.build_pathfinding_grid();
+    saved.sim.set_game_setup(game);
+    REQUIRE(saved.state.do_string("FlattenMapRect(10, 10, 2, 2, 11)").ok());
+    lua_settop(saved.state.raw(), 0);
+    saved.sim.set_recording(true);
+    saved.sim.tick();
+    const osc::sim::SavedGame save = osc::sim::save_game(saved.sim, "flattened");
+
+    World loaded;
+    loaded.sim.build_pathfinding_grid();
+    loaded.sim.set_game_setup(game);
+    REQUIRE(loaded.state.do_string("FlattenMapRect(40, 40, 2, 2, 41)").ok());
+    lua_settop(loaded.state.raw(), 0);
+    REQUIRE(loaded.land_passes(20, 20));
+    const std::string err = osc::sim::load_snapshot(loaded.sim, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    CHECK(loaded.land_passes(5, 5));         // the saved game's flattening
+    CHECK_FALSE(loaded.land_passes(20, 20)); // the boot's, undone
+}
+
+TEST_CASE("Ground alone changes the sync checksum, in its domain, and a load restores it",
+          "[terrain][checksum]") {
+    World a;
+    World b;
+    const auto before = a.sim.checksum_parts();
+    REQUIRE(before.values() == b.sim.checksum_parts().values());
+    // Far from anything: only the ground changes.
+    REQUIRE(a.state.do_string("FlattenMapRect(50, 50, 2, 2, 3)").ok());
+    lua_settop(a.state.raw(), 0);
+    const auto after = a.sim.checksum_parts();
+    for (size_t i = 0; i < osc::sim::SimState::ChecksumParts::kCount; ++i) {
+        INFO(osc::sim::SimState::ChecksumParts::kNames[i]);
+        const bool terrain = std::string(osc::sim::SimState::ChecksumParts::kNames[i]) == "terrain";
+        CHECK((after.values()[i] != before.values()[i]) == terrain);
+    }
+    // Another flattening is other ground.
+    REQUIRE(b.state.do_string("FlattenMapRect(50, 50, 2, 2, 4)").ok());
+    lua_settop(b.state.raw(), 0);
+    CHECK(b.sim.checksum_parts().terrain != after.terrain);
+    // The ground reset is the map's again.
+    b.sim.terrain()->set_flattenings({});
+    CHECK(b.sim.checksum_parts().terrain == before.terrain);
+
+    // A saved game's ground, loaded over other ground, checksums as it did.
+    osc::sim::GameSetup game;
+    game.scenario = "/maps/test/test_scenario.lua";
+    game.seed = 3;
+    a.sim.set_game_setup(game);
+    a.sim.set_recording(true);
+    a.sim.tick();
+    const auto saved_terrain = a.sim.checksum_parts().terrain;
+    const osc::sim::SavedGame save = osc::sim::save_game(a.sim, "ground");
+    World c;
+    c.sim.set_game_setup(game);
+    REQUIRE(c.state.do_string("FlattenMapRect(20, 20, 3, 3, 9)").ok());
+    lua_settop(c.state.raw(), 0);
+    REQUIRE(c.sim.checksum_parts().terrain != saved_terrain);
+    const std::string err = osc::sim::load_snapshot(c.sim, save.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    CHECK(c.sim.checksum_parts().terrain == saved_terrain);
 }

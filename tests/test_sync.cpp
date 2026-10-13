@@ -3,6 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
@@ -144,6 +146,19 @@ TEST_CASE("Each checksum domain covers its own state, and only it", "[sync]") {
         populate(b);
         b.economy_events().create(first_unit(b)->entity_id(), 0.0, 10.0, 1.0);
         CHECK(differing(a, b) == Names{"economy_events"});
+    }
+    SECTION("the ground, away from any unit: terrain") {
+        LuaGuard ga, gb;
+        SimState a(ga.L, nullptr), b(gb.L, nullptr);
+        for (SimState* sim : {&a, &b}) {
+            std::vector<osc::u16> heights(65 * 65, 256);
+            sim->set_terrain(std::make_unique<osc::map::Terrain>(
+                osc::map::Heightmap(64, 64, 1.0f / 128.0f, std::move(heights)), 0.0f, false));
+            populate(*sim);
+        }
+        REQUIRE(differing(a, b).empty());
+        REQUIRE(b.flatten_map_rect(50, 50, 2, 2, 5.0f));
+        CHECK(differing(a, b) == Names{"terrain"});
     }
     SECTION("stored resources: armies") {
         LuaGuard ga, gb;
