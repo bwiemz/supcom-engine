@@ -552,9 +552,6 @@ void test_trail_render(TestContext& ctx) {
             const auto b = px(without, p);
             return std::array<f32, 3>{a[0] - b[0], a[1] - b[1], a[2] - b[2]};
         };
-        const auto none = [](const std::array<f32, 3>& c) {
-            return std::abs(c[0]) < 0.05f && std::abs(c[1]) < 0.05f && std::abs(c[2]) < 0.05f;
-        };
         // G's points are 2 apart, the one 2k along k ticks after it began:
         // 23 along is 1/16 of the way back (the ramp's red edge), 20 a
         // quarter, 10 seven eighths (its blue).
@@ -563,8 +560,9 @@ void test_trail_render(TestContext& ctx) {
         const auto old = added(with, on(g0, 10));
         const auto tail = added(with, on(g0, 6));
         const auto ahead_of = added(with, on(g0, 26.5f));
-        // (Ahead of the head nothing is added: the ground there may darken as
-        // the trees about it sway, but the additive trail only adds.)
+        // (Ahead of the head and past its tail nothing is added: the ground
+        // there may darken as the trees about it sway, but the additive trail
+        // only adds.)
         // Across the ribbon at 16 along: 1 out (inside its 1.5) and 2.5 (past).
         f32 ex = 0, ey = 0, ez = 0;
         r.camera().eye_position(ex, ey, ez);
@@ -583,9 +581,9 @@ void test_trail_render(TestContext& ctx) {
         const f32 inside = across(1.0f);
         const f32 outside = across(2.5f);
         t.check(head[0] > 0.3f && head[2] < 0.1f && young[0] > 0.3f && young[2] < 0.1f &&
-                    std::abs(young[1]) < 0.05f && old[2] > 0.3f && old[0] < 0.1f && none(tail) &&
-                    ahead_of[0] < 0.05f && ahead_of[2] < 0.05f && inside > 0.3f &&
-                    std::abs(outside) < 0.05f,
+                    std::abs(young[1]) < 0.05f && old[2] > 0.3f && old[0] < 0.1f &&
+                    tail[0] < 0.05f && tail[2] < 0.05f && ahead_of[0] < 0.05f &&
+                    ahead_of[2] < 0.05f && inside > 0.3f && std::abs(outside) < 0.05f,
                 fmt::format("Test 8: added at its head r{:+.2f} b{:+.2f}; a quarter back r{:+.2f} "
                             "g{:+.2f} b{:+.2f}; 7/8 back r{:+.2f} b{:+.2f}; past its 8 ticks "
                             "{:+.2f}, ahead {:+.2f}; 1 across {:+.2f}, 2.5 across {:+.2f}",
