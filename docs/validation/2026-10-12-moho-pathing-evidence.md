@@ -95,6 +95,9 @@ Both games ran three at a time beside others.
 ## What stands between it and the default
 
 1. **Stranded units at a crowded gap** (4 of 24 above). The port follows faf-re's navigator rule for rule; only the original game can tell whether Moho strands them too.
+   - **Answered, 2026-10-13:** the original game gets all 24 across, and none of its units stands still for more than 17 ticks (`tools/moho_probes`).
+   - The difference is in the motion, not the navigator. A Moho unit whose step won't fit is bounced back (`CUnitMotion::CalcMoveCommon`, `AddImpulse` at its top speed x 0.01), and its steering asks for the way afresh once the push dies down. A unit against the wall is therefore never still for the 30 ticks after which its navigator gives up.
+   - The engine's drive now bounces it too. With Moho's pathing 23 of 24 get across; one still stops short.
 2. **The games differ.** The AIs play otherwise with Moho's pathing, so the goldens and benchmarks that hold a pinned game will need re-recording when the default changes.
 3. **What the switch would retire:** the grid's corner-cutting through wall cells (6 of 24 above).
 
