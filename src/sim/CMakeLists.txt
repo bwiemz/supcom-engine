@@ -12,6 +12,7 @@ add_library(osc_sim STATIC
     bounded_props.cpp
     collision.cpp
     collision_beam.cpp
+    collision_cells.cpp
     emitter_params.cpp
     entity.cpp
     formation.cpp

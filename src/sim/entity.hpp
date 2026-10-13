@@ -121,6 +121,17 @@ struct CollisionShape {
     f32 sx = 0, sy = 0, sz = 0; // radius (sphere) or half-extents (box)
 };
 
+/// Where an entity stands in the sim's collision cells (CollisionCells):
+/// the cells its collision box covered when it was last linked (Moho's
+/// CollisionDBRect), and that link's place in their order.
+struct CellLink {
+    u16 x = 0, z = 0; ///< the first cell across and down
+    u16 w = 0, h = 0; ///< the cells across and down from it: none if either is 0
+    u64 seq = 0;      ///< the link's order (later links are higher), 0 if unlinked
+    u64 moved = 0;    ///< the stamp of its last move since the cells advanced, 0 if none
+    u64 mark = 0;     ///< the last gather that took it (one takes each entity once)
+};
+
 /// Attachment child record.
 struct ChildAttachment {
     u32 entity_id = 0;
@@ -178,7 +189,7 @@ public:
     void set_position(const Vector3& p); // implemented in entity.cpp (auto-notifies spatial grid)
 
     const Quaternion& orientation() const { return orientation_; }
-    void set_orientation(const Quaternion& o) { orientation_ = o; }
+    void set_orientation(const Quaternion& o); // entity.cpp (tells the registry's cells)
 
     /// The entity teleported (Warp, or SetPosition with `immediate`): the
     /// renderer jumps it to its new pose instead of sliding it there.
@@ -358,6 +369,8 @@ public:
     void set_grid_cell(i32 cx, i32 cz) { grid_cell_x_ = cx; grid_cell_z_ = cz; }
     i32 prop_cell() const { return prop_cell_; }
     void set_prop_cell(i32 cell) { prop_cell_ = cell; }
+    CellLink& cell_link() { return cell_link_; }
+    const CellLink& cell_link() const { return cell_link_; }
     void set_registry(EntityRegistry* r) { registry_ = r; }
     /// False once unregistered (the object may outlive that until the tick ends).
     bool in_registry() const { return registry_ != nullptr; }
@@ -453,6 +466,7 @@ private:
     i32 grid_cell_x_ = -1; // spatial grid cell, -1 = not in grid
     i32 grid_cell_z_ = -1;
     i32 prop_cell_ = -1;
+    CellLink cell_link_;                 // the registry's CollisionCells'
     EntityRegistry* registry_ = nullptr; // back-pointer for auto grid update
     bool script_destroy_notified_ = false;
     bool script_owns_death_ = false;

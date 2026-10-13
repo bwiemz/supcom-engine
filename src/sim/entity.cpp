@@ -11,6 +11,14 @@ void Entity::set_position(const Vector3& p) {
     if (registry_) registry_->notify_position_changed(*this);
 }
 
+void Entity::set_orientation(const Quaternion& o) {
+    if (o.x == orientation_.x && o.y == orientation_.y && o.z == orientation_.z &&
+        o.w == orientation_.w)
+        return;
+    orientation_ = o;
+    if (registry_) registry_->notify_orientation_changed(*this);
+}
+
 void Entity::set_collision_shape(const CollisionShape& s) {
     collision_shape_ = s;
     shape_reach_ = collision_reach(s);
