@@ -2994,20 +2994,46 @@ Vector3 normalized(const Vector3& v) {
     return {v.x * inv, v.y * inv, v.z * inv};
 }
 
-// Moho's COORDS_Tilt: the shortest turn of its up onto the normal, before it.
+} // namespace
+
+// Moho's COORDS_Tilt and BuildTiltShortestArcDelta (faf-re Entity.cpp,
+// QuaternionMath.cpp). Its up is read off as the rotation matrix's middle
+// column, which stays near unit length when `q` is a little off it, so a
+// turn carries that error along. Rotating (0, 1, 0) by `q` would scale up by
+// |q|^2 and the turn as much again: a unit tilted each tick as it is jostled
+// had its error cubed each time: |q| passed 10^4 in a crowd within 1,500.
 Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
     const Vector3 n = normalized(normal);
     if (n.x == 0.0f && n.y == 0.0f && n.z == 0.0f) {
         return q;
     }
-    const Vector3 up = quat_rotate(q, {0.0f, 1.0f, 0.0f});
+    const Vector3 up{2.0f * (q.y * q.x - q.w * q.z), 1.0f - 2.0f * (q.z * q.z + q.x * q.x),
+                     2.0f * (q.z * q.y + q.w * q.x)};
     const Vector3 h = normalized({up.x + n.x, up.y + n.y, up.z + n.z});
-    const Quaternion delta{up.y * h.z - up.z * h.y, up.z * h.x - up.x * h.z,
-                           up.x * h.y - up.y * h.x, up.x * h.x + up.y * h.y + up.z * h.z};
+    Quaternion delta;
+    delta.w = up.x * h.x + up.y * h.y + up.z * h.z;
+    if (delta.w == 0.0f) {
+        // Exactly upside down: no half-way vector, so a half turn about an
+        // axis square to up, away from its shorter lane of x and y (in
+        // double, as the binary's x87 code).
+        if (std::abs(up.x) < std::abs(up.y)) {
+            const f64 inv = 1.0 / std::sqrt(f64{up.y} * up.y + f64{up.z} * up.z);
+            delta.x = 0.0f;
+            delta.y = static_cast<f32>(inv * up.z);
+            delta.z = static_cast<f32>(-inv * up.y);
+        } else {
+            const f64 inv = 1.0 / std::sqrt(f64{up.x} * up.x + f64{up.z} * up.z);
+            delta.y = 0.0f;
+            delta.x = static_cast<f32>(-inv * up.z);
+            delta.z = static_cast<f32>(inv * up.x);
+        }
+    } else {
+        delta.x = up.y * h.z - up.z * h.y;
+        delta.y = up.z * h.x - up.x * h.z;
+        delta.z = up.x * h.y - up.y * h.x;
+    }
     return quat_multiply(delta, q);
 }
-
-} // namespace
 
 // Moho's CUnitMotion::SnapToGround (from CalcMoveHover and CalcMoveLand).
 Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z,
