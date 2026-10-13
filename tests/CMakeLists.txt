@@ -54,6 +54,7 @@ add_executable(osc_tests
     test_build_on_wreck.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
+    test_frame_times.cpp
     test_interpolation.cpp
     test_ordered_iteration.cpp
     test_collision.cpp

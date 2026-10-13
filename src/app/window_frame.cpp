@@ -36,9 +36,9 @@ bool App::Window::frame() {
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
     const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
-    advance_sim(dt);
+    advance_sim(session_dt);
 
-    run_beats(dt, beat_tick0);
+    run_beats(session_dt, beat_tick0);
     finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
@@ -82,8 +82,18 @@ double App::Window::begin_frame() {
     auto now = std::chrono::high_resolution_clock::now();
     double dt = std::chrono::duration<double>(now - prev_time).count();
     prev_time = now;
+    const bool fixed_step = !screenshot_path.empty() || render_bench || opt.scripted_window;
     if (!screenshot_path.empty() || render_bench) dt = kScreenshotFrameDt;
     if (opt.scripted_window) dt = kInterpFrameDt;
+    // The session runs on the median of the last frame times (Moho's
+    // CScApp::Main and RollingFrameRates), or on a fixed step as Moho's
+    // /framerate gives one: a slow frame adds only a usual frame's time to
+    // the game, so a hitch leaves its ticks behind the wall clock, which the
+    // UI's WaitSeconds keeps. (Retail's commander is selected at the start
+    // only if that leaves the UI's tick short of the warp's unselectable 30.)
+    frame_times.push(dt);
+    session_dt = fixed_step ? dt : frame_times.median();
+    wall_dt = dt;
     // Clamp dt to avoid spiral of death
     if (dt > 0.25) dt = 0.25;
     return dt;
@@ -393,7 +403,7 @@ void App::Window::update_ui(double dt) {
 
     // Resume UI coroutines
     ++ui_frame_count;
-    osc::lua::advance_ui_clock(ui_lua_state.raw(), dt);
+    osc::lua::advance_ui_clock(ui_lua_state.raw(), wall_dt);
     ui_thread_manager.resume_all(ui_frame_count);
 
     // OnBeat — UI heartbeat each frame
