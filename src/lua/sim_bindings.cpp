@@ -3366,7 +3366,6 @@ static int l_ParseEntityCategory(lua_State* L) {
     return 1;
 }
 
-// GetUnitsInRect(x1,z1,x2,z2) or GetUnitsInRect(rect) -> table of units or nil
 /// A Rect at `idx` as Moho reads one (SCR_FromLuaCopy<Rect2f>): its x0, y0,
 /// x1 and y1 fields, y being the map's z. A plain {x0, z0, x1, z1} array
 /// (the engine's own callers) is read too.
@@ -3389,44 +3388,46 @@ static void read_rect(lua_State* L, int idx, f32& x0, f32& z0, f32& x1, f32& z1)
     }
 }
 
-static int l_GetUnitsInRect(lua_State* L) {
+/// Moho's rect queries (cfunc_GetUnitsInRectL, cfunc_GetReclaimablesInRectL)
+/// take a Rect, or x0, z0, x1, z1, and give what the collision cells under it
+/// hold (CollisionCells): each unit, and with `props` each prop, whose
+/// collision box touches those cells, in their order. A destroyed one is
+/// still there until the tick ends, as in Moho. Nil if there is none.
+static int push_rect_gather(lua_State* L, bool props) {
     auto* sim = get_sim(L);
-    if (!sim) { lua_pushnil(L); return 1; }
-
-    f32 x0, z0, x1, z1;
+    if (!sim) {
+        lua_pushnil(L);
+        return 1;
+    }
+    f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
     if (lua_istable(L, 1)) {
         read_rect(L, 1, x0, z0, x1, z1);
     } else {
-        x0 = static_cast<f32>(lua_tonumber(L, 1));
-        z0 = static_cast<f32>(lua_tonumber(L, 2));
-        x1 = static_cast<f32>(lua_tonumber(L, 3));
-        z1 = static_cast<f32>(lua_tonumber(L, 4));
+        x0 = static_cast<f32>(luaL_checknumber(L, 1));
+        z0 = static_cast<f32>(luaL_checknumber(L, 2));
+        x1 = static_cast<f32>(luaL_checknumber(L, 3));
+        z1 = static_cast<f32>(luaL_checknumber(L, 4));
     }
-
-    auto ids = sim->entity_registry().collect_in_rect(x0, z0, x1, z1);
-
-    // Return nil if no units found (FA uses `GetUnitsInRect(...) or {}`)
-    bool found_any = false;
+    const auto found = sim->entity_registry().collision_cells().gather(
+        sim::CollisionCells::query_rect(x0, z0, x1, z1), true, props);
     lua_newtable(L);
-    int result = lua_gettop(L);
-    int idx = 1;
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
-        auto* unit = static_cast<sim::Unit*>(entity);
-        if (unit->lua_table_ref() < 0) continue;
-
-        lua_pushnumber(L, idx++);
-        lua_rawgeti(L, LUA_REGISTRYINDEX, unit->lua_table_ref());
-        lua_rawset(L, result);
-        found_any = true;
+    const int result = lua_gettop(L);
+    int n = 0;
+    for (const sim::Entity* e : found) {
+        if (e->lua_table_ref() < 0) continue;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_rawseti(L, result, ++n);
     }
-
-    if (!found_any) {
-        lua_pop(L, 1); // pop empty table
+    if (n == 0) {
+        lua_pop(L, 1);
         lua_pushnil(L);
     }
     return 1;
+}
+
+// GetUnitsInRect(rect) or (x0, z0, x1, z1): the units there, or nil.
+static int l_GetUnitsInRect(lua_State* L) {
+    return push_rect_gather(L, false);
 }
 
 // Math helpers
@@ -5198,48 +5199,11 @@ static int l_SplitProp(lua_State* L) {
     return 1;
 }
 
-// GetReclaimablesInRect(rect) or (x0, z0, x1, z1): the units and props in
-// it (Moho's cfunc_GetReclaimablesInRectL), nil when there are none. Retail's
-// AI reclaim conditions and engineers read it through
+// GetReclaimablesInRect(rect) or (x0, z0, x1, z1): the units and props
+// there, or nil. Retail's AI reclaim conditions and engineers read it through
 // AIGetReclaimablesAroundLocation.
 static int l_GetReclaimablesInRect(lua_State* L) {
-    auto* sim = get_sim(L);
-    if (!sim) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
-    if (lua_istable(L, 1)) {
-        read_rect(L, 1, x0, z0, x1, z1);
-    } else {
-        x0 = static_cast<f32>(luaL_checknumber(L, 1));
-        z0 = static_cast<f32>(luaL_checknumber(L, 2));
-        x1 = static_cast<f32>(luaL_checknumber(L, 3));
-        z1 = static_cast<f32>(luaL_checknumber(L, 4));
-    }
-
-    auto ids = sim->entity_registry().collect_in_rect(x0, z0, x1, z1);
-
-    lua_newtable(L);
-    int result = lua_gettop(L);
-    int idx = 1;
-
-    for (u32 eid : ids) {
-        auto* e = sim->entity_registry().find(eid);
-        if (!e || e->destroyed() || !(e->is_prop() || e->is_unit())) continue;
-        if (e->lua_table_ref() < 0) continue;
-
-        lua_pushnumber(L, idx++);
-        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
-        lua_rawset(L, result);
-    }
-
-    if (idx == 1) {
-        lua_pop(L, 1);
-        lua_pushnil(L);
-    }
-    return 1;
+    return push_rect_gather(L, true);
 }
 
 // IssuePatrol(units_table, position) — append patrol waypoint (no clear)

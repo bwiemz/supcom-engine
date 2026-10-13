@@ -6419,10 +6419,45 @@ void test_prop(TestContext& ctx) {
         if not holds(GetReclaimablesInRect(a[1] - 6, a[3] - 6, a[1] + 6, a[3] + 6), rock) then
             error('four numbers: no rock')
         end
-        -- Off the map's edge: nothing, so nil
+        -- Off the map's edge: Moho clamps it to the corner cell, where
+        -- nothing stands, so nil
         local none = GetReclaimablesInRect(Rect(-40, -40, -30, -30))
         if none ~= nil then error('an empty rect gave ' .. tostring(none)) end
         rock:Destroy()
+    )");
+    // Moho's order, as the original game gives it (probed 2026-10-13): a
+    // cell's units the last linked first, so the last made, and one that
+    // left and came back first again.
+    lua_check("Test 10c: GetUnitsInRect gives a cell's units the last linked first", R"(
+        local a = GetEntityById(__osc_test_acu_id(1)):GetPosition()
+        local x0 = math.floor((a[1] + 30) / 4) * 4
+        local z0 = math.floor((a[3] + 30) / 4) * 4
+        __osc_cell = Rect(x0, z0, x0 + 4, z0 + 4)
+        __osc_cell_units = {}
+        for i, d in {0, 0.2, -0.2} do
+            local x, z = x0 + 2 + d, z0 + 2 + d
+            local u = CreateUnitHPR('uel0201', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            u.__osc_index = i
+            __osc_cell_units[i] = u
+        end
+        function __osc_cell_order()
+            local t = {}
+            for _, u in GetUnitsInRect(__osc_cell) or {} do table.insert(t, u.__osc_index or 0) end
+            return table.concat(t, ' ')
+        end
+        if __osc_cell_order() ~= '3 2 1' then error('as made: ' .. __osc_cell_order()) end
+        __osc_cell_home = __osc_cell_units[1]:GetPosition()
+        Warp(__osc_cell_units[1], {__osc_cell_home[1] + 60, __osc_cell_home[2], __osc_cell_home[3]})
+    )");
+    for (int i = 0; i < 2; ++i) ctx.sim.tick();
+    lua_check("Test 10d: one warped away leaves its cell as the tick ends", R"(
+        if __osc_cell_order() ~= '3 2' then error('away: ' .. __osc_cell_order()) end
+        Warp(__osc_cell_units[1], __osc_cell_home)
+    )");
+    for (int i = 0; i < 2; ++i) ctx.sim.tick();
+    lua_check("Test 10e: and back, it links last, so comes first", R"(
+        if __osc_cell_order() ~= '1 3 2' then error('back: ' .. __osc_cell_order()) end
+        for _, u in __osc_cell_units do u:Destroy() end
     )");
     // The commanders' warp-in keeps blasting its surroundings (DamageRing,
     // Force) for several seconds; let it finish before reclaiming beside one.

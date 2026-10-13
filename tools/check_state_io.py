@@ -27,6 +27,8 @@ TYPES: list[tuple[str, str]] = [
     ("src/sim/entity.hpp", "Entity"),
     ("src/sim/entity.hpp", "Entity::BeamSetup"),
     ("src/sim/entity.hpp", "CollisionShape"),
+    ("src/sim/entity.hpp", "CellLink"),
+    ("src/sim/collision_cells.hpp", "CollisionCells"),
     ("src/sim/entity.hpp", "ScrollerSpec"),
     ("src/sim/entity.hpp", "TextureScroller"),
     ("src/sim/unit.hpp", "Unit"),

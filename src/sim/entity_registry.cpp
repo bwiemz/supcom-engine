@@ -75,6 +75,7 @@ Entity* EntityRegistry::find(u32 id) const {
 void EntityRegistry::collect_garbage(const std::function<void(Entity&)>& release) {
     std::vector<std::unique_ptr<Entity>> dead;
     dead.swap(graveyard_);
+    for (const auto& e : dead) cells_.unlink(*e);
     if (release)
         for (const auto& e : dead) release(*e);
     dead.clear();
@@ -109,6 +110,10 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
     prop_grid_height_ = std::max(1u, (map_height + PROP_CELL_SIZE - 1) / PROP_CELL_SIZE);
     prop_cells_.resize(static_cast<size_t>(prop_grid_width_) * prop_grid_height_);
     grid_initialized_ = true;
+    // The collision cells start empty: what exists links below, in id order
+    // (the order it was made, as Moho links each as it is made).
+    for_each([](Entity& e) { e.cell_link() = CellLink{}; });
+    cells_.init(map_width, map_height);
 
     // Retroactively insert all existing entities (e.g. props created before grid init)
     for_each([this](Entity& e) {
@@ -120,6 +125,7 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
             e.set_prop_cell(-1);
             prop_cell_update(e);
         }
+        cells_.link(e);
     });
 
     spdlog::info("Spatial hash grid: {}x{} cells (cell_size={}u, {} entities indexed)", grid_width_,
@@ -163,6 +169,7 @@ void EntityRegistry::grid_remove(const Entity& entity, i32 cx, i32 cz) {
 
 void EntityRegistry::notify_position_changed(Entity& entity) {
     if (!grid_initialized_) return;
+    cells_.moved(entity);
     if (entity.is_prop()) {
         prop_cell_update(entity);
     }
@@ -394,9 +401,15 @@ void EntityRegistry::props_touching(f32 x0, f32 z0, f32 x1, f32 z1,
     out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
-void EntityRegistry::notify_collision_shape_changed(const Entity& entity) {
+void EntityRegistry::notify_orientation_changed(Entity& entity) {
+    if (grid_initialized_) cells_.moved(entity);
+}
+
+void EntityRegistry::notify_collision_shape_changed(Entity& entity) {
     if (entity.shape_reach() > COLLIDER_REACH) large_colliders_.insert(entity.entity_id());
     else large_colliders_.erase(entity.entity_id());
+    // As Moho installs a new collision primitive: relinked at once.
+    if (grid_initialized_) cells_.link(entity);
 }
 
 bool EntityRegistry::any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1,

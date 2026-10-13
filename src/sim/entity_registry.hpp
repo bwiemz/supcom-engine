@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/collision_cells.hpp"
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
@@ -73,6 +74,15 @@ public:
 
     /// Notify the registry that an entity's position has changed.
     void notify_position_changed(Entity& entity);
+    /// Called by Entity::set_orientation when it turns.
+    void notify_orientation_changed(Entity& entity);
+
+    /// Moho's collision cells, for its rect queries (GetUnitsInRect,
+    /// GetReclaimablesInRect). init_spatial_grid sizes them.
+    CollisionCells& collision_cells() { return cells_; }
+    /// Relink what moved this tick (Moho's AdvanceCoords, at the end of the
+    /// beat): SimState::tick, before collect_garbage.
+    void advance_collision_cells() { cells_.advance(); }
 
     /// Collect entity IDs within radius of a point (2D distance, ignoring Y),
     /// in ascending id order.
@@ -123,7 +133,7 @@ public:
     void props_touching(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<Entity*>& out) const;
 
     /// Called by Entity::set_collision_shape.
-    void notify_collision_shape_changed(const Entity& entity);
+    void notify_collision_shape_changed(Entity& entity);
 
     /// Iterate all entities in id order: the same order on every platform,
     /// as lockstep needs (a hash map's order is the standard library's).
@@ -206,6 +216,10 @@ private:
     std::vector<std::vector<UnitRef>> prop_cells_;
     /// Entities whose shape reaches beyond COLLIDER_REACH, in id order.
     std::set<u32> large_colliders_;
+    /// Units and props by the cells their collision boxes cover. An entity
+    /// leaves as collect_garbage frees it, not as it is unregistered: Moho's
+    /// gathers find a destroyed one until the end of the beat.
+    CollisionCells cells_;
 
     bool any_unit_collider_impl(f32 x0, f32 z0, f32 x1, f32 z1, bool (*visit)(const Entity&, void*),
                                 void* ctx) const;

@@ -1574,6 +1574,11 @@ void SimState::tick() {
         lua_setgcthreshold(L_, 0);
     }
 
+    // What moved this tick relinks in the collision cells (Moho's
+    // AdvanceCoords, near the end of the beat): the rect queries see each
+    // tick's moves from the next one on.
+    entity_registry_.advance_collision_cells();
+
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe,
     // their Lua handles cut first.

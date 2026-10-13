@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 50; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 51; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -76,7 +76,8 @@ constexpr u32 kVersion = 50; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 47: the heightfield's flattenings (FlattenMapRect);
                              // 48: units' Elevation, hover lean and wobble;
                              // 49: aircraft's blueprint Elevation, for RevertElevation;
-                             // 50: FormAttack orders and their slots
+                             // 50: FormAttack orders and their slots;
+                             // 51: collision cells' link order (Moho's rect queries)
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -149,6 +150,12 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
         }
     }
     w.u32v(reg.next_id_);
+    // cells_: each entity's link order (its CellLink), and the count of
+    // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
+    // last_index_ are the map's; units_ and props_ follow from the entities
+    // and their order; moves_ is empty between ticks, and move_stamp_ and
+    // gather_ only tell one tick's moves and one gather's finds apart
+    w.u64v(reg.cells_.link_count());
     // default_random_, sim_random_: the sim's generator (SimState's);
     // walking_: no walk is under way between ticks; unregister_hook_: the
     // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
@@ -172,6 +179,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     for (auto& cell : reg.prop_cells_) {
         cell.clear();
     }
+    reg.cells_.clear();
 
     const size_t n = r.size(64);
     u32 last_id = 0;
@@ -229,7 +237,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
         reg.entities_[id] = std::move(e);
         ++reg.live_count_;
         Entity& placed = *reg.entities_[id];
-        reg.notify_collision_shape_changed(placed);
+        // As notify_collision_shape_changed, but for the collision cells,
+        // which link below, all in their saved order.
+        if (placed.shape_reach() > EntityRegistry::COLLIDER_REACH) reg.large_colliders_.insert(id);
         if (reg.grid_initialized_) {
             i32 cx = 0, cz = 0;
             reg.world_to_cell(placed.position().x, placed.position().z, cx, cz);
@@ -242,6 +252,12 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     }
     reg.next_id_ = r.u32v();
     if (r.ok() && reg.next_id_ <= last_id) r.fail("an entity id past the next one");
+    const u64 links = r.u64v();
+    if (!r.ok()) return;
+    std::vector<Entity*> linked;
+    for (const auto& slot : reg.order_)
+        if (slot.entity && slot.entity->cell_link().seq != 0) linked.push_back(slot.entity);
+    reg.cells_.restore(std::move(linked), links);
 }
 
 // ------------------------------------------------------------ SimState

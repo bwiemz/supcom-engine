@@ -202,6 +202,10 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     enum8(w, e.viz_neutrals_);
     save_shape(w, e.collision_shape_);
     save_shape(w, e.default_collision_shape_);
+    // cell_link_: its order alone (seq); its cells follow from where it is
+    // (between ticks the cells have advanced, so no move is pending, and
+    // moved is 0), and mark is a gather's own
+    w.u64v(e.cell_link_.seq);
     w.str(e.mesh_override_); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
     w.b(e.unselectable_);
     w.b(e.is_wreckage_);
@@ -294,6 +298,8 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.collision_shape_ = load_shape(r);
     e.shape_reach_ = collision_reach(e.collision_shape_); // derived, not saved
     e.default_collision_shape_ = load_shape(r);
+    e.cell_link_ = CellLink{};
+    e.cell_link_.seq = r.u64v(); // linked in this order once all are loaded
     e.mesh_override_ = r.str();
     e.unselectable_ = r.b();
     e.is_wreckage_ = r.b();
