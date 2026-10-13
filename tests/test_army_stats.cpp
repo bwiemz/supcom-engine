@@ -975,24 +975,26 @@ TEST_CASE("A unit's resource fraction counts only what it asks for", "[economy]"
     CHECK(osc::sim::resource_fraction(osc::sim::UnitEconomy{}, 0.1, 0.1) == 1.0);
 }
 
-TEST_CASE("GetUnitsAroundPoint finds units on the cells of its square, GetNumUnitsAroundPoint "
-          "centres strictly within its radius",
+TEST_CASE("GetUnitsAroundPoint and GetNumUnitsAroundPoint find centres strictly within the radius, "
+          "as the original game does",
           "[army][lua]") {
+    // Retail FA's answers (tools/moho_probes, 2026-10-12) for a 2x2 power
+    // generator, asked from points about its centre.
     struct Row {
-        osc::f32 x, z, half, r;
-        bool listed;
-        bool counted;
+        osc::f32 dx, dy, dz, r;
+        bool found;
     };
     const std::vector<Row> rows = {
-        {10.5f, 10.0f, 0.5f, 1.0f, true, true},   {11.8f, 10.0f, 0.5f, 1.0f, true, false},
-        {8.2f, 10.0f, 0.5f, 1.0f, true, false},   {11.5f, 11.5f, 0.25f, 1.0f, true, false},
-        {15.0f, 10.0f, 3.5f, 1.0f, true, false},  {13.0f, 10.0f, 0.5f, 1.0f, false, false},
-        {11.0f, 10.0f, 0.5f, 1.0f, true, false},  {10.0f, 10.0f, 0.5f, 0.0f, true, false},
-        {7.5f, 10.0f, 0.25f, 0.0f, false, false},
+        {0.0f, 0.0f, 0.0f, 1.0f, true},  {0.99f, 0.0f, 0.0f, 1.0f, true},
+        {1.0f, 0.0f, 0.0f, 1.0f, false}, {1.01f, 0.0f, 0.0f, 1.0f, false},
+        {3.0f, 0.0f, 0.0f, 1.0f, false}, {1.99f, 0.0f, 0.0f, 2.0f, true},
+        {2.0f, 0.0f, 0.0f, 2.0f, false}, {4.99f, 0.0f, 0.0f, 5.0f, true},
+        {5.0f, 0.0f, 0.0f, 5.0f, false}, {0.0f, 0.0f, 0.0f, 0.0f, false},
+        {3.0f, 0.0f, 0.0f, 0.0f, false}, {0.6f, 0.9f, 0.0f, 1.0f, true},
+        {0.6f, 0.0f, 0.6f, 1.0f, true},  {0.75f, 0.0f, 0.75f, 1.0f, false},
     };
     for (const auto& row : rows) {
-        DYNAMIC_SECTION("unit at " << row.x << "," << row.z << " half " << row.half << " r "
-                                   << row.r) {
+        DYNAMIC_SECTION("offset " << row.dx << "," << row.dy << "," << row.dz << " r " << row.r) {
             osc::lua::LuaState lua;
             osc::sim::SimState sim(lua.raw(), nullptr);
             osc::lua::register_moho_bindings(lua, sim);
@@ -1002,12 +1004,12 @@ TEST_CASE("GetUnitsAroundPoint finds units on the cells of its square, GetNumUni
             auto unit = std::make_unique<osc::sim::Unit>();
             unit->set_army(0);
             unit->add_category("LAND");
-            unit->set_position({row.x, 0.0f, row.z});
+            unit->set_position({10.0f, 0.0f, 10.0f});
             osc::sim::CollisionShape box;
             box.type = osc::sim::CollisionShapeType::BOX;
-            box.sx = row.half;
+            box.sx = 1.0f;
             box.sy = 0.5f;
-            box.sz = row.half;
+            box.sz = 1.0f;
             unit->set_default_collision_shape(box);
             lua_newtable(L);
             lua_pushstring(L, "_c_object");
@@ -1021,20 +1023,24 @@ TEST_CASE("GetUnitsAroundPoint finds units on the cells of its square, GetNumUni
             lua_pushlightuserdata(L, sim.get_army(0));
             lua_rawset(L, -3);
             lua_setglobal(L, "brain");
-            lua_pushnumber(L, row.r);
-            lua_setglobal(L, "r");
+            for (const auto& [name, value] :
+                 {std::pair{"r", row.r}, std::pair{"qx", 10.0f + row.dx}, std::pair{"qy", row.dy},
+                  std::pair{"qz", 10.0f + row.dz}}) {
+                lua_pushnumber(L, value);
+                lua_setglobal(L, name);
+            }
 
             const auto result = lua.do_string(R"(
                 local land = {__name = 'LAND'}
-                listed = table.getn(moho.aibrain_methods.GetUnitsAroundPoint(brain, land, {10, 0, 10}, r))
-                counted = moho.aibrain_methods.GetNumUnitsAroundPoint(brain, land, {10, 0, 10}, r)
+                listed = table.getn(moho.aibrain_methods.GetUnitsAroundPoint(brain, land, {qx, qy, qz}, r))
+                counted = moho.aibrain_methods.GetNumUnitsAroundPoint(brain, land, {qx, qy, qz}, r)
             )");
             INFO((result.ok() ? std::string() : result.error().message));
             REQUIRE(result.ok());
             lua_getglobal(L, "listed");
-            CHECK(lua_tonumber(L, -1) == (row.listed ? 1.0 : 0.0));
+            CHECK(lua_tonumber(L, -1) == (row.found ? 1.0 : 0.0));
             lua_getglobal(L, "counted");
-            CHECK(lua_tonumber(L, -1) == (row.counted ? 1.0 : 0.0));
+            CHECK(lua_tonumber(L, -1) == (row.found ? 1.0 : 0.0));
             lua_pop(L, 2);
         }
     }
