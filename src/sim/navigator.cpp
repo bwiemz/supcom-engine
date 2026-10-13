@@ -348,6 +348,25 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         return moho_active_ && sim_ && sim_->footprint_fits_at(unit.footprint(), to.x, to.z) == 0 &&
                sim_->footprint_fits_at(unit.footprint(), from.x, from.z) != 0;
     };
+    // Refused, it is pushed back from the ground it won't fit, as Moho's
+    // CalcMoveCommon pushes it (AddImpulse: its top speed x 0.01 back along
+    // the step), where its footprint fits; else it stays. Where it ends.
+    const auto bounce = [&](const Vector3& tried, const Quaternion& facing) {
+        Vector3 at = from;
+        const f32 bx = from.x - tried.x;
+        const f32 bz = from.z - tried.z;
+        const f32 along = std::sqrt(bx * bx + bz * bz);
+        if (along > 1e-6f) {
+            const f32 push = max_speed * 0.01f;
+            const Vector3 back{from.x + bx / along * push, from.y, from.z + bz / along * push};
+            if (sim_->footprint_fits_at(unit.footprint(), back.x, back.z) != 0) {
+                at = back;
+                if (terrain) at.y = unit.ground_stance(terrain, at.x, at.z, facing).y;
+                unit.set_position(at);
+            }
+        }
+        return at;
+    };
 
     // Held still (a weapon unpacking, a teleport): it keeps its orders.
     if (unit.immobile()) {
@@ -371,6 +390,8 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
             facing = stance.orientation;
         }
         if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
+        // Braking near still, it stays put if refused: bounced and sent for a
+        // fresh way here, a crowd's waiting units strand more of their number.
         if (refused(pos)) {
             unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
             return true;
@@ -499,10 +520,14 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         facing = stance.orientation;
     }
     if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
-    // Refused (as above): it stays put, turned, and its steering then asks
-    // for the way afresh. A sidestep (M203c) that led there is given up --
-    // the steering picks its side by the units alone, and a point onto ground
-    // the unit won't fit would hold it against it till it gave up the move.
+    // Refused (as above): it bounces back, and once the push has died down
+    // its steering asks for the way afresh (ProcessSplineMovement:
+    // NotifyNavigatorPathRefresh). A unit against a wall is never still, so it
+    // doesn't give up the move: in retail FA all 24 Strikers sent through a
+    // crowded gap got there. A
+    // sidestep (M203c) that led there is given up -- the steering picks its
+    // side by the units alone, and a point onto ground the unit won't fit
+    // would hold it against it till it gave up the move.
     if (refused(pos)) {
         if (sidestep_ && waypoint_index_ == sidestep_index_ &&
             waypoint_index_ + 1 < waypoints_.size()) {
@@ -511,8 +536,9 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
             next_check_ = 0;
         }
         moho_.request_repath();
-        unit.set_orientation(
-            terrain ? unit.ground_stance(terrain, from.x, from.z, level).orientation : level);
+        const Vector3 at = bounce(pos, level);
+        unit.set_orientation(terrain ? unit.ground_stance(terrain, at.x, at.z, level).orientation
+                                     : level);
         unit.note_drive(0, 0, top, turning);
         return true;
     }

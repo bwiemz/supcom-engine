@@ -60,14 +60,14 @@ Each area, what is accepted and by what. "Last verified" names the validation re
 | Scenario | Game at the end | Measured |
 | --- | --- | --- |
 | `early`: 6,000 ticks (10 game-minutes) | 641 units, 40,717 entities | 13.5 s of sim; a tick's mean 2.2 ms, p50 1.5 ms, p99 17 ms; peak 408 MB |
-| `early-moho`: the same, Moho pathing | 569 units, 42,546 entities; 8,409 searches, 2.1 M cells expanded | 14.0 s of sim; mean 2.3 ms, p50 1.6 ms, p99 12 ms; peak 387 MB |
+| `early-moho`: the same, Moho pathing | 637 units, 42,635 entities; 7,682 searches, 2.3 M cells expanded | 17.9 s of sim; mean 3.0 ms, p50 1.8 ms, p99 17 ms; peak 389 MB |
 | `late`: 18,000 ticks (30 game-minutes) | 1,388 units, 38,724 entities | 155 s of sim; a tick's mean 8.6 ms, p50 6.7 ms, p99 44 ms; peak 653 MB |
-| `late-moho`: the same, Moho pathing | 1,248 units, 40,167 entities; 125,305 searches, 45 M cells expanded | 248 s of sim; mean 13.8 ms, p50 13.0 ms, p99 55 ms; peak 539 MB |
+| `late-moho`: the same, Moho pathing | 1,344 units, 43,731 entities; 163,603 searches, 45 M cells expanded | 250 s of sim; mean 13.9 ms, p50 13.4 ms, p99 52 ms; peak 707 MB |
 | `render-battle`: 600 frames of tick 6,000 | | CPU `render()` p50 1.7 ms, p95 3.2 ms; GPU 0.60 ms |
 | `render-late`: 600 frames of tick 18,000 | | CPU p50 2.4 ms, p95 5.5 ms; GPU 0.72 ms |
 | `render-strategic`: the same, zoomed out to icons | | CPU p50 1.8 ms, p95 4.9 ms; GPU 0.38 ms |
 
-Moho pathing costs 1.04× the default's sim time in the early game and 1.6× in the late game. A late-game search expands about 360 cells; an early-game one about 250.
+Moho pathing costs 1.3× the default's sim time in the early game and 1.6× in the late game. A search expands about 300 cells. Its two games were recorded again with a unit bouncing back from ground it won't fit, as Moho's motion does.
 
 Against the 2026-10-07 baselines (6d59aa3b), the games have grown:
 - **More units early.** Retail's AIs build as they did before #591 again (#615): 641 units at tick 6,000, against 517.
@@ -79,7 +79,7 @@ Against the 2026-10-07 baselines (6d59aa3b), the games have grown:
 
 What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`docs/ROADMAP.md`, and the external review's work order of 2026-10-06).
 
-- **Pathing by footprint.** By default units still path as points on one 2-unit grid. Moho keeps passability per footprint class, so a big unit can't take a gap a small one can, and its pathing is now ported (#415–#418, `docs/plans/2026-10-07-per-class-pathing-design.md`). It stays behind `--moho-pathing`; the evidence for making it the default is in the [pathing record](validation/2026-10-12-moho-pathing-evidence.md): every gate data mode passes with it, water transitions and saves hold, and the late game now runs faster with it than without (81 s against 139 s; the games differ). Before the switch: with it, 4 of 24 units sent through a crowded 4-wide gap stop short, as faf-re's navigator has it (to compare with the original game); without it, 6 of them cut through the wall's corners.
+- **Pathing by footprint.** By default units still path as points on one 2-unit grid. Moho keeps passability per footprint class, so a big unit can't take a gap a small one can, and its pathing is now ported (#415–#418, `docs/plans/2026-10-07-per-class-pathing-design.md`). It stays behind `--moho-pathing`; the evidence for making it the default is in the [pathing record](validation/2026-10-12-moho-pathing-evidence.md): every gate data mode passes with it, water transitions and saves hold, and the late game now runs faster with it than without (81 s against 139 s; the games differ). Before the switch: of 24 units sent through a crowded 4-wide gap, the original game gets all across (probed 2026-10-12). With it, 23 do, since a unit pushed against the wall bounces back as Moho's motion does, and one still stops short. Without it, 6 of them cut through the wall's corners.
 - **Projectile flight.** As Moho's since #405 and #408, but for two things nothing in retail uses: bounce (no projectile has `Min/MaxBounceCount`), and retargeting on a miss, which Moho gates on `AutoInitiateAttackCommand` as well as `ReTargetOnMiss`, a pair no retail weapon has.
 - **Engine API:** the Lua calls, arguments, blueprint fields, categories, callbacks and behaviours that retail's scripts and data use and the engine doesn't support, or supports in part, with FAF's additions, each with its effect, evidence and status: `docs/engine-api-gaps.md`.
 - **Needs a person:** a listening pass of the audio; comparison with the original game's look (no reference captures exist here); the hardware cursor on a real display; Steam and the Steam Deck; external testers.

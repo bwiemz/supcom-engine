@@ -209,11 +209,11 @@ void test_choke(TestContext& ctx) {
                           .. '%d stopped short of it; the last in by tick %d',
                           through, round, clipped, stranded, last))
         if __osc_moho_pathing then
-            -- Moho's drive moves a unit only where its footprint fits. One
-            -- whose fresh search (after three failed continuations) finds
-            -- the gap shut by stopped units arrives where it stands, as
-            -- faf-re's CAiPathNavigator does: some stop short.
+            -- Moho's drive moves a unit only where its footprint fits, and
+            -- bounces one back from ground it won't (CalcMoveCommon). In
+            -- retail FA all 24 get across; one still stops short here.
             if clipped > 0 then error(clipped .. ' went through wall cells') end
+            if stranded > 1 then error(stranded .. ' stopped short of the gap') end
         else
             -- The grid's pathing gets each one across; its smoothed paths
             -- cut the wall's corners (a known gap of the default pathing).
