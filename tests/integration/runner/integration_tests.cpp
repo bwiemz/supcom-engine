@@ -6329,6 +6329,29 @@ void test_prop(TestContext& ctx) {
         }
     };
     const int failures_before = osc::test_status::failure_count();
+    // The original game's answers for one of Seton's Clutch's tree groups
+    // (pine06_big_groupa at 113.573, 680.572), probed 2026-10-13: the .scmap's
+    // axes are its matrix's columns, which turn the box's offset with it.
+    lua_check("Test 5b: a map prop faces and holds its box as in the original game", R"(
+        local group
+        for _, e in GetReclaimablesInRect(Rect(112, 679, 115, 682)) or {} do
+            local p = e:GetPosition()
+            if math.abs(p[1] - 113.573) < 0.01 and math.abs(p[3] - 680.572) < 0.01 then group = e end
+        end
+        if not group then error('no group at 113.573, 680.572 (is this Seton\'s Clutch?)') end
+        local q = group:GetOrientation()
+        if math.abs(q[1]) > 0.001 or math.abs(q[2] + 0.4617) > 0.001 or math.abs(q[3]) > 0.001
+            or math.abs(q[4] - 0.8870) > 0.001 then
+            error(string.format('turned %.4f %.4f %.4f %.4f, not 0 -0.4617 0 0.8870', q[1], q[2], q[3], q[4]))
+        end
+        local x = group:GetCollisionExtents()
+        local want = {x.Min.x - 107.331, x.Min.z - 675.632, x.Max.x - 119.480, x.Max.z - 686.602}
+        for _, d in want do
+            if math.abs(d) > 0.002 then
+                error(string.format('box %.3f %.3f | %.3f %.3f', x.Min.x, x.Min.z, x.Max.x, x.Max.z))
+            end
+        end
+    )");
     lua_check("Test 6: map props are instances of their script classes", R"(
         local Tree = import('/lua/proptree.lua').Tree
         local TreeGroup = import('/lua/proptree.lua').TreeGroup
