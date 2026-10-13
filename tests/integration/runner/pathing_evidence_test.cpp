@@ -226,6 +226,15 @@ void test_choke(TestContext& ctx) {
             if u:IsMoving() then error('Striker ' .. i .. ' is still moving') end
         end
     )");
+    // Pushed apart tick after tick, each is tilted to the ground again: its
+    // orientation must stay a rotation (it once grew past 10^4 here).
+    lua_check(ctx, t, "Test 2b: each one's orientation is still unit length", R"(
+        for i, u in __osc_crowd do
+            local q = u:GetOrientation()
+            local n = math.sqrt(q[1] * q[1] + q[2] * q[2] + q[3] * q[3] + q[4] * q[4])
+            if math.abs(n - 1) > 0.001 then error('Striker ' .. i .. ': |q| ' .. n) end
+        end
+    )");
     lua_check(ctx, t,
               "Test 3: the Monkeylord crosses over the wall with Moho's pathing, by the gap "
               "or round without it",
