@@ -484,6 +484,14 @@ void StateIO::load(StateReader& r, SimState& sim) {
     }
     if (sim.terrain_) {
         sim.terrain_->set_flattenings(std::move(flattenings));
+        // The boot's ground and the saved game's differ anywhere: the default
+        // pathing's cells are all classed afresh, the structures marked on
+        // them kept (and then swapped for the saved game's, below).
+        if (sim.pathfinding_grid_) {
+            const map::Heightmap& hm = sim.terrain_->heightmap();
+            sim.pathfinding_grid_->refresh_terrain(hm, 0, 0, static_cast<i32>(hm.grid_width()),
+                                                   static_cast<i32>(hm.grid_height()));
+        }
     }
     // The boot's structures come off the pathfinding grid, the saved
     // game's go on.

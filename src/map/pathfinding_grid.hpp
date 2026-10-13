@@ -70,6 +70,11 @@ public:
     /// Convert grid coordinates to world position (cell center).
     void grid_to_world(u32 gx, u32 gz, f32& wx, f32& wz) const;
 
+    /// The terrain changed at heightmap points [x0, x1) x [z0, z1) (a
+    /// flattening, or a load's ground): its cells are classed again by slope
+    /// and water depth, under any structure still marked on them.
+    void refresh_terrain(const Heightmap& heightmap, i32 x0, i32 z0, i32 x1, i32 z1);
+
     /// Mark a rectangular footprint as Obstacle: the cells whose centres it
     /// covers, or the one its centre is in when it covers none.
     /// (wx, wz) = center in world coords, sizeX/sizeZ in world units.
@@ -85,6 +90,9 @@ public:
     u64 version() const { return version_; }
 
 private:
+    /// A cell's terrain class and water depth, from its corner points.
+    void classify_cell(const Heightmap& heightmap, u32 gx, u32 gz, CellPassability& pass,
+                       f32& depth) const;
     void covered_cells(f32 wx, f32 wz, f32 sizeX, f32 sizeZ, u32& gx0, u32& gz0, u32& gx1,
                        u32& gz1) const;
 
@@ -111,6 +119,8 @@ private:
     std::vector<u16> obstacle_refs_;           // footprints covering each cell
     std::vector<f32> water_depth_;
     f32 water_elevation_ = 0;
+    f32 max_diff_ = 0; ///< the largest height step a passable cell's edge has
+    bool has_water_ = false;
     u64 version_ = 0;
 };
 

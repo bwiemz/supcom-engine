@@ -638,13 +638,14 @@ public:
         u64 shields = 0;        ///< on or off (their health is an entity's)
         u64 economy_events = 0; ///< progress, done, cancelled
         u64 threads = 0;        ///< live script threads: which, and when they wake
+        u64 terrain = 0;        ///< the heightfield's digest (its flattenings included)
         u32 total() const;
-        static constexpr size_t kCount = 11;
+        static constexpr size_t kCount = 12;
         /// The domains in order, with their names (kNames).
         std::array<u64, kCount> values() const;
         static constexpr std::array<const char*, kCount> kNames = {
-            "rng",     "armies",      "entities", "units",          "orders", "navigation",
-            "weapons", "projectiles", "shields",  "economy_events", "threads"};
+            "rng",     "armies",      "entities", "units",          "orders",  "navigation",
+            "weapons", "projectiles", "shields",  "economy_events", "threads", "terrain"};
     };
     ChecksumParts checksum_parts() const;
     /// The checksum of the tick just run: computed once however many ask

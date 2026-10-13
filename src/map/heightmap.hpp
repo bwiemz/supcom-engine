@@ -42,6 +42,12 @@ public:
     void copy_rect(const Heightmap& from, i32 x0, i32 z0, i32 x1, i32 z1);
     void reset();
 
+    /// The heights' digest, for the sync checksum: a sum over the grid's
+    /// points of a hash of each one's place and raw height, kept as the
+    /// heights change, so two grids differing anywhere differ in it (but
+    /// for a 64-bit collision) and an edit costs only its points.
+    u64 digest() const { return digest_; }
+
     u32 grid_width() const { return grid_width_; }
     u32 grid_height() const { return grid_height_; }
     u32 map_width() const { return grid_width_ - 1; }
@@ -55,6 +61,7 @@ private:
     std::vector<u16> data_; // row-major [gz * grid_width + gx]
     std::vector<u16> original_;
     f32 max_height_ = 0.0f;
+    u64 digest_ = 0;
     struct Tier {
         u32 width = 0;
         u32 height = 0;
@@ -63,6 +70,15 @@ private:
     std::vector<Tier> tiers_;
 
     void update_tiers(i32 x0, i32 z0, i32 x1, i32 z1);
+    /// Point `index` at raw height `raw`'s share of digest_.
+    static u64 point_hash(size_t index, u16 raw);
+    /// digest_ from every point.
+    void recompute_digest();
+    /// Point `index` to raw height `raw`, keeping digest_.
+    void set_point(size_t index, u16 raw) {
+        digest_ += point_hash(index, raw) - point_hash(index, data_[index]);
+        data_[index] = raw;
+    }
 };
 
 /// The path of a shot, for CAiBrain:CheckBlockingTerrain.

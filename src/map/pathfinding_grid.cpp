@@ -8,79 +8,88 @@
 
 namespace osc::map {
 
-PathfindingGrid::PathfindingGrid(const Heightmap& heightmap,
-                                 f32 water_elevation, bool has_water,
+PathfindingGrid::PathfindingGrid(const Heightmap& heightmap, f32 water_elevation, bool has_water,
                                  u32 cell_size, f32 slope_threshold)
-    : cell_size_(cell_size),
-      map_width_(heightmap.map_width()),
-      map_height_(heightmap.map_height()) {
+    : cell_size_(cell_size), map_width_(heightmap.map_width()), map_height_(heightmap.map_height()),
+      max_diff_(slope_threshold * static_cast<f32>(cell_size)), has_water_(has_water) {
     grid_width_ = map_width_ / cell_size_;
     grid_height_ = map_height_ / cell_size_;
     if (grid_width_ == 0) grid_width_ = 1;
     if (grid_height_ == 0) grid_height_ = 1;
 
-    const f32 max_diff = slope_threshold * static_cast<f32>(cell_size_);
+    water_elevation_ = water_elevation;
     cells_.resize(grid_width_ * grid_height_);
-
+    water_depth_.resize(grid_width_ * grid_height_, 0.0f);
     for (u32 gz = 0; gz < grid_height_; ++gz) {
         for (u32 gx = 0; gx < grid_width_; ++gx) {
-            // Map cell to heightmap corners
-            u32 hx0 = gx * cell_size_;
-            u32 hz0 = gz * cell_size_;
-            u32 hx1 = std::min(hx0 + cell_size_, heightmap.map_width());
-            u32 hz1 = std::min(hz0 + cell_size_, heightmap.map_height());
-
-            // Sample 4 corners of the cell from heightmap
-            f32 h00 = heightmap.get_height_at_grid(hx0, hz0);
-            f32 h10 = heightmap.get_height_at_grid(hx1, hz0);
-            f32 h01 = heightmap.get_height_at_grid(hx0, hz1);
-            f32 h11 = heightmap.get_height_at_grid(hx1, hz1);
-
-            // Check max slope: height difference between adjacent corners
-            f32 d1 = std::fabs(h10 - h00); // top edge
-            f32 d2 = std::fabs(h01 - h00); // left edge
-            f32 d3 = std::fabs(h11 - h10); // right edge
-            f32 d4 = std::fabs(h11 - h01); // bottom edge
-            f32 max_slope = std::max({d1, d2, d3, d4});
-
-            CellPassability pass = CellPassability::Passable;
-
-            if (max_slope > max_diff) {
-                pass = CellPassability::Impassable;
-            } else if (has_water) {
-                // Check if cell is underwater (average height below water)
-                f32 avg_h = (h00 + h10 + h01 + h11) * 0.25f;
-                if (avg_h < water_elevation) {
-                    pass = CellPassability::Water;
-                }
-            }
-
-            cells_[gz * grid_width_ + gx] = pass;
+            const u32 i = gz * grid_width_ + gx;
+            classify_cell(heightmap, gx, gz, cells_[i], water_depth_[i]);
         }
     }
-
     base_cells_ = cells_;
+}
 
-    // Compute per-cell water depth for draft-aware naval passability
-    water_elevation_ = water_elevation;
-    water_depth_.resize(grid_width_ * grid_height_, 0.0f);
-    if (has_water) {
-        for (u32 gz = 0; gz < grid_height_; ++gz) {
-            for (u32 gx = 0; gx < grid_width_; ++gx) {
-                u32 hx0 = gx * cell_size_;
-                u32 hz0 = gz * cell_size_;
-                u32 hx1 = std::min(hx0 + cell_size_, heightmap.map_width());
-                u32 hz1 = std::min(hz0 + cell_size_, heightmap.map_height());
-                f32 avg_h = (heightmap.get_height_at_grid(hx0, hz0) +
-                             heightmap.get_height_at_grid(hx1, hz0) +
-                             heightmap.get_height_at_grid(hx0, hz1) +
-                             heightmap.get_height_at_grid(hx1, hz1)) * 0.25f;
-                if (avg_h < water_elevation) {
-                    water_depth_[gz * grid_width_ + gx] = water_elevation - avg_h;
-                }
-            }
+void PathfindingGrid::classify_cell(const Heightmap& heightmap, u32 gx, u32 gz,
+                                    CellPassability& pass, f32& depth) const {
+    // Map cell to heightmap corners
+    u32 hx0 = gx * cell_size_;
+    u32 hz0 = gz * cell_size_;
+    u32 hx1 = std::min(hx0 + cell_size_, heightmap.map_width());
+    u32 hz1 = std::min(hz0 + cell_size_, heightmap.map_height());
+
+    // Sample 4 corners of the cell from heightmap
+    f32 h00 = heightmap.get_height_at_grid(hx0, hz0);
+    f32 h10 = heightmap.get_height_at_grid(hx1, hz0);
+    f32 h01 = heightmap.get_height_at_grid(hx0, hz1);
+    f32 h11 = heightmap.get_height_at_grid(hx1, hz1);
+
+    // Check max slope: height difference between adjacent corners
+    f32 d1 = std::fabs(h10 - h00); // top edge
+    f32 d2 = std::fabs(h01 - h00); // left edge
+    f32 d3 = std::fabs(h11 - h10); // right edge
+    f32 d4 = std::fabs(h11 - h01); // bottom edge
+    f32 max_slope = std::max({d1, d2, d3, d4});
+
+    // Underwater: the corners' average below the water (draft-aware naval
+    // passability reads the depth)
+    const f32 avg_h = (h00 + h10 + h01 + h11) * 0.25f;
+    const bool under = has_water_ && avg_h < water_elevation_;
+    depth = under ? water_elevation_ - avg_h : 0.0f;
+
+    pass = CellPassability::Passable;
+    if (max_slope > max_diff_) {
+        pass = CellPassability::Impassable;
+    } else if (under) {
+        pass = CellPassability::Water;
+    }
+}
+
+void PathfindingGrid::refresh_terrain(const Heightmap& heightmap, i32 x0, i32 z0, i32 x1, i32 z1) {
+    if (x0 >= x1 || z0 >= z1) return;
+    // The cells with a corner on the changed points (cell gx's corners are
+    // points gx * cell_size and (gx + 1) * cell_size).
+    const auto cs = static_cast<i32>(cell_size_);
+    const auto lo = [cs](i32 p) { return std::max(p / cs - 1, 0); };
+    const i32 gx0 = lo(x0);
+    const i32 gz0 = lo(z0);
+    const i32 gx1 = std::min((x1 - 1) / cs, static_cast<i32>(grid_width_) - 1);
+    const i32 gz1 = std::min((z1 - 1) / cs, static_cast<i32>(grid_height_) - 1);
+    bool changed = false;
+    for (i32 gz = gz0; gz <= gz1; ++gz) {
+        for (i32 gx = gx0; gx <= gx1; ++gx) {
+            const auto i = static_cast<size_t>(gz) * grid_width_ + static_cast<size_t>(gx);
+            CellPassability pass = CellPassability::Passable;
+            f32 depth = 0.0f;
+            classify_cell(heightmap, static_cast<u32>(gx), static_cast<u32>(gz), pass, depth);
+            const bool covered = i < obstacle_refs_.size() && obstacle_refs_[i] > 0;
+            const CellPassability now = covered ? CellPassability::Obstacle : pass;
+            changed |= base_cells_[i] != pass || cells_[i] != now || water_depth_[i] != depth;
+            base_cells_[i] = pass;
+            cells_[i] = now;
+            water_depth_[i] = depth;
         }
     }
+    if (changed) ++version_;
 }
 
 CellPassability PathfindingGrid::get(u32 gx, u32 gz) const {
