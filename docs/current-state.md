@@ -55,32 +55,25 @@ Each area, what is accepted and by what. "Last verified" names the validation re
 
 ## Benchmarks
 
-`tools/bench.py` (Release, four retail AIs on SCMP_009, seed 4242, an RTX PRO 4500 at 1920×1080). These are the baselines `bench.py check` holds later builds to. They were recorded on 2026-10-07 with main's engine at 6d59aa3b, which is main at 75efb749 plus this bench's search counters. The `-moho` scenarios play the same game with `--moho-pathing`, and their reports count the path searches and the cells they expanded.
-
-They predate #591 and the changes since, which changed the games (see the [3be4d6a5 record](validation/2026-10-12-3be4d6a5.md)), so they need recording again.
+`tools/bench.py` (Release, four retail AIs on SCMP_009, seed 4242, an RTX PRO 4500 at 1920×1080). These are the baselines `bench.py check` holds later builds to. They were recorded on 2026-10-12 on main at 19c44e71, and `late-moho` with #619 as well: without it that game exits at tick 15,100, on an `IssueFormAttack` with `'NoFormation'`. The `-moho` scenarios play the same game with `--moho-pathing`, and their reports count the path searches and the cells they expanded.
 
 | Scenario | Game at the end | Measured |
 | --- | --- | --- |
-| `early`: 6,000 ticks (10 game-minutes) | 517 units, 12,630 entities | 7.4 s of sim; a tick's mean 1.2 ms, p50 0.9 ms, p99 8.0 ms; peak 304 MB |
-| `early-moho`: the same, Moho pathing | 581 units, 13,344 entities; 7,902 searches, 1.6 M cells expanded | 10.4 s of sim; mean 1.7 ms, p50 1.2 ms, p99 11 ms; peak 306 MB |
-| `late`: 18,000 ticks (30 game-minutes) | 1,418 units, 28,882 entities | 91 s of sim; a tick's mean 5.1 ms, p50 4.4 ms, p99 31 ms; peak 410 MB |
-| `late-moho`: the same, Moho pathing | 1,570 units, 26,068 entities; 162,748 searches, 55 M cells expanded | 184 s of sim; mean 10.2 ms, p50 10.3 ms, p99 38 ms; peak 456 MB |
-| `render-battle`: 600 frames of tick 6,000 | | CPU `render()` p50 1.2 ms, p95 1.9 ms; GPU 0.49 ms |
-| `render-late`: 600 frames of tick 18,000 | | CPU p50 1.6 ms, p95 4.2 ms; GPU 0.75 ms |
-| `render-strategic`: the same, zoomed out to icons | | CPU p50 0.95 ms, p95 3.4 ms; GPU 0.34 ms |
+| `early`: 6,000 ticks (10 game-minutes) | 641 units, 40,717 entities | 13.5 s of sim; a tick's mean 2.2 ms, p50 1.5 ms, p99 17 ms; peak 408 MB |
+| `early-moho`: the same, Moho pathing | 569 units, 42,546 entities; 8,409 searches, 2.1 M cells expanded | 14.0 s of sim; mean 2.3 ms, p50 1.6 ms, p99 12 ms; peak 387 MB |
+| `late`: 18,000 ticks (30 game-minutes) | 1,388 units, 38,724 entities | 155 s of sim; a tick's mean 8.6 ms, p50 6.7 ms, p99 44 ms; peak 653 MB |
+| `late-moho`: the same, Moho pathing | 1,248 units, 40,167 entities; 125,305 searches, 45 M cells expanded | 248 s of sim; mean 13.8 ms, p50 13.0 ms, p99 55 ms; peak 539 MB |
+| `render-battle`: 600 frames of tick 6,000 | | CPU `render()` p50 1.7 ms, p95 3.2 ms; GPU 0.60 ms |
+| `render-late`: 600 frames of tick 18,000 | | CPU p50 2.4 ms, p95 5.5 ms; GPU 0.72 ms |
+| `render-strategic`: the same, zoomed out to icons | | CPU p50 1.8 ms, p95 4.9 ms; GPU 0.38 ms |
 
-Moho pathing costs 1.4× the default's sim time in the early game and 2.0× in the late game. A late-game search expands about 340 cells; an early-game one about 200.
+Moho pathing costs 1.04× the default's sim time in the early game and 1.6× in the late game. A late-game search expands about 360 cells; an early-game one about 250.
 
-The games differ with it, because the AIs' units move otherwise. From tick 7,000 its ticks cost 2.0-2.3× the default's, for two reasons:
-- **More units.** From tick 8,000 it holds 30-40% more units: 1,220 against 870 at tick 10,000.
-- **The searches.** In a profile from tick 10,000 (400 samples), the path searches take 26% of its tick, and the navigator's checks along its path another 9%. Half the searches' time is the test for units in the way.
-
-Without those, a unit costs about the same as in the default game (7.6 against 7.0 µs a tick).
-
-Against the 2026-10-06 baselines (b167ab14):
-- The default games changed since. The parity and pathing work changed how the AIs play: the late game ends with 1,418 units against 1,666.
-- Its ticks are shorter: a mean of 5.1 ms against 5.9 ms.
-- The render frames hold within noise.
+Against the 2026-10-07 baselines (6d59aa3b), the games have grown:
+- **More units early.** Retail's AIs build as they did before #591 again (#615): 641 units at tick 6,000, against 517.
+- **Trees.** About 1,800 of SCMP_009's 4,700 tree groups break up by tick 6,000, each into about 19 single trees, which stay as props. That makes 38,662 props at tick 6,000, against the map's 5,300 at the start. Whether Moho's games break up as many hasn't been compared.
+- **The cost.** The default late game takes 155 s of sim against 91 s: a tick's mean is 8.6 ms against 5.1 ms, and it peaks at 653 MB against 410 MB. Where its ticks' time goes now hasn't been profiled.
+- These numbers include #607, which made dead Lua threads leave in one pass: −8.8% on 3be4d6a5's late game.
 
 ## Known gaps
 
@@ -92,7 +85,7 @@ What is not yet as Moho does it, or not yet checked. Each is on the roadmap (`do
 - **Needs a person:** a listening pass of the audio; comparison with the original game's look (no reference captures exist here); the hardware cursor on a real display; Steam and the Steam Deck; external testers.
 - **Multiplayer:** peers are not authenticated; two players dropping at once can leave the survivors disagreeing; FAF's ICE adapter and client are tested only through stand-ins.
 - **Lobby options:** difficulty cheat multipliers are applied by FA's AI scripts, not the engine; `PrebuiltUnits` needs map data.
-- **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()` is down from 756 lines to 149: the frame's CPU updates and each pass (normals, reflection, the scene, the screen's layers, submission) are their own functions. `build_scene` is down from 393 to 111: its bone descriptors, terrain strata set, fog texture, normal maps and map decals are their own functions. `init` is down from 378 to 59: the window, the Vulkan instance, surface and device, the command objects, descriptor layouts, samplers and sub-renderers are its stages. `create_pipelines` is down from 361 to 44: its terrain, unit, mesh and shield, decal and UI pipelines are built by a function each. In the sim's bindings, `create_unit_core`, which makes every unit, was 1,330 lines, most of them its blueprint's read; that read is now `src/lua/unit_blueprint.cpp`, a function per part of the blueprint (health, drive, each weapon, economy, intel, transport, footprints, an aircraft's flight...), and `create_unit_core` is 176 lines.
+- **Architecture:** the renderer is being broken into subsystems in small changes: the shadow map, the bloom and the shadow casters are out (#420, #421, #423; the frame's targets in #429). `render()` is down from 756 lines to 149: the frame's CPU updates and each pass (normals, reflection, the scene, the screen's layers, submission) are their own functions. `build_scene` is down from 393 to 111: its bone descriptors, terrain strata set, fog texture, normal maps and map decals are their own functions. `init` is down from 378 to 59: the window, the Vulkan instance, surface and device, the command objects, descriptor layouts, samplers and sub-renderers are its stages. `create_pipelines` is down from 361 to 44: its terrain, unit, mesh and shield, decal and UI pipelines are built by a function each. In the sim's bindings, `create_unit_core`, which makes every unit, was 1,330 lines, most of them its blueprint's read; that read is now `src/lua/unit_blueprint.cpp`, a function per part of the blueprint (health, drive, each weapon, economy, intel, transport, footprints, an aircraft's flight...), and `create_unit_core` is 176 lines. The tick's checksum, `SimState::checksum_parts`, was 501 lines; it is now `src/sim/sim_checksum.cpp`, a function per part it hashes, and 74 lines (#611). `Unit::order_guard` is down from 409 lines to 240 (#612), and `OverlayRenderer::update` from 430 to 45 (#613).
 
 ## Game modes and victory
 
