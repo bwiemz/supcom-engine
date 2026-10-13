@@ -36,6 +36,7 @@ bool App::Window::frame() {
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
     advance_sim(session_dt);
+    app.begin_match_record();
     if (app.telemetry && sim_state) app.telemetry->after_tick(*sim_state);
 
     run_beats();
@@ -104,7 +105,7 @@ double App::Window::begin_frame() {
 }
 
 bool App::Window::fixed_step() const {
-    return !screenshot_path.empty() || render_bench || opt.scripted_window;
+    return !screenshot_path.empty() || render_bench || opt.scripted_window || opt.fast_match_ticks > 0;
 }
 
 void App::Window::update_audio(double dt) {

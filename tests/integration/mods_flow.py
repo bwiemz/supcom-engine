@@ -224,6 +224,20 @@ def main(argv: list[str]) -> int:
             problems.append(f"game: failed, exit {game.returncode}")
 
         recording = user / "replays" / "Player" / "LastGame.oscreplay"
+        # A player's game is kept under a name of its own too (when it ended
+        # and its map), with its statistics beside it: the game before last
+        # is still there to watch and to study.
+        kept = [f for f in recording.parent.glob("*.oscreplay") if f.name != recording.name]
+        if len(kept) != 1:
+            problems.append(f"game: kept {len(kept)} recordings under names of their own, not 1")
+        else:
+            if kept[0].read_bytes() != recording.read_bytes():
+                problems.append("game: the kept recording is not the game's")
+            stats = kept[0].with_suffix(".jsonl")
+            lines = stats.read_text().splitlines() if stats.exists() else []
+            kinds = [line.split('"record":"')[1].split('"')[0] for line in lines if '"record":"' in line]
+            if not kinds or kinds[0] != "match" or kinds[-1] != "end":
+                problems.append(f"game: its statistics are not a match to its end: {kinds[:3]}..{kinds[-1:]}")
         if not recording.exists():
             problems.append("game: left no recording")
         else:

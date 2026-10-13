@@ -314,6 +314,19 @@ private:
     /// profile's replays -- when a new game starts, on the way back to the
     /// lobby, and at exit. Interactive games only; a replay isn't recorded.
     void save_last_game();
+    /// A player's game is kept: its recording, and its statistics as it
+    /// plays (MatchTelemetry), under a name of its own beside LastGame --
+    /// `<when it ended> <its map>.oscreplay` and `.jsonl` -- so that the
+    /// game before last is still there to be watched again and studied.
+    /// begin: opens the statistics of the game now starting, unless the run
+    /// was given a file for them (--match-telemetry). Each frame may call it.
+    void begin_match_record();
+    /// Where the current profile keeps a recording called `base`; empty if
+    /// its name can't be a folder's.
+    std::filesystem::path recording_path(const std::string& base) const;
+    /// Whether `telemetry` is a kept game's (begin_match_record's), to be
+    /// closed and filed with its recording.
+    bool match_record_open_ = false;
 
     int argc;
     char** argv;

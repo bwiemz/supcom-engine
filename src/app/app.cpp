@@ -9,9 +9,12 @@
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_snapshot.hpp"
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
 #include <cstring>
 #include <memory>
 #include <string_view>
@@ -213,21 +216,83 @@ bool App::check_catch_up() {
     return true;
 }
 
+std::filesystem::path App::recording_path(const std::string& base) const {
+    const std::string profile = prefs.get_string(prefs.current_profile_path() + ".Name", "Player");
+    const auto* type = osc::lua::SpecialFiles::find_type("Replay");
+    return special_files->path(*type, profile, base);
+}
+
+void App::begin_match_record() {
+    if (telemetry || !opt.interactive || !opt.match_telemetry_path.empty()) return;
+    if (!sim_state || !sim_state->recording() || sim_state->playback()) return;
+    auto path = recording_path("LastGame");
+    if (path.empty()) return;
+    path.replace_extension("jsonl");
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    telemetry.emplace(path.string());
+    match_record_open_ = telemetry->is_open();
+    if (!match_record_open_) telemetry.reset();
+}
+
+namespace {
+
+/// A kept game's name: when it ended, and its map (`2026-10-13 2117
+/// SCMP_009`): one plain file name, in order of time when sorted.
+std::string kept_game_name(const std::string& scenario) {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char when[32];
+    (void)std::strftime(when, sizeof when, "%Y-%m-%d %H%M%S", &local);
+    std::string map = std::filesystem::path(scenario).parent_path().filename().string();
+    for (char& c : map)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')) c = '_';
+    return map.empty() ? std::string(when) : std::string(when) + " " + map;
+}
+
+} // namespace
+
 void App::save_last_game() {
     if (!opt.interactive || !sim_state || !sim_state->recording() || sim_state->playback()) return;
     const auto& replay = sim_state->recorded_replay();
-    if (!replay.has_setup || replay.final_beat == 0) {
-        return;
+    // The game's statistics end with it, whatever becomes of the recording
+    const bool had_record = match_record_open_;
+    if (had_record) {
+        telemetry->finish(sim_state.get(), "ended");
+        telemetry.reset();
+        match_record_open_ = false;
     }
-    const std::string profile = prefs.get_string(prefs.current_profile_path() + ".Name", "Player");
-    const auto* type = osc::lua::SpecialFiles::find_type("Replay");
-    const auto path = special_files->path(*type, profile, "LastGame");
+    if (!replay.has_setup || replay.final_beat == 0) return;
+    const auto path = recording_path("LastGame");
+
     if (path.empty()) {
-        spdlog::warn("Replay: profile name '{}' can't be a folder name; LastGame not saved",
-                     profile);
+        spdlog::warn("Replay: profile's name can't be a folder name; LastGame not saved");
         return;
     }
     osc::lua::write_replay_file(replay, path);
+    // And kept under a name of its own, its statistics beside it
+    const auto kept = recording_path(kept_game_name(replay.setup.scenario));
+    if (kept.empty()) return;
+    std::error_code ec;
+    std::filesystem::copy_file(path, kept, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        spdlog::warn("Replay: the game was not kept as {}: {}", kept.string(), ec.message());
+        return;
+    }
+    if (had_record) {
+        auto stats = path;
+        stats.replace_extension("jsonl");
+        auto kept_stats = kept;
+        kept_stats.replace_extension("jsonl");
+        std::filesystem::copy_file(stats, kept_stats,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+    }
+    spdlog::info("Replay: the game is kept as {}", kept.string());
 }
 
 } // namespace osc::app
