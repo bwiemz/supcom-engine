@@ -10,20 +10,36 @@ local function spawn(bp, army, x, z, heading)
     return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, heading or 0, 0)
 end
 
--- How far GetUnitsAroundPoint reaches: a T1 power generator at (120, 920),
--- asked for from points d away along x with a radius of 1 (retail's
--- EngineerTryRepair asks so before each build), and with a radius of 0.
+-- How far GetUnitsAroundPoint reaches: a T1 power generator (2x2) at
+-- (120, 920), asked for from points about its centre. Retail's
+-- EngineerTryRepair asks with a radius of 1 before each build. Each point is
+-- asked of GetNumUnitsAroundPoint too.
 function ProbeUnitsAroundPoint(army)
     local brain = GetArmyBrain(army)
-    local x, z = 120, 920
-    spawn('ueb1101', army, x, z)
+    local pgen = spawn('ueb1101', army, 120, 920)
     WaitTicks(2)
-    for d = 0, 8 do
-        local found = brain:GetUnitsAroundPoint(categories.ueb1101, {x + d, GetTerrainHeight(x + d, z), z}, 1, 'Ally') or {}
-        probe('units-around-point radius=1 d=%d found=%d', d, table.getn(found))
+    local p = pgen:GetPosition()
+    local function ask(r, dx, dy, dz)
+        local at = {p[1] + dx, p[2] + (dy or 0), p[3] + (dz or 0)}
+        local found = brain:GetUnitsAroundPoint(categories.ueb1101, at, r, 'Ally') or {}
+        local num = brain:GetNumUnitsAroundPoint(categories.ueb1101, at, r, 'Ally')
+        probe('units-around-point radius=%g offset=(%g,%g,%g) found=%d num=%s', r, dx, dy or 0,
+            dz or 0, table.getn(found), tostring(num))
     end
-    local found = brain:GetUnitsAroundPoint(categories.ueb1101, {x + 3, GetTerrainHeight(x + 3, z), z}, 0, 'Ally') or {}
-    probe('units-around-point radius=0 d=3 found=%d', table.getn(found))
+    -- Along x, by whole units
+    for d = 0, 8 do ask(1, d) end
+    ask(0, 0)
+    ask(0, 3)
+    -- The edge: strictly within, or within
+    for _, d in {0.5, 0.9, 0.99, 1.0, 1.01} do ask(1, d) end
+    for _, d in {1.9, 1.99, 2.0, 2.01} do ask(2, d) end
+    for _, d in {4.9, 4.99, 5.0, 5.01, 5.1} do ask(5, d) end
+    -- Height: 0.6 off in x and 0.9 up is 1.08 away in 3D, 0.6 across the map
+    ask(1, 0.6, 0.5)
+    ask(1, 0.6, 0.9)
+    -- A circle or a square: 0.75 along both x and z is 1.06 away
+    ask(1, 0.6, 0, 0.6)
+    ask(1, 0.75, 0, 0.75)
 end
 
 -- The strait at z 520: banks too steep, by the engine's reading of Moho's
