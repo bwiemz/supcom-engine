@@ -15,6 +15,7 @@
 #include "app/ui_clicks.hpp"
 #include "app/window_mode.hpp"
 #include "app/world_sounds.hpp"
+#include "core/frame_times.hpp"
 #include "lua/factory_queue.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/renderer.hpp"
@@ -175,6 +176,20 @@ private:
     /// SimCallback queue (UI→Sim bridge, M138a)
     osc::sim::SimCallbackQueue sim_callback_queue;
     double sim_accumulator = 0.0;
+    /// The last frames' times (Moho's RollingFrameRates), whose median the
+    /// session runs on: begin_frame's session_dt. The engine loads a game
+    /// before its first frame, where Moho's loading screen runs frames, so the
+    /// ring starts as if after nine frames that took no time: the first
+    /// frames' long renders give the game nothing, as Moho's median drops
+    /// them among the loading screen's.
+    osc::RollingFrameTimes frame_times = osc::RollingFrameTimes::full_of(0.0);
+    /// This frame's time for the session (the sim's ticks and beats, and the
+    /// world's interpolation): the median of the last frame times, as Moho's
+    /// CScApp::Main gives WLD_Frame, or the fixed step of a capture.
+    double session_dt = 0.0;
+    /// This frame's time, unclamped, for the UI's clock (CurrentTime and
+    /// WaitSeconds), which is Moho's system timer: a hitch counts in full.
+    double wall_dt = 0.0;
     /// The entities whose loops the frame's sound plays (update_world_sounds).
     EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched
