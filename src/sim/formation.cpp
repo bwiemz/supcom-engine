@@ -45,14 +45,17 @@ bool push_formations_module(lua_State* L) {
     return true;
 }
 
-/// Push /lua/formations.lua's function `name`, or nothing (false).
+/// Push /lua/formations.lua's function `name`, or nothing (false). Read raw:
+/// the module's metatable errors on a name it lacks, and retail's AI asks for
+/// formations it has none of ('NoFormation'), which Moho takes as none. The
+/// sim reads it outside any protected call, where an error ends the process.
 bool push_formation_function(lua_State* L, const std::string& name) {
     const int top = lua_gettop(L);
     if (!push_formations_module(L)) {
         return false;
     }
     lua_pushstring(L, name.c_str());
-    lua_gettable(L, -2);
+    lua_rawget(L, -2);
     if (!lua_isfunction(L, -1)) {
         lua_settop(L, top);
         return false;
@@ -70,7 +73,7 @@ std::vector<std::string> formation_scripts(lua_State* L, bool air) {
         return out;
     }
     lua_pushstring(L, air ? "AirFormations" : "SurfaceFormations");
-    lua_gettable(L, -2);
+    lua_rawget(L, -2);
     if (lua_istable(L, -1)) {
         const int n = luaL_getn(L, -1);
         for (int i = 1; i <= n; ++i) {
