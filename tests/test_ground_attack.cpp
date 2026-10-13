@@ -137,6 +137,34 @@ TEST_CASE("A ground attack brings its unit within range, and its weapon takes th
     CHECK(gun(*u).ground_target.z == at.z);
 }
 
+TEST_CASE("A ground attack's units make for the square about the point, keeping their breadth",
+          "[ground-attack]") {
+    // Moho's SetWeaponGoal: the navigator's goal is the square of side the
+    // weapon's MaxRadius about the point, and each unit makes for its nearest
+    // part. Two tanks abreast drive straight on and stop in range where they
+    // are, not on one line to the point (retail FA: six Strikers stopped 11
+    // apart).
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    land(sim);
+    Unit* a = tank(sim, 98.0f, 20.0f, 18.0f);
+    Unit* b = tank(sim, 112.0f, 20.0f, 18.0f);
+    const Vector3 at{105.0f, 7.8f, 100.0f};
+    a->push_command(ground_attack(at), true);
+    b->push_command(ground_attack(at), true);
+    for (int t = 0; t < 300; ++t) {
+        hold(*a);
+        hold(*b);
+        sim.tick();
+    }
+    for (const Unit* u : {a, b}) {
+        CHECK(u->command_queue().front().engaged);
+        CHECK(dist_to(*u, at) <= 18.0f);
+    }
+    CHECK(std::abs(a->position().x - 98.0f) < 1.0f);
+    CHECK(std::abs(b->position().x - 112.0f) < 1.0f);
+}
+
 TEST_CASE("A ground attack with no order after it never ends", "[ground-attack]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
