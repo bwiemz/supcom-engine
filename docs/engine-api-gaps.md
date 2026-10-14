@@ -37,7 +37,7 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| `REBUILDER`: when a structure dies, retail queues its rebuild, same blueprint and spot, on its army's `REBUILDER` units guarding it | Support commanders guarding a structure don't rebuild it | faf-re `CUnitGuardTask`, `Unit::Kill` (`unit/core/Unit.cpp`); engine: no rebuild path | Open |
+| `REBUILDER`: when a structure dies, Moho queues its rebuild, same blueprint and spot, on its army's `REBUILDER` units whose Guard names that blueprint at that spot. A `REBUILDER`'s Guard takes up no live unit and outlives its target. | The Guard part is ported: a support commander guarding a factory doesn't build with it, and its Guard of a destroyed structure stays, keeping it where the structure stood. The rebuild isn't. The original rebuilds nothing for a Guard from `IssueGuard`, which carries no blueprint (faf-re `cfunc_IssueGuardL`). Whether a player's right-click Guard carries one is not yet known. | faf-re `CUnitGuardTask`, `Unit::LookForStructureRebuilder` (`unit/core/Unit.cpp`); `tools/moho_probes` `rebuild`, `scu-assist` (2026-10-13) | Part: the Guard ported (2026-10-13); the rebuild open |
 
 ## Engine callbacks
 
