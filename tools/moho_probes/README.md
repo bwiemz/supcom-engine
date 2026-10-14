@@ -49,9 +49,33 @@ The original game answered on 2026-10-12: retail FA (Steam) under Proton, run tw
 | `prop-orient` | The tree groups in `Rect(116, 650, 132, 690)`: their orientations and collision boxes | 34 groups | The same quaternions, and boxes within 0.001, since #628 | A `.scmap` prop's axes are its rotation's columns. |
 | `unit-box` | A Seraphim artillery (`CollisionOffsetZ` -1.5) at four headings: its box | The offset turns with it | The same | Units' boxes were right. |
 | `rebuild` | A support commander (`REBUILDER`) guards a power generator that is then destroyed, and an engineer guards another. Is it rebuilt? | The support commander's Guard stays, and it goes to the site (2.7 off); the engineer's ends. Nothing is rebuilt. | Before: both Guards end. Now: as the original (0.9 off). | A Guard from `IssueGuard` carries no blueprint (faf-re `cfunc_IssueGuardL`), and `LookForStructureRebuilder` matches on the Guard's blueprint, so a script's Guard never rebuilds. Whether a player's right-click Guard does is not yet known. |
-| `scu-assist` | A support commander and an engineer guard a factory building tanks: does each build with it? | The engineer does; the support commander doesn't. The factory's progress is 0.09, 0.20 and 0.45 at ticks 60, 150 and 300. | Before: both did. Now: as the original. The factory's progress is 0.02, 0.05 and 0.11. | Moho's guard task takes up no live unit a `REBUILDER` guards. The engine's factory builds more slowly, which is not yet explained. |
+| `scu-assist` | A support commander and an engineer guard a factory building tanks: does each build with it? | The engineer does; the support commander doesn't. The factory's progress is 0.09, 0.20 and 0.45 at ticks 60, 150 and 300. | Before: both did. Now: as the original. The factory's progress is 0.02, 0.05 and 0.11. | Moho's guard task takes up no live unit a `REBUILDER` guards. The low progress in both is the scenes' shared economy, starved of energy (the choke scene's Monkeylord upkeep among them), not the factory: see `economy` below. |
 | `scu-follow` | A support commander guards a tank driven 70 north: does it follow? | Yes: 16.7 and 31.0 behind at ticks 100 and 250 | Yes: 18.3 and 23.3 behind | Both follow; the original's lags a little more. |
 
 Found along the way: a land tank made in water 4 deep (at 560, 300) was gone by tick 250 in the original, while the engine's stood there unharmed. It is not yet a probe.
 
 The probes play the scenes at once, after the commanders' warp-in (tick 80). They make every other army neutral first, because the map's other commanders start near two of the scenes.
+
+## Probes run on their own
+
+The scenes above share one army's economy, so a question about the economy gets an answer of its own. Each folder below has its own `init_probes.lua`. Run it in place of the one above, on both games, the same way.
+
+**`economy/`** puts a T1 land factory with a T1 engineer guarding it through three Strikers, three times over:
+- **alone**, on the army's starting economy;
+- **stalled**, with energy drained and a Monkeylord's 250 a second upkeep beside it;
+- **ample**, after `GiveStorage` and `GiveResource`.
+
+At fixed ticks it logs the factory's progress and energy use, the engineer's focus, and the army's energy and mass (stored / income / requested). It is done at `PROBE econ done`.
+
+**`timing/`** gives a factory three Strikers and an engineer a power generator, with ample resources. It logs their state, work progress, `GetResourceConsumed` and focus: the factory at t=0–12 and t=130–160, and the engineer every tick from t=0 to 40. It is done at `PROBE timing done`.
+
+Asked on 2026-10-14 (the original once, the engine on main 7f09e969 and with #642):
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `economy` start | energy 4000, mass 650: the commander's own storage | 4200 and 850 before #639; now the same | An army has no storage of its own. |
+| `economy` after `GiveStorage('ENERGY')` then `GiveStorage('MASS')` | energy storage unchanged, mass raised | both raised before #639; now the same | `GiveStorage` replaces the army's one extra pair (`cfunc_CAiBrainGiveStorageL`). |
+| `economy` alone | 0.0069 progress a tick | the same | The factory builds at the same rate. |
+| `economy` stalled | progress at income over requested (about 7%); mass rose 17.2 over the stall | progress the same; mass fell 101 before #640, rises 17.1 now | Moho grants a request wanting both resources the same share of each (`ProcessArmyEconomy`). |
+| `timing` factory | the Striker at t=1, `GetResourceConsumed` 0 at t=1–2, progress from t=3, done at t=142, 0 the tick after | progress from t=1 before #642; now identical on all 44 logged ticks | A unit works at last tick's grant (`ResourceConsumed`). |
+| `timing` engineer | Building from t=2, the frame at t=10, progress from t=12 | Building t=1, frame t=6, progress t=8 with #642 | Moho's mobile build task starts later. Not yet ported. |
