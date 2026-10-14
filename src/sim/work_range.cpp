@@ -23,6 +23,27 @@ f32 skirt_extent(const Unit& u) {
     return std::max({u.skirt_size_x(), u.skirt_size_z(), footprint_extent(u)});
 }
 
+std::pair<f32, f32> blueprint_footprint_cells(lua_State* L, const std::string& bp_id) {
+    std::pair<f32, f32> size{1.0f, 1.0f};
+    if (!L || bp_id.empty()) return size;
+    std::string key = bp_id;
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, key.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            const auto [x, z] = blueprint_footprint(L, lua_gettop(L));
+            size = {std::max(x, 1.0f), std::max(z, 1.0f)};
+        }
+    }
+    lua_settop(L, top);
+    return size;
+}
+
 std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id) {
     std::pair<f32, f32> skirt{1.0f, 1.0f};
     if (!L || bp_id.empty()) return skirt;

@@ -10994,10 +10994,12 @@ void test_range(TestContext& ctx) {
         if __osc_arm_prep == 0 then error('OnPrepareArmToBuild never ran') end
     )");
 
-    lua_check("Test 12j: the ACU builds once its arm is on the site, a tick after it turns it",
+    // Its arm turns 36 degrees a tick (SetAimingArc's 360 a second, as the
+    // original's engineers turn): 36, 72 (18 off), then 90, on target.
+    lua_check("Test 12j: the ACU builds once its arm is on the site, 3 ticks after it aims",
               R"(
         local tick, heading = __osc_arm_start[1], __osc_arm_start[2]
-        if tick - __osc_arm_prep_tick ~= 1 or math.abs(math.abs(heading) - math.pi / 2) > 0.3 then
+        if tick - __osc_arm_prep_tick ~= 3 or math.abs(math.abs(heading) - math.pi / 2) > 0.3 then
             error(string.format('OnStartBuild %d ticks after OnPrepareArmToBuild, arm at %.2f',
                                 tick - __osc_arm_prep_tick, heading))
         end

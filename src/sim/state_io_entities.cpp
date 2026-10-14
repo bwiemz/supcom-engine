@@ -378,6 +378,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.f32v(c.site_skirt_x);
     w.f32v(c.site_skirt_z);
     w.b(c.site_cleared);
+    w.b(c.prepared);
     w.u32v(c.rebuild_wreck_id);
     w.f32v(c.rebuild_bonus);
     w.u32v(c.clearing_prop_id);
@@ -433,6 +434,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.site_skirt_x = r.f32v();
     c.site_skirt_z = r.f32v();
     c.site_cleared = r.b();
+    c.prepared = r.b();
     c.rebuild_wreck_id = r.u32v();
     c.rebuild_bonus = r.f32v();
     c.clearing_prop_id = r.u32v();
@@ -1419,6 +1421,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.quat(u.tick_orientation_);
     w.b(u.tick_position_set_);
     w.b(u.moved_last_tick_);
+    w.vec3(u.last_tick_motion_);
+    w.b(u.turned_last_tick_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1828,6 +1832,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.tick_orientation_ = r.quat();
     u.tick_position_set_ = r.b();
     u.moved_last_tick_ = r.b();
+    u.last_tick_motion_ = r.vec3();
+    u.turned_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();

@@ -4,10 +4,10 @@
 
 #include "map/terrain.hpp"
 #include "sim/build_placement.hpp"
-#include "sim/collision.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/work_range.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -220,28 +220,10 @@ bool retargetable(CommandType type) {
     }
 }
 
-std::pair<f32, f32> footprint_of(lua_State* L, std::string bp_id) {
-    std::pair<f32, f32> size{1.0f, 1.0f};
-    std::transform(bp_id.begin(), bp_id.end(), bp_id.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id.c_str());
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            const auto [x, z] = blueprint_footprint(L, lua_gettop(L));
-            size = {std::max(x, 1.0f), std::max(z, 1.0f)};
-        }
-    }
-    lua_settop(L, top);
-    return size;
-}
-
 void forget_target(UnitCommand& c) {
     c.approached = false;
     c.site_cleared = false;
+    c.prepared = false; // Moho's build task rewinds to TASKSTATE_Preparing
     c.clearing_prop_id = 0;
     c.clearing_approached = false;
     c.engaged = false;
@@ -263,7 +245,7 @@ void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb)
     });
     std::optional<std::pair<f32, f32>> footprint;
     if (!orders.empty() && orders.front().command->type == CommandType::BuildMobile) {
-        footprint = footprint_of(L, orders.front().command->blueprint_id);
+        footprint = blueprint_footprint_cells(L, orders.front().command->blueprint_id);
     }
     sim.retarget_command(cb, orders, footprint);
 }

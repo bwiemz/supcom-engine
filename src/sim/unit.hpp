@@ -1006,14 +1006,23 @@ public:
     bool moved_last_tick() const { return moved_last_tick_; }
     /// Where it stood as this tick began (the next tick's moved_last_tick).
     const Vector3& tick_position() const { return tick_position_; }
-    /// Note where it stands as a tick begins (SimState::tick).
+    /// Note where it stands as a tick begins (SimState::tick), and how it
+    /// moved and turned over the last.
     void note_tick_position() {
         const Vector3& p = position();
+        const Quaternion& q = orientation();
         moved_last_tick_ =
             tick_position_set_ &&
             (p.x != tick_position_.x || p.y != tick_position_.y || p.z != tick_position_.z);
+        last_tick_motion_ =
+            tick_position_set_
+                ? Vector3{p.x - tick_position_.x, p.y - tick_position_.y, p.z - tick_position_.z}
+                : Vector3{};
+        turned_last_tick_ =
+            tick_position_set_ && (q.x != tick_orientation_.x || q.y != tick_orientation_.y ||
+                                   q.z != tick_orientation_.z || q.w != tick_orientation_.w);
         tick_position_ = p;
-        tick_orientation_ = orientation();
+        tick_orientation_ = q;
         tick_position_set_ = true;
     }
     /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
@@ -1998,6 +2007,8 @@ private:
     Quaternion tick_orientation_{};
     bool tick_position_set_ = false; // (none before its first tick)
     bool moved_last_tick_ = false;
+    Vector3 last_tick_motion_;      // its move over the last tick
+    bool turned_last_tick_ = false; // and whether it turned
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

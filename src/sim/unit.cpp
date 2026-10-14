@@ -635,6 +635,13 @@ void Unit::update(f64 dt, SimContext& ctx) {
     air_stepped_ = false;
     if (!tick_lifecycle(dt, ctx)) return;
 
+    // Manipulators (rotators, animators, sliders, aim controllers) move
+    // before the unit's orders run, as Moho's Unit::MotionTick updates them
+    // ahead of the task stage: an order sees this tick's aim (a build arm
+    // come on target), and what an order sets plays from the next tick.
+    tick_manipulators(static_cast<f32>(dt), ctx.L);
+    if (destroyed() || !in_registry()) return;
+
     // A landed aircraft given an order goes back to the air before it
     // carries the order out (Moho's motion target set, layer Air).
     if (can_fly() && !is_being_built() && !command_queue_.empty() && parent_entity_id() == 0 &&
@@ -1010,9 +1017,6 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
             }
         }
     }
-
-    // Update manipulators (rotators, animators, sliders, aim controllers)
-    tick_manipulators(static_cast<f32>(dt), L);
 }
 
 bool Unit::auto_initiate_allowed(const EntityRegistry& registry) const {
@@ -3777,15 +3781,12 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     if (!tick_position_set_) {
         return 0.0f;
     }
-    const Vector3& p = position();
-    const f32 dx = p.x - tick_position_.x;
-    const f32 dy = p.y - tick_position_.y;
-    const f32 dz = p.z - tick_position_.z;
-    const f32 scale = std::sqrt(dx * dx + dy * dy + dz * dz) / dt / max_speed_;
-    const Quaternion& q = orientation();
-    const Quaternion& q0 = tick_orientation_;
-    const bool turning = q.x != q0.x || q.y != q0.y || q.z != q0.z || q.w != q0.w;
-    if (turning && scale <= 0.25f) {
+    // The last tick's move and turn: the manipulators run ahead of this
+    // tick's motion, as Moho's CAnimationManipulator reads the unit's
+    // velocity and its last two transforms before CUnitMotion moves it.
+    const Vector3& d = last_tick_motion_;
+    const f32 scale = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) / dt / max_speed_;
+    if (turned_last_tick_ && scale <= 0.25f) {
         return 0.25f;
     }
     return scale;
