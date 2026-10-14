@@ -56,15 +56,18 @@ std::vector<std::string> script_hooks(lua_State* L, const vfs::VirtualFileSystem
                                       std::string_view path) {
     const std::string normalized = vfs::VirtualFileSystem::normalize(path);
     std::vector<std::string> hooks;
-    auto take = [&](const std::string& candidate) {
+    // Looked up in a listing of its hook folder, taken once per folder: with
+    // twenty mods, asking the mounts for every script's every candidate cost
+    // a disk check apiece.
+    auto take = [&](const std::string& dir, const std::string& candidate) {
         std::string hook = vfs::VirtualFileSystem::normalize(candidate);
-        if (!vfs.file_exists(hook)) return;
+        if (!vfs.listed_file_exists(dir, hook)) return;
         spdlog::info("Hooked {} with {}", normalized, hook);
         hooks.push_back(std::move(hook));
     };
 
     // The init file's hook directories: /schook/lua/x.lua for /lua/x.lua.
-    for (const auto& dir : vfs.hook_dirs()) take(dir + normalized);
+    for (const auto& dir : vfs.hook_dirs()) take(dir, dir + normalized);
 
     // Each active mod's: <location><hookdir or /hook>/lua/x.lua, in order,
     // until the list's first nil.
@@ -82,10 +85,8 @@ std::vector<std::string> script_hooks(lua_State* L, const vfs::VirtualFileSystem
                 std::string hookdir = string_field(L, "hookdir");
                 if (hookdir.empty()) hookdir = "/hook";
                 if (!location.empty()) {
-                    std::string candidate = location;
-                    candidate += hookdir;
-                    candidate += normalized;
-                    take(candidate);
+                    const std::string dir = location + hookdir;
+                    take(dir, dir + normalized);
                 }
             }
             lua_pop(L, 1);

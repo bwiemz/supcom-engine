@@ -12960,9 +12960,11 @@ void test_right_click(TestContext& ctx) {
                 unbuilt = &u;
         });
     }
-    // A reclaimable prop near by (the map's trees and rocks).
-    const osc::sim::Entity* prop = nullptr;
-    {
+    // The reclaimable prop nearest the engineer (the map's trees and rocks),
+    // found when it is clicked: a tree group picked earlier may have broken
+    // up into single trees, and been freed, by then.
+    const auto nearest_prop = [&]() -> const osc::sim::Entity* {
+        const osc::sim::Entity* nearest = nullptr;
         float best = 1e9f;
         ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
             if (e.destroyed() || !e.is_prop() || !e.reclaimable() ||
@@ -12973,10 +12975,11 @@ void test_right_click(TestContext& ctx) {
                 std::hypot(e.position().x - eng->position().x, e.position().z - eng->position().z);
             if (d < best) {
                 best = d;
-                prop = &e;
+                nearest = &e;
             }
         });
-    }
+        return nearest;
+    };
 
     osc::renderer::InputHandler input;
     input.set_player_army(0);
@@ -13129,7 +13132,7 @@ void test_right_click(TestContext& ctx) {
           "on a staging platform: one load, for the plane and the tank; the plane docks, the "
           "tank can't");
 
-    if (prop) {
+    if (const osc::sim::Entity* prop = nearest_prop()) {
         input.set_selected({eng->entity_id(), tank->entity_id()});
         const auto shown_order =
             input.right_button_order(ctx.sim, prop->position().x, prop->position().z);

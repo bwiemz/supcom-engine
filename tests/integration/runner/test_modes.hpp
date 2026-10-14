@@ -35,6 +35,9 @@ private:
     std::string render_dump_path_;             // --render-dump <file>
     bool mouse_scene_ = false;                 // --mouse-scene
     bool mouse_scene_spawned_ = false;
+    u32 count_marks_frames_ = 0; // --count-marks <frames>
+    u32 marks_frames_seen_ = 0;
+    size_t marks_most_ = 0; // the most order marks drawn at once
     InterpProbe interp_probe_;
     std::optional<RenderDumpProbe> render_dump_;
 };

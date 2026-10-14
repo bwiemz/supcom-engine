@@ -96,6 +96,28 @@ void VirtualFileSystem::mount(const std::string& mountpoint, std::unique_ptr<Mou
     auto mp = normalize(mountpoint);
     spdlog::debug("VFS: mounting at '{}'", mp);
     mounts_.push_back({std::move(mp), std::move(source)});
+    drop_listings();
+}
+
+void VirtualFileSystem::drop_listings() {
+    const std::lock_guard lock(listings_->mutex);
+    listings_->files.clear();
+}
+
+bool VirtualFileSystem::listed_file_exists(std::string_view directory,
+                                           std::string_view path) const {
+    std::string dir = normalize(directory);
+    const std::string file = normalize(path);
+    const std::lock_guard lock(listings_->mutex);
+    auto it = listings_->files.find(dir);
+    if (it == listings_->files.end()) {
+        const auto found = find_files(dir, "*");
+        it = listings_->files
+                 .emplace(std::move(dir),
+                          std::unordered_set<std::string>(found.begin(), found.end()))
+                 .first;
+    }
+    return it->second.contains(file);
 }
 
 std::optional<std::vector<char>> VirtualFileSystem::read_file(
@@ -180,6 +202,7 @@ std::optional<FileInfo> VirtualFileSystem::get_file_info(
 
 void VirtualFileSystem::clear() {
     mounts_.clear();
+    drop_listings();
 }
 
 void VirtualFileSystem::set_hook_dirs(const std::vector<std::string>& dirs) {

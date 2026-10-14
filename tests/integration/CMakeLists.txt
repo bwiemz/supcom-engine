@@ -568,6 +568,19 @@ set_tests_properties(data.golden.formation_drag PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
 
+# The same six Strikers boxed, then a plain right-click on the ground: the
+# move is reported to commandmode.OnCommandIssued, which draws its mark
+add_test(NAME data.right-click-mark
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --camera 672,346,60 --mouse-scene
+                 --mouse "610 move w659,346" --mouse "612 press left"
+                 --mouse "614 move w671,353" --mouse "618 release left"
+                 --mouse "624 move w682,344" --mouse "626 press right"
+                 --mouse "628 release right" --count-marks 660)
+set_tests_properties(data.right-click-mark PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
+
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither
 # bound nor listed in the baseline. Baseline is for retail FA 3599; a machine

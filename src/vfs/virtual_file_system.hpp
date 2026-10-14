@@ -3,8 +3,11 @@
 #include "vfs/mount_point.hpp"
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::vfs {
@@ -26,6 +29,14 @@ public:
     /// Find all files matching a pattern under a directory.
     std::vector<std::string> find_files(
         std::string_view directory, std::string_view pattern) const;
+
+    /// Whether `path` is a file under `directory`, by a listing of the
+    /// directory taken once (find_files) rather than a check of every mount.
+    /// Script hooks ask it of each mod's hook folder for every script run:
+    /// asked of the mounts, each check of a folder on disk went to the disk,
+    /// which on Windows took most of a modded game's start. A new mount, or
+    /// clear(), drops the listings.
+    bool listed_file_exists(std::string_view directory, std::string_view path) const;
 
     /// Get file info from the VFS.
     std::optional<FileInfo> get_file_info(std::string_view path) const;
@@ -54,6 +65,15 @@ private:
 
     std::vector<MountEntry> mounts_;
     std::vector<std::string> hook_dirs_;
+
+    /// listed_file_exists' listings, by normalised directory (scripts load
+    /// on more than one thread).
+    struct Listings {
+        std::mutex mutex;
+        std::unordered_map<std::string, std::unordered_set<std::string>> files;
+    };
+    std::unique_ptr<Listings> listings_ = std::make_unique<Listings>();
+    void drop_listings();
 
     /// Whether `mountpoint` lies below `directory` (both normalised).
     static bool mounted_below(std::string_view mountpoint, std::string_view directory);

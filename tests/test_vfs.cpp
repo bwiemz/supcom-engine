@@ -46,3 +46,35 @@ TEST_CASE("a directory mount never reads a directory as a file", "[vfs]") {
     CHECK(std::string(data->begin(), data->end()) == "abc");
     fs::remove_all(root);
 }
+
+TEST_CASE("a listed folder answers as the mounts do, and a new mount lists it again", "[vfs]") {
+    // Script hooks look each mod's hook folder up in a listing taken once,
+    // not with a check of every mount per script.
+    namespace fs = std::filesystem;
+    const fs::path a = osc::test::unique_temp_path("osc_vfs_listing_a");
+    const fs::path b = osc::test::unique_temp_path("osc_vfs_listing_b");
+    fs::create_directories(a / "hook" / "lua" / "sim");
+    fs::create_directories(b / "hook" / "lua");
+    { std::ofstream(a / "hook" / "lua" / "sim" / "Unit.lua") << "-- a"; }
+    { std::ofstream(b / "hook" / "lua" / "aibrain.lua") << "-- b"; }
+
+    VirtualFileSystem vfs;
+    vfs.mount("/mods/a", std::make_unique<DirectoryMount>(a));
+    // Any spelling: paths are normalised (lowercase, forward slashes).
+    CHECK(vfs.listed_file_exists("/mods/a/hook", "/mods/a/hook/lua/sim/unit.lua"));
+    CHECK(vfs.listed_file_exists("/MODS/A/hook/", "\\mods\\a\\hook\\lua\\sim\\Unit.lua"));
+    CHECK_FALSE(vfs.listed_file_exists("/mods/a/hook", "/mods/a/hook/lua/sim/weapon.lua"));
+    // A folder is no file
+    CHECK_FALSE(vfs.listed_file_exists("/mods/a/hook", "/mods/a/hook/lua/sim"));
+    CHECK_FALSE(vfs.listed_file_exists("/mods/b/hook", "/mods/b/hook/lua/aibrain.lua"));
+
+    // Mounting b drops the listings: b's folder is listed anew.
+    vfs.mount("/mods/b", std::make_unique<DirectoryMount>(b));
+    CHECK(vfs.listed_file_exists("/mods/b/hook", "/mods/b/hook/lua/aibrain.lua"));
+    CHECK(vfs.listed_file_exists("/mods/a/hook", "/mods/a/hook/lua/sim/unit.lua"));
+
+    vfs.clear();
+    CHECK_FALSE(vfs.listed_file_exists("/mods/a/hook", "/mods/a/hook/lua/sim/unit.lua"));
+    fs::remove_all(a);
+    fs::remove_all(b);
+}
