@@ -1347,8 +1347,8 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         static_cast<Unit*>(target)->set_unit_state("BeingUpgraded", true);
     }
 
-    // Read economy data from the target blueprint
-    if (blueprints::push_blueprint(L, cmd.blueprint_id)) {
+    // Use the created unit's canonical blueprint id, including for AI orders.
+    if (blueprints::push_blueprint(L, target->blueprint_id())) {
         lua_pushstring(L, "Economy");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
