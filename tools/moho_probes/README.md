@@ -2,7 +2,7 @@
 
 Some of the engine's rules come from faf-re's decompiled Moho, and a few of their consequences surprised us. Only the original game can say whether it behaves the same. These probes ask each question the same way of both: an init file mounts the hooks ahead of the game, the hooks build each scene on Seton's Clutch (SCMP_009), and every answer is a `PROBE ...` line in the log.
 
-Nothing here patches the game's scripts. The hooks wrap two functions to start the scenes and to read the start's selection.
+Nothing here patches the game's scripts. The hooks wrap two functions to start the scenes and to read the start's selection; `engineer/` also wraps its own engineer's build callbacks, on that unit alone, to log them.
 
 ## Running them
 
@@ -69,7 +69,17 @@ At fixed ticks it logs the factory's progress and energy use, the engineer's foc
 
 **`timing/`** gives a factory three Strikers and an engineer a power generator, with ample resources. It logs their state, work progress, `GetResourceConsumed` and focus: the factory at t=0–12 and t=130–160, and the engineer every tick from t=0 to 40. It is done at `PROBE timing done`.
 
-Asked on 2026-10-14 (the original once, the engine on main 7f09e969 and with #642):
+**`engineer/`** looks closer at how an engineer starts a build. A T1 engineer at (260, 790), heading 0, is told to build a T1 power generator behind it, at (262, 784), with ample resources. Every tick from the order to t=20 it logs:
+- the engineer's state, progress, `GetResourceConsumed`, focus and heading;
+- its build turret's direction (`GetBoneDirection('Turret')`).
+
+It also logs:
+- each build callback as it runs (`OnPrepareArmToBuild`, the open animation's wait, `OnStartBuild`, `OnStopBuilderTracking`), wrapped on that engineer alone. It also wraps `BuildManipulatorSetEnabled`, which neither game called: retail's open-animation wait enables the arm itself;
+- where the frame appears.
+
+It is done at `PROBE eng-build done`.
+
+Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, and with #646.
 
 | Probe | The original | The engine | So |
 |---|---|---|---|
@@ -78,4 +88,7 @@ Asked on 2026-10-14 (the original once, the engine on main 7f09e969 and with #64
 | `economy` alone | 0.0069 progress a tick | the same | The factory builds at the same rate. |
 | `economy` stalled | progress at income over requested (about 7%); mass rose 17.2 over the stall | progress the same; mass fell 101 before #640, rises 17.1 now | Moho grants a request wanting both resources the same share of each (`ProcessArmyEconomy`). |
 | `timing` factory | the Striker at t=1, `GetResourceConsumed` 0 at t=1–2, progress from t=3, done at t=142, 0 the tick after | progress from t=1 before #642; now identical on all 44 logged ticks | A unit works at last tick's grant (`ResourceConsumed`). |
-| `timing` engineer | Building from t=2, the frame at t=10, progress from t=12 | Building t=1, frame t=6, progress t=8 with #642 | Moho's mobile build task starts later. Not yet ported. |
+| `timing` engineer | Building from t=2, the frame at t=10, progress from t=12 | Building t=1, frame t=6, progress t=8 with #642; identical on all 41 logged ticks with #646 | Moho's mobile build task starts later: see `engineer`. |
+| `engineer` site | the frame at (262.5, 784.5) | (262, 784) before #646; now the same | The build task snaps its site to its footprint's cell, a script's order as the UI's. |
+| `engineer` start | `OnPrepareArmToBuild` after t=1, Building from t=2 | after t=0 before #646; now the same | The task's first tick only prepares (faf-re's `TASKSTATE_Preparing` returns 1). |
+| `engineer` arm | the open animation's wait ends after t=6; the turret turns 36° a tick from t=7 (36°, 72°, 108°, 144°) and settles at 155° at t=11; `OnStartBuild` after t=9 | the wait ended after t=4, the arm turned in one tick, `OnStartBuild` after t=5, before #646; all 32 logged rows the same now | Manipulators move before a unit's tasks (`Unit::MotionTick`), and `SetAimingArc`'s slews are degrees a second. |
