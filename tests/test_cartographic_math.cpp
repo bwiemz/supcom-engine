@@ -206,10 +206,8 @@ TEST_CASE("The cartographic view: the rect fills the target, higher is nearer", 
     // column-major: clip = m * (x, y, z, 1)
     const auto clip = [&](f32 x, f32 y, f32 z) {
         std::array<f32, 3> out{};
-        for (int row = 0; row < 3; ++row)
-            out[static_cast<size_t>(row)] =
-                m[static_cast<size_t>(row)] * x + m[static_cast<size_t>(4 + row)] * y +
-                m[static_cast<size_t>(8 + row)] * z + m[static_cast<size_t>(12 + row)];
+        for (size_t row = 0; row < 3; ++row)
+            out[row] = m[row] * x + m[4 + row] * y + m[8 + row] * z + m[12 + row];
         return out;
     };
     const auto top_left = clip(100.0f, 0.0f, 50.0f);
