@@ -568,8 +568,8 @@ bool Unit::tick_fuel(f64 dt, SimContext& ctx, Unit* platform) {
         if (dock_repair_asked_) {
             f32 eff = 1.0f;
             if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES) {
-                const auto& ae = ctx.army_efficiency[static_cast<u32>(army())];
-                eff = static_cast<f32>(std::min(ae.mass, ae.energy));
+                eff = static_cast<f32>(ctx.army_grants[static_cast<u32>(army())].of(
+                    economy_.dock_repair_mass, economy_.dock_repair_energy));
             }
             set_health(std::min(max_health(), health() + pad.repair_amount * kFuelTickScale * eff));
         }

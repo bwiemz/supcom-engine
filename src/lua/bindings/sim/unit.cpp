@@ -1280,8 +1280,7 @@ static int unit_GetResourceConsumed(lua_State* L) {
         lua_pushnumber(L, 1.0);
         return 1;
     }
-    lua_pushnumber(L, sim::resource_fraction(u->economy(), brain->mass_efficiency(),
-                                             brain->energy_efficiency()));
+    lua_pushnumber(L, sim::resource_fraction(u->economy(), brain->grant_ratios()));
     return 1;
 }
 

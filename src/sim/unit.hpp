@@ -51,9 +51,10 @@ struct BuildQueueEntry {
 };
 
 struct UnitEconomy;
+struct GrantRatios;
 /// unit:GetResourceConsumed(): the share it obtains of what it asks for, at
-/// its army's efficiencies (1 asking for nothing)
-f64 resource_fraction(const UnitEconomy& econ, f64 mass_efficiency, f64 energy_efficiency);
+/// its army's grants to its requests (1 asking for nothing)
+f64 resource_fraction(const UnitEconomy& econ, const GrantRatios& grants);
 
 struct UnitEconomy {
     f64 production_mass = 0.0;

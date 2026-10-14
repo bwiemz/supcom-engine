@@ -32,6 +32,24 @@ enum class BrainState : i32 {
     Recalled = 4,
 };
 
+/// What an army's economy grants this tick, as Moho's ProcessArmyEconomy
+/// shares it out: a request that wants the resource that ran short (the
+/// limiting one) gets `dual` of what it asks, of each resource it wants;
+/// a request wanting only the other gets `single`, its share of what the
+/// first class left. Requests wanting both resources set `dual`, bounded by
+/// the scarcer one, so a build starved of energy takes as little mass.
+struct GrantRatios {
+    f64 dual = 1.0;
+    f64 single = 1.0;
+    bool mass_limits = false; ///< mass ran short (else energy, Moho's first lane)
+    /// The share granted a request of `mass` and `energy` a second. One
+    /// asking nothing yet (an order's first tick) is taken to want both.
+    f64 of(f64 mass, f64 energy) const {
+        if (mass <= 0.0 && energy <= 0.0) return dual;
+        return (mass_limits ? mass : energy) > 0.0 ? dual : single;
+    }
+};
+
 struct ResourceState {
     f64 income = 0.0;
     f64 requested = 0.0;
@@ -126,6 +144,10 @@ public:
     void add_event_request(f64 mass, f64 energy) {
         event_mass_ += mass;
         event_energy_ += energy;
+        if (mass > 0.0 && energy > 0.0) {
+            event_dual_mass_ += mass;
+            event_dual_energy_ += energy;
+        }
     }
 
     /// aibrain:GiveStorage: the army's one extra storage pair, on top of what
@@ -142,8 +164,12 @@ public:
         extra_storage_mass_ = mass;
         extra_storage_energy_ = energy;
     }
+    /// The share of what it asked the economy's last tick granted each
+    /// resource, as Moho reports it (mLastUseActual over the requests).
     f64 mass_efficiency() const { return mass_efficiency_; }
     f64 energy_efficiency() const { return energy_efficiency_; }
+    /// The shares its requests are granted (see GrantRatios).
+    const GrantRatios& grant_ratios() const { return grant_ratios_; }
 
     // --- Unit tracking ---
     i32 unit_cap() const { return unit_cap_; }
@@ -293,6 +319,9 @@ private:
     f64 mass_efficiency_ = 1.0;
     f64 event_mass_ = 0.0; // add_event_request, spent by update_economy
     f64 event_energy_ = 0.0;
+    f64 event_dual_mass_ = 0.0; // the part of them wanting both resources
+    f64 event_dual_energy_ = 0.0;
+    GrantRatios grant_ratios_;
     f64 energy_efficiency_ = 1.0;
     i32 unit_cap_ = 1000;
     bool ignore_unit_cap_ = false;

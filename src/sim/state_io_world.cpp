@@ -250,6 +250,11 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.f64v(a.mass_efficiency_);
     w.f64v(a.event_mass_);
     w.f64v(a.event_energy_);
+    w.f64v(a.event_dual_mass_);
+    w.f64v(a.event_dual_energy_);
+    w.f64v(a.grant_ratios_.dual);
+    w.f64v(a.grant_ratios_.single);
+    w.b(a.grant_ratios_.mass_limits);
     w.f64v(a.energy_efficiency_);
     w.i32v(a.unit_cap_);
     w.b(a.ignore_unit_cap_);
@@ -329,6 +334,11 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.mass_efficiency_ = r.f64v();
     a.event_mass_ = r.f64v();
     a.event_energy_ = r.f64v();
+    a.event_dual_mass_ = r.f64v();
+    a.event_dual_energy_ = r.f64v();
+    a.grant_ratios_.dual = r.f64v();
+    a.grant_ratios_.single = r.f64v();
+    a.grant_ratios_.mass_limits = r.b();
     a.energy_efficiency_ = r.f64v();
     a.unit_cap_ = r.i32v();
     a.ignore_unit_cap_ = r.b();
