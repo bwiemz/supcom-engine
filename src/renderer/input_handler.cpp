@@ -508,7 +508,11 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                 remove_order(sim, hovered_command_);
             }
         } else {
-            right_release(sim);
+            // A plain right-click's orders, as a command mode's: reported to
+            // commandmode.OnCommandIssued, which draws the move marker.
+            for (const auto& issued : right_release(sim)) {
+                if (mode_hooks_.issued) mode_hooks_.issued(issued);
+            }
         }
     }
     if (rmb && rmb_was_pressed_) {

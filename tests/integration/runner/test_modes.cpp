@@ -42,7 +42,9 @@
 
 extern "C" {
 #include <thread>
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <lua.h>
 }
 
@@ -450,6 +452,7 @@ void IntegrationModes::print_usage() const {
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
               << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
               << "  --mouse-scene      Six Strikers of army 1 beside its commander, for --mouse goldens\n"
+              << "  --count-marks <N>  Run N frames; fail if no order's mark (feedback blip) is drawn\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --focus-army-test  A launch's player in the second slot plays and watches it\n"
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
@@ -494,11 +497,13 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     interp_ = parse_flag(argc, argv, "--interp-test");
     render_dump_path_ = parse_string_arg(argc, argv, "--render-dump", "");
     mouse_scene_ = parse_flag(argc, argv, "--mouse-scene");
+    count_marks_frames_ = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--count-marks", "0").c_str(), nullptr, 10));
     render_dump_.emplace(render_dump_path_);
 
     app::TestRequest request;
     request.headless = !given_.empty();
-    request.windowed = interp_ || !render_dump_path_.empty();
+    request.windowed = interp_ || !render_dump_path_.empty() || count_marks_frames_ > 0;
     request.ai_army_2 = has("--ai-test") || has("--platoon-test") || has("--threat-test") ||
                         has("--combat-test") || has("--persist-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
@@ -760,6 +765,10 @@ void IntegrationModes::frame_view(Engine& e, app::Frame& frame) {
 }
 
 void IntegrationModes::frame_rendered(Engine& e, app::Frame& frame) {
+    if (count_marks_frames_ > 0) {
+        ++marks_frames_seen_;
+        marks_most_ = std::max(marks_most_, frame.renderer.feedback_blips().blips().size());
+    }
     if (render_dump_path_.empty()) return;
     render_dump_->on_frame(
         *e.sim_state, [&](const char* code) { return run_sim_lua(e, code); },
@@ -769,10 +778,19 @@ void IntegrationModes::frame_rendered(Engine& e, app::Frame& frame) {
 
 bool IntegrationModes::frames_done() const {
     return (interp_ && interp_probe_.done()) ||
-           (!render_dump_path_.empty() && render_dump_->done());
+           (!render_dump_path_.empty() && render_dump_->done()) ||
+           (count_marks_frames_ > 0 && marks_frames_seen_ >= count_marks_frames_);
 }
 
 std::optional<int> IntegrationModes::after_window() {
+    if (count_marks_frames_ > 0) {
+        if (marks_most_ == 0) {
+            osc::test_status::fail("[FAIL] count-marks: no order's mark was drawn");
+        } else {
+            spdlog::info("[PASS] count-marks: up to {} order marks drawn at once", marks_most_);
+        }
+        return finish_test_run("count-marks");
+    }
     if (interp_) {
         if (!interp_probe_.done())
             osc::test_status::fail("[FAIL] interp: the window closed before the check ended");
