@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "app/support.hpp"
 #include "core/front_end_data.hpp"
@@ -304,7 +305,8 @@ TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
 
     auto* unit = static_cast<osc::sim::Unit*>(registry.find(unit_id));
     REQUIRE(unit != nullptr);
-    REQUIRE(brain.energy_efficiency() == 0.0);
+    // Nothing granted (Moho's report of usage reads full here: see GrantRatios)
+    REQUIRE(brain.grant_ratios().of(0.0, 100.0) == 0.0);
     REQUIRE_FALSE(unit->is_cloaked());
     REQUIRE_FALSE(unit->is_intel_enabled("Cloak"));
     REQUIRE_FALSE(unit->economy().maintenance_active);
@@ -333,7 +335,8 @@ TEST_CASE("Energy stall disables active intel maintenance toggles", "[intel][eco
 
     auto* unit = static_cast<osc::sim::Unit*>(registry.find(unit_id));
     REQUIRE(unit != nullptr);
-    REQUIRE(brain.energy_efficiency() == 0.0);
+    // Nothing granted (Moho's report of usage reads full here: see GrantRatios)
+    REQUIRE(brain.grant_ratios().of(0.0, 100.0) == 0.0);
     for (std::string_view intel : {
              "Radar", "Sonar", "Omni", "Jammer",
              "RadarStealth", "SonarStealth", "CloakField",
@@ -373,7 +376,8 @@ TEST_CASE("Energy stall turns off maintained shields", "[shield][economy]") {
     auto* updated_shield = static_cast<osc::sim::Shield*>(registry.find(shield_id));
     REQUIRE(updated_owner != nullptr);
     REQUIRE(updated_shield != nullptr);
-    REQUIRE(brain.energy_efficiency() == 0.0);
+    // Nothing granted (Moho's report of usage reads full here: see GrantRatios)
+    REQUIRE(brain.grant_ratios().of(0.0, 100.0) == 0.0);
     REQUIRE_FALSE(updated_shield->is_on);
     REQUIRE_FALSE(updated_owner->economy().maintenance_active);
 }
@@ -973,20 +977,134 @@ TEST_CASE("The player plays the army set up as human, not the first", "[session]
     CHECK(osc::app::human_army(lua.raw(), sim) == 0);
 }
 
-TEST_CASE("A unit's resource fraction counts only what it asks for", "[economy]") {
+TEST_CASE("A unit's resource fraction is its own request's grant", "[economy]") {
     osc::sim::UnitEconomy radar;
     radar.maintenance_active = true;
     radar.energy_maintenance_override = 20;
-    CHECK(osc::sim::resource_fraction(radar, 0.2, 1.0) == 1.0);
-    CHECK(osc::sim::resource_fraction(radar, 1.0, 0.5) == 0.5);
-
     osc::sim::UnitEconomy builder;
     builder.consumption_active = true;
     builder.consumption_mass = 4;
     builder.consumption_energy = 20;
-    CHECK(osc::sim::resource_fraction(builder, 0.3, 0.6) == 0.3);
 
-    CHECK(osc::sim::resource_fraction(osc::sim::UnitEconomy{}, 0.1, 0.1) == 1.0);
+    // Energy ran short: every request wanting energy gets the pooled share
+    osc::sim::GrantRatios energy_short{0.5, 0.8, false};
+    CHECK(osc::sim::resource_fraction(radar, energy_short) == 0.5);
+    CHECK(osc::sim::resource_fraction(builder, energy_short) == 0.5);
+    // Mass ran short: the builder gets the pooled share, the radar (energy
+    // alone) its share of what was left
+    osc::sim::GrantRatios mass_short{0.3, 0.9, true};
+    CHECK(osc::sim::resource_fraction(radar, mass_short) == 0.9);
+    CHECK(osc::sim::resource_fraction(builder, mass_short) == 0.3);
+
+    CHECK(osc::sim::resource_fraction(osc::sim::UnitEconomy{}, mass_short) == 1.0);
+}
+
+namespace {
+
+/// An army of one unit holding storage, and a builder and an upkeep, for
+/// the economy's grants.
+struct Economy {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    osc::sim::Unit* store = nullptr;
+    osc::sim::Unit* builder = nullptr;
+    osc::sim::Unit* upkeep = nullptr;
+
+    Economy(double income_mass, double income_energy) {
+        brain.set_index(0);
+        auto make = [&]() {
+            auto u = std::make_unique<osc::sim::Unit>();
+            u->set_army(0);
+            auto* raw = u.get();
+            registry.register_entity(std::move(u));
+            return raw;
+        };
+        store = make();
+        store->economy().storage_mass = 1000;
+        store->economy().storage_energy = 5000;
+        store->economy().production_mass = income_mass;
+        store->economy().production_energy = income_energy;
+        store->economy().production_active = true;
+        builder = make();
+        upkeep = make();
+        brain.update_economy(registry, 0.1); // the storage counted
+    }
+};
+
+} // namespace
+
+TEST_CASE("An energy stall grants a build as little mass as energy, as Moho's economy does",
+          "[economy]") {
+    // The original game's probe (2026-10-14): a factory asking 4 mass and
+    // 19 energy a second beside a Monkeylord's 250 energy upkeep, on 20
+    // energy and 1 mass a second, no energy stored. Its progress ran at
+    // income over asked; its army's mass rose (it took 0.036 a tick of the
+    // 0.4 asked), where the engine had spent all 0.4 and its mass fell.
+    Economy e(1.0, 20.0);
+    e.brain.set_stored_resources(500.0, 0.0);
+    e.builder->economy().consumption_active = true;
+    e.builder->economy().consumption_mass = 4.0;
+    e.builder->economy().consumption_energy = 19.0;
+    e.upkeep->economy().maintenance_active = true;
+    e.upkeep->economy().energy_maintenance_override = 250.0;
+    e.brain.update_economy(e.registry, 0.1);
+
+    const osc::sim::GrantRatios& g = e.brain.grant_ratios();
+    CHECK_FALSE(g.mass_limits);
+    CHECK(g.dual == Catch::Approx(2.0 / 26.9));
+    CHECK(g.of(4.0, 19.0) == g.dual);
+    CHECK(g.of(0.0, 250.0) == g.dual); // it wants the limiting resource too
+    CHECK(e.brain.economy().energy.stored == Catch::Approx(0.0).margin(1e-9));
+    // 0.1 income less 0.4 x 2/26.9 spent
+    CHECK(e.brain.economy().mass.stored == Catch::Approx(500.0 + 0.1 - 0.4 * 2.0 / 26.9));
+    CHECK(e.brain.economy().mass.stored > 500.0);
+}
+
+TEST_CASE("A mass stall slows a build but not an energy upkeep", "[economy]") {
+    // The pooled request (the build) is bounded by mass; the upkeep, wanting
+    // only energy, shares what the build left of the energy, all of it here
+    Economy e(0.0, 1000.0);
+    e.brain.set_stored_resources(0.5, 4000.0);
+    e.builder->economy().consumption_active = true;
+    e.builder->economy().consumption_mass = 10.0;
+    e.builder->economy().consumption_energy = 50.0;
+    e.upkeep->economy().maintenance_active = true;
+    e.upkeep->economy().energy_maintenance_override = 100.0;
+    e.upkeep->add_intel("Radar", 50.0f);
+    e.upkeep->enable_intel("Radar");
+    e.brain.update_economy(e.registry, 0.1);
+
+    const osc::sim::GrantRatios& g = e.brain.grant_ratios();
+    CHECK(g.mass_limits);
+    CHECK(g.dual == Catch::Approx(0.5));
+    CHECK(g.single == 1.0);
+    CHECK(osc::sim::resource_fraction(e.builder->economy(), g) == Catch::Approx(0.5));
+    CHECK(osc::sim::resource_fraction(e.upkeep->economy(), g) == 1.0);
+    // The upkeep is granted in full, so it stays on (a mass stall stops no
+    // radar, cloak or shield)
+    CHECK(e.upkeep->economy().maintenance_active);
+    CHECK(e.upkeep->is_intel_enabled("Radar"));
+    // The build's energy at its share, the upkeep's in full
+    CHECK(e.brain.economy().energy.stored ==
+          Catch::Approx(4000.0 + 100.0 - 5.0 * 0.5 - 10.0).margin(1e-9));
+    CHECK(e.brain.economy().mass.stored == Catch::Approx(0.0).margin(1e-9));
+    // As Moho reports them: mass used at the build's share; energy at each
+    // request's
+    CHECK(e.brain.mass_efficiency() == Catch::Approx(0.5));
+    CHECK(e.brain.energy_efficiency() == Catch::Approx((50.0 * 0.5 + 100.0) / 150.0));
+}
+
+TEST_CASE("An economy with enough grants every request in full", "[economy]") {
+    Economy e(5.0, 100.0);
+    e.brain.set_stored_resources(800.0, 4000.0);
+    e.builder->economy().consumption_active = true;
+    e.builder->economy().consumption_mass = 4.0;
+    e.builder->economy().consumption_energy = 19.0;
+    e.brain.update_economy(e.registry, 0.1);
+    CHECK(e.brain.grant_ratios().dual == 1.0);
+    CHECK(e.brain.grant_ratios().single == 1.0);
+    CHECK(e.brain.mass_efficiency() == 1.0);
+    CHECK(e.brain.economy().mass.stored == Catch::Approx(800.0 + 0.5 - 0.4));
 }
 
 TEST_CASE("GetUnitsAroundPoint and GetNumUnitsAroundPoint find centres strictly within the radius, "

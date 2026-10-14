@@ -1830,12 +1830,9 @@ void SimState::tick_economy_events() {
             if (!evt.counted()) return;
             const Entity* unit = entity_registry_.find(unit_id);
             const ArmyBrain* brain = unit ? get_army(unit->army()) : nullptr;
-            if (brain) {
-                if (evt.mass_per_second() > 0)
-                    efficiency = std::min(efficiency, brain->mass_efficiency());
-                if (evt.energy_per_second() > 0)
-                    efficiency = std::min(efficiency, brain->energy_efficiency());
-            }
+            if (brain)
+                efficiency =
+                    brain->grant_ratios().of(evt.mass_per_second(), evt.energy_per_second());
         }
         evt.advance(SECONDS_PER_TICK, efficiency);
         if (evt.callback_ref() < 0 || unit_id == 0) return;
@@ -1892,8 +1889,7 @@ void SimState::update_entities() {
     SimContext ctx{
         entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this, {}};
     for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
-        ctx.army_efficiency[i] = {armies_[i]->mass_efficiency(),
-                                  armies_[i]->energy_efficiency()};
+        ctx.army_grants[i] = armies_[i]->grant_ratios();
     }
 
     // Units on paths look ahead for others they would meet (M203c).

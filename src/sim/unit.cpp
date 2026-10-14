@@ -50,18 +50,12 @@ bool reclaim_target_valid(const Entity& target) {
     return target.is_prop() && static_cast<const Prop&>(target).reclaimable_category;
 }
 
-f64 resource_fraction(const UnitEconomy& econ, f64 mass_efficiency, f64 energy_efficiency) {
-    const bool consuming = econ.consumption_active;
-    const bool mass = consuming && econ.consumption_mass > 0;
-    const bool energy = (consuming && econ.consumption_energy > 0) ||
-                        (econ.maintenance_active && econ.energy_maintenance_override > 0);
+f64 resource_fraction(const UnitEconomy& econ, const GrantRatios& grants) {
     f64 fraction = 1.0;
-    if (mass) {
-        fraction = std::min(fraction, mass_efficiency);
-    }
-    if (energy) {
-        fraction = std::min(fraction, energy_efficiency);
-    }
+    if (econ.consumption_active && (econ.consumption_mass > 0 || econ.consumption_energy > 0))
+        fraction = std::min(fraction, grants.of(econ.consumption_mass, econ.consumption_energy));
+    if (econ.maintenance_active && econ.energy_maintenance_override > 0)
+        fraction = std::min(fraction, grants.of(0.0, econ.energy_maintenance_override));
     return fraction;
 }
 
@@ -661,8 +655,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
     // Compute economy efficiency for this unit's army
     f32 econ_eff = 1.0f;
     if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES) {
-        const auto& ae = ctx.army_efficiency[static_cast<u32>(army())];
-        econ_eff = static_cast<f32>(std::min(ae.mass, ae.energy));
+        // What the economy grants this unit's own request (a capture's is
+        // energy alone)
+        econ_eff = static_cast<f32>(ctx.army_grants[static_cast<u32>(army())].of(
+            economy_.consumption_mass, economy_.consumption_energy + economy_.capture_energy));
     }
 
     // Assisting a silo is renewed each tick (see Guard); one that stops

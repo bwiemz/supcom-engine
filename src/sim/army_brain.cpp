@@ -193,8 +193,20 @@ bool ArmyBrain::is_neutral(i32 other_army) const {
 void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     f64 mass_income = 0.0;
     f64 energy_income = 0.0;
-    f64 mass_consumption = 0.0;
-    f64 energy_consumption = 0.0;
+    // Moho's two classes of request (ProcessArmyEconomy): those that want
+    // both resources, and those that want one
+    f64 dual_mass = 0.0, dual_energy = 0.0, single_mass = 0.0, single_energy = 0.0;
+    const auto request = [&](f64 mass, f64 energy) {
+        mass = std::max(0.0, mass);
+        energy = std::max(0.0, energy);
+        if (mass > 0.0 && energy > 0.0) {
+            dual_mass += mass;
+            dual_energy += energy;
+        } else {
+            single_mass += mass;
+            single_energy += energy;
+        }
+    };
     // The units' storage and GiveStorage's pair: an army has none of its
     // own (the original's starts with its commander's 4000 and 650)
     f64 total_storage_mass = extra_storage_mass_;
@@ -219,25 +231,25 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         mass_income += econ.reclaim_mass;
         energy_income += econ.reclaim_energy;
 
-        if (econ.consumption_active) {
-            mass_consumption += econ.consumption_mass;
-            energy_consumption += econ.consumption_energy;
-        }
-        // A silo's missile under way (M206), and a repair on a staging
-        // platform (M206r).
-        mass_consumption += econ.silo_mass + econ.dock_repair_mass;
-        energy_consumption += econ.silo_energy + econ.dock_repair_energy + econ.capture_energy;
-
-        if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0) {
-            energy_consumption += econ.energy_maintenance_override;
-        }
+        // Each its own request, as Moho's tasks and upkeep each hold one
+        if (econ.consumption_active) request(econ.consumption_mass, econ.consumption_energy);
+        // A silo's missile under way (M206), a repair on a staging platform
+        // (M206r), a capture
+        request(econ.silo_mass, econ.silo_energy);
+        request(econ.dock_repair_mass, econ.dock_repair_energy);
+        request(0.0, econ.capture_energy);
+        if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0)
+            request(0.0, econ.energy_maintenance_override);
     });
 
     // Its economy events' requests (M206d).
-    mass_consumption += event_mass_;
-    energy_consumption += event_energy_;
-    event_mass_ = 0.0;
-    event_energy_ = 0.0;
+    dual_mass += event_dual_mass_;
+    dual_energy += event_dual_energy_;
+    single_mass += event_mass_ - event_dual_mass_;
+    single_energy += event_energy_ - event_dual_energy_;
+    event_mass_ = event_energy_ = event_dual_mass_ = event_dual_energy_ = 0.0;
+    const f64 mass_consumption = dual_mass + single_mass;
+    const f64 energy_consumption = dual_energy + single_energy;
 
     // Lobby handicap reduces this army's resource income.
     if (handicap_ > 0.0) {
@@ -254,35 +266,62 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     economy_.mass.max_storage = std::max(0.0, total_storage_mass);
     economy_.energy.max_storage = std::max(0.0, total_storage_energy);
 
-    // Storage-aware efficiency: storage acts as buffer that smoothly drains
-    // before stalling kicks in. available = income*dt + stored
-    f64 mass_consumed = 0.0, energy_consumed = 0.0;
+    // ProcessArmyEconomy: what the army holds this tick against what is
+    // asked. Both classes' demand bounds the pooled ratio, energy first; the
+    // resource that bounds it last is the limiting one.
+    const f64 mass_avail = mass_income * dt + economy_.mass.stored;
+    const f64 energy_avail = energy_income * dt + economy_.energy.stored;
+    const f64 mass_needed = mass_consumption * dt;
+    const f64 energy_needed = energy_consumption * dt;
+    GrantRatios g;
+    if (energy_needed * g.dual > energy_avail) {
+        g.dual = energy_avail / energy_needed;
+        g.mass_limits = false;
+    }
+    if (mass_needed * g.dual > mass_avail) {
+        g.dual = mass_avail / mass_needed;
+        g.mass_limits = true;
+    }
+    // Single-resource requests of the other resource share what the pooled
+    // grants left of it
+    const f64 single_needed = (g.mass_limits ? single_energy : single_mass) * dt;
+    const f64 left = std::max(0.0, g.mass_limits ? energy_avail - dual_energy * dt * g.dual
+                                                 : mass_avail - dual_mass * dt * g.dual);
+    if (single_needed * g.single > left) g.single = left / single_needed;
+    grant_ratios_ = g;
+    // The grants: the limiting resource's at `dual` (whichever class asked
+    // it), the other's at `dual` to the pooled requests and `single` to the
+    // rest
+    const f64 mass_consumed =
+        g.mass_limits ? mass_needed * g.dual : (dual_mass * g.dual + single_mass * g.single) * dt;
+    const f64 energy_consumed = g.mass_limits
+                                    ? (dual_energy * g.dual + single_energy * g.single) * dt
+                                    : energy_needed * g.dual;
     {
-        f64 mass_avail = mass_income * dt + economy_.mass.stored;
-        f64 mass_needed = mass_consumption * dt;
-        mass_consumed = (mass_needed > 0) ? std::min(mass_avail, mass_needed) : 0.0;
-        f64 mass_raw = mass_avail - mass_consumed;
+        const f64 mass_raw = mass_avail - mass_consumed;
         economy_.mass.stored = std::clamp(mass_raw, 0.0, economy_.mass.max_storage);
         economy_.mass.overflow = std::max(0.0, mass_raw - economy_.mass.max_storage);
-        mass_efficiency_ = (mass_needed > 0) ? mass_consumed / mass_needed : 1.0;
-    }
-    {
-        f64 energy_avail = energy_income * dt + economy_.energy.stored;
-        f64 energy_needed = energy_consumption * dt;
-        energy_consumed = (energy_needed > 0) ? std::min(energy_avail, energy_needed) : 0.0;
-        f64 energy_raw = energy_avail - energy_consumed;
+        const f64 energy_raw = energy_avail - energy_consumed;
         economy_.energy.stored = std::clamp(energy_raw, 0.0, economy_.energy.max_storage);
         economy_.energy.overflow = std::max(0.0, energy_raw - economy_.energy.max_storage);
-        energy_efficiency_ = (energy_needed > 0) ? energy_consumed / energy_needed : 1.0;
     }
+    // What Moho reports used (mLastUseActual): each class at its own ratio
+    const f64 mass_used = dual_mass * g.dual + single_mass * g.single;
+    const f64 energy_used = dual_energy * g.dual + single_energy * g.single;
+    mass_efficiency_ = mass_consumption > 0.0 ? mass_used / mass_consumption : 1.0;
+    energy_efficiency_ = energy_consumption > 0.0 ? energy_used / energy_consumption : 1.0;
 
-    if (energy_efficiency_ < 1.0) {
+    // An upkeep stops when its own request isn't granted in full (which
+    // Moho's report of usage can hide): an energy stall's, never a mass
+    // stall's, which grants energy-only requests from what is left
+    if (g.dual < 1.0 || g.single < 1.0) {
         registry.for_each_unit([&](Entity& e) {
             if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
             auto& unit = static_cast<Unit&>(e);
             auto& econ = unit.economy();
             if (!econ.maintenance_active ||
                 econ.energy_maintenance_override <= 0.0) return;
+            if (g.of(0.0, econ.energy_maintenance_override) >= 1.0) return;
 
             bool stopped = disable_maintenance_intel(unit);
             stopped = turn_off_maintained_shield(unit, registry) || stopped;

@@ -118,11 +118,6 @@ struct CameraFollowEvent {
 };
 
 /// Per-army resource efficiency (pre-computed per tick).
-struct ArmyEfficiency {
-    f64 mass = 1.0;
-    f64 energy = 1.0;
-};
-
 /// Cached blip data for dead-reckoning (last-known position when entity
 /// leaves intel coverage, or entity destroyed while previously seen).
 struct BlipSnapshot {
@@ -141,7 +136,8 @@ struct SimContext {
     map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
     SimState* sim;
     static constexpr u32 MAX_EFFICIENCY_ARMIES = 16;
-    std::array<ArmyEfficiency, MAX_EFFICIENCY_ARMIES> army_efficiency;
+    /// Each army's grants this tick (its economy's last update)
+    std::array<GrantRatios, MAX_EFFICIENCY_ARMIES> army_grants;
 };
 
 class SimState {
