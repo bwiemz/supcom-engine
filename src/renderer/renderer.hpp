@@ -375,6 +375,9 @@ public:
     u32 mesh_instance_count() const;
     u32 cube_instance_count() const { return unit_renderer_.cube_instance_count(); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
+    /// The quads FA's minimap views painted last frame, in order (the map
+    /// first, then resources, icons and the camera's outline).
+    const std::vector<UIQuad>& painted_minimap() const { return painted_minimap_; }
 
     /// --legacy-hud: keep drawing the engine's C++ HUD placeholders (economy
     /// bars, minimap, selection panel, game-over banner) while FA's own game
@@ -801,6 +804,9 @@ private:
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
     CartographicRenderer cartographic_; ///< the minimap's map
+    /// The cartographic frame a minimap view draws this frame (the first
+    /// cartographic one painted), recorded before the scene's passes.
+    std::optional<CartographicRenderer::View> cartographic_view_;
     FogRenderer fog_renderer_;
     UIRenderer ui_renderer_;
     MovieTextures movie_textures_; ///< Movie controls' frames (M216a)

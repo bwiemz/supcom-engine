@@ -247,7 +247,8 @@ void write_samplers(VkDevice device, VkDescriptorSet set, VkSampler sampler,
 
 } // namespace
 
-void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkFormat depth_format) {
+void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkFormat depth_format,
+                                VkDescriptorSetLayout ui_layout) {
     device_ = device;
     allocator_ = allocator;
     depth_format_ = depth_format;
@@ -269,18 +270,22 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     lookup_layout_ = sampler_layout(device, 3);
     frame_layout_ = sampler_layout(device, 1);
 
+    // The lookups' set, then each frame in flight's stage-1 input and UI set
     const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                    3 + FRAMES_IN_FLIGHT};
+                                    3 + 2 * FRAMES_IN_FLIGHT};
     VkDescriptorPoolCreateInfo pool_ci{};
     pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_ci.maxSets = 1 + FRAMES_IN_FLIGHT;
+    pool_ci.maxSets = 1 + 2 * FRAMES_IN_FLIGHT;
     pool_ci.poolSizeCount = 1;
     pool_ci.pPoolSizes = &size;
     vkCreateDescriptorPool(device, &pool_ci, nullptr, &pool_);
-    std::array<VkDescriptorSetLayout, 1 + FRAMES_IN_FLIGHT> layouts{};
+    std::array<VkDescriptorSetLayout, 1 + 2 * FRAMES_IN_FLIGHT> layouts{};
     layouts[0] = lookup_layout_;
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) layouts[1 + i] = frame_layout_;
-    std::array<VkDescriptorSet, 1 + FRAMES_IN_FLIGHT> sets{};
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        layouts[1 + i] = frame_layout_;
+        layouts[1 + FRAMES_IN_FLIGHT + i] = ui_layout;
+    }
+    std::array<VkDescriptorSet, 1 + 2 * FRAMES_IN_FLIGHT> sets{};
     VkDescriptorSetAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     alloc.descriptorPool = pool_;
@@ -288,7 +293,10 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     alloc.pSetLayouts = layouts.data();
     vkAllocateDescriptorSets(device, &alloc, sets.data());
     lookup_set_ = sets[0];
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) frame_sets_[i] = sets[1 + i];
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        frame_sets_[i] = sets[1 + i];
+        ui_sets_[i] = sets[1 + FRAMES_IN_FLIGHT + i];
+    }
 
     const VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(TerrainPush)};
@@ -447,7 +455,20 @@ bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
             : VkImageAspectFlags{VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT};
     t.depth = make_image(device_, allocator_, depth_format_, width, height,
                          VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_aspect);
-    if (!t.frame.view || !t.output.view || !t.depth.view) {
+    // The UI's view of the output: alpha read as 1 (see ui_descriptor)
+    if (t.output.image) {
+        VkImageViewCreateInfo view{};
+        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view.image = t.output.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = kTargetFormat;
+        view.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                           VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_ONE};
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        if (vkCreateImageView(device_, &view, nullptr, &t.ui_view) != VK_SUCCESS)
+            t.ui_view = VK_NULL_HANDLE;
+    }
+    if (!t.frame.view || !t.output.view || !t.ui_view || !t.depth.view) {
         destroy_target(t);
         return false;
     }
@@ -470,14 +491,19 @@ bool CartographicRenderer::ensure_target(u32 fi, u32 width, u32 height) {
         return false;
     }
     write_samplers(device_, frame_sets_[fi], point_, {t.frame.view});
+    write_samplers(device_, ui_sets_[fi], point_, {t.ui_view});
     t.width = width;
     t.height = height;
     return true;
 }
 
+bool CartographicRenderer::prepare(u32 fi, u32 width, u32 height) {
+    if (!ready() || fi >= FRAMES_IN_FLIGHT || width == 0 || height == 0) return false;
+    return ensure_target(fi, width, height);
+}
+
 void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view) {
-    if (!ready() || fi >= FRAMES_IN_FLIGHT || view.width == 0 || view.height == 0) return;
-    if (!ensure_target(fi, view.width, view.height)) return;
+    if (!prepare(fi, view.width, view.height)) return;
     const Target& t = targets_[fi];
     const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
                               0.0f, 1.0f};
@@ -538,6 +564,7 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view)
 void CartographicRenderer::destroy_target(Target& t) {
     if (t.frame_fb) vkDestroyFramebuffer(device_, t.frame_fb, nullptr);
     if (t.output_fb) vkDestroyFramebuffer(device_, t.output_fb, nullptr);
+    if (t.ui_view) vkDestroyImageView(device_, t.ui_view, nullptr);
     destroy_image(device_, allocator_, t.frame);
     destroy_image(device_, allocator_, t.output);
     destroy_image(device_, allocator_, t.depth);

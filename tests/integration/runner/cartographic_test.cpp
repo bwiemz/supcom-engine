@@ -8,19 +8,29 @@
 // - its structure: contour lines on land, none in open water, the shore
 //   lined.
 // On SCMP_009, square and letterboxed.
+//
+// --cartographic-minimap-test: a cartographic minimap view (retail's
+// minimap.lua sets SetCartographic(true)) draws that frame, pixel for
+// pixel, over the whole pixels the UI clips it to, in both frames in
+// flight and after a resize; without the flag, the terrain texture again.
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
 
 #include "core/image.hpp"
+#include "core/ui_registry_keys.hpp"
+#include "lua/lua_state.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "renderer/cartographic_math.hpp"
 #include "renderer/cartographic_renderer.hpp"
+#include "renderer/minimap_renderer.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/sim_state.hpp"
+#include "ui/ui_control.hpp"
 
 #include <fmt/format.h>
+#include <lua.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -28,6 +38,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -196,6 +207,53 @@ Edges compare_stage1(const Images& img) {
     return e;
 }
 
+/// A minimap frame's pixels against the cartographic output drawn for its
+/// view: those not under the minimap's later quads (icons, the camera's
+/// outline), RGB.
+struct Copied {
+    size_t pixels = 0, matched = 0;
+};
+
+Copied compare_copy(const ImageRGBA8& frame, const renderer::MapArea& rect, const Images& drawn,
+                    const std::vector<renderer::UIQuad>& painted) {
+    Copied c;
+    const auto x0 = static_cast<u32>(rect.x);
+    const auto y0 = static_cast<u32>(rect.y);
+    for (u32 j = 0; j < drawn.height; ++j) {
+        for (u32 i = 0; i < drawn.width; ++i) {
+            const u32 x = x0 + i;
+            const u32 y = y0 + j;
+            if (x >= frame.width || y >= frame.height) continue;
+            const f32 cx = static_cast<f32>(x) + 0.5f;
+            const f32 cy = static_cast<f32>(y) + 0.5f;
+            bool covered = false;
+            for (size_t q = 1; q < painted.size() && !covered; ++q) {
+                const auto& r = painted[q].inst.rect;
+                covered = cx >= r[0] && cx < r[0] + r[2] && cy >= r[1] && cy < r[1] + r[3];
+            }
+            if (covered) continue;
+            ++c.pixels;
+            const size_t f = (static_cast<size_t>(y) * frame.width + x) * 4;
+            const size_t d = (static_cast<size_t>(j) * drawn.width + i) * 4;
+            if (frame.pixels[f] == drawn.output[d] && frame.pixels[f + 1] == drawn.output[d + 1] &&
+                frame.pixels[f + 2] == drawn.output[d + 2])
+                ++c.matched;
+        }
+    }
+    return c;
+}
+
+/// Lay the test's minimap view at (x, y, w, h).
+std::string place_view(f32 x, f32 y, f32 w, f32 h) {
+    return fmt::format("do local v = rawget(_G, '__osc_carto_view')\n"
+                       "v.Left:Set(function() return {} end)\n"
+                       "v.Top:Set(function() return {} end)\n"
+                       "v.Width:Set(function() return {} end)\n"
+                       "v.Height:Set(function() return {} end)\n"
+                       "end\n",
+                       x, y, w, h);
+}
+
 } // namespace
 
 void test_cartographic(TestContext& ctx) {
@@ -284,6 +342,141 @@ void test_cartographic(TestContext& ctx) {
     t.check(renderer::Renderer::validation_error_count() == errors_before,
             "no Vulkan validation errors drawing it");
     spdlog::info("Cartographic frame test: {} passed, {} failed", t.pass, t.fail);
+}
+
+void test_cartographic_minimap(TestContext& ctx) {
+    spdlog::info("=== Cartographic minimap test ===");
+    Tally t;
+    const map::Terrain* terrain = ctx.sim.terrain();
+    lua_State* L = ctx.L;
+    lua_pushstring(L, "osc_ui_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* registry = static_cast<ui::UIControlRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!terrain || !registry) {
+        t.check(false, "a map is loaded and the UI's controls are up");
+        return;
+    }
+    OffscreenShots shots(ctx);
+    if (!shots.ok()) {
+        t.check(false, "renderer init (no Vulkan?)");
+        return;
+    }
+    renderer::Renderer& r = shots.renderer();
+    r.init_ui_caches(&ctx.vfs);
+    const u32 errors_before = renderer::Renderer::validation_error_count();
+    const auto map_w = static_cast<f32>(terrain->map_width());
+    const auto map_h = static_cast<f32>(terrain->map_height());
+
+    // A minimap view as retail's minimap.lua makes one, its rect off the
+    // pixel grid; FA's game interface is up, so the engine's HUD is not
+    const auto ran = ctx.lua_state.do_string(
+        "do local v = {}\n"
+        "setmetatable(v, {__index = moho.UIWorldView})\n"
+        "moho.UIWorldView.__init(v, GetFrame(0), 'MiniMap', 2, true, 'WorldCamera')\n"
+        "v.Depth:Set(function() return 50 end)\n"
+        "moho.UIWorldView.SetCartographic(v, true)\n"
+        "rawset(_G, '__osc_carto_view', v)\n"
+        "end\n" +
+        place_view(40.4f, 30.6f, 241.3f, 180.8f));
+    t.check(static_cast<bool>(ran), "a cartographic minimap view is made");
+    lua_pushstring(L, core::kWorldUiActiveKey);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    (void)shots.shoot_frame(*terrain, map_w * 0.5f, map_h * 0.5f, 200.0f); // the scene
+    shots.set_ui(registry);
+
+    const auto is_frame = [&](VkDescriptorSet ds) {
+        return ds &&
+               (ds == r.cartographic().ui_descriptor(0) || ds == r.cartographic().ui_descriptor(1));
+    };
+    // Two frames, one in each slot; each view's pixels against the frame
+    // drawn for that view
+    const auto check_view = [&](f32 x, f32 y, f32 w, f32 h, const std::string& name) {
+        const auto m = renderer::cartographic_minimap(x, y, w, h, map_w, map_h);
+        if (!m) {
+            t.check(false, name + ": the view has a frame");
+            return;
+        }
+        std::array<ImageRGBA8, 2> frames;
+        std::array<std::vector<renderer::UIQuad>, 2> painted;
+        for (size_t f = 0; f < frames.size(); ++f) {
+            frames[f] = shots.grab();
+            painted[f] = r.painted_minimap();
+        }
+        const auto drawn = r.capture_cartographic(*terrain, m->frame);
+        for (size_t f = 0; f < frames.size(); ++f) {
+            const std::string at = fmt::format("{} (frame {})", name, f + 1);
+            const auto& ps = painted[f];
+            const bool first_is_map =
+                !ps.empty() && is_frame(ps[0].texture_ds) && ps[0].inst.rect[0] == m->rect.x &&
+                ps[0].inst.rect[1] == m->rect.y && ps[0].inst.rect[2] == m->rect.w &&
+                ps[0].inst.rect[3] == m->rect.h;
+            t.check(first_is_map,
+                    fmt::format("{}: the view's first quad is the cartographic frame over its "
+                                "rect snapped to {} {} {}x{}",
+                                at, m->rect.x, m->rect.y, m->rect.w, m->rect.h));
+            const bool outlined = std::any_of(ps.begin(), ps.end(), [](const renderer::UIQuad& q) {
+                return q.inst.color[0] == 1.0f && q.inst.color[1] == 1.0f &&
+                       q.inst.color[2] == 0.0f;
+            });
+            t.check(outlined, fmt::format("{}: the camera's outline is drawn over it ({} quads)",
+                                          at, ps.size()));
+            if (!drawn || frames[f].pixels.empty()) {
+                t.check(false, at + ": the frames are captured");
+                continue;
+            }
+            const Copied c = compare_copy(frames[f], m->rect, *drawn, ps);
+            t.check(c.pixels > 0 && c.matched == c.pixels,
+                    fmt::format("{}: {} of {} pixels the frame's, copied pixel for pixel", at,
+                                c.matched, c.pixels));
+        }
+        t.check(r.cartographic().width(0) == m->frame.width &&
+                    r.cartographic().width(1) == m->frame.width &&
+                    r.cartographic().height(0) == m->frame.height &&
+                    r.cartographic().height(1) == m->frame.height,
+                fmt::format("{}: both frames' targets are {}x{}", name, m->frame.width,
+                            m->frame.height));
+    };
+    check_view(40.4f, 30.6f, 241.3f, 180.8f, "a wide view");
+
+    // A click at the view's middle is the map's middle
+    {
+        const auto m = renderer::cartographic_minimap(40.4f, 30.6f, 241.3f, 180.8f, map_w, map_h);
+        f32 wx = -1.0f;
+        f32 wz = -1.0f;
+        const bool hit =
+            m && r.minimap().hit_test(m->rect.x + m->rect.w * 0.5f, m->rect.y + m->rect.h * 0.5f,
+                                      r.width(), r.height(), map_w, map_h, wx, wz);
+        t.check(hit && std::abs(wx - map_w * 0.5f) < 2.0f && std::abs(wz - map_h * 0.5f) < 2.0f,
+                fmt::format("a click at the view's middle is the map's ({:.1f}, {:.1f})", wx, wz));
+    }
+
+    // Resized (as the minimap window is), the targets are made again
+    (void)ctx.lua_state.do_string(place_view(100.0f, 20.2f, 150.6f, 260.0f));
+    check_view(100.0f, 20.2f, 150.6f, 260.0f, "a tall view, after a resize");
+
+    // Without the flag, the terrain texture over the fitted map
+    (void)ctx.lua_state.do_string(
+        "moho.UIWorldView.SetCartographic(rawget(_G, '__osc_carto_view'), false)\n");
+    (void)shots.grab();
+    {
+        const auto& ps = r.painted_minimap();
+        const renderer::MapArea area =
+            renderer::fit_map_area(100.0f, 20.2f, 150.6f, 260.0f, map_w, map_h);
+        t.check(!ps.empty() && ps[0].texture_ds && !is_frame(ps[0].texture_ds) &&
+                    ps[0].inst.rect[0] == area.x && ps[0].inst.rect[1] == area.y &&
+                    ps[0].inst.rect[2] == area.w && ps[0].inst.rect[3] == area.h,
+                "SetCartographic(false): the terrain texture over the map, as before");
+    }
+
+    shots.set_ui(nullptr);
+    lua_pushstring(L, core::kWorldUiActiveKey);
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    t.check(renderer::Renderer::validation_error_count() == errors_before,
+            "no Vulkan validation errors drawing it");
+    spdlog::info("Cartographic minimap test: {} passed, {} failed", t.pass, t.fail);
 }
 
 } // namespace osc::test
