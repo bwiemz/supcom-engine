@@ -1276,24 +1276,17 @@ static int unit_RemoveSpecifiedEnhancement(lua_State* L) {
     return 0;
 }
 
-// GetResourceConsumed(self) → number
+// GetResourceConsumed(self): the share of its consumption request its work
+// goes at (Moho's ResourceConsumed: last tick's grant, 0 asking for nothing);
+// a unit of no army, which no economy grants, works in full
 static int unit_GetResourceConsumed(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->army() < 0) {
-        lua_pushnumber(L, 1.0);
-        return 1;
-    }
     auto* sim = get_sim(L);
-    if (!sim) {
+    if (u && (!sim || !sim->get_army(u->army()))) {
         lua_pushnumber(L, 1.0);
         return 1;
     }
-    auto* brain = sim->get_army(u->army());
-    if (!brain) {
-        lua_pushnumber(L, 1.0);
-        return 1;
-    }
-    lua_pushnumber(L, sim::resource_fraction(u->economy(), brain->grant_ratios()));
+    lua_pushnumber(L, u ? u->economy().resource_consumed : 0.0);
     return 1;
 }
 

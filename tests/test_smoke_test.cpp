@@ -1258,6 +1258,9 @@ TEST_CASE("A paused unit's enhancement waits", "[session][rules][pause]") {
     enhance.type = osc::sim::CommandType::Enhance;
     enhance.blueprint_id = "Gun";
     f->push_command(enhance, true);
+    // Its request is granted the tick after it is made, and worked from the
+    // one after that
+    h.sim.tick();
     h.sim.tick();
     h.sim.tick();
     REQUIRE(f->is_enhancing());

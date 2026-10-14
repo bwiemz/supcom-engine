@@ -50,15 +50,6 @@ bool reclaim_target_valid(const Entity& target) {
     return target.is_prop() && static_cast<const Prop&>(target).reclaimable_category;
 }
 
-f64 resource_fraction(const UnitEconomy& econ, const GrantRatios& grants) {
-    f64 fraction = 1.0;
-    if (econ.consumption_active && (econ.consumption_mass > 0 || econ.consumption_energy > 0))
-        fraction = std::min(fraction, grants.of(econ.consumption_mass, econ.consumption_energy));
-    if (econ.maintenance_active && econ.energy_maintenance_override > 0)
-        fraction = std::min(fraction, grants.of(0.0, econ.energy_maintenance_override));
-    return fraction;
-}
-
 Weapon* Unit::get_weapon(i32 index) {
     if (index < 0 || index >= static_cast<i32>(weapons_.size()))
         return nullptr;
@@ -652,13 +643,17 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (destroyed() || !in_registry()) return;
     }
 
-    // Compute economy efficiency for this unit's army
-    f32 econ_eff = 1.0f;
-    if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES) {
-        // What the economy grants this unit's own request (a capture's is
-        // energy alone)
-        econ_eff = static_cast<f32>(ctx.army_grants[static_cast<u32>(army())].of(
-            economy_.consumption_mass, economy_.consumption_energy + economy_.capture_energy));
+    // Its work goes at what its consumption request was granted last tick
+    // (Moho's ResourceConsumed); a capture asks through a request of its own,
+    // granted this tick
+    f32 econ_eff = static_cast<f32>(economy_.resource_consumed);
+    // (A unit of no army has no economy to ask: it works in full.)
+    if (!ctx.sim || !ctx.sim->get_army(army())) econ_eff = 1.0f;
+    if (economy_.capture_energy > 0.0) {
+        econ_eff = 1.0f;
+        if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES)
+            econ_eff = static_cast<f32>(
+                ctx.army_grants[static_cast<u32>(army())].of(0.0, economy_.capture_energy));
     }
 
     // Assisting a silo is renewed each tick (see Guard); one that stops
@@ -984,7 +979,14 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
     if (!is_being_built()) {
         // Its silo builds beside everything else (paused, it waits).
         if (!dying_ && (silo_building() || !silo_orders_.empty() || auto_mode_)) {
-            update_silo(dt, econ_eff, L);
+            // A missile asks through a request of its own (Moho's
+            // CAiSiloBuildImpl), granted this tick, not the unit's
+            f32 silo_eff = 1.0f;
+            if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES &&
+                ctx.sim && ctx.sim->get_army(army()))
+                silo_eff = static_cast<f32>(ctx.army_grants[static_cast<u32>(army())].of(
+                    economy_.silo_mass, economy_.silo_energy));
+            update_silo(dt, silo_eff, L);
             if (destroyed() || dying_) return;
         }
         update_motion_horz(L);

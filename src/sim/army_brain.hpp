@@ -138,7 +138,7 @@ public:
     f64 get_economy_trend(const std::string& resource_type) const;
 
     /// Per-tick economy update: sum unit production/consumption, update stored.
-    void update_economy(const EntityRegistry& registry, f64 dt);
+    void update_economy(EntityRegistry& registry, f64 dt);
     /// A request beyond its units' own, per second, for the next
     /// update_economy only: its economy events' (M206d).
     void add_event_request(f64 mass, f64 energy) {
