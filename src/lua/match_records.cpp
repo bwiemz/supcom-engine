@@ -126,8 +126,8 @@ std::optional<json> read_match_record(const fs::path& path, bool summary) {
                           kind == "commander_hit" || kind == "enhanced" || kind == "army_result";
         if (!summary && keep && notable.size() < kMaxNotable) {
             json n = json::object();
-            for (const char* k : {"tick", "kind", "army", "bp", "by_bp", "by_army", "health",
-                                  "name", "result"})
+            for (const char* k :
+                 {"tick", "kind", "army", "bp", "by_bp", "by_army", "health", "name", "result"})
                 if (e.contains(k)) n[k] = e[k];
             notable.push_back(std::move(n));
         }
@@ -186,7 +186,9 @@ void push_json(lua_State* L, const json& value) {
         }
         return;
     }
-    case json::value_t::string: lua_pushstring(L, value.get_ref<const std::string&>().c_str()); return;
+    case json::value_t::string:
+        lua_pushstring(L, value.get_ref<const std::string&>().c_str());
+        return;
     case json::value_t::boolean: lua_pushboolean(L, value.get<bool>() ? 1 : 0); return;
     case json::value_t::number_integer:
     case json::value_t::number_unsigned:
