@@ -3291,11 +3291,12 @@ void test_stall(TestContext& ctx) {
                 LOG('STALL TEST 1: FAIL (expected number, got ' .. type(consumed) .. ')')
             end
 
-            -- Test 2: Efficiency starts at 1.0 (ACU has no consumption initially)
-            if consumed >= 0.99 then
-                LOG('STALL TEST 2: PASS (efficiency ~1.0 with no consumption)')
+            -- Test 2: asking for nothing, it is 0 (the original game's answer
+            -- for an idle unit: the timing probe, 2026-10-14)
+            if consumed == 0 then
+                LOG('STALL TEST 2: PASS (0 with no consumption, as the original)')
             else
-                LOG('STALL TEST 2: FAIL (expected ~1.0, got ' .. tostring(consumed))
+                LOG('STALL TEST 2: FAIL (expected 0, got ' .. tostring(consumed))
             end
 
             -- Test 3: GetEconomyUsage vs GetEconomyRequested
@@ -9868,7 +9869,12 @@ void test_missile(TestContext& ctx) {
         if not b or not b.done then error('B never finished') end
         -- 80 + 4 x 5 build rate: 24 s.
         if math.abs((b.done - b.start) - 240) > 1 then error('B took ' .. (b.done - b.start) .. ' ticks') end
-        if math.abs(b.energy - 3600) > 1 or math.abs(b.mass - 180) > 0.1 then
+        -- The missile's cost, and the engineers' grants that run ahead of
+        -- their work (Moho's ResourceConsumed: a grant is worked the tick
+        -- after, and given back to the army if they stop first, which the
+        -- spent-stat, as Moho's, doesn't take off): five ticks of their
+        -- 4 x 0.75 E and 4 x 0.0375 M a tick, measured
+        if b.energy < 3599 or b.energy > 3615.5 or b.mass < 179.9 or b.mass > 180.8 then
             error(string.format('B and its engineers spent %g E and %g M', b.energy, b.mass))
         end
         for _, e in __osc_engineers do
@@ -9956,12 +9962,17 @@ void test_missile(TestContext& ctx) {
     run(5);
     lua_check("setup: B's engineers unpaused", R"(
         __osc_alone = __osc_b:GetWorkProgress() - __osc_alone
-        __osc_helped = __osc_b:GetWorkProgress()
         __osc_paused_use = 0
         for _, e in __osc_engineers do
             __osc_paused_use = __osc_paused_use + e:GetEconData().energyConsumed
             e:SetPaused(false)
         end
+    )");
+    // Their requests are granted the tick after, and worked from the one
+    // after that (Moho's ResourceConsumed)
+    run(2);
+    lua_check("setup: the engineers' help under way", R"(
+        __osc_helped = __osc_b:GetWorkProgress()
     )");
     run(5);
     lua_check("Test 9b: paused engineers add nothing to the silo they help, and pay nothing", R"(
@@ -12959,6 +12970,11 @@ void test_right_click(TestContext& ctx) {
                 u.blueprint_id() == "ueb1101")
                 unbuilt = &u;
         });
+    }
+    // Worked a little: a request is worked from the second tick after it is
+    // made (Moho's ResourceConsumed), and a frame left at nothing decays away
+    for (int i = 0; i < 10 && unbuilt && unbuilt->fraction_complete() <= 0.0f; ++i) {
+        ctx.sim.tick();
     }
     // FAF's scripts compare an order's commandType with Moho's numbers
     // (UnitQueueDataToCommand)

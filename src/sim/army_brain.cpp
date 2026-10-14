@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <vector>
 
 namespace osc::sim {
 
@@ -190,7 +191,7 @@ bool ArmyBrain::is_neutral(i32 other_army) const {
     return get_alliance(other_army) == Alliance::Neutral;
 }
 
-void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
+void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt) {
     f64 mass_income = 0.0;
     f64 energy_income = 0.0;
     // Moho's two classes of request (ProcessArmyEconomy): those that want
@@ -214,12 +215,37 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
 
     u32 active_units = 0;
     f32 cap_used = 0.0f; // get_unit_cost_total, in the same pass
-    registry.for_each_unit([&](const Entity& e) {
+    // Each unit's one request, as Moho's (its consumption and any upkeep set
+    // through the engine's own maintenance fields): granted once the shares
+    // are known
+    struct Requester {
+        UnitEconomy* econ;
+        f64 mass, energy;
+    };
+    std::vector<Requester> requesters;
+    f64 refund_mass = 0.0, refund_energy = 0.0;
+    registry.for_each_unit([&](Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
         ++active_units;
-        const auto& unit = static_cast<const Unit&>(e);
+        auto& unit = static_cast<Unit&>(e);
         if (!unit.is_dying()) cap_used += unit.cap_cost();
-        const auto& econ = unit.economy();
+        auto& econ = unit.economy();
+        // Last tick's grant is this tick's work (Moho's ResourceConsumed),
+        // none once it stops asking
+        const bool upkeep = econ.maintenance_active && econ.energy_maintenance_override > 0.0;
+        const bool asking = econ.consumption_active || upkeep;
+        econ.resource_consumed = asking ? econ.granted : 0.0;
+        econ.granted = 0.0;
+        // A request that stopped before working its grant gives it back
+        if (!econ.consumption_active) {
+            refund_mass += econ.granted_mass;
+            refund_energy += econ.granted_energy;
+        }
+        econ.granted_mass = econ.granted_energy = 0.0;
+        if (asking)
+            requesters.push_back({&econ, econ.consumption_active ? econ.consumption_mass : 0.0,
+                                  (econ.consumption_active ? econ.consumption_energy : 0.0) +
+                                      (upkeep ? econ.energy_maintenance_override : 0.0)});
 
         if (unit.producing()) {
             mass_income += econ.production_mass;
@@ -266,6 +292,8 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     economy_.mass.max_storage = std::max(0.0, total_storage_mass);
     economy_.energy.max_storage = std::max(0.0, total_storage_energy);
 
+    economy_.mass.stored += refund_mass;
+    economy_.energy.stored += refund_energy;
     // ProcessArmyEconomy: what the army holds this tick against what is
     // asked. Both classes' demand bounds the pooled ratio, energy first; the
     // resource that bounds it last is the limiting one.
@@ -289,6 +317,15 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
                                                  : mass_avail - dual_mass * dt * g.dual);
     if (single_needed * g.single > left) g.single = left / single_needed;
     grant_ratios_ = g;
+    // A request asking nothing is met in full (CEconRequest::LimitingRate)
+    for (const Requester& r : requesters) {
+        r.econ->granted = r.mass > 0.0 || r.energy > 0.0 ? g.of(r.mass, r.energy) : 1.0;
+        if (r.econ->consumption_active) {
+            const f64 share = g.of(r.econ->consumption_mass, r.econ->consumption_energy);
+            r.econ->granted_mass = r.econ->consumption_mass * dt * share;
+            r.econ->granted_energy = r.econ->consumption_energy * dt * share;
+        }
+    }
     // The grants: the limiting resource's at `dual` (whichever class asked
     // it), the other's at `dual` to the pooled requests and `single` to the
     // rest

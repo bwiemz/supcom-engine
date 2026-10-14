@@ -50,12 +50,6 @@ struct BuildQueueEntry {
     int count = 1;
 };
 
-struct UnitEconomy;
-struct GrantRatios;
-/// unit:GetResourceConsumed(): the share it obtains of what it asks for, at
-/// its army's grants to its requests (1 asking for nothing)
-f64 resource_fraction(const UnitEconomy& econ, const GrantRatios& grants);
-
 struct UnitEconomy {
     f64 production_mass = 0.0;
     f64 production_energy = 0.0;
@@ -85,6 +79,18 @@ struct UnitEconomy {
     f64 dock_repair_energy = 0.0;
     /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's.
     f64 capture_energy = 0.0;
+    /// The share of its consumption request the economy granted this tick,
+    /// and the share its work goes at (Moho's ResourceConsumed, what
+    /// GetResourceConsumed answers): last tick's grant, so a request made in
+    /// one tick is granted in the next and worked from the one after; 0 as
+    /// soon as it stops asking (Unit::HandleResourceManagement).
+    f64 granted = 0.0;
+    f64 resource_consumed = 0.0;
+    /// What the economy took for its consumption request this tick, for the
+    /// next tick's work: given back to the army if it stops asking first, as
+    /// Moho's SetConsumptionActive(false) returns a request's mGranted.
+    f64 granted_mass = 0.0;
+    f64 granted_energy = 0.0;
 
     /// Moho's mMaintainenceCost: a silo's missile under way asks through it
     /// too (CAiSiloBuildImpl).

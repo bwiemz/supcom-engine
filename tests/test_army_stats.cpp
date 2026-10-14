@@ -977,26 +977,17 @@ TEST_CASE("The player plays the army set up as human, not the first", "[session]
     CHECK(osc::app::human_army(lua.raw(), sim) == 0);
 }
 
-TEST_CASE("A unit's resource fraction is its own request's grant", "[economy]") {
-    osc::sim::UnitEconomy radar;
-    radar.maintenance_active = true;
-    radar.energy_maintenance_override = 20;
-    osc::sim::UnitEconomy builder;
-    builder.consumption_active = true;
-    builder.consumption_mass = 4;
-    builder.consumption_energy = 20;
-
+TEST_CASE("A request is granted by whether it wants the resource that ran short", "[economy]") {
     // Energy ran short: every request wanting energy gets the pooled share
     osc::sim::GrantRatios energy_short{0.5, 0.8, false};
-    CHECK(osc::sim::resource_fraction(radar, energy_short) == 0.5);
-    CHECK(osc::sim::resource_fraction(builder, energy_short) == 0.5);
-    // Mass ran short: the builder gets the pooled share, the radar (energy
-    // alone) its share of what was left
+    CHECK(energy_short.of(0.0, 20.0) == 0.5); // an upkeep
+    CHECK(energy_short.of(4.0, 20.0) == 0.5); // a build
+    CHECK(energy_short.of(4.0, 0.0) == 0.8);  // mass alone
+    // Mass ran short: the build gets the pooled share, the upkeep its share
+    // of what was left
     osc::sim::GrantRatios mass_short{0.3, 0.9, true};
-    CHECK(osc::sim::resource_fraction(radar, mass_short) == 0.9);
-    CHECK(osc::sim::resource_fraction(builder, mass_short) == 0.3);
-
-    CHECK(osc::sim::resource_fraction(osc::sim::UnitEconomy{}, mass_short) == 1.0);
+    CHECK(mass_short.of(0.0, 20.0) == 0.9);
+    CHECK(mass_short.of(4.0, 20.0) == 0.3);
 }
 
 namespace {
@@ -1078,8 +1069,9 @@ TEST_CASE("A mass stall slows a build but not an energy upkeep", "[economy]") {
     CHECK(g.mass_limits);
     CHECK(g.dual == Catch::Approx(0.5));
     CHECK(g.single == 1.0);
-    CHECK(osc::sim::resource_fraction(e.builder->economy(), g) == Catch::Approx(0.5));
-    CHECK(osc::sim::resource_fraction(e.upkeep->economy(), g) == 1.0);
+    CHECK(g.of(10.0, 50.0) == Catch::Approx(0.5));
+    CHECK(g.of(0.0, 100.0) == 1.0);
+    CHECK(e.builder->economy().granted == Catch::Approx(0.5));
     // The upkeep is granted in full, so it stays on (a mass stall stops no
     // radar, cloak or shield)
     CHECK(e.upkeep->economy().maintenance_active);
@@ -1092,6 +1084,71 @@ TEST_CASE("A mass stall slows a build but not an energy upkeep", "[economy]") {
     // request's
     CHECK(e.brain.mass_efficiency() == Catch::Approx(0.5));
     CHECK(e.brain.energy_efficiency() == Catch::Approx((50.0 * 0.5 + 100.0) / 150.0));
+}
+
+TEST_CASE("A request is worked from two ticks after it is made, as Moho's ResourceConsumed",
+          "[economy]") {
+    // The original game (the timing probe, 2026-10-14): a factory's new
+    // unit appears a tick after the order, GetResourceConsumed answers 0 for
+    // that tick and the next, and progress starts the tick after. A request
+    // made in one tick is granted in the next, and worked from the one after.
+    Economy e(5.0, 100.0);
+    e.brain.set_stored_resources(800.0, 4000.0);
+    auto& econ = e.builder->economy();
+    CHECK(econ.resource_consumed == 0.0); // asking for nothing
+    // The request is made during a tick's orders, after its economy
+    econ.consumption_active = true;
+    econ.consumption_mass = 4.0;
+    econ.consumption_energy = 19.0;
+    e.brain.update_economy(e.registry, 0.1); // the next tick: granted
+    CHECK(econ.granted == 1.0);
+    CHECK(econ.resource_consumed == 0.0);
+    e.brain.update_economy(e.registry, 0.1); // the one after: worked
+    CHECK(econ.resource_consumed == 1.0);
+    // And when it stops asking, its work stops at once (the original: 0 the
+    // tick after a factory's unit is done)
+    econ.consumption_active = false;
+    e.brain.update_economy(e.registry, 0.1);
+    CHECK(econ.granted == 0.0);
+    CHECK(econ.resource_consumed == 0.0);
+}
+
+TEST_CASE("A request that stops before working its grant gives it back", "[economy]") {
+    // Moho's SetConsumptionActive(false) returns the request's mGranted to
+    // the army's stores: a build done (or cancelled) the tick after a grant
+    // wastes nothing
+    Economy e(0.0, 0.0);
+    e.brain.set_stored_resources(500.0, 2000.0);
+    auto& econ = e.builder->economy();
+    econ.consumption_active = true;
+    econ.consumption_mass = 4.0;
+    econ.consumption_energy = 20.0;
+    e.brain.update_economy(e.registry, 0.1); // granted, taken from the stores
+    CHECK(e.brain.economy().mass.stored == Catch::Approx(499.6));
+    CHECK(e.brain.economy().energy.stored == Catch::Approx(1998.0));
+    econ.consumption_active = false; // done before working it
+    e.brain.update_economy(e.registry, 0.1);
+    CHECK(e.brain.economy().mass.stored == Catch::Approx(500.0));
+    CHECK(e.brain.economy().energy.stored == Catch::Approx(2000.0));
+    CHECK(econ.granted_mass == 0.0);
+}
+
+TEST_CASE("An upkeep set through the engine's own fields reads granted too", "[economy]") {
+    // Retail's scripts fold upkeep into the unit's consumption request; the
+    // engine's SetMaintenanceConsumptionActive binding keeps it apart. Either
+    // way GetResourceConsumed reads its grant: retail's IntelWatchThread
+    // turns a radar off when it is not 1.
+    Economy e(5.0, 100.0);
+    e.brain.set_stored_resources(800.0, 4000.0);
+    auto& econ = e.upkeep->economy();
+    econ.maintenance_active = true;
+    econ.energy_maintenance_override = 20.0;
+    e.brain.update_economy(e.registry, 0.1);
+    e.brain.update_economy(e.registry, 0.1);
+    CHECK(econ.resource_consumed == 1.0);
+    econ.maintenance_active = false;
+    e.brain.update_economy(e.registry, 0.1);
+    CHECK(econ.resource_consumed == 0.0);
 }
 
 TEST_CASE("An economy with enough grants every request in full", "[economy]") {
