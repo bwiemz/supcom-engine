@@ -5,8 +5,10 @@
 // without game data or a real filesystem.
 
 #include "vfs/mount_point.hpp"
+#include "vfs/path_utils.hpp"
 #include "vfs/virtual_file_system.hpp"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -37,9 +39,20 @@ public:
         return files_.find(path) != files_.end();
     }
 
-    std::vector<std::string> find_files(
-        std::string_view, std::string_view) const override {
-        return {};
+    /// The files under `directory` whose names match `pattern`, sorted, as
+    /// the real mounts list them (script hooks are found by a listing).
+    std::vector<std::string> find_files(std::string_view directory,
+                                        std::string_view pattern) const override {
+        std::string dir = osc::vfs::VirtualFileSystem::normalize(directory);
+        if (dir.back() != '/') dir += '/';
+        std::vector<std::string> found;
+        for (const auto& [path, data] : files_) {
+            if (path.compare(0, dir.size(), dir) != 0) continue;
+            const std::string_view name = std::string_view(path).substr(path.rfind('/') + 1);
+            if (osc::vfs::wildcard_match(pattern, name)) found.push_back(path);
+        }
+        std::sort(found.begin(), found.end());
+        return found;
     }
 
     std::optional<osc::vfs::FileInfo> get_file_info(
