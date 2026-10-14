@@ -126,9 +126,14 @@ TEST_CASE("A repair of a unit under construction aims the arm and builds it as a
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    // The order aims the arm; the arm turns before the next tick's order,
+    // which starts the repair (Moho's MotionTick runs ahead of its tasks).
+    w.sim.tick();
+    CHECK_FALSE(eng->is_building());
+    CHECK(w.log() == "eng arm");
     w.sim.tick();
     CHECK(eng->is_building());
-    CHECK(w.log() == "eng arm,eng start Repair");
+    CHECK(w.log() == "eng start Repair");
     CHECK(arm_of(*eng).has_target());
 
     eng->push_command(order(CommandType::Stop, *w.site, 2), true);
@@ -143,8 +148,11 @@ TEST_CASE("A guard helping a build aims its arm at what it helps build", "[build
     Unit* helper = w.engineer("helper", 14.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    w.sim.tick();
-    w.sim.tick();
+    // The repair starts on the second tick; the helper aims at it then and
+    // starts on the third
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
     CHECK(helper->is_building());
     CHECK(arm_of(*helper).has_target());
 }
@@ -167,9 +175,9 @@ TEST_CASE("A repair of a unit under construction starts once the builder's arm i
     CHECK(w.log().empty());
     CHECK(w.site->fraction_complete() <= 0.1f);
 
+    // Enabled, the arm turns at the start of the next tick, and the order
+    // then finds it on target
     arm.set_enabled(true);
-    w.sim.tick();
-    CHECK_FALSE(eng->is_building());
     w.sim.tick();
     CHECK(eng->is_building());
     CHECK(w.log() == "eng start Repair");
@@ -208,8 +216,10 @@ TEST_CASE("A repairer paused before it starts waits at its target until a retry 
     }
     CHECK(eng->command_queue().size() == 1);
     CHECK(arm_of(*eng).has_target());
+    // On target from the second tick, the order meets the pause there and
+    // retries each 10th tick: the 22nd, the 7th after the unpause.
     eng->set_paused(false);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         w.sim.tick();
         CHECK_FALSE(eng->is_building());
     }
@@ -229,8 +239,10 @@ TEST_CASE("A guard paused before it helps a build waits until a retry after unpa
         w.sim.tick();
         CHECK_FALSE(helper->is_building());
     }
+    // The helper's arm is on the build from the third tick, where it meets
+    // the pause, then each 10th: the 23rd, the 8th after the unpause.
     helper->set_paused(false);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 7; ++i) {
         w.sim.tick();
         CHECK_FALSE(helper->is_building());
     }
@@ -244,8 +256,9 @@ TEST_CASE("A paused guard helping a build holds it and adds nothing", "[build][a
     Unit* helper = w.engineer("helper", 14.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     helper->push_command(order(CommandType::Guard, *eng, 2), true);
-    w.sim.tick();
-    w.sim.tick();
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
     REQUIRE(helper->is_building());
     helper->set_paused(true);
     const osc::f32 before = w.site->fraction_complete();

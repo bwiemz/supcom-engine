@@ -200,6 +200,11 @@ struct UnitCommand {
     /// CBuildTaskHelper delta); the prop being reclaimed off it (Moho's
     /// reclaim task under the build task, not an order). Runtime state.
     bool site_cleared = false;
+    /// A mobile build's task has prepared: checked its site and sent its
+    /// builder there. It aims from the next tick, as Moho's
+    /// CUnitMobileBuildTask leaves TASKSTATE_Preparing returning 1. Runtime
+    /// state.
+    bool prepared = false;
     u32 rebuild_wreck_id = 0;
     f32 rebuild_bonus = 0;
     u32 clearing_prop_id = 0;

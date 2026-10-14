@@ -555,6 +555,13 @@ void AimManipulator::tick(f32 dt) {
         // from its forward (+Z); pitch from the pitch bone, once turned.
         const BonePose yaw = rest_frame_world(*unit, yaw_bone_);
         const Quaternion to_local = quat_conjugate(yaw.rotation);
+        // A build arm aims along the line from its reference bone (the aim
+        // bone CreateBuilderArmController was given), heading and pitch alike
+        // (Moho's CBuilderArmManipulator::ComputeDirectionToReferenceBone);
+        // a weapon's controller from its yaw and pitch bones.
+        const bool from_reference = builder_arm_ && unit->bone_data()->is_valid(muzzle_bone_);
+        const Vector3 reference =
+            from_reference ? unit->bone_world_position(muzzle_bone_) : yaw.position;
         const auto elevated = [&](const Vector3& d) {
             const f32 flat = std::sqrt(d.x * d.x + d.z * d.z);
             if (!elevation_ || flat <= 0.0f) {
@@ -563,9 +570,11 @@ void AimManipulator::tick(f32 dt) {
             const f32 across = osc::dmath::cos(*elevation_) / flat;
             return Vector3{d.x * across, osc::dmath::sin(*elevation_), d.z * across};
         };
-        const Vector3 v = quat_rotate(to_local, elevated(sub(target_, yaw.position)));
+        const Vector3 v = quat_rotate(to_local, elevated(sub(target_, reference)));
         want_heading = osc::dmath::atan2(v.x, v.z);
-        const Vector3 from = pitches ? unit->bone_world_position(pitch_bone_) : yaw.position;
+        const Vector3 from =
+            from_reference ? reference
+                           : (pitches ? unit->bone_world_position(pitch_bone_) : yaw.position);
         const Vector3 w = quat_rotate(quat_axis_angle('y', -want_heading),
                                       quat_rotate(to_local, elevated(sub(target_, from))));
         want_pitch = osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));

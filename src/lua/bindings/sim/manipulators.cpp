@@ -433,13 +433,14 @@ static int aim_SetFiringArc(lua_State* L) {
 static int builder_SetAimingArc(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) {
-        // Moho's CBuilderArmManipulator slews its arc's speed every tick.
-        const f64 per_second = 1.0 / sim::SimState::SECONDS_PER_TICK;
+        // The slews are degrees a second: Moho's thunk turns each into
+        // radians times 0.1 for a tick's step (cfunc_CBuilderArmManipulator-
+        // SetAimingArcL), so retail's 360 turns an arm 36 degrees a tick, as
+        // the original's engineers do.
         static_cast<sim::AimManipulator*>(m)->set_firing_arc(
             static_cast<f32>(lua_tonumber(L, 2)), static_cast<f32>(lua_tonumber(L, 3)),
-            static_cast<f32>(lua_tonumber(L, 4) * per_second), static_cast<f32>(lua_tonumber(L, 5)),
-            static_cast<f32>(lua_tonumber(L, 6)),
-            static_cast<f32>(lua_tonumber(L, 7) * per_second));
+            static_cast<f32>(lua_tonumber(L, 4)), static_cast<f32>(lua_tonumber(L, 5)),
+            static_cast<f32>(lua_tonumber(L, 6)), static_cast<f32>(lua_tonumber(L, 7)));
     }
     lua_pushvalue(L, 1);
     return 1;

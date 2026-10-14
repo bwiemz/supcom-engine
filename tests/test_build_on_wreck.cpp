@@ -130,6 +130,13 @@ struct WreckSite {
         engineer->push_command(c, true);
     }
 
+    /// The build's first two ticks: its task prepares, then builds (Moho's
+    /// CUnitMobileBuildTask leaves TASKSTATE_Preparing returning 1).
+    void start() {
+        sim.tick();
+        sim.tick();
+    }
+
     Unit* built() {
         auto* e = built_id != 0 ? sim.entity_registry().find(built_id) : nullptr;
         return e ? static_cast<Unit*>(e) : nullptr;
@@ -143,7 +150,7 @@ TEST_CASE("A structure built on its own wreck starts half built, and the wreck g
     WreckSite w;
     const osc::u32 wreck = w.prop(11.0f, 11.0f, "ueb1103", true);
     w.build("ueb1103");
-    w.sim.tick();
+    w.start();
     REQUIRE(w.built());
     CHECK(w.built()->fraction_complete() == Catch::Approx(0.51f));
     CHECK(w.sim.entity_registry().find(wreck) == nullptr);
@@ -183,7 +190,7 @@ TEST_CASE("With OBSTRUCTSBUILDING in the data, only such props are cleared first
         "__blueprints.wreck = { BlueprintId = 'wreck', Categories = { 'OBSTRUCTSBUILDING' } }");
     const osc::u32 tree = w.prop(10.5f, 10.5f, nullptr, true);
     w.build("uab1103");
-    w.sim.tick();
+    w.start();
     REQUIRE(w.built());
     CHECK(w.sim.entity_registry().find(tree) != nullptr);
 }
@@ -300,7 +307,7 @@ TEST_CASE("A mobile build tells OnStartBuild and OnStopBuild its order", "[build
 TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame left", "[build]") {
     WreckSite w(kHeard);
     w.build("ueb1103");
-    w.sim.tick();
+    w.start();
     REQUIRE(w.built());
     REQUIRE(w.engineer->build_target_id() == w.built_id);
     w.engineer->clear_commands(w.sim.entity_registry(), w.L);
@@ -344,7 +351,7 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
     w.build("ueb1103");
     int failures = 0;
     SECTION("an incomplete build is cancelled") {
-        w.sim.tick();
+        w.start();
         REQUIRE(w.built());
         w.engineer->clear_commands(w.sim.entity_registry(), w.L);
         failures = 1;
@@ -361,7 +368,7 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
         REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);
         lua_rawset(w.L, -3);
         lua_pop(w.L, 1);
-        w.sim.tick();
+        w.start();
         failures = 1;
         REQUIRE(w.built());
         CHECK(w.built()->is_being_built());
@@ -375,7 +382,7 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
             lua_setglobal(w.L, "__replace");
         }
         SECTION("OnStopBeingBuilt clears the builder's queue first") {
-            w.sim.tick();
+            w.start();
             REQUIRE(w.built());
             lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.built()->lua_table_ref());
             lua_pushstring(w.L, "OnStopBeingBuilt");

@@ -31,6 +31,10 @@ f32 footprint_extent(const Entity& e);
 /// A unit's largest skirt side (a skirt is at least its footprint).
 f32 skirt_extent(const Unit& u);
 
+/// The footprint of the blueprint `bp_id`, X and Z, in whole cells (at least
+/// 1 by 1; 1 by 1 when unknown).
+std::pair<f32, f32> blueprint_footprint_cells(lua_State* L, const std::string& bp_id);
+
 /// The skirt of the blueprint `bp_id` (at least its footprint), X and Z:
 /// what a structure not yet begun will span. 1 by 1 when unknown.
 std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id);

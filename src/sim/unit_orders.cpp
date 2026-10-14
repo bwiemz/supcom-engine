@@ -8,6 +8,7 @@
 #include "sim/bone_data.hpp"
 #include "core/test_status.hpp"
 #include "sim/blueprint_categories.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/build_site_props.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
@@ -732,6 +733,11 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
     const u32 order_id = cmd.command_id;
     if (build_target_id_ == 0) {
         if (!cmd.site_cleared && cmd.clearing_prop_id == 0) {
+            // The site, as the task takes it: snapped to the footprint's
+            // cells (Moho's CUnitMobileBuildTask, as made). An order from
+            // the UI comes snapped already; a script's may not.
+            const auto [fx, fz] = blueprint_footprint_cells(L, cmd.blueprint_id);
+            snap_structure_center(cmd.target_pos.x, cmd.target_pos.z, fx, fz);
             const BuildSiteProp site =
                 find_build_site_prop(L, registry, *this, cmd.blueprint_id, cmd.target_pos);
             if (destroyed() || !in_registry()) {
@@ -792,6 +798,12 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             }
             cmd.approached = true;
             set_path_goal(approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1), ctx);
+        }
+        // The task's first tick checks the site and sends the builder; it
+        // aims from the next (Moho's TASKSTATE_Preparing returns 1).
+        if (!cmd.prepared) {
+            cmd.prepared = true;
+            return OrderStep::Hold;
         }
         if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
         // After the walk only range decides: the pathfinder may have moved
