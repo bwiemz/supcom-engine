@@ -1,4 +1,4 @@
--- The sim's probes (see README.md). Once the commanders have warped in, four
+-- The sim's probes (see README.md). Once the commanders have warped in, the
 -- scenes play at once in separate corners of Seton's Clutch (SCMP_009), each
 -- logging `PROBE <scene> ...` lines. Written for Lua 5.0, as Moho runs it.
 
@@ -141,6 +141,176 @@ function ProbeFormAttack(army)
     end
 end
 
+-- Support commanders (REBUILDER), on dry ground at x 270-330, z 790. One
+-- guards a T1 power generator that is then destroyed: is it built again where it stood (faf-re's
+-- LookForStructureRebuilder)? faf-re's guard task has a REBUILDER not bind
+-- a live target, so: does one guarding a building factory help it, and does
+-- one guarding a tank follow it?
+function ProbeRebuild(army)
+    local pgen = spawn('ueb1101', army, 270, 790)
+    local scu = spawn('uel0301', army, 270, 802)
+    -- A control: a T1 engineer, no REBUILDER, guarding another
+    local pgen2 = spawn('ueb1101', army, 250, 790)
+    local eng = spawn('uel0105', army, 250, 798)
+    WaitTicks(10)
+    IssueGuard({scu}, pgen)
+    IssueGuard({eng}, pgen2)
+    WaitTicks(60)
+    local p = pgen:GetPosition()
+    local s = scu:GetPosition()
+    probe('rebuild guarding scu-at=%.1f,%.1f pgen-at=%.1f,%.1f queue=%d engineer-queue=%d', s[1], s[3],
+        p[1], p[3], table.getn(scu:GetCommandQueue() or {}), table.getn(eng:GetCommandQueue() or {}))
+    pgen:Kill()
+    pgen2:Kill()
+    local waited = 0
+    for _, at in {30, 150, 400, 800} do
+        WaitTicks(at - waited)
+        waited = at
+        local found, fraction = 0, -1
+        for _, u in GetUnitsInRect(Rect(p[1] - 1, p[3] - 1, p[1] + 1, p[3] + 1)) or {} do
+            if not u:IsDead() and u:GetUnitId() == 'ueb1101' then
+                found = found + 1
+                fraction = u:GetFractionComplete()
+            end
+        end
+        s = scu:GetPosition()
+        probe('rebuild after-kill tick=%d pgens=%d fraction=%.2f scu-at=%.1f,%.1f building=%s queue=%d engineer-queue=%d',
+            at, found, fraction, s[1], s[3], tostring(scu:IsUnitState('Building')),
+            table.getn(scu:GetCommandQueue() or {}), table.getn(eng:GetCommandQueue() or {}))
+    end
+end
+
+function ProbeScuAssist(army)
+    local factory = spawn('ueb0101', army, 300, 790)
+    WaitTicks(5)
+    IssueBuildFactory({factory}, 'uel0201', 3)
+    local scu = spawn('uel0301', army, 300, 808)
+    IssueGuard({scu}, factory)
+    -- A control: a T1 engineer guarding the same factory
+    local eng = spawn('uel0105', army, 306, 808)
+    IssueGuard({eng}, factory)
+    local waited = 0
+    for _, at in {60, 150, 300} do
+        WaitTicks(at - waited)
+        waited = at
+        local focus = scu:GetFocusUnit()
+        local s = scu:GetPosition()
+        local efocus = eng:GetFocusUnit()
+        probe('scu-assist tick=%d building=%s guarding=%s focus=%s engineer-focus=%s factory-progress=%.2f scu-at=%.1f,%.1f',
+            at, tostring(scu:IsUnitState('Building')), tostring(scu:IsUnitState('Guarding')),
+            focus and focus:GetUnitId() or 'none', efocus and efocus:GetUnitId() or 'none',
+            factory:GetWorkProgress(), s[1], s[3])
+    end
+end
+
+function ProbeScuFollow(army)
+    local tank = spawn('uel0201', army, 330, 790)
+    local scu = spawn('uel0301', army, 324, 790)
+    IssueGuard({scu}, tank)
+    WaitTicks(10)
+    IssueMove({tank}, {330, GetTerrainHeight(330, 860), 860})
+    local waited = 0
+    for _, at in {100, 250} do
+        WaitTicks(at - waited)
+        waited = at
+        local t, s = tank:GetPosition(), scu:GetPosition()
+        probe('scu-follow tick=%d tank-at=%.1f,%.1f scu-at=%.1f,%.1f apart=%.1f', at, t[1], t[3], s[1],
+            s[3], VDist2(t[1], t[3], s[1], s[3]))
+    end
+end
+
+-- Tree breakup: 12 Strikers driven north through a forest (x 128-192,
+-- z 640-704); its tree groups and single trees counted before and after.
+function ProbeForest(army)
+    local function count()
+        local groups, singles = 0, 0
+        for _, e in GetReclaimablesInRect(Rect(128, 640, 192, 704)) or {} do
+            if not IsUnit(e) then
+                local id = e:GetBlueprint().BlueprintId or ''
+                if string.find(id, 'group') then groups = groups + 1
+                elseif string.find(id, 'trees') then singles = singles + 1 end
+            end
+        end
+        return groups, singles
+    end
+    local g, t = count()
+    probe('forest tick=0 groups=%d singles=%d', g, t)
+    local tanks = {}
+    for i = 0, 11 do
+        local x = 132 + 5 * i
+        local u = spawn('uel0201', army, x, 628)
+        IssueMove({u}, {x, GetTerrainHeight(x, 716), 716})
+        table.insert(tanks, u)
+    end
+    local waited = 0
+    for _, at in {100, 200, 400} do
+        WaitTicks(at - waited)
+        waited = at
+        g, t = count()
+        local north = 0
+        for _, u in tanks do
+            if not u:IsDead() and u:GetPosition()[3] > 704 then north = north + 1 end
+        end
+        probe('forest tick=%d groups=%d singles=%d tanks-through=%d', at, g, t, north)
+    end
+end
+
+-- GetUnitsInRect's order: three Strikers made in one cell (x 700-704,
+-- z 120-124), then the first warped away and back. Moho lists a cell's units
+-- the last linked first.
+function ProbeRectOrder(army)
+    local made = {}
+    for i, at in {{702, 122}, {702.3, 122.2}, {701.8, 121.8}} do
+        local u = spawn('uel0201', army, at[1], at[2])
+        u.ProbeIndex = i
+        made[i] = u
+    end
+    local function order(label)
+        local t = {}
+        for _, u in GetUnitsInRect(Rect(700, 120, 704, 124)) or {} do
+            table.insert(t, tostring(u.ProbeIndex or 'other'))
+        end
+        probe('rect-order %s [%s]', label, table.concat(t, ' '))
+    end
+    order('made')
+    WaitTicks(3)
+    local home = made[1]:GetPosition()
+    Warp(made[1], {760, GetTerrainHeight(760, 122), 122})
+    WaitTicks(3)
+    order('away')
+    Warp(made[1], home)
+    WaitTicks(3)
+    order('back')
+end
+
+local function extents(e)
+    local x = e:GetCollisionExtents()
+    if not x then return 'none' end
+    return string.format('%.3f %.3f %.3f %.3f', x.Min.x, x.Min.z, x.Max.x, x.Max.z)
+end
+
+-- Map props' orientation and boxes: the tree groups in Rect(116, 650, 132,
+-- 690), read before the forest drive reaches them.
+function ProbePropOrient()
+    for _, e in GetReclaimablesInRect(Rect(116, 650, 132, 690)) or {} do
+        if not IsUnit(e) and string.find(e:GetBlueprint().BlueprintId or '', 'group') then
+            local p, q = e:GetPosition(), e:GetOrientation()
+            probe('prop-orient %.3f %.3f q=%.4f %.4f %.4f %.4f box=%s', p[1], p[3], q[1], q[2], q[3], q[4],
+                extents(e))
+        end
+    end
+end
+
+-- Units' boxes: a Seraphim artillery (xsb2302, CollisionOffsetZ -1.5) at
+-- four headings, its box offset turned with it.
+function ProbeUnitBox(army)
+    for i, h in {0, math.pi / 2, math.pi, 1} do
+        local u = spawn('xsb2302', army, 580 + 20 * i, 300, h)
+        local o = u:GetOrientation()
+        probe('unit-box %d q=%.4f %.4f %.4f %.4f box=%s', i, o[1], o[2], o[3], o[4], extents(u))
+    end
+end
+
 function ProbeMain()
     WaitTicks(80) -- after the commanders' warp-in
     local armies = ListArmies()
@@ -157,6 +327,13 @@ function ProbeMain()
     ForkThread(ProbeShore, me)
     ForkThread(ProbeChoke, me)
     ForkThread(ProbeFormAttack, me)
+    ProbePropOrient()
+    ForkThread(ProbeForest, me)
+    ForkThread(ProbeRectOrder, me)
+    ForkThread(ProbeUnitBox, me)
+    ForkThread(ProbeRebuild, me)
+    ForkThread(ProbeScuAssist, me)
+    ForkThread(ProbeScuFollow, me)
 end
 
 local probe_started = false
