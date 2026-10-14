@@ -50,6 +50,9 @@ TEST_CASE("A match's record says what happened to its units, and when", "[teleme
     sim.add_army("ARMY_2", "ARMY_2");
     auto* commander = add_unit(sim, 0, "uel0001");
     commander->add_category("COMMAND");
+    commander->economy().production_mass = 1.0;
+    commander->economy().production_energy = 20.0;
+    commander->economy().production_active = true;
     auto* tank = add_unit(sim, 1, "url0107");
     tank->set_is_being_built(true);
     add_unit(sim, 1, "dummy")->add_category("INSIGNIFICANTUNIT");
@@ -80,7 +83,8 @@ TEST_CASE("A match's record says what happened to its units, and when", "[teleme
 
     const auto match = records(path, "match");
     REQUIRE(match.size() == 1);
-    CHECK(match[0]["schema"] == 2);
+    CHECK(match[0]["schema"] == 3);
+    CHECK(match[0]["armies"][0]["ai"] == "");
 
     const auto built = records(path, "unit_built");
     REQUIRE(built.size() == 2);
@@ -114,6 +118,18 @@ TEST_CASE("A match's record says what happened to its units, and when", "[teleme
     CHECK(lost[0]["by_bp"] == "uel0001");
     CHECK(lost[0]["by_army"] == 1);
     CHECK(lost[0]["tick"] == 6);
+
+    // The last sample says what each army is made of and where its income
+    // comes from: the commander, counted with the engineers, makes it all
+    const auto samples = records(path, "sample");
+    REQUIRE_FALSE(samples.empty());
+    const auto& last = samples[samples.size() - 2]; // army 1's (army 2's is after it)
+    REQUIRE(last["army"] == 1);
+    CHECK(last["units"]["engineers"] == 1);
+    CHECK(last["units"]["land"] == 0);
+    CHECK(last["mass_from"]["commander"].get<double>() == 1.0);
+    CHECK(last["energy_from"]["commander"].get<double>() == 20.0);
+    CHECK(last["mass_from"]["extractors"].get<double>() == 0.0);
 
     CHECK(records(path, "end").size() == 1);
     std::filesystem::remove(path);

@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include <array>
+#include <cmath>
 
 namespace osc::app {
 
@@ -59,11 +60,12 @@ void MatchTelemetry::write_match(const sim::SimState& sim) {
                           {"name", brain->name()},
                           {"nickname", brain->nickname()},
                           {"faction", brain->faction()},
+                          {"ai", brain->ai_personality()},
                           {"human", brain->is_human()},
                           {"civilian", brain->is_civilian()}});
     }
     out_ << nlohmann::json{{"record", "match"},
-                           {"schema", 2},
+                           {"schema", 3},
                            {"engine", "opensupcom"},
                            {"version", osc::core::version()},
                            {"build", osc::core::build_id()},
@@ -74,7 +76,65 @@ void MatchTelemetry::write_match(const sim::SimState& sim) {
          << '\n';
 }
 
+namespace {
+
+/// What an army is made of and where its income comes from, at one tick
+struct Makeup {
+    i32 land = 0, air = 0, naval = 0, engineers = 0, structures = 0;
+    f64 mass[5] = {};   // extractors, fabricators, commander, reclaim, other
+    f64 energy[5] = {}; // generators, fabricators, commander, reclaim, other
+};
+
+std::vector<Makeup> makeups(const sim::SimState& sim) {
+    std::vector<Makeup> out(sim.army_count());
+    sim.entity_registry().for_each_unit([&](const sim::Entity& entity) {
+        const auto& unit = static_cast<const sim::Unit&>(entity);
+        const i32 army = unit.army();
+        if (army < 0 || static_cast<size_t>(army) >= out.size() || unit.destroyed() ||
+            unit.is_dying() || unit.has_category("INSIGNIFICANTUNIT")) {
+            return;
+        }
+        Makeup& m = out[static_cast<size_t>(army)];
+        if (!unit.is_being_built()) {
+            if (!unit.is_mobile()) ++m.structures;
+            else if (unit.has_category("ENGINEER") || unit.has_category("COMMAND")) ++m.engineers;
+            else if (unit.can_fly() || unit.has_category("AIR")) ++m.air;
+            else if (unit.has_category("NAVAL")) ++m.naval;
+            else ++m.land;
+        }
+        const auto& econ = unit.economy();
+        m.mass[3] += econ.reclaim_mass;
+        m.energy[3] += econ.reclaim_energy;
+        if (!econ.production_active || unit.is_being_built()) return;
+        const bool commander = unit.has_category("COMMAND");
+        const bool fabricator = unit.has_category("MASSFABRICATION");
+        const int mass_from = commander                             ? 2
+                              : unit.has_category("MASSEXTRACTION") ? 0
+                              : fabricator                          ? 1
+                                                                    : 4;
+        const int energy_from = commander                               ? 2
+                                : unit.has_category("ENERGYPRODUCTION") ? 0
+                                : fabricator                            ? 1
+                                                                        : 4;
+        m.mass[mass_from] += econ.production_mass;
+        m.energy[energy_from] += econ.production_energy;
+    });
+    return out;
+}
+
+nlohmann::json sources(const f64 (&from)[5], const char* first) {
+    const auto r = [](f64 v) { return std::round(v * 100.0) / 100.0; };
+    return {{first, r(from[0])},
+            {"fabricators", r(from[1])},
+            {"commander", r(from[2])},
+            {"reclaim", r(from[3])},
+            {"other", r(from[4])}};
+}
+
+} // namespace
+
 void MatchTelemetry::write_samples(const sim::SimState& sim) {
+    const auto made_of = makeups(sim);
     for (size_t a = 0; a < sim.army_count(); ++a) {
         const auto* brain = sim.army_at(a);
         if (!brain || brain->is_civilian()) continue;
@@ -83,6 +143,14 @@ void MatchTelemetry::write_samples(const sim::SimState& sim) {
                               {"army", a + 1},
                               {"result", result_name(brain->state())}};
         for (const char* stat : kStats) sample[stat] = brain->get_stat(stat);
+        const Makeup& m = made_of[a];
+        sample["units"] = {{"land", m.land},
+                           {"air", m.air},
+                           {"naval", m.naval},
+                           {"engineers", m.engineers},
+                           {"structures", m.structures}};
+        sample["mass_from"] = sources(m.mass, "extractors");
+        sample["energy_from"] = sources(m.energy, "generators");
         out_ << sample.dump() << '\n';
     }
     last_sample_tick_ = sim.tick_count();

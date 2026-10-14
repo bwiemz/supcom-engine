@@ -89,6 +89,10 @@ public:
 
     i32 faction() const { return faction_; }
     void set_faction(i32 f) { faction_ = f; }
+    /// The AI personality the lobby gave this army ("rush", "adaptive"...),
+    /// or empty for a person: for the match record
+    const std::string& ai_personality() const { return ai_personality_; }
+    void set_ai_personality(std::string p) { ai_personality_ = std::move(p); }
     /// Whether the army's units may go anywhere on the map, not only in the
     /// playable area (SetIgnorePlayableRect; Moho's CArmyImpl::UseWholeMap):
     /// a campaign's reinforcements come in from off the playable area.
@@ -319,6 +323,7 @@ private:
     std::string name_;
     std::string nickname_;
     i32 faction_ = 1;
+    std::string ai_personality_;
     bool use_whole_map_ = false;
     bool is_human_ = true;
     bool is_civilian_ = false;

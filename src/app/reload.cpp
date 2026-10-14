@@ -248,8 +248,14 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         }
         for (size_t i = 0; i < setup.slots.size(); ++i) {
             if (!setup.slots[i].configured) continue;
-            if (auto* brain = sim_state->get_army(static_cast<osc::i32>(i)))
+            if (auto* brain = sim_state->get_army(static_cast<osc::i32>(i))) {
                 brain->set_faction(setup.slots[i].faction);
+                if (!setup.slots[i].human) {
+                    brain->set_ai_personality(setup.slots[i].ai_personality.empty()
+                                                  ? setup.ai_personality
+                                                  : setup.slots[i].ai_personality);
+                }
+            }
         }
         osc::lua::SessionManager new_session_mgr;
         new_session_mgr.configure(setup);

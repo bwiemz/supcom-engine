@@ -22,6 +22,12 @@
 //                  health (0 to 1), by_bp, by_army
 //   army_result    an army's result changed: army, result
 //
+// Schema 3 adds to each army in `match` its AI (`ai`, the lobby's
+// personality, empty for a person), and to each sample what the army is made
+// of (`units`: land, air, naval, engineers, structures; finished units) and
+// where its income comes from, per second (`mass_from` and `energy_from`:
+// extractors or generators, fabricators, commander, reclaim, other).
+//
 // They are found by looking at the units each tick, not by the sim telling:
 // an event carries the tick it was seen at.
 
