@@ -7,12 +7,14 @@
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
 
+#include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
 #include "lua/order_helpers.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
+#include "renderer/command_graph_renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/range_overlays.hpp"
 #include "renderer/frustum.hpp"
@@ -1135,6 +1137,66 @@ static renderer::InputHandler* get_input_handler(lua_State* L) {
     return ih;
 }
 
+/// GetHighlightCommand(): the order whose command graph waypoint is under
+/// the cursor (FAF's patch, Moho's highlightCommandId), as {commandType, x,
+/// y, z, commandId, targetId, blueprintId}; nothing without one. Its place is
+/// the waypoint's (a unit target's where the unit is; what Moho's command
+/// holds for one isn't known). Only a structure's build has a waypoint and a
+/// blueprint: a factory's build and an upgrade draw none.
+static int l_GetHighlightCommand(lua_State* L) {
+    const auto* input = get_input_handler(L);
+    const u32 id = input ? input->hovered_command() : 0;
+    if (id == 0) return 0;
+    for (const renderer::CommandGraphNode& node : input->command_graph_nodes()) {
+        const sim::CommandRecord& order = node.order;
+        if (order.command_id != id) continue;
+        const auto field = [L](const char* name, lua_Number value) {
+            lua_pushstring(L, name);
+            lua_pushnumber(L, value);
+            lua_rawset(L, -3);
+        };
+        lua_newtable(L);
+        field("commandType", order.moho_command);
+        field("x", node.position.x);
+        field("y", node.position.y);
+        field("z", node.position.z);
+        field("commandId", id);
+        if (order.target_id != 0) {
+            lua_pushstring(L, "targetId");
+            sim::push_entity_id(L, order.target_id);
+            lua_rawset(L, -3);
+        }
+        if (!order.blueprint_id.empty()) {
+            lua_pushstring(L, "blueprintId");
+            lua_pushstring(L, order.blueprint_id.c_str());
+            lua_rawset(L, -3);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/// GetDepositsAroundPoint(X, Z, Radius, Type) in the UI: the map's deposits
+/// about a point, as the UI's tick has them (FAF's patch; see
+/// push_deposits_around_point).
+static int l_UiGetDepositsAroundPoint(lua_State* L) {
+    const sim::WorldSnapshot* world = ui_world(L);
+    if (!world) return 0;
+    return push_deposits_around_point(L, world->deposits);
+}
+
+/// CopyToClipboard(text): puts the text on the desktop's clipboard (FAF's
+/// patch); whether it did.
+static int l_CopyToClipboard(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return luaL_error(L, "%s\n  expected %d args, but got %d", "CopyToClipboard", 1,
+                          lua_gettop(L));
+    auto* r = get_renderer(L);
+    const char* text = lua_tostring(L, 1);
+    lua_pushboolean(L, r && text && r->copy_to_clipboard(text) ? 1 : 0);
+    return 1;
+}
+
 static int l_GetSelectedUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
     auto* sim = get_sim(L);
@@ -1849,6 +1911,9 @@ void register_user_bindings(LuaState& state) {
     lua_rawset(L, LUA_GLOBALSINDEX);
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
+    state.register_function("GetHighlightCommand", l_GetHighlightCommand);
+    state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
+    state.register_function("CopyToClipboard", l_CopyToClipboard);
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);
@@ -1980,6 +2045,56 @@ bool cursor_world_pos(lua_State* L, sim::Vector3& out) {
         wv->set_viewport(r->width(), r->height());
     }
     return wv->get_mouse_world_pos(mx, my, out.x, out.y, out.z);
+}
+
+/// The child named `name` of the stat item on top of the stack (in its
+/// Children list, which it makes if need be), pushed; made if missing.
+static void push_stat_child(lua_State* L, const char* name) {
+    lua_pushstring(L, "Children");
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, "Children");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
+    }
+    const int n = luaL_getn(L, -1);
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, -1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Name");
+            lua_rawget(L, -2);
+            const char* got = lua_tostring(L, -1);
+            const bool match = got && std::strcmp(got, name) == 0;
+            lua_pop(L, 1);
+            if (match) {
+                lua_remove(L, -2); // the Children list
+                return;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_newtable(L);
+    lua_pushstring(L, "Name");
+    lua_pushstring(L, name);
+    lua_rawset(L, -3);
+    lua_pushvalue(L, -1);
+    lua_rawseti(L, -3, n + 1);
+    luaL_setn(L, -2, n + 1);
+    lua_remove(L, -2);
+}
+
+/// Set the leaf stat `name` of the item on top of the stack.
+static void set_stat(lua_State* L, const char* name, const char* type, auto push_value) {
+    push_stat_child(L, name);
+    lua_pushstring(L, "Type");
+    lua_pushstring(L, type);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "Value");
+    push_value();
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
 }
 
 /// CON_StartCommandMode: `StartCommandMode mode name` starts the command
@@ -2322,6 +2437,34 @@ void track_unit(lua_State* L, const std::vector<std::string>& args) {
 }
 
 } // namespace
+
+void update_engine_stats(lua_State* L) {
+    sim::Vector3 at;
+    if (cursor_world_pos(L, at) && !std::isnan(at.x) && !std::isnan(at.z))
+        update_cursor_stats(L, at);
+}
+
+void update_cursor_stats(lua_State* L, const sim::Vector3& at) {
+    const auto* sim = get_sim(L);
+    const map::Terrain* terrain = sim ? sim->terrain() : nullptr;
+    if (!terrain) return;
+    lua_pushstring(L, "__EngineStats");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    push_stat_child(L, "Camera");
+    push_stat_child(L, "Cursor");
+    const std::string position = fmt::format("x={:.2f},y={:.2f},z={:.2f}", at.x, at.y, at.z);
+    set_stat(L, "Position", "String", [&] { lua_pushstring(L, position.c_str()); });
+    set_stat(L, "Elevation", "Float",
+             [&] { lua_pushnumber(L, terrain->get_terrain_height(at.x, at.z)); });
+    const std::string cell =
+        fmt::format("x={},z={}", static_cast<int>(at.x), static_cast<int>(at.z));
+    set_stat(L, "OCell", "String", [&] { lua_pushstring(L, cell.c_str()); });
+    lua_pop(L, 3); // Cursor, Camera, __EngineStats
+}
 
 void register_session_console_commands(ui::Console& console) {
     console.add("StartCommandMode", start_command_mode);

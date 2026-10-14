@@ -3389,6 +3389,12 @@ void Renderer::set_window_title(const char* title) {
     if (window_) glfwSetWindowTitle(window_, title);
 }
 
+bool Renderer::copy_to_clipboard(const std::string& text) {
+    if (!window_ || offscreen_) return false;
+    glfwSetClipboardString(window_, text.c_str());
+    return true;
+}
+
 void Renderer::mouse_position(f64& x, f64& y) const {
     if (scripted_pointer_) {
         x = scripted_pointer_->x;

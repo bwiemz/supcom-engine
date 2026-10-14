@@ -32,6 +32,9 @@ void App::Window::load_flow_frame() {
                 "if SessionIsReplay() then error('SessionIsReplay() is true while a "
                 "saved game catches up') end");
             if (!r) osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
+            if (sim_session_is_replay(*sim_state))
+                osc::test_status::fail("[FAIL] load-flow: the sim's SessionIsReplay() is true "
+                                       "while a saved game catches up");
         }
         // A loaded game's interface waits for the load's own post-load: a
         // catch-up through a history that holds earlier loads' post-loads

@@ -208,6 +208,9 @@ void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& 
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on
 /// the UI state.
 void register_session_ui_globals(lua::LuaState& ui_lua_state);
+/// What the sim's SessionIsReplay() answers its scripts (the flow tests'
+/// check that the sim and the UI agree).
+bool sim_session_is_replay(const sim::SimState& sim);
 
 /// One run of the engine: what run() builds and its phases over it (M192
 /// step 2b). The members are declared in the order the run makes them, so

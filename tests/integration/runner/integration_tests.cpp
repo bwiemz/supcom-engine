@@ -12960,6 +12960,15 @@ void test_right_click(TestContext& ctx) {
                 unbuilt = &u;
         });
     }
+    // FAF's scripts compare an order's commandType with Moho's numbers
+    // (UnitQueueDataToCommand)
+    check(lua(R"(
+        local q = __osc_eng:GetCommandQueue()
+        if not q[1] or q[1].commandType ~= 8 then
+            error('the build: ' .. tostring(q[1] and q[1].commandType))
+        end
+    )"),
+          "the sim's GetCommandQueue numbers the build 8, Moho's UNITCOMMAND_BuildMobile");
     // The reclaimable prop nearest the engineer (the map's trees and rocks),
     // found when it is clicked: a tree group picked earlier may have broken
     // up into single trees, and been freed, by then.
@@ -19395,7 +19404,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         local q = GetSelectedUnits()[1]:GetCommandQueue()
         local builds = 0
         for _, c in q do
-            if c.commandType == 20 then builds = builds + 1 end
+            if c.commandType == 8 then builds = builds + 1 end
         end
         if builds ~= {0} or {0} < 4 then
             error(builds .. ' builds queued, ' .. {0} .. ' issued')
@@ -19551,7 +19560,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(1); // the order applies in the sim's next tick
     lua_ok("Test 11c: the commander builds it; the mode ended", R"(
         local q = GetSelectedUnits()[1]:GetCommandQueue()
-        if not q[1] or q[1].commandType ~= 20 then
+        if not q[1] or q[1].commandType ~= 8 then
             error('commander queue head: ' .. tostring(q[1] and q[1].commandType))
         end
         if import('/lua/ui/game/commandmode.lua').GetCommandMode()[1] then

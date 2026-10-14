@@ -401,6 +401,9 @@ void App::Window::update_ui(double dt) {
         osc::lua::pump_desyncs(ui_lua_state.raw());
     }
 
+    // The engine statistics the UI reads this frame (FAF's cursor depth)
+    if (sim_state) osc::lua::update_engine_stats(ui_lua_state.raw());
+
     // Resume UI coroutines
     ++ui_frame_count;
     osc::lua::advance_ui_clock(ui_lua_state.raw(), wall_dt);

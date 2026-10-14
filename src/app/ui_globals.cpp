@@ -22,10 +22,9 @@ namespace osc::app {
 static int l_FlushEvents(lua_State*) { return 0; }
 
 /// SessionIsReplay() for the UI: whether the game is a replay being played
-/// (retail's UI then hides orders and shows the replay controls). Only UI
-/// scripts ask it; the sim's own answer stays false, so a replay can't
-/// change what the game does. A saved game catching up plays back too, but
-/// it is the player's game.
+/// (retail's UI then hides orders and shows the replay controls). The sim
+/// answers the same (sim_bindings.cpp). A saved game catching up plays back
+/// too, but it is the player's game.
 static int l_SessionIsReplay(lua_State* L) {
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -320,6 +319,17 @@ static int l_GetArmiesTable(lua_State* L) {
 }
 
 /// The session's UI globals above, on the UI state.
+bool sim_session_is_replay(const osc::sim::SimState& sim) {
+    lua_State* S = sim.lua_state();
+    if (!S) return false;
+    const int top = lua_gettop(S);
+    lua_pushstring(S, "SessionIsReplay"); // raw: the sim's globals are strict
+    lua_rawget(S, LUA_GLOBALSINDEX);
+    const bool replay = lua_pcall(S, 0, 1, 0) == 0 && lua_toboolean(S, -1) != 0;
+    lua_settop(S, top);
+    return replay;
+}
+
 void register_session_ui_globals(osc::lua::LuaState& ui_lua_state) {
     ui_lua_state.register_function("FlushEvents", l_FlushEvents);
     ui_lua_state.register_function("SessionIsReplay", l_SessionIsReplay);

@@ -716,35 +716,48 @@ static int unit_IsMoving(lua_State* L) {
     return 1;
 }
 
+// unit:GetCommandQueue(): the unit's orders, first first, each
+// {commandType, x, y, z, target, targetId, blueprintId}, the fields FAF's
+// SimGetCommandQueue patch adds and FAF's UnitCommand annotation lists:
+// commandType is Moho's UNITCOMMAND number, the place every order's, target
+// the entity it is on while that lives, blueprintId what a build makes. FAF's
+// copy and distribute orders re-issue from them. A target's place is where it
+// is now, as the UI's queue gives it; what Moho's command holds for one isn't
+// known.
 static int unit_GetCommandQueue(lua_State* L) {
     auto* unit = check_unit(L);
-    if (!unit) {
-        lua_newtable(L);
-        return 1;
-    }
-    const auto& queue = unit->command_queue();
     lua_newtable(L);
-    int idx = 1;
-    for (const auto& cmd : queue) {
-        lua_newtable(L);
-        lua_pushstring(L, "commandType");
-        lua_pushnumber(L, static_cast<int>(cmd.type));
+    if (!unit) return 1;
+    auto* sim = get_sim(L);
+    const auto number = [L](const char* key, lua_Number value) {
+        lua_pushstring(L, key);
+        lua_pushnumber(L, value);
         lua_rawset(L, -3);
-        if (cmd.type == sim::CommandType::Move ||
-            cmd.type == sim::CommandType::Attack) {
-            lua_pushstring(L, "x");
-            lua_pushnumber(L, cmd.target_pos.x);
-            lua_rawset(L, -3);
-            lua_pushstring(L, "y");
-            lua_pushnumber(L, cmd.target_pos.y);
-            lua_rawset(L, -3);
-            lua_pushstring(L, "z");
-            lua_pushnumber(L, cmd.target_pos.z);
+    };
+    int idx = 1;
+    for (const auto& cmd : unit->command_queue()) {
+        lua_newtable(L);
+        number("commandType", sim::moho_command_number(cmd));
+        const sim::Entity* target =
+            cmd.target_id > 0 && sim ? sim->entity_registry().find(cmd.target_id) : nullptr;
+        if (target && target->destroyed()) target = nullptr;
+        const sim::Vector3 at = target ? target->position() : cmd.target_pos;
+        number("x", at.x);
+        number("y", at.y);
+        number("z", at.z);
+        if (target && target->lua_table_ref() >= 0) {
+            lua_pushstring(L, "target");
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
             lua_rawset(L, -3);
         }
         if (cmd.target_id > 0) {
             lua_pushstring(L, "targetId");
             sim::push_entity_id(L, cmd.target_id);
+            lua_rawset(L, -3);
+        }
+        if (!cmd.blueprint_id.empty()) {
+            lua_pushstring(L, "blueprintId");
+            lua_pushstring(L, cmd.blueprint_id.c_str());
             lua_rawset(L, -3);
         }
         lua_rawseti(L, -2, idx++);

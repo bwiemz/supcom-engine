@@ -485,6 +485,8 @@ std::optional<int> App::Window::finish() {
                                    active_playback->diverged_at());
         } else if (!is_replay) {
             osc::test_status::fail("[FAIL] replay-flow: {}", is_replay.error().message);
+        } else if (!sim_session_is_replay(*sim_state)) {
+            osc::test_status::fail("[FAIL] replay-flow: the sim's SessionIsReplay() is false");
         } else {
             spdlog::info("[PASS] replay-flow: {} ticks watched in the game, matching "
                          "the recording",

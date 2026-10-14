@@ -390,7 +390,7 @@ int uu_GetCommandQueue(lua_State* L) {
         lua_rawseti(L, -2, 3);
         lua_rawset(L, -3);
         lua_pushstring(L, "commandType");
-        lua_pushnumber(L, static_cast<int>(c.type));
+        lua_pushnumber(L, c.moho_command);
         lua_rawset(L, -3);
         if (c.type == sim::CommandType::Move || c.type == sim::CommandType::Attack) {
             lua_pushstring(L, "x");

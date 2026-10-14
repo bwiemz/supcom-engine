@@ -348,6 +348,9 @@ public:
     /// The order whose command graph waypoint is under the cursor, while
     /// Shift shows the graph (0: none)
     u32 hovered_command() const { return hovered_command_; }
+    /// The waypoint under the cursor, as update() takes it each frame (tests
+    /// set it).
+    void set_hovered_command(u32 command_id) { hovered_command_ = command_id; }
 
     std::vector<CommandGraphNode> command_graph_nodes() const;
 

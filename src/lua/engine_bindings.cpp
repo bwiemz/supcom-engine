@@ -12,6 +12,7 @@
 #include "video/movie_player.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -399,6 +400,41 @@ static int l_STR_Utf8Len(lua_State* L) {
         str++;
     }
     lua_pushnumber(L, static_cast<double>(len));
+    return 1;
+}
+
+int push_deposits_around_point(lua_State* L, std::span<const sim::ResourceDeposit> deposits) {
+    const auto x = static_cast<f32>(lua_tonumber(L, 1));
+    const auto z = static_cast<f32>(lua_tonumber(L, 2));
+    auto radius = static_cast<f32>(lua_tonumber(L, 3));
+    if (std::isnan(x + z + radius)) return 0;
+    const auto type = static_cast<int>(lua_tonumber(L, 4));
+    radius *= radius;
+    const auto field = [L](const char* name, lua_Number value) {
+        lua_pushstring(L, name);
+        lua_pushnumber(L, value);
+        lua_rawset(L, -3);
+    };
+    lua_newtable(L);
+    int n = 1;
+    for (const auto& d : deposits) {
+        const int moho_type = d.type == sim::ResourceDeposit::Hydrocarbon ? 2 : 1;
+        if (type != 0 && type != moho_type) continue;
+        const sim::DepositRect r = sim::deposit_rect(d);
+        const f32 dx = static_cast<f32>(r.x1 + r.x0) * 0.5f - x;
+        const f32 dz = static_cast<f32>(r.z1 + r.z0) * 0.5f - z;
+        const f32 dist = dx * dx + dz * dz;
+        if (dist > radius) continue;
+        lua_pushnumber(L, n++);
+        lua_newtable(L);
+        field("X1", r.x0);
+        field("Z1", r.z0);
+        field("X2", r.x1);
+        field("Z2", r.z1);
+        field("Type", moho_type);
+        field("Dist", std::sqrt(dist));
+        lua_settable(L, -3);
+    }
     return 1;
 }
 

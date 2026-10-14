@@ -26,6 +26,17 @@ void register_user_bindings(LuaState& state);
 /// the command mode and GetRightMouseButtonOrder
 void update_world_view_cursor(lua_State* L);
 
+/// The engine statistics FAF's UI reads from __EngineStats, which Moho fills
+/// each frame: Camera > Cursor > Position ("x=338.09,y=24.16,z=436.07"),
+/// Elevation (the ground under the cursor, below any water) and OCell
+/// ("x=338,z=436"), in the forms of the dump of Moho's tree in FAF's
+/// /lua/system/performance.lua. They keep their last values while the
+/// cursor is off the map. Moho's LODMetric and FocusDistance are not filled.
+void update_engine_stats(lua_State* L);
+/// The Cursor stats for the cursor on the world at `at` (GetMouseWorldPos: on
+/// the water over a sea), as update_engine_stats writes them.
+void update_cursor_stats(lua_State* L, const sim::Vector3& at);
+
 /// plan_formation in the UI state, over its UserUnits (CFormation::Finalize)
 std::vector<sim::FormationSlot> plan_ui_formation(lua_State* L,
                                                   const std::vector<sim::FormationMember>& units,

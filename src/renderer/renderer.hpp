@@ -371,6 +371,10 @@ public:
 
     /// Get current mouse position in screen pixels.
     void mouse_position(f64& x, f64& y) const;
+    /// Put `text` (UTF-8) on the desktop's clipboard (FAF's CopyToClipboard).
+    /// False without a window, and offscreen, so that a scripted run never
+    /// replaces what the player copied.
+    bool copy_to_clipboard(const std::string& text);
 
     // ── The window (M217h) ──
     /// Full screen on the primary display at a mode (FA's primary_adapter

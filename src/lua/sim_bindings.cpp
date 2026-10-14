@@ -4197,6 +4197,26 @@ static int l_SetIgnorePlayableRect(lua_State* L) {
     return 0;
 }
 
+/// GetDepositsAroundPoint(X, Z, Radius, Type): the map's deposits about a
+/// point (FAF's patch; see push_deposits_around_point).
+static int l_GetDepositsAroundPoint(lua_State* L) {
+    const auto* sim = get_sim(L);
+    if (!sim) return 0;
+    return push_deposits_around_point(L, sim->resource_deposits());
+}
+
+/// SessionIsReplay() in the sim: whether the game is a replay being played
+/// (FAF's SimIsReplay patch answers the session's isReplay; the original
+/// answers false). FAF's score.lua reads it beside GetFocusArmy, to choose
+/// what Sync.Score shows the local player, so it decides nothing the game
+/// does. A saved game catching up plays back too, but it is the player's
+/// game.
+static int l_SessionIsReplay(lua_State* L) {
+    const auto* sim = get_sim(L);
+    lua_pushboolean(L, sim && sim->playback() && !sim->resuming() ? 1 : 0);
+    return 1;
+}
+
 static int l_SessionIsActive(lua_State* L) {
     // Check if session_active flag is stored in registry
     lua_pushstring(L, "osc_session_active");
@@ -5780,7 +5800,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
 
     // Session/network
     state.register_function("SessionIsActive", l_SessionIsActive);
-    state.register_function("SessionIsReplay", stub_false);
+    state.register_function("SessionIsReplay", l_SessionIsReplay);
+    state.register_function("GetDepositsAroundPoint", l_GetDepositsAroundPoint);
     state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
     state.register_function("GetCurrentCommandSource", stub_zero);
     state.register_function("RequestPause", l_sim_RequestPause);
