@@ -82,7 +82,6 @@ double App::Window::begin_frame() {
     auto now = std::chrono::high_resolution_clock::now();
     double dt = std::chrono::duration<double>(now - prev_time).count();
     prev_time = now;
-    const bool fixed_step = !screenshot_path.empty() || render_bench || opt.scripted_window;
     if (!screenshot_path.empty() || render_bench) dt = kScreenshotFrameDt;
     if (opt.scripted_window) dt = kInterpFrameDt;
     // The session runs on the median of the last frame times (Moho's
@@ -92,11 +91,15 @@ double App::Window::begin_frame() {
     // UI's WaitSeconds keeps. (Retail's commander is selected at the start
     // only if that leaves the UI's tick short of the warp's unselectable 30.)
     frame_times.push(dt);
-    session_dt = fixed_step ? dt : frame_times.median();
+    session_dt = fixed_step() ? dt : frame_times.median();
     wall_dt = dt;
     // Clamp dt to avoid spiral of death
     if (dt > 0.25) dt = 0.25;
     return dt;
+}
+
+bool App::Window::fixed_step() const {
+    return !screenshot_path.empty() || render_bench || opt.scripted_window;
 }
 
 void App::Window::update_audio(double dt) {
@@ -175,6 +178,12 @@ void App::Window::count_fps(double dt) {
 }
 
 void App::Window::advance_sim(double dt) {
+    if (sim_state && (game_state_mgr.paused() || sim_state->network_paused())) {
+        world_interp.one_tick_next = true;
+    }
+    if (fixed_step()) {
+        world_interp.one_tick_next = false;
+    }
     if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped() && sim_state) {
         world_interp.clock.advance(dt * game_state_mgr.speed());
         if (catch_up) {
@@ -213,10 +222,10 @@ void App::Window::advance_sim(double dt) {
             auto* session = osc::lua::mp_net_state().session.get();
             if (game_state_mgr.sim_rate() != session->speed())
                 game_state_mgr.set_sim_rate(session->speed());
-            sim_accumulator += dt * game_state_mgr.speed();
-            int guard = 0;
-            while (sim_accumulator >= osc::sim::SimState::SECONDS_PER_TICK && guard++ < 4) {
-                sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
+            const int rounds = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
+                                                  dt * game_state_mgr.speed(),
+                                                  osc::sim::SimState::SECONDS_PER_TICK, 4);
+            for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
                 // A timed-out peer is defeated so the match resolves
@@ -232,8 +241,9 @@ void App::Window::advance_sim(double dt) {
         } else {
             // At most 8 ticks per frame; a slower-than-real-time
             // sim slows the game rather than stalling every frame.
-            const int ticks = osc::consume_fixed_steps(sim_accumulator, dt * game_state_mgr.speed(),
-                                                       osc::sim::SimState::SECONDS_PER_TICK, 8);
+            const int ticks = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
+                                                 dt * game_state_mgr.speed(),
+                                                 osc::sim::SimState::SECONDS_PER_TICK, 8);
             for (int t = 0; t < ticks; ++t) {
                 // A replay plays to its end, then holds there.
                 if (active_playback && active_playback->finished(*sim_state)) break;

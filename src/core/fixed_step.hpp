@@ -22,4 +22,15 @@ inline int consume_fixed_steps(double& accumulator, double frame_dt, double step
     return steps;
 }
 
+/// CWldSession::SessionFrame (faf-re): one tick after a beat that didn't advance the sim.
+inline int session_ticks(double& accumulator, bool& one_tick, double frame_dt, double step,
+                         int max_steps) {
+    if (one_tick) {
+        one_tick = false;
+        accumulator = 0.0;
+        return 1;
+    }
+    return consume_fixed_steps(accumulator, frame_dt, step, max_steps);
+}
+
 } // namespace osc
