@@ -485,7 +485,7 @@ void Renderer::init_sub_renderers() {
     // FA's sky (M210b)
     sky_renderer_.init(device_, allocator_, frame_.scene_pass());
     // The cartographic view (the minimap's map)
-    cartographic_.init(device_, allocator_, depth_format_);
+    cartographic_.init(device_, allocator_, depth_format_, texture_ds_layout_);
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, frame_.scene_pass());
     water_renderer_.set_frame_images(
@@ -1579,6 +1579,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
 
     // Build minimap terrain texture
     minimap_renderer_.build_terrain_texture(*terrain, texture_cache_);
+    // and the cartographic map's lookups, which retail's minimap draws
+    cartographic_.build(*terrain, texture_cache_);
 
     // Build strategic icon atlas
     strategic_icon_renderer_.build_atlas(texture_cache_);
@@ -1991,6 +1993,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     auto vp = camera_.view_proj(aspect);
     Frustum frustum(vp);
 
+    cartographic_view_.reset(); // until a minimap view draws it
     update_frame_scene(fi, vp, frustum, view, events, ghost, L, ui_registry, selected_ids);
 
     // Record command buffer
@@ -2005,6 +2008,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // The movies' new frames, likewise.
     movie_textures_.record(cmd_buf_[fi]);
     record_terrain_sync(cmd_buf_[fi]);
+    // The cartographic frame the minimap's quad samples (its own passes)
+    if (cartographic_view_) cartographic_.record(cmd_buf_[fi], fi, *cartographic_view_);
 
     // ==================== SHADOW PASS ====================
     record_shadow_pass(fi, vp);
@@ -2220,6 +2225,13 @@ void Renderer::dump_frame(std::ostream& out) const {
         section("projectile-icons", std::move(icons));
     }
     section("minimap-window", ui_quads(painted_minimap_));
+    section("cartographic",
+            cartographic_view_
+                ? std::vector<std::string>{fmt::format(
+                      "{}x{} | {:.3f} {:.3f} {:.3f} {:.3f}", cartographic_view_->width,
+                      cartographic_view_->height, cartographic_view_->x0, cartographic_view_->z0,
+                      cartographic_view_->x1, cartographic_view_->z1)}
+                : std::vector<std::string>{});
     section("minimap-hud", ui_quads(minimap_renderer_.quads()));
     section("hud", quads(hud_renderer_.quads()));
     section("selection-info", quads(selection_info_renderer_.quads()));
@@ -2703,9 +2715,24 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                         PlayableRect{0, 0, static_cast<i32>(terrain_->map_width()),
                                      static_cast<i32>(terrain_->map_height())});
                 }
-                minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
+                // A cartographic view (retail's minimap sets it) draws the
+                // cartographic frame, at the view's whole pixels; one view a
+                // frame, the others the terrain texture.
+                ui::ControlRect at = r;
+                VkDescriptorSet cartographic = VK_NULL_HANDLE;
+                if (wv.is_cartographic() && !cartographic_view_ && terrain_) {
+                    const auto m = cartographic_minimap(r.x, r.y, r.w, r.h,
+                                                        static_cast<f32>(terrain_->map_width()),
+                                                        static_cast<f32>(terrain_->map_height()));
+                    if (m && cartographic_.prepare(fi, m->frame.width, m->frame.height)) {
+                        at = {m->rect.x, m->rect.y, m->rect.w, m->rect.h};
+                        cartographic = cartographic_.ui_descriptor(fi);
+                        cartographic_view_ = m->frame;
+                    }
+                }
+                minimap_renderer_.paint(view, camera_, texture_cache_, at.x, at.y, at.w, at.h,
                                         window_width_, window_height_, selected_ids, L, out,
-                                        resources);
+                                        resources, cartographic);
                 painted_minimap_.insert(painted_minimap_.end(),
                                         out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };

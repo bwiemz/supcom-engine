@@ -170,6 +170,7 @@ constexpr Mode kModesBefore[] = {
     {"--water-render-test", test_water_render, false},
     {"--sky-test", test_sky, false},
     {"--cartographic-test", test_cartographic, false},
+    {"--cartographic-minimap-test", test_cartographic_minimap, true},
     {"--skirt-render-test", test_skirt_render, false},
     {"--water-reflection-test", test_water_reflection, false},
     {"--refract-render-test", test_refract_render, false},
@@ -390,6 +391,7 @@ void IntegrationModes::print_usage() const {
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"
               << "  --sky-test         FA's sky dome: the map's block, atmosphere, cull, decals, cirrus\n"
               << "  --cartographic-test The minimap's cartographic frame, against cartographic.fx\n"
+              << "  --cartographic-minimap-test A cartographic minimap view draws that frame\n"
               << "  --skirt-render-test The terrain's skirt below the map's edges (TTerrainSkirt)\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
               << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"

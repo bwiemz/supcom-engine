@@ -161,6 +161,7 @@ void test_water_render(TestContext& ctx);
 void test_sky(TestContext& ctx);
 /// --cartographic-test, in cartographic_test.cpp.
 void test_cartographic(TestContext& ctx);
+void test_cartographic_minimap(TestContext& ctx);
 /// --skirt-render-test, in skirt_render_test.cpp.
 void test_skirt_render(TestContext& ctx);
 /// --shield-render-test (M211k), in shield_render_test.cpp.

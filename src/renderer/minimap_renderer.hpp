@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/vk_types.hpp"
+#include "renderer/cartographic_renderer.hpp"
 #include "renderer/ui_renderer.hpp" // UIInstance
 #include "renderer/playable_rect.hpp"
 #include "renderer/resource_icon_renderer.hpp"
@@ -34,6 +35,20 @@ struct MapArea {
 /// The largest rect with the map's aspect ratio centred in (x, y, w, h):
 /// where a minimap view shows a map_w x map_h map.
 MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h);
+
+/// A minimap view drawing the cartographic frame: `rect` is the view's rect
+/// in whole pixels, the ones the UI renderer clips the view to (its Left,
+/// Top, Width and Height each truncated; at least a pixel each way), so the
+/// frame, drawn at `frame`'s size, is copied pixel for pixel. Its
+/// world rect fills that rect with the map where fit_map_area fits it (as
+/// Moho's SetMaxZoomMult(1.0) camera frames it); past the map is the
+/// frame's black. Nothing for a map with no size.
+struct CartographicMinimap {
+    MapArea rect;
+    CartographicRenderer::View frame;
+};
+std::optional<CartographicMinimap> cartographic_minimap(f32 x, f32 y, f32 w, f32 h, f32 map_w,
+                                                        f32 map_h);
 
 /// The world point under screen point (mx, my) on a minimap view `view`
 /// showing the map at `area`: false outside the view. A point in the
@@ -90,10 +105,14 @@ public:
 
     /// Draw the minimap into the view rect (x, y, w, h): its quads are
     /// appended to `out`, for the UI renderer to draw at the view's depth.
+    /// `cartographic`: the cartographic frame drawn for this rect (see
+    /// cartographic_minimap), which then fills the whole view in place of the
+    /// terrain texture.
     void paint(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache, f32 x,
                f32 y, f32 w, f32 h, u32 viewport_w, u32 viewport_h,
                const std::unordered_set<u32>* selected_ids, lua_State* L, std::vector<UIQuad>& out,
-               const std::optional<PlayableRect>& resources = std::nullopt);
+               const std::optional<PlayableRect>& resources = std::nullopt,
+               VkDescriptorSet cartographic = VK_NULL_HANDLE);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
@@ -127,7 +146,8 @@ private:
     void build(const sim::FrameView& view, const Camera& camera, TextureCache& tex_cache,
                u32 viewport_w, u32 viewport_h, bool framed,
                const std::unordered_set<u32>* selected_ids, lua_State* L,
-               const std::optional<PlayableRect>& resources = std::nullopt);
+               const std::optional<PlayableRect>& resources = std::nullopt,
+               VkDescriptorSet cartographic = VK_NULL_HANDLE);
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a,

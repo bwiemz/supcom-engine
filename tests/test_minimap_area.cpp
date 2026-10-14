@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "renderer/minimap_renderer.hpp"
+
+#include <cmath>
 
 using osc::renderer::fit_map_area;
 using osc::f32;
@@ -54,6 +57,50 @@ TEST_CASE("Minimap clicks: the whole view is the minimap's", "[minimap]") {
 
     CHECK_FALSE(minimap_to_world(view, area, 250, 100, 1024, 512, wx, wz)); // outside
     CHECK_FALSE(minimap_to_world({}, {}, 0, 0, 1024, 512, wx, wz));        // not drawn
+}
+
+TEST_CASE("Cartographic minimap: the view's pixels as the UI clips them", "[minimap]") {
+    using Catch::Matchers::WithinAbs;
+    using osc::renderer::cartographic_minimap;
+    // Left, Top, Width and Height each truncated, as the UI renderer's clip
+    // takes them: the frame is drawn at that size, pixel for pixel
+    const auto m = cartographic_minimap(40.4f, 30.6f, 241.3f, 180.8f, 1024, 1024);
+    REQUIRE(m);
+    CHECK(m->rect.x == 40);
+    CHECK(m->rect.y == 30);
+    CHECK(m->rect.w == 241);
+    CHECK(m->rect.h == 180);
+    CHECK(m->frame.width == 241);
+    CHECK(m->frame.height == 180);
+    // A square map in a wide view: the map fills it top to bottom, centred,
+    // the world running past its sides (the frame's black)
+    CHECK(m->frame.z0 == 0);
+    CHECK(m->frame.z1 == 1024);
+    CHECK_THAT(m->frame.x0 + m->frame.x1, WithinAbs(1024.0, 1e-3));
+    CHECK(m->frame.x0 < 0);
+    // A pixel is as many world units each way
+    CHECK_THAT((m->frame.x1 - m->frame.x0) / 241.0f, WithinAbs(1024.0f / 180.0f, 1e-3));
+}
+
+TEST_CASE("Cartographic minimap: a wide map in a square view runs past its top and bottom",
+          "[minimap]") {
+    const auto m = osc::renderer::cartographic_minimap(0, 0, 200, 200, 1024, 512);
+    REQUIRE(m);
+    CHECK(m->frame.x0 == 0);
+    CHECK(m->frame.x1 == 1024);
+    CHECK(m->frame.z0 == -256);
+    CHECK(m->frame.z1 == 768);
+}
+
+TEST_CASE("Cartographic minimap: at least a pixel; nothing without a map", "[minimap]") {
+    using osc::renderer::cartographic_minimap;
+    const auto tiny = cartographic_minimap(5.9f, 5.9f, 0.4f, 0.4f, 512, 512);
+    REQUIRE(tiny);
+    CHECK(tiny->rect.w == 1);
+    CHECK(tiny->frame.width == 1);
+    CHECK(tiny->frame.height == 1);
+    CHECK_FALSE(cartographic_minimap(0, 0, 200, 200, 0, 512));
+    CHECK_FALSE(cartographic_minimap(0, 0, std::nanf(""), 200, 512, 512));
 }
 
 namespace {

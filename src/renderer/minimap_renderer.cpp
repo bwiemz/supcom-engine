@@ -123,6 +123,28 @@ MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h) {
     return {x + (w - aw) * 0.5f, y + (h - ah) * 0.5f, aw, ah};
 }
 
+std::optional<CartographicMinimap> cartographic_minimap(f32 x, f32 y, f32 w, f32 h, f32 map_w,
+                                                        f32 map_h) {
+    if (!(map_w > 0) || !(map_h > 0) || !std::isfinite(x) || !std::isfinite(y) ||
+        !std::isfinite(w) || !std::isfinite(h))
+        return std::nullopt;
+    const f32 left = std::trunc(x);
+    const f32 top = std::trunc(y);
+    const f32 width = std::max(1.0f, std::trunc(w));
+    const f32 height = std::max(1.0f, std::trunc(h));
+    const MapArea area = fit_map_area(left, top, width, height, map_w, map_h);
+    if (area.w <= 0 || area.h <= 0) return std::nullopt;
+    CartographicMinimap m;
+    m.rect = {left, top, width, height};
+    m.frame.width = static_cast<u32>(width);
+    m.frame.height = static_cast<u32>(height);
+    m.frame.x0 = (left - area.x) / area.w * map_w;
+    m.frame.x1 = (left + width - area.x) / area.w * map_w;
+    m.frame.z0 = (top - area.y) / area.h * map_h;
+    m.frame.z1 = (top + height - area.y) / area.h * map_h;
+    return m;
+}
+
 bool minimap_to_world(const MapArea& view, const MapArea& area, f32 mx, f32 my,
                       f32 map_w, f32 map_h, f32& out_wx, f32& out_wz) {
     if (view.w <= 0 || view.h <= 0 || area.w <= 0 || area.h <= 0) return false;
@@ -290,21 +312,23 @@ void MinimapRenderer::paint(const sim::FrameView& view, const Camera& camera,
                             TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h, u32 viewport_w,
                             u32 viewport_h, const std::unordered_set<u32>* selected_ids,
                             lua_State* L, std::vector<UIQuad>& out,
-                            const std::optional<PlayableRect>& resources) {
+                            const std::optional<PlayableRect>& resources,
+                            VkDescriptorSet cartographic) {
     quads_.clear();
     if (map_w_ <= 0 || map_h_ <= 0) return;
     view_ = {x, y, w, h};
     area_ = fit_map_area(x, y, w, h, map_w_, map_h_);
     if (area_.w <= 0 || area_.h <= 0) return;
     build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false, selected_ids, L,
-          resources);
+          resources, cartographic);
     out.insert(out.end(), quads_.begin(), quads_.end());
 }
 
 void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
                             TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, bool framed,
                             const std::unordered_set<u32>* selected_ids, lua_State* L,
-                            const std::optional<PlayableRect>& resources) {
+                            const std::optional<PlayableRect>& resources,
+                            VkDescriptorSet cartographic) {
     white_ds_ = tex_cache.fallback_descriptor();
     const f32 sw = static_cast<f32>(viewport_w);
     const f32 sh = static_cast<f32>(viewport_h);
@@ -315,9 +339,14 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
         emit_quad(view_.x - 2, view_.y - 2, view_.w + 4, view_.h + 4, 0.3f, 0.3f, 0.35f, 0.9f,
                   white_ds_);
 
-    // --- Terrain background texture ---
-    VkDescriptorSet bg_ds = terrain_ds_ ? terrain_ds_ : white_ds_;
-    emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
+    // --- The map: the cartographic frame over the whole view (black past
+    // the map, as Moho clears it), else the terrain texture over the map ---
+    if (cartographic) {
+        emit_quad(view_.x, view_.y, view_.w, view_.h, 1.0f, 1.0f, 1.0f, 1.0f, cartographic);
+    } else {
+        VkDescriptorSet bg_ds = terrain_ds_ ? terrain_ds_ : white_ds_;
+        emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
+    }
 
     if (resources && view.cur()) {
         for (const ResourceIcon& icon :

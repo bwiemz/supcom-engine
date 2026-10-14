@@ -39,18 +39,34 @@ public:
         f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
     };
 
-    /// Samplers, layouts, passes and pipelines, once.
-    void init(VkDevice device, VmaAllocator allocator, VkFormat depth_format);
+    /// Samplers, layouts, passes and pipelines, once. `ui_layout` is the
+    /// UI's texture set layout (one combined sampler), which ui_descriptor's
+    /// sets take.
+    void init(VkDevice device, VmaAllocator allocator, VkFormat depth_format,
+              VkDescriptorSetLayout ui_layout);
 
     /// The map's lookup data (Cartographic::InitializeTerrain), made once
     /// from its heights as they are now. Waits for the device.
     void build(const map::Terrain& terrain, TextureCache& textures);
 
+    /// Frame `fi`'s targets at `width` x `height`. A new size waits for the
+    /// device and makes them again, so call it before anything this frame
+    /// refers to them (ui_descriptor), then record() at that size. False with
+    /// no map built, or if they couldn't be made.
+    bool prepare(u32 fi, u32 width, u32 height);
+
     /// Both stages into frame `fi`'s targets, outside any render pass; the
-    /// output ends shader-readable. Nothing without a map built. A new size
-    /// waits for the device and makes the targets again, so record before
-    /// anything in the command buffer uses them.
+    /// output ends shader-readable. Nothing without a map built. Prepares
+    /// the targets at the view's size first (see prepare()).
     void record(VkCommandBuffer cmd, u32 fi, const View& view);
+
+    /// Frame `fi`'s output for the UI to draw: the point sampler, so a frame
+    /// drawn at its own size is copied pixel for pixel, and alpha read as 1.
+    /// Stage 1 writes alpha 0 (Moho draws the frame straight into the view;
+    /// the UI blends). Valid from prepare() until the size changes.
+    VkDescriptorSet ui_descriptor(u32 fi) const {
+        return fi < FRAMES_IN_FLIGHT ? ui_sets_[fi] : VK_NULL_HANDLE;
+    }
 
     bool ready() const { return built_ && terrain_pipeline_ && edge_pipeline_; }
     const CartographicParams& params() const { return params_; }
@@ -71,6 +87,7 @@ private:
         AllocatedImage frame{};
         AllocatedImage depth{};
         AllocatedImage output{};
+        VkImageView ui_view = VK_NULL_HANDLE; ///< the output, its alpha 1
         VkFramebuffer frame_fb = VK_NULL_HANDLE;
         VkFramebuffer output_fb = VK_NULL_HANDLE;
     };
@@ -90,6 +107,7 @@ private:
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
     VkDescriptorSet lookup_set_ = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, FRAMES_IN_FLIGHT> frame_sets_{};
+    std::array<VkDescriptorSet, FRAMES_IN_FLIGHT> ui_sets_{};
     VkPipelineLayout terrain_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout edge_layout_ = VK_NULL_HANDLE;
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;
