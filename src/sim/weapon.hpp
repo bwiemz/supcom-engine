@@ -239,7 +239,9 @@ public:
     /// fire control on target (see fire_control), the unit free (not Busy)
     /// and above water if it must be, a winged bomber at its release point
     /// (bomb_ready), and a silo weapon's missile ready (HasSiloAmmo).
-    bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
+    /// `sim`: for the water's surface (none: a map without water).
+    bool can_fire(const Unit& owner, const EntityRegistry& registry,
+                  const SimState* sim = nullptr) const;
 
     /// A winged aircraft's bomb (NeedToComputeBombDrop): only in a run
     /// (MakingAttackRun), and only where a bomb dropped now, with the
@@ -309,7 +311,7 @@ private:
     };
     TargetMark target_mark() const { return {target_entity_id, has_ground_target, ground_target}; }
     void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
-                         const TargetMark& previous);
+                         const TargetMark& previous, const SimState* sim);
     /// A manual weapon's target: what its unit's launch order names, if the
     /// order is for this weapon; else none.
     void take_order_target(const Unit& owner, const EntityRegistry& registry);

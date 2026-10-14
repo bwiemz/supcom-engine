@@ -642,6 +642,19 @@ void Unit::update(f64 dt, SimContext& ctx) {
     tick_manipulators(static_cast<f32>(dt), ctx.L);
     if (destroyed() || !in_registry()) return;
 
+    // A surface unit on a layer its motion type can't be on (a land tank on
+    // the seabed) loses 1% of its health a tick, moving or not, and dies at
+    // none: Moho's CUnitMotion::CalcMoveCommon, which each motion tick runs
+    // for a unit not being built, carried, falling or flying.
+    if (is_mobile() && !can_fly() && !is_being_built() && !crashing_ && parent_entity_id() == 0 &&
+        !on_valid_layer()) {
+        set_health(health() - max_health() * 0.0099999998f);
+        if (health() <= 0.0f && ctx.sim) {
+            ctx.sim->kill_unit(*this, "");
+            return;
+        }
+    }
+
     // A landed aircraft given an order goes back to the air before it
     // carries the order out (Moho's motion target set, layer Air).
     if (can_fly() && !is_being_built() && !command_queue_.empty() && parent_entity_id() == 0 &&
@@ -3214,6 +3227,21 @@ f32 Unit::raised_platform_height(f32 x, f32 z) const {
         return u * (right - left) + left;
     }
     return 0.0f;
+}
+
+bool Unit::on_valid_layer() const {
+    const std::string& m = motion_type_;
+    if (layer_ == "Land") {
+        return m == "RULEUMT_Land" || m == "RULEUMT_AmphibiousFloating" ||
+               m == "RULEUMT_Amphibious" || m == "RULEUMT_Biped" || m == "RULEUMT_Hover";
+    }
+    if (layer_ == "Seabed") return m == "RULEUMT_Amphibious";
+    if (layer_ == "Sub") return m == "RULEUMT_SurfacingSub";
+    if (layer_ == "Water") {
+        return m == "RULEUMT_Water" || m == "RULEUMT_AmphibiousFloating" ||
+               m == "RULEUMT_SurfacingSub" || m == "RULEUMT_Hover";
+    }
+    return true;
 }
 
 void Unit::update_current_layer(const map::Terrain* terrain, lua_State* L) {

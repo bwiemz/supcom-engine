@@ -217,6 +217,7 @@ constexpr Mode kModesBefore[] = {
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
     {"--mobile-build-start-test", test_mobile_build_start, false},
+    {"--drown-test", test_drown, false},
     {"--attack-move-test", test_attack_move, false},
     {"--placement-layers-test", test_placement_layers, false},
     {"--yaw-only-test", test_yaw_only, false},
@@ -314,6 +315,7 @@ void IntegrationModes::print_usage() const {
               << "  --economy-test     After ticks, log economy state for all armies\n"
               << "  --build-test       After ticks, build a T1 power gen near entity #1\n"
               << "  --mobile-build-start-test An engineer's build start, tick by tick, as the original\n"
+              << "  --drown-test       Units made in water: a land tank drowns, as the original\n"
               << "  --chain-test       Full build chain: ACU -> factory -> engineer -> pgen\n"
               << "  --ai-test          AI ARMY_2: pgens + factory + engineers + guard assist\n"
               << "  --reclaim-test     Create prop, engineer reclaims it, verify mass gained\n"

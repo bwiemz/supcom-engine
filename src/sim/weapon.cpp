@@ -207,10 +207,19 @@ std::optional<Vector3> Weapon::target_point(const EntityRegistry& registry) cons
     return std::nullopt;
 }
 
-bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
+bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry,
+                      const SimState* sim) const {
     if (!enabled || !has_target() || owner.busy() || owner.is_stunned()) return false;
     if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return false;
-    if (above_water_fire_only && is_underwater(owner.layer())) return false;
+    // AboveWaterFireOnly: by where its muzzle is against the water's surface,
+    // not by its unit's layer (Moho's UnitWeapon fire check), so a walker
+    // standing on the seabed fires while its guns are above the water.
+    if (above_water_fire_only) {
+        Vector3 muzzle = owner.position();
+        if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0)
+            muzzle = owner.bone_world_position(bone);
+        if (muzzle.y <= water_surface(sim)) return false;
+    }
     // A script callback earlier this tick may have destroyed the target.
     const std::optional<Vector3> at = target_point(registry);
     if (!at) return false;
@@ -309,7 +318,7 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const S
     if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
 
     if (L && fires_through_script()) {
-        update_scripted(owner, registry, L, previous);
+        update_scripted(owner, registry, L, previous, sim);
         return;
     }
 
@@ -363,7 +372,7 @@ void Weapon::drop_target(lua_State* L) {
 }
 
 void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
-                             const TargetMark& previous) {
+                             const TargetMark& previous, const SimState* sim) {
     // Each callback may kill the unit or disable the weapon.
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
@@ -389,7 +398,7 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
     // The fire clock: when it is ready and the weapon can fire, the script
     // gets OnFire (its state machine decides what that means) and the clock
     // restarts.
-    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry)) return;
+    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry, sim)) return;
     if (!call_script(L, "CanWeaponFire") || !still_firing()) return;
     call_script(L, "OnFire");
     fire_clock = fire_period();

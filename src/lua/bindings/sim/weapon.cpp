@@ -157,7 +157,7 @@ static int weapon_CanFire(lua_State* L) {
     if (w && sim) {
         auto* owner = sim->entity_registry().find(w->owner_entity_id);
         can = owner && !owner->destroyed() && owner->is_unit() &&
-              w->can_fire(static_cast<const sim::Unit&>(*owner), sim->entity_registry());
+              w->can_fire(static_cast<const sim::Unit&>(*owner), sim->entity_registry(), sim);
     }
     lua_pushboolean(L, can);
     return 1;
