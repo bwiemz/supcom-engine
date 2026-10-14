@@ -28,6 +28,7 @@
 #include "renderer/recon_view.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/sky_renderer.hpp"
+#include "renderer/cartographic_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -262,6 +263,21 @@ public:
     /// The map's water (tests read its water map and Fresnel table; M213a).
     const WaterRenderer& water_renderer() const { return water_renderer_; }
     const SkyRenderer& sky_renderer() const { return sky_renderer_; }
+    /// The cartographic frame (the minimap's map) as it stands.
+    const CartographicRenderer& cartographic() const { return cartographic_; }
+    /// The cartographic frame's two stages, read back: 8-bit RGBA, row-major
+    /// from the top.
+    struct CartographicImages {
+        u32 width = 0, height = 0;
+        std::vector<u8> frame;  ///< Stage 0: the ramp's colour, the band's shade in alpha
+        std::vector<u8> output; ///< Stage 1: with the contour lines, alpha 0
+    };
+    /// Draw `terrain`'s cartographic frame for `view` now, outside any frame,
+    /// built from its heights as they are, and read both stages back (tests
+    /// of the port). Nothing without a device, or before the texture cache is
+    /// up (a scene built, or init_ui_caches).
+    std::optional<CartographicImages> capture_cartographic(const map::Terrain& terrain,
+                                                           const CartographicRenderer::View& view);
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -780,6 +796,7 @@ private:
     vfs::VirtualFileSystem* vfs_ = nullptr; ///< where the cursor's images are read
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
+    CartographicRenderer cartographic_; ///< the minimap's map
     FogRenderer fog_renderer_;
     UIRenderer ui_renderer_;
     MovieTextures movie_textures_; ///< Movie controls' frames (M216a)

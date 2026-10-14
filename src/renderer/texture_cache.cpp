@@ -677,12 +677,18 @@ const GPUTexture* TextureCache::get_raw(const std::string& key,
 const GPUTexture* TextureCache::upload_rgba(const std::string& key,
                                               const u8* pixels,
                                               u32 width, u32 height) {
+    return upload_pixels(key, VK_FORMAT_R8G8B8A8_UNORM, pixels, 4, width, height);
+}
+
+const GPUTexture* TextureCache::upload_pixels(const std::string& key, VkFormat format,
+                                              const void* pixels, u32 texel_bytes, u32 width,
+                                              u32 height) {
     if (device_ == VK_NULL_HANDLE) return nullptr;
 
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second.get();
 
-    u32 tex_size = width * height * 4;
+    const VkDeviceSize tex_size = static_cast<VkDeviceSize>(width) * height * texel_bytes;
 
     // Staging buffer
     VkBufferCreateInfo staging_ci{};
@@ -708,7 +714,7 @@ const GPUTexture* TextureCache::upload_rgba(const std::string& key,
     VkImageCreateInfo img_ci{};
     img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_ci.imageType = VK_IMAGE_TYPE_2D;
-    img_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    img_ci.format = format;
     img_ci.extent = {width, height, 1};
     img_ci.mipLevels = 1;
     img_ci.arrayLayers = 1;
@@ -791,7 +797,7 @@ const GPUTexture* TextureCache::upload_rgba(const std::string& key,
     view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view_ci.image = image.image;
     view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_ci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    view_ci.format = format;
     view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_ci.subresourceRange.levelCount = 1;
     view_ci.subresourceRange.layerCount = 1;
