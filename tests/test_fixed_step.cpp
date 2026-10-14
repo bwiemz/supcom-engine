@@ -27,3 +27,31 @@ TEST_CASE("negative frame time is ignored", "[fixedstep]") {
     CHECK(consume_fixed_steps(acc, -1.0, 0.1, 8) == 0);
     CHECK_THAT(acc, WithinAbs(0.05, 1e-12));
 }
+
+TEST_CASE("the first frame after a paused beat runs one tick, and its time restarts",
+          "[fixedstep]") {
+    double acc = 0.07;
+    bool one_tick = true;
+    CHECK(osc::session_ticks(acc, one_tick, 0.25, 0.1, 8) == 1);
+    CHECK_FALSE(one_tick);
+    CHECK(acc == 0.0);
+    CHECK(osc::session_ticks(acc, one_tick, 0.05, 0.1, 8) == 0);
+    CHECK_THAT(acc, WithinAbs(0.05, 1e-12));
+}
+
+TEST_CASE("a slow lockstep frame's time past its rounds is lost, not replayed", "[fixedstep]") {
+    double acc = 0.0;
+    bool one_tick = false;
+    CHECK(osc::session_ticks(acc, one_tick, 1.0, 0.1, 4) == 4);
+    CHECK(acc < 0.1);
+    CHECK(osc::session_ticks(acc, one_tick, 1.0 / 60.0, 0.1, 4) == 1);
+}
+
+TEST_CASE("a lockstep frame after a paused beat runs one round, then the clock's", "[fixedstep]") {
+    double acc = 0.05;
+    bool one_tick = true;
+    CHECK(osc::session_ticks(acc, one_tick, 0.35, 0.1, 4) == 1);
+    CHECK_FALSE(one_tick);
+    CHECK(osc::session_ticks(acc, one_tick, 1.0 / 60.0, 0.1, 4) == 0);
+    CHECK(osc::session_ticks(acc, one_tick, 0.1, 0.1, 4) == 1);
+}

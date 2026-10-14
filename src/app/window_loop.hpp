@@ -65,6 +65,7 @@ private:
     bool frame();
     /// The profiler's frame, a resized root frame, and this frame's time.
     double begin_frame();
+    bool fixed_step() const;
     /// The camera as the sound's listener.
     void update_audio(double dt);
     /// The world's sounds for this frame: the ticks' one-shots and the

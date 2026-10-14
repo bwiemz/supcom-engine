@@ -42,6 +42,18 @@ TEST_CASE("a ring full of no time drops the first long frames", "[frametimes]") 
     CHECK(times.median() == 0.004);
 }
 
+TEST_CASE("a new session's first frame runs one tick, though the ring holds no time yet",
+          "[frametimes]") {
+    auto times = RollingFrameTimes::full_of(0.0);
+    double accumulator = 0.0;
+    bool one_tick = true;
+    times.push(0.3);
+    CHECK(osc::session_ticks(accumulator, one_tick, times.median(), 0.1, 8) == 1);
+    CHECK(accumulator == 0.0);
+    times.push(0.016);
+    CHECK(osc::session_ticks(accumulator, one_tick, times.median(), 0.1, 8) == 0);
+}
+
 TEST_CASE("a hitch leaves the session's ticks behind the wall clock", "[frametimes]") {
     // Three seconds at 60 frames a second, one of them half a second long,
     // as Moho's session sees them: the median of the last frame times.

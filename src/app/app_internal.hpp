@@ -182,11 +182,13 @@ u64 launch_seed(const std::string& seed_arg, bool reproducible);
 struct WorldInterp {
     osc::sim::WorldHistory history;
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
+    bool one_tick_next = true;
 
     /// Follow a new sim's ticks from its first one. Must outlive `sim`.
     void attach(osc::sim::SimState& sim) {
         history.clear();
         clock.reset();
+        one_tick_next = true;
         sim.set_tick_observer([this](const osc::sim::SimState& s) {
             history.capture(s);
             clock.on_tick();
