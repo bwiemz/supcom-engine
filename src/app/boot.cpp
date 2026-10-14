@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "core/profiler.hpp"
+#include "lua/match_records.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/binding_coverage.hpp"
@@ -340,6 +341,8 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
 
     // Replays and saved games (FA's special files), set up once (boot_ui)
     osc::lua::register_special_file_bindings(ui_lua_state, &*special_files);
+    // The match records beside the replays, for the match history screens
+    osc::lua::register_match_record_bindings(ui_lua_state);
 
     // OpenURL: the protocols the init file allows, opened in the browser
     url_opener.protocols = loader.url_protocols();

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "app/match_telemetry.hpp"
+#include "lua/match_records.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
@@ -132,5 +133,58 @@ TEST_CASE("A match's record says what happened to its units, and when", "[teleme
     CHECK(last["mass_from"]["extractors"].get<double>() == 0.0);
 
     CHECK(records(path, "end").size() == 1);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A kept match record is read back for the game's match history", "[telemetry]") {
+    const auto path = std::filesystem::temp_directory_path() / "osc_match_history_test.jsonl";
+    {
+        std::ofstream out(path);
+        out << R"({"record":"match","schema":3,"seed":7,"build":"b","armies":[)"
+            << R"({"idx":1,"name":"ARMY_1","nickname":"Ryan","faction":1,"human":true,"ai":""},)"
+            << R"({"idx":2,"name":"ARMY_2","faction":3,"human":false,"ai":"rush"}]})" << '\n';
+        for (int t = 50; t <= 1000; t += 50) {
+            for (int army = 1; army <= 2; ++army) {
+                out << R"({"record":"sample","army":)" << army << R"(,"tick":)" << t
+                    << R"(,"Economy_Income_Mass":1.5,"Units_Active":4,"units":{"land":3},)"
+                    << R"("mass_from":{"extractors":14,"commander":1}})" << '\n';
+            }
+        }
+        out << R"({"record":"event","kind":"unit_built","tick":100,"army":1,"bp":"ueb1103"})"
+            << '\n';
+        out << R"({"record":"event","kind":"unit_built","tick":120,"army":1,"bp":"uel0106"})"
+            << '\n';
+        out << R"({"record":"event","kind":"unit_lost","tick":900,"army":2,"bp":"url0106",)"
+            << R"("complete":true,"by_army":1,"by_bp":"uel0106"})" << '\n';
+        out << R"({"record":"end","ended":"victory","army_results":["victory","defeat"]})" << '\n';
+    }
+    const auto full = osc::lua::read_match_record(path, false);
+    REQUIRE(full);
+    const auto& armies = (*full)["armies"];
+    REQUIRE(armies.size() == 2);
+    CHECK(armies[0]["name"] == "Ryan");
+    CHECK(armies[0]["result"] == "victory");
+    CHECK(armies[0]["built"] == 2);
+    CHECK(armies[0]["destroyed"] == 1);
+    CHECK(armies[1]["ai"] == "rush");
+    CHECK(armies[1]["lost"] == 1);
+    CHECK(armies[0]["structures"].size() == 1);
+    CHECK(armies[0]["structures"][0][1] == "ueb1103");
+    CHECK(armies[0]["units"]["uel0106"] == 1);
+    REQUIRE(armies[0]["samples"].size() == 20);
+    CHECK(armies[0]["samples"][19][0].get<double>() == 1000.0); // the tick
+    CHECK(armies[0]["samples"][19][1].get<double>() == 15.0);   // mass a second
+    CHECK(armies[0]["samples"][19][4].get<double>() == 3.0);    // land units
+    CHECK(armies[0]["samples"][19][9].get<double>() == 14.0);   // mass from extractors
+    CHECK((*full)["notable"].size() == 1);
+    CHECK((*full)["ticks"].get<double>() == 1000.0);
+
+    const auto summary = osc::lua::read_match_record(path, true);
+    REQUIRE(summary);
+    CHECK_FALSE((*summary)["armies"][0].contains("samples"));
+    CHECK((*summary)["armies"][0]["last"][1].get<double>() == 15.0);
+    CHECK_FALSE(summary->contains("notable"));
+
+    CHECK_FALSE(osc::lua::read_match_record(path.string() + ".none", false));
     std::filesystem::remove(path);
 }
