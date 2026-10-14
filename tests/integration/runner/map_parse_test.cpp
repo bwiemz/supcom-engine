@@ -14,6 +14,8 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <cmath>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -98,6 +100,59 @@ void test_map_parse(TestContext& ctx) {
         t.check(whole && !padded_whole,
                 fmt::format("Test 4: SCMP_009 is read whole ({}), with 4 bytes more it isn't ({})",
                             whole, !padded_whole));
+    }
+
+    // Test 5: the cartographic view's data, read in place (from version 56):
+    // every map's band count and colours are sane, and its decal batches
+    // parse (each a known technique and a texture). Sane, not Moho's rules:
+    // a read out of step would give stray counts, alphas and strings.
+    {
+        const std::vector<std::string> files = ctx.vfs.find_files("/maps", "*.scmap");
+        int sane = 0;
+        int with_batches = 0;
+        std::map<u32, int> second_colours; // FAF's map editor: the "contour colour"
+        size_t batch_decals = 0;
+        std::string odd;
+        for (const std::string& f : files) {
+            const auto d = parse(ctx.vfs, f);
+            if (!d) continue;
+            const map::ScmapCartographic& c = d->cartographic;
+            bool ok = c.topographic_samples >= 1 && c.topographic_samples <= 100;
+            for (u32 colour : c.hypsometric) ok = ok && (colour >> 24) == 0xFF;
+            for (const map::ScmapCartographicBatch& b : c.batches) {
+                ok = ok && (b.technique == "Decal" || b.technique == "DecalGlow") &&
+                     !b.texture.empty();
+                batch_decals += b.decals.size();
+            }
+            with_batches += c.batches.empty() ? 0 : 1;
+            ++second_colours[c.hypsometric[1]];
+            if (ok) ++sane;
+            else odd += " " + f;
+        }
+        spdlog::info("  cartographic: {} maps with decal batches, {} decals in them", with_batches,
+                     batch_decals);
+        for (const auto& [colour, maps] : second_colours)
+            spdlog::info("  second colour {:08X}: {} maps", colour, maps);
+        t.check(!files.empty() && sane == static_cast<int>(files.size()),
+                fmt::format("Test 5: {} of {} maps' cartographic bands and colours are sane "
+                            "(odd:{})",
+                            sane, files.size(), odd.empty() ? " none" : odd));
+        // Seton's Clutch's own, read from the file once
+        const auto d = parse(ctx.vfs, "/maps/SCMP_009/SCMP_009.scmap");
+        bool pinned = false;
+        if (d) {
+            const map::ScmapCartographic& c = d->cartographic;
+            spdlog::info("  SCMP_009: {} bands, colours {:08X} {:08X} {:08X} {:08X} {:08X}, "
+                         "imager offset {}",
+                         c.topographic_samples, c.hypsometric[0], c.hypsometric[1],
+                         c.hypsometric[2], c.hypsometric[3], c.hypsometric[4],
+                         c.imager_elevation_offset);
+            pinned = c.topographic_samples == 24 && c.hypsometric[0] == 0xFF478CB5u &&
+                     c.hypsometric[1] == 0xFF707070u && c.hypsometric[2] == 0xFF8CC9E0u &&
+                     c.hypsometric[3] == 0xFF75636Bu && c.hypsometric[4] == 0xFFCECEB0u &&
+                     std::abs(c.imager_elevation_offset + 8.3f) < 1e-4f && c.batches.empty();
+        }
+        t.check(pinned, "Test 6: SCMP_009's 24 bands, five colours and imager offset, no batches");
     }
 
     spdlog::info("Map parse test: {} passed, {} failed", t.pass, t.fail);

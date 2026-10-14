@@ -164,6 +164,37 @@ struct ScmapSky {
     };
 };
 
+/// One decal of a cartographic decal batch (Moho's CartographicDecalBatch:
+/// 36 bytes, DecalVS's instance): its place, turn and size on the ground,
+/// and the rectangle of the batch's texture it shows.
+struct ScmapCartographicDecal {
+    f32 x = 0, z = 0;
+    f32 rotation = 0;
+    f32 size_x = 0, size_z = 0;
+    f32 u = 0, v = 0, width = 0, height = 0;
+};
+
+/// A batch of decals the cartographic view draws over its terrain
+/// (Cartographic::ReadDecals, from version 59): its technique in
+/// cartographic.fx, Decal or DecalGlow (named from version 60), and texture.
+struct ScmapCartographicBatch {
+    std::string technique = "Decal";
+    std::string texture;
+    std::vector<ScmapCartographicDecal> decals;
+};
+
+/// What the cartographic view (the minimap's map) draws a map with
+/// (CWldTerrainRes::Load): its contour band count and its five hypsometric
+/// colours (ARGB: abyss, deep and shallow water, low and high land) from
+/// version 56, Moho's defaults before; the imager's elevation offset from
+/// version 57 (MapImager's, not the view's); its decal batches.
+struct ScmapCartographic {
+    i32 topographic_samples = 20;
+    u32 hypsometric[5] = {0xFF0E3EFF, 0xFF215CFF, 0xFF4785FF, 0xFF4C9D32, 0xFFFFFFFF};
+    f32 imager_elevation_offset = 0;
+    std::vector<ScmapCartographicBatch> batches;
+};
+
 /// The sky a map older than version 58 gets (SkyDome::SetupHorizonAndCirrus):
 /// a dome over the map's centre, from `elevation` (the water's, or the
 /// terrain's floor), its radius the half-diagonal / cos 72 degrees.
@@ -189,6 +220,7 @@ struct ScmapData {
     ScmapLighting lighting;
     ScmapEnvironment environment;
     ScmapSky sky; ///< the map's, or default_sky's for an older map (M210b)
+    ScmapCartographic cartographic;
     i32 version_minor = 0;
     std::vector<ScmapProp> props;   // map props from .scmap binary
     std::vector<ScmapDecal> decals; // terrain decals from .scmap binary

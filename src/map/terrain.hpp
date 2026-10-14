@@ -137,6 +137,17 @@ public:
     void set_sky(ScmapSky sky) { sky_ = std::move(sky); }
     const ScmapSky& sky() const { return sky_; }
 
+    /// What the cartographic view draws the map with: its contour bands,
+    /// hypsometric colours and decal batches (Moho's defaults until a map's).
+    void set_cartographic(ScmapCartographic cartographic) {
+        cartographic_ = std::move(cartographic);
+    }
+    const ScmapCartographic& cartographic() const { return cartographic_; }
+    /// The elevation the map's deep water starts at (STIMap's
+    /// mWaterElevationDeep; the cartographic view's water blues change there).
+    void set_water_deep_elevation(f32 elevation) { water_deep_elevation_ = elevation; }
+    f32 water_deep_elevation() const { return water_deep_elevation_; }
+
     /// The map's terrain types, one TypeCode per map cell, row by row.
     void set_terrain_types(std::vector<u8> types);
     /// The terrain type at a world position: its TypeCode in
@@ -169,7 +180,9 @@ private:
     ScmapWaterMasks water_masks_;
     std::vector<ScmapWaveGenerator> waves_;
     f32 water_abyss_elevation_ = 0.0f;
+    f32 water_deep_elevation_ = 0.0f;
     ScmapSky sky_;
+    ScmapCartographic cartographic_;
 };
 
 } // namespace osc::map

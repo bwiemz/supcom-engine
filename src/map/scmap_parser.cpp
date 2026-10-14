@@ -159,21 +159,28 @@ bool read_sky(BinaryReader& r, ScmapSky& sky) {
     return true;
 }
 
-/// The cartographic decal batches (Cartographic::ReadDecals), which the
-/// engine doesn't draw: a technique (from version 60), a texture and 36
-/// bytes a decal, each.
-bool skip_cartographic_decals(BinaryReader& r, i32 version_minor) {
+/// The cartographic decal batches (Cartographic::ReadDecals): a technique
+/// (from version 60), a texture and 36 bytes a decal, each.
+bool read_cartographic_decals(BinaryReader& r, i32 version_minor,
+                              std::vector<ScmapCartographicBatch>& out) {
     if (!r.has_remaining(4)) return false;
     const i32 batches = r.read_i32();
     if (batches < 0) return false;
     for (i32 b = 0; b < batches; ++b) {
-        if (version_minor >= 60) r.read_cstring();
-        r.read_cstring();
+        ScmapCartographicBatch batch;
+        if (version_minor >= 60) batch.technique = r.read_cstring();
+        batch.texture = r.read_cstring();
         if (!r.has_remaining(4)) return false;
         const i32 count = r.read_i32();
         constexpr size_t kDecalBytes = 36;
         if (count < 0 || !r.has_remaining(static_cast<size_t>(count) * kDecalBytes)) return false;
-        r.skip(static_cast<size_t>(count) * kDecalBytes);
+        batch.decals.resize(static_cast<size_t>(count));
+        for (ScmapCartographicDecal& d : batch.decals) {
+            for (f32* f :
+                 {&d.x, &d.z, &d.rotation, &d.size_x, &d.size_z, &d.u, &d.v, &d.width, &d.height})
+                *f = r.read_f32();
+        }
+        out.push_back(std::move(batch));
     }
     return true;
 }
@@ -251,16 +258,19 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
         }
     }
 
-    // --- Version-dependent tileset data ---
-    if (version_minor >= 59) {
-        if (!r.has_remaining(28)) return false;
-        r.skip(28);
-    } else if (version_minor > 53) {
+    // --- The cartographic view's contours and colours, from version 56,
+    // and the imager's elevation offset, from 57 (CWldTerrainRes::Load;
+    // the FAF map editor reads the same) ---
+    if (version_minor >= 56) {
         if (!r.has_remaining(24)) return false;
-        r.skip(24);
-    } else {
-        r.read_cstring(); // tileset name
+        result.cartographic.topographic_samples = r.read_i32();
+        for (u32& c : result.cartographic.hypsometric) c = r.read_u32();
     }
+    if (version_minor >= 57) {
+        if (!r.has_remaining(4)) return false;
+        result.cartographic.imager_elevation_offset = r.read_f32();
+    }
+    if (version_minor <= 53) r.read_cstring(); // tileset name
 
     // --- Terrain strata ---
     if (version_minor > 53) {
@@ -448,7 +458,9 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
         if (!read_sky(r, sky)) return false;
         result.sky = std::move(sky);
     }
-    if (version_minor >= 59 && !skip_cartographic_decals(r, version_minor)) return false;
+    if (version_minor >= 59 &&
+        !read_cartographic_decals(r, version_minor, result.cartographic.batches))
+        return false;
 
     return true;
 }
