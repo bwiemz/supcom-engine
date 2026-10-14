@@ -543,8 +543,8 @@ public:
     /// here. Its orders for later ticks are the restored scheduler's: they
     /// join the recording as they run.
     void adopt_history(const Replay& saved);
-    /// Catching up a loaded game. It is not a replay: the UI's
-    /// SessionIsReplay() stays false.
+    /// Catching up a loaded game. It is not a replay: SessionIsReplay()
+    /// stays false.
     bool resuming() const { return resume_tick_ != 0; }
 
     // Game end state

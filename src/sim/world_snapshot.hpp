@@ -33,6 +33,7 @@ struct CommandRecord {
     bool pending = false;
     bool from_guard = false; ///< a fight its Guard (behind it) broke off for
     u32 command_id = 0;
+    u8 moho_command = 0; ///< its Moho UNITCOMMAND number (moho_command_number)
 };
 
 struct PendingQueue {

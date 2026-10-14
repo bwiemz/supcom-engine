@@ -67,6 +67,46 @@ inline bool instant_order(CommandType type) {
     }
 }
 
+/// Moho's UNITCOMMAND number of an order (faf-re SSTICommandIssueData.h's
+/// EUnitCommandType): the commandType GetCommandQueue and
+/// GetHighlightCommand report, which FAF's scripts compare
+/// (UnitQueueDataToCommand). `formed`: laid out in a formation (a FormMove,
+/// FormAttack or FormAggressiveMove).
+inline int moho_command_number(CommandType type, bool formed) {
+    switch (type) {
+    case CommandType::Stop: return 1;
+    case CommandType::Move: return formed ? 4 : 2;
+    case CommandType::Dive: return 3;
+    case CommandType::SiloBuildTactical: return 5;
+    case CommandType::SiloBuildNuke: return 6;
+    case CommandType::BuildFactory: return 7;
+    case CommandType::BuildMobile: return 8;
+    case CommandType::Attack: return formed ? 11 : 10;
+    case CommandType::Nuke: return 12;
+    case CommandType::Tactical: return 13;
+    case CommandType::Teleport: return 14;
+    case CommandType::Guard: return 15;
+    case CommandType::Patrol: return 16;
+    case CommandType::Ferry: return 17;
+    case CommandType::Reclaim: return 19;
+    case CommandType::Repair: return 20;
+    case CommandType::Capture: return 21;
+    // A wait at a ferry beacon is Moho's TransportLoadUnits at the beacon
+    case CommandType::TransportLoad:
+    case CommandType::WaitForFerry: return 22;
+    case CommandType::TransportUnload: return 24;
+    case CommandType::Upgrade: return 27;
+    // retail issues an enhancement as a Script order (EnhanceTask)
+    case CommandType::Script:
+    case CommandType::Enhance: return 28;
+    case CommandType::Sacrifice: return 32;
+    case CommandType::Overcharge: return 34;
+    case CommandType::AggressiveMove: return formed ? 36 : 35;
+    case CommandType::Dock: return 39;
+    }
+    return 0;
+}
+
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
 enum class DockPhase : u8 {
     Reserve,  ///< asking the platform for a slot, heading for it meanwhile
@@ -231,5 +271,15 @@ struct UnitCommand {
     u32 leash_anchor_id = 0;
     Vector3 leash_anchor_pos;
 };
+
+/// Moho's UNITCOMMAND number of order `c` (see the CommandType overload): an
+/// unload of chosen cargo is TransportUnloadSpecificUnits. The engine has no
+/// order Moho numbers 9 (BuildAssist: a build helped is a Repair here), 18
+/// (FormPatrol: a Patrol), 23, 26, 29 (AssistCommander: a Guard), 30, 31,
+/// 33, 37 or 38.
+inline int moho_command_number(const UnitCommand& c) {
+    if (c.type == CommandType::TransportUnload && !c.unload_ids.empty()) return 25;
+    return moho_command_number(c.type, c.formed || c.form_attack);
+}
 
 } // namespace osc::sim

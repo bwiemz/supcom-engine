@@ -174,7 +174,7 @@ CommandRecord command_record(const UnitCommand& c, bool pending) {
     return {c.type,       c.target_id,
             c.target_pos, c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(),
             pending,      c.from_guard,
-            c.command_id};
+            c.command_id, static_cast<u8>(moho_command_number(c))};
 }
 
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
