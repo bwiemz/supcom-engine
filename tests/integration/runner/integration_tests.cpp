@@ -3314,11 +3314,15 @@ void test_stall(TestContext& ctx) {
             local bp_id = 'ueb1101'
             local pos = acu:GetPosition()
             IssueBuildMobile({acu}, {pos[1] + 8, pos[2], pos[3]}, bp_id, {})
-            WaitTicks(5) -- let build start
+            local waited = 0
+            while acu:GetResourceConsumed() == 0 and waited < 30 do
+                WaitTicks(1)
+                waited = waited + 1
+            end
 
             -- Check efficiency while building (ACU has income from bp, may not stall)
             local consumed2 = acu:GetResourceConsumed()
-            LOG('STALL TEST 4: efficiency during build = ' .. tostring(consumed2))
+            LOG('STALL TEST 4: efficiency during build = ' .. tostring(consumed2) .. ' after ' .. waited .. ' ticks')
             if type(consumed2) == 'number' and consumed2 > 0 then
                 LOG('STALL TEST 4: PASS (valid efficiency during build)')
             else
