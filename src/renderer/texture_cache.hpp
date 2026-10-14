@@ -67,6 +67,10 @@ public:
     /// Key is used for caching. Pixels must be width*height*4 bytes.
     const GPUTexture* upload_rgba(const std::string& key,
                                    const u8* pixels, u32 width, u32 height);
+    /// As upload_rgba, for texels of any format, each `texel_bytes` long (the
+    /// cartographic view's half-float elevations and its ramps).
+    const GPUTexture* upload_pixels(const std::string& key, VkFormat format, const void* pixels,
+                                    u32 texel_bytes, u32 width, u32 height);
 
     /// A descriptor set drawing `view` (shader-readable) with the cache's
     /// sampler, for a texture made elsewhere (a movie's). It stays in the

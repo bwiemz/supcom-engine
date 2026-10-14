@@ -200,3 +200,31 @@ TEST_CASE("The contour ramp: none under water, a shade a band on land", "[cartog
     const auto dry = topographic_ramp(ramp_params(false));
     CHECK(dry[0] == 27);
 }
+
+TEST_CASE("The cartographic view: the rect fills the target, higher is nearer", "[cartographic]") {
+    const auto m = cartographic_view_proj(100.0f, 50.0f, 300.0f, 150.0f, 0.0f, 40.0f);
+    // column-major: clip = m * (x, y, z, 1)
+    const auto clip = [&](f32 x, f32 y, f32 z) {
+        std::array<f32, 3> out{};
+        for (size_t row = 0; row < 3; ++row)
+            out[row] = m[row] * x + m[4 + row] * y + m[8 + row] * z + m[12 + row];
+        return out;
+    };
+    const auto top_left = clip(100.0f, 0.0f, 50.0f);
+    CHECK(top_left[0] == Catch::Approx(-1.0f));
+    CHECK(top_left[1] == Catch::Approx(-1.0f)); // z0 at the top
+    const auto bottom_right = clip(300.0f, 0.0f, 150.0f);
+    CHECK(bottom_right[0] == Catch::Approx(1.0f));
+    CHECK(bottom_right[1] == Catch::Approx(1.0f));
+    CHECK(clip(200.0f, 40.0f, 100.0f)[2] == Catch::Approx(0.0f));
+    CHECK(clip(200.0f, 0.0f, 100.0f)[2] == Catch::Approx(1.0f));
+    CHECK(m[15] == 1.0f);
+}
+
+TEST_CASE("The ground quad lies at the surface, in whole height words", "[cartographic]") {
+    CartographicParams p;
+    p.surface = 12.34f; // 1579.52 words
+    CHECK(cartographic_surface_word(p) == 1579);
+    p.surface = -0.5f;
+    CHECK(cartographic_surface_word(p) == -64);
+}

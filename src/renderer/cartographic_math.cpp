@@ -141,6 +141,23 @@ Lanes lanes(const CartographicParams& p) {
 
 } // namespace
 
+i16 cartographic_surface_word(const CartographicParams& p) {
+    constexpr f32 kWordsPerUnit = 128.0f;
+    return static_cast<i16>(truncate_to_i32(p.surface * kWordsPerUnit));
+}
+
+std::array<f32, 16> cartographic_view_proj(f32 x0, f32 z0, f32 x1, f32 z1, f32 y_low, f32 y_high) {
+    std::array<f32, 16> m{};
+    m[0] = 2.0f / (x1 - x0);
+    m[12] = -2.0f * x0 / (x1 - x0) - 1.0f;
+    m[9] = 2.0f / (z1 - z0);
+    m[13] = -2.0f * z0 / (z1 - z0) - 1.0f;
+    m[6] = -1.0f / (y_high - y_low);
+    m[14] = y_high / (y_high - y_low);
+    m[15] = 1.0f;
+    return m;
+}
+
 std::array<u32, kCartographicRampTexels> hypsometric_ramp(const CartographicParams& p) {
     const Lanes n = lanes(p);
     std::array<u32, kCartographicRampTexels> ramp{};

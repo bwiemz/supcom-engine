@@ -484,6 +484,8 @@ void Renderer::init_sub_renderers() {
     trail_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's sky (M210b)
     sky_renderer_.init(device_, allocator_, frame_.scene_pass());
+    // The cartographic view (the minimap's map)
+    cartographic_.init(device_, allocator_, depth_format_);
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, frame_.scene_pass());
     water_renderer_.set_frame_images(
@@ -1382,6 +1384,7 @@ void Renderer::clear_scene() {
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.clear();
     sky_renderer_.clear();
+    cartographic_.clear(texture_cache_);
     fog_renderer_.destroy(device_, allocator_);
 
     if (bone_ds_pool_) {
@@ -3859,6 +3862,94 @@ bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
     return true;
 }
 
+std::optional<Renderer::CartographicImages>
+Renderer::capture_cartographic(const map::Terrain& terrain,
+                               const CartographicRenderer::View& view) {
+    if (!device_ || view.width == 0 || view.height == 0) return std::nullopt;
+    vkQueueWaitIdle(graphics_queue_);
+    cartographic_.build(terrain, texture_cache_);
+    if (!cartographic_.ready()) return std::nullopt;
+
+    const VkDeviceSize image_bytes = static_cast<VkDeviceSize>(view.width) * view.height * 4;
+    VkBufferCreateInfo buf_ci{};
+    buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buf_ci.size = image_bytes * 2;
+    buf_ci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VmaAllocationCreateInfo alloc_ci{};
+    alloc_ci.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+    AllocatedBuffer readback{};
+    if (vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci, &readback.buffer, &readback.allocation,
+                        nullptr) != VK_SUCCESS)
+        return std::nullopt;
+
+    VkCommandBufferAllocateInfo cmd_ai{};
+    cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmd_ai.commandPool = cmd_pool_;
+    cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmd_ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd);
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    cartographic_.record(cmd, 0, view);
+    // Both stages (shader-readable) copied out
+    const std::array<VkImage, 2> images = {cartographic_.frame(0).image,
+                                           cartographic_.output(0).image};
+    for (size_t i = 0; i < images.size(); ++i) {
+        VkImageMemoryBarrier to_src{};
+        to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        to_src.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_src.image = images[i];
+        to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
+        VkBufferImageCopy region{};
+        region.bufferOffset = image_bytes * i;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {view.width, view.height, 1};
+        vkCmdCopyImageToBuffer(cmd, images[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               readback.buffer, 1, &region);
+        VkImageMemoryBarrier back = to_src;
+        back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        back.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        back.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &back);
+    }
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    vkQueueSubmit(graphics_queue_, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(graphics_queue_);
+    vkFreeCommandBuffers(device_, cmd_pool_, 1, &cmd);
+
+    CartographicImages out;
+    out.width = view.width;
+    out.height = view.height;
+    void* mapped = nullptr;
+    if (vmaMapMemory(allocator_, readback.allocation, &mapped) == VK_SUCCESS) {
+        vmaInvalidateAllocation(allocator_, readback.allocation, 0, VK_WHOLE_SIZE);
+        const auto* bytes = static_cast<const u8*>(mapped);
+        out.frame.assign(bytes, bytes + image_bytes);
+        out.output.assign(bytes + image_bytes, bytes + 2 * image_bytes);
+        vmaUnmapMemory(allocator_, readback.allocation);
+    }
+    vmaDestroyBuffer(allocator_, readback.buffer, readback.allocation);
+    if (out.frame.empty()) return std::nullopt;
+    return out;
+}
+
 void Renderer::deliver_scene_capture() {
     // A test path: stalling the queue keeps it simple.
     vkQueueWaitIdle(graphics_queue_);
@@ -3992,6 +4083,7 @@ void Renderer::shutdown() {
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
     sky_renderer_.destroy(device_, allocator_);
+    cartographic_.destroy();
     fog_renderer_.destroy(device_, allocator_);
     movie_textures_.destroy();
     ui_renderer_.destroy(device_, allocator_);

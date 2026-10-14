@@ -237,6 +237,7 @@ Each phase is one reviewable PR, with its own tests, in the repo's patterns (uni
 - No goldens.
 
 **P2. Terrain on the GPU** (not wired to the UI)
+- *As built:* both targets are `R8G8B8A8_UNORM`, not HDR. Moho's are 8-bit, and the edge detect works on the 8-bit band shades, so the port rounds where Moho's did. P5 makes the overlay pipelines for this pass. The test hook is `Renderer::capture_cartographic(terrain, view)`, which draws in a command buffer of its own and reads both stages back. On SCMP_009 every pixel matches the CPU reference, square and letterboxed, with no validation errors. The `±0.0001` and `16 → 8` mutations fail it.
 - `CartographicRenderer` (terrain + edge pipelines, textures, targets), shaders, `upload_pixels`, and a test hook `Renderer::request_cartographic_capture(cb)` (the frame or the output, as floats, like `request_scene_capture`, `renderer.hpp:424-435`) with a probe view (size and map rect) so the frame renders with no UI.
 - `--cartographic-test` part 2 on SCMP_009 at 512x512 and 640x384 (letterbox):
   - Stage0: every pixel against a test-side CPU reference of `TerrainPS0` fed from the pure-math textures (colour and alpha);
@@ -272,7 +273,7 @@ Each phase is one reviewable PR, with its own tests, in the repo's patterns (uni
 |---|---|---|
 | Unit | ramps, textures, half-float, ortho, parser | `tests/test_cartographic_math.cpp`, `tests/test_map*.cpp` (new files listed in `tests/CMakeLists.txt` near `test_sky_dome.cpp:130`) |
 | Integration gate | `--cartographic-test` parts 1-3 | `tests/integration/runner/cartographic_test.cpp`, `test_modes.cpp` table (next to `{"--sky-test", test_sky, false}` at line 171), `integration_tests.hpp` (decl near 160), `data_tests.cmake:52`, `tests/integration/CMakeLists.txt` (runner list near 58) |
-| Render probes | whole-frame CPU reference compare, structure checks | `request_cartographic_capture` |
+| Render probes | whole-frame CPU reference compare, structure checks | `Renderer::capture_cartographic` |
 | Golden | the minimap rebaseline (P3), the main view (P7) | machine-local PNGs; changes need your review |
 
 ## 6. Risks and open questions

@@ -58,6 +58,15 @@ std::array<u32, kCartographicRampTexels> hypsometric_ramp(const CartographicPara
 /// shade, 16 to 255, which the edge pass turns into contour lines.
 std::array<u8, kCartographicRampTexels> topographic_ramp(const CartographicParams& p);
 
+/// The ground quad's height, as InitializeTerrain uploads it: the water's
+/// surface (or the floor) in whole height words, truncated.
+i16 cartographic_surface_word(const CartographicParams& p);
+
+/// The view of a cartographic frame, top-down: the world rect (x0, z0) to
+/// (x1, z1) fills the target, z0 at its top; heights y_low to y_high take
+/// depths 1 to 0 (higher is nearer). Column-major, for Vulkan's clip space.
+std::array<f32, 16> cartographic_view_proj(f32 x0, f32 z0, f32 x1, f32 z1, f32 y_low, f32 y_high);
+
 /// BlendPackedColor: each byte from + (to - from) * t, truncated.
 u32 blend_packed_color(u32 from, u32 to, f32 t);
 
