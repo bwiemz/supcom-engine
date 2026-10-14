@@ -195,8 +195,10 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     f64 energy_income = 0.0;
     f64 mass_consumption = 0.0;
     f64 energy_consumption = 0.0;
-    f64 total_storage_mass = 200.0 + bonus_storage_mass_; // base + GiveStorage
-    f64 total_storage_energy = 200.0 + bonus_storage_energy_;
+    // The units' storage and GiveStorage's pair: an army has none of its
+    // own (the original's starts with its commander's 4000 and 650)
+    f64 total_storage_mass = extra_storage_mass_;
+    f64 total_storage_energy = extra_storage_energy_;
 
     u32 active_units = 0;
     f32 cap_used = 0.0f; // get_unit_cost_total, in the same pass
@@ -248,8 +250,9 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     economy_.energy.income = energy_income;
     economy_.mass.requested = mass_consumption;
     economy_.energy.requested = energy_consumption;
-    economy_.mass.max_storage = total_storage_mass;
-    economy_.energy.max_storage = total_storage_energy;
+    // (A negative GiveStorage could take the total under nothing.)
+    economy_.mass.max_storage = std::max(0.0, total_storage_mass);
+    economy_.energy.max_storage = std::max(0.0, total_storage_energy);
 
     // Storage-aware efficiency: storage acts as buffer that smoothly drains
     // before stalling kicks in. available = income*dt + stored

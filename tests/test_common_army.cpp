@@ -39,7 +39,9 @@ TEST_CASE("Common Army off: allies keep their own reserves", "[commonarmy]") {
     SimState sim(g.L, nullptr);
     sim.set_victory_condition("sandbox");
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 200.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
@@ -55,13 +57,15 @@ TEST_CASE("Common Army pools allied mass and energy", "[commonarmy]") {
     sim.set_victory_condition("sandbox");
     sim.set_common_army(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 160.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
 
     sim.tick();
-    // Equal storage caps (200 base each) → equal split.
+    // Equal storage caps (200 each) → equal split.
     CHECK_THAT(mass(sim, 0), WithinAbs(100.0, 1e-6));
     CHECK_THAT(mass(sim, 1), WithinAbs(100.0, 1e-6));
     CHECK_THAT(energy(sim, 0), WithinAbs(80.0, 1e-6));
@@ -74,7 +78,9 @@ TEST_CASE("Common Army does not pool across enemies", "[commonarmy]") {
     sim.set_victory_condition("sandbox");
     sim.set_common_army(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2"); // enemy by default
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.get_army(0)->set_stored_resources(200.0, 0.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
 
@@ -89,7 +95,9 @@ TEST_CASE("Common Army excludes a defeated ally", "[commonarmy]") {
     sim.set_victory_condition("sandbox");
     sim.set_common_army(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 0.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
@@ -107,8 +115,11 @@ TEST_CASE("Common Army equalizes three allies to a common fill ratio",
     sim.set_victory_condition("sandbox");
     sim.set_common_army(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_3", "ARMY_3");
+    sim.get_army(2)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.set_alliance(0, 2, Alliance::Ally);
     sim.set_alliance(1, 2, Alliance::Ally);

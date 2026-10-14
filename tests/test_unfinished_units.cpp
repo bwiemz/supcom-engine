@@ -106,12 +106,12 @@ TEST_CASE("A unit being built produces nothing and stores nothing until it is fi
 
     brain.update_economy(registry, 0.1);
     CHECK(brain.economy().energy.income == 0.0);
-    CHECK(brain.economy().energy.max_storage == 200.0);
+    CHECK(brain.economy().energy.max_storage == 0.0);
 
     p->set_is_being_built(false);
     brain.update_economy(registry, 0.1);
     CHECK(brain.economy().energy.income == 20.0);
-    CHECK(brain.economy().energy.max_storage == 1200.0);
+    CHECK(brain.economy().energy.max_storage == 1000.0);
 }
 
 TEST_CASE("A unit being built doesn't regenerate", "[sim]") {

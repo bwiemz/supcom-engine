@@ -48,7 +48,9 @@ TEST_CASE("TeamShareOverflow routes wasted overflow to an ally", "[shareoverflow
     sim.set_victory_condition("sandbox");
     sim.set_team_share_overflow(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 0.0); // full
     sim.get_army(1)->set_stored_resources(0.0, 0.0);   // empty, has room
@@ -64,7 +66,9 @@ TEST_CASE("Overflow is not shared when the option is off", "[shareoverflow]") {
     SimState sim(g.L, nullptr);
     sim.set_victory_condition("sandbox");
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 0.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
@@ -80,7 +84,9 @@ TEST_CASE("Overflow is not shared with enemies", "[shareoverflow]") {
     sim.set_victory_condition("sandbox");
     sim.set_team_share_overflow(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2"); // enemy by default
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.get_army(0)->set_stored_resources(200.0, 0.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
     add_producer(sim, 0, 1000.0);
@@ -96,7 +102,9 @@ TEST_CASE("Common Army takes precedence over overflow sharing", "[shareoverflow]
     sim.set_common_army(true);
     sim.set_team_share_overflow(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 0.0);
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
@@ -113,7 +121,9 @@ TEST_CASE("Overflow distribution is capped by available room", "[shareoverflow]"
     sim.set_victory_condition("sandbox");
     sim.set_team_share_overflow(true);
     sim.add_army("ARMY_1", "ARMY_1");
+    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
     sim.set_alliance(0, 1, Alliance::Ally);
     sim.get_army(0)->set_stored_resources(200.0, 0.0); // full donor
     sim.get_army(1)->set_stored_resources(180.0, 0.0); // only 20 room

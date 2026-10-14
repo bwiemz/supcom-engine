@@ -2250,16 +2250,16 @@ static int brain_SetCurrentPlan(lua_State* L) {
     return 0;
 }
 
+// brain:GiveStorage(type, amount): the extra storage pair, replaced
+// (ArmyBrain::set_extra_storage).
 static int brain_GiveStorage(lua_State* L) {
     auto* brain = check_brain(L);
     if (!brain) return 0;
     if (lua_type(L, 2) != LUA_TSTRING) return 0;
     std::string type = lua_tostring(L, 2);
     f64 amount = lua_tonumber(L, 3);
-    if (type == "MASS" || type == "Mass")
-        brain->give_storage(amount, 0.0);
-    else if (type == "ENERGY" || type == "Energy")
-        brain->give_storage(0.0, amount);
+    if (type == "MASS" || type == "Mass") brain->set_extra_storage(amount, 0.0);
+    else if (type == "ENERGY" || type == "Energy") brain->set_extra_storage(0.0, amount);
     return 0;
 }
 

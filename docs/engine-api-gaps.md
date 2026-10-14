@@ -45,6 +45,7 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
+| Moho's economy grants each consumption request a share of what it asks: requests wanting both energy and mass share one ratio, bounded by the scarcer resource, and single-resource requests share what is left (`ProcessArmyEconomy`). The engine works each resource's efficiency out alone, so a build starved of energy still takes all the mass it asks for | In an energy stall the engine drains mass about 13 times as fast as the original: the probe's factory, stalled to 7% by a Monkeylord's upkeep, took 0.5 mass a tick there and 0.036 in the original (its mass rose, the engine's fell) | faf-re `sim/CEconomy.cpp` `ProcessArmyEconomy`; the original probed 2026-10-14 (the economy probe); engine `sim/army_brain.cpp` update_economy | Open |
 
 ### Where the engine does retail's way and FAF's exe differs
 
@@ -57,6 +58,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| An army has no storage of its own: the engine gave each 200 energy and 200 mass more than its units hold, so every army started with 4200 and 850 where the original's start with their commander's 4000 and 650. `GiveStorage(type, amount)` replaces the army's one extra storage pair, the amount in its resource and none in the other (`cfunc_CAiBrainGiveStorageL`), as the original game showed: retail's X1CA_006 gives Fletcher and the Seraphim 10000 extra energy storage and no extra mass | [#639](https://github.com/bwiemz/supcom-engine/pull/639) |
 | FAF: an order's `commandType` is Moho's `UNITCOMMAND` number in the sim's and the UI's `GetCommandQueue` (a build 8, a repair 20; a formation's move 4, attack 11, attack-move 36; an unload of chosen cargo 25), and the sim's entries give every order's `x, y, z` (a target's where it is), its `target` entity, `targetId` and `blueprintId`, as FAF's `SimGetCommandQueue` patch: copy and distribute orders re-issue the right orders. Numbers of orders the engine doesn't have are never given: a build helped reads Repair (20), not BuildAssist (9); a formation patrol 16, not 18; a guard of a commander 15, not AssistCommander (29), which FAF's UEF pod scripts compare. A target's place is where it is now; what Moho's command holds for one isn't known | [#635](https://github.com/bwiemz/supcom-engine/pull/635) |
 | FAF: the sim's `SessionIsReplay()` is true in a replay (`SimIsReplay`), so a replay's viewer focused on a player sees every army's score | [#635](https://github.com/bwiemz/supcom-engine/pull/635) |
 | FAF: `GetDepositsAroundPoint(x, z, radius, type)` in the sim and the UI, each deposit's whole-cell square as Moho keeps it, and the UI's `GetHighlightCommand()`, the order whose waypoint is under the cursor; and the cursor's `Position`, `Elevation` (the ground, below any water) and `OCell` in `__EngineStats` (Camera, Cursor), in the forms of the dump of Moho's tree in FAF's `performance.lua`, which FAF's `GetMouseTerrainElevation` reads: what FAF's context-based templates hotkey asks for (not run with FAF's scripts here) | [#635](https://github.com/bwiemz/supcom-engine/pull/635) |

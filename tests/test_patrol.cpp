@@ -125,10 +125,11 @@ std::vector<osc::u32> break_offs(SimState& sim, Unit& u, CommandType type, int t
 }
 
 void store(SimState& sim, double mass, double energy) {
+    // Storage of 1000 each that outlives the economy's recount (the army
+    // has no units with storage)
+    sim.army_at(0)->set_extra_storage(1000.0, 1000.0);
     auto& economy = sim.army_at(0)->economy();
-    economy.mass.max_storage = 1000.0;
     economy.mass.stored = mass;
-    economy.energy.max_storage = 1000.0;
     economy.energy.stored = energy;
 }
 
