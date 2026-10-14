@@ -7,12 +7,30 @@
 // totals, units built and lost, enemies destroyed), and an `end` record as
 // the run ends. Recording reads the sim only: the game is the one it would be
 // without it.
+//
+// Between the samples, what happened, an `event` record each (schema 2;
+// WOPC, 2026-10-13: a snapshot of totals every thirty seconds cannot say
+// what happened at minute 8). Each has the tick and a `kind`:
+//
+//   unit_started   a unit first seen, still being built: id, army, bp, x, z
+//   unit_built     a unit complete (or first seen so: a commander): the same
+//   unit_lost      a unit dying or gone: the same, `complete` (was it built),
+//                  and what last damaged it when anything did: by_id, by_bp,
+//                  by_army (an army's own unit when it was let go)
+//   enhanced       an upgrade fitted to a unit: slot, name
+//   commander_hit  a commander's health a tenth lower than last told:
+//                  health (0 to 1), by_bp, by_army
+//   army_result    an army's result changed: army, result
+//
+// They are found by looking at the units each tick, not by the sim telling:
+// an event carries the tick it was seen at.
 
 #include "core/types.hpp"
 
 #include <chrono>
 #include <fstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace osc::sim {
@@ -23,8 +41,8 @@ namespace osc::app {
 
 class MatchTelemetry {
 public:
-    /// A sample every 30 game seconds.
-    static constexpr u32 kSampleEvery = 300;
+    /// A sample every 5 game seconds (30 until schema 2).
+    static constexpr u32 kSampleEvery = 50;
 
     /// Opens (truncates) `path`; is_open() says whether it could.
     explicit MatchTelemetry(const std::string& path);
@@ -47,6 +65,22 @@ public:
 private:
     void write_match(const sim::SimState& sim);
     void write_samples(const sim::SimState& sim);
+    void write_events(const sim::SimState& sim);
+
+    /// A unit as the events last saw it.
+    struct Seen {
+        i32 army = -1;
+        std::string bp;
+        f32 x = 0;
+        f32 z = 0;
+        bool complete = false;
+        bool lost = false; ///< told as lost (it may be dying a while)
+        bool commander = false;
+        size_t enhancements = 0;
+        f32 health_told = 1.0f; ///< a commander's health, as last told
+        u32 last_attacker = 0;
+        u32 seen_at = 0; ///< the walk that last found it
+    };
 
     using Clock = std::chrono::steady_clock;
 
@@ -65,6 +99,11 @@ private:
     /// Each army's result as of the last tick seen, for an `end` written
     /// without the sim (the destructor's).
     std::vector<std::string> army_results_;
+    /// The units the events know, by id, and the count of the walks made.
+    std::unordered_map<u32, Seen> seen_;
+    u32 walk_ = 0;
+    /// Each army's result as the events last told it.
+    std::vector<std::string> results_told_;
 };
 
 } // namespace osc::app

@@ -3,6 +3,7 @@
 #include "core/version.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -62,7 +63,7 @@ void MatchTelemetry::write_match(const sim::SimState& sim) {
                           {"civilian", brain->is_civilian()}});
     }
     out_ << nlohmann::json{{"record", "match"},
-                           {"schema", 1},
+                           {"schema", 2},
                            {"engine", "opensupcom"},
                            {"version", osc::core::version()},
                            {"build", osc::core::build_id()},
@@ -86,6 +87,117 @@ void MatchTelemetry::write_samples(const sim::SimState& sim) {
     }
     last_sample_tick_ = sim.tick_count();
     out_.flush();
+}
+
+void MatchTelemetry::write_events(const sim::SimState& sim) {
+    const u32 tick = sim.tick_count();
+    ++walk_;
+    const auto event = [&](const char* kind, u32 id, const Seen& unit) {
+        return nlohmann::json{
+            {"record", "event"},     {"tick", tick},  {"kind", kind}, {"id", id},
+            {"army", unit.army + 1}, {"bp", unit.bp}, {"x", unit.x},  {"z", unit.z}};
+    };
+    // Who last damaged a unit, as far as it is still there to ask
+    const auto blame = [&](nlohmann::json& record, u32 attacker) {
+        if (attacker == 0) return;
+        record["by_id"] = attacker;
+        if (const auto known = seen_.find(attacker); known != seen_.end()) {
+            record["by_bp"] = known->second.bp;
+            record["by_army"] = known->second.army + 1;
+        } else if (const auto* by = sim.entity_registry().find(attacker)) {
+            record["by_bp"] = by->blueprint_id();
+            record["by_army"] = by->army() + 1;
+        }
+    };
+
+    sim.entity_registry().for_each_unit([&](const sim::Entity& entity) {
+        const auto& unit = static_cast<const sim::Unit&>(entity);
+        if (unit.has_category("INSIGNIFICANTUNIT")) return;
+        const u32 id = unit.entity_id();
+        auto [it, first] = seen_.try_emplace(id);
+        Seen& seen = it->second;
+        seen.seen_at = walk_;
+        seen.x = unit.position().x;
+        seen.z = unit.position().z;
+        if (unit.last_attacker_id() != 0) seen.last_attacker = unit.last_attacker_id();
+        const bool gone = unit.destroyed() || unit.is_dying();
+        if (first) {
+            seen.army = unit.army();
+            seen.bp = unit.blueprint_id();
+            seen.commander = unit.has_category("COMMAND");
+            seen.enhancements = unit.enhancements().size();
+            if (gone) {
+                seen.lost = true; // made and unmade within a tick: nothing to tell
+                return;
+            }
+            seen.complete = !unit.is_being_built();
+            out_ << event(seen.complete ? "unit_built" : "unit_started", id, seen).dump() << '\n';
+        }
+        if (seen.lost) return;
+        if (gone) {
+            seen.lost = true;
+            auto record = event("unit_lost", id, seen);
+            record["complete"] = seen.complete;
+            blame(record, seen.last_attacker);
+            out_ << record.dump() << '\n';
+            return;
+        }
+        if (!seen.complete && !unit.is_being_built()) {
+            seen.complete = true;
+            out_ << event("unit_built", id, seen).dump() << '\n';
+        }
+        if (unit.enhancements().size() != seen.enhancements) {
+            // Which is new is not kept: all it has now are told again
+            if (unit.enhancements().size() > seen.enhancements) {
+                for (const auto& [slot, name] : unit.enhancements()) {
+                    auto record = event("enhanced", id, seen);
+                    record["slot"] = slot;
+                    record["name"] = name;
+                    out_ << record.dump() << '\n';
+                }
+            }
+            seen.enhancements = unit.enhancements().size();
+        }
+        if (seen.commander && unit.max_health() > 0) {
+            const f32 health = unit.health() / unit.max_health();
+            if (health <= seen.health_told - 0.1f) {
+                auto record = event("commander_hit", id, seen);
+                record["health"] = health;
+                blame(record, seen.last_attacker);
+                out_ << record.dump() << '\n';
+                seen.health_told = health;
+            } else if (health > seen.health_told) {
+                seen.health_told = health; // repaired: the next tenth is from here
+            }
+        }
+    });
+    // Those the walk did not find are gone from the sim without a death seen
+    for (auto it = seen_.begin(); it != seen_.end();) {
+        Seen& seen = it->second;
+        if (seen.seen_at == walk_) {
+            ++it;
+            continue;
+        }
+        if (!seen.lost) {
+            auto record = event("unit_lost", it->first, seen);
+            record["complete"] = seen.complete;
+            blame(record, seen.last_attacker);
+            out_ << record.dump() << '\n';
+        }
+        it = seen_.erase(it);
+    }
+    if (results_told_.size() != army_results_.size()) results_told_ = army_results_;
+    for (size_t a = 0; a < army_results_.size(); ++a) {
+        if (army_results_[a] == results_told_[a]) continue;
+        results_told_[a] = army_results_[a];
+        out_ << nlohmann::json{{"record", "event"},
+                               {"tick", tick},
+                               {"kind", "army_result"},
+                               {"army", a + 1},
+                               {"result", army_results_[a]}}
+                    .dump()
+             << '\n';
+    }
 }
 
 void MatchTelemetry::after_tick(const sim::SimState& sim) {
@@ -112,6 +224,7 @@ void MatchTelemetry::after_tick(const sim::SimState& sim) {
         const auto* brain = sim.army_at(a);
         army_results_.emplace_back(brain ? result_name(brain->state()) : "unknown");
     }
+    write_events(sim);
     if (tick - last_sample_tick_ >= kSampleEvery) write_samples(sim);
 }
 
