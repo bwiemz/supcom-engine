@@ -982,6 +982,9 @@ public:
     bool is_naval() const {
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }
+    /// Whether its motion type can be on its layer (Moho's
+    /// CUnitMotion::IsOnValidLayer). A surface unit that can't drowns.
+    bool on_valid_layer() const;
 
     /// How far it moved over its last tick, per second (SimState sets it):
     /// weapons that LeadTarget aim ahead by it.

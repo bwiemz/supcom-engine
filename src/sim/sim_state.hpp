@@ -604,7 +604,9 @@ public:
 
     /// Kill a unit as Moho does: its script's Kill (OnKilled plays the death
     /// out and destroys it). A unit without a script object is removed.
-    void kill_unit(Unit& unit);
+    /// `damage_type`: the type OnKilled is given, as Moho's own Unit::Kill
+    /// passes one (no instigator, no excess); none: a script's bare Kill().
+    void kill_unit(Unit& unit, const char* damage_type = nullptr);
 
     /// Number of alliance-connected "teams" still in the game (non-civilian,
     /// non-defeated armies grouped by their alliance graph). Exposed for tests

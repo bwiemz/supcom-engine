@@ -12942,7 +12942,9 @@ void test_right_click(TestContext& ctx) {
         __osc_eng = CreateUnitHPR('uel0105', 'ARMY_1', x, y, z, 0, 0, 0)
         x, y, z = at(4, 0)
         __osc_tank = CreateUnitHPR('uel0201', 'ARMY_1', x, y, z, 0, 0, 0)
-        x, y, z = at(8, 0)
+        -- (8, 0) lies 2.4 deep: a land tank made there drowns, as in the
+        -- original game
+        x, y, z = at(-4, 0)
         __osc_tank2 = CreateUnitHPR('uel0201', 'ARMY_1', x, y, z, 0, 0, 0)
         x, y, z = at(20, 20)
         __osc_xport = CreateUnitHPR('uea0107', 'ARMY_1', x, y + 20, z, 0, 0, 0)

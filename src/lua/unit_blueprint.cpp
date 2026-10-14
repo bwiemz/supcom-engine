@@ -949,7 +949,15 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
                           (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
     unit.set_footprints(blueprints::resolve_unit_footprints(
         store.footprint_classes(), own, unit.motion_type(), alt_motion, build_caps));
-    if (!unit.is_mobile() && sim.terrain()) {
+    // Where it is made decides its layer (Moho's Entity::GetStartingLayer),
+    // for a structure and for a unit that walks or floats: a land tank made
+    // in water, however shallow, stands on the seabed, where it drowns (the
+    // original, probed). Ships, subs and aircraft keep their motion type's.
+    const std::string& motion = unit.motion_type();
+    const bool walks_or_floats = motion == "RULEUMT_Land" || motion == "RULEUMT_Amphibious" ||
+                                 motion == "RULEUMT_AmphibiousFloating" ||
+                                 motion == "RULEUMT_Hover" || motion == "RULEUMT_Biped";
+    if ((!unit.is_mobile() || walks_or_floats) && sim.terrain()) {
         unit.set_layer(sim::starting_layer(unit.footprint().caps, unit.has_category("EXPERIMENTAL"),
                                            *sim.terrain(), x, z));
     }

@@ -2977,7 +2977,7 @@ void SimState::defeat_army(i32 army) {
     spdlog::info("Army {} ({}) defeated (player drop)", army, b->name());
 }
 
-void SimState::kill_unit(Unit& unit) {
+void SimState::kill_unit(Unit& unit, const char* damage_type) {
     if (unit.destroyed() || unit.is_dying()) return;
     const u32 id = unit.entity_id();
     if (L_ && unit.lua_table_ref() >= 0) {
@@ -2987,7 +2987,14 @@ void SimState::kill_unit(Unit& unit) {
         lua_gettable(L_, -2);
         if (lua_isfunction(L_, -1)) {
             lua_pushvalue(L_, top + 1);
-            if (lua_pcall(L_, 1, 0, 0) != 0) {
+            int args = 1;
+            if (damage_type) {
+                lua_pushnil(L_); // no instigator
+                lua_pushstring(L_, damage_type);
+                lua_pushnumber(L_, 0); // no excess damage
+                args = 4;
+            }
+            if (lua_pcall(L_, args, 0, 0) != 0) {
                 const char* err = lua_tostring(L_, -1);
                 spdlog::warn("Kill error: {}", err ? err : "(unknown)");
             }
