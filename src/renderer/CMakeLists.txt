@@ -5,6 +5,7 @@ add_library(osc_renderer STATIC
     water_renderer.cpp
     sky_dome.cpp
     sky_renderer.cpp
+    cartographic_math.cpp
     mesh_cache.cpp
     texture_cache.cpp
     dds_parser.cpp

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <string>
 #include <vector>
 
 using namespace osc;
@@ -512,6 +513,73 @@ TEST_CASE("SCMAP parser gives an older map SetupHorizonAndCirrus's sky (M210b)",
     auto dry = parse_scmap(build_test_scmap(2, 2, 1.0f / 128.0f, heights));
     REQUIRE(dry.ok());
     CHECK_THAT(dry.value().sky.elevation, WithinAbs(2.0, 1e-5));
+}
+
+TEST_CASE("The cartographic view's contours and colours are read from version 56",
+          "[map][cartographic]") {
+    // CWldTerrainRes::Load (and the FAF map editor): from version 56 a band
+    // count and five ARGB colours, from 57 the imager's elevation offset;
+    // an older map gets Moho's defaults and no bytes are read for them.
+    const std::vector<u16> heights(9, 1000);
+    const std::vector<ScmapWaveGenerator> waves;
+    const auto with_block = [&](i32 version) {
+        auto bytes = build_test_scmap(2, 2, 1.0f / 128.0f, heights, true, 25.0f, &waves, version);
+        const auto put = [&](u32 v) {
+            for (int i = 0; i < 4; ++i) bytes.push_back(static_cast<u8>(v >> (8 * i)));
+        };
+        put(33);
+        for (u32 c : {0xFF000001u, 0xFF000002u, 0xFF000003u, 0xFF000004u, 0xFF000005u}) put(c);
+        u32 offset = 0;
+        const f32 value = 7.5f;
+        std::memcpy(&offset, &value, 4);
+        put(offset);
+        return parse_scmap(bytes);
+    };
+    // Version 55: the strata follow the waves straight away (a parser that
+    // took bytes there would read them garbled)
+    auto old_bytes = build_test_scmap(2, 2, 1.0f / 128.0f, heights, true, 25.0f, &waves, 55);
+    const auto string = [&](const std::string& text) {
+        old_bytes.insert(old_bytes.end(), text.begin(), text.end());
+        old_bytes.push_back(0);
+    };
+    const auto scale = [&](f32 value) {
+        u32 bits = 0;
+        std::memcpy(&bits, &value, 4);
+        for (int i = 0; i < 4; ++i) old_bytes.push_back(static_cast<u8>(bits >> (8 * i)));
+    };
+    for (int i = 0; i < 10; ++i) {
+        string("/albedo" + std::to_string(i) + ".dds");
+        scale(4.0f + static_cast<f32>(i));
+    }
+    for (int i = 0; i < 9; ++i) {
+        string("/normal" + std::to_string(i) + ".dds");
+        scale(2.0f + static_cast<f32>(i));
+    }
+    auto older = parse_scmap(old_bytes);
+    REQUIRE(older.ok());
+    const ScmapData& o = older.value();
+    CHECK(o.cartographic.topographic_samples == 20);
+    CHECK(o.cartographic.hypsometric[0] == 0xFF0E3EFFu);
+    CHECK(o.cartographic.hypsometric[3] == 0xFF4C9D32u);
+    CHECK(o.cartographic.hypsometric[4] == 0xFFFFFFFFu);
+    REQUIRE(o.strata.size() == 10);
+    CHECK(o.strata[0].albedo_path == "/albedo0.dds");
+    CHECK(o.strata[9].albedo_path == "/albedo9.dds");
+    CHECK(o.strata[9].albedo_scale == 13.0f);
+    CHECK(o.strata[8].normal_path == "/normal8.dds");
+    CHECK(o.strata[8].normal_scale == 10.0f);
+
+    auto v56 = with_block(56);
+    REQUIRE(v56.ok());
+    CHECK(v56.value().cartographic.topographic_samples == 33);
+    CHECK(v56.value().cartographic.hypsometric[0] == 0xFF000001u);
+    CHECK(v56.value().cartographic.hypsometric[4] == 0xFF000005u);
+    CHECK(v56.value().cartographic.imager_elevation_offset == 0.0f);
+
+    auto v57 = with_block(57);
+    REQUIRE(v57.ok());
+    CHECK(v57.value().cartographic.topographic_samples == 33);
+    CHECK(v57.value().cartographic.imager_elevation_offset == 7.5f);
 }
 
 TEST_CASE("SCMAP parser rejects invalid magic", "[map]") {

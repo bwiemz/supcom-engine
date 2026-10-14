@@ -263,6 +263,8 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     terrain->set_water(scmap.water, std::move(scmap.water_masks), scmap.water_abyss_elevation);
     terrain->set_waves(std::move(scmap.waves));
     terrain->set_sky(std::move(scmap.sky));
+    terrain->set_water_deep_elevation(scmap.water_deep_elevation);
+    terrain->set_cartographic(std::move(scmap.cartographic));
     terrain->set_normal_maps(
         {scmap.normal_map_width, scmap.normal_map_height, std::move(scmap.normal_maps)});
     spdlog::info("  Normal maps: {} of {}x{}", terrain->normal_maps().tiles.size(),
