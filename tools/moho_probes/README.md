@@ -24,7 +24,7 @@ steam -applaunch 9420 /init 'Z:\<repo>\tools\moho_probes\init_probes.lua' /map S
 ```
 
 - `/windowed <w> <h>` keeps the game in a window, whatever its options say. Without it, a game set to full screen changes the display's mode.
-- The game never ends on its own. The probes are done when `PROBE choke monkeylord` is in the log, about three and a half minutes in. Then close the game: kill its process (`pgrep -a -i supremecommand`).
+- The game never ends on its own. The probes are done when `PROBE choke monkeylord` and `PROBE rebuild after-kill tick=800` are both in the log, about three and a half minutes in. Then close the game: kill its process (`pgrep -a -i supremecommand`).
 - It rewrites its shader caches in the prefix (`AppData/Local/Gas Powered Games/.../cache`). To leave the prefix as it was, copy that folder aside first and back after.
 - `init_probes.lua` holds the game's folder twice, once as Linux sees it and once as Wine sees it. Edit both for another machine.
 
@@ -39,5 +39,19 @@ The original game answered on 2026-10-12: retail FA (Steam) under Proton, run tw
 | `shore` | At the strait at z 520, whose banks fall about 1.2 a cell, do a hover and an amphibious tank cross, or drive round by land? | Both drive round, arriving at ticks 1196 and 1201, only ever on Land | Both drive round, arriving 1066–1186 ticks in, only ever on Land | The same: the engine's `MaxSlope` reading of `OCCUPY_MobileCheck` holds. |
 | `choke` | 24 Strikers through a 4-wide gap in a wall: how many through the gap, through wall cells, stopped short? Does the Monkeylord walk over the wall? | 24 / 0 / 0, and the Monkeylord walks over the wall (x 678.25) | Grid: 18 / 6 / 0, and the Monkeylord goes round (x 649). Moho pathing: 21 / 0 / 3, and over the wall (x 679). | Moho pathing's port misses a rule that gets the last units through; the Monkeylord matches it. |
 | `formattack` | Six Strikers given `IssueFormAttack(..., 'AttackFormation', 0)` on a point, beside six given `IssueAttack`: how spread are they at ticks 60, 120 and 200? | Formed: 15.0, 15.0, 13.4. Plain: 13.2, 10.4, 11.3, driving straight on side by side. | Main: both as a plain attack, closing to 4.4. With #605: formed holds 15; plain closes to 4.4. | #605's FormAttack matches. A group's plain attack on a point doesn't close up in the original: the engine's does. |
+
+**Asked on 2026-10-13** (the original twice, the engine on main 904e9d5b and with the `REBUILDER` change):
+
+| Probe | The question | The original | The engine | So |
+|---|---|---|---|---|
+| `forest` | 12 Strikers driven north through a forest (x 128-192, z 640-704): how many of its 149 tree groups break up, and when? | 137, 69 and 29 groups left at ticks 100, 200 and 400 (232, 1,843 and 2,681 single trees), the same in both runs | 121, 45 and 26 groups (580, 2,480 and 2,821 trees) | As many break up by the end. The engine breaks them up sooner. |
+| `rect-order` | Three Strikers made in one cell, then the first warped away and back: in what order does `GetUnitsInRect` give them? | `3 2 1`; away, `3 2`; back, `1 3 2` | The same since #627 | Moho's collision cells list the last linked first. |
+| `prop-orient` | The tree groups in `Rect(116, 650, 132, 690)`: their orientations and collision boxes | 34 groups | The same quaternions, and boxes within 0.001, since #628 | A `.scmap` prop's axes are its rotation's columns. |
+| `unit-box` | A Seraphim artillery (`CollisionOffsetZ` -1.5) at four headings: its box | The offset turns with it | The same | Units' boxes were right. |
+| `rebuild` | A support commander (`REBUILDER`) guards a power generator that is then destroyed, and an engineer guards another. Is it rebuilt? | The support commander's Guard stays, and it goes to the site (2.7 off); the engineer's ends. Nothing is rebuilt. | Before: both Guards end. Now: as the original (0.9 off). | A Guard from `IssueGuard` carries no blueprint (faf-re `cfunc_IssueGuardL`), and `LookForStructureRebuilder` matches on the Guard's blueprint, so a script's Guard never rebuilds. Whether a player's right-click Guard does is not yet known. |
+| `scu-assist` | A support commander and an engineer guard a factory building tanks: does each build with it? | The engineer does; the support commander doesn't. The factory's progress is 0.09, 0.20 and 0.45 at ticks 60, 150 and 300. | Before: both did. Now: as the original. The factory's progress is 0.02, 0.05 and 0.11. | Moho's guard task takes up no live unit a `REBUILDER` guards. The engine's factory builds more slowly, which is not yet explained. |
+| `scu-follow` | A support commander guards a tank driven 70 north: does it follow? | Yes: 16.7 and 31.0 behind at ticks 100 and 250 | Yes: 18.3 and 23.3 behind | Both follow; the original's lags a little more. |
+
+Found along the way: a land tank made in water 4 deep (at 560, 300) was gone by tick 250 in the original, while the engine's stood there unharmed. It is not yet a probe.
 
 The probes play the scenes at once, after the commanders' warp-in (tick 80). They make every other army neutral first, because the map's other commanders start near two of the scenes.

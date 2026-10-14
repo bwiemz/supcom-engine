@@ -213,6 +213,7 @@ void test_unit_hooks(TestContext& ctx);
 void test_notify_upgrade(TestContext& ctx);
 void test_need_unpack(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
+void test_rebuilder_guard(TestContext& ctx);
 void test_attack_move(TestContext& ctx);
 void test_placement_layers(TestContext& ctx);
 void test_yaw_only(TestContext& ctx);

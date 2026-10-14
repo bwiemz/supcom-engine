@@ -213,6 +213,7 @@ constexpr Mode kModesBefore[] = {
     {"--notify-upgrade-test", test_notify_upgrade, false},
     {"--need-unpack-test", test_need_unpack, false},
     {"--guard-engage-test", test_guard_engage, false},
+    {"--rebuilder-guard-test", test_rebuilder_guard, false},
     {"--attack-move-test", test_attack_move, false},
     {"--placement-layers-test", test_placement_layers, false},
     {"--yaw-only-test", test_yaw_only, false},

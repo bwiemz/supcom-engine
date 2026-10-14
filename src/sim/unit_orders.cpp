@@ -1576,20 +1576,27 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         end_guard_build(registry, L);
         return order_guard_point(cmd, dt, ctx);
     }
+    // A REBUILDER (the support commanders) guards a place more than a unit
+    // (faf-re CUnitGuardTask): its order outlives what it guards, and it
+    // keeps to where that stood (the original game, probed 2026-10-13:
+    // tools/moho_probes `rebuild`).
+    const bool rebuilder = has_category("REBUILDER");
     auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed()) {
+    if (!target || target->destroyed() || !target->is_unit()) {
         end_guard_build(registry, L);
+        if (rebuilder) {
+            // Its repair of it goes with it: the Guard staying, nothing else
+            // would stop it (Unit::update keeps a guard's repair).
+            if (is_repairing()) stop_repairing(L, registry);
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            return order_guard_point(cmd, dt, ctx);
+        }
         release_navigator(); // the walk to it ends too
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    if (!target->is_unit()) {
-        end_guard_build(registry, L);
-        release_navigator();
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
     auto* target_unit = static_cast<Unit*>(target);
+    if (rebuilder) cmd.target_pos = target_unit->position(); // where it stood, should it go
 
     // A factory guarding a factory takes work from its queue.
     if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY"))
@@ -1648,11 +1655,15 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // unit that repairs helps builds, silos and repairs; one that
     // reclaims, reclaims. Others (a tank guarding an engineer, a
     // factory assisting a factory) only follow.
+    // A REBUILDER doesn't take up a live unit it guards (Moho's
+    // RefreshGuardedUnitFromTarget), so it helps none of its work: a support
+    // commander guarding a factory doesn't build with it (probed
+    // 2026-10-13, `scu-assist`). It still repairs it.
     const bool repairs = has_category("REPAIR") && build_rate_ > 0;
-    const bool reclaims = has_category("RECLAIM") && build_rate_ > 0;
+    const bool reclaims = has_category("RECLAIM") && build_rate_ > 0 && !rebuilder;
 
     // Assist: if target is building, contribute build power
-    const Entity* guarded_build = repairs && target_unit->is_building()
+    const Entity* guarded_build = repairs && !rebuilder && target_unit->is_building()
                                       ? registry.find(target_unit->build_target_id())
                                       : nullptr;
     const Entity* guarded_reclaim = reclaims && target_unit->is_reclaiming()
@@ -1752,7 +1763,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 }
             }
         }
-    } else if (repairs && target_unit->silo_building() && !target_unit->is_paused()) {
+    } else if (repairs && !rebuilder && target_unit->silo_building() && !target_unit->is_paused()) {
         // Assist a silo's missile: this unit's build power on it, at
         // its share of the cost (retail's UpdateConsumptionValues
         // for a SiloBuildingAmmo focus). A paused silo's helpers
