@@ -205,7 +205,8 @@ TEST_CASE("Cloak intel drives cloak flag", "[cloak][economy]") {
     REQUIRE_FALSE(unit.is_cloaked());
 }
 
-TEST_CASE("GiveStorage survives the per-tick storage recount", "[army][economy]") {
+TEST_CASE("GiveStorage replaces the army's one extra pair, which outlives the recount",
+          "[army][economy]") {
     osc::sim::EntityRegistry registry;
     osc::sim::ArmyBrain brain;
     brain.set_index(0);
@@ -213,25 +214,38 @@ TEST_CASE("GiveStorage survives the per-tick storage recount", "[army][economy]"
     auto unit = std::make_unique<osc::sim::Unit>();
     unit->set_army(0);
     unit->economy().storage_energy = 4000.0;
+    unit->economy().storage_mass = 650.0;
     unit->economy().production_active = true;
     registry.register_entity(std::move(unit));
 
+    // An army has no storage of its own: its commander's, as the original's
+    // starts with 4000 and 650
     brain.update_economy(registry, 0.1);
-    const double base = brain.economy().energy.max_storage;
-    REQUIRE(base == 4200.0); // 200 army base + the unit's storage
+    REQUIRE(brain.economy().energy.max_storage == 4000.0);
+    REQUIRE(brain.economy().mass.max_storage == 650.0);
 
-    brain.give_storage(0.0, 10000.0);
+    brain.set_extra_storage(0.0, 10000.0);
     // Usable at once: storage can be filled before the next economy tick.
-    REQUIRE(brain.economy().energy.max_storage == base + 10000.0);
+    REQUIRE(brain.economy().energy.max_storage == 14000.0);
     brain.update_economy(registry, 0.1);
     brain.update_economy(registry, 0.1);
-    REQUIRE(brain.economy().energy.max_storage == base + 10000.0);
-    REQUIRE(brain.economy().mass.max_storage == 200.0);
+    REQUIRE(brain.economy().energy.max_storage == 14000.0);
+    REQUIRE(brain.economy().mass.max_storage == 650.0);
 
-    // Negative or zero amounts never shrink storage.
-    brain.give_storage(-500.0, 0.0);
+    // A second call replaces the pair: GiveStorage('MASS', 500) after
+    // GiveStorage('ENERGY', 10000) leaves no extra energy (the original:
+    // energy stays at its units' 4000)
+    brain.set_extra_storage(500.0, 0.0);
+    REQUIRE(brain.economy().energy.max_storage == 4000.0);
+    REQUIRE(brain.economy().mass.max_storage == 1150.0);
     brain.update_economy(registry, 0.1);
-    REQUIRE(brain.economy().mass.max_storage == 200.0);
+    REQUIRE(brain.economy().energy.max_storage == 4000.0);
+    REQUIRE(brain.economy().mass.max_storage == 1150.0);
+
+    // Never under nothing
+    brain.set_extra_storage(-5000.0, 0.0);
+    brain.update_economy(registry, 0.1);
+    REQUIRE(brain.economy().mass.max_storage == 0.0);
 }
 
 TEST_CASE("EnableIntel only enables intel the unit has", "[intel]") {

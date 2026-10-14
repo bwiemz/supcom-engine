@@ -254,8 +254,8 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.i32v(a.unit_cap_);
     w.b(a.ignore_unit_cap_);
     w.f64v(a.handicap_);
-    w.f64v(a.bonus_storage_mass_);
-    w.f64v(a.bonus_storage_energy_);
+    w.f64v(a.extra_storage_mass_);
+    w.f64v(a.extra_storage_energy_);
     {
         std::vector<std::pair<i32, Alliance>> sorted(a.alliances_.begin(), a.alliances_.end());
         std::sort(sorted.begin(), sorted.end(),
@@ -333,8 +333,8 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.unit_cap_ = r.i32v();
     a.ignore_unit_cap_ = r.b();
     a.handicap_ = r.f64v();
-    a.bonus_storage_mass_ = r.f64v();
-    a.bonus_storage_energy_ = r.f64v();
+    a.extra_storage_mass_ = r.f64v();
+    a.extra_storage_energy_ = r.f64v();
     a.alliances_.clear();
     const size_t alliances = r.size(8);
     for (size_t i = 0; i < alliances; ++i) {

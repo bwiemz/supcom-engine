@@ -48,6 +48,7 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
+| Moho's economy grants each consumption request a share of what it asks: requests wanting both energy and mass share one ratio, bounded by the scarcer resource, and single-resource requests share what is left (`ProcessArmyEconomy`). The engine works each resource's efficiency out alone, so a build starved of energy still takes all the mass it asks for | In an energy stall the engine drains mass about 13 times as fast as the original: the probe's factory, stalled to 7% by a Monkeylord's upkeep, took 0.5 mass a tick there and 0.036 in the original (its mass rose, the engine's fell) | faf-re `sim/CEconomy.cpp` `ProcessArmyEconomy`; the original probed 2026-10-14 (the economy probe); engine `sim/army_brain.cpp` update_economy | Open |
 
 ### Where the engine does retail's way and FAF's exe differs
 
@@ -60,6 +61,7 @@ How to read it:
 
 | Item | PR |
 |---|---|
+| An army has no storage of its own: the engine gave each 200 energy and 200 mass more than its units hold, so every army started with 4200 and 850 where the original's start with their commander's 4000 and 650. `GiveStorage(type, amount)` replaces the army's one extra storage pair, the amount in its resource and none in the other (`cfunc_CAiBrainGiveStorageL`), as the original game showed: retail's X1CA_006 gives Fletcher and the Seraphim 10000 extra energy storage and no extra mass | [#639](https://github.com/bwiemz/supcom-engine/pull/639) |
 | A platoon's `FindClosestUnit` and `FindPrioritizedUnit` read their alliance as `SCR_GetEnum` does (any case, prefix optional): retail's AI asks for `'enemy'`, which matched nothing, so `AttackForceAI`'s final push was handed its own closest unit and its attack was refused | [#605](https://github.com/bwiemz/supcom-engine/pull/605) |
 | `IssueFormAttack(units, target, formation, heading)` attacks in formation (`UNITCOMMAND_FormAttack`): the formation centred on the target, a unit or a point, each unit heads for its slot until its weapon reaches the target, then attacks as any other; one with no weapon that can hit the target gives the order up unless it is `DIRECTFIRE`. It returns nothing | [#605](https://github.com/bwiemz/supcom-engine/pull/605) |
 | `_c_CreateDecal` (`UserDecal`): the area-weapon and nuke target reticle follows the cursor | [#502](https://github.com/bwiemz/supcom-engine/pull/502) |
