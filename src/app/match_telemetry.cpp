@@ -96,8 +96,9 @@ std::vector<Makeup> makeups(const sim::SimState& sim) {
         }
         Makeup& m = out[static_cast<size_t>(army)];
         if (!unit.is_being_built()) {
-            if (!unit.is_mobile()) ++m.structures;
-            else if (unit.has_category("ENGINEER") || unit.has_category("COMMAND")) ++m.engineers;
+            if (unit.has_category("COMMAND") || (unit.has_category("ENGINEER") && unit.is_mobile()))
+                ++m.engineers;
+            else if (!unit.is_mobile()) ++m.structures;
             else if (unit.can_fly() || unit.has_category("AIR")) ++m.air;
             else if (unit.has_category("NAVAL")) ++m.naval;
             else ++m.land;

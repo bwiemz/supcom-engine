@@ -237,6 +237,8 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.str(a.name_);
     w.str(a.nickname_);
     w.i32v(a.faction_);
+    // ai_personality_ isn't saved: it is only the match record's (which AI
+    // played the army), and a loaded game is started from its setup again
     w.b(a.use_whole_map_);
     w.b(a.is_human_);
     w.b(a.is_civilian_);
