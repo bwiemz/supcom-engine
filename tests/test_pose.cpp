@@ -47,6 +47,28 @@ BoneData make_two_bones() {
     return bd;
 }
 
+BoneData make_master_and_slave() {
+    BoneData bd;
+    BoneInfo root;
+    root.name = "root";
+    root.parent_index = -1;
+    bd.bones.push_back(root);
+    BoneInfo master;
+    master.name = "master";
+    master.parent_index = 0;
+    master.local_rotation = quat_axis_angle('z', 1.5707963f);
+    master.world_rotation = master.local_rotation;
+    bd.bones.push_back(master);
+    BoneInfo slave;
+    slave.name = "slave";
+    slave.parent_index = 0;
+    bd.bones.push_back(slave);
+    bd.name_to_index["root"] = 0;
+    bd.name_to_index["master"] = 1;
+    bd.name_to_index["slave"] = 2;
+    return bd;
+}
+
 /// Two frames moving only the root, from the origin to (1, 0, 0).
 SCAData root_slide() {
     SCAData sca;
@@ -522,6 +544,73 @@ TEST_CASE("A thrust controller turns its engine toward the unit's thrust", "[pos
     CHECK_THAT(forward().x, WithinAbs(0.25 / std::sqrt(0.625), 1e-5));
     CHECK_THAT(forward().y, WithinAbs(0.75 / std::sqrt(0.625), 1e-5));
     CHECK_THAT(forward().z, WithinAbs(0.0, 1e-5));
+}
+
+TEST_CASE("A slaved bone turns as its master has from its bind pose, a tick behind", "[pose]") {
+    BoneData bd = make_master_and_slave();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+    auto& rotator = static_cast<RotateManipulator&>(
+        *unit.add_manipulator(std::make_unique<RotateManipulator>()));
+    rotator.set_bone_index(1);
+    rotator.set_axis('y');
+    rotator.set_current_angle(90.0f);
+    rotator.set_precedence(10);
+    auto& slaver = static_cast<SlaverManipulator&>(
+        *unit.add_manipulator(std::make_unique<SlaverManipulator>()));
+    slaver.set_slave_bone(2);
+    slaver.set_master_bone(1);
+    slaver.set_precedence(9);
+    const auto forward = [&] { return quat_rotate(unit.bone_pose(2).rotation, {0, 0, 1}); };
+
+    unit.tick_manipulators(0.1f, nullptr);
+    CHECK_THAT(forward().z, WithinAbs(1.0, 1e-5));
+
+    unit.tick_manipulators(0.1f, nullptr);
+    CHECK_THAT(forward().x, WithinAbs(1.0, 1e-5));
+    CHECK_THAT(forward().y, WithinAbs(0.0, 1e-5));
+    CHECK(slaver.is_at_goal());
+}
+
+TEST_CASE("SetMaxRate turns a slaved bone at most so many degrees a second", "[pose][lua]") {
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    lua::register_sim_bindings(lua, sim);
+    lua::register_moho_bindings(lua, sim);
+    BoneData bd = make_master_and_slave();
+    auto owned = std::make_unique<Unit>();
+    owned->set_bone_data(&bd);
+    owned->init_animated_bones();
+    Unit& unit = *owned;
+    sim.entity_registry().register_entity(std::move(owned));
+    lua_State* L = lua.raw();
+    set_lua_handle(L, "u", unit);
+    auto& rotator = static_cast<RotateManipulator&>(
+        *unit.add_manipulator(std::make_unique<RotateManipulator>()));
+    rotator.set_bone_index(1);
+    rotator.set_axis('y');
+    rotator.set_current_angle(90.0f);
+    REQUIRE(lua.do_string("s = CreateSlaver(u, 'slave', 'master') "
+                          "assert(s:SetMaxRate(200) == s)")
+                .ok());
+    const auto& slaver = static_cast<const SlaverManipulator&>(*unit.manipulators()[1]);
+    const auto forward = [&] { return quat_rotate(unit.bone_pose(2).rotation, {0, 0, 1}); };
+
+    unit.tick_manipulators(0.1f, L);
+    unit.tick_manipulators(0.1f, L);
+    CHECK_THAT(forward().x, WithinAbs(std::sin(0.3490659), 1e-5));
+    CHECK_FALSE(slaver.is_at_goal());
+
+    for (int t = 0; t < 3; ++t) {
+        unit.tick_manipulators(0.1f, L);
+    }
+    CHECK_THAT(forward().x, WithinAbs(std::sin(1.3962634), 1e-5));
+    CHECK_FALSE(slaver.is_at_goal());
+
+    unit.tick_manipulators(0.1f, L);
+    CHECK_THAT(forward().x, WithinAbs(1.0, 1e-5));
+    CHECK(slaver.is_at_goal());
 }
 
 TEST_CASE("An animation plays on top of the manipulators before it", "[pose]") {

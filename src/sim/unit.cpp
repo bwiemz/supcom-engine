@@ -4115,6 +4115,11 @@ void Unit::update_pose() {
     for (size_t i = 0; i < count; ++i)
         locals.local[i] = {bd->bones[i].local_position, bd->bones[i].local_rotation};
     for (Manipulator* m : order) m->apply_pose(locals);
+    for (const auto& m : manipulators_) {
+        if (!m->is_destroyed()) {
+            m->after_pose(locals);
+        }
+    }
     if (!locals.changed) {
         pose_.clear(); // the bind pose; the render matrices stay identity
         return;
