@@ -22,10 +22,13 @@ TEST_CASE("A control's rect comes from its MAUI edges", "[ui][layout]") {
         CHECK(r.w == 64);
         CHECK(r.h == 32);
     }
-    SECTION("an inverted or empty edge pair falls back per axis") {
-        const auto r = control_rect(100, 50, 100, 150, 40, 999);
-        CHECK(r.w == 40);   // right == left: no horizontal extent from edges
-        CHECK(r.h == 100);  // vertical extent from edges
+    SECTION("an empty edge pair is empty, as Moho's") {
+        const auto bar = control_rect(441, 883, 441, 887, 74, 4);
+        CHECK(bar.w == 0);
+        CHECK(bar.h == 4);
+        const auto strip = control_rect(1579, 222, 1593, 222, 14, 2);
+        CHECK(strip.w == 14);
+        CHECK(strip.h == 0);
     }
 }
 
@@ -50,6 +53,10 @@ TEST_CASE("A bitmap draws from Left to Right, mirrored when they are inverted", 
     CHECK(plain.rect.h == 900);
     CHECK_FALSE(plain.mirror_x);
     CHECK_FALSE(plain.mirror_y);
+
+    const auto empty = bitmap_quad(441, 883, 441, 887, 74, 4);
+    CHECK(empty.rect.w == 0);
+    CHECK_FALSE(empty.mirror_x);
 }
 
 TEST_CASE("UI below a main world view is hidden where it covers it", "[ui][layout]") {
