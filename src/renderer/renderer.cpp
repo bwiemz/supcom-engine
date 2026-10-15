@@ -2249,19 +2249,8 @@ std::vector<SceneView> Renderer::drawn_views() const {
     const SceneView whole{
         const_cast<Camera*>(&camera_),    0.0f, 0.0f, static_cast<f32>(window_width_),
         static_cast<f32>(window_height_), true};
-    std::vector<SceneView> views;
-    for (const SceneView& v : scene_views_) {
-        const f32 x0 = std::clamp(std::round(v.x), 0.0f, whole.w);
-        const f32 y0 = std::clamp(std::round(v.y), 0.0f, whole.h);
-        const f32 x1 = std::clamp(std::round(v.x + v.w), 0.0f, whole.w);
-        const f32 y1 = std::clamp(std::round(v.y + v.h), 0.0f, whole.h);
-        const bool seen = std::any_of(views.begin(), views.end(),
-                                      [&](const SceneView& o) { return o.camera == v.camera; });
-        if (v.camera && !seen && x1 > x0 && y1 > y0 && views.size() < FRAMES_IN_FLIGHT) {
-            views.push_back({v.camera, x0, y0, x1 - x0, y1 - y0, v.global_camera_commands,
-                             v.resources, v.world_view});
-        }
-    }
+    std::vector<SceneView> views =
+        placed_views(scene_views_, ui_scale_, whole.w, whole.h, FRAMES_IN_FLIGHT);
     if (views.size() < 2) {
         return {whole};
     }

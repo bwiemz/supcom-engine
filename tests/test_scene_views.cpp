@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "renderer/camera.hpp"
 #include "renderer/scene_views.hpp"
@@ -59,4 +60,22 @@ TEST_CASE("A point in a split view picks the ground through that view's camera",
     CHECK(z == Approx(left.focus_z()).margin(0.5));
     CHECK(&osc::renderer::view_under(views, 1000.0f, 100.0f) == &views[1]);
     CHECK(&osc::renderer::view_under(views, 1300.0f, 360.0f) == &views[0]);
+}
+
+TEST_CASE("Split views laid out in points are placed in the frame's pixels", "[renderer][camera]") {
+    const float scale = GENERATE(1.0f, 2.0f);
+    Camera left;
+    Camera right;
+    const std::vector<SceneView> laid_out{{&left, 0.0f, 0.0f, 399.0f, 600.0f, true},
+                                          {&right, 401.0f, 0.0f, 399.0f, 600.0f, false}};
+
+    const std::vector<SceneView> placed =
+        osc::renderer::placed_views(laid_out, scale, 800.0f * scale, 600.0f * scale, 2);
+    REQUIRE(placed.size() == 2);
+    CHECK(placed[0].camera == &left);
+    CHECK(placed[0].w == 399.0f * scale);
+    CHECK(placed[1].camera == &right);
+    CHECK(placed[1].x == 401.0f * scale);
+    CHECK(placed[1].w == 399.0f * scale);
+    CHECK(placed[1].h == 600.0f * scale);
 }

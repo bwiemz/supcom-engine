@@ -65,6 +65,9 @@ inline SceneView in_points(SceneView v, f32 scale) {
     return v;
 }
 
+std::vector<SceneView> placed_views(const std::vector<SceneView>& laid_out, f32 scale, f32 width,
+                                    f32 height, size_t most);
+
 const SceneView& view_under(const std::vector<SceneView>& views, f32 sx, f32 sy);
 
 bool pick_ground_in(const std::vector<SceneView>& views, f32 sx, f32 sy,

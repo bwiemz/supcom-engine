@@ -79,7 +79,7 @@ void test_world_views(TestContext& ui, TestContext& sim, ui::UIControlRegistry& 
         t.check(false, "the map");
         return;
     }
-    OffscreenShots shots(sim);
+    OffscreenShots shots(sim, 2.0f);
     if (!shots.ok()) {
         t.check(false, "renderer init (no Vulkan?)");
         return;
@@ -115,7 +115,7 @@ void test_world_views(TestContext& ui, TestContext& sim, ui::UIControlRegistry& 
         const ImageRGBA8 shot = frame();
         const f32 left_end = number(ui, "import('/lua/ui/game/worldview.lua').viewLeft.Right()");
         const f32 right_start = number(ui, "import('/lua/ui/game/worldview.lua').viewRight.Left()");
-        const auto gap = static_cast<u32>((left_end + right_start) / 2.0f);
+        const auto gap = static_cast<u32>((left_end + right_start) / 2.0f * r.ui_scale());
         const bool split = right_start - left_end >= 2.0f && gap < shot.width;
         const int off = split ? off_backdrop(shot, gap, shot.height / 6, shot.height / 3) : 255;
         t.check(split && off <= 2,
