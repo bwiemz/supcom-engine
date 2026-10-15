@@ -50,6 +50,8 @@ add_library(osc_renderer STATIC
     selection_renderer.cpp
     range_overlays.cpp
     range_renderer.cpp
+    stencil_volume.cpp
+    vision_renderer.cpp
     build_template.cpp
     effect_blueprint_file.cpp
     trail_blueprint.cpp

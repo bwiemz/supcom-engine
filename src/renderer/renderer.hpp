@@ -46,6 +46,7 @@
 #include "renderer/command_feedback.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/range_renderer.hpp"
+#include "renderer/vision_renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
@@ -244,6 +245,10 @@ public:
     RangeOverlays& range_overlays() { return *range_overlays_; }
     void share_range_overlays(RangeOverlays& overlays) { range_overlays_ = &overlays; }
     const RangeRenderer& range_renderer() const { return range_renderer_; }
+    /// The cartographic minimap's range rings and fog, drawn into its frame
+    /// (Moho's Cartographic::Render), as last updated.
+    const RangeRenderer& minimap_ranges() const { return minimap_ranges_; }
+    const VisionRenderer& minimap_vision() const { return minimap_vision_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
     void set_command_highlight(u32 command_id) { highlight_command_ = command_id; }
@@ -272,12 +277,22 @@ public:
         std::vector<u8> frame;  ///< Stage 0: the ramp's colour, the band's shade in alpha
         std::vector<u8> output; ///< Stage 1: with the contour lines, alpha 0
     };
+    /// What a capture draws over Stage 0, as the minimap's frame has it:
+    /// range batches (for a map whose playable rect's larger side is
+    /// `ring_span`, at the minimap's full zoom) and the fog's vision circles
+    /// (none: no fog).
+    struct CartographicOverlayInput {
+        std::vector<RangeBatch> rings;
+        f32 ring_span = 0.0f;
+        std::optional<std::vector<RangeRing>> fog;
+    };
     /// Draw `terrain`'s cartographic frame for `view` now, outside any frame,
     /// built from its heights as they are, and read both stages back (tests
     /// of the port). Nothing without a device, or before the texture cache is
     /// up (a scene built, or init_ui_caches).
-    std::optional<CartographicImages> capture_cartographic(const map::Terrain& terrain,
-                                                           const CartographicRenderer::View& view);
+    std::optional<CartographicImages>
+    capture_cartographic(const map::Terrain& terrain, const CartographicRenderer::View& view,
+                         const CartographicOverlayInput* overlays = nullptr);
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -629,6 +644,18 @@ private:
                             const BuildGhost* ghost, lua_State* L,
                             ui::UIControlRegistry* ui_registry,
                             const std::unordered_set<u32>* selected_ids);
+    /// The cartographic minimap's range rings and fog this frame (its view
+    /// drawn, so cartographic_view_ set): Moho's range renderer with the
+    /// minimap's camera, and its fog from the focus army's vision circles.
+    void update_minimap_overlays(const sim::FrameView& view, const BuildGhost* ghost, lua_State* L,
+                                 const std::unordered_set<u32>* selected_ids, f32 span, u32 fi);
+    /// The minimap's rings and fog into its cartographic frame (record()'s
+    /// overlays), frame slot `fi`'s.
+    void draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, u32 width, u32 height,
+                               u32 fi) const;
+    /// The heights the range and fog volumes span: from 5 below the map's
+    /// lowest point to its highest (FAF's Sim::Create_exxt).
+    void set_volume_heights(const map::Heightmap& heights);
 
     // A frame's command stages, in render()'s order (render_ui_only takes the
     // first, the swapchain pass and the last).
@@ -991,6 +1018,8 @@ private:
     RangeOverlays own_range_overlays_;
     RangeOverlays* range_overlays_ = &own_range_overlays_;
     RangeRenderer range_renderer_;
+    RangeRenderer minimap_ranges_; ///< in the cartographic frame's pass
+    VisionRenderer minimap_vision_;
     RangeBlueprints range_blueprints_;
     u32 hovered_ = 0;
     u32 highlight_command_ = 0;
