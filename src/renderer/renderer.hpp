@@ -44,6 +44,8 @@
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/command_feedback.hpp"
+#include "renderer/world_quad_batch.hpp"
+#include "renderer/world_shapes.hpp"
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/range_renderer.hpp"
 #include "renderer/vision_renderer.hpp"
@@ -239,6 +241,9 @@ public:
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     const CommandGraphRenderer& command_graph_renderer() const { return command_graph_renderer_; }
+    /// What the world view's OnRenderWorld drew this frame (FAF's
+    /// UI_DrawLine and kin)
+    const WorldShapes& world_shapes() const { return world_shapes_; }
     const SelectionRenderer& selection_renderer() const { return selection_renderer_; }
     /// FA's range overlays: the profiles and filters its UI sets and the
     /// range convars (Moho's viewport keeps them), and what they drew.
@@ -639,6 +644,10 @@ private:
     /// overlays, the water's, sky's and terrain's time, the scripts' decals,
     /// the legacy HUD, the strategic icons and the profile overlay -- in that
     /// order, into frame slot `fi`'s buffers.
+    /// FAF's world drawing: the main world view's OnRenderWorld(self,
+    /// delta), with its custom rendering on (SetCustomRender), collecting
+    /// the shapes UI_DrawLine and its kin draw; into frame slot `fi`.
+    void update_world_shapes(lua_State* L, u32 fi);
     void update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                             const sim::FrameView& view, sim::WorldEvents& events,
                             const BuildGhost* ghost, lua_State* L,
@@ -1013,6 +1022,8 @@ private:
     const map::Terrain* terrain_ = nullptr;
     BeamRenderer beam_renderer_;
     CommandGraphRenderer command_graph_renderer_;
+    WorldShapes world_shapes_;          ///< FAF's world drawing, this frame
+    WorldQuadBatch world_shapes_batch_; ///< and drawn
     bool ui_keys_blocked_ = false;
     SelectionRenderer selection_renderer_;
     RangeOverlays own_range_overlays_;

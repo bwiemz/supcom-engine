@@ -125,6 +125,7 @@ add_executable(osc_tests
     test_playable_rect.cpp
     test_recon_view.cpp
     test_vision_circles.cpp
+    test_world_shapes.cpp
     test_platoon_squads.cpp
     test_wave_stream.cpp
     test_emitter_params.cpp

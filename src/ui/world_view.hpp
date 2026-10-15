@@ -70,6 +70,11 @@ public:
     bool resource_rendering() const { return resource_rendering_; }
     void set_resource_rendering(bool on) { resource_rendering_ = on; }
 
+    /// FAF's patched game's SetCustomRender: each frame the view's Lua
+    /// OnRenderWorld(self, delta) draws shapes in it (UI_DrawLine, ...).
+    bool custom_render() const { return custom_render_; }
+    void set_custom_render(bool on) { custom_render_ = on; }
+
 private:
     renderer::Camera* camera_ = nullptr;
     const map::Terrain* terrain_ = nullptr;
@@ -83,6 +88,7 @@ private:
     bool global_cam_cmds_ = false;
     bool is_minimap_ = false;
     bool resource_rendering_ = true;
+    bool custom_render_ = false;
 };
 
 } // namespace osc::ui

@@ -57,6 +57,7 @@ add_executable(osc_integration
     runner/water_render_test.cpp
     runner/sky_test.cpp
     runner/cartographic_test.cpp
+    runner/world_shapes_test.cpp
     runner/mobile_build_start_test.cpp
     runner/drown_test.cpp
     runner/spawn_layer_test.cpp

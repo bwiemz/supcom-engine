@@ -3,6 +3,7 @@
 // and the UI's own orders (M191). They live apart from the Lua library, which
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
+#include "core/color.hpp"
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
@@ -20,6 +21,7 @@
 #include "renderer/frustum.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/terrain_preview.hpp"
+#include "renderer/world_shapes.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/category_expr.hpp"
 #include "sim/lua_bytes.hpp"
@@ -335,6 +337,68 @@ static bool read_vec3(lua_State* L, int idx, f32 out[3]) {
         lua_pop(L, 1);
     }
     return ok;
+}
+
+// --- FAF's world drawing (FA-Binary-Patches DrawFunc.cpp) ---
+// UI_DrawLine, UI_DrawCircle and UI_DrawRect draw flat in the world, over it,
+// from a world view's OnRenderWorld (the renderer collects the shapes then);
+// called at any other time they raise an error, as FAF's do.
+
+static renderer::WorldShapes* drawing_shapes(lua_State* L, const char* what) {
+    lua_pushstring(L, renderer::kWorldShapesKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* shapes = static_cast<renderer::WorldShapes*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!shapes) luaL_error(L, "Attempt to call %s outside of OnRenderWorld", what);
+    return shapes;
+}
+
+static sim::Vector3 shape_vector(lua_State* L, int idx) {
+    f32 v[3] = {0, 0, 0};
+    if (!read_vec3(L, idx, v)) luaL_argerror(L, idx, "vector expected");
+    return {v[0], v[1], v[2]};
+}
+
+/// A shape's colour, as SCR_DecodeColor reads it
+static u32 shape_color(lua_State* L, int idx) {
+    const char* text = luaL_checkstring(L, idx);
+    const std::optional<u32> color = decode_color(text);
+    if (!color) luaL_error(L, "Unknown color: %s", text);
+    return color.value_or(0u);
+}
+
+static f32 shape_thickness(lua_State* L, int idx) {
+    return static_cast<f32>(luaL_optnumber(L, idx, renderer::WorldShapes::kDefaultThickness));
+}
+
+// UI_DrawLine(pos1, pos2, color, thickness = 0.15)
+static int l_UI_DrawLine(lua_State* L) {
+    auto* shapes = drawing_shapes(L, "DrawLine");
+    const sim::Vector3 a = shape_vector(L, 1);
+    const sim::Vector3 b = shape_vector(L, 2);
+    const u32 color = shape_color(L, 3);
+    shapes->line(a, b, color, shape_thickness(L, 4));
+    return 0;
+}
+
+// UI_DrawCircle(pos, radius, color, thickness = 0.15)
+static int l_UI_DrawCircle(lua_State* L) {
+    auto* shapes = drawing_shapes(L, "DrawCircle");
+    const sim::Vector3 at = shape_vector(L, 1);
+    const auto radius = static_cast<f32>(luaL_checknumber(L, 2));
+    const u32 color = shape_color(L, 3);
+    shapes->circle(at, radius, color, shape_thickness(L, 4));
+    return 0;
+}
+
+// UI_DrawRect(pos, size, color, thickness = 0.15)
+static int l_UI_DrawRect(lua_State* L) {
+    auto* shapes = drawing_shapes(L, "DrawRect");
+    const sim::Vector3 at = shape_vector(L, 1);
+    const auto size = static_cast<f32>(luaL_checknumber(L, 2));
+    const u32 color = shape_color(L, 3);
+    shapes->rect(at, size, color, shape_thickness(L, 4));
+    return 0;
 }
 
 static void push_vec3(lua_State* L, f32 x, f32 y, f32 z) {
@@ -1914,6 +1978,9 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetHighlightCommand", l_GetHighlightCommand);
     state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
     state.register_function("CopyToClipboard", l_CopyToClipboard);
+    state.register_function("UI_DrawLine", l_UI_DrawLine);
+    state.register_function("UI_DrawCircle", l_UI_DrawCircle);
+    state.register_function("UI_DrawRect", l_UI_DrawRect);
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("SyncPlayableRect", l_SyncPlayableRect);

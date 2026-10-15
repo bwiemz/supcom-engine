@@ -476,6 +476,8 @@ void Renderer::init_sub_renderers() {
     // FA's beams, in the scene pass too (M214a)
     beam_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     command_graph_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
+    world_shapes_batch_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_,
+                             WorldShapes::kMaxQuads, "WorldShapes");
     selection_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     if (has_stencil()) range_renderer_.init(device_, allocator_, frame_.scene_pass());
     resource_icon_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
@@ -2603,6 +2605,76 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     submit_and_present(fi, image_index, false, capturing, false);
 }
 
+void Renderer::update_world_shapes(lua_State* L, u32 fi) {
+    // The world's size of a pixel at a point: the LOD metric (the view's
+    // width at the point's depth) over the view's width in pixels
+    sim::Vector3 eye;
+    camera_.eye_position(eye.x, eye.y, eye.z);
+    sim::Vector3 forward{camera_.focus_x() - eye.x, camera_.focus_y() - eye.y,
+                         camera_.focus_z() - eye.z};
+    const f32 length =
+        std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
+    if (length > 0.0f) forward = {forward.x / length, forward.y / length, forward.z / length};
+    const f32 fov = camera_.fov();
+    const f32 width = window_width_ > 0 ? static_cast<f32>(window_width_) : 1.0f;
+    world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
+        return lod_metric(p, eye, forward, fov) / width;
+    });
+
+    const ui::WorldView* view = nullptr;
+    if (L) {
+        lua_pushstring(L, "__osc_world_view");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        view = static_cast<const ui::WorldView*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+    }
+    if (view && view->custom_render() && view->lua_table_ref() >= 0) {
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, view->lua_table_ref());
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "OnRenderWorld");
+            lua_gettable(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, -2);
+                lua_pushnumber(L, static_cast<lua_Number>(frame_dt_));
+                lua_pushstring(L, kWorldShapesKey);
+                lua_pushlightuserdata(L, &world_shapes_);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnRenderWorld: {}",
+                                 lua_isstring(L, -1) ? lua_tostring(L, -1) : "(error)");
+                }
+                lua_pushstring(L, kWorldShapesKey);
+                lua_pushnil(L);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+            }
+        }
+        lua_settop(L, top);
+    }
+
+    // Each a quad of the batch: white (FromSolidColor 0xFFFFFFFF) times its
+    // colour, as two triangles
+    std::vector<WorldQuadBatch::Quad> quads;
+    quads.reserve(world_shapes_.quads().size());
+    VkDescriptorSet white = texture_cache_.fallback_descriptor();
+    for (const ShapeQuad& s : world_shapes_.quads()) {
+        const std::array<f32, 4> c = {static_cast<f32>((s.color >> 16) & 0xFFu) / 255.0f,
+                                      static_cast<f32>((s.color >> 8) & 0xFFu) / 255.0f,
+                                      static_cast<f32>(s.color & 0xFFu) / 255.0f,
+                                      static_cast<f32>((s.color >> 24) & 0xFFu) / 255.0f};
+        const auto vertex = [&](size_t i, f32 u, f32 v) {
+            const sim::Vector3& p = s.corners[i];
+            return WorldQuadBatch::Vertex{{p.x, p.y, p.z}, {u, v}, {c[0], c[1], c[2], c[3]}};
+        };
+        WorldQuadBatch::Quad q;
+        q.ds = white;
+        q.v = {vertex(0, 0, 0), vertex(1, 1, 0), vertex(2, 1, 1),
+               vertex(2, 1, 1), vertex(3, 0, 1), vertex(0, 0, 0)};
+        quads.push_back(q);
+    }
+    world_shapes_batch_.upload(quads, fi);
+}
+
 void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                                   const sim::FrameView& view, sim::WorldEvents& events,
                                   const BuildGhost* ghost, lua_State* L,
@@ -2783,6 +2855,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
     selection_renderer_.update(view, camera_, window_height_, selected_ids, hovered_, player_army_,
                                drag_box_, texture_cache_, mesh_cache_, L, fi);
+
+    update_world_shapes(L, fi);
 
     // FA's range overlays (Moho's RangeRenderer), for the focus army
     {
@@ -3137,6 +3211,9 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     resource_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, resource_icon_time_,
                                    fi);
     projectile_icon_renderer_.render(cmd_buf_[fi], window_width_, window_height_, fi);
+    // FAF's world drawing, at the end of the world view's own drawing
+    // (DrawFunc.cpp's hook at CUIWorldView::Render's end)
+    world_shapes_batch_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
 }
 
 void Renderer::record_screen_layers(u32 fi) {
@@ -4180,6 +4257,7 @@ void Renderer::shutdown() {
     runtime_decals_.destroy(device_, allocator_);
     beam_renderer_.destroy(device_, allocator_);
     command_graph_renderer_.destroy(device_, allocator_);
+    world_shapes_batch_.destroy(device_, allocator_);
     selection_renderer_.destroy(device_, allocator_);
     range_renderer_.destroy(device_, allocator_);
     minimap_ranges_.destroy(device_, allocator_);

@@ -12,6 +12,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "renderer/input_handler.hpp"
+#include "renderer/world_shapes.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/pose.hpp"
@@ -324,6 +325,38 @@ TEST_CASE("CopyToClipboard takes one argument, and needs a window", "[faf]") {
     CHECK(run(w.ui, "if CopyToClipboard('text') ~= false then error('copied') end").empty());
     CHECK_FALSE(run(w.ui, "CopyToClipboard()").empty());
     CHECK_FALSE(run(w.ui, "CopyToClipboard('a', 'b')").empty());
+}
+
+TEST_CASE("UI_DrawLine, UI_DrawCircle and UI_DrawRect draw only from OnRenderWorld",
+          "[faf][shapes]") {
+    // DrawFunc.cpp: outside a world view's OnRenderWorld they raise an error;
+    // inside, each draws its quads (the renderer collects them then)
+    World w;
+    const std::string outside = run(w.ui, "UI_DrawLine({0, 0, 0}, {10, 0, 0}, 'ff00ff00')");
+    CHECK(outside.find("outside of OnRenderWorld") != std::string::npos);
+    CHECK_FALSE(run(w.ui, "UI_DrawCircle({0, 0, 0}, 5, 'red')").empty());
+
+    osc::renderer::WorldShapes shapes;
+    shapes.begin({});
+    lua_State* L = w.ui.raw();
+    lua_pushstring(L, osc::renderer::kWorldShapesKey);
+    lua_pushlightuserdata(L, &shapes);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    CHECK(run(w.ui, "UI_DrawLine({0, 0, 0}, {10, 0, 0}, 'ff00ff00')\n"
+                    "UI_DrawCircle({0, 0, 0}, 5, 'Red', 0.5)\n"
+                    "UI_DrawRect({0, 0, 0}, 4, '80ffffff')\n")
+              .empty());
+    CHECK(shapes.quads().size() == 1 + osc::renderer::WorldShapes::kCircleSegments + 4);
+    CHECK(shapes.quads()[0].color == 0xFF00FF00u);
+    CHECK(shapes.quads()[1].color == 0xFFFF0000u);
+    // An unknown colour is an error, and draws nothing
+    const std::string bad = run(w.ui, "UI_DrawLine({0, 0, 0}, {1, 0, 0}, 'nocolour')");
+    CHECK(bad.find("Unknown color") != std::string::npos);
+    CHECK_FALSE(run(w.ui, "UI_DrawRect({0, 0, 0}, 'big', 'red')").empty());
+    CHECK(shapes.quads().size() == 1 + osc::renderer::WorldShapes::kCircleSegments + 4);
+    lua_pushstring(L, osc::renderer::kWorldShapesKey);
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
 }
 
 TEST_CASE("The Cursor stats hold the ground under the cursor", "[faf][stats]") {

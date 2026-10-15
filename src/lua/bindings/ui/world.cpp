@@ -410,7 +410,14 @@ static int worldview_SetCartographic(lua_State* L) {
         wv->set_cartographic(lua_toboolean(L, 2) != 0);
     return 0;
 }
-static int worldview_SetCustomRender(lua_State* /*L*/) { return 0; }
+// worldview:SetCustomRender(bool): FAF's patched game's (WorldView.cpp,
+// DrawFunc.cpp): on, the view's OnRenderWorld(self, delta) runs each frame
+// as the world is drawn, and may draw with UI_DrawLine and its kin.
+static int worldview_SetCustomRender(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) wv->set_custom_render(lua_toboolean(L, 2) != 0);
+    return 0;
+}
 
 static int worldview_SetHighlightEnabled(lua_State* L) {
     auto* wv = check_world_view(L);
