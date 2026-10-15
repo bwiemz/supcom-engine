@@ -11,6 +11,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
 #include "sim/shield.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -160,6 +161,35 @@ TEST_CASE("Back from its fight, a guard goes home before it looks about again", 
     CHECK(home);
     CHECK(dist(*tank, *ward) <= 10.5f); // its footprint (0) and half its scan
     CHECK(dist(*tank, *other) > 20.0f); // home, the other is out of its scan
+}
+
+TEST_CASE("A guard's ward moved while the guard fights moves, before its tick too",
+          "[guard][order_edit]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* ward = still(sim, 0, 50.0f, 50.0f);
+    Unit* other = still(sim, 0, 40.0f, 40.0f);
+    Unit* tank = armed(sim, 0, 55.0f, 50.0f);
+    still(sim, 1, 70.0f, 55.0f);
+    tank->push_command(guard(ward, 7), true);
+    for (int t = 0; t < 10 && !fight(*tank); ++t) {
+        sim.tick();
+    }
+    REQUIRE(fight(*tank));
+    osc::sim::SimCallbackEntry cb;
+    cb.func_name = osc::sim::kSetCommandTargetCallback;
+    cb.args["Command"] = 7.0;
+    cb.args["Target"] = static_cast<double>(other->entity_id());
+    cb.unit_ids = {tank->entity_id()};
+    sim.submit_callback(cb);
+    const auto pending = sim.queues_with_pending();
+    REQUIRE(pending.count(tank->entity_id()) == 1);
+    const auto& orders = pending.at(tank->entity_id()).orders;
+    REQUIRE(orders.size() == 2);
+    CHECK(orders[1].target_id == other->entity_id());
+    sim.tick();
+    CHECK(tank->guarded_unit_id() == other->entity_id());
 }
 
 TEST_CASE("A guard's fight ends at GuardReturnRadius from what it guards, once it has been in "

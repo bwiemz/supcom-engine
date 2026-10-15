@@ -239,6 +239,9 @@ void set_command_target(SimState& sim, lua_State* L, const SimCallbackEntry& cb)
     std::vector<SimState::CommandToRetarget> orders;
     for_each_unit(sim, cb, [&](Unit& u) {
         for (UnitCommand* c : u.commands_with_id(static_cast<u32>(*command))) {
+            if (c->from_patrol || c->from_guard) {
+                continue;
+            }
             const bool front = !u.command_queue().empty() && &u.command_queue().front() == c;
             orders.push_back({&u, c, front});
         }

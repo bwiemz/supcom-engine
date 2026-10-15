@@ -1001,7 +1001,8 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
                 }
                 QueueWithPending& queue = queue_of(id, *unit);
                 for (size_t i = 0; i < queue.orders.size(); ++i) {
-                    if (queue.orders[i].command_id != *command) {
+                    const UnitCommand& c = queue.orders[i];
+                    if (c.command_id != *command || (!remove && (c.from_patrol || c.from_guard))) {
                         continue;
                     }
                     if (remove) {
