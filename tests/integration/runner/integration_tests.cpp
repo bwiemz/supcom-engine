@@ -5595,8 +5595,8 @@ void test_massstub2(TestContext& ctx) {
             local w = u:GetWeapon(1)
             if not w then error('no weapon') end
             local bp = w:GetProjectileBlueprint()
-            if type(bp) ~= 'string' and bp ~= nil then
-                error('GetProjectileBlueprint expected string or nil, got ' .. type(bp))
+            if type(bp) ~= 'table' then
+                error('GetProjectileBlueprint expected a projectile blueprint, got ' .. type(bp))
             end
             w:SetTargetGround(true)
             -- SetFireControl/IsFireControl name an aim controller by label.
