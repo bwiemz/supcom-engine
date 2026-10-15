@@ -116,9 +116,10 @@ Pixels OffscreenShots::shoot(const map::Terrain& terrain, f32 x, f32 z, f32 dist
     return centre_pixels(capture(terrain, x, z, distance, with_world));
 }
 
-ImageRGBA8 OffscreenShots::shoot_frame(const map::Terrain& terrain, f32 x, f32 z, f32 distance) {
+ImageRGBA8 OffscreenShots::shoot_frame(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
+                                       bool with_world) {
     if (!ok_) return {};
-    return capture(terrain, x, z, distance, true);
+    return capture(terrain, x, z, distance, with_world);
 }
 
 ImageRGBA8 OffscreenShots::capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
