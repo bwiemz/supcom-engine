@@ -615,14 +615,18 @@ void test_strategic_icons(TestContext& ctx) {
     r.set_strategic_icon_scale(1.0f);
     r.set_projectile_icon_scale(1.0f);
 
+    OffscreenShots retina(ctx, 2.0f);
+    if (!retina.ok()) {
+        t.check(false, "renderer init at a display scale of 2");
+        return;
+    }
     {
         const std::string rest = icon_texture(ctx, "uel0201", "rest");
         const auto file = ctx.vfs.read_file(rest);
         const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
-        OffscreenShots retina(ctx, 2.0f);
         int blocks = 0;
         int blended = 0;
-        if (dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK && !dds->mips.empty() && retina.ok()) {
+        if (dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK && !dds->mips.empty()) {
             const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
                 reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
             renderer::Renderer& big = retina.renderer();
@@ -670,6 +674,147 @@ void test_strategic_icons(TestContext& ctx) {
                             "texels is a 2x2 block of one colour (point sampled): {} of {} "
                             "blended",
                             blended, blocks));
+    }
+
+    {
+        renderer::Renderer& big = retina.renderer();
+        big.set_player_army(0);
+        (void)retina.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+        const ImageRGBA8 image = retina.grab();
+        const Frame frame = drawn(big);
+        renderer::Renderer::SceneImage scene;
+        big.request_scene_capture(
+            [&](renderer::Renderer::SceneImage captured) { scene = std::move(captured); });
+        retina.redraw();
+        const auto points_of = [&](const char* name) -> std::optional<std::array<f32, 2>> {
+            const sim::EntityRecord* e = projectile(name);
+            const auto at = e ? screen_of(big, e->position) : std::nullopt;
+            if (!at) {
+                return std::nullopt;
+            }
+            return std::array<f32, 2>{std::floor((*at)[0] / 2.0f), std::floor((*at)[1] / 2.0f)};
+        };
+
+        const renderer::ProjectileIcon* nuke = nullptr;
+        for (const renderer::ProjectileIcon& p : big.projectile_icons()) {
+            if (p.path == nuke_icon) {
+                nuke = &p;
+            }
+        }
+        const auto nuke_at = points_of("tifmissilenuke01");
+        t.check(nuke && nuke_at && nuke->w == 20.0f && nuke->h == 20.0f &&
+                    std::abs(nuke->x + 10.0f - (*nuke_at)[0]) < 1.0f &&
+                    std::abs(nuke->y + 10.0f - (*nuke_at)[1]) < 1.0f,
+                fmt::format("Test 31: at a display scale of 2 the nuke's 20x20 icon is centred on "
+                            "its point, in points: ({:.1f}, {:.1f}) at ({:.0f}, {:.0f})",
+                            nuke ? nuke->x + nuke->w * 0.5f : -1.0f,
+                            nuke ? nuke->y + nuke->h * 0.5f : -1.0f,
+                            nuke_at ? (*nuke_at)[0] : -1.0f, nuke_at ? (*nuke_at)[1] : -1.0f));
+
+        const auto glowing = [&](f32 cx, f32 cy, int& lit, int& dark) {
+            const auto x0 = static_cast<i32>(cx) - 20;
+            const auto y0 = static_cast<i32>(cy) - 20;
+            for (i32 y = std::max(y0, 0); y < std::min(y0 + 40, static_cast<i32>(scene.height));
+                 ++y) {
+                for (i32 x = std::max(x0, 0); x < std::min(x0 + 40, static_cast<i32>(scene.width));
+                     ++x) {
+                    const f32 a = scene.rgba[(static_cast<size_t>(y) * scene.width +
+                                              static_cast<size_t>(x)) *
+                                                 4 +
+                                             3];
+                    lit += std::abs(a - nuke->glow) < 0.002f ? 1 : 0;
+                    dark += a == 0.0f ? 1 : 0;
+                }
+            }
+        };
+        int lit = 0;
+        int dark = 0;
+        int lit_1x = 0;
+        int dark_1x = 0;
+        if (nuke && nuke->glow > 0.0f) {
+            glowing(2.0f * (nuke->x + 10.0f), 2.0f * (nuke->y + 10.0f), lit, dark);
+            glowing(nuke->x + 10.0f, nuke->y + 10.0f, lit_1x, dark_1x);
+        }
+        t.check(lit > 400 && lit + dark == 1600 && lit_1x == 0,
+                fmt::format("Test 32: in the {}x{} scene the nuke's icon glows in the 40x40 "
+                            "pixels around twice its point ({} lit, {} dark), none around the "
+                            "point itself ({} lit)",
+                            scene.width, scene.height, lit, dark, lit_1x));
+
+        const auto shell_at = points_of("tifantimattershells01");
+        const Quad* square =
+            shell_at ? quad_at(frame.icons, (*shell_at)[0], (*shell_at)[1], 3.0f, 3.0f) : nullptr;
+        int yellow = 0;
+        int spilled = 0;
+        if (square && image.width > 0) {
+            const auto x0 = static_cast<i32>(2.0f * (square->x - 1.5f));
+            const auto y0 = static_cast<i32>(2.0f * (square->y - 1.5f));
+            for (i32 y = std::max(y0 - 1, 0); y < std::min(y0 + 7, static_cast<i32>(image.height));
+                 ++y) {
+                for (i32 x = std::max(x0 - 1, 0);
+                     x < std::min(x0 + 7, static_cast<i32>(image.width)); ++x) {
+                    const u8* px = &image.pixels[(static_cast<size_t>(y) * image.width +
+                                                  static_cast<size_t>(x)) *
+                                                 4];
+                    if (px[0] != 255 || px[1] != 255 || px[2] != 0) {
+                        continue;
+                    }
+                    if (x >= x0 && x < x0 + 6 && y >= y0 && y < y0 + 6) {
+                        ++yellow;
+                    } else {
+                        ++spilled;
+                    }
+                }
+            }
+        }
+        t.check(square && yellow == 36 && spilled == 0,
+                fmt::format("Test 33: at a display scale of 2 the shell's yellow square, 3 points "
+                            "across, is the 6x6 pixels at twice its point ({} of 36 yellow, {} "
+                            "around them)",
+                            yellow, spilled));
+    }
+
+    {
+        renderer::Renderer& big = retina.renderer();
+        big.camera().set_ortho(true);
+        renderer::Renderer::SceneImage scene;
+        big.request_scene_capture(
+            [&](renderer::Renderer::SceneImage captured) { scene = std::move(captured); });
+        retina.redraw();
+        big.camera().set_ortho(false);
+        const renderer::ProjectileIcon* nuke = nullptr;
+        for (const renderer::ProjectileIcon& p : big.projectile_icons()) {
+            if (p.path == nuke_icon) {
+                nuke = &p;
+            }
+        }
+        const auto lit_around = [&](f32 cx, f32 cy) {
+            int lit = 0;
+            const auto x0 = static_cast<i32>(cx) - 20;
+            const auto y0 = static_cast<i32>(cy) - 20;
+            for (i32 y = std::max(y0, 0); y < std::min(y0 + 40, static_cast<i32>(scene.height));
+                 ++y) {
+                for (i32 x = std::max(x0, 0); x < std::min(x0 + 40, static_cast<i32>(scene.width));
+                     ++x) {
+                    const f32 a =
+                        scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
+                                       4 +
+                                   3];
+                    lit += std::abs(a - nuke->glow) < 0.002f ? 1 : 0;
+                }
+            }
+            return lit;
+        };
+        int lit = 0;
+        int lit_1x = 0;
+        if (nuke && nuke->glow > 0.0f) {
+            lit = lit_around(2.0f * (nuke->x + 10.0f), 2.0f * (nuke->y + 10.0f));
+            lit_1x = lit_around(nuke->x + 10.0f, nuke->y + 10.0f);
+        }
+        t.check(big.cartographic_main() && lit > 400 && lit_1x == 0,
+                fmt::format("Test 32b: so in a cartographic main view ({}): {} lit around twice "
+                            "its point, {} around the point itself",
+                            big.cartographic_main(), lit, lit_1x));
     }
 
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
