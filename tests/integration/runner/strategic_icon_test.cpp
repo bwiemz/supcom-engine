@@ -615,6 +615,84 @@ void test_strategic_icons(TestContext& ctx) {
     r.set_strategic_icon_scale(1.0f);
     r.set_projectile_icon_scale(1.0f);
 
+    run_lua(ctx, "__osc_ic_nuke_at = __osc_ic_nuke:GetPosition()\n"
+                 "__osc_ic_nuke:SetPosition(__osc_ic_tank:GetPosition(), true)\n");
+    f = next();
+    {
+        const auto texels = [&](const std::string& path, u32& w, u32& h) {
+            const auto file = ctx.vfs.read_file(path);
+            const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
+            if (!dds || dds->format != VK_FORMAT_BC3_UNORM_BLOCK || dds->mips.empty()) {
+                return std::vector<u8>{};
+            }
+            w = dds->width;
+            h = dds->height;
+            return renderer::decode_bc3_to_rgba(reinterpret_cast<const u8*>(dds->mips[0].data), w,
+                                                h);
+        };
+        u32 tank_w = 0;
+        u32 tank_h = 0;
+        u32 nuke_w = 0;
+        u32 nuke_h = 0;
+        const std::vector<u8> tank_texels =
+            texels(icon_texture(ctx, "uel0201", "rest"), tank_w, tank_h);
+        const std::vector<u8> nuke_texels = texels(nuke_icon, nuke_w, nuke_h);
+        const auto at = icons_at(f, tank);
+        const auto nukes = nuke_icons();
+        const ImageRGBA8 with = shots.grab(&selection);
+        r.set_projectile_icons(false);
+        const ImageRGBA8 without = shots.grab(&selection);
+        r.set_projectile_icons(true);
+        int overlap = 0;
+        int shown = 0;
+        if (!at.empty() && nukes.size() == 1 && !tank_texels.empty() && !nuke_texels.empty() &&
+            with.width == without.width && with.height == without.height) {
+            const Quad& q = f.icons[at.front()];
+            const auto left = static_cast<i32>(q.x - q.w * 0.5f);
+            const auto top = static_cast<i32>(q.y - q.h * 0.5f);
+            const auto nx = static_cast<i32>(nukes[0].x);
+            const auto ny = static_cast<i32>(nukes[0].y);
+            for (i32 v = 0; v < static_cast<i32>(nuke_h); ++v) {
+                for (i32 u = 0; u < static_cast<i32>(nuke_w); ++u) {
+                    const i32 x = nx + u;
+                    const i32 y = ny + static_cast<i32>(nuke_h) - 1 - v;
+                    const i32 tu = x - left;
+                    const i32 tv = y - top;
+                    if (tu < 0 || tv < 0 || tu >= static_cast<i32>(tank_w) ||
+                        tv >= static_cast<i32>(tank_h) || x < 0 || y < 0 ||
+                        x >= static_cast<i32>(with.width) || y >= static_cast<i32>(with.height)) {
+                        continue;
+                    }
+                    const u8* nt =
+                        &nuke_texels[(static_cast<size_t>(v) * nuke_w + static_cast<size_t>(u)) *
+                                     4];
+                    const u8* tt =
+                        &tank_texels[(static_cast<size_t>(tv) * tank_w + static_cast<size_t>(tu)) *
+                                     4];
+                    const bool alike = std::equal(nt, nt + 3, tt, [](u8 a, u8 b) {
+                        return std::abs(static_cast<int>(a) - static_cast<int>(b)) <= 8;
+                    });
+                    if (nt[3] != 255 || tt[3] != 255 || alike) {
+                        continue;
+                    }
+                    const size_t i =
+                        (static_cast<size_t>(y) * with.width + static_cast<size_t>(x)) * 4;
+                    ++overlap;
+                    shown += std::equal(&with.pixels[i], &with.pixels[i] + 3, &without.pixels[i])
+                                 ? 0
+                                 : 1;
+                }
+            }
+        }
+        t.check(overlap > 0 && shown == overlap,
+                fmt::format("Test 30: a nuke over the tank is drawn over its icon, as Moho draws "
+                            "the projectiles' icons after the units': {} of the {} pixels both "
+                            "cover in colours of their own show it",
+                            shown, overlap));
+    }
+    run_lua(ctx, "__osc_ic_nuke:SetPosition(__osc_ic_nuke_at, true)\n");
+    (void)next();
+
     OffscreenShots retina(ctx, 2.0f);
     if (!retina.ok()) {
         t.check(false, "renderer init at a display scale of 2");
@@ -670,7 +748,7 @@ void test_strategic_icons(TestContext& ctx) {
             }
         }
         t.check(blocks > 0 && blended == 0,
-                fmt::format("Test 30: at a display scale of 2 each of the tank icon's opaque "
+                fmt::format("Test 31: at a display scale of 2 each of the tank icon's opaque "
                             "texels is a 2x2 block of one colour (point sampled): {} of {} "
                             "blended",
                             blended, blocks));
@@ -705,7 +783,7 @@ void test_strategic_icons(TestContext& ctx) {
         t.check(nuke && nuke_at && nuke->w == 20.0f && nuke->h == 20.0f &&
                     std::abs(nuke->x + 10.0f - (*nuke_at)[0]) < 1.0f &&
                     std::abs(nuke->y + 10.0f - (*nuke_at)[1]) < 1.0f,
-                fmt::format("Test 31: at a display scale of 2 the nuke's 20x20 icon is centred on "
+                fmt::format("Test 32: at a display scale of 2 the nuke's 20x20 icon is centred on "
                             "its point, in points: ({:.1f}, {:.1f}) at ({:.0f}, {:.0f})",
                             nuke ? nuke->x + nuke->w * 0.5f : -1.0f,
                             nuke ? nuke->y + nuke->h * 0.5f : -1.0f,
@@ -736,7 +814,7 @@ void test_strategic_icons(TestContext& ctx) {
             glowing(nuke->x + 10.0f, nuke->y + 10.0f, lit_1x, dark_1x);
         }
         t.check(lit > 400 && lit + dark == 1600 && lit_1x == 0,
-                fmt::format("Test 32: in the {}x{} scene the nuke's icon glows in the 40x40 "
+                fmt::format("Test 33: in the {}x{} scene the nuke's icon glows in the 40x40 "
                             "pixels around twice its point ({} lit, {} dark), none around the "
                             "point itself ({} lit)",
                             scene.width, scene.height, lit, dark, lit_1x));
@@ -768,7 +846,7 @@ void test_strategic_icons(TestContext& ctx) {
             }
         }
         t.check(square && yellow == 36 && spilled == 0,
-                fmt::format("Test 33: at a display scale of 2 the shell's yellow square, 3 points "
+                fmt::format("Test 34: at a display scale of 2 the shell's yellow square, 3 points "
                             "across, is the 6x6 pixels at twice its point ({} of 36 yellow, {} "
                             "around them)",
                             yellow, spilled));
@@ -828,7 +906,7 @@ void test_strategic_icons(TestContext& ctx) {
                                  {});
         }
         t.check(in_scene[0] > 0 && in_scene[1] == 0,
-                fmt::format("Test 34: at a display scale of 2 each of the nuke icon's opaque "
+                fmt::format("Test 35: at a display scale of 2 each of the nuke icon's opaque "
                             "texels is a 2x2 block of one colour in the scene, as the tank's "
                             "icon: {} of {} blended",
                             in_scene[1], in_scene[0]));
@@ -856,7 +934,7 @@ void test_strategic_icons(TestContext& ctx) {
                 later);
         }
         t.check(on_map[0] > 0 && on_map[1] == 0,
-                fmt::format("Test 35: so is its icon on the minimap: {} of {} blended", on_map[1],
+                fmt::format("Test 36: so is its icon on the minimap: {} of {} blended", on_map[1],
                             on_map[0]));
     }
 
@@ -898,7 +976,7 @@ void test_strategic_icons(TestContext& ctx) {
             lit_1x = lit_around(nuke->x + 10.0f, nuke->y + 10.0f);
         }
         t.check(big.cartographic_main() && lit > 400 && lit_1x == 0,
-                fmt::format("Test 32b: so in a cartographic main view ({}): {} lit around twice "
+                fmt::format("Test 33b: so in a cartographic main view ({}): {} lit around twice "
                             "its point, {} around the point itself",
                             big.cartographic_main(), lit, lit_1x));
     }

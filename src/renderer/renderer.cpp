@@ -1322,17 +1322,23 @@ void Renderer::create_ui_pipeline() {
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 4};     // uvRect
         attrs[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 8};     // color
 
-        ui_pipeline_ = PipelineBuilder()
-            .set_shaders(uiv, uif)
-            .set_vertex_input(&binding, 1, attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(false, false)
-            .set_blend(true)
-            .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 2,
-                               VK_SHADER_STAGE_VERTEX_BIT)
-            .set_descriptor_set_layout(texture_ds_layout_)
-            .build(device_, render_pass_, &ui_layout_);
+        const auto builder = [&] {
+            PipelineBuilder b;
+            b.set_shaders(uiv, uif)
+                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                .set_depth_test(false, false)
+                .set_blend(true)
+                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 2, VK_SHADER_STAGE_VERTEX_BIT)
+                .set_descriptor_set_layout(texture_ds_layout_);
+            return b;
+        };
+        ui_pipeline_ = builder().build(device_, render_pass_, &ui_layout_);
+        scene_ui_pipeline_ =
+            builder()
+                .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                      VK_COLOR_COMPONENT_B_BIT)
+                .build(device_, frame_.scene_pass(), &scene_ui_layout_);
     }
     if (uiv) vkDestroyShaderModule(device_, uiv, nullptr);
     if (uif) vkDestroyShaderModule(device_, uif, nullptr);
@@ -2129,8 +2135,8 @@ void Renderer::record_cartographic_main(u32 fi, const std::array<f32, 16>& vp) {
     // no trails)
     particle_renderer_.render(cmd, window_width_, window_height_, vp.data(), false, fi, true);
     // RenUI and the world view's own drawing: the order lines, selection,
-    // the resource and projectile icons, FAF's world drawing (the strategic
-    // icons are the screen's layer, on at every zoom)
+    // the resource, strategic (on at every zoom) and projectile icons, FAF's
+    // world drawing
     command_graph_renderer_.render(cmd, window_width_, window_height_, vp.data(), fi);
     selection_renderer_.render(cmd, window_width_, window_height_, vp.data(), fi);
     record_view_drawing(cmd, fi, vp);
@@ -3385,6 +3391,11 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
 
 void Renderer::record_view_drawing(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp) {
     resource_icon_renderer_.render(cmd, window_width_, window_height_, resource_icon_time_, fi);
+    if (scene_ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
+        vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scene_ui_pipeline_);
+        strategic_icon_renderer_.render(cmd, scene_ui_layout_, window_width_, window_height_,
+                                        ui_scale_);
+    }
     projectile_icon_renderer_.render(cmd, ui_width(), ui_height(), fi);
     // FAF's world drawing, at the end of the world view's own drawing
     // (DrawFunc.cpp's hook at CUIWorldView::Render's end)
@@ -3392,13 +3403,6 @@ void Renderer::record_view_drawing(VkCommandBuffer cmd, u32 fi, const std::array
 }
 
 void Renderer::record_screen_layers(u32 fi) {
-    // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
-    if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        strategic_icon_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_,
-                                        ui_scale_);
-    }
-
     // 7. Draw game overlays (health bars, selection, command lines)
     if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
         vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
@@ -4548,8 +4552,16 @@ void Renderer::shutdown() {
          {decal_glow_layout_, decal_glow_mask_layout_, decal_normal_layout_, terrain_normal_layout_,
           decal_water_layout_})
         if (layout) vkDestroyPipelineLayout(device_, layout, nullptr);
-    if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);
-    if (ui_layout_) vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
+    for (VkPipeline pipeline : {ui_pipeline_, scene_ui_pipeline_}) {
+        if (pipeline) {
+            vkDestroyPipeline(device_, pipeline, nullptr);
+        }
+    }
+    for (VkPipelineLayout layout : {ui_layout_, scene_ui_layout_}) {
+        if (layout) {
+            vkDestroyPipelineLayout(device_, layout, nullptr);
+        }
+    }
 
     // Sync (per-frame)
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {

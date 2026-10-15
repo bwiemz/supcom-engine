@@ -731,9 +731,8 @@ private:
     /// technique at this fidelity (none: not drawn), over the frame, with
     /// no lighting, shadow or terrain.
     void draw_cartographic_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp);
-    /// The screen's 2D layers over the composited scene: the strategic
-    /// icons, the overlays, the legacy HUD, FA's interface, then the profile
-    /// overlay on top.
+    /// The screen's 2D layers over the composited scene: the overlays, the
+    /// legacy HUD, FA's interface, then the profile overlay on top.
     void record_screen_layers(u32 fi);
     /// End slot `fi`'s commands, submit them and present `image_index`,
     /// delivering the captures recorded (`capturing`, `scene_capturing`)
@@ -1009,6 +1008,8 @@ private:
     // UI 2D pipeline
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
+    VkPipeline scene_ui_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout scene_ui_layout_ = VK_NULL_HANDLE;
 
     // Shadow mapping (Moho's, M210c): the map, its depth and the blur's
     // targets (shadow_map.hpp); B of the second is the terrain's mask.
