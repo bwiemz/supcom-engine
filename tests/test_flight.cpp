@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <memory>
+#include <utility>
 
 using Catch::Approx;
 using osc::f32;
@@ -98,6 +99,21 @@ TEST_CASE("A shell falls on its parabola, as before", "[flight]") {
     CHECK(shell->position().y == Approx(10 + 5 - 2.45f).margin(1e-3));
     CHECK(shell->position().z == Approx(20.0f).margin(1e-3));
     CHECK(shell->velocity.y == Approx(5 - 4.9f).margin(1e-4));
+}
+
+TEST_CASE("A shot lives to the tick nearest its lifetime, moves on it, and bursts there",
+          "[flight]") {
+    for (const auto& [lifetime, moves] : {std::pair{0.23f, 3.0f}, std::pair{0.27f, 4.0f}}) {
+        INFO(lifetime);
+        EntityRegistry reg;
+        Projectile* shot = add_shot(reg, {0, 10, 0}, {0, 0, 10});
+        shot->lifetime = lifetime;
+        for (int i = 0; i < 10 && !shot->destroyed(); ++i) {
+            shot->update(0.1, reg, nullptr);
+        }
+        REQUIRE(shot->destroyed());
+        CHECK(shot->position().z == Approx(moves));
+    }
 }
 
 TEST_CASE("A rocket thrusts the way it faces, its speed capped", "[flight]") {
