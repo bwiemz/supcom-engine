@@ -564,14 +564,19 @@ void Unit::update_speed_through() {
         return type == CommandType::Move || type == CommandType::Attack ||
                type == CommandType::Patrol || type == CommandType::Guard;
     };
-    if (command_queue_.empty() || !busy(command_queue_.front().type) ||
-        has_unit_state("Refueling")) {
+    if (has_unit_state("Refueling")) {
         return;
     }
-    bool through = command_queue_.size() > 1 && busy(command_queue_[1].type);
-    if (command_queue_.front().type == CommandType::Guard && !has_unit_state("Ferrying") &&
-        !has_category("EXPERIMENTAL")) {
-        through = true;
+    bool through = has_unit_state("ForceSpeedThrough") || has_unit_state("CannotFindPlaceToLand");
+    if (!through && !command_queue_.empty()) {
+        if (!busy(command_queue_.front().type)) {
+            return;
+        }
+        through = command_queue_.size() > 1 && busy(command_queue_[1].type);
+        if (command_queue_.front().type == CommandType::Guard && !has_unit_state("Ferrying") &&
+            !has_category("EXPERIMENTAL")) {
+            through = true;
+        }
     }
     navigator_.set_speed_through_goal(through);
 }
@@ -3374,9 +3379,11 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         if (!navigator_.air_hold()) {
             navigator_.set_air_hold(air_stop_point());
         }
+        update_speed_through();
         AirMove move;
         move.target = *navigator_.air_hold();
         move.elevation = elevation_target_;
+        move.top_speed = navigator_.speed_through_goal();
         fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
     };
     Vector3 aim = land.target;
@@ -3468,9 +3475,11 @@ void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
     if (!navigator_.air_hold()) {
         navigator_.set_air_hold(air_stop_point());
     }
+    update_speed_through();
     AirMove move;
     move.target = *navigator_.air_hold();
     move.elevation = elevation_target_;
+    move.top_speed = navigator_.speed_through_goal();
     fly_air_move(*this, move, ctx.sim, ctx.terrain, static_cast<f32>(dt));
 }
 
