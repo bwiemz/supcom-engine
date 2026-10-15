@@ -237,6 +237,23 @@ TEST_CASE("A hover unit draws its wobble from the sim's stream every fifth tick"
     CHECK(random.words_drawn() == 6);
 }
 
+TEST_CASE("A hover unit standing on a slope keeps a unit quaternion", "[ground_snap]") {
+    const auto terrain = ridge(0.0f, false);
+    for (const f32 heading : {0.3f, 2.2f}) {
+        const auto hover = unit("RULEUMT_Hover", heading);
+        hover->set_hover_physics({0.0f, 1.0f, 0.0f, 0.0f});
+        hover->set_position({70.0f, kBase, 64.0f});
+        osc::sim::SimRandom random;
+        for (osc::u32 tick = 1; tick <= 1000; ++tick) {
+            hover->tick_hover(&terrain, tick, random);
+        }
+        const osc::sim::Quaternion q = hover->orientation();
+        const f32 length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+        CHECK(length == Approx(1.0f).margin(1e-5));
+        CHECK(std::isfinite(hover->position().y));
+    }
+}
+
 TEST_CASE("A turret on a slope aims and lobs at a target on level ground", "[ground_snap][aim]") {
     osc::sim::BoneData bd;
     osc::sim::BoneInfo turret;
