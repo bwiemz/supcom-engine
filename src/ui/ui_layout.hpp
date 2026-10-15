@@ -17,12 +17,11 @@ struct ControlRect {
 /// The rectangle Moho draws and hit-tests a control over: its edges
 /// (Left/Top/Right/Bottom). MAUI's Width/Height are layout inputs -- a
 /// bitmap's default to its texture size even after LayoutHelpers.FillParent
-/// has set all four edges -- so each only stands in when its axis has no
-/// valid edge pair.
+/// has set all four edges -- so each only stands in when its axis's edges
+/// are inverted.
 inline ControlRect control_rect(f32 left, f32 top, f32 right, f32 bottom,
                                 f32 width, f32 height) {
-    return {left, top, right > left ? right - left : width,
-            bottom > top ? bottom - top : height};
+    return {left, top, right >= left ? right - left : width, bottom >= top ? bottom - top : height};
 }
 
 /// The quad a bitmap draws over: Moho's CMauiBitmap::Draw spans Left to
