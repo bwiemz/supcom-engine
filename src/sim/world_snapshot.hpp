@@ -363,6 +363,7 @@ struct SoundEventRecord {
     std::string bank, cue, lod_cutoff;
     Vector3 pos;
     bool underwater = false;
+    u32 entity_id = 0;
 };
 /// Events of every tick captured since the renderer (and, for sounds, the
 /// audio) last took them.

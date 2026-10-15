@@ -307,8 +307,8 @@ void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, s
         const std::string& layer = static_cast<const sim::Unit&>(e).layer();
         underwater = layer == "Sub" || layer == "Seabed";
     }
-    sim->request_sound(
-        {std::move(bank), std::move(cue), std::move(lod_cutoff), e.position(), underwater});
+    sim->request_sound({std::move(bank), std::move(cue), std::move(lod_cutoff), e.position(),
+                        underwater, e.entity_id()});
 }
 
 /// Push the entity's blueprint table from the blueprint store (what

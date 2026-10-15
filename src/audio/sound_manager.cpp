@@ -888,6 +888,9 @@ f32 SoundManager::camera_distance() const {
 
 SoundManager::Filter SoundManager::filter(std::string_view lod_cutoff, const sim::Vector3& pos,
                                           bool underwater, const Hearing& hears) const {
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) {
+        return Filter::Nowhere;
+    }
     if (!lod_cutoff.empty()) {
         const auto* gs = registry_->global_settings();
         const int v = gs ? gs->find_variable(lod_cutoff) : -1;
@@ -900,10 +903,24 @@ SoundManager::Filter SoundManager::filter(std::string_view lod_cutoff, const sim
     return Filter::Pass;
 }
 
+void SoundManager::warn_nowhere(std::string_view bank, std::string_view cue, u32 entity_id,
+                                const sim::Vector3& pos) {
+    if (!nowhere_warned_.insert(entity_id).second) {
+        return;
+    }
+    spdlog::warn("Audio: {}/{} of entity #{} not played: its point ({}, {}, {}) isn't finite", bank,
+                 cue, entity_id, pos.x, pos.y, pos.z);
+}
+
 SoundHandle SoundManager::play_world(const WorldSound& sound, const Hearing& hears) {
     if (!registry_ || !world_enabled_) return INVALID_SOUND;
-    if (filter(sound.lod_cutoff, sound.pos, sound.underwater, hears) != Filter::Pass)
+    const Filter heard = filter(sound.lod_cutoff, sound.pos, sound.underwater, hears);
+    if (heard == Filter::Nowhere) {
+        warn_nowhere(sound.bank, sound.cue, sound.entity_id, sound.pos);
+    }
+    if (heard != Filter::Pass) {
         return INVALID_SOUND;
+    }
     // One of each cue a beat (Moho's recent one-shot keys).
     if (sound.beat != dedupe_beat_) {
         dedupe_beat_ = sound.beat;
@@ -951,6 +968,7 @@ void SoundManager::sync_entity_loops(const std::vector<EntityLoop>& wanted, cons
             stop(it->second.handle, true);
             it = entity_loops_.erase(it);
             continue;
+        case Filter::Nowhere: warn_nowhere(w.bank, w.cue, w.entity_id, w.pos); [[fallthrough]];
         case Filter::Hearing:
             stop(it->second.handle, false);
             it = entity_loops_.erase(it);
@@ -966,7 +984,13 @@ void SoundManager::sync_entity_loops(const std::vector<EntityLoop>& wanted, cons
     if (camera_distance() > kLoopStartCameraDistance) return;
     for (const auto& [key, w] : by_key) {
         if (!w->in_view || entity_loops_.count(key) != 0) continue;
-        if (filter(w->lod_cutoff, w->pos, w->underwater, hears) != Filter::Pass) continue;
+        const Filter heard = filter(w->lod_cutoff, w->pos, w->underwater, hears);
+        if (heard == Filter::Nowhere) {
+            warn_nowhere(w->bank, w->cue, w->entity_id, w->pos);
+        }
+        if (heard != Filter::Pass) {
+            continue;
+        }
         std::string bank(w->bank);
         std::string cue(w->cue);
         const SoundHandle h = play(bank, cue, &w->pos);

@@ -144,7 +144,8 @@ void App::Window::update_world_sounds() {
     // The ticks' one-shots, in order.
     auto& events = world_interp.history.events();
     for (const auto& s : events.sounds)
-        sound.play_world({s.bank, s.cue, s.lod_cutoff, s.pos, s.underwater, s.tick}, hears);
+        sound.play_world({s.bank, s.cue, s.lod_cutoff, s.pos, s.underwater, s.tick, s.entity_id},
+                         hears);
     events.sounds.clear();
 
     // The entities' wanted loops: where they are drawn, and whether they're

@@ -583,7 +583,7 @@ void WorldHistory::capture(const SimState& sim) {
         events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
     for (const auto& r : sim.sound_requests())
         events_.sounds.push_back(
-            {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater});
+            {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater, r.entity_id});
 }
 
 void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
