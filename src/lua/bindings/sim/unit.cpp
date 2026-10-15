@@ -228,7 +228,7 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Reclaiming") == 0)
             result = u->is_reclaiming();
         else if (std::strcmp(state, "Repairing") == 0)
-            result = u->is_repairing() || u->build_repairs();
+            result = u->is_repairing() || u->build_repairs() || u->silo_assist_id() != 0;
         else if (std::strcmp(state, "Busy") == 0)
             result = u->busy();
         else if (std::strcmp(state, "BlockCommandQueue") == 0)
@@ -374,6 +374,7 @@ static int unit_GetFocusUnit(lua_State* L) {
 
     u32 focus_id = u->build_target_id();
     if (focus_id == 0) focus_id = u->capture_target_id();
+    if (focus_id == 0) focus_id = u->silo_assist_id();
     if (focus_id == 0) { lua_pushnil(L); return 1; }
 
     auto* sim = get_sim(L);

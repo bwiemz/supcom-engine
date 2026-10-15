@@ -1837,8 +1837,27 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
         if (within_reach(*target_unit, true, false)) {
-            assisting_silo_ = true;
-            if (!paused_) {
+            // Moho's repair task on it, begun unpaused: focus, OnStartBuild,
+            // Repairing, and the silo's progress for its own (faf-re
+            // CUnitRepairTask, CBuildTaskHelper)
+            if (silo_assist_id_ != cmd.target_id && !paused_) {
+                if (silo_assist_id_ != 0) {
+                    end_silo_assist(ctx.L, registry);
+                }
+                silo_assist_id_ = cmd.target_id;
+                call_build_callback(ctx.L, "OnStartBuild", target_unit, "Repair");
+                if (destroyed() || !in_registry()) {
+                    return OrderStep::Gone;
+                }
+                if (target_unit->destroyed() || !target_unit->silo_building()) {
+                    return OrderStep::Hold;
+                }
+            }
+            if (silo_assist_id_ == cmd.target_id) {
+                silo_assist_renewed_ = true;
+                work_progress_ = target_unit->work_progress();
+            }
+            if (silo_assist_id_ == cmd.target_id && !paused_) {
                 const SiloBuild& missile = target_unit->silo_build();
                 const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
                 economy_.consumption_energy = missile.energy * per_second;
