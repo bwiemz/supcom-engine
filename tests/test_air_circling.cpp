@@ -414,9 +414,15 @@ TEST_CASE("A HoverOverAttack aircraft hangs at its reach rather than circle", "[
     REQUIRE(w.run_until(h, [&] { return engaged(h); }, 300) < 300);
     for (int t = 0; t < 30; ++t) w.tick(h);
     const Vector3 parked = h.position();
-    for (int t = 0; t < 60; ++t) w.tick(h);
-    CHECK(h.position().x == parked.x);
-    CHECK(h.position().z == parked.z);
+    f32 drift = 0.0f;
+    Vector3 last = parked;
+    for (int t = 0; t < 60; ++t) {
+        last = h.position();
+        w.tick(h);
+        drift = std::max(drift, flat_dist(h, parked));
+    }
+    CHECK(drift < 1.0f);
+    CHECK(flat_dist(h, last) < 0.02f);
     CHECK_FALSE(h.air_combat().flying);
 }
 

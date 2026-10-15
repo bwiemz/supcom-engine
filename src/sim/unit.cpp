@@ -633,6 +633,7 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
 
 void Unit::update(f64 dt, SimContext& ctx) {
     air_stepped_ = false;
+    air_held_ = false;
     if (!tick_lifecycle(dt, ctx)) return;
 
     // Manipulators (rotators, animators, sliders, aim controllers) move
@@ -884,6 +885,7 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
             set_unit_state("Attached", false);
         }
         ground_speed_ = 0; // carried, not driving
+        rest_air_body();
         return false;      // Skip commands and weapons while loaded
     }
     drove_ = false;
@@ -912,6 +914,7 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     // An idle aircraft comes down (item 6).
     tick_idle_landing(dt, ctx);
     if (destroyed() || !in_registry()) return false;
+    fly_unflown_tick(dt, ctx);
 
     if (is_air_unit() && vert_event_ == "Hover" && current_altitude_ > transport_hover_height_) {
         set_unit_state("MovingUp", true);
@@ -2575,12 +2578,6 @@ f32 Unit::air_floor(const map::Terrain* terrain, f32 x, f32 z) const {
 
 f32 Unit::track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 tick, f32 dt,
                             bool landing) {
-    if (tick > lift_tick_ + 1) {
-        lift_velocity_ = 0.0f;
-        air_velocity_ = {};
-        air_dv_ = {};
-        air_spin_ = {};
-    }
     lift_tick_ = tick;
     if (!terrain) {
         return 1.0f;
@@ -3428,10 +3425,7 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         land.descending = false;
         current_altitude_ = 0;
         current_airspeed_ = 0;
-        air_velocity_ = {};
-        air_dv_ = {};
-        air_spin_ = {};
-        lift_velocity_ = 0.0f;
+        rest_air_body();
         set_unit_state("MovingDown", false);
         set_layer_with_callback(land.layer, L);
         if (destroyed() || !in_registry()) return;
@@ -3443,6 +3437,33 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
     move.elevation = over ? 0.0f : elevation_target_ * 0.5f;
     move.landing = true;
     fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
+}
+
+void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
+    if (!ctx.sim || !is_air_unit() || !can_fly() || air_held_ || dying_ || crashing_ ||
+        is_being_built() || parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() ||
+        immobile_) {
+        return;
+    }
+    const u32 now = ctx.sim->tick_count();
+    if (now == 0 || flew_at(now) || !flew_at(now - 1)) {
+        return;
+    }
+    if (!navigator_.air_hold()) {
+        navigator_.set_air_hold(air_stop_point());
+    }
+    AirMove move;
+    move.target = *navigator_.air_hold();
+    move.elevation = elevation_target_;
+    fly_air_move(*this, move, ctx.sim, ctx.terrain, static_cast<f32>(dt));
+}
+
+void Unit::rest_air_body() {
+    air_velocity_ = {};
+    air_dv_ = {};
+    air_spin_ = {};
+    lift_velocity_ = 0.0f;
+    air_held_ = true;
 }
 
 void Unit::set_vert_event(const char* event, lua_State* L) {

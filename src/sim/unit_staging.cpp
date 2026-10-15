@@ -126,6 +126,7 @@ bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, Sim
         navigator_.abort_move();
         glided = true;
     }
+    rest_air_body();
     // Settling: straight over the point, slowing to a hover, down to it and
     // turned the way it faces (Moho's move onto the land layer, at the
     // point's height and facing).

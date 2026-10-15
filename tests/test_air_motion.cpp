@@ -15,6 +15,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/weapon.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -37,7 +38,7 @@ struct World {
     osc::blueprints::BlueprintStore store{state.raw()};
     osc::sim::SimState sim{state.raw(), &store};
 
-    World() {
+    explicit World(bool rival = false) {
         osc::sim::GameSetup game;
         game.scenario = "/maps/test/test_scenario.lua";
         game.seed = 3;
@@ -48,6 +49,11 @@ struct World {
         sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
         sim.build_pathfinding_grid();
         sim.add_army("ARMY_1", "ARMY_1");
+        if (rival) {
+            sim.add_army("ARMY_2", "ARMY_2");
+            sim.set_fog_of_war("none");
+            sim.set_victory_condition("sandbox");
+        }
         sim.set_game_setup(game);
         lua_State* L = state.raw();
         for (const char* bp : {
@@ -97,6 +103,18 @@ struct World {
                  " Footprint = {SizeX = 1, SizeZ = 1},"
                  " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, TurnSpeed = 0.7},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 "{BlueprintId = 'ferry', Categories = {'AIR', 'MOBILE', 'TRANSPORTATION'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = 5,"
+                 " TransportHoverHeight = 3},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'pad', Categories = {'STRUCTURE', 'AIRSTAGINGPLATFORM'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2}, Physics = {MotionType = 'RULEUMT_None'}}",
+                 "{BlueprintId = 'tank', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Land'}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -109,8 +127,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id :
-             {"gunship", "gun1", "fighter", "gunfwd", "level", "uea0102", "bomber"}) {
+        for (const char* id : {"gunship", "gun1", "fighter", "gunfwd", "level", "uea0102", "bomber",
+                               "ferry", "pad", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -119,10 +137,11 @@ struct World {
         lua_settop(L, 0);
     }
 
-    Unit& make(const char* bp, f32 x, f32 z) {
+    Unit& make(const char* bp, f32 x, f32 z, int army = 1) {
         REQUIRE(state
-                    .do_string("made = CreateUnit('" + std::string(bp) + "', 1, " +
-                               std::to_string(x) + ", 10, " + std::to_string(z) + ")")
+                    .do_string("made = CreateUnit('" + std::string(bp) + "', " +
+                               std::to_string(army) + ", " + std::to_string(x) + ", 10, " +
+                               std::to_string(z) + ")")
                     .ok());
         Unit* found = nullptr;
         sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
@@ -384,4 +403,121 @@ TEST_CASE("Near its goal a winged aircraft turns its nose to the way its order s
     }
     REQUIRE(a.layer() == "Land");
     CHECK(a.heading() == Approx(1.5707964f).margin(0.05f));
+}
+
+TEST_CASE("An aircraft breaking off its patrol to attack flies on at its speed, not from rest",
+          "[air_motion]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 25.0f;
+    gun->damage = 10.0f;
+    a.add_weapon(std::move(gun));
+    w.make("gunship", 150.0f, 138.0f, 2);
+    osc::sim::UnitCommand patrol;
+    patrol.type = osc::sim::CommandType::Patrol;
+    patrol.target_pos = {230.0f, 10.0f, 128.0f};
+    a.push_command(patrol, true);
+    f32 cruise = 0.0f;
+    std::vector<f32> after;
+    for (int t = 0; t < 300 && after.size() < 5; ++t) {
+        a.weapons().front()->fire_clock = 1000000;
+        const auto before = a.position();
+        w.sim.tick();
+        const f32 speed = World::flat_speed(before, a.position());
+        if (!after.empty() || a.command_queue().front().from_patrol) {
+            after.push_back(speed);
+        } else {
+            cruise = speed;
+        }
+    }
+    REQUIRE(after.size() == 5);
+    CHECK(cruise > 14.0f);
+    CHECK(*std::min_element(after.begin(), after.end()) > cruise - 3.0f);
+}
+
+TEST_CASE("An aircraft whose ground attack goes round the queue flies on through that tick",
+          "[air_motion]") {
+    for (const char* id : {"bomber", "gunship"}) {
+        INFO(id);
+        World w;
+        Unit& a = w.make(id, 30.0f, 128.0f);
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = 20.0f;
+        gun->damage = 10.0f;
+        a.add_weapon(std::move(gun));
+        osc::sim::UnitCommand attack;
+        attack.type = osc::sim::CommandType::Attack;
+        attack.target_pos = {120.0f, 10.0f, 128.0f};
+        a.push_command(attack, true);
+        World::move(a, 200.0f, 220.0f, false);
+        osc::sim::Weapon& gun_ref = *a.weapons().front();
+        f32 last = 0.0f;
+        f32 at_turn = 0.0f;
+        f32 sharpest = 0.0f;
+        int after = -1;
+        for (int t = 0; t < 600 && after < 5; ++t) {
+            gun_ref.fire_clock = 1000000;
+            if (a.command_queue().front().engaged) {
+                gun_ref.shots_at_target = gun_ref.attack_ground_tries;
+            }
+            const auto before = a.position();
+            w.sim.tick();
+            const f32 speed = World::flat_speed(before, a.position());
+            if (after < 0 && a.command_queue().front().type == osc::sim::CommandType::Move) {
+                after = 0;
+                at_turn = last;
+            }
+            if (after >= 0) {
+                sharpest = std::max(sharpest, last - speed);
+                ++after;
+            }
+            last = speed;
+        }
+        REQUIRE(after == 5);
+        CHECK(at_turn > 5.0f);
+        CHECK(sharpest < 4.0f);
+    }
+}
+
+TEST_CASE("An aircraft the engine held docked or hovering flies again from rest", "[air_motion]") {
+    World w;
+    lua_State* L = w.state.raw();
+    SECTION("docked on a platform") {
+        Unit& a = w.make("gunship", 30.0f, 128.0f);
+        Unit& pad = w.make("pad", 60.0f, 60.0f);
+        World::move(a, 200.0f, 128.0f);
+        for (int t = 0; t < 40; ++t) {
+            w.sim.tick();
+        }
+        REQUIRE(std::abs(a.air_velocity().x) > 8.0f);
+        a.attach_to_transport(&pad, w.sim.entity_registry(), L);
+        REQUIRE(a.transport_id() == pad.entity_id());
+        for (int t = 0; t < 5; ++t) {
+            w.sim.tick();
+        }
+        pad.detach_cargo({a.entity_id()}, w.sim.entity_registry(), L, w.sim.terrain());
+        const auto before = a.position();
+        w.sim.tick();
+        CHECK(World::flat_speed(before, a.position()) < 2.0f);
+    }
+    SECTION("hovering low with its cargo") {
+        Unit& ferry = w.make("ferry", 40.0f, 40.0f);
+        Unit& tank = w.make("tank", 44.0f, 40.0f);
+        tank.attach_to_transport(&ferry, w.sim.entity_registry(), L);
+        for (int t = 0; t < 300 && ferry.vert_event() != "Hover"; ++t) {
+            if (ferry.has_unit_state("MovingDown")) {
+                ferry.set_air_spin({0.0f, 3.0f, 0.0f});
+            }
+            w.sim.tick();
+        }
+        REQUIRE(ferry.vert_event() == "Hover");
+        World::move(ferry, 100.0f, 40.0f);
+        const auto before = ferry.orientation();
+        w.sim.tick();
+        const auto after = ferry.orientation();
+        const f32 dot = std::abs(before.x * after.x + before.y * after.y + before.z * after.z +
+                                 before.w * after.w);
+        CHECK(2.0f * std::acos(std::min(dot, 1.0f)) < 0.05f);
+    }
 }

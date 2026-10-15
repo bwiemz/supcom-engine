@@ -2286,7 +2286,7 @@ void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
     else if (alt > altitude) alt = std::max(alt - climb, altitude);
     current_altitude_ = alt;
     current_airspeed_ = 0.0f;
-    air_velocity_ = {};
+    rest_air_body();
     Vector3 at = position();
     at.y = air_floor(terrain, at.x, at.z) + alt;
     set_position(at);
