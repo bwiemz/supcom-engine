@@ -124,7 +124,7 @@ MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h) {
 }
 
 std::optional<CartographicMinimap> cartographic_minimap(f32 x, f32 y, f32 w, f32 h, f32 map_w,
-                                                        f32 map_h) {
+                                                        f32 map_h, f32 scale) {
     if (!(map_w > 0) || !(map_h > 0) || !std::isfinite(x) || !std::isfinite(y) ||
         !std::isfinite(w) || !std::isfinite(h))
         return std::nullopt;
@@ -132,16 +132,22 @@ std::optional<CartographicMinimap> cartographic_minimap(f32 x, f32 y, f32 w, f32
     const f32 top = std::trunc(y);
     const f32 width = std::max(1.0f, std::trunc(w));
     const f32 height = std::max(1.0f, std::trunc(h));
-    const MapArea area = fit_map_area(left, top, width, height, map_w, map_h);
-    if (area.w <= 0 || area.h <= 0) return std::nullopt;
+    const f32 px0 = std::floor(left * scale);
+    const f32 py0 = std::floor(top * scale);
+    const f32 pw = std::ceil((left + width) * scale) - px0;
+    const f32 ph = std::ceil((top + height) * scale) - py0;
     CartographicMinimap m;
-    m.rect = {left, top, width, height};
-    m.frame.width = static_cast<u32>(width);
-    m.frame.height = static_cast<u32>(height);
-    m.frame.x0 = (left - area.x) / area.w * map_w;
-    m.frame.x1 = (left + width - area.x) / area.w * map_w;
-    m.frame.z0 = (top - area.y) / area.h * map_h;
-    m.frame.z1 = (top + height - area.y) / area.h * map_h;
+    m.rect = {px0 / scale, py0 / scale, pw / scale, ph / scale};
+    const MapArea area = fit_map_area(m.rect.x, m.rect.y, m.rect.w, m.rect.h, map_w, map_h);
+    if (area.w <= 0 || area.h <= 0) {
+        return std::nullopt;
+    }
+    m.frame.width = static_cast<u32>(pw);
+    m.frame.height = static_cast<u32>(ph);
+    m.frame.x0 = (m.rect.x - area.x) / area.w * map_w;
+    m.frame.x1 = (m.rect.x + m.rect.w - area.x) / area.w * map_w;
+    m.frame.z0 = (m.rect.y - area.y) / area.h * map_h;
+    m.frame.z1 = (m.rect.y + m.rect.h - area.y) / area.h * map_h;
     return m;
 }
 

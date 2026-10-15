@@ -82,6 +82,35 @@ TEST_CASE("Cartographic minimap: the view's pixels as the UI clips them", "[mini
     CHECK_THAT((m->frame.x1 - m->frame.x0) / 241.0f, WithinAbs(1024.0f / 180.0f, 1e-3));
 }
 
+TEST_CASE("Cartographic minimap: on a scaled display, the device pixels the UI clips it to",
+          "[minimap]") {
+    using Catch::Matchers::WithinAbs;
+    using osc::renderer::cartographic_minimap;
+    const auto one = cartographic_minimap(40.4f, 30.6f, 241.3f, 180.8f, 1024, 1024);
+    const auto two = cartographic_minimap(40.4f, 30.6f, 241.3f, 180.8f, 1024, 1024, 2.0f);
+    REQUIRE(one);
+    REQUIRE(two);
+    CHECK(two->rect.x == 40);
+    CHECK(two->rect.y == 30);
+    CHECK(two->rect.w == 241);
+    CHECK(two->rect.h == 180);
+    CHECK(two->frame.width == 482);
+    CHECK(two->frame.height == 360);
+    CHECK(two->frame.x0 == one->frame.x0);
+    CHECK(two->frame.x1 == one->frame.x1);
+    CHECK(two->frame.z0 == one->frame.z0);
+    CHECK(two->frame.z1 == one->frame.z1);
+
+    const auto odd = cartographic_minimap(41, 30, 241, 180, 1024, 1024, 1.5f);
+    REQUIRE(odd);
+    CHECK(odd->frame.width == 362);
+    CHECK(odd->frame.height == 270);
+    CHECK_THAT(odd->rect.x * 1.5f, WithinAbs(61.0, 1e-4));
+    CHECK_THAT((odd->rect.x + odd->rect.w) * 1.5f, WithinAbs(423.0, 1e-4));
+    CHECK_THAT(odd->rect.y * 1.5f, WithinAbs(45.0, 1e-4));
+    CHECK_THAT((odd->rect.y + odd->rect.h) * 1.5f, WithinAbs(315.0, 1e-4));
+}
+
 TEST_CASE("Cartographic minimap: a wide map in a square view runs past its top and bottom",
           "[minimap]") {
     const auto m = osc::renderer::cartographic_minimap(0, 0, 200, 200, 1024, 512);

@@ -2958,9 +2958,9 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                 ui::ControlRect at = r;
                 VkDescriptorSet cartographic = VK_NULL_HANDLE;
                 if (wv.is_cartographic() && !cartographic_view_ && terrain_) {
-                    const auto m = cartographic_minimap(r.x, r.y, r.w, r.h,
-                                                        static_cast<f32>(terrain_->map_width()),
-                                                        static_cast<f32>(terrain_->map_height()));
+                    const auto m = cartographic_minimap(
+                        r.x, r.y, r.w, r.h, static_cast<f32>(terrain_->map_width()),
+                        static_cast<f32>(terrain_->map_height()), ui_scale_);
                     if (m && cartographic_.prepare(fi, m->frame.width, m->frame.height)) {
                         at = {m->rect.x, m->rect.y, m->rect.w, m->rect.h};
                         cartographic = cartographic_.ui_descriptor(fi);

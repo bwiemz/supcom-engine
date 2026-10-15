@@ -196,6 +196,14 @@ endforeach()
 foreach(mode IN LISTS OSC_DATA_TESTS_NO_MAP_RETAIL_GAP)
     osc_add_data_test(${mode} retail-gap NO_MAP)
 endforeach()
+# --hidpi-test in FA's game interface, its minimap window shown as the golden's
+add_test(NAME data.minimap.hidpi-test
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --hidpi-test
+                 --prefs ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/minimap.prefs)
+set_tests_properties(data.minimap.hidpi-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 
 # M196: the same game, played twice as two processes (every address
 # different), stays identical tick for tick -- nothing depends on hash

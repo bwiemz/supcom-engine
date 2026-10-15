@@ -4,9 +4,15 @@
 #include "app/window_commands.hpp"
 #include "core/image.hpp"
 #include "core/test_status.hpp"
+#include "integration_tests.hpp"
 #include "lua/lua_state.hpp"
+#include "map/terrain.hpp"
 #include "render_probe.hpp"
+#include "renderer/minimap_renderer.hpp"
 #include "renderer/renderer.hpp"
+#include "sim/sim_state.hpp"
+#include "ui/ui_control.hpp"
+#include "ui/ui_layout.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -15,8 +21,12 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace osc::test {
 
@@ -38,9 +48,9 @@ struct Frame {
     bool raster = false;
 };
 
-f64 ui_number(app::Engine& e, const char* expr) {
-    lua_State* L = e.ui_lua_state.raw();
-    if (!e.ui_lua_state.do_string(std::string("rawset(_G, '__osc_hidpi_value', ") + expr + ")")) {
+f64 ui_number(lua::LuaState& state, const std::string& expr) {
+    lua_State* L = state.raw();
+    if (!state.do_string("rawset(_G, '__osc_hidpi_value', " + expr + ")")) {
         return -1.0;
     }
     lua_pushstring(L, "__osc_hidpi_value");
@@ -107,14 +117,61 @@ Frame draw_at(app::Engine& e, f32 scale) {
     f.height = shot.height;
     f.ui_width = r.ui_width();
     f.ui_height = r.ui_height();
-    f.root_width = ui_number(e, "GetFrame(0).Width()");
-    f.root_height = ui_number(e, "GetFrame(0).Height()");
+    f.root_width = ui_number(e.ui_lua_state, "GetFrame(0).Width()");
+    f.root_height = ui_number(e.ui_lua_state, "GetFrame(0).Height()");
     f.square = count_pixels(shot, [](const u8* p) { return p[0] > 250 && p[1] < 5 && p[2] > 250; });
     f.text = count_pixels(shot, [](const u8* p) { return p[0] < 60 && p[1] > 128 && p[2] < 60; });
     f.raster = r.font_cache().loaded("Arial", renderer::raster_pointsize(kTextSize, scale));
     (void)e.ui_lua_state.do_string("rawget(_G, '__osc_hidpi'):Destroy()");
     r.shutdown();
     return f;
+}
+
+constexpr const char* kGameUiHidden =
+    "import('/lua/ui/game/gamemain.lua').gameUIHidden and 1 or 0";
+constexpr const char* kMiniMap = "import('/lua/ui/game/minimap.lua').controls.miniMap";
+constexpr std::array<const char*, 12> kOverMiniMap = {
+    "GlowTL", "GlowTR", "GlowBR", "GlowBL", "GlowL",  "GlowR",
+    "GlowT",  "GlowB",  "DragTL", "DragTR", "DragBL", "DragBR"};
+
+ui::ControlRect control_area(lua::LuaState& state, const std::string& control) {
+    const auto edge = [&](const char* name) {
+        return static_cast<f32>(ui_number(state, control + "." + name + "()"));
+    };
+    return {edge("Left"), edge("Top"), edge("Right") - edge("Left"), edge("Bottom") - edge("Top")};
+}
+
+struct Copied {
+    u64 pixels = 0;
+    u64 matched = 0;
+};
+
+Copied compare_copy(const ImageRGBA8& shot, u32 x0, u32 y0,
+                    const renderer::Renderer::CartographicImages& drawn,
+                    const std::vector<ui::ControlRect>& over) {
+    Copied c;
+    for (u32 j = 0; j < drawn.height; ++j) {
+        for (u32 i = 0; i < drawn.width; ++i) {
+            const u32 x = x0 + i;
+            const u32 y = y0 + j;
+            const f32 cx = static_cast<f32>(x) + 0.5f;
+            const f32 cy = static_cast<f32>(y) + 0.5f;
+            const bool covered =
+                std::any_of(over.begin(), over.end(), [&](const ui::ControlRect& r) {
+                    return cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h;
+                });
+            if (x >= shot.width || y >= shot.height || covered) {
+                continue;
+            }
+            ++c.pixels;
+            const size_t s = (static_cast<size_t>(y) * shot.width + x) * 4;
+            const size_t d = (static_cast<size_t>(j) * drawn.width + i) * 4;
+            if (std::equal(&shot.pixels[s], &shot.pixels[s] + 3, &drawn.output[d])) {
+                ++c.matched;
+            }
+        }
+    }
+    return c;
 }
 
 } // namespace
@@ -152,6 +209,116 @@ void run_hidpi_test(app::Engine& e) {
                         kTextSize, two.raster));
 
     spdlog::info("HiDPI test: {}/{} passed", t.pass, t.pass + t.fail);
+}
+
+void run_hidpi_minimap_test(TestContext& ui, const std::function<void(int)>& pump) {
+    spdlog::info("=== HiDPI test: the minimap window ===");
+    Tally t;
+    lua_State* L = ui.L;
+    const map::Terrain* terrain = ui.sim.terrain();
+    lua_pushstring(L, "osc_ui_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* registry = static_cast<ui::UIControlRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!terrain || !registry) {
+        t.check(false, "a map is loaded and FA's game interface is up");
+        return;
+    }
+    constexpr u32 kScale = 2;
+    OffscreenShots shots(ui, static_cast<f32>(kScale));
+    if (!shots.ok()) {
+        t.check(false, "renderer init (no Vulkan?)");
+        return;
+    }
+    renderer::Renderer& r = shots.renderer();
+    r.init_ui_caches(&ui.vfs);
+    app::size_root_frame(L, r.ui_width(), r.ui_height());
+    int frames = 0;
+    while (frames < 600 && ui_number(ui.lua_state, kGameUiHidden) == 1.0) {
+        pump(1);
+        ++frames;
+    }
+    t.check(ui_number(ui.lua_state, "import('/lua/ui/game/minimap.lua').controls.displayGroup:"
+                                    "IsHidden() and 0 or 1") == 1.0,
+            fmt::format("Test 4: once the game interface shows ({} frames), so does the minimap "
+                        "window, as the profile's stratview asks",
+                        frames));
+
+    const auto map_w = static_cast<f32>(terrain->map_width());
+    const auto map_h = static_cast<f32>(terrain->map_height());
+    (void)shots.shoot_frame(*terrain, map_w * 0.5f, map_h * 0.5f, 200.0f);
+    shots.set_ui(registry);
+    const ui::ControlRect view = control_area(ui.lua_state, kMiniMap);
+    const auto points =
+        renderer::cartographic_minimap(view.x, view.y, view.w, view.h, map_w, map_h);
+    if (!points) {
+        t.check(false, "the minimap view has a cartographic frame");
+        shots.set_ui(nullptr);
+        return;
+    }
+    const auto to_pixels = [](const ui::ControlRect& p) {
+        constexpr auto s = static_cast<f32>(kScale);
+        return ui::ControlRect{p.x * s, p.y * s, p.w * s, p.h * s};
+    };
+    const ui::ControlRect pixels =
+        to_pixels({points->rect.x, points->rect.y, points->rect.w, points->rect.h});
+    renderer::CartographicRenderer::View frame = points->frame;
+    frame.width *= kScale;
+    frame.height *= kScale;
+
+    std::array<ImageRGBA8, 2> images;
+    std::array<std::vector<renderer::UIQuad>, 2> painted;
+    for (size_t f = 0; f < images.size(); ++f) {
+        images[f] = shots.grab();
+        painted[f] = r.painted_minimap();
+    }
+    const renderer::CartographicRenderer& carto = r.cartographic();
+    t.check(carto.width(0) == frame.width && carto.height(0) == frame.height &&
+                carto.width(1) == frame.width && carto.height(1) == frame.height,
+            fmt::format("Test 5: the {}x{} point view's cartographic frame is its {}x{} pixels "
+                        "({}x{} and {}x{} drawn)",
+                        points->rect.w, points->rect.h, frame.width, frame.height,
+                        carto.width(0), carto.height(0), carto.width(1), carto.height(1)));
+
+    std::vector<ui::ControlRect> decorations;
+    for (const char* name : kOverMiniMap) {
+        decorations.push_back(
+            to_pixels(control_area(ui.lua_state, std::string(kMiniMap) + "." + name)));
+    }
+    const auto drawn = r.capture_cartographic(*terrain, frame);
+    bool placed = true;
+    Copied copied;
+    for (size_t f = 0; f < images.size(); ++f) {
+        const std::vector<renderer::UIQuad>& ps = painted[f];
+        const auto quad = [&](size_t q) {
+            const auto& rect = ps[q].inst.rect;
+            return to_pixels({rect[0], rect[1], rect[2], rect[3]});
+        };
+        placed = placed && !ps.empty() &&
+                 (ps[0].texture_ds == carto.ui_descriptor(0) ||
+                  ps[0].texture_ds == carto.ui_descriptor(1)) &&
+                 quad(0).x == pixels.x && quad(0).y == pixels.y && quad(0).w == pixels.w &&
+                 quad(0).h == pixels.h;
+        std::vector<ui::ControlRect> over = decorations;
+        for (size_t q = 1; q < ps.size(); ++q) {
+            over.push_back(quad(q));
+        }
+        if (drawn && !images[f].pixels.empty()) {
+            const Copied c = compare_copy(images[f], static_cast<u32>(pixels.x),
+                                          static_cast<u32>(pixels.y), *drawn, over);
+            copied.pixels += c.pixels;
+            copied.matched += c.matched;
+        }
+    }
+    t.check(placed, fmt::format("Test 6: in both frames the view's first quad is the "
+                                "cartographic frame, over pixels ({}, {}) {}x{}",
+                                pixels.x, pixels.y, pixels.w, pixels.h));
+    t.check(copied.pixels > 0 && copied.matched == copied.pixels,
+            fmt::format("Test 7: {} of {} pixels the frame's, copied pixel for pixel (the "
+                        "window's glows and handles, the icons and the camera's outline aside)",
+                        copied.matched, copied.pixels));
+    shots.set_ui(nullptr);
+    spdlog::info("HiDPI minimap test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
 } // namespace osc::test

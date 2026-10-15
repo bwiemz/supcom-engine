@@ -483,7 +483,8 @@ void IntegrationModes::print_usage() const {
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
               << "  --combo-click-test A combo's list closes on a click outside; Cancel clicks\n"
-              << "  --hidpi-test       The UI in points on a Retina frame, at twice the pixels\n"
+              << "  --hidpi-test       The UI in points on a Retina frame, at twice the pixels;\n"
+              << "                     with --map, the minimap window's map\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -533,7 +534,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
                         has("--combat-test") || has("--persist-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
                        has("--session-command-test") || has("--keyboard-test") ||
-                       has("--camera-moves-test") || has("--window-test") || has("--options-test");
+                       has("--camera-moves-test") || has("--window-test") || has("--options-test") ||
+                       has("--hidpi-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -598,11 +600,7 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         osc::test::run_edit_text_test(e);
         return finish_test_run("edit-text-test");
     }
-    if (has("--hidpi-test")) {
-        if (!e.map_path.empty()) {
-            spdlog::error("--hidpi-test runs from the no-map front-end boot; omit --map");
-            return 1;
-        }
+    if (has("--hidpi-test") && e.map_path.empty()) {
         osc::test::run_hidpi_test(e);
         return finish_test_run("hidpi-test");
     }
@@ -1265,6 +1263,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool camera_moves_test = has("--camera-moves-test");
     const bool window_test = has("--window-test");
     const bool options_test = has("--options-test");
+    const bool hidpi_test = has("--hidpi-test");
     const bool dualstate_test = has("--dualstate-test");
     const bool construction_test = has("--construction-test");
     const bool phase2_test = has("--phase2-test");
@@ -1272,7 +1271,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool phase4_test = has("--phase4-test");
     const bool phase5_test = has("--phase5-test");
     if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test ||
-         camera_moves_test || window_test || options_test) &&
+         camera_moves_test || window_test || options_test || hidpi_test) &&
         !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
@@ -1354,6 +1353,9 @@ void IntegrationModes::headless(Engine& e) {
             osc::test::test_camera_moves(ui_test_ctx, test_ctx, pump, play, sim_lua);
         if (window_test) osc::test::test_window(ui_test_ctx, test_ctx, pump);
         if (options_test) osc::test::test_options(ui_test_ctx, test_ctx, pump);
+        if (hidpi_test) {
+            osc::test::run_hidpi_minimap_test(ui_test_ctx, pump);
+        }
         if (victory_test) {
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }
