@@ -534,8 +534,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
                         has("--combat-test") || has("--persist-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
                        has("--session-command-test") || has("--keyboard-test") ||
-                       has("--camera-moves-test") || has("--window-test") || has("--options-test") ||
-                       has("--hidpi-test");
+                       has("--camera-moves-test") || has("--window-test") ||
+                       has("--options-test") || has("--hidpi-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.

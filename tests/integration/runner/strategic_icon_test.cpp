@@ -718,10 +718,10 @@ void test_strategic_icons(TestContext& ctx) {
                  ++y) {
                 for (i32 x = std::max(x0, 0); x < std::min(x0 + 40, static_cast<i32>(scene.width));
                      ++x) {
-                    const f32 a = scene.rgba[(static_cast<size_t>(y) * scene.width +
-                                              static_cast<size_t>(x)) *
-                                                 4 +
-                                             3];
+                    const f32 a =
+                        scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
+                                       4 +
+                                   3];
                     lit += std::abs(a - nuke->glow) < 0.002f ? 1 : 0;
                     dark += a == 0.0f ? 1 : 0;
                 }

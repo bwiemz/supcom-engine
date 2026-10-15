@@ -127,12 +127,11 @@ Frame draw_at(app::Engine& e, f32 scale) {
     return f;
 }
 
-constexpr const char* kGameUiHidden =
-    "import('/lua/ui/game/gamemain.lua').gameUIHidden and 1 or 0";
+constexpr const char* kGameUiHidden = "import('/lua/ui/game/gamemain.lua').gameUIHidden and 1 or 0";
 constexpr const char* kMiniMap = "import('/lua/ui/game/minimap.lua').controls.miniMap";
-constexpr std::array<const char*, 12> kOverMiniMap = {
-    "GlowTL", "GlowTR", "GlowBR", "GlowBL", "GlowL",  "GlowR",
-    "GlowT",  "GlowB",  "DragTL", "DragTR", "DragBL", "DragBR"};
+constexpr std::array<const char*, 12> kOverMiniMap = {"GlowTL", "GlowTR", "GlowBR", "GlowBL",
+                                                      "GlowL",  "GlowR",  "GlowT",  "GlowB",
+                                                      "DragTL", "DragTR", "DragBL", "DragBR"};
 
 ui::ControlRect control_area(lua::LuaState& state, const std::string& control) {
     const auto edge = [&](const char* name) {
@@ -277,10 +276,11 @@ void run_hidpi_minimap_test(TestContext& ui, const std::function<void(int)>& pum
                 carto.width(1) == frame.width && carto.height(1) == frame.height,
             fmt::format("Test 5: the {}x{} point view's cartographic frame is its {}x{} pixels "
                         "({}x{} and {}x{} drawn)",
-                        points->rect.w, points->rect.h, frame.width, frame.height,
-                        carto.width(0), carto.height(0), carto.width(1), carto.height(1)));
+                        points->rect.w, points->rect.h, frame.width, frame.height, carto.width(0),
+                        carto.height(0), carto.width(1), carto.height(1)));
 
     std::vector<ui::ControlRect> decorations;
+    decorations.reserve(kOverMiniMap.size());
     for (const char* name : kOverMiniMap) {
         decorations.push_back(
             to_pixels(control_area(ui.lua_state, std::string(kMiniMap) + "." + name)));
