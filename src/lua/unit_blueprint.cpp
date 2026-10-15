@@ -1219,16 +1219,10 @@ static void read_fuel(lua_State* L, const BlueprintStore& store, const Blueprint
 /// Where a finished unit stands as it is made, by its starting layer (Moho's
 /// Unit constructor: IUnit::CalcSpawnElevation): on the ground or the seabed,
 /// or at the water's surface. A sub is put at its depth (start_submerged),
-/// and an aircraft at its height (create_unit_core). An experimental aircraft
-/// starts on the ground (GetStartingLayer gives an EXPERIMENTAL footprint
-/// with AIR the Land) and takes off on its first tick.
+/// and an aircraft at its height (create_unit_core).
 static void place_at_spawn(const sim::SimState& sim, sim::Unit& unit, f32 x, f32 z) {
     const map::Terrain* terrain = sim.terrain();
     if (!terrain) return;
-    if (unit.can_fly() && unit.has_category("EXPERIMENTAL")) {
-        unit.set_layer("Land");
-        unit.set_lifts_off(true);
-    }
     const std::string& layer = unit.layer();
     sim::Vector3 at = unit.position();
     if (layer == "Land" || layer == "Seabed") {
@@ -1276,6 +1270,12 @@ void read_unit_blueprint(lua_State* L, const sim::SimState& sim, const Blueprint
     if (unit.can_fly()) {
         read_air_elevation(L, store, entry, unit);
         read_air(L, store, entry, unit);
+    }
+    // Moho's Entity::GetStartingLayer: an EXPERIMENTAL aircraft starts on the
+    // Land, finished or being built
+    if (unit.can_fly() && unit.has_category("EXPERIMENTAL")) {
+        unit.set_layer("Land");
+        unit.set_lifts_off(true);
     }
     if (!being_built) place_at_spawn(sim, unit, x, z);
     read_command_caps(L, store, entry, unit);

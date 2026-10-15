@@ -4,6 +4,7 @@
 // takes it back up.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -69,6 +70,12 @@ struct World {
                  " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
                  "5},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
+                 "{BlueprintId = 'giant', Categories = {'AIR', 'MOBILE', 'EXPERIMENTAL'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
+                 " Footprint = {SizeX = 2, SizeZ = 2},"
+                 " Air = {CanFly = true, MaxAirspeed = 10, AutoLandTime = 1, StartTurnDistance = "
+                 "5},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 10}}",
                  "{BlueprintId = 'drone', Categories = {'AIR', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 2, SizeZ = 2,"
                  " Footprint = {SizeX = 2, SizeZ = 2},"
@@ -113,7 +120,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"plane", "drone", "ferry", "pod", "fighter", "flier", "tank"}) {
+        for (const char* id :
+             {"plane", "giant", "drone", "ferry", "pod", "fighter", "flier", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -135,6 +143,23 @@ struct World {
         REQUIRE(found);
         lua_settop(state.raw(), 0);
         return found;
+    }
+
+    Unit* build(const char* bp, f32 x, f32 z) {
+        lua_State* L = state.raw();
+        lua_pushstring(L, "__osc_create_building_unit");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        lua_pushstring(L, bp);
+        lua_pushnumber(L, 1);
+        lua_pushnumber(L, x);
+        lua_pushnil(L);
+        lua_pushnumber(L, z);
+        REQUIRE(lua_pcall(L, 5, 2, 0) == 0);
+        auto* u =
+            static_cast<Unit*>(sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -2))));
+        lua_settop(L, 0);
+        REQUIRE(u);
+        return u;
     }
 
     static void move(Unit& u, f32 x, f32 z) {
@@ -347,6 +372,28 @@ TEST_CASE("An aircraft under construction neither lands nor takes off", "[air_la
     CHECK_FALSE(plane.idle_landing().descending);
     CHECK(plane.position().x == at.x);
     CHECK(plane.position().z == at.z);
+}
+
+TEST_CASE("An EXPERIMENTAL aircraft is built on the ground and takes off once finished; another "
+          "is built in the Air",
+          "[air_landing]") {
+    const bool experimental = GENERATE(false, true);
+    World w;
+    Unit& u = *w.build(experimental ? "giant" : "plane", 40.0f, 40.0f);
+    if (experimental) {
+        CHECK(u.layer() == "Land");
+        CHECK(u.position().y == 10.0f);
+    } else {
+        CHECK(u.layer() == "Air");
+    }
+    const std::string layer = u.layer();
+    for (int i = 0; i < 10; ++i) {
+        w.sim.tick();
+    }
+    CHECK(u.layer() == layer);
+    u.set_is_being_built(false);
+    w.sim.tick();
+    CHECK(u.is_air_unit());
 }
 
 TEST_CASE("A landed aircraft given an order takes off, climbs to its height and flies it",
