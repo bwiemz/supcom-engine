@@ -57,19 +57,41 @@ CommandGraphStyle command_graph_style(lua_State* L, int params, const std::strin
 /// empty for one Moho draws no line for.
 std::string command_graph_key(sim::CommandType type);
 
-/// A segment's strip on the ground, as retail lays an order's leg: its
-/// corners, `half_width` either side of the segment from `a` to `b`. False
-/// for a segment with no length across the ground.
+/// A segment's strip on the ground: its corners, `half_width` either side of
+/// the segment from `a` to `b`. False for a segment with no length across the
+/// ground.
 bool command_strip(const sim::Vector3& a, const sim::Vector3& b, f32 half_width,
                    std::array<sim::Vector3, 4>& corners);
+
+struct CommandCurvePoint {
+    sim::Vector3 position;
+    sim::Vector3 tangent; ///< the curve's unit direction; zero where it has none
+};
 
 /// A leg from `a` to `b` as Moho's UICommandGraph bends it, in `segments` + 1
 /// points: a cubic Hermite curve along the unit tangents `ta` and `tb` (the
 /// leg's direction where zero), a quarter of the leg long, at most
 /// `smoothness` × `width`.
-std::vector<sim::Vector3> command_curve(const sim::Vector3& a, const sim::Vector3& b,
-                                        const sim::Vector3& ta, const sim::Vector3& tb,
-                                        u32 segments, f32 width, f32 smoothness = 50.0f);
+std::vector<CommandCurvePoint> command_curve(const sim::Vector3& a, const sim::Vector3& b,
+                                             const sim::Vector3& ta, const sim::Vector3& tb,
+                                             u32 segments, f32 width, f32 smoothness = 50.0f);
+
+/// The ribbon along `curve` as Moho's EmitHermiteRibbonSegments lays it, a
+/// quad per two points, corners as command_strip's: each point's edge
+/// `half_width` either side across its own tangent, level with the ground
+std::vector<std::array<sim::Vector3, 4>> command_ribbon(const std::vector<CommandCurvePoint>& curve,
+                                                        f32 half_width);
+
+/// CommandWaypointParams' ui_CurveSegments and ui_CurveSmoothness
+/// (/lua/ui/game/commandwaypoint.lua), as Moho's
+/// UICommandGraph::LoadWaypointParams reads them
+struct CommandCurveParams {
+    u32 segments = 20;
+    f32 smoothness = 50.0f;
+};
+
+/// Read from the CommandWaypointParams table at stack index `params`
+CommandCurveParams command_curve_params(lua_State* L, int params);
 
 /// A structure's pad from its footprint and skirt (Physics.SkirtSizeX/Z,
 /// SkirtOffsetX/Z), centred at (x, z): {x0, z0, x1, z1}
@@ -230,8 +252,6 @@ public:
     const std::vector<PlannedSite>& planned_sites() const { return planned_; }
 
     static constexpr u32 MAX_QUADS = 32768;
-    /// Segments a leg's curve is drawn in (ui_CurveSegments)
-    static constexpr u32 kCurveSegments = 20;
     /// A leg's width in the world for one unit; for n, √n of it, at most 10
     /// (commandwaypoint.lua's CalculateWaypointLineWidth)
     static constexpr f32 kLineWidth = 1.0f;
@@ -256,6 +276,7 @@ private:
 
     std::unordered_map<std::string, CommandGraphStyle> styles_;
     std::unordered_map<std::string, std::array<f32, 6>> pads_;
+    CommandCurveParams curve_;
     bool styles_read_ = false;
     u32 highlight_ = 0;
     u32 hovered_unit_ = 0;
