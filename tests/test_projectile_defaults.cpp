@@ -135,3 +135,42 @@ TEST_CASE("A projectile leads its target unless its blueprint says not", "[bluep
     (void)dart.apply_blueprint_physics(state.raw());
     CHECK_FALSE(dart.lead_target);
 }
+
+TEST_CASE("A projectile a script makes lives Moho's 15 seconds unless its blueprint says",
+          "[blueprints]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    REQUIRE(lua.do_string(R"(
+        __blueprints = {
+            shell = {Physics = {}},
+            timed = {Physics = {Lifetime = 3}},
+            typo = {Physics = {LifeTime = 30}},
+        }
+    )")
+                .ok());
+    lua_State* L = lua.raw();
+    auto parent = std::make_unique<osc::sim::Projectile>();
+    parent->set_blueprint_id("shell");
+    const osc::u32 id = sim.entity_registry().register_entity(std::move(parent));
+    osc::sim::create_projectile_object(
+        L, *static_cast<osc::sim::Projectile*>(sim.entity_registry().find(id)), false, true);
+    lua_setglobal(L, "parent");
+    lua_settop(L, 0);
+    const auto lifetime = [&](const std::string& bp) {
+        REQUIRE(lua.do_string("child = moho.projectile_methods.CreateChildProjectile(parent, '" +
+                              bp + "')")
+                    .ok());
+        lua_getglobal(L, "child");
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        const auto* child = static_cast<const osc::sim::Projectile*>(lua_touserdata(L, -1));
+        lua_settop(L, 0);
+        REQUIRE(child);
+        return child->lifetime;
+    };
+    CHECK(lifetime("shell") == 15.0f);
+    CHECK(lifetime("timed") == 3.0f);
+    CHECK(lifetime("typo") == 15.0f);
+}

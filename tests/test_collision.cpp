@@ -489,6 +489,62 @@ TEST_CASE("a straight weapon's turret holds, off target, where no arc reaches", 
     CHECK(t.aim->pitch() == 0.0f);
 }
 
+TEST_CASE("a shot whose projectile gives no Lifetime lives Moho's 15 seconds", "[collision]") {
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {bare = {Physics = {}},"
+                          " spread = {Physics = {LifetimeRange = 2}}}")
+                .ok());
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    const auto lifetime = [&](osc::sim::Weapon& w) {
+        const Projectile* p = w.launch(owner, {0, 20, 0}, nullptr, reg, lua.raw(), false);
+        REQUIRE(p);
+        return p->lifetime;
+    };
+    osc::sim::Weapon gun;
+    gun.muzzle_velocity = 20;
+    gun.max_range = 40;
+    gun.projectile_bp_id = "bare";
+    CHECK(lifetime(gun) == 15.0f);
+    osc::sim::Weapon bomb;
+    bomb.need_compute_bomb_drop = true;
+    bomb.projectile_bp_id = "bare";
+    CHECK(lifetime(bomb) == 15.0f);
+    osc::sim::Weapon silo;
+    silo.counted_projectile = true;
+    silo.projectile_bp_id = "bare";
+    CHECK(lifetime(silo) == 15.0f);
+
+    gun.projectile_bp_id = "spread";
+    f32 low = 1e9f;
+    f32 high = -1e9f;
+    for (int i = 0; i < 200; ++i) {
+        const f32 t = lifetime(gun);
+        low = std::min(low, t);
+        high = std::max(high, t);
+    }
+    CHECK(low >= 13.0f);
+    CHECK(low < 13.5f);
+    CHECK(high > 16.5f);
+    CHECK(high <= 17.0f);
+}
+
+TEST_CASE("a projectile blueprint's LifeTime is not its Lifetime", "[collision]") {
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {typo = {Physics = {LifeTime = 30}}}").ok());
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 20;
+    w.max_range = 40;
+    w.projectile_bp_id = "typo";
+    const Projectile* p = w.launch(owner, {0, 0, 0}, nullptr, reg, lua.raw(), false);
+    REQUIRE(p);
+    CHECK(p->lifetime == 15.0f);
+}
+
 TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision]") {
     EntityRegistry reg;
     const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
@@ -496,10 +552,9 @@ TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision
     osc::sim::Weapon w;
     w.muzzle_velocity = 20;
     w.max_range = 40;
-    // With neither, a shot lives its flight to its reach and two seconds.
     const Projectile* plain = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
     REQUIRE(plain);
-    CHECK(plain->lifetime == Approx(40.0f / 20.0f + 2.0f));
+    CHECK(plain->lifetime == 15.0f);
     // ProjectileLifetime sets it.
     w.projectile_lifetime = 7;
     const Projectile* timed = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
@@ -607,9 +662,8 @@ TEST_CASE("a projectile's blueprint ranges spread each one made", "[collision]")
         CHECK(p.max_speed <= 12.0f);
         CHECK(p.turn_rate == 90.0f); // no range: as it is
         CHECK(p.acceleration == 4.0f);
-        REQUIRE(found.lifetime);
-        CHECK(*found.lifetime >= 4.0f);
-        CHECK(*found.lifetime <= 6.0f);
+        CHECK(found.lifetime >= 4.0f);
+        CHECK(found.lifetime <= 6.0f);
         low = std::min(low, p.max_speed);
         high = std::max(high, p.max_speed);
     }

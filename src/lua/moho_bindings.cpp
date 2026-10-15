@@ -379,7 +379,7 @@ void apply_script_projectile_physics(lua_State* L, sim::Projectile& p) {
     const sim::Projectile::BlueprintPhysics physics =
         p.apply_blueprint_physics(L, sim ? &sim->entity_registry().sim_random() : nullptr);
     if (physics.use_gravity.value_or(true)) p.ballistic_accel = -sim::Projectile::GRAVITY;
-    p.lifetime = physics.lifetime.value_or(10.0f);
+    p.lifetime = physics.lifetime;
 }
 
 std::string lowercase_arg(lua_State* L, int idx) {
