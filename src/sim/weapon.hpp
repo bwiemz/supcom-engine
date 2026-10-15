@@ -76,8 +76,8 @@ public:
     Vector3 aim_point(const Entity& target, const Unit& owner, const Vector3& muzzle,
                       const Vector3& muzzle_forward) const;
     bool fire_on_death = false;
-    /// DummyWeapon, or a Death weapon (a structure's explosion): never one
-    /// a unit attacks with.
+    /// A Death weapon (a commander's explosion): never one a unit attacks
+    /// with.
     bool dummy = false;
     /// ManualFire: fires only at what its unit's launch order names.
     bool manual_fire = false;

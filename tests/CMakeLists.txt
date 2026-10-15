@@ -163,6 +163,7 @@ add_executable(osc_tests
     test_url_bindings.cpp
     test_script_object.cpp
     test_veterancy_kills.cpp
+    test_unit_weapons.cpp
     test_quaternions.cpp
     test_category_match.cpp
     test_parse_category.cpp
