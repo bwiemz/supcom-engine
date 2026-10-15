@@ -59,6 +59,7 @@ public:
     /// Apply this manipulator to its bones in the unit's pose (see
     /// Unit::bone_pose), on top of the lower-precedence ones before it.
     virtual void apply_pose(PoseLocals& /*pose*/) {}
+    virtual void after_pose(const PoseLocals& /*pose*/) {}
 
     // Waitable interface
     bool is_done() const override { return is_at_goal(); }
@@ -297,22 +298,31 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// SlaverManipulator — slaves one bone's rotation to follow another
+// SlaverManipulator — turns a bone as another has turned from its bind pose
+// (CreateSlaver; faf-re CSlaveManipulator)
 // ---------------------------------------------------------------------------
 class SlaverManipulator : public Manipulator {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
-    void tick(f32 /*dt*/) override {} // slaving is resolved at render time
-    bool is_at_goal() const override { return true; }
+    /// Moho reads the master from CAniActor's prior pose.
+    void tick(f32 dt) override;
+    bool is_at_goal() const override { return at_goal_; }
+    void apply_pose(PoseLocals& pose) override { pose.rotate(slave_bone_, current_); }
+    void after_pose(const PoseLocals& pose) override;
 
     void set_slave_bone(i32 b) { slave_bone_ = b; }
     void set_master_bone(i32 b) { master_bone_ = b; }
     i32 slave_bone() const { return slave_bone_; }
     i32 master_bone() const { return master_bone_; }
+    void set_max_rate(f32 degrees_per_second);
 
 private:
     i32 slave_bone_ = 0;
     i32 master_bone_ = 0;
+    Quaternion master_turn_{};
+    Quaternion current_{};
+    f32 max_rate_rad_ = -1.0f;
+    bool at_goal_ = true;
 };
 
 // ---------------------------------------------------------------------------

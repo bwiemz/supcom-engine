@@ -494,6 +494,28 @@ static int thrust_SetThrustingParam(lua_State* L) {
     return 0;
 }
 
+static int slaver_SetMaxRate(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 2) {
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "SlaveManipulator:SetMaxRate(self, degrees_per_second)", 2, n);
+    }
+    auto* m = check_manip_base(L);
+    if (!m) {
+        return 0;
+    }
+    static_cast<sim::SlaverManipulator*>(m)->set_max_rate(static_cast<f32>(luaL_checknumber(L, 2)));
+    lua_settop(L, 1);
+    return 1;
+}
+
+// clang-format off
+static const MethodEntry slave_manipulator_methods[] = {
+    {"SetMaxRate", slaver_SetMaxRate},
+    {nullptr, nullptr},
+};
+// clang-format on
+
 // Minimal entries for other classes
 // clang-format off
 static const MethodEntry thrust_manipulator_methods[] = {
@@ -1721,7 +1743,7 @@ static const MohoClassDef moho_classes[] = {
     {"BuilderArmManipulator",   builder_arm_methods,            "manipulator_methods"},
     {"RotateManipulator",       rotate_manipulator_methods,     "manipulator_methods"},
     {"SlideManipulator",        slide_manipulator_methods,      "manipulator_methods"},
-    {"SlaveManipulator",        empty_methods,                  "manipulator_methods"},
+    {"SlaveManipulator",        slave_manipulator_methods,      "manipulator_methods"},
     {"ThrustManipulator",       thrust_manipulator_methods,     "manipulator_methods"},
     {"BoneEntityManipulator",   empty_methods,                  "manipulator_methods"},
     {"StorageManipulator",      empty_methods,                  "manipulator_methods"},

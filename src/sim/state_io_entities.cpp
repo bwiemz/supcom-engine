@@ -836,6 +836,10 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         const auto& x = static_cast<const SlaverManipulator&>(m);
         w.i32v(x.slave_bone_);
         w.i32v(x.master_bone_);
+        w.quat(x.master_turn_);
+        w.quat(x.current_);
+        w.f32v(x.max_rate_rad_);
+        w.b(x.at_goal_);
         break;
     }
     case ManipKind::CollisionDetector: {
@@ -986,6 +990,10 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         auto x = std::make_unique<SlaverManipulator>();
         x->slave_bone_ = r.i32v();
         x->master_bone_ = r.i32v();
+        x->master_turn_ = r.quat();
+        x->current_ = r.quat();
+        x->max_rate_rad_ = r.f32v();
+        x->at_goal_ = r.b();
         m = std::move(x);
         break;
     }
