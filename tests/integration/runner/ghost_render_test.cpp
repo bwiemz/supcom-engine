@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <optional>
 #include <string>
 
 namespace osc::test {
@@ -116,6 +117,35 @@ void test_ghost_render(TestContext& ctx) {
             fmt::format("Test 4: a template's ghosts each draw their own blueprint ({} draws, a "
                         "factory for a generator changes {} pixels)",
                         both, factory.pixels));
+
+    (void)spawn_unit(ctx, "__osc_ghost_shield", "ueb4202", "ARMY_1", {spot->x + 9.0f, spot->z});
+    run_lua(ctx, "ForkThread(function()\n"
+                 "  while true do ArmyBrains[1]:GiveResource('ENERGY', 5000) WaitTicks(1) end\n"
+                 "end)\n");
+    for (int i = 0; i < 20; ++i) {
+        ctx.sim.tick();
+    }
+    shots.recapture();
+    const Pixels shielded = shot(nullptr);
+    const Tint under = changed_tint(shielded, shot(&ghost));
+    std::optional<size_t> ghost_at;
+    std::optional<size_t> fill_at;
+    const auto& groups = r.unit_renderer().mesh_groups();
+    for (size_t i = 0; i < groups.size(); ++i) {
+        if (groups[i].ghost && !ghost_at) {
+            ghost_at = i;
+        }
+        if (groups[i].mesh->technique == renderer::MeshTechnique::ShieldFill && !fill_at) {
+            fill_at = i;
+        }
+    }
+    t.check(ghost_at && fill_at && *ghost_at < *fill_at && under.pixels > 100 &&
+                under.g > under.r + 0.05f,
+            fmt::format("Test 5: under a shield the ghost draws before its fill (group {} of {}, "
+                        "the fill {}) and shows: {} pixels, change r {:.3f} g {:.3f} b {:.3f}",
+                        ghost_at ? static_cast<int>(*ghost_at) : -1, groups.size(),
+                        fill_at ? static_cast<int>(*fill_at) : -1, under.pixels, under.r, under.g,
+                        under.b));
 
     spdlog::info("Ghost test: {}/{} passed", t.pass, t.pass + t.fail);
 }
