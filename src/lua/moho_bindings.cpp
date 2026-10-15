@@ -235,6 +235,18 @@ void push_vector3(lua_State* L, const sim::Vector3& v) {
     lua_setmetatable(L, -2);
 }
 
+void push_vector2(lua_State* L, f32 x, f32 y) {
+    lua_newtable(L);
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, x);
+    lua_settable(L, -3);
+    lua_pushnumber(L, 2);
+    lua_pushnumber(L, y);
+    lua_settable(L, -3);
+    push_vector_metatable(L);
+    lua_setmetatable(L, -2);
+}
+
 // Push a direction as the three separate numbers retail's bindings return, for
 // the calls retail's Lua destructures (`local x, y, z = GetBoneDirection(b)`).
 // Returns 3, for the caller's return statement.

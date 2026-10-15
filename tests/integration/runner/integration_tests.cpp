@@ -20062,12 +20062,12 @@ void test_uiboot(TestContext& ctx) {
             lua_getglobal(L, "_test_proj");
             if (lua_istable(L, -1)) {
                 lua_pushstring(L, "x");
-                lua_rawget(L, -2);
+                lua_gettable(L, -2);
                 ok = lua_isnumber(L, -1);
                 lua_pop(L, 1);
                 if (ok) {
                     lua_pushstring(L, "y");
-                    lua_rawget(L, -2);
+                    lua_gettable(L, -2);
                     ok = lua_isnumber(L, -1);
                     lua_pop(L, 1);
                 }

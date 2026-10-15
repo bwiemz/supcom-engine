@@ -89,6 +89,8 @@ audio::SoundManager* get_sound_mgr(lua_State* L);
 bool extract_sound_table(lua_State* L, int idx, std::string& bank, std::string& cue,
                          std::string* lod_cutoff = nullptr);
 void push_vector3(lua_State* L, const sim::Vector3& v);
+/// A Vector2 as Moho returns one (SCR_ToLua<Wm3::Vector2f>).
+void push_vector2(lua_State* L, f32 x, f32 y);
 /// A direction as three numbers, the way retail's bindings return it (see
 /// entity_GetBoneDirection); returns 3.
 int push_direction(lua_State* L, const sim::Vector3& v);
