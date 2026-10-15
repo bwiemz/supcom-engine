@@ -3,6 +3,7 @@
 // a replay see it at the same tick. It never changes the live sim.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -267,6 +268,23 @@ TEST_CASE("GetIdleEngineers counts the orders given and not yet run", "[userunit
     stop.type = osc::sim::CommandType::Stop;
     w.sim.schedule_command(0, {w.id}, stop, true);
     CHECK(idle() == 1.0);
+}
+
+TEST_CASE("GetIdleEngineers leaves out commanders, scouts and untargetable units", "[userunit]") {
+    const std::string category =
+        GENERATE(as<std::string>{}, "", "COMMAND", "SCOUT", "UNTARGETABLE");
+    CAPTURE(category);
+    UiWorld w;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_ui_bindings(w.ui, registry);
+    w.unit().add_category("ENGINEER");
+    if (!category.empty()) {
+        w.unit().add_category(category);
+    }
+    auto result = w.ui.do_string("local e = GetIdleEngineers() return e and table.getn(e) or 0");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(lua_tonumber(w.ui.raw(), -1) == (category.empty() ? 1.0 : 0.0));
 }
 
 TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[userunit]") {
