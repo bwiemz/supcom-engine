@@ -543,10 +543,10 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return OrderStep::Hold;
         }
     }
-    if (dist2 > range2) {
-        // Move toward target: a FormAttack's unit toward its slot about it,
-        // the formation centred on the target wherever it goes (Moho's
-        // attack task, Update: SetCoords, GetAdjustedFormationPosition)
+    // Move toward target: a FormAttack's unit toward its slot about it,
+    // the formation centred on the target wherever it goes (Moho's
+    // attack task, Update: SetCoords, GetAdjustedFormationPosition)
+    const auto close_in = [&] {
         Vector3 goal = target->position();
         if (cmd.has_slot) {
             goal.x += cmd.slot_offset.x;
@@ -557,12 +557,20 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             set_path_goal(goal, ctx);
         }
         nav_update(dt, ctx.terrain);
+    };
+    if (dist2 > range2) {
+        close_in();
     } else {
         // In reach, the formation is dropped: from now on the unit attacks
         // as a plain attack does (TaskTick's Processing: mFormation = null).
         cmd.has_slot = false;
-        navigator_.abort_move();
-        // Parked, every 9 ticks it asks to face its target AttackAngle off
+        // CUnitAttackTargetTask::TaskTick, Complete: AbortNavigation unless Air.CanFly.
+        if (can_fly()) {
+            close_in();
+        } else {
+            navigator_.abort_move();
+        }
+        // In reach, every 9 ticks it asks to face its target AttackAngle off
         // the bow (Moho's attack task, Complete: SetFacing, return 10).
         if (attack_angle_ > 0.0f) {
             if (cmd.facing_clock <= 0) {
@@ -670,15 +678,17 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Hold;
     }
     if (weapon && weapon->in_firing_range(*this, at)) {
-        navigator_.abort_move();
         cmd.engaged = true;
         cmd.has_slot = false; // the formation dropped, as on a unit
-        return OrderStep::Hold;
+        if (!can_fly()) {
+            navigator_.abort_move();
+            return OrderStep::Hold;
+        }
     }
-    // Out of range it goes toward the point; inside its weapon's minimum
-    // range it backs off GuardScanRadius from the point (the task's
-    // Starting state). With no weapon that can hit the point it goes there
-    // and stays.
+    // Out of range, or in range if it can fly, it goes toward the point;
+    // inside its weapon's minimum range it backs off GuardScanRadius from
+    // the point (the task's Starting state). With no weapon that can hit
+    // the point it goes there and stays.
     // A FormAttack's unit heads for its slot about the point.
     Vector3 goal = at;
     if (cmd.has_slot) {
