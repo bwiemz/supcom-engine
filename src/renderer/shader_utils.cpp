@@ -2235,15 +2235,19 @@ layout(location = 1) in vec4 fragColor;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec4 texColor = texture(texSampler, fragUV);
+    vec4 texColor;
     if (fragColor.a < 0.0) {
-        // A negative alpha asks for FA's StrategicIconPS (M215c): the
-        // icon's grey texels take the tint (its army's colour), the rest
-        // (outlines, the selected ring) keep their own.
+        // A negative alpha asks for FA's StrategicIconPS (M215c), through
+        // its PointSampler (primbatcher.fx): the icon's grey texels take the
+        // tint (its army's colour), the rest (outlines, the selected ring)
+        // keep their own.
+        ivec2 size = textureSize(texSampler, 0);
+        texColor = texelFetch(texSampler, clamp(ivec2(fragUV * vec2(size)), ivec2(0), size - 1), 0);
         vec3 d = texColor.rgb - vec3(0.5);
         if (dot(d, d) < 0.25) texColor.rgb = fragColor.rgb;
         outColor = texColor;
     } else {
+        texColor = texture(texSampler, fragUV);
         outColor = texColor * fragColor;
     }
     if (outColor.a < 0.01) discard;

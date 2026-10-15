@@ -14,6 +14,8 @@
 #include "render_probe.hpp"
 
 #include "renderer/army_colors.hpp"
+#include "renderer/dds_decode.hpp"
+#include "renderer/dds_parser.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/texture_cache.hpp"
@@ -21,6 +23,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <lua.h>
 #include <spdlog/spdlog.h>
@@ -32,6 +35,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace osc::test {
@@ -610,6 +614,63 @@ void test_strategic_icons(TestContext& ctx) {
     }
     r.set_strategic_icon_scale(1.0f);
     r.set_projectile_icon_scale(1.0f);
+
+    {
+        const std::string rest = icon_texture(ctx, "uel0201", "rest");
+        const auto file = ctx.vfs.read_file(rest);
+        const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
+        OffscreenShots retina(ctx, 2.0f);
+        int blocks = 0;
+        int blended = 0;
+        if (dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK && !dds->mips.empty() && retina.ok()) {
+            const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
+                reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
+            renderer::Renderer& big = retina.renderer();
+            big.set_player_army(0);
+            (void)retina.shoot(*ctx.sim.terrain(), sx, sz, 300.0f);
+            const ImageRGBA8 image = retina.grab();
+            const auto& quads = big.strategic_icons().quads();
+            const auto& textures = big.strategic_icons().quad_textures();
+            for (size_t i = 0; i < quads.size() && i < textures.size(); ++i) {
+                if (textures[i] != rest) {
+                    continue;
+                }
+                const auto x0 = static_cast<i32>(2.0f * quads[i].rect[0]);
+                const auto y0 = static_cast<i32>(2.0f * quads[i].rect[1]);
+                for (u32 v = 0; v < dds->height; ++v) {
+                    for (u32 u = 0; u < dds->width; ++u) {
+                        if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
+                            continue;
+                        }
+                        const i32 px = x0 + 2 * static_cast<i32>(u);
+                        const i32 py = y0 + 2 * static_cast<i32>(v);
+                        if (px < 0 || py < 0 || px + 1 >= static_cast<i32>(image.width) ||
+                            py + 1 >= static_cast<i32>(image.height)) {
+                            continue;
+                        }
+                        const auto at = [&](i32 x, i32 y) {
+                            return &image.pixels[(static_cast<size_t>(y) * image.width +
+                                                  static_cast<size_t>(x)) *
+                                                 4];
+                        };
+                        bool same = true;
+                        for (const auto& [dx, dy] :
+                             {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
+                            same = same && std::equal(at(px, py), at(px, py) + 3,
+                                                      at(px + dx, py + dy));
+                        }
+                        ++blocks;
+                        blended += same ? 0 : 1;
+                    }
+                }
+            }
+        }
+        t.check(blocks > 0 && blended == 0,
+                fmt::format("Test 30: at a display scale of 2 each of the tank icon's opaque "
+                            "texels is a 2x2 block of one colour (point sampled): {} of {} "
+                            "blended",
+                            blended, blocks));
+    }
 
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }
