@@ -146,7 +146,7 @@ struct AirCombatRules {
     /// what they work on, at a radius that changes now and then.
     bool hover_over_attack = false;
     bool circling_dir_change = true;        ///< it may change direction at each change
-    f32 circling_min_airspeed = 0.0f;       ///< MinAirspeed as given (0 missing): its step round
+    f32 circling_min_airspeed = 0.0f;       ///< min_airspeed: its step round
     f32 circling_turn_mult = 3.0f;          ///< its turn gain while circling
     f32 circling_radius_min = 0.6f;         ///< CirclingRadiusChangeMinRatio
     f32 circling_radius_max = 0.9f;         ///< CirclingRadiusChangeMaxRatio

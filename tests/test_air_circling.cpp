@@ -106,6 +106,10 @@ struct World {
                 blueprint("banker", airframe + ", Winged = true, BankFactor = 2"),
                 blueprint("flatwing", airframe + ", Winged = true, BankFactor = 0"),
                 blueprint("gunfwd", gunship_air + ", BankForward = true"),
+                blueprint("nomin", "CanFly = true, MaxAirspeed = 12, StartTurnDistance = 5,"
+                                   " KMove = 0.8, KMoveDamping = 2, KTurn = 0.8,"
+                                   " KTurnDamping = 1.5, BankFactor = 0.1,"
+                                   " CirclingDirChange = false"),
                 blueprint("drone", "CanFly = true, MaxAirspeed = 4, MinAirspeed = 3,"
                                    " StartTurnDistance = 5, KMove = 1, KMoveDamping = 1.2"),
                 // An engineering drone: it repairs what it guards (REPAIR, a
@@ -138,7 +142,7 @@ struct World {
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
         for (const char* id : {"gunship", "steady", "hoverer", "plane", "banker", "flatwing",
-                               "gunfwd", "drone", "repairdrone", "tank"}) {
+                               "gunfwd", "nomin", "drone", "repairdrone", "tank"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -376,6 +380,29 @@ TEST_CASE("Without CirclingDirChange a gunship goes round one way only", "[air_c
     INFO("net " << net << " total " << total);
     CHECK(std::abs(net) > 2.0f);
     CHECK(std::abs(net) > 0.95f * total);
+}
+
+TEST_CASE("A gunship without MinAirspeed goes round its target by a MaxAirspeed's step",
+          "[air_circling]") {
+    World w;
+    Unit& g = *w.make("nomin", 20.0f, 64.0f);
+    World::arm(g, 22.0f);
+    const Vector3 at{64.0f, 10.0f, 64.0f};
+    World::attack_ground(g, at);
+    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+    for (int t = 0; t < 100; ++t) {
+        w.tick(g);
+    }
+    f32 net = 0.0f;
+    f32 angle = std::atan2(g.position().x - at.x, g.position().z - at.z);
+    for (int t = 0; t < 300; ++t) {
+        w.tick(g);
+        const f32 now = std::atan2(g.position().x - at.x, g.position().z - at.z);
+        net += wrap(now - angle);
+        angle = now;
+    }
+    INFO("net " << net);
+    CHECK(std::abs(net) > 2.0f);
 }
 
 TEST_CASE("A HoverOverAttack aircraft hangs at its reach rather than circle", "[air_circling]") {

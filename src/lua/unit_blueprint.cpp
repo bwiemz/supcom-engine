@@ -1107,7 +1107,6 @@ static void read_air(lua_State* L, const BlueprintStore& store, const BlueprintE
             rules.circling_dir_change = lua_isnil(L, -1) || flag("CirclingDirChange");
             lua_pop(L, 1);
         }
-        rules.circling_min_airspeed = rules.min_airspeed;
         rules.circling_turn_mult = number("CirclingTurnMult", 3.0f);
         rules.circling_radius_min = number("CirclingRadiusChangeMinRatio", 0.6f);
         rules.circling_radius_max = number("CirclingRadiusChangeMaxRatio", 0.9f);
@@ -1142,12 +1141,15 @@ static void read_air(lua_State* L, const BlueprintStore& store, const BlueprintE
     if (unit.max_airspeed() <= 0 && unit.max_speed() > 0) unit.set_max_airspeed(unit.max_speed());
     if (unit.accel_rate() <= 0 && unit.max_airspeed() > 0)
         unit.set_accel_rate(unit.max_airspeed() * 0.5f);
-    if (unit.turn_rate_rad() <= 0) unit.set_turn_rate_rad(1.5f); // ~86 deg/s default
-    if (unit.air_combat_rules().min_airspeed <= 0.0f) {
-        sim::AirCombatRules rules = unit.air_combat_rules();
-        rules.min_airspeed = unit.max_airspeed();
-        unit.set_air_combat_rules(rules);
+    if (unit.turn_rate_rad() <= 0) {
+        unit.set_turn_rate_rad(1.0f);
     }
+    sim::AirCombatRules rules = unit.air_combat_rules();
+    if (rules.min_airspeed <= 0.0f) {
+        rules.min_airspeed = unit.max_airspeed();
+    }
+    rules.circling_min_airspeed = rules.min_airspeed;
+    unit.set_air_combat_rules(rules);
 }
 
 /// General.CommandCaps / ToggleCaps: the orders and toggles a unit
