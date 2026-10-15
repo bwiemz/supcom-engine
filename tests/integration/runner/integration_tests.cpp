@@ -14356,9 +14356,9 @@ void test_air_staging(TestContext& ctx) {
           "a plane called off on its way gives its slot up");
 
     // A pad still being built takes nobody (Moho's IssueRefuelTask): the
-    // order ends at once.
+    // order ends at once. (A tech 2 engineer's: the pad is built by tier 2.)
     lua(R"(
-        __osc_eng = CreateUnitHPR('uel0105', 'ARMY_1', __osc_px + 40, GetTerrainHeight(__osc_px + 40, __osc_pz - 40), __osc_pz - 40, 0, 0, 0)
+        __osc_eng = CreateUnitHPR('uel0208', 'ARMY_1', __osc_px + 40, GetTerrainHeight(__osc_px + 40, __osc_pz - 40), __osc_pz - 40, 0, 0, 0)
         IssueBuildMobile({__osc_eng}, {__osc_px + 50, 0, __osc_pz - 40}, 'ueb5202', {})
     )");
     const osc::sim::Unit* unbuilt = nullptr;

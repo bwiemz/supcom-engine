@@ -123,6 +123,9 @@ public:
     void set_frame_index(u32 fi) { fi_ = fi; }
 
     void set_icons(StrategicIconRenderer* icons) { icons_ = icons; }
+    /// FAF's ui_DepositIconScale, for the deposits' icons on the map (1 as
+    /// retail).
+    void set_deposit_icon_scale(f32 s) { deposit_icon_scale_ = s; }
 
     /// This frame's quads from update() (the legacy HUD's minimap).
     const std::vector<UIQuad>& quads() const { return quads_; }
@@ -157,6 +160,7 @@ private:
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
     u32 fi_ = 0;
     StrategicIconRenderer* icons_ = nullptr;
+    f32 deposit_icon_scale_ = 1.0f;
 
     std::vector<UIQuad> quads_;
     u32 quad_count_ = 0; // quads uploaded for render()

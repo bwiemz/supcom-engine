@@ -21,6 +21,17 @@ i32 windows_key_code(i32 glfw_key);
 /// right 3). 0 for any other button.
 i32 moho_mouse_button(i32 glfw_button);
 
+/// The side mouse buttons as keys, as FAF's patched game has them
+/// (FA-Binary-Patches OnWindowMessage.cpp makes WM_XBUTTONDOWN/UP the
+/// WM_KEYDOWN/UP of VK_XBUTTON1/2, which wx passes on as key codes 5 and 6;
+/// retail's wx 2.4 drops them). GLFW has no key below space, so these stand
+/// for them among its key codes, with both codes 5 and 6.
+constexpr i32 kKeyXButton1 = 5;
+constexpr i32 kKeyXButton2 = 6;
+
+/// The key a side mouse button is (kKeyXButton1/2), else 0.
+i32 side_button_key(i32 glfw_button);
+
 /// The GLFW keys a modifier's keyNames.lua name stands for, in any case;
 /// none for another name.
 std::vector<i32> glfw_keys_named(std::string_view name);

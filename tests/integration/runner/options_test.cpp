@@ -216,6 +216,28 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
                             sky, clear));
     }
 
+    // Test 6: FAF's patched game's icon scales, as its options set them
+    // (ConExecute), 1 as retail draws them
+    {
+        const bool retail = near(r.strategic_icon_scale(), 1.0f) &&
+                            near(r.projectile_icon_scale(), 1.0f) &&
+                            near(r.deposit_icon_scale(), 1.0f);
+        const auto typed = ui.lua_state.do_string("ConExecute('ui_StrategicIconScale 1.5') "
+                                                  "ConExecute('ui_ProjectileIconScale 2') "
+                                                  "ConExecute('ui_DepositIconScale 0.5')");
+        const bool set = near(r.strategic_icon_scale(), 1.5f) &&
+                         near(r.projectile_icon_scale(), 2.0f) &&
+                         near(r.deposit_icon_scale(), 0.5f);
+        t.check(retail && static_cast<bool>(typed) && set,
+                fmt::format("Test 6: the icon scales start at 1 ({}) and take ConExecute's "
+                            "{}, {}, {}",
+                            retail, r.strategic_icon_scale(), r.projectile_icon_scale(),
+                            r.deposit_icon_scale()));
+        console->execute(L, "ui_StrategicIconScale 1");
+        console->execute(L, "ui_ProjectileIconScale 1");
+        console->execute(L, "ui_DepositIconScale 1");
+    }
+
     lua_pushstring(L, "__osc_renderer");
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);

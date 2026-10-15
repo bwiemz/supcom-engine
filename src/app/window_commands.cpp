@@ -346,6 +346,20 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
     renderer_bool("ui_NisRenderIcons", true, &Renderer::nis_icons, &Renderer::set_nis_icons);
     renderer_bool("UI_forceWeaponsToYellow", true, &Renderer::weapons_yellow,
                   &Renderer::set_weapons_yellow);
+    // FAF's patched game's icon scales (FA-Binary-Patches Icons/*.cxx), which
+    // FAF's options set (150%, 200%): retail draws them at 1
+    const auto renderer_float = [&](const char* name, f32 fallback, f32 (Renderer::*get)() const,
+                                    void (Renderer::*set)(f32)) {
+        renderer_var<f32>(
+            console, held, name, fallback, [get](Renderer& r) { return (r.*get)(); },
+            [set](Renderer& r, f32 v) { (r.*set)(v); });
+    };
+    renderer_float("ui_StrategicIconScale", 1.0f, &Renderer::strategic_icon_scale,
+                   &Renderer::set_strategic_icon_scale);
+    renderer_float("ui_ProjectileIconScale", 1.0f, &Renderer::projectile_icon_scale,
+                   &Renderer::set_projectile_icon_scale);
+    renderer_float("ui_DepositIconScale", 1.0f, &Renderer::deposit_icon_scale,
+                   &Renderer::set_deposit_icon_scale);
     renderer_bool("UI_RenProjectileIcons", true, &Renderer::projectile_icons_on,
                   &Renderer::set_projectile_icons);
     renderer_bool("UI_RenProjectileGlow", true, &Renderer::projectile_glow,

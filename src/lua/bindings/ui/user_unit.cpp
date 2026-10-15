@@ -236,6 +236,15 @@ int uu_GetMaxHealth(lua_State* L) {
 int uu_GetWorkProgress(lua_State* L) {
     return push_number_of(L, &sim::EntityRecord::work_progress, 0.0f);
 }
+/// FAF's patched game (UserUnit.cpp): how far the unit is built, 1 when
+/// finished, and nothing for a unit gone. FAF's construction and orders
+/// panels ask it of an external factory unguarded.
+int uu_GetFractionComplete(lua_State* L) {
+    const auto* r = record(L);
+    if (!r) return 0;
+    lua_pushnumber(L, static_cast<lua_Number>(r->fraction_complete));
+    return 1;
+}
 int uu_GetFuelRatio(lua_State* L) {
     return push_number_of(L, &sim::EntityRecord::fuel_ratio, -1.0f);
 }
@@ -607,6 +616,7 @@ const MethodEntry user_unit_methods[] = {
     {"GetEntityId",              uu_GetEntityId},
     {"GetFocus",                 uu_GetFocus},
     {"GetFootPrintSize",         uu_GetFootPrintSize},
+    {"GetFractionComplete",      uu_GetFractionComplete},
     {"GetFuelRatio",             uu_GetFuelRatio},
     {"GetGuardedEntity",         uu_GetGuardedEntity},
     {"GetHealth",                uu_GetHealth},

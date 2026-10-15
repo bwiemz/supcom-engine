@@ -50,6 +50,7 @@ i32 moho_key_code(i32 glfw_key) {
     // GLFW's printable keys are their (unshifted, upper case) ASCII codes,
     // as wx's are.
     if (glfw_key >= GLFW_KEY_SPACE && glfw_key <= GLFW_KEY_GRAVE_ACCENT) return glfw_key;
+    if (glfw_key == kKeyXButton1 || glfw_key == kKeyXButton2) return glfw_key;
     if (glfw_key >= GLFW_KEY_F1 && glfw_key <= GLFW_KEY_F24)
         return kWxF1 + (glfw_key - GLFW_KEY_F1);
     if (glfw_key >= GLFW_KEY_KP_0 && glfw_key <= GLFW_KEY_KP_9)
@@ -95,7 +96,8 @@ i32 moho_key_code(i32 glfw_key) {
 i32 windows_key_code(i32 glfw_key) {
     // Letters, digits and space share their codes with Windows.
     if ((glfw_key >= GLFW_KEY_A && glfw_key <= GLFW_KEY_Z) ||
-        (glfw_key >= GLFW_KEY_0 && glfw_key <= GLFW_KEY_9) || glfw_key == GLFW_KEY_SPACE)
+        (glfw_key >= GLFW_KEY_0 && glfw_key <= GLFW_KEY_9) || glfw_key == GLFW_KEY_SPACE ||
+        glfw_key == kKeyXButton1 || glfw_key == kKeyXButton2)
         return glfw_key;
     if (glfw_key >= GLFW_KEY_F1 && glfw_key <= GLFW_KEY_F24) return 0x70 + (glfw_key - GLFW_KEY_F1);
     if (glfw_key >= GLFW_KEY_KP_0 && glfw_key <= GLFW_KEY_KP_9)
@@ -180,6 +182,14 @@ i32 moho_mouse_button(i32 glfw_button) {
     case GLFW_MOUSE_BUTTON_LEFT: return 1;
     case GLFW_MOUSE_BUTTON_MIDDLE: return 2;
     case GLFW_MOUSE_BUTTON_RIGHT: return 3;
+    default: return 0;
+    }
+}
+
+i32 side_button_key(i32 glfw_button) {
+    switch (glfw_button) {
+    case GLFW_MOUSE_BUTTON_4: return kKeyXButton1;
+    case GLFW_MOUSE_BUTTON_5: return kKeyXButton2;
     default: return 0;
     }
 }

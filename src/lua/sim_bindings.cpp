@@ -4932,17 +4932,48 @@ static int l_IssueEnhancement(lua_State* L) {
     return 0;
 }
 
-// IssueBuildMobile(units_table, position, blueprintId, {})
+// IssueBuildMobile(units, position, blueprintId, cells[, all]): Moho gives the
+// build to the one unit that can build it nearest the site (3-D distance), and
+// none if no unit can (faf-re cfunc_IssueBuildMobileL). FAF's game takes a
+// fifth argument: true gives it to every unit instead, once one can build it.
 static int l_IssueBuildMobile(lua_State* L) {
     auto target_pos = extract_position(L, 2);
     const char* bp_id = luaL_checkstring(L, 3);
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
 
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::BuildMobile;
     cmd.target_pos = target_pos;
     cmd.blueprint_id = bp_id;
 
-    route_units_command(L, 1, cmd, false);
+    const auto ids = collect_unit_ids(L, 1);
+    u32 nearest = 0;
+    f32 nearest_d2 = 0.0f;
+    for (const u32 id : ids) {
+        const sim::Entity* e = sim->entity_registry().find(id);
+        if (!e || !e->is_unit()) continue;
+        const auto& u = static_cast<const sim::Unit&>(*e);
+        const auto* brain = sim->get_army(u.army());
+        if (!sim::blueprint_can_build(L, u.blueprint_id(), bp_id) ||
+            (brain && brain->is_build_restricted(bp_id)))
+            continue;
+        const sim::Vector3& p = u.position();
+        const f32 dx = p.x - target_pos.x;
+        const f32 dy = p.y - target_pos.y;
+        const f32 dz = p.z - target_pos.z;
+        const f32 d2 = dx * dx + dy * dy + dz * dz;
+        if (nearest == 0 || d2 < nearest_d2) {
+            nearest = id;
+            nearest_d2 = d2;
+        }
+    }
+    if (nearest == 0) return 0;
+    if (lua_toboolean(L, 5)) {
+        sim->route_command(ids, cmd, false);
+    } else {
+        sim->route_command({nearest}, cmd, false);
+    }
     return 0;
 }
 

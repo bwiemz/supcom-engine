@@ -26,6 +26,9 @@
 #include "renderer/cartographic_renderer.hpp"
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/renderer.hpp"
+#include "renderer/resource_icon_renderer.hpp"
+#include "renderer/texture_cache.hpp"
+#include "renderer/ui_renderer.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
@@ -468,6 +471,35 @@ void test_cartographic_minimap(TestContext& ctx) {
                     ps[0].inst.rect[0] == area.x && ps[0].inst.rect[1] == area.y &&
                     ps[0].inst.rect[2] == area.w && ps[0].inst.rect[3] == area.h,
                 "SetCartographic(false): the terrain texture over the map, as before");
+    }
+
+    // FAF's patched game's ui_DepositIconScale (1 as retail) scales the
+    // deposits' icons on the map too: the minimap is a world view, and
+    // RenderResources draws its icons as the world's
+    {
+        const auto deposit_icons = [&](f32 scale) {
+            int n = 0;
+            for (const char* path :
+                 {renderer::kMassIconTexture, renderer::kHydrocarbonIconTexture}) {
+                const renderer::GPUTexture* tex = r.texture_cache().get(path);
+                if (!tex || tex->width == 0) {
+                    continue;
+                }
+                const f32 w = static_cast<f32>(tex->width >> 2) * 2.0f * scale;
+                for (const renderer::UIQuad& q : r.painted_minimap()) {
+                    n += q.texture_ds == tex->descriptor_set && q.inst.rect[2] == w ? 1 : 0;
+                }
+            }
+            return n;
+        };
+        const int plain = deposit_icons(1.0f);
+        r.set_deposit_icon_scale(2.0f);
+        (void)shots.grab();
+        const int scaled = deposit_icons(2.0f);
+        r.set_deposit_icon_scale(1.0f);
+        t.check(plain > 0 && scaled == plain,
+                fmt::format("ui_DepositIconScale 2 doubles the map's {} deposit icons ({} so)",
+                            plain, scaled));
     }
 
     shots.set_ui(nullptr);

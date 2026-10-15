@@ -155,8 +155,8 @@ void ResourceIconRenderer::update(std::span<const ResourceIcon> icons, TextureCa
         if (!tex || tex->width == 0) {
             continue;
         }
-        const auto half_w = static_cast<f32>(tex->width >> 2);
-        const auto half_h = static_cast<f32>(tex->height >> 2);
+        const auto half_w = static_cast<f32>(tex->width >> 2) * scale_;
+        const auto half_h = static_cast<f32>(tex->height >> 2) * scale_;
         Group group{tex->descriptor_set, static_cast<u32>(quads_.size()), 0};
         for (const ResourceIcon& icon : icons) {
             if (icon.type != type || quads_.size() >= MAX_ICONS) {

@@ -583,6 +583,34 @@ void test_strategic_icons(TestContext& ctx) {
                         nuke_icons().size(), squares_at(f, "tifmissilenuke01").size()));
     r.set_projectile_icons(true);
 
+    // FAF's patched game's ui_StrategicIconScale and ui_ProjectileIconScale
+    // (1 as retail): the half sizes times them, about the same centres.
+    r.set_strategic_icon_scale(2.0f);
+    r.set_projectile_icon_scale(2.0f);
+    f = next();
+    {
+        const auto at = icons_at(f, tank);
+        const renderer::GPUTexture* tex =
+            r.texture_cache().get(icon_texture(ctx, "uel0201", "rest"));
+        const f32 w = tex ? static_cast<f32>(tex->width & ~1u) : 0.0f;
+        const f32 h = tex ? static_cast<f32>(tex->height & ~1u) : 0.0f;
+        t.check(!at.empty() && w > 0.0f && f.icons[at.front()].w == 2.0f * w &&
+                    f.icons[at.front()].h == 2.0f * h,
+                fmt::format("Test 28: at ui_StrategicIconScale 2 the tank's icon is {}x{} ({}x{} "
+                            "at 1)",
+                            at.empty() ? 0.0f : f.icons[at.front()].w,
+                            at.empty() ? 0.0f : f.icons[at.front()].h, w, h));
+        const auto icons = nuke_icons();
+        const auto squares = squares_at(f, "tifantimattershells01");
+        t.check(icons.size() == 1 && icons[0].w == 40.0f && icons[0].h == 40.0f &&
+                    squares.size() == 1 && squares[0].w == 6.0f,
+                fmt::format("Test 29: at ui_ProjectileIconScale 2 the nuke's icon is 40 across "
+                            "and the shell's square 6 ({} icons, {} squares there)",
+                            icons.size(), squares.size()));
+    }
+    r.set_strategic_icon_scale(1.0f);
+    r.set_projectile_icon_scale(1.0f);
+
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
