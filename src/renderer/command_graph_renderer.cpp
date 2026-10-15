@@ -777,9 +777,9 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     batch_.upload(lines, fi);
 }
 
-void CommandGraphRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                                  const f32* view_proj, u32 fi) const {
-    batch_.render(cmd, viewport_w, viewport_h, view_proj, fi);
+void CommandGraphRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                                  u32 fi) const {
+    batch_.render(cmd, area, view_proj, fi);
 }
 
 void CommandGraphRenderer::destroy(VkDevice device, VmaAllocator allocator) {

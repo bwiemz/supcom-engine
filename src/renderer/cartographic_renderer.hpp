@@ -63,9 +63,10 @@ public:
 
     /// What is drawn into the frame over Stage 0, before Stage 1 finds the
     /// contour lines (Moho's range rings, fog and boundary): given the
-    /// command buffer inside the frame's pass, its view-projection and size.
+    /// command buffer inside the frame's pass, its view-projection and the
+    /// rect drawn.
     using Overlays =
-        std::function<void(VkCommandBuffer cmd, const f32* view_proj, u32 width, u32 height)>;
+        std::function<void(VkCommandBuffer cmd, const f32* view_proj, const VkRect2D& area)>;
 
     /// What is drawn into the output after Stage 1 (Moho's RenderMeshes:
     /// the minimap's meshes), through mesh_view_proj, over a depth cleared
@@ -78,17 +79,17 @@ public:
     void record(VkCommandBuffer cmd, u32 fi, const View& view, const Overlays& overlays = {},
                 const Meshes& meshes = {});
 
-    /// The main view's Stage 0, and its overlays, into its frame for `fi`
-    /// at `width` x `height` (the scene's), through `view_proj` (the
-    /// camera's), outside any render pass; the frame ends shader-readable.
-    /// A new size waits for the device. False, and nothing drawn, without a
-    /// map built or if the frame couldn't be made.
-    bool record_main_frame(VkCommandBuffer cmd, u32 fi, u32 width, u32 height, const f32* view_proj,
-                           const Overlays& overlays = {});
-    /// The main view's Stage 1 over the whole of the open scene pass (which
-    /// is the frame's size): the frame less its contour lines, alpha 0 (no
+    /// A main view's Stage 0, and its overlays, into its frame for `fi` at
+    /// `width` x `height` (the scene's), in the view's `area` of it, through
+    /// `view_proj` (the camera's), outside any render pass; the frame ends
+    /// shader-readable. A new size waits for the device. False, and nothing
+    /// drawn, without a map built or if the frame couldn't be made.
+    bool record_main_frame(VkCommandBuffer cmd, u32 fi, u32 width, u32 height, const VkRect2D& area,
+                           const f32* view_proj, const Overlays& overlays = {});
+    /// The view's Stage 1 over its `area` of the open scene pass (which is
+    /// the frame's size): the frame less its contour lines, alpha 0 (no
     /// glow). After record_main_frame drew it this frame.
-    void record_main_edge(VkCommandBuffer cmd, u32 fi) const;
+    void record_main_edge(VkCommandBuffer cmd, u32 fi, const VkRect2D& area) const;
 
     /// The frame's view-projection for `view` (record()'s): top down over
     /// its world rect, its depth over the heights, the quad and the
@@ -159,9 +160,11 @@ private:
     /// (the main view's). `frame_set` takes the frame, `ui_set` the output.
     bool ensure_target(Target& t, u32 width, u32 height, bool with_output,
                        VkDescriptorSet frame_set, VkDescriptorSet ui_set);
-    /// Stage 0 into `t`'s frame through `view_proj`, then the overlays.
-    void record_stage0(VkCommandBuffer cmd, const Target& t, const f32* view_proj,
-                       const Overlays& overlays) const;
+    /// Stage 0 into `area` of `t`'s frame through `view_proj`, then the
+    /// overlays.
+    void record_stage0(VkCommandBuffer cmd, const Target& t, const VkRect2D& area,
+                       const f32* view_proj, const Overlays& overlays) const;
+    void push_area(VkCommandBuffer cmd, const VkRect2D& area) const;
     void destroy_target(Target& t);
 
     VkDevice device_ = VK_NULL_HANDLE;

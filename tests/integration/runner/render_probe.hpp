@@ -18,6 +18,10 @@ namespace osc::map {
 class Terrain;
 }
 
+namespace osc::ui {
+class UIControlRegistry;
+}
+
 namespace osc::test {
 
 struct TestContext;
@@ -87,6 +91,11 @@ public:
     ImageRGBA8 grab(const std::unordered_set<u32>* selected = nullptr,
                     const renderer::BuildGhost* ghost = nullptr);
 
+    void draw_ui(lua_State* L, ui::UIControlRegistry* registry) {
+        ui_L_ = L;
+        ui_ = registry;
+    }
+
     /// The events the next frame shows (the sim's are cleared as its tick
     /// ends, before recapture() can take them; a test adds its own).
     sim::WorldEvents& events() { return history_.events(); }
@@ -102,6 +111,7 @@ private:
     sim::WorldHistory empty_;
     ui::UIControlRegistry* ui_ = nullptr;
     bool ok_ = false;
+    lua_State* ui_L_ = nullptr;
 };
 
 } // namespace osc::test

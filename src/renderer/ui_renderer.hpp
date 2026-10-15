@@ -4,6 +4,7 @@
 #include "renderer/texture_cache.hpp"
 #include "renderer/font_cache.hpp"
 #include "renderer/movie_textures.hpp"
+#include "renderer/scene_views.hpp"
 #include "core/types.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/ui_layout.hpp"
@@ -106,6 +107,8 @@ public:
         return ClipRect::intersect(a, b);
     }
 
+    const std::vector<SceneView>& scene_views() const { return scene_views_; }
+
 private:
     /// Record the visible main world views (occluders) under `ctrl`.
     void collect_world_views(lua_State* L, ui::UIControl* ctrl);
@@ -161,6 +164,7 @@ private:
     const MovieTextures* movies_ = nullptr;
     std::vector<UIQuad> painted_; // scratch for world view content
     std::vector<ui::WorldOccluder> world_views_; // this frame's main world views
+    std::vector<SceneView> scene_views_;
     std::vector<UIDrawGroup> groups_;
     u32 quad_count_ = 0;
     f32 mouse_x_ = 0;

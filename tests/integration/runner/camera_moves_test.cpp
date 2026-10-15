@@ -233,9 +233,9 @@ void test_camera_moves(TestContext& ui, TestContext& sim, const std::function<vo
                             moving, waiting, sim_done(), cam.target_x(), want_x));
     }
 
-    // Test 6: the WorldCamera is the engine's one camera. Retail's minimap.lua
-    // sets its own camera's ('MiniMap') zoom limit to 1.0 and resets it,
-    // which leaves the main view's limit at 1.4 and its target where it was
+    // Test 6: retail's minimap.lua sets its own camera's ('MiniMap') zoom limit
+    // to 1.0 and resets it, which leaves the main view's limit at 1.4 and its
+    // target where it was
     {
         cam.set_max_zoom_mult(renderer::Camera::kDefaultMaxZoomMult);
         cam.set_target(300.0f, 700.0f);

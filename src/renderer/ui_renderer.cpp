@@ -734,7 +734,12 @@ void UIRenderer::collect_world_views(lua_State* L, ui::UIControl* ctrl) {
             read_lazyvar(L, t, "Width"), read_lazyvar(L, t, "Height"));
         const f32 depth = read_lazyvar(L, t, "Depth");
         lua_pop(L, 1);
-        if (rect.w > 0 && rect.h > 0) world_views_.push_back({rect, depth});
+        if (rect.w > 0 && rect.h > 0) {
+            world_views_.push_back({rect, depth});
+            scene_views_.push_back({wv->camera(), rect.x, rect.y, rect.w, rect.h,
+                                    wv->gets_global_camera_commands(), wv->resource_rendering(),
+                                    wv});
+        }
     }
     for (auto* child : ctrl->children()) collect_world_views(L, child);
 }
@@ -779,6 +784,7 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
     // UI below a main world view is hidden where the view covers it: FA
     // draws the 3D world into the view (here: the scene underneath all UI).
     world_views_.clear();
+    scene_views_.clear();
     collect_world_views(L, root);
     if (!world_views_.empty()) {
         std::erase_if(quads_, [&](const QuadEntry& q) {

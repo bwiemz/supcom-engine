@@ -131,13 +131,19 @@ static void glfw_scroll_callback(GLFWwindow* window, double /*xoffset*/,
 
 void Renderer::on_scroll(f64 y_offset) {
     // A wheel notch over the world zooms about the cursor (CUIWorldView's
-    // HandleEvent): the pivot, then CameraZoom
-    if (!window_ || !camera_.accepts_mouse()) return;
+    // HandleEvent): the pivot, then CameraZoom, of the view under it
+    if (!window_) {
+        return;
+    }
     f64 mx = 0;
     f64 my = 0;
     mouse_position(mx, my);
-    camera_.set_pivot(static_cast<f32>(mx), static_cast<f32>(my));
-    camera_.zoom(static_cast<f32>(y_offset));
+    const SceneView v = view_at(static_cast<f32>(mx), static_cast<f32>(my));
+    if (!v.camera->accepts_mouse()) {
+        return;
+    }
+    v.camera->set_pivot(static_cast<f32>(mx) - v.x, static_cast<f32>(my) - v.y);
+    v.camera->zoom(static_cast<f32>(y_offset));
 }
 
 bool Renderer::init(u32 width, u32 height, const std::string& title,
@@ -921,8 +927,8 @@ void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) 
     if (shadow_fidelity() > 0 && height_bounds_) {
         ShadowView sight;
         sight.view_proj = view_proj;
-        sight.forward = camera_.direction();
-        sight.zoom = camera_.zoom();
+        sight.forward = view_camera_->direction();
+        sight.zoom = view_camera_->zoom();
         sight.sun = {lighting_.sun_direction[0], lighting_.sun_direction[1],
                      lighting_.sun_direction[2]};
         light = shadow_camera(sight, *height_bounds_);
@@ -939,7 +945,7 @@ void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) 
 
     // The map: the terrain (R its depth over 128, G 1), then the meshes
     // and the placeholder cubes (R their depth, G 0).
-    shadow_map_.begin_map(cmd_buf_[fi]);
+    shadow_map_.begin_map(cmd_);
     if (light) {
         ShadowCasters::Frame casters;
         casters.terrain = &terrain_mesh_;
@@ -948,12 +954,12 @@ void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) 
         casters.albedo_fallback = texture_cache_.fallback_descriptor();
         casters.lane = static_cast<u32>(fidelity());
         casters.strategic = strategic_icon_renderer_.is_strategic_zoom();
-        shadow_casters_.record(cmd_buf_[fi], light_vp, casters);
+        shadow_casters_.record(cmd_, light_vp, casters);
     }
-    vkCmdEndRenderPass(cmd_buf_[fi]);
+    vkCmdEndRenderPass(cmd_);
 
     // The terrain's mask, B: Moho's blur, or a copy of the map's G.
-    shadow_map_.record_mask(cmd_buf_[fi], video_options_.shadow_blur);
+    shadow_map_.record_mask(cmd_, video_options_.shadow_blur);
 }
 
 void Renderer::create_pipelines() {
@@ -1427,9 +1433,9 @@ void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDr
         return;
     }
     sim::Vector3 eye;
-    camera_.eye_position(eye.x, eye.y, eye.z);
-    sim::Vector3 forward{camera_.focus_x() - eye.x, camera_.focus_y() - eye.y,
-                         camera_.focus_z() - eye.z};
+    view_camera_->eye_position(eye.x, eye.y, eye.z);
+    sim::Vector3 forward{view_camera_->focus_x() - eye.x, view_camera_->focus_y() - eye.y,
+                         view_camera_->focus_z() - eye.z};
     const f32 length =
         std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
     if (length <= 0.0f) {
@@ -1456,7 +1462,7 @@ void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDr
         }
         // Its one LOD, to a metric of 1000; CommandFeedbackVS grows it with
         // the metric so it reads the same size from afar.
-        const f32 lod = lod_metric(spec.position, eye, forward, camera_.fov());
+        const f32 lod = lod_metric(spec.position, eye, forward, view_camera_->fov());
         if (lod > lod_cutoff) {
             return;
         }
@@ -1569,6 +1575,7 @@ void Renderer::clear_scene() {
     terrain_map_height_ = 0;
     destroy_terrain_strata_ubo();
     camera_.set_ground(nullptr, false, 0.0f);
+    cameras_.for_each_other([](Camera& camera) { camera.set_ground(nullptr, false, 0.0f); });
     ground_.reset();
     camera_view_ = sim::FrameView{}; // the old world's entities are gone
 }
@@ -2030,9 +2037,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                       const BuildGhost* ghost, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
-    // The view's aspect, which the camera's farthest zoom and projection
-    // take (its moves and basis run in poll_events); the world it follows
-    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+    const std::vector<SceneView> views = drawn_views();
+    split_ = views.size() > 1;
+    for (const SceneView& v : views) {
+        v.camera->set_viewport(v.w, v.h);
+    }
     camera_view_ = view;
     for (const auto& follow : events.camera_follows) {
         camera_.camera_follow(follow.source, follow.projectile, follow.timeout);
@@ -2059,6 +2068,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     PROFILE_ZONE("Render::frame");
     // Select current frame's sync objects
     u32 fi = frame_index_;
+    const u32 other = (fi + 1) % FRAMES_IN_FLIGHT;
 
     // This slot's last GPU work done, and a swapchain image (or the frame
     // is skipped: don't reset the fence, there's no submission)
@@ -2066,12 +2076,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     {
         PROFILE_ZONE("Render::gpu_wait");
         const auto wait_start = std::chrono::steady_clock::now();
-        const bool ready = begin_frame_slot(fi, image_index);
+        bool ready = begin_frame_slot(fi, image_index);
+        if (ready && (split_ || split_last_frame_)) {
+            ready = vkWaitForFences(device_, 1, &render_fence_[other], VK_TRUE, 100'000'000) ==
+                    VK_SUCCESS;
+        }
         last_gpu_wait_ms_ =
             std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - wait_start)
                 .count();
-        if (!ready) return;
+        if (!ready) {
+            return;
+        }
     }
+    split_last_frame_ = split_;
 
     vkResetFences(device_, 1, &render_fence_[fi]);
 
@@ -2080,82 +2097,115 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // slot fi is free. (Setting it after the updates made them write into
     // the other slot while the GPU could still be reading it, and the draws
     // then showed data one frame old.)
-    unit_renderer_.set_frame_index(fi);
+    set_frame_slot(fi);
     minimap_units_.set_frame_index(fi);
-    ui_renderer_.set_frame_index(fi);
-    overlay_renderer_.set_frame_index(fi);
-    minimap_renderer_.set_frame_index(fi);
     minimap_renderer_.begin_frame();
-    strategic_icon_renderer_.set_frame_index(fi);
-    economy_overlay_renderer_.set_frame_index(fi);
-    hud_renderer_.set_frame_index(fi);
-    selection_info_renderer_.set_frame_index(fi);
-    profile_overlay_.set_frame_index(fi);
 
     // Camera shakes of the ticks since the last frame
-    {
-        if (!events.shakes.empty()) {
+    if (!events.shakes.empty()) {
+        for (const SceneView& v : views) {
             f32 total_intensity = 0;
             for (const auto& ev : events.shakes) {
-                f32 dx = camera_.target_x() - ev.x;
-                f32 dz = camera_.target_z() - ev.z;
+                f32 dx = v.camera->target_x() - ev.x;
+                f32 dz = v.camera->target_z() - ev.z;
                 f32 dist = std::sqrt(dx * dx + dz * dz);
                 if (dist < ev.radius) {
                     f32 t = 1.0f - dist / ev.radius;
                     total_intensity += ev.min_shake + t * (ev.max_shake - ev.min_shake);
                 }
             }
-            camera_.apply_shake(total_intensity);
-            events.shakes.clear();
+            v.camera->apply_shake(total_intensity);
         }
+        events.shakes.clear();
     }
 
     // Finalize any async texture loads that completed this frame
     texture_cache_.flush_uploads(4);
 
     // View-projection matrix (computed early for frustum culling)
-    f32 aspect = static_cast<f32>(window_width_) /
-                 static_cast<f32>(window_height_);
-    auto vp = camera_.view_proj(aspect);
+    use_view(views.front());
+    auto vp = view_camera_->view_proj(view_aspect());
     Frustum frustum(vp);
 
     cartographic_view_.reset(); // until a minimap view draws it
-    // A cartographic main view (its camera ortho) draws the map's frame in
-    // place of the world, the strategic icons on at every zoom
-    cartographic_main_ = camera_.ortho() && cartographic_.ready();
-    strategic_icon_renderer_.set_forced(cartographic_main_);
     update_frame_scene(fi, vp, frustum, view, events, ghost, L, ui_registry, selected_ids);
 
     // Record command buffer
     begin_commands(fi);
-    gpu_queries_.begin(cmd_buf_[fi], fi, frame_sequence_ + 1);
+    gpu_queries_.begin(cmd_, fi, frame_sequence_ + 1);
     mesh_draws_.fill(0); // this frame's, for tests (M211k)
     cartographic_mesh_draws_.fill(0);
 
     // The movies' new frames (barriers + copy, before any render pass)
-    movie_textures_.record(cmd_buf_[fi]);
-    record_terrain_sync(cmd_buf_[fi]);
+    movie_textures_.record(cmd_);
+    record_terrain_sync(cmd_);
     // The cartographic frame the minimap's quad samples (its own passes),
     // its range rings and fog drawn into it
     if (cartographic_view_) {
         cartographic_.record(
-            cmd_buf_[fi], fi, *cartographic_view_,
-            [&](VkCommandBuffer cmd, const f32* view_proj, u32 w, u32 h) {
-                draw_minimap_overlays(cmd, view_proj, w, h, fi);
+            cmd_, fi, *cartographic_view_,
+            [&](VkCommandBuffer cmd, const f32* view_proj, const VkRect2D& area) {
+                draw_minimap_overlays(cmd, view_proj, area, fi);
             },
             [&](VkCommandBuffer cmd, const f32* view_proj) {
                 draw_minimap_meshes(cmd, fi, view_proj);
             });
     }
-    // A cartographic main view's frame, through the camera, at the scene's
-    // size: its range rings (the main view's, at its zoom) and the fog
+
+    const f32 ticks = view.cur() ? static_cast<f32>(view.cur()->tick) + view.alpha() : 0.0f;
+    record_view(fi, vp, frustum, ticks, false);
+    std::vector<ScreenLayers> layers{{view_area_, overlay_renderer_.drawn()}};
+
+    // Each view draws through its own camera (CUIWorldView::GetCamera)
+    if (split_) {
+        use_view(views[1]);
+        const auto vp2 = view_camera_->view_proj(view_aspect());
+        const Frustum frustum2(vp2);
+        set_frame_slot(other);
+        update_view_units(other, frustum2, view, ghost, L, selected_ids);
+        update_view_effects(other, vp2, frustum2, view, events, ghost, L, selected_ids, false);
+        record_view(other, vp2, frustum2, ticks, true);
+        layers.push_back({view_area_, overlay_renderer_.drawn()});
+        set_frame_slot(fi);
+        use_view(views.front());
+    }
+
+    // ==================== COMPOSITE + BLOOM ====================
+    // Scene always renders to offscreen HDR. End scene pass, optionally run
+    // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
+    const bool scene_capturing = record_scene_capture(cmd_);
+
+    const bool do_bloom = bloom_enabled_ && bloom_.ready();
+    if (do_bloom) {
+        bloom_.record(cmd_, kBloomGlowCopyScale, lighting_.bloom, kBloomBlurKernelScale,
+                      kBloomBlurCount);
+    }
+
+    // Begin swapchain render pass for composite + UI
+    begin_swapchain_pass(fi, image_index);
+
+    // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
+    bloom_.composite(cmd_, do_bloom);
+
+    record_screen_layers(layers);
+
+    vkCmdEndRenderPass(cmd_);
+    gpu_queries_.end(cmd_, fi); // the frame's, not a capture's readback
+    const bool capturing = record_capture(cmd_, image_index);
+    submit_and_present(fi, image_index, true, capturing, scene_capturing);
+}
+
+void Renderer::record_view(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum, f32 ticks,
+                           bool after_another) {
+    // A cartographic view's frame, through its camera, in its rect: its
+    // range rings (at its zoom) and the fog
     if (cartographic_main_) {
         cartographic_main_ = cartographic_.record_main_frame(
-            cmd_buf_[fi], fi, window_width_, window_height_, vp.data(),
-            [&](VkCommandBuffer cmd, const f32* view_proj, u32 w, u32 h) {
-                main_frame_ranges_.render(cmd, w, h, view_proj, fi);
-                minimap_vision_.render(cmd, w, h, view_proj, fi);
-                frame_boundary_.render(cmd, w, h, view_proj);
+            cmd_, fi, window_width_, window_height_, view_area_, vp.data(),
+            [&](VkCommandBuffer cmd, const f32* view_proj, const VkRect2D& area) {
+                main_frame_ranges_.render(cmd, area, view_proj, fi);
+                minimap_vision_.render(cmd, area, view_proj, fi);
+                frame_boundary_.render(cmd, area, view_proj);
             });
     }
 
@@ -2163,8 +2213,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     record_shadow_pass(fi, vp);
 
     // ==================== NORMALS ====================
-    collect_frame_decals(frustum,
-                         view.cur() ? static_cast<f32>(view.cur()->tick) + view.alpha() : 0.0f);
+    collect_frame_decals(frustum, ticks);
     record_normal_pass(fi, vp);
 
     // ==================== REFLECTION ====================
@@ -2172,52 +2221,159 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // ==================== MAIN PASS ====================
     PROFILE_ZONE("Render::main_pass");
+    if (after_another) {
+        keep_scene_drawn();
+    }
+    record_main_pass(fi, vp, after_another);
+    vkCmdEndRenderPass(cmd_);
+}
 
-    bool do_bloom = bloom_enabled_ && bloom_.ready();
+void Renderer::keep_scene_drawn() {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = frame_.scene_color().image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr,
+                         1, &barrier);
+}
 
-    record_main_pass(fi, vp);
+std::vector<SceneView> Renderer::drawn_views() const {
+    const SceneView whole{
+        const_cast<Camera*>(&camera_),    0.0f, 0.0f, static_cast<f32>(window_width_),
+        static_cast<f32>(window_height_), true};
+    std::vector<SceneView> views =
+        placed_views(scene_views_, ui_scale_, whole.w, whole.h, FRAMES_IN_FLIGHT);
+    if (views.size() < 2) {
+        return {whole};
+    }
+    return views;
+}
 
-    // ==================== COMPOSITE + BLOOM ====================
-    // Scene always renders to offscreen HDR. End scene pass, optionally run
-    // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
-    vkCmdEndRenderPass(cmd_buf_[fi]);
-    const bool scene_capturing = record_scene_capture(cmd_buf_[fi]);
+SceneView Renderer::view_at(f32 x, f32 y) const {
+    return view_under(drawn_views(), x, y);
+}
 
-    if (do_bloom)
-        bloom_.record(cmd_buf_[fi], kBloomGlowCopyScale, lighting_.bloom, kBloomBlurKernelScale,
-                      kBloomBlurCount);
+SceneView Renderer::view_of(const Camera* camera) const {
+    const std::vector<SceneView> views = drawn_views();
+    for (const SceneView& v : views) {
+        if (v.camera == camera) {
+            return v;
+        }
+    }
+    SceneView whole = views.front();
+    whole.x = 0.0f;
+    whole.y = 0.0f;
+    whole.w = static_cast<f32>(window_width_);
+    whole.h = static_cast<f32>(window_height_);
+    return whole;
+}
 
-    // Begin swapchain render pass for composite + UI
-    begin_swapchain_pass(fi, image_index);
+std::vector<SceneView> Renderer::ui_views() const {
+    std::vector<SceneView> views = drawn_views();
+    for (SceneView& v : views) {
+        v = in_points(v, ui_scale_);
+    }
+    return views;
+}
 
-    // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
-    bloom_.composite(cmd_buf_[fi], do_bloom);
+SceneView Renderer::ui_view_at(f32 x, f32 y) const {
+    return view_under(ui_views(), x, y);
+}
 
-    record_screen_layers(fi);
+SceneView Renderer::ui_view_of(const Camera* camera) const {
+    return in_points(view_of(camera), ui_scale_);
+}
 
-    vkCmdEndRenderPass(cmd_buf_[fi]);
-    gpu_queries_.end(cmd_buf_[fi], fi); // the frame's, not a capture's readback
-    const bool capturing = record_capture(cmd_buf_[fi], image_index);
-    submit_and_present(fi, image_index, true, capturing, scene_capturing);
+void Renderer::use_view(const SceneView& v) {
+    view_camera_ = v.camera;
+    view_world_view_ = v.world_view;
+    view_area_.offset = {static_cast<i32>(v.x), static_cast<i32>(v.y)};
+    view_area_.extent = {static_cast<u32>(v.w), static_cast<u32>(v.h)};
+    view_resources_ = v.resources;
+    // A cartographic view (its camera ortho) draws the map's frame in place
+    // of the world, the strategic icons on at every zoom
+    cartographic_main_ = view_camera_->ortho() && cartographic_.ready();
+    strategic_icon_renderer_.set_forced(cartographic_main_);
+}
+
+std::array<u32, 2> Renderer::view_points() const {
+    return core::ui_extent(view_area_.extent.width, view_area_.extent.height, ui_scale_);
+}
+
+f32 Renderer::view_aspect() const {
+    return view_area_.extent.height > 0 ? static_cast<f32>(view_area_.extent.width) /
+                                              static_cast<f32>(view_area_.extent.height)
+                                        : 1.0f;
+}
+
+void Renderer::set_frame_slot(u32 fi) {
+    unit_renderer_.set_frame_index(fi);
+    ui_renderer_.set_frame_index(fi);
+    overlay_renderer_.set_frame_index(fi);
+    minimap_renderer_.set_frame_index(fi);
+    strategic_icon_renderer_.set_frame_index(fi);
+    economy_overlay_renderer_.set_frame_index(fi);
+    hud_renderer_.set_frame_index(fi);
+    selection_info_renderer_.set_frame_index(fi);
+    profile_overlay_.set_frame_index(fi);
+}
+
+Camera& Renderer::add_camera(const std::string& name) {
+    bool created = false;
+    Camera& camera = cameras_.add(name, created);
+    if (created) {
+        camera.set_entity_lookup([this](u32 id, CameraEntityPose& out) {
+            const sim::EntityRecord* e = camera_view_.find(id);
+            if (!e) {
+                return false;
+            }
+            const sim::Vector3 p = camera_view_.position(*e);
+            const sim::Quaternion q = camera_view_.orientation(*e);
+            out.pos = {p.x, p.y, p.z};
+            out.orient = {q.x, q.y, q.z, q.w};
+            return true;
+        });
+    }
+    if (&camera != &camera_) {
+        // A view's camera starts afresh, as CameraImpl's constructor resets it
+        camera.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+        camera.copy_options(camera_);
+        if (terrain_ && ground_) {
+            camera.set_ground(&*ground_, terrain_->has_water(), terrain_->water_elevation());
+            camera.init(static_cast<f32>(terrain_->map_width()),
+                        static_cast<f32>(terrain_->map_height()));
+        }
+        const auto& rect = camera_.playable_rect();
+        camera.set_playable_rect(rect[0], rect[1], rect[2], rect[3]);
+        camera.reset();
+    }
+    return camera;
 }
 
 void Renderer::record_cartographic_main(u32 fi, const std::array<f32, 16>& vp) {
-    VkCommandBuffer cmd = cmd_buf_[fi];
     // Stage 1 over the scene, cleared black as Moho clears the head for it:
     // the map less its contour lines, no glow
-    cartographic_.record_main_edge(cmd, fi);
+    cartographic_.record_main_edge(cmd_, fi, view_area_);
     // RenderMeshes: the meshes in their cartographic techniques
-    draw_cartographic_meshes(cmd, fi, vp);
+    draw_cartographic_meshes(cmd_, fi, vp);
     // RenderParticles: RenderEffects(camera, renderWaterSurface 0,
     // suppressTLight 1), which draws the light particles alone (no beams,
     // no trails)
-    particle_renderer_.render(cmd, window_width_, window_height_, vp.data(), false, fi, true);
+    particle_renderer_.render(cmd_, view_area_, vp.data(), false, fi, true);
     // RenUI and the world view's own drawing: the order lines, selection,
     // the resource, strategic (on at every zoom) and projectile icons, FAF's
     // world drawing
-    command_graph_renderer_.render(cmd, window_width_, window_height_, vp.data(), fi);
-    selection_renderer_.render(cmd, window_width_, window_height_, vp.data(), fi);
-    record_view_drawing(cmd, fi, vp);
+    command_graph_renderer_.render(cmd_, view_area_, vp.data(), fi);
+    selection_renderer_.render(cmd_, view_area_, vp.data(), fi);
+    record_view_drawing(cmd_, fi, vp);
 }
 
 void Renderer::record_terrain_sync(VkCommandBuffer cmd) {
@@ -2257,16 +2413,16 @@ void Renderer::record_normal_pass(u32 fi, const std::array<f32, 16>& vp) {
     begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     begin.renderPass = frame_.scene_pass();
     begin.framebuffer = frame_.terrain_normal_framebuffer();
-    begin.renderArea.extent = {window_width_, window_height_};
+    begin.renderArea = view_area_;
     begin.clearValueCount = static_cast<u32>(cleared.size());
     begin.pClearValues = cleared.data();
-    vkCmdBeginRenderPass(cmd_buf_[fi], &begin, VK_SUBPASS_CONTENTS_INLINE);
-    set_window_viewport(cmd_buf_[fi]);
+    vkCmdBeginRenderPass(cmd_, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    vkc::set_area(cmd_, view_area_);
     // The low fidelity terrain draws no normals (its DrawTerrainNormal is
     // empty, M212h): the pass only clears the target then, which keeps it
     // readable for what samples it (a fidelity 0 decal's light).
     if (fidelity() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
@@ -2278,24 +2434,23 @@ void Renderer::record_normal_pass(u32 fi, const std::array<f32, 16>& vp) {
         std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
-        camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
-        vkc::push_constants(cmd_buf_[fi], terrain_normal_layout_,
+        view_camera_->eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
+        vkc::push_constants(cmd_, terrain_normal_layout_,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                             sizeof(tpc), &tpc);
         const std::array<VkDescriptorSet, 2> sets = {terrain_tex_ds_, shadow_ds_[fi]};
-        vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  terrain_normal_layout_, 0, static_cast<u32>(sets.size()),
-                                  sets.data(), 0, nullptr);
+        vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_layout_, 0,
+                                  static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
         VkBuffer vertices = terrain_mesh_.vertex_buffer();
         const VkDeviceSize no_offset = 0;
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, &vertices, &no_offset);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
-        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+        vkCmdBindVertexBuffers(cmd_, 0, 1, &vertices, &no_offset);
+        vkCmdBindIndexBuffer(cmd_, terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_, terrain_mesh_.index_count(), 1, 0, 0, 0);
 
         // The normal decals (OverDrawDecals: TDecalsNormals, ...Alpha).
-        record_decals(cmd_buf_[fi], fi, DecalTechnique::Normals, decal_normal_pipeline_, vp);
+        record_decals(cmd_, fi, DecalTechnique::Normals, decal_normal_pipeline_, vp);
     }
-    vkCmdEndRenderPass(cmd_buf_[fi]);
+    vkCmdEndRenderPass(cmd_);
 }
 
 void Renderer::record_reflection_pass(u32 fi, const std::array<f32, 16>& vp) {
@@ -2315,14 +2470,14 @@ void Renderer::record_reflection_pass(u32 fi, const std::array<f32, 16>& vp) {
         mirror.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         mirror.renderPass = frame_.scene_pass();
         mirror.framebuffer = frame_.reflection_framebuffer();
-        mirror.renderArea.extent = {window_width_, window_height_};
+        mirror.renderArea = view_area_;
         mirror.clearValueCount = static_cast<u32>(cleared.size());
         mirror.pClearValues = cleared.data();
-        vkCmdBeginRenderPass(cmd_buf_[fi], &mirror, VK_SUBPASS_CONTENTS_INLINE);
-        set_window_viewport(cmd_buf_[fi]);
-        draw_meshes(cmd_buf_[fi], fi, mirrored_view_proj(vp, water_renderer_.water_elevation()),
+        vkCmdBeginRenderPass(cmd_, &mirror, VK_SUBPASS_CONTENTS_INLINE);
+        vkc::set_area(cmd_, view_area_);
+        draw_meshes(cmd_, fi, mirrored_view_proj(vp, water_renderer_.water_elevation()),
                     MeshPass::Reflection);
-        vkCmdEndRenderPass(cmd_buf_[fi]);
+        vkCmdEndRenderPass(cmd_);
     }
 }
 
@@ -2462,7 +2617,7 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
     } mesh_pc{};
     static_assert(sizeof(MeshPushConstants) == 112, "matches mesh_vert/frag's push block");
     std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
-    camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
+    view_camera_->eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
     // (The reflection is seen from the eye mirrored in the water: mesh_frag
     // takes FA's view direction from viewProj, which is mirrored.)
     mesh_pc.mirrored = mirrored ? 1u : 0u;
@@ -2757,7 +2912,7 @@ void Renderer::copy_and_continue(VkCommandBuffer cmd, VkRenderPass next) {
     again.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     again.renderPass = next;
     again.framebuffer = frame_.scene_framebuffer();
-    again.renderArea.extent = {window_width_, window_height_};
+    again.renderArea = view_area_;
     vkCmdBeginRenderPass(cmd, &again, VK_SUBPASS_CONTENTS_INLINE);
 }
 
@@ -2867,18 +3022,18 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     begin_commands(fi);
 
     // The movies' new frames (before the render pass).
-    movie_textures_.record(cmd_buf_[fi]);
+    movie_textures_.record(cmd_);
 
     // Begin swapchain render pass (NOT frame_.scene_pass())
     begin_swapchain_pass(fi, image_index);
 
     if (ui_registry && L && ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        ui_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        ui_renderer_.render(cmd_, ui_layout_, window_width_, window_height_);
     }
 
-    vkCmdEndRenderPass(cmd_buf_[fi]);
-    const bool capturing = record_capture(cmd_buf_[fi], image_index);
+    vkCmdEndRenderPass(cmd_);
+    const bool capturing = record_capture(cmd_, image_index);
     submit_and_present(fi, image_index, false, capturing, false);
 }
 
@@ -2886,20 +3041,20 @@ void Renderer::update_world_shapes(lua_State* L, u32 fi) {
     // The world's size of one of the UI's points at a spot: the LOD metric
     // (the view's width at its depth) over the view's width in points
     sim::Vector3 eye;
-    camera_.eye_position(eye.x, eye.y, eye.z);
-    sim::Vector3 forward{camera_.focus_x() - eye.x, camera_.focus_y() - eye.y,
-                         camera_.focus_z() - eye.z};
+    view_camera_->eye_position(eye.x, eye.y, eye.z);
+    sim::Vector3 forward{view_camera_->focus_x() - eye.x, view_camera_->focus_y() - eye.y,
+                         view_camera_->focus_z() - eye.z};
     const f32 length =
         std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
     if (length > 0.0f) forward = {forward.x / length, forward.y / length, forward.z / length};
-    const f32 fov = camera_.fov();
-    const f32 width = ui_width() > 0 ? static_cast<f32>(ui_width()) : 1.0f;
+    const f32 fov = view_camera_->fov();
+    const f32 width = view_points()[0] > 0 ? static_cast<f32>(view_points()[0]) : 1.0f;
     world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
         return lod_metric(p, eye, forward, fov) / width;
     });
 
-    const ui::WorldView* view = nullptr;
-    if (L) {
+    const ui::WorldView* view = view_world_view_;
+    if (!view && L) {
         lua_pushstring(L, "__osc_world_view");
         lua_rawget(L, LUA_REGISTRYINDEX);
         view = static_cast<const ui::WorldView*>(lua_touserdata(L, -1));
@@ -2957,6 +3112,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                                   const BuildGhost* ghost, lua_State* L,
                                   ui::UIControlRegistry* ui_registry,
                                   const std::unordered_set<u32>* selected_ids) {
+    frame_ui_registry_ = ui_registry;
     // What the player's army sees this tick (everything, with the fog off)
     recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
     strategic_icon_renderer_.set_focus_army(player_army_);
@@ -2976,74 +3132,6 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         frame_boundary_.set_off();
     }
 
-    // Before the meshes: its planned sites are ghosts among them
-    command_graph_renderer_.set_highlight(highlight_command_, hovered_);
-    command_graph_renderer_.update(view, camera_, selected_ids, player_army_, texture_cache_, L,
-                                   unit_renderer_.shader_time() / 10.0f, ui_height(),
-                                   command_graph_held(), fi);
-
-    const std::vector<WorldMeshDraw> world_meshes =
-        ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
-    const std::vector<std::string> border_meshes = map_border_meshes(L);
-    // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
-    {
-        PROFILE_ZONE("Render::unit_update");
-        // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
-        // decides it below, from the same camera)
-        const bool meshes_drawn = camera_.eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
-        unit_renderer_.set_ghost_slots(
-            1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
-            static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
-            static_cast<u32>(formation_ghosts_.size()) +
-            static_cast<u32>(feedback_blips_.blips().size()) +
-            static_cast<u32>(world_meshes.size()) + static_cast<u32>(border_meshes.size()));
-        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, &frustum,
-                              meshes_drawn);
-    }
-    // A bone SSBO the update grew is a new buffer for this slot's set.
-    if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))
-        write_bone_descriptor(fi);
-
-    // Build preview ghost — a semi-transparent mesh where input places it
-    if (ghost && !ghost->blueprint_id.empty()) {
-        // Green = valid, Red = invalid
-        f32 gr = ghost->valid ? 0.2f : 1.0f;
-        f32 gg = ghost->valid ? 0.9f : 0.2f;
-        f32 gb = ghost->valid ? 0.3f : 0.2f;
-
-        const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
-        if (ghost_mesh) {
-            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
-                                        &texture_cache_);
-        }
-        // A drag's other sites, or a build template's other structures, each
-        // its own blueprint's mesh
-        for (const BuildGhost& site : ghost->line) {
-            const GPUMesh* mesh = site.blueprint_id == ghost->blueprint_id
-                                      ? ghost_mesh
-                                      : mesh_cache_.get(site.blueprint_id, L);
-            if (!mesh) continue;
-            unit_renderer_.inject_ghost(mesh, site.x, site.y, site.z, site.valid ? 0.2f : 1.0f,
-                                        site.valid ? 0.9f : 0.2f, site.valid ? 0.3f : 0.2f,
-                                        &texture_cache_);
-        }
-    }
-    for (const auto& site : command_graph_renderer_.planned_sites()) {
-        if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
-            unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
-                                        0.2f, 0.9f, 0.3f, &texture_cache_);
-        }
-    }
-    // Moho's formation preview tint, 0xD8D8D800
-    constexpr f32 kFormationTint = 0xD8 / 255.0f;
-    for (const FormationGhost& ghost : formation_ghosts_) {
-        if (const GPUMesh* mesh = mesh_cache_.get(ghost.blueprint_id, L)) {
-            unit_renderer_.inject_ghost(mesh, ghost.position.x, ghost.position.y, ghost.position.z,
-                                        kFormationTint, kFormationTint, 0.0f, &texture_cache_,
-                                        ghost.heading);
-        }
-    }
-
     // The frame's step, which the particles and overlays run on, with or
     // without a UI (an offscreen test has none).
     {
@@ -3056,8 +3144,10 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     }
     // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
     feedback_blips_.update(frame_dt_);
-    inject_feedback_blips(L, world_meshes);
-    inject_map_border(L, border_meshes);
+
+    world_meshes_ = ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
+    border_meshes_ = map_border_meshes(L);
+    update_view_units(fi, frustum, view, ghost, L, selected_ids);
 
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
@@ -3111,6 +3201,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_, ui_width(), ui_height(),
                             static_cast<f32>(ui_dispatch_.mouse_x()),
                             static_cast<f32>(ui_dispatch_.mouse_y()), minimap_painter);
+        scene_views_ = ui_renderer_.scene_views();
     }
 
     // The fog of war, from the focus army's vision circles (Moho's VisionDB),
@@ -3121,78 +3212,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     beam_renderer_.set_fidelity(fidelity());
     trail_renderer_.set_fidelity(fidelity());
     particle_system_.set_fidelity(fidelity());
-    // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
-    beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
-                          unit_renderer_.shader_time(), fi);
-    // And its trails, which likewise leave their dots to them (M214b)
-    trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
-                           fi);
-    // And its particles, likewise; a new tick's emission, then this frame's quads (M214c)
-    {
-        PROFILE_ZONE("Render::particle_update");
-        // The waves in view emit on the system clock (M213c)
-        if (view.cur()) {
-            waves_emitted_.clear();
-            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
-            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
-        }
-        particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
-        particle_renderer_.update(particle_system_, texture_cache_, fi);
-    }
-
-    selection_renderer_.update(view, camera_, ui_height(), selected_ids, hovered_, player_army_,
-                               drag_box_, texture_cache_, mesh_cache_, L, fi);
-
-    update_world_shapes(L, fi);
-
-    // FA's range overlays (Moho's RangeRenderer), for the focus army
-    {
-        PROFILE_ZONE("Render::range_update");
-        const RangeScene scene = collect_range_scene(
-            *range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
-            ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
-            ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
-        const auto& rect = camera_.playable_rect();
-        const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
-        const auto batches = range_batches(*range_overlays_, scene);
-        range_renderer_.update(batches, range_overlays_->settings(), span,
-                               camera_.zoom() / camera_.max_zoom(), fi);
-        // A cartographic main view draws them into its frame instead
-        if (cartographic_main_)
-            main_frame_ranges_.update(batches, range_overlays_->settings(), span,
-                                      camera_.zoom() / camera_.max_zoom(), fi);
-        if (cartographic_view_) update_minimap_overlays(view, ghost, L, selected_ids, span, fi);
-    }
+    update_view_effects(fi, vp, frustum, view, events, ghost, L, selected_ids, true);
     update_minimap_meshes(view, L, fi);
-
-    // Update game overlays (health bars, selection circles, game over)
-    {
-        PROFILE_ZONE("Render::overlay_update");
-        const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
-        overlay_renderer_.set_hovered(hovered_);
-        overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
-                                 ui_width(), ui_height(), game_result, frame_dt_, &frustum, ghost);
-    }
-
-    // FA's water: this frame's camera and time (M213a)
-    water_renderer_.update(camera_, vp, unit_renderer_.shader_time(), fi);
-    // The sky: its time is the tick and the interpolant, unwrapped (M210b)
-    sky_renderer_.update(camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
-
-    // Scripts' decals and splats: this tick's, as the player's army sees
-    // them (M212c)
-    if (terrain_) {
-        PROFILE_ZONE("Render::runtime_decals");
-        f32 ex = 0;
-        f32 ey = 0;
-        f32 ez = 0;
-        camera_.eye_position(ex, ey, ez);
-        const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
-        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
-                               terrain_mesh_, camera_.view(), {ex, ey, ez},
-                               camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi,
-                               fidelity(), ui_registry ? &ui_registry->user_decals() : nullptr);
-    }
 
     // The terrain's Time (M212f): set when the terrain would re-tessellate,
     // so TTerrainGlow's lava stands still under a still camera, as in FA.
@@ -3206,39 +3227,6 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     if (legacy_hud_active_) {
         minimap_renderer_.update(view, camera_, texture_cache_, selected_ids, ui_width(),
                                  ui_height(), L);
-    }
-
-    // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
-    strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, ui_width(),
-                                    ui_height(), L, frame_dt_);
-    economy_overlay_renderer_.update(
-        view, camera_, vp, player_army_,
-        [&](const std::string& id) { return strategic_icon_renderer_.fade_in_zoom(id, L); },
-        texture_cache_, font_cache_, window_width_, window_height_, L);
-    projectile_icon_renderer_.update(strategic_icon_renderer_.projectile_icons(), fi);
-
-    {
-        bool resources = !camera_.free();
-        if (L) {
-            lua_pushstring(L, "__osc_world_view");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            if (const auto* wv = static_cast<const ui::WorldView*>(lua_touserdata(L, -1))) {
-                resources = resources && wv->resource_rendering();
-            }
-            lua_pop(L, 1);
-        }
-        std::vector<ResourceIcon> icons;
-        if (resources && terrain_ && view.cur()) {
-            const map::Terrain& terrain = *terrain_;
-            const PlayableRect whole{0, 0, static_cast<i32>(terrain.map_width()),
-                                     static_cast<i32>(terrain.map_height())};
-            icons = renderer::resource_icons(
-                view.cur()->deposits, camera_, static_cast<f32>(window_width_),
-                static_cast<f32>(window_height_), playable_rect_.rect().value_or(whole),
-                [&](f32 x, f32 z) { return terrain.get_terrain_height(x, z); });
-        }
-        resource_icon_renderer_.update(icons, texture_cache_, fi);
-        resource_icon_time_ = static_cast<f32>(glfwGetTime());
     }
 
     if (legacy_hud_active_) {
@@ -3256,8 +3244,207 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     profile_overlay_.update(font_cache_, texture_cache_, ui_width(), ui_height());
 }
 
+void Renderer::update_view_units(u32 fi, const Frustum& frustum, const sim::FrameView& view,
+                                 const BuildGhost* ghost, lua_State* L,
+                                 const std::unordered_set<u32>* selected_ids) {
+    // Before the meshes: its planned sites are ghosts among them
+    command_graph_renderer_.set_highlight(highlight_command_, hovered_);
+    command_graph_renderer_.update(view, *view_camera_, selected_ids, player_army_, texture_cache_,
+                                   L, unit_renderer_.shader_time() / 10.0f, view_points()[1],
+                                   command_graph_held(), fi);
+
+    // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
+    {
+        PROFILE_ZONE("Render::unit_update");
+        // Strategic zoom draws icons, not meshes (as StrategicIconRenderer
+        // decides it below, from the same camera)
+        const bool meshes_drawn =
+            view_camera_->eye_distance() < StrategicIconRenderer::ZOOM_THRESHOLD;
+        unit_renderer_.set_ghost_slots(
+            1 + static_cast<u32>(ghost ? ghost->line.size() : 0) +
+            static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
+            static_cast<u32>(formation_ghosts_.size()) +
+            static_cast<u32>(feedback_blips_.blips().size()) +
+            static_cast<u32>(world_meshes_.size()) + static_cast<u32>(border_meshes_.size()));
+        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, view_camera_, &frustum,
+                              meshes_drawn);
+    }
+    // A bone SSBO the update grew is a new buffer for this slot's set.
+    if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi)) {
+        write_bone_descriptor(fi);
+    }
+
+    // Build preview ghost — a semi-transparent mesh where input places it
+    if (ghost && !ghost->blueprint_id.empty()) {
+        // Green = valid, Red = invalid
+        f32 gr = ghost->valid ? 0.2f : 1.0f;
+        f32 gg = ghost->valid ? 0.9f : 0.2f;
+        f32 gb = ghost->valid ? 0.3f : 0.2f;
+
+        const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
+        if (ghost_mesh) {
+            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z, gr, gg, gb,
+                                        &texture_cache_);
+        }
+        // A drag's other sites, or a build template's other structures, each
+        // its own blueprint's mesh
+        for (const BuildGhost& site : ghost->line) {
+            const GPUMesh* mesh = site.blueprint_id == ghost->blueprint_id
+                                      ? ghost_mesh
+                                      : mesh_cache_.get(site.blueprint_id, L);
+            if (!mesh) {
+                continue;
+            }
+            unit_renderer_.inject_ghost(mesh, site.x, site.y, site.z, site.valid ? 0.2f : 1.0f,
+                                        site.valid ? 0.9f : 0.2f, site.valid ? 0.3f : 0.2f,
+                                        &texture_cache_);
+        }
+    }
+    for (const auto& site : command_graph_renderer_.planned_sites()) {
+        if (const GPUMesh* mesh = mesh_cache_.get(site.blueprint, L)) {
+            unit_renderer_.inject_ghost(mesh, site.position.x, site.position.y, site.position.z,
+                                        0.2f, 0.9f, 0.3f, &texture_cache_);
+        }
+    }
+    // Moho's formation preview tint, 0xD8D8D800
+    constexpr f32 kFormationTint = 0xD8 / 255.0f;
+    for (const FormationGhost& formation : formation_ghosts_) {
+        if (const GPUMesh* mesh = mesh_cache_.get(formation.blueprint_id, L)) {
+            unit_renderer_.inject_ghost(mesh, formation.position.x, formation.position.y,
+                                        formation.position.z, kFormationTint, kFormationTint, 0.0f,
+                                        &texture_cache_, formation.heading);
+        }
+    }
+
+    inject_feedback_blips(L, world_meshes_);
+    inject_map_border(L, border_meshes_);
+}
+
+void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
+                                   const sim::FrameView& view, sim::WorldEvents& events,
+                                   const BuildGhost* ghost, lua_State* L,
+                                   const std::unordered_set<u32>* selected_ids, bool primary) {
+    // Effects emit where any view sees them (Moho's CAM_GetAllCameras)
+    const Frustum* emit_frustum = split_ ? nullptr : &frustum;
+    // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
+    beam_renderer_.update(view, *view_camera_, beam_bp_cache_, texture_cache_, L, &recon_,
+                          unit_renderer_.shader_time(), fi);
+    // And its trails, which likewise leave their dots to them (M214b)
+    trail_renderer_.update(view, *view_camera_, emit_frustum, trail_bp_cache_, texture_cache_, L,
+                           &recon_, fi);
+    // And its particles, likewise; a new tick's emission, then this frame's quads (M214c)
+    {
+        PROFILE_ZONE("Render::particle_update");
+        // The waves in view emit on the system clock (M213c)
+        if (primary && view.cur()) {
+            waves_emitted_.clear();
+            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
+            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
+        }
+        particle_system_.update(view, *view_camera_, emit_frustum, emitter_bp_cache_, L, terrain_);
+        particle_renderer_.update(particle_system_, texture_cache_, fi);
+    }
+
+    selection_renderer_.update(view, *view_camera_, view_points()[1], selected_ids, hovered_,
+                               player_army_, drag_box_, texture_cache_, mesh_cache_, L, fi);
+
+    update_world_shapes(L, fi);
+    if (!primary && fog_on_) {
+        vision_renderer_.update(fog_circles_, fi);
+        minimap_vision_.update(fog_circles_, fi);
+    }
+
+    // FA's range overlays (Moho's RangeRenderer), for the focus army
+    {
+        PROFILE_ZONE("Render::range_update");
+        const RangeScene scene = collect_range_scene(
+            *range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
+            ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
+            ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
+        const auto& rect = view_camera_->playable_rect();
+        const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
+        const auto batches = range_batches(*range_overlays_, scene);
+        const f32 zoom = view_camera_->zoom() / view_camera_->max_zoom();
+        range_renderer_.update(batches, range_overlays_->settings(), span, zoom, fi);
+        // A cartographic view draws them into its frame instead
+        if (cartographic_main_) {
+            main_frame_ranges_.update(batches, range_overlays_->settings(), span, zoom, fi);
+        }
+        if (primary && cartographic_view_) {
+            update_minimap_overlays(view, ghost, L, selected_ids, span, fi);
+        }
+    }
+
+    // Update game overlays (health bars, selection circles, game over)
+    {
+        PROFILE_ZONE("Render::overlay_update");
+        const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
+        overlay_renderer_.set_hovered(hovered_);
+        overlay_renderer_.update(view, events, *view_camera_, vp, selected_ids, texture_cache_,
+                                 view_points()[0], view_points()[1], game_result, frame_dt_,
+                                 &frustum, ghost);
+    }
+
+    // FA's water: this frame's camera and time (M213a)
+    water_renderer_.update(*view_camera_, vp, unit_renderer_.shader_time(), fi);
+    // The sky: its time is the tick and the interpolant, unwrapped (M210b)
+    sky_renderer_.update(*view_camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
+
+    // Scripts' decals and splats: this tick's, as the player's army sees
+    // them (M212c)
+    if (terrain_) {
+        PROFILE_ZONE("Render::runtime_decals");
+        f32 ex = 0;
+        f32 ey = 0;
+        f32 ez = 0;
+        view_camera_->eye_position(ex, ey, ez);
+        const f32 aspect = view_aspect();
+        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
+                               terrain_mesh_, view_camera_->view(), {ex, ey, ez},
+                               view_camera_->tan_half_fov_y(aspect) * aspect, frustum,
+                               texture_cache_, fi, fidelity(),
+                               frame_ui_registry_ ? &frame_ui_registry_->user_decals() : nullptr);
+    }
+
+    // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
+    strategic_icon_renderer_.update(view, *view_camera_, vp, selected_ids, texture_cache_,
+                                    view_points()[0], view_points()[1], L, frame_dt_);
+    if (primary) {
+        economy_overlay_renderer_.update(
+            view, camera_, vp, player_army_,
+            [&](const std::string& id) { return strategic_icon_renderer_.fade_in_zoom(id, L); },
+            texture_cache_, font_cache_, window_width_, window_height_, L);
+    }
+    projectile_icon_renderer_.update(strategic_icon_renderer_.projectile_icons(), fi);
+
+    {
+        bool resources = !view_camera_->free() && view_resources_;
+        if (!split_ && L) {
+            lua_pushstring(L, "__osc_world_view");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            if (const auto* wv = static_cast<const ui::WorldView*>(lua_touserdata(L, -1))) {
+                resources = resources && wv->resource_rendering();
+            }
+            lua_pop(L, 1);
+        }
+        std::vector<ResourceIcon> icons;
+        if (resources && terrain_ && view.cur()) {
+            const map::Terrain& terrain = *terrain_;
+            const PlayableRect whole{0, 0, static_cast<i32>(terrain.map_width()),
+                                     static_cast<i32>(terrain.map_height())};
+            icons = renderer::resource_icons(
+                view.cur()->deposits, *view_camera_, static_cast<f32>(view_area_.extent.width),
+                static_cast<f32>(view_area_.extent.height), playable_rect_.rect().value_or(whole),
+                [&](f32 x, f32 z) { return terrain.get_terrain_height(x, z); });
+        }
+        resource_icon_renderer_.update(icons, texture_cache_, fi);
+        resource_icon_time_ = static_cast<f32>(glfwGetTime());
+    }
+}
+
 void Renderer::begin_commands(u32 fi) {
-    vkResetCommandBuffer(cmd_buf_[fi], 0);
+    cmd_ = cmd_buf_[fi];
+    vkResetCommandBuffer(cmd_, 0);
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -3288,11 +3475,11 @@ void Renderer::begin_swapchain_pass(u32 fi, u32 image_index) {
     rp.renderArea.extent = {window_width_, window_height_};
     rp.clearValueCount = static_cast<u32>(clear.size());
     rp.pClearValues = clear.data();
-    vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
-    set_window_viewport(cmd_buf_[fi]);
+    vkCmdBeginRenderPass(cmd_, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    set_window_viewport(cmd_);
 }
 
-void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
+void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool after_another) {
     // Always render scene to offscreen HDR image (frame_.scene_pass()).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
@@ -3311,15 +3498,25 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
         !cartographic_main_ && fidelity() >= 2 && particle_renderer_.refracting();
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass = high_water || refracting ? frame_.first_pass() : frame_.scene_pass();
+    if (after_another) {
+        rp_begin.renderPass =
+            high_water || refracting ? frame_.next_view_first_pass() : frame_.next_view_pass();
+    } else {
+        rp_begin.renderPass = high_water || refracting ? frame_.first_pass() : frame_.scene_pass();
+    }
     rp_begin.framebuffer = frame_.scene_framebuffer();
-    rp_begin.renderArea.extent = {window_width_, window_height_};
+    // The first view's pass clears the whole frame, as Moho clears the head
+    // before its views draw: between split views it stays cleared
+    rp_begin.renderArea = view_area_;
+    if (split_ && !after_another) {
+        rp_begin.renderArea = {{0, 0}, {window_width_, window_height_}};
+    }
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
     rp_begin.pClearValues = clear_values.data();
-    vkCmdBeginRenderPass(cmd_buf_[fi], &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBeginRenderPass(cmd_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
     // Dynamic viewport + scissor
-    set_window_viewport(cmd_buf_[fi]);
+    vkc::set_area(cmd_, view_area_);
 
     if (cartographic_main_) {
         record_cartographic_main(fi, vp);
@@ -3328,14 +3525,16 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
 
     // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b),
     // unless ren_SkyDome is off (the render_skydome option): the clear shows
-    if (video_options_.skydome) sky_renderer_.record(cmd_buf_[fi], fi);
+    if (video_options_.skydome) {
+        sky_renderer_.record(cmd_, fi);
+    }
 
     // 1. Draw terrain: at graphics fidelity 0 the low fidelity terrain
     // (LowFidelityTerrain, M212h), else the map's own shader (Medium and
     // High alike)
     const bool low_terrain = fidelity() == 0 && terrain_low_pipeline_;
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                            low_terrain ? terrain_low_pipeline_ : terrain_pipeline_);
 
         // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
@@ -3352,29 +3551,28 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
         tpc.terrainTime = terrain_time_.value();
-        camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
+        view_camera_->eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
-        vkc::push_constants(cmd_buf_[fi], terrain_layout_,
+        vkc::push_constants(cmd_, terrain_layout_,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                             sizeof(tpc), &tpc);
 
         // Bind terrain texture descriptor set (set=0)
         if (terrain_tex_ds_) {
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      terrain_layout_, 0, 1, &terrain_tex_ds_, 0, nullptr);
+            vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 0, 1,
+                                      &terrain_tex_ds_, 0, nullptr);
         }
         // Bind shadow descriptor set (set=1)
         if (shadow_ds_[fi]) {
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      terrain_layout_, 1, 1, &shadow_ds_[fi], 0, nullptr);
+            vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 1, 1,
+                                      &shadow_ds_[fi], 0, nullptr);
         }
 
         VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
         VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
-                             VK_INDEX_TYPE_UINT32);
-        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+        vkCmdBindVertexBuffers(cmd_, 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_, terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_, terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
     // 2. The decals, as HighFidelityTerrain's DrawNormals draws them: the
@@ -3385,55 +3583,56 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     // drew in the normal pass (M212e).
     // Medium and Low have no AlbedoXP pass; Low draws the water's albedo
     // decals here, before the water (LowFidelityTerrain::DrawNormals, M212h).
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::GlowMask, decal_glow_mask_pipeline_, vp);
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::Albedo, decal_pipeline_, vp);
-    if (fidelity() >= 2)
-        record_decals(cmd_buf_[fi], fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
+    record_decals(cmd_, fi, DecalTechnique::GlowMask, decal_glow_mask_pipeline_, vp);
+    record_decals(cmd_, fi, DecalTechnique::Albedo, decal_pipeline_, vp);
+    if (fidelity() >= 2) {
+        record_decals(cmd_, fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
+    }
     if (fidelity() == 0)
-        record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
+        record_decals(cmd_, fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
     if (decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi]) {
         f32 ex = 0;
         f32 ey = 0;
         f32 ez = 0;
-        camera_.eye_position(ex, ey, ez);
-        runtime_decals_.draw_splats(cmd_buf_[fi], fi, vp, {ex, ey, ez},
+        view_camera_->eye_position(ex, ey, ez);
+        runtime_decals_.draw_splats(cmd_, fi, vp, {ex, ey, ez},
                                     static_cast<f32>(terrain_->map_width()),
                                     static_cast<f32>(terrain_->map_height()), terrain_tex_ds_,
                                     shadow_ds_[fi], fidelity() == 0);
     }
-    record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
+    record_decals(cmd_, fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
 
     // WRenViewport::RenderCompositeTerrain: DrawTerrainSkirt after DrawNormals
     if (video_options_.skirt && terrain_skirt_pipeline_ && terrain_mesh_.skirt_index_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_skirt_pipeline_);
-        vkc::push_constants(cmd_buf_[fi], terrain_skirt_layout_,
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_skirt_pipeline_);
+        vkc::push_constants(cmd_, terrain_skirt_layout_,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                             sizeof(f32) * 16, vp.data());
         VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
         VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
-        vkc::draw_indexed(cmd_buf_[fi], terrain_mesh_.skirt_index_count(), 1,
+        vkCmdBindVertexBuffers(cmd_, 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_, terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_, terrain_mesh_.skirt_index_count(), 1,
                           terrain_mesh_.skirt_first_index(), 0, 0);
     }
 
     // 2b. The range overlays, on the terrain before the meshes
     // (WRenViewport::Render's RangeRenderer::Render)
-    range_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+    range_renderer_.render(cmd_, view_area_, vp.data(), fi);
 
     // 3. The meshes (real SCM models with GPU skinning): on a map with water,
     // those Moho draws before it (M213b)
-    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::BeforeWater);
+    draw_meshes(cmd_, fi, vp, MeshPass::BeforeWater);
 
     // 4. Draw cube fallback units (skip when strategic zoom active)
     if (!strategic_icon_renderer_.is_strategic_zoom() &&
         unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_pipeline_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, unit_pipeline_);
 
         // Bind shadow descriptor set at set=0
         if (shadow_ds_[fi]) {
-            vkc::bind_descriptor_sets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, unit_layout_,
-                                      0, 1, &shadow_ds_[fi], 0, nullptr);
+            vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, unit_layout_, 0, 1,
+                                      &shadow_ds_[fi], 0, nullptr);
         }
 
         struct UnitPC {
@@ -3441,25 +3640,24 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
             f32 eyeX, eyeY, eyeZ;
         } upc{};
         std::memcpy(upc.viewProj, vp.data(), sizeof(f32) * 16);
-        camera_.eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
-        vkc::push_constants(cmd_buf_[fi], unit_layout_,
+        view_camera_->eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
+        vkc::push_constants(cmd_, unit_layout_,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                             sizeof(upc), &upc);
 
         VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
                             unit_renderer_.cube_instance_buffer()};
         VkDeviceSize offsets[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
-                             VK_INDEX_TYPE_UINT32);
-        vkc::draw_indexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
+        vkCmdBindVertexBuffers(cmd_, 0, 2, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_, unit_renderer_.cube_index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkc::draw_indexed(cmd_, unit_renderer_.cube_index_count(),
                           unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
     // 4b. FA's particles and trails under the water, a negative SortOrder's
     // (M214b-c)
-    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
-    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
+    particle_renderer_.render(cmd_, view_area_, vp.data(), true, fi);
+    trail_renderer_.render(cmd_, view_area_, vp.data(), true, fi);
 
     // 5. FA's water (M213a), as CWorldView draws it: its alpha mask (alpha 0
     // over open water), a copy of the frame so far, then the surface, which
@@ -3469,108 +3667,108 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     // (LowFidelityWater, M213d).
     if (water_renderer_.has_water()) {
         if (high_water) {
-            water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
-            copy_and_continue(cmd_buf_[fi],
-                              refracting ? frame_.middle_pass() : frame_.second_pass());
-            water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
+            water_renderer_.render_mask(cmd_, view_area_, fi);
+            copy_and_continue(cmd_, refracting ? frame_.middle_pass() : frame_.second_pass());
+            water_renderer_.render_surface(cmd_, view_area_, fi);
         } else {
-            water_renderer_.render_surface_low(cmd_buf_[fi], window_width_, window_height_, fi);
+            water_renderer_.render_surface_low(cmd_, view_area_, fi);
         }
         // The water's albedo decals on its surface (M212g), as the terrain
         // draws them once the water is down (Medium and High; Low drew them).
-        if (fidelity() > 0)
-            record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
+        if (fidelity() > 0) {
+            record_decals(cmd_, fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
+        }
     }
     // The playable area's boundary (RenderPlayableBoundary), after the water
     // and before the meshes Moho draws after it
-    boundary_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data());
+    boundary_renderer_.render(cmd_, view_area_, vp.data());
     // The meshes Moho draws after the water (M213b), which writes no depth:
     // over it, unrefracted (on a dry map, in the same place)
-    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
+    draw_meshes(cmd_, fi, vp, MeshPass::AfterWater);
 
     // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
     // Moho's CWorldParticles::RenderEffects draws them
-    beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
-    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
+    beam_renderer_.render(cmd_, view_area_, vp.data(), fi);
+    particle_renderer_.render(cmd_, view_area_, vp.data(), false, fi);
+    trail_renderer_.render(cmd_, view_area_, vp.data(), false, fi);
     // The last of the meshes, after the effects above the water: the
     // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
-    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
+    draw_meshes(cmd_, fi, vp, MeshPass::AfterEffects);
     // The fog of war over all of it (WRenViewport::Render: after the meshes
     // and effects, before the refracting effects and the world view's own
     // overlays): what no vision circle holds, darkened to 67%
-    vision_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+    vision_renderer_.render(cmd_, view_area_, vp.data(), fi);
     // The order lines and waypoints, over the world (TCommand)
-    command_graph_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-    selection_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+    command_graph_renderer_.render(cmd_, view_area_, vp.data(), fi);
+    selection_renderer_.render(cmd_, view_area_, vp.data(), fi);
 
     // 5c. FA's refracting particles (M214d), as WRenViewport's
     // RenderRefractingEffects draws them: last, over a copy of the finished
     // frame.
     if (refracting) {
-        copy_and_continue(cmd_buf_[fi], frame_.second_pass());
-        particle_renderer_.render_refracting(cmd_buf_[fi], window_width_, window_height_, vp.data(),
-                                             fi);
+        copy_and_continue(cmd_, frame_.second_pass());
+        particle_renderer_.render_refracting(cmd_, view_area_, vp.data(), fi);
     }
-    record_view_drawing(cmd_buf_[fi], fi, vp);
+    record_view_drawing(cmd_, fi, vp);
 }
 
 void Renderer::record_view_drawing(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp) {
-    resource_icon_renderer_.render(cmd, window_width_, window_height_, resource_icon_time_, fi);
+    resource_icon_renderer_.render(cmd, view_area_, resource_icon_time_, fi);
     if (scene_ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
         vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scene_ui_pipeline_);
-        strategic_icon_renderer_.render(cmd, scene_ui_layout_, window_width_, window_height_,
-                                        ui_scale_);
+        strategic_icon_renderer_.render(cmd, scene_ui_layout_, view_area_, ui_scale_);
     }
-    projectile_icon_renderer_.render(cmd, ui_width(), ui_height(), fi);
+    const std::array<u32, 2> points = view_points();
+    projectile_icon_renderer_.render(cmd, points[0], points[1], fi);
     // FAF's world drawing, at the end of the world view's own drawing
     // (DrawFunc.cpp's hook at CUIWorldView::Render's end)
-    world_shapes_batch_.render(cmd, window_width_, window_height_, vp.data(), fi);
+    world_shapes_batch_.render(cmd, view_area_, vp.data(), fi);
 }
 
-void Renderer::record_screen_layers(u32 fi) {
+void Renderer::record_screen_layers(const std::vector<ScreenLayers>& views) {
     // 7. Draw game overlays (health bars, selection, command lines)
-    if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        overlay_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_,
-                                 ui_scale_);
+    const bool drawn = std::any_of(views.begin(), views.end(),
+                                   [](const ScreenLayers& v) { return v.overlays.quads > 0; });
+    if (ui_pipeline_ && drawn) {
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        for (const ScreenLayers& v : views) {
+            overlay_renderer_.render(cmd_, ui_layout_, v.overlays, v.area, ui_scale_);
+        }
+        set_window_viewport(cmd_);
     }
     if (ui_pipeline_ && economy_overlay_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        economy_overlay_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        economy_overlay_renderer_.render(cmd_, ui_layout_, window_width_, window_height_);
     }
 
     // 8. Draw minimap (terrain bg + unit icons + camera box)
     if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        minimap_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_,
-                                 ui_scale_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        minimap_renderer_.render(cmd_, ui_layout_, window_width_, window_height_, ui_scale_);
     }
 
     // 9. Draw economy HUD (resource bars + text at top of screen)
     if (legacy_hud_active_ && ui_pipeline_ && hud_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        hud_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_, ui_scale_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        hud_renderer_.render(cmd_, ui_layout_, window_width_, window_height_, ui_scale_);
     }
 
     // 10. Draw selection info panel (bottom-center unit details)
     if (legacy_hud_active_ && ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        selection_info_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_,
-                                        ui_scale_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        selection_info_renderer_.render(cmd_, ui_layout_, window_width_, window_height_, ui_scale_);
     }
 
     // 11. Draw UI (screen-space 2D quads, last — always on top)
     if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        ui_renderer_.render(cmd_buf_[fi], ui_layout_,
-                            window_width_, window_height_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        ui_renderer_.render(cmd_, ui_layout_, window_width_, window_height_);
     }
 
     // 12. Draw profile overlay (topmost, after all other UI)
     if (ui_pipeline_ && profile_overlay_.quad_count() > 0) {
-        vkc::bind_pipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
-        profile_overlay_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_, ui_scale_);
+        vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        profile_overlay_.render(cmd_, ui_layout_, window_width_, window_height_, ui_scale_);
     }
 }
 
@@ -3643,14 +3841,14 @@ const std::string* Renderer::decal_frame(const std::string& path, f32 ticks) {
 void Renderer::collect_frame_decals(const Frustum& frustum, f32 ticks) {
     frame_decals_.clear();
     if (!decals_enabled_ || !terrain_) return;
-    const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
-    const f32 half_width = camera_.tan_half_fov_y(aspect) * aspect;
+    const f32 aspect = view_aspect();
+    const f32 half_width = view_camera_->tan_half_fov_y(aspect) * aspect;
     f32 ex = 0;
     f32 ey = 0;
     f32 ez = 0;
-    camera_.eye_position(ex, ey, ez);
+    view_camera_->eye_position(ex, ey, ez);
     const std::array<f32, 3> eye = {ex, ey, ez};
-    const std::array<f32, 16> view = camera_.view();
+    const std::array<f32, 16> view = view_camera_->view();
     // The map's decals are fidelity 1 (CWldTerrainDecal's load): the low
     // fidelity terrain draws none of them (M212h).
     for (const StoredDecal& sd : stored_decals_) {
@@ -3700,7 +3898,7 @@ void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique techniq
     pc.map_alpha[0] = static_cast<f32>(terrain_->map_width());
     pc.map_alpha[1] = static_cast<f32>(terrain_->map_height());
     pc.map_alpha[3] = technique == DecalTechnique::AlbedoXP ? 1.0f : 0.0f;
-    camera_.eye_position(pc.eye[0], pc.eye[1], pc.eye[2]);
+    view_camera_->eye_position(pc.eye[0], pc.eye[1], pc.eye[2]);
     // The water's albedo decals lie on its surface (DecalsVSWaterAlbedo)
     if (technique == DecalTechnique::WaterAlbedo) pc.eye[3] = water_renderer_.water_elevation();
     VkDescriptorSet no_spec = texture_cache_.specteam_fallback_descriptor();
@@ -4039,10 +4237,41 @@ void Renderer::poll_events(f64 dt) {
 
     // The world view's camera, before input picks this frame: its moves,
     // then its basis (a pan has moved the target)
-    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
-    // Its clocks: the system's, and the game's
-    camera_.set_clocks(glfwGetTime(), camera_game_time_);
-    camera_.update(window_, dt);
+    const std::vector<SceneView> views = drawn_views();
+    if (views.size() < 2) {
+        camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+        // Its clocks: the system's, and the game's
+        camera_.set_clocks(glfwGetTime(), camera_game_time_);
+        camera_.update(window_, dt);
+        return;
+    }
+    // Each view's camera takes the mouse over it; only the one that GetsGlobalCameraCommands
+    // takes the keys' and the screen edges' pans and spins (CUIWorldView::Frame)
+    const CameraInput in = camera_.read_input(window_);
+    for (const SceneView& v : views) {
+        Camera& c = *v.camera;
+        if (&c != &camera_) {
+            c.copy_options(camera_);
+            const auto& rect = camera_.playable_rect();
+            c.set_playable_rect(rect[0], rect[1], rect[2], rect[3]);
+        }
+        c.set_viewport(v.w, v.h);
+        c.set_clocks(glfwGetTime(), camera_game_time_);
+        c.set_mouse_enabled(!mouse_over_ui_ && v.contains(in.mouse_x, in.mouse_y));
+        if (!c.input_enabled()) {
+            c.frame(dt);
+            continue;
+        }
+        CameraInput own = in;
+        own.mouse_x -= v.x;
+        own.mouse_y -= v.y;
+        if (!v.global_camera_commands) {
+            own.up = own.down = own.left = own.right = false;
+            own.insert = own.del = false;
+            own.at_left = own.at_right = own.at_top = own.at_bottom = false;
+        }
+        c.apply(own, dt);
+    }
 }
 
 void Renderer::write_bone_descriptor(u32 fi) {
@@ -4353,12 +4582,12 @@ void Renderer::update_fog(const sim::FrameView& view, u32 fi) {
     }
 }
 
-void Renderer::draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, u32 width,
-                                     u32 height, u32 fi) const {
+void Renderer::draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj,
+                                     const VkRect2D& area, u32 fi) const {
     // Cartographic::Render's order: the range rings, then the fog
-    minimap_ranges_.render(cmd, width, height, view_proj, fi);
-    minimap_vision_.render(cmd, width, height, view_proj, fi);
-    frame_boundary_.render(cmd, width, height, view_proj);
+    minimap_ranges_.render(cmd, area, view_proj, fi);
+    minimap_vision_.render(cmd, area, view_proj, fi);
+    frame_boundary_.render(cmd, area, view_proj);
 }
 
 std::optional<Renderer::CartographicImages>
@@ -4401,8 +4630,8 @@ Renderer::capture_cartographic(const map::Terrain& terrain, const CartographicRe
     vkBeginCommandBuffer(cmd, &begin);
     CartographicRenderer::Overlays draw_overlays;
     if (overlays) {
-        draw_overlays = [&](VkCommandBuffer c, const f32* vp, u32 w, u32 h) {
-            draw_minimap_overlays(c, vp, w, h, 0);
+        draw_overlays = [&](VkCommandBuffer c, const f32* vp, const VkRect2D& area) {
+            draw_minimap_overlays(c, vp, area, 0);
         };
     }
     CartographicRenderer::Meshes draw_meshes_into;

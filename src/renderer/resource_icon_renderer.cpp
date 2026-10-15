@@ -174,11 +174,12 @@ void ResourceIconRenderer::update(std::span<const ResourceIcon> icons, TextureCa
     }
 }
 
-void ResourceIconRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, f32 time,
+void ResourceIconRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, f32 time,
                                   u32 fi) const {
     if (groups_.empty() || !colour_pipeline_ || !glow_pipeline_ || !instance_buf_[fi].buffer) {
         return;
     }
+    vkc::set_area(cmd, area);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_[fi].buffer, &offset);
     for (const Group& g : groups_) {
@@ -186,9 +187,10 @@ void ResourceIconRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewp
             VkPipelineLayout layout = glow ? glow_layout_ : colour_layout_;
             vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                glow ? glow_pipeline_ : colour_pipeline_);
-            const PushConstants pc{{static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)},
-                                   time,
-                                   glow ? 1.0f : 0.0f};
+            const PushConstants pc{
+                {static_cast<f32>(area.extent.width), static_cast<f32>(area.extent.height)},
+                time,
+                glow ? 1.0f : 0.0f};
             vkc::push_constants(cmd, layout,
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                 sizeof(pc), &pc);

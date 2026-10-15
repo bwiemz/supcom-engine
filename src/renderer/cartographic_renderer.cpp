@@ -91,13 +91,16 @@ void main() {
 
 // TerrainPS1: the frame's colour less saturate(16 (c - mean of the eight
 // neighbours' alpha)), alpha 0; neighbours summed in Moho's order (bl, l,
-// tl, t, ur, r, br, b), POINT and CLAMP. Clamped at 0 as Moho's 8-bit head
-// clamps it, which the scene's float target wouldn't.
+// tl, t, ur, r, br, b), POINT and CLAMP (to the view's rect). Clamped at 0
+// as Moho's 8-bit head clamps it, which the scene's float target wouldn't.
 const char* kEdgeFrag = R"(#version 450
 layout(set = 0, binding = 0) uniform sampler2D frame;
+layout(push_constant) uniform Area {
+    ivec4 rect;
+} pc;
 layout(location = 0) out vec4 color;
 float alpha_at(ivec2 at) {
-    return texelFetch(frame, clamp(at, ivec2(0), textureSize(frame, 0) - 1), 0).a;
+    return texelFetch(frame, clamp(at, pc.rect.xy, pc.rect.xy + pc.rect.zw - 1), 0).a;
 }
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
@@ -311,9 +314,9 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     layout_ci.pushConstantRangeCount = 1;
     layout_ci.pPushConstantRanges = &push;
     vkCreatePipelineLayout(device, &layout_ci, nullptr, &terrain_layout_);
+    const VkPushConstantRange area_push{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(i32) * 4};
     layout_ci.pSetLayouts = &frame_layout_;
-    layout_ci.pushConstantRangeCount = 0;
-    layout_ci.pPushConstantRanges = nullptr;
+    layout_ci.pPushConstantRanges = &area_push;
     vkCreatePipelineLayout(device, &layout_ci, nullptr, &edge_layout_);
 
     VkShaderModule terrain_vert =
@@ -538,11 +541,15 @@ std::array<f32, 16> CartographicRenderer::mesh_view_proj(const View& view) const
                                       kMeshHeadroom);
 }
 
-void CartographicRenderer::record_stage0(VkCommandBuffer cmd, const Target& t, const f32* view_proj,
-                                         const Overlays& overlays) const {
-    const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
-                              0.0f, 1.0f};
-    const VkRect2D scissor{{0, 0}, {t.width, t.height}};
+void CartographicRenderer::record_stage0(VkCommandBuffer cmd, const Target& t, const VkRect2D& area,
+                                         const f32* view_proj, const Overlays& overlays) const {
+    const VkViewport viewport{static_cast<f32>(area.offset.x),
+                              static_cast<f32>(area.offset.y),
+                              static_cast<f32>(area.extent.width),
+                              static_cast<f32>(area.extent.height),
+                              0.0f,
+                              1.0f};
+    const VkRect2D scissor = area;
     // Into the frame: cleared to opaque black, depth 1, stencil 0
     std::array<VkClearValue, 2> clears{};
     clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -573,7 +580,9 @@ void CartographicRenderer::record_stage0(VkCommandBuffer cmd, const Target& t, c
                         &push);
     vkc::draw(cmd, 4, 1, 0, 0);
     // The overlays, on the quad's depth
-    if (overlays) overlays(cmd, view_proj, t.width, t.height);
+    if (overlays) {
+        overlays(cmd, view_proj, area);
+    }
     vkCmdEndRenderPass(cmd);
 }
 
@@ -582,12 +591,12 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
     if (!prepare(fi, view.width, view.height)) return;
     const Target& t = targets_[fi];
     const auto vp = view_proj(view);
-    record_stage0(cmd, t, vp.data(), overlays);
+    const VkRect2D scissor{{0, 0}, {t.width, t.height}};
+    record_stage0(cmd, t, scissor, vp.data(), overlays);
 
     // Stage 1, into the output: the contour lines
     const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
                               0.0f, 1.0f};
-    const VkRect2D scissor{{0, 0}, {t.width, t.height}};
     // Black, and a depth of 1 for the meshes (Moho clears the head's)
     std::array<VkClearValue, 2> clears{};
     clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -605,6 +614,7 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edge_pipeline_);
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edge_layout_, 0, 1,
                               &frame_sets_[fi], 0, nullptr);
+    push_area(cmd, scissor);
     vkc::draw(cmd, 3, 1, 0, 0);
     // RenderMeshes, after Stage 1
     if (meshes) {
@@ -614,21 +624,32 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
     vkCmdEndRenderPass(cmd);
 }
 
+void CartographicRenderer::push_area(VkCommandBuffer cmd, const VkRect2D& area) const {
+    const std::array<i32, 4> rect = {area.offset.x, area.offset.y,
+                                     static_cast<i32>(area.extent.width),
+                                     static_cast<i32>(area.extent.height)};
+    vkc::push_constants(cmd, edge_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(rect),
+                        rect.data());
+}
+
 bool CartographicRenderer::record_main_frame(VkCommandBuffer cmd, u32 fi, u32 width, u32 height,
-                                             const f32* view_proj, const Overlays& overlays) {
+                                             const VkRect2D& area, const f32* view_proj,
+                                             const Overlays& overlays) {
     if (!ready() || !scene_edge_pipeline_ || fi >= FRAMES_IN_FLIGHT || width == 0 || height == 0 ||
         !ensure_target(main_targets_[fi], width, height, false, main_frame_sets_[fi],
                        VK_NULL_HANDLE))
         return false;
-    record_stage0(cmd, main_targets_[fi], view_proj, overlays);
+    record_stage0(cmd, main_targets_[fi], area, view_proj, overlays);
     return true;
 }
 
-void CartographicRenderer::record_main_edge(VkCommandBuffer cmd, u32 fi) const {
+void CartographicRenderer::record_main_edge(VkCommandBuffer cmd, u32 fi,
+                                            const VkRect2D& area) const {
     if (!scene_edge_pipeline_ || fi >= FRAMES_IN_FLIGHT || !main_targets_[fi].frame_fb) return;
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scene_edge_pipeline_);
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edge_layout_, 0, 1,
                               &main_frame_sets_[fi], 0, nullptr);
+    push_area(cmd, area);
     vkc::draw(cmd, 3, 1, 0, 0);
 }
 

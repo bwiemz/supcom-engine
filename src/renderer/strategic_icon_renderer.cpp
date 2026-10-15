@@ -815,16 +815,16 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
         });
 }
 
-void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
-                                   u32 viewport_h, f32 scale) {
-    if (quad_count_ == 0) return;
+void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
+                                   const VkRect2D& area, f32 scale) const {
+    if (quad_count_ == 0) {
+        return;
+    }
 
-    f32 vp[2] = {static_cast<f32>(viewport_w) / scale, static_cast<f32>(viewport_h) / scale};
+    f32 vp[2] = {static_cast<f32>(area.extent.width) / scale,
+                 static_cast<f32>(area.extent.height) / scale};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
-
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkc::set_area(cmd, area);
 
     VkBuffer buf = instance_buf_[fi_].buffer;
     VkDeviceSize offset = 0;
@@ -832,7 +832,9 @@ void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 
     // A run of icons per texture, in the order they were collected.
     for (const Group& g : groups_) {
-        if (!g.ds || g.first >= MAX_ICON_QUADS) continue;
+        if (!g.ds || g.first >= MAX_ICON_QUADS) {
+            continue;
+        }
         const u32 count = std::min(g.count, MAX_ICON_QUADS - g.first);
         vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &g.ds, 0,
                                   nullptr);

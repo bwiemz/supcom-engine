@@ -409,16 +409,9 @@ void WaterRenderer::update(const Camera& camera, const std::array<f32, 16>& view
     std::memcpy(uniform_mapped_[fi], &params_, sizeof(Uniforms));
 }
 
-void WaterRenderer::render_mask(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, u32 fi) const {
+void WaterRenderer::render_mask(VkCommandBuffer cmd, const VkRect2D& area, u32 fi) const {
     if (!has_water_ || !mask_pipeline_) return;
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(viewport_w);
-    viewport.height = static_cast<f32>(viewport_h);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkc::set_area(cmd, area);
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mask_pipeline_);
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
                               nullptr);
@@ -428,25 +421,17 @@ void WaterRenderer::render_mask(VkCommandBuffer cmd, u32 viewport_w, u32 viewpor
     vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
 }
 
-void WaterRenderer::render_surface_low(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                                       u32 fi) const {
+void WaterRenderer::render_surface_low(VkCommandBuffer cmd, const VkRect2D& area, u32 fi) const {
     if (!has_water_ || !low_pipelines_[0] || !low_pipelines_[1]) return;
     for (VkPipeline pass : low_pipelines_) {
-        bind_quad(cmd, pass, viewport_w, viewport_h, fi);
+        bind_quad(cmd, pass, area, fi);
         vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
     }
 }
 
-void WaterRenderer::bind_quad(VkCommandBuffer cmd, VkPipeline pipeline, u32 viewport_w,
-                              u32 viewport_h, u32 fi) const {
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(viewport_w);
-    viewport.height = static_cast<f32>(viewport_h);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+void WaterRenderer::bind_quad(VkCommandBuffer cmd, VkPipeline pipeline, const VkRect2D& area,
+                              u32 fi) const {
+    vkc::set_area(cmd, area);
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &sets_[fi], 0,
                               nullptr);
@@ -455,10 +440,9 @@ void WaterRenderer::bind_quad(VkCommandBuffer cmd, VkPipeline pipeline, u32 view
     vkCmdBindIndexBuffer(cmd, index_buf_.buffer, 0, VK_INDEX_TYPE_UINT16);
 }
 
-void WaterRenderer::render_surface(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                                   u32 fi) const {
+void WaterRenderer::render_surface(VkCommandBuffer cmd, const VkRect2D& area, u32 fi) const {
     if (!has_water_ || !surface_pipeline_) return;
-    bind_quad(cmd, surface_pipeline_, viewport_w, viewport_h, fi);
+    bind_quad(cmd, surface_pipeline_, area, fi);
     vkc::draw_indexed(cmd, 6, 1, 0, 0, 0);
 }
 
