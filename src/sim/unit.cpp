@@ -656,9 +656,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
     }
 
     // A landed aircraft given an order goes back to the air before it
-    // carries the order out (Moho's motion target set, layer Air).
-    if (can_fly() && !is_being_built() && !command_queue_.empty() && parent_entity_id() == 0 &&
-        (layer_ == "Land" || layer_ == "Water")) {
+    // carries the order out (Moho's motion target set, layer Air); so does an
+    // experimental one made on the ground, with no order.
+    if (can_fly() && !is_being_built() && (!command_queue_.empty() || lifts_off_) &&
+        parent_entity_id() == 0 && (layer_ == "Land" || layer_ == "Water")) {
         take_off(ctx);
         if (destroyed() || !in_registry()) return;
     }
@@ -3278,6 +3279,7 @@ void Unit::free_landing_reservation(SimState& sim) {
 }
 
 void Unit::take_off(SimContext& ctx) {
+    lifts_off_ = false;
     idle_landing_.descending = false;
     idle_landing_.idle_since = 0;
     if (ctx.sim) free_landing_reservation(*ctx.sim);

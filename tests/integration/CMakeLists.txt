@@ -59,6 +59,7 @@ add_executable(osc_integration
     runner/cartographic_test.cpp
     runner/mobile_build_start_test.cpp
     runner/drown_test.cpp
+    runner/spawn_layer_test.cpp
     runner/skirt_render_test.cpp
     runner/shield_render_test.cpp
     runner/mesh_capacity_test.cpp

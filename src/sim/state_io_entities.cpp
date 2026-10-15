@@ -1421,6 +1421,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.quat(u.tick_orientation_);
     w.b(u.tick_position_set_);
     w.b(u.moved_last_tick_);
+    w.b(u.lifts_off_);
     w.vec3(u.last_tick_motion_);
     w.b(u.turned_last_tick_);
     w.b(u.auto_overcharge_);
@@ -1832,6 +1833,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.tick_orientation_ = r.quat();
     u.tick_position_set_ = r.b();
     u.moved_last_tick_ = r.b();
+    u.lifts_off_ = r.b();
     u.last_tick_motion_ = r.vec3();
     u.turned_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();

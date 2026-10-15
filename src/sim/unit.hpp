@@ -855,6 +855,11 @@ public:
     bool is_air_unit() const { return layer_ == "Air"; }
     /// An aircraft, flying or landed (MotionType Air).
     bool can_fly() const { return motion_type_ == "RULEUMT_Air"; }
+    /// An experimental aircraft made by script starts on the ground (Moho's
+    /// GetStartingLayer gives it Land) and takes off on its first tick, with
+    /// no order (the original, probed).
+    bool lifts_off() const { return lifts_off_; }
+    void set_lifts_off(bool b) { lifts_off_ = b; }
     /// Air.FlyInWater: an aircraft that may fly under the water's surface.
     void set_fly_in_water(bool b) { fly_in_water_ = b; }
     /// What an aircraft holds its height over at (x, z): the ground, or the
@@ -2010,6 +2015,7 @@ private:
     Quaternion tick_orientation_{};
     bool tick_position_set_ = false; // (none before its first tick)
     bool moved_last_tick_ = false;
+    bool lifts_off_ = false;
     Vector3 last_tick_motion_;      // its move over the last tick
     bool turned_last_tick_ = false; // and whether it turned
     bool auto_overcharge_ = false;

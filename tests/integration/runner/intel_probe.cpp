@@ -8,6 +8,7 @@
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 #include <lua.h>
 #include <spdlog/spdlog.h>
@@ -154,6 +155,16 @@ u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char*
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
     const u32 id = lua_isnumber(ctx.L, -1) ? static_cast<u32>(lua_tonumber(ctx.L, -1)) : 0;
     lua_pop(ctx.L, 1);
+    // Moho stands a unit made by script on its spawn height (the ground, the
+    // water's surface: IUnit::CalcSpawnElevation). A scene that lifts one does
+    // so on purpose (a rig for what it draws), so the lift goes on after; an
+    // aircraft keeps its flying height, as it always did.
+    if (sim::Entity* e = id != 0 && lift != 0.0f ? ctx.sim.entity_registry().find(id) : nullptr;
+        e && e->is_unit() && static_cast<sim::Unit*>(e)->layer() != "Air") {
+        sim::Vector3 p = e->position();
+        p.y = ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift;
+        e->set_position(p);
+    }
     return id;
 }
 

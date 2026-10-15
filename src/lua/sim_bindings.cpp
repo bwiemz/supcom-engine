@@ -503,12 +503,15 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
     if (id == 0) return 0;
     if (auto* made = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
         made->set_orientation(orientation);
-        if (made->is_air_unit()) {
+        if (made->can_fly()) {
             made->set_air_facing(sim::forward_of(orientation));
         }
         if (place_of) {
+            // The unit it replaces: its place and layer, flying or landed (no
+            // lift-off from where it was made)
             made->set_position(pos);
             made->set_layer(place_of->layer());
+            made->set_lifts_off(false);
             made->set_heading(place_of->heading());
             made->set_current_altitude(place_of->current_altitude());
         }

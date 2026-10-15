@@ -219,6 +219,7 @@ void test_guard_engage(TestContext& ctx);
 void test_rebuilder_guard(TestContext& ctx);
 void test_mobile_build_start(TestContext& ctx);
 void test_drown(TestContext& ctx);
+void test_spawn_layer(TestContext& ctx);
 void test_attack_move(TestContext& ctx);
 void test_placement_layers(TestContext& ctx);
 void test_yaw_only(TestContext& ctx);
