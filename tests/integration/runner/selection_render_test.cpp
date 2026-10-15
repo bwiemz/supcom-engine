@@ -14,6 +14,7 @@
 #include "renderer/input_handler.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/selection_renderer.hpp"
+#include "renderer/unit_renderer.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
@@ -22,7 +23,9 @@
 
 #include <algorithm>
 
+#include <array>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -37,6 +40,20 @@ const renderer::SelectionRenderer::Bracket* bracket_of(const renderer::Renderer&
         }
     }
     return nullptr;
+}
+
+std::optional<std::array<f32, 3>> mesh_colour_at(const renderer::Renderer& r,
+                                                 const sim::Vector3& at) {
+    const renderer::MeshInstance* all = r.unit_renderer().mesh_instances();
+    for (const auto& g : r.unit_renderer().mesh_groups()) {
+        for (u32 i = 0; all && i < g.instance_count; ++i) {
+            const renderer::MeshInstance& m = all[g.instance_offset + i];
+            if (std::abs(m.model[12] - at.x) < 0.1f && std::abs(m.model[14] - at.z) < 0.1f) {
+                return std::array<f32, 3>{m.r, m.g, m.b};
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 bool ends_with(const std::string& s, const std::string& tail) {
@@ -93,6 +110,19 @@ void test_selection_render(TestContext& ctx) {
         ring = ring || same_colour(q, 0.2f, 1.0f, 0.2f);
     }
     t.check(!ring, "Test 2: the overlay draws no selection ring");
+
+    const auto* own_entity = ctx.sim.entity_registry().find(own);
+    const sim::Vector3 own_at = own_entity ? own_entity->position() : sim::Vector3{sx, 0, sz};
+    const auto selected_colour = mesh_colour_at(r, own_at);
+    shots.redraw();
+    const auto plain_colour = mesh_colour_at(r, own_at);
+    const auto rgb = [](const std::optional<std::array<f32, 3>>& c) {
+        return c ? fmt::format("{:.3f} {:.3f} {:.3f}", (*c)[0], (*c)[1], (*c)[2])
+                 : std::string("none");
+    };
+    t.check(selected_colour && plain_colour && *selected_colour == *plain_colour,
+            fmt::format("Test 2b: the selected unit's mesh colour ({}) is its unselected ({})",
+                        rgb(selected_colour), rgb(plain_colour)));
 
     // Test 3: under the cursor, an own unit's highlighted brackets, an
     // enemy's the enemy's
