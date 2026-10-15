@@ -303,6 +303,21 @@ TEST_CASE("GetIdleFactories holds the factories that are structures", "[userunit
     CHECK(lua_tonumber(w.ui.raw(), -1) == (structure ? 1.0 : 0.0));
 }
 
+TEST_CASE("UserUnit:IsIdle counts the orders given and not yet run", "[userunit]") {
+    UiWorld w;
+    const auto idle = [&] {
+        REQUIRE(w.ui.do_string("return units[1]:IsIdle()").ok());
+        const bool b = lua_toboolean(w.ui.raw(), -1) != 0;
+        lua_pop(w.ui.raw(), 1);
+        return b;
+    };
+    CHECK(idle());
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    w.sim.schedule_command(0, {w.id}, move, true);
+    CHECK_FALSE(idle());
+}
+
 TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[userunit]") {
     UiWorld w;
     w.unit().add_category("FACTORY");
