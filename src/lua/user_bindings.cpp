@@ -277,17 +277,12 @@ static int worldview_init(lua_State* L) {
     return 0;
 }
 
+static bool read_vec3(lua_State* L, int idx, f32 out[3]);
+
 static int worldview_Project(lua_State* L) {
     auto* wv = check_world_view(L);
     if (!wv || !wv->camera()) {
-        // Fallback: return {x=0, y=0}
-        lua_newtable(L);
-        lua_pushstring(L, "x");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "y");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
+        push_vector2(L, 0, 0);
         return 1;
     }
 
@@ -297,33 +292,11 @@ static int worldview_Project(lua_State* L) {
         wv->set_viewport(r->ui_width(), r->ui_height());
     }
 
-    // Args: self, Vector {x,y,z}
-    f32 wx = 0, wy = 0, wz = 0;
-    if (lua_istable(L, 2)) {
-        lua_pushstring(L, "x");
-        lua_rawget(L, 2);
-        if (lua_isnumber(L, -1)) wx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "y");
-        lua_rawget(L, 2);
-        if (lua_isnumber(L, -1)) wy = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushstring(L, "z");
-        lua_rawget(L, 2);
-        if (lua_isnumber(L, -1)) wz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-
+    f32 at[3] = {};
+    (void)read_vec3(L, 2, at);
     f32 sx = 0, sy = 0;
-    wv->project(wx, wy, wz, sx, sy);
-
-    lua_newtable(L);
-    lua_pushstring(L, "x");
-    lua_pushnumber(L, static_cast<lua_Number>(sx));
-    lua_rawset(L, -3);
-    lua_pushstring(L, "y");
-    lua_pushnumber(L, static_cast<lua_Number>(sy));
-    lua_rawset(L, -3);
+    wv->project(at[0], at[1], at[2], sx, sy);
+    push_vector2(L, sx, sy);
     return 1;
 }
 
