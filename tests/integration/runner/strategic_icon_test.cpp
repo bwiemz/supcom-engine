@@ -698,65 +698,67 @@ void test_strategic_icons(TestContext& ctx) {
         t.check(false, "renderer init at a display scale of 2");
         return;
     }
-    {
+    renderer::Renderer& big = retina.renderer();
+    big.set_player_army(0);
+    const auto tank_blocks = [&](i32 k) {
+        std::array<int, 2> n{};
         const std::string rest = icon_texture(ctx, "uel0201", "rest");
         const auto file = ctx.vfs.read_file(rest);
         const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
-        int blocks = 0;
-        int blended = 0;
-        if (dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK && !dds->mips.empty()) {
-            const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
-                reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
-            renderer::Renderer& big = retina.renderer();
-            big.set_player_army(0);
-            (void)retina.shoot(*ctx.sim.terrain(), sx, sz, 300.0f);
-            const ImageRGBA8 image = retina.grab();
-            const auto& quads = big.strategic_icons().quads();
-            const auto& textures = big.strategic_icons().quad_textures();
-            for (size_t i = 0; i < quads.size() && i < textures.size(); ++i) {
-                if (textures[i] != rest) {
-                    continue;
-                }
-                const auto x0 = static_cast<i32>(2.0f * quads[i].rect[0]);
-                const auto y0 = static_cast<i32>(2.0f * quads[i].rect[1]);
-                for (u32 v = 0; v < dds->height; ++v) {
-                    for (u32 u = 0; u < dds->width; ++u) {
-                        if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
-                            continue;
-                        }
-                        const i32 px = x0 + 2 * static_cast<i32>(u);
-                        const i32 py = y0 + 2 * static_cast<i32>(v);
-                        if (px < 0 || py < 0 || px + 1 >= static_cast<i32>(image.width) ||
-                            py + 1 >= static_cast<i32>(image.height)) {
-                            continue;
-                        }
-                        const auto at = [&](i32 x, i32 y) {
-                            return &image.pixels[(static_cast<size_t>(y) * image.width +
-                                                  static_cast<size_t>(x)) *
-                                                 4];
-                        };
-                        bool same = true;
-                        for (const auto& [dx, dy] :
-                             {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
+        if (!dds || dds->format != VK_FORMAT_BC3_UNORM_BLOCK || dds->mips.empty()) {
+            return n;
+        }
+        const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
+            reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
+        (void)retina.shoot(*ctx.sim.terrain(), sx, sz, 300.0f);
+        const ImageRGBA8 image = retina.grab();
+        const auto at = [&](i32 x, i32 y) {
+            return &image.pixels[(static_cast<size_t>(y) * image.width + static_cast<size_t>(x)) *
+                                 4];
+        };
+        const auto& quads = big.strategic_icons().quads();
+        const auto& textures = big.strategic_icons().quad_textures();
+        for (size_t i = 0; i < quads.size() && i < textures.size(); ++i) {
+            if (textures[i] != rest) {
+                continue;
+            }
+            const auto x0 = static_cast<i32>(2.0f * quads[i].rect[0]);
+            const auto y0 = static_cast<i32>(2.0f * quads[i].rect[1]);
+            for (u32 v = 0; v < dds->height; ++v) {
+                for (u32 u = 0; u < dds->width; ++u) {
+                    if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
+                        continue;
+                    }
+                    const i32 px = x0 + k * static_cast<i32>(u);
+                    const i32 py = y0 + k * static_cast<i32>(v);
+                    if (px < 0 || py < 0 || px + k > static_cast<i32>(image.width) ||
+                        py + k > static_cast<i32>(image.height)) {
+                        continue;
+                    }
+                    bool same = true;
+                    for (i32 dy = 0; dy < k; ++dy) {
+                        for (i32 dx = 0; dx < k; ++dx) {
                             same = same &&
                                    std::equal(at(px, py), at(px, py) + 3, at(px + dx, py + dy));
                         }
-                        ++blocks;
-                        blended += same ? 0 : 1;
                     }
+                    ++n[0];
+                    n[1] += same ? 0 : 1;
                 }
             }
         }
-        t.check(blocks > 0 && blended == 0,
+        return n;
+    };
+    {
+        const auto tank = tank_blocks(2);
+        t.check(tank[0] > 0 && tank[1] == 0,
                 fmt::format("Test 31: at a display scale of 2 each of the tank icon's opaque "
                             "texels is a 2x2 block of one colour (point sampled): {} of {} "
                             "blended",
-                            blended, blocks));
+                            tank[1], tank[0]));
     }
 
     {
-        renderer::Renderer& big = retina.renderer();
-        big.set_player_army(0);
         (void)retina.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
         const ImageRGBA8 image = retina.grab();
         const Frame frame = drawn(big);
@@ -789,13 +791,13 @@ void test_strategic_icons(TestContext& ctx) {
                             nuke ? nuke->y + nuke->h * 0.5f : -1.0f,
                             nuke_at ? (*nuke_at)[0] : -1.0f, nuke_at ? (*nuke_at)[1] : -1.0f));
 
-        const auto glowing = [&](f32 cx, f32 cy, int& lit, int& dark) {
-            const auto x0 = static_cast<i32>(cx) - 20;
-            const auto y0 = static_cast<i32>(cy) - 20;
-            for (i32 y = std::max(y0, 0); y < std::min(y0 + 40, static_cast<i32>(scene.height));
-                 ++y) {
-                for (i32 x = std::max(x0, 0); x < std::min(x0 + 40, static_cast<i32>(scene.width));
-                     ++x) {
+        const auto glowing = [&](f32 cx, f32 cy, i32 half, int& lit, int& dark) {
+            const auto x0 = static_cast<i32>(cx) - half;
+            const auto y0 = static_cast<i32>(cy) - half;
+            for (i32 y = std::max(y0, 0);
+                 y < std::min(y0 + 2 * half, static_cast<i32>(scene.height)); ++y) {
+                for (i32 x = std::max(x0, 0);
+                     x < std::min(x0 + 2 * half, static_cast<i32>(scene.width)); ++x) {
                     const f32 a =
                         scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
                                        4 +
@@ -810,8 +812,8 @@ void test_strategic_icons(TestContext& ctx) {
         int lit_1x = 0;
         int dark_1x = 0;
         if (nuke && nuke->glow > 0.0f) {
-            glowing(2.0f * (nuke->x + 10.0f), 2.0f * (nuke->y + 10.0f), lit, dark);
-            glowing(nuke->x + 10.0f, nuke->y + 10.0f, lit_1x, dark_1x);
+            glowing(2.0f * (nuke->x + 10.0f), 2.0f * (nuke->y + 10.0f), 20, lit, dark);
+            glowing(nuke->x + 10.0f, nuke->y + 10.0f, 20, lit_1x, dark_1x);
         }
         t.check(lit > 400 && lit + dark == 1600 && lit_1x == 0,
                 fmt::format("Test 33: in the {}x{} scene the nuke's icon glows in the 40x40 "
@@ -936,6 +938,37 @@ void test_strategic_icons(TestContext& ctx) {
         t.check(on_map[0] > 0 && on_map[1] == 0,
                 fmt::format("Test 36: so is its icon on the minimap: {} of {} blended", on_map[1],
                             on_map[0]));
+
+        big.set_strategic_icon_scale(2.0f);
+        const auto tank = tank_blocks(4);
+        t.check(tank[0] > 0 && tank[1] == 0,
+                fmt::format("Test 37: at a display scale of 2 and ui_StrategicIconScale 2 each of "
+                            "the tank icon's opaque texels is a 4x4 block of one colour: {} of {} "
+                            "blended",
+                            tank[1], tank[0]));
+        big.set_projectile_icon_scale(2.0f);
+        (void)retina.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+        big.request_scene_capture(
+            [&](renderer::Renderer::SceneImage captured) { scene = std::move(captured); });
+        retina.redraw();
+        nuke = nullptr;
+        for (const renderer::ProjectileIcon& p : big.projectile_icons()) {
+            if (p.path == nuke_icon) {
+                nuke = &p;
+            }
+        }
+        int lit_4x = 0;
+        int dark_4x = 0;
+        if (nuke && nuke->w == 40.0f && nuke->glow > 0.0f) {
+            glowing(2.0f * (nuke->x + 20.0f), 2.0f * (nuke->y + 20.0f), 40, lit_4x, dark_4x);
+        }
+        t.check(lit_4x > 1600 && lit_4x + dark_4x == 6400,
+                fmt::format("Test 38: at a display scale of 2 and ui_ProjectileIconScale 2 the "
+                            "nuke's icon glows in the 80x80 pixels around twice its point ({} "
+                            "lit, {} dark)",
+                            lit_4x, dark_4x));
+        big.set_strategic_icon_scale(1.0f);
+        big.set_projectile_icon_scale(1.0f);
     }
 
     {

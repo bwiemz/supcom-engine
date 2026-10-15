@@ -282,6 +282,17 @@ void test_resource_icon_render(TestContext& ctx) {
             fmt::format("Test 9: at a display scale of 2 the mass icon is still {}x{} of its "
                         "pixels ({} icons in all)",
                         size, size, retina.renderer().resource_icons().quads().size()));
+
+    bool composed = false;
+    if (retina.ok()) {
+        retina.renderer().set_deposit_icon_scale(2.0f);
+        retina.redraw();
+        composed = icon_quad(retina.renderer(), *mass, terrain, 2.0f * size) != nullptr;
+    }
+    t.check(composed,
+            fmt::format("Test 10: at a display scale of 2 and ui_DepositIconScale 2 the mass icon "
+                        "is {}x{} of its pixels",
+                        2.0f * size, 2.0f * size));
 }
 
 } // namespace osc::test
