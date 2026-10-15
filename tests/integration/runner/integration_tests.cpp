@@ -9919,6 +9919,22 @@ void test_missile(TestContext& ctx) {
             if not v:IsDead() then error('victim ' .. i .. ' lives') end
         end
     )");
+    lua_check("Test 8b: the silo is credited with what its nuke killed", R"(
+        local kills = __osc_s:GetStat('KILLS', 0).Value
+        if kills ~= table.getn(__osc_victims) then error('S has ' .. kills .. ' kills') end
+    )");
+    lua_check("Test 8c: a projectile's projectile is launched by the first's launcher", R"(
+        local bp = '/projectiles/TDFGauss01/TDFGauss01_proj.bp'
+        local first = __osc_s:CreateProjectile(bp, 0, 30, 0, nil, nil, nil)
+        local second = first:CreateProjectile(bp, 0, 0, 0, nil, nil, nil)
+        local launcher = second:GetLauncher()
+        local first_launcher = first:GetLauncher()
+        second:Destroy()
+        first:Destroy()
+        if first_launcher ~= __osc_s then error('the first is not launched by S') end
+        if launcher == first then error('the second is launched by the first') end
+        if launcher ~= __osc_s then error('the second is launched by ' .. tostring(launcher)) end
+    )");
 
     // Phase 2:
     // - A, stocked to one below its storage, fills it in auto mode, then stops;
