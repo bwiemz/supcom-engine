@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 
 #include <array>
+#include <bitset>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -28,6 +29,8 @@ public:
     /// strings to names (CUIKeyHandler::SetKeyNameTable).
     void set_key_names(lua_State* L, int table_idx);
     const std::string& key_name(u32 code) const { return names_[code & 0xFF]; }
+    /// Whether keyNames.lua named the code (else its name is "Unknown%02X").
+    bool named(u32 code) const { return named_[code & 0xFF]; }
 
     /// IN_ParseKeyModifiers: `Ctrl-Shift-A` to a chord. The last token is the
     /// key, the rest modifiers, all case-insensitive; an unknown key is -1
@@ -51,6 +54,7 @@ public:
 
 private:
     std::array<std::string, 256> names_;
+    std::bitset<256> named_;
     std::unordered_map<u32, std::string> actions_;
     std::unordered_set<u32> repeats_;
 };

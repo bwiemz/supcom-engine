@@ -259,6 +259,17 @@ void test_resource_icon_render(TestContext& ctx) {
     (void)shots.shoot(terrain, hx, hz, 300.0f);
     t.check(icon_quad(r, *hydro, terrain, size) != nullptr,
             "Test 7: the hydrocarbon deposit shows its icon");
+
+    // FAF's patched game's ui_DepositIconScale (1 as retail): the icons'
+    // half sizes times it (the minimap's: the cartographic minimap test)
+    r.set_deposit_icon_scale(2.0f);
+    shots.redraw();
+    const bool scaled = icon_quad(r, *hydro, terrain, 2.0f * size) != nullptr;
+    r.set_deposit_icon_scale(1.0f);
+    shots.redraw();
+    t.check(scaled && icon_quad(r, *hydro, terrain, size) != nullptr,
+            "Test 8: at ui_DepositIconScale 2 the icon is twice as wide about its centre, and "
+            "back at 1");
 }
 
 } // namespace osc::test

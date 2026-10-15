@@ -96,6 +96,20 @@ TEST_CASE("A mouse button's KeyCode is wx's button number", "[ui][input]") {
     CHECK(moho_mouse_button(GLFW_MOUSE_BUTTON_4) == 0);
 }
 
+TEST_CASE("The side mouse buttons are keys 5 and 6, as FAF's patched game makes them",
+          "[ui][input]") {
+    using osc::ui::side_button_key;
+    CHECK(side_button_key(GLFW_MOUSE_BUTTON_4) == osc::ui::kKeyXButton1);
+    CHECK(side_button_key(GLFW_MOUSE_BUTTON_5) == osc::ui::kKeyXButton2);
+    CHECK(side_button_key(GLFW_MOUSE_BUTTON_LEFT) == 0);
+    CHECK(side_button_key(GLFW_MOUSE_BUTTON_6) == 0);
+    // VK_XBUTTON1/2, which wx passes on as the key codes
+    CHECK(moho_key_code(osc::ui::kKeyXButton1) == 5);
+    CHECK(windows_key_code(osc::ui::kKeyXButton1) == 5);
+    CHECK(moho_key_code(osc::ui::kKeyXButton2) == 6);
+    CHECK(windows_key_code(osc::ui::kKeyXButton2) == 6);
+}
+
 TEST_CASE("A modifier named as keyNames.lua names it is its GLFW keys", "[ui][input]") {
     using osc::ui::glfw_keys_named;
     using Keys = std::vector<osc::i32>;

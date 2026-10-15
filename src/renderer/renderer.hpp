@@ -300,6 +300,17 @@ public:
     bool unit_bars() const { return overlay_renderer_.unit_bars(); }
     void set_nis_icons(bool on) { strategic_icon_renderer_.set_nis_icons(on); }
     bool nis_icons() const { return strategic_icon_renderer_.nis_icons(); }
+    /// FAF's patched game's icon scales (ui_StrategicIconScale,
+    /// ui_ProjectileIconScale, ui_DepositIconScale): 1 as retail draws them.
+    void set_strategic_icon_scale(f32 s) { strategic_icon_renderer_.set_icon_scale(s); }
+    f32 strategic_icon_scale() const { return strategic_icon_renderer_.icon_scale(); }
+    void set_projectile_icon_scale(f32 s) { strategic_icon_renderer_.set_projectile_icon_scale(s); }
+    f32 projectile_icon_scale() const { return strategic_icon_renderer_.projectile_icon_scale(); }
+    void set_deposit_icon_scale(f32 s) {
+        resource_icon_renderer_.set_scale(s);
+        minimap_renderer_.set_deposit_icon_scale(s);
+    }
+    f32 deposit_icon_scale() const { return resource_icon_renderer_.scale(); }
     void set_weapons_yellow(bool on) { strategic_icon_renderer_.set_weapons_yellow(on); }
     bool weapons_yellow() const { return strategic_icon_renderer_.weapons_yellow(); }
     void set_team_color_mode(bool on) { strategic_icon_renderer_.set_team_color_mode(on); }

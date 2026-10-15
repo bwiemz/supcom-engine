@@ -73,7 +73,10 @@ void KeyMapRegistry::set_key_names(lua_State* L, int table_idx) {
                 spdlog::warn(
                     "CUIKeyHandler::SetKeyNameTable found incorrect key code in key names: {}",
                     key);
-            else names_[code] = lua_tostring(L, -1);
+            else {
+                names_[code] = lua_tostring(L, -1);
+                named_.set(code);
+            }
         }
         lua_pop(L, 1);
     }

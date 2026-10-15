@@ -1545,6 +1545,12 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
             global("friend", still(sim, 0, 14.0f, 10.0f));
             global("enemy", still(sim, 1, 60.0f, 10.0f));
             global("rock", rock(sim, 20.0f, 20.0f, 10.0f, 0.0f));
+            // A mobile build goes only to a unit that can build it
+            if (std::string(row.issue).rfind("IssueBuildMobile", 0) == 0) {
+                with->set_blueprint_id("builder");
+                REQUIRE(lua.do_string("__blueprints = { builder = { Economy = "
+                                      "{ BuildableCategory = { 'uel0001' } } } }"));
+            }
             const auto r = lua.do_string(std::string(R"(
                 local function results(...) return arg.n, arg[1] end
                 n, command = results()") +
@@ -1567,6 +1573,63 @@ TEST_CASE("Only Move, Attack, the form moves, Dive and a rally point return thei
             }
         }
     }
+}
+
+TEST_CASE("IssueBuildMobile gives the build to the nearest unit that can build it, or with FAF's "
+          "fifth argument to all",
+          "[lua]") {
+    // faf-re cfunc_IssueBuildMobileL; FA-Binary-Patches IssueBuildMobile.cpp
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    two_armies(sim);
+    Unit* cannot = still(sim, 0, 21.0f, 20.0f); // nearest the site, but can't build it
+    Unit* near = still(sim, 0, 25.0f, 20.0f);
+    Unit* far = still(sim, 0, 40.0f, 20.0f);
+    for (Unit* u : {cannot, near, far}) {
+        u->set_motion_type("RULEUMT_Land");
+        u->add_category("ENGINEER");
+    }
+    cannot->set_blueprint_id("other");
+    near->set_blueprint_id("builder");
+    far->set_blueprint_id("builder");
+    lua_State* L = lua.raw();
+    const auto global = [&](const char* name, osc::sim::Entity* e) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, e);
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    global("cannot", cannot);
+    global("near", near);
+    global("far", far);
+    REQUIRE(lua.do_string(R"(
+        __blueprints = {
+            builder = { Economy = { BuildableCategory = { 'uel0001' } } },
+            other = { Economy = { BuildableCategory = { 'uel0002' } } },
+        }
+    )"));
+    const auto issue = [&](const char* call) {
+        const auto r = lua.do_string(call);
+        if (!r) {
+            FAIL(r.error().message);
+        }
+    };
+
+    issue("IssueBuildMobile({cannot}, {20, 0, 20}, 'uel0001', {})");
+    CHECK(cannot->command_queue().empty());
+
+    issue("IssueBuildMobile({far, cannot, near}, {20, 0, 20}, 'uel0001', {})");
+    CHECK(cannot->command_queue().empty());
+    REQUIRE(near->command_queue().size() == 1);
+    CHECK(near->command_queue().front().type == CommandType::BuildMobile);
+    CHECK(far->command_queue().empty());
+
+    issue("IssueBuildMobile({far, cannot, near}, {20, 0, 20}, 'uel0001', {}, true)");
+    CHECK(near->command_queue().size() == 2);
+    CHECK(far->command_queue().size() == 1);
 }
 
 TEST_CASE("Repair, Sacrifice, Reclaim and Capture leave their target out of the units ordered",

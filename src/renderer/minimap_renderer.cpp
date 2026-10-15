@@ -357,8 +357,8 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
             if (!tex || tex->width == 0) {
                 continue;
             }
-            const auto half_w = static_cast<f32>(tex->width >> 2);
-            const auto half_h = static_cast<f32>(tex->height >> 2);
+            const auto half_w = static_cast<f32>(tex->width >> 2) * deposit_icon_scale_;
+            const auto half_h = static_cast<f32>(tex->height >> 2) * deposit_icon_scale_;
             emit_quad(icon.x - half_w, icon.y - half_h, 2.0f * half_w, 2.0f * half_h, 1.0f, 1.0f,
                       1.0f, 1.0f, tex->descriptor_set);
         }

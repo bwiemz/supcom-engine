@@ -90,6 +90,12 @@ void UIDispatch::on_key(i32 key, i32 action, i32 mods) {
 }
 
 void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods, f64 now) {
+    // A side button is a key, as FAF's patched game makes it (dropped in
+    // dispatch_events unless the key names name it)
+    if (const i32 key = side_button_key(button)) {
+        on_key(key, action, mods);
+        return;
+    }
     u8 bit = 0;
     switch (button) {
     case GLFW_MOUSE_BUTTON_LEFT: bit = kMouseLeft; break;
@@ -156,6 +162,15 @@ void UIDispatch::on_char(u32 codepoint) {
     e.mouse_x = mouse_x_;
     e.mouse_y = mouse_y_;
     pending_events_.push_back(e);
+}
+
+/// The UI state's key map (CUIKeyHandler), or null if it has none.
+static const KeyMapRegistry* keymap_of(lua_State* L) {
+    lua_pushstring(L, "__osc_keymap_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* km = static_cast<const KeyMapRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return km;
 }
 
 /// A key event's, as Moho's are.
@@ -542,6 +557,13 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
     events.swap(pending_events_);
 
     for (const auto& ev : events) {
+        // A side button's key reaches the UI only where the key names name
+        // it, as FAF's keyNames.lua does for its patched game: retail's names
+        // stop at MiddleMouse (04), and its game never sees the buttons.
+        if (is_key_event(ev) && (ev.key_code == kKeyXButton1 || ev.key_code == kKeyXButton2)) {
+            const KeyMapRegistry* km = keymap_of(L);
+            if (!km || !km->named(static_cast<u32>(ev.key_code))) continue;
+        }
         // Clear stale hover pointer if the control was destroyed (e.g. by Lua)
         if (hover_control_ && hover_control_->destroyed())
             hover_control_ = nullptr;
@@ -980,10 +1002,7 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
 
 void UIDispatch::handle_key(lua_State* L, const UIEvent& ev) {
     // Moho's CUIKeyHandler::OnKeyDown.
-    lua_pushstring(L, "__osc_keymap_registry");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const auto* km = static_cast<const KeyMapRegistry*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    const KeyMapRegistry* km = keymap_of(L);
     if (!km) return;
     const u32 chord = KeyMapRegistry::chord(ev.key_code, ev.modifiers);
     // An auto-repeat acts only for a chord that asks for it (keyRepeat).

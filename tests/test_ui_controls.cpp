@@ -602,6 +602,44 @@ TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][inpu
                   "and of_type('ButtonPress')[2].event.Modifiers.Middle"));
 }
 
+TEST_CASE("A side mouse button is a key only where the key names name it, as FAF's game has it",
+          "[ui][lua][input]") {
+    InputFixture f;
+    f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) target.eats = true");
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "target"));
+
+    // Retail's names stop at MiddleMouse, and its game never sees the side
+    // buttons: no key and no button.
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_4, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_4, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("table.getn(handled) == 0"));
+
+    // FAF's keyNames.lua names them XButton1 and XButton2.
+    lua_State* L = f.lua.raw();
+    REQUIRE(f.lua.do_string("__names = { ['05'] = 'XButton1', ['06'] = 'XButton2' }").ok());
+    lua_getglobal(L, "__names");
+    f.keymap.set_key_names(L, -1);
+    lua_pop(L, 1);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_5, GLFW_PRESS, GLFW_MOD_SHIFT);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_5, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("of_type('KeyDown')[1].event.KeyCode == 6 "
+                  "and of_type('KeyDown')[1].event.RawKeyCode == 6 "
+                  "and of_type('KeyDown')[1].event.Modifiers.Shift "
+                  "and of_type('KeyUp')[1].event.KeyCode == 6 "
+                  "and table.getn(of_type('ButtonPress')) == 0 "
+                  "and table.getn(of_type('ButtonRelease')) == 0"));
+
+    // With no control focused, a binding to the name acts.
+    f.registry.set_keyboard_focus(nullptr);
+    f.run("IN_AddKeyMapTable({ XButton1 = { action = 'UI_Lua hotkeys = hotkeys + 1' } })");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_4, GLFW_PRESS, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_4, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 1"));
+}
+
 TEST_CASE("A press no control eats reaches each control under the mouse once", "[ui][lua][input]") {
     InputFixture f;
     f.run("item = box('item', GetFrame(0), 0, 0, 100, 100, 1) "

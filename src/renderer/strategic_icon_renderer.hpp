@@ -130,6 +130,12 @@ public:
     /// all, as a campaign's NIS turns them off.
     void set_nis_icons(bool on) { nis_icons_ = on; }
     bool nis_icons() const { return nis_icons_; }
+    /// FAF's patched game's ui_StrategicIconScale and ui_ProjectileIconScale:
+    /// an icon's half size, and a projectile's, times this (1 as retail).
+    void set_icon_scale(f32 s) { icon_scale_ = s; }
+    f32 icon_scale() const { return icon_scale_; }
+    void set_projectile_icon_scale(f32 s) { projectile_icon_scale_ = s; }
+    f32 projectile_icon_scale() const { return projectile_icon_scale_; }
     /// UI_forceWeaponsToYellow
     void set_weapons_yellow(bool on) { weapons_yellow_ = on; }
     bool weapons_yellow() const { return weapons_yellow_; }
@@ -176,7 +182,8 @@ private:
                                 f32 sh, f32& out_x, f32& out_y);
 
     /// A texture's quad centred at (x, y), at its own size, tinted.
-    static UIInstance icon_quad(f32 x, f32 y, const GPUTexture& tex, f32 r, f32 g, f32 b);
+    static UIInstance icon_quad(f32 x, f32 y, const GPUTexture& tex, f32 r, f32 g, f32 b,
+                                f32 scale = 1.0f);
     void emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
                    f32 b);
 
@@ -252,6 +259,8 @@ private:
     bool strategic_zoom_active_ = false;
     bool nis_icons_ = true;
     bool weapons_yellow_ = true;
+    f32 icon_scale_ = 1.0f;
+    f32 projectile_icon_scale_ = 1.0f;
     bool projectile_icons_on_ = true;
     bool projectile_glow_ = true;
     bool always_ = false;

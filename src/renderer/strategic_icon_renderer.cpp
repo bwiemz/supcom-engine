@@ -291,11 +291,11 @@ bool StrategicIconRenderer::world_to_screen(f32 wx, f32 wy, f32 wz,
 }
 
 UIInstance StrategicIconRenderer::icon_quad(f32 x, f32 y, const GPUTexture& tex, f32 r, f32 g,
-                                            f32 b) {
+                                            f32 b, f32 scale) {
     // Centred at its own size (DrawStrategicIconQuad: the texture's width
-    // and height, halved to radii).
-    const f32 half_w = static_cast<f32>(tex.width >> 1);
-    const f32 half_h = static_cast<f32>(tex.height >> 1);
+    // and height, halved to radii), times FAF's ui_StrategicIconScale.
+    const f32 half_w = static_cast<f32>(tex.width >> 1) * scale;
+    const f32 half_h = static_cast<f32>(tex.height >> 1) * scale;
     UIInstance inst{};
     inst.rect[0] = x - half_w;
     inst.rect[1] = y - half_h;
@@ -315,7 +315,7 @@ UIInstance StrategicIconRenderer::icon_quad(f32 x, f32 y, const GPUTexture& tex,
 void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex,
                                       f32 r, f32 g, f32 b) {
     if (quad_count_ >= MAX_ICON_QUADS) return;
-    quads_.push_back(icon_quad(x, y, tex, r, g, b));
+    quads_.push_back(icon_quad(x, y, tex, r, g, b, icon_scale_));
     quad_textures_.push_back(path);
     if (groups_.empty() || groups_.back().ds != tex.descriptor_set)
         groups_.push_back({tex.descriptor_set, quad_count_, 0});
@@ -593,9 +593,9 @@ UIInstance StrategicIconRenderer::square_quad(f32 x, f32 y, f32 size, f32 r, f32
 
 namespace {
 
-std::array<f32, 4> projectile_icon_rect(f32 x, f32 y, const GPUTexture& tex) {
-    const auto half_w = static_cast<f32>(tex.width >> 1);
-    const auto half_h = static_cast<f32>(tex.height >> 1);
+std::array<f32, 4> projectile_icon_rect(f32 x, f32 y, const GPUTexture& tex, f32 scale) {
+    const auto half_w = static_cast<f32>(tex.width >> 1) * scale;
+    const auto half_h = static_cast<f32>(tex.height >> 1) * scale;
     return {x - half_w, y - half_h, 2.0f * half_w, 2.0f * half_h};
 }
 
@@ -652,7 +652,7 @@ void StrategicIconRenderer::projectile_marks(const sim::FrameView& view, lua_Sta
         if (!weapons_yellow_) {
             get_army_color(entity, view, r, g, b);
         }
-        square(square_quad(sx, sy, bp.icon_size, r, g, b));
+        square(square_quad(sx, sy, bp.icon_size * projectile_icon_scale_, r, g, b));
     }
 }
 
@@ -720,7 +720,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         };
         const auto icon = [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex) {
             ProjectileIcon out;
-            const auto rect = projectile_icon_rect(x, y, tex);
+            const auto rect = projectile_icon_rect(x, y, tex, projectile_icon_scale_);
             out.x = rect[0];
             out.y = rect[1];
             out.w = rect[2];
@@ -766,7 +766,7 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
             runs, tex_cache,
             [&](f32 x, f32 y, const std::string&, const GPUTexture& tex, f32 r, f32 g, f32 b) {
                 UIQuad q{};
-                q.inst = icon_quad(x, y, tex, r, g, b);
+                q.inst = icon_quad(x, y, tex, r, g, b, icon_scale_);
                 q.texture_ds = tex.descriptor_set;
                 out.push_back(q);
             });
@@ -776,7 +776,7 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
         [&](const UIInstance& inst) { out.push_back({inst, tex_cache.fallback_descriptor()}); },
         [&](f32 x, f32 y, const std::string&, const GPUTexture& tex) {
             UIInstance inst{};
-            const auto rect = projectile_icon_rect(x, y, tex);
+            const auto rect = projectile_icon_rect(x, y, tex, projectile_icon_scale_);
             std::copy(rect.begin(), rect.end(), inst.rect);
             inst.uv[1] = 1.0f;
             inst.uv[2] = 1.0f;

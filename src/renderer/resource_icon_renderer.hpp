@@ -57,6 +57,11 @@ public:
 
     const std::vector<std::array<f32, 4>>& quads() const { return quads_; }
 
+    /// FAF's patched game's ui_DepositIconScale: an icon's half size times
+    /// this (1 as retail).
+    void set_scale(f32 s) { scale_ = s; }
+    f32 scale() const { return scale_; }
+
     static constexpr u32 MAX_ICONS = 4096;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
@@ -65,6 +70,7 @@ private:
         VkDescriptorSet ds = VK_NULL_HANDLE;
         u32 first = 0, count = 0;
     };
+    f32 scale_ = 1.0f;
 
     VkPipeline colour_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout colour_layout_ = VK_NULL_HANDLE;
