@@ -10834,6 +10834,14 @@ void test_range(TestContext& ctx) {
         IssueBuildMobile({__osc_boss}, __osc_at(661.5, 120.5), 'ueb2101', {})
         IssueGuard({__osc_helper}, __osc_boss)
 
+        -- Guard of a factory: an engineer held 8 from a quantum gateway's
+        -- centre, in reach of its skirt (10), not of the unit it builds.
+        __osc_gate = __osc_spawn('ueb0304', 'ARMY_1', 740.5, 170.5)
+        __osc_gate_helper = __osc_spawn('uel0105', 'ARMY_1', 740.5, 162.5)
+        __osc_gate_helper:SetSpeedMult(0)
+        IssueBuildFactory({__osc_gate}, 'uel0301', 1)
+        IssueGuard({__osc_gate_helper}, __osc_gate)
+
         -- Repair, reclaim and capture, each in reach.
         __osc_mender = __osc_spawn('uel0105', 'ARMY_1', 575.5, 80.5)
         __osc_hurt = __osc_spawn('uel0201', 'ARMY_1', 581.5, 80.5)
@@ -10962,8 +10970,22 @@ void test_range(TestContext& ctx) {
         local d = __osc_from(__osc_helper, 661.5, 120.5)
         if d > 7 then error(string.format('the helper is %.2f from the build', d)) end
     )");
+    lua_check("setup: the gateway builds", R"(
+        __osc_scu = __osc_gate:GetFocusUnit()
+        if not __osc_scu then error('the gateway builds nothing') end
+        __osc_scu_from = {GetGameTick(), __osc_scu:GetFractionComplete()}
+    )");
 
     run(140);
+    lua_check("Test 11b: a guard in reach of a factory, not of its build, builds with it", R"(
+        local rate = (__osc_scu:GetFractionComplete() - __osc_scu_from[2]) / (GetGameTick() - __osc_scu_from[1])
+        local want = (120 + 5) / (36000 * 10)
+        if math.abs(rate - want) > 1e-7 then
+            error(string.format('the support commander builds at %.4e a tick, not %.4e (focus %s)', rate,
+                                want, tostring(__osc_gate_helper:GetFocusUnit())))
+        end
+        if __osc_from(__osc_gate_helper, 740.5, 162.5) > 0.1 then error('the helper moved') end
+    )");
     lua_check("Test 12: a launcher too close backs off, and fires", R"(
         local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
         if __osc_moho_pathing then
