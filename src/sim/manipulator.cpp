@@ -375,6 +375,16 @@ BonePose rest_frame_world(const Unit& unit, i32 bone) {
             quat_multiply(unit.orientation(), model_rot)};
 }
 
+bool descends_from(const BoneData& bd, i32 bone, i32 ancestor) {
+    for (i32 b = bd.bones[static_cast<size_t>(bone)].parent_index; b >= 0;
+         b = bd.bones[static_cast<size_t>(b)].parent_index) {
+        if (b == ancestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 void RotateManipulator::apply_pose(PoseLocals& pose) {
@@ -580,8 +590,20 @@ void AimManipulator::tick(f32 dt) {
         const Vector3 from =
             from_reference ? reference
                            : (pitches ? unit->bone_world_position(pitch_bone_) : yaw.position);
-        const Vector3 w = quat_rotate(quat_axis_angle('y', -want_heading),
-                                      quat_rotate(to_local, elevated(sub(target_, from))));
+        // Moho's CAimManipulator::CheckTracking: the pitch in the pitch bone's
+        // frame as the animation left it.
+        Quaternion barrel{};
+        if (pitches && !from_reference &&
+            descends_from(*unit->bone_data(), pitch_bone_, yaw_bone_)) {
+            const Quaternion yaw_posed = unit->bone_pose(yaw_bone_).rotation;
+            const Quaternion pitch_posed = unit->bone_pose(pitch_bone_).rotation;
+            barrel = quat_multiply(quat_multiply(quat_conjugate(yaw_posed), pitch_posed),
+                                   quat_axis_angle('x', pitch_));
+        }
+        const Vector3 w =
+            quat_rotate(quat_conjugate(barrel),
+                        quat_rotate(quat_axis_angle('y', -want_heading),
+                                    quat_rotate(to_local, elevated(sub(target_, from)))));
         want_pitch = osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));
         if (!full_circle) {
             // Measured about the arc's centre, so an arc across +-180 deg
