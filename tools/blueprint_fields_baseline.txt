@@ -22,5 +22,4 @@ ShowAssistRangeOnSelect
 ShowIntelOnSelect
 Silhouette
 SpawnRandomRotation
-StayUpright
 StraddleWater

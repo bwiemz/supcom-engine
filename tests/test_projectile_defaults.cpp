@@ -2,6 +2,7 @@
 // RProjectileBlueprintPhysics defaults (faf-re): FAF's cruise missiles add
 // MaxSpeedRange to MaxSpeed as they are made.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "blueprints/blueprint_store.hpp"
@@ -9,6 +10,8 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "sim/entity_registry.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/projectile.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/sim_state.hpp"
@@ -17,6 +20,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -173,4 +177,39 @@ TEST_CASE("A projectile a script makes lives Moho's 15 seconds unless its bluepr
     CHECK(lifetime("shell") == 15.0f);
     CHECK(lifetime("timed") == 3.0f);
     CHECK(lifetime("typo") == 15.0f);
+}
+
+TEST_CASE("A projectile stays upright if its blueprint says StayUpright", "[blueprints]") {
+    osc::lua::LuaState state;
+    REQUIRE(state
+                .do_string(R"(
+        __blueprints = {
+            upright = {Physics = {StayUpright = true, VelocityAlign = false}},
+            tumbling = {Physics = {VelocityAlign = false}},
+        }
+    )")
+                .ok());
+    osc::sim::EntityRegistry registry;
+    const auto spin = [&](const char* bp) {
+        auto made = std::make_unique<osc::sim::Projectile>();
+        made->set_blueprint_id(bp);
+        (void)made->apply_blueprint_physics(state.raw());
+        made->collide_surface = false;
+        made->collide_entity = false;
+        made->lifetime = 100;
+        made->angular_velocity = {3, 4, 0};
+        auto* p = static_cast<osc::sim::Projectile*>(
+            registry.find(registry.register_entity(std::move(made))));
+        for (int tick = 0; tick < 5; ++tick) {
+            p->update(0.1, registry, nullptr);
+        }
+        return p->orientation();
+    };
+    const osc::sim::Quaternion upright = spin("upright");
+    CHECK(osc::sim::quat_rotate(upright, {0, 1, 0}).y == Catch::Approx(1.0f).margin(1e-5));
+    const osc::sim::Vector3 ahead = osc::sim::forward_of(upright);
+    CHECK(ahead.y == Catch::Approx(0.0f).margin(1e-5));
+    CHECK(ahead.z == Catch::Approx(std::cos(2.5f)).margin(1e-4));
+    const osc::sim::Quaternion tumbling = spin("tumbling");
+    CHECK(osc::sim::quat_rotate(tumbling, {0, 1, 0}).y < 0.5f);
 }

@@ -480,6 +480,7 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
         lua_pop(L, 1);
     };
     flag("VelocityAlign", velocity_align);
+    flag("StayUpright", stay_upright);
     number("Acceleration", acceleration);
     number("MaxSpeed", max_speed);
     flag("TrackTarget", tracking);
