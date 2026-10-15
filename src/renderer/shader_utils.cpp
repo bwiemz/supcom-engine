@@ -2350,7 +2350,8 @@ layout(location = 1) in float fragGlow;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec4 color = texture(texSampler, fragUV);
+    ivec2 size = textureSize(texSampler, 0);
+    vec4 color = texelFetch(texSampler, clamp(ivec2(fragUV * vec2(size)), ivec2(0), size - 1), 0);
     if (pc.glow > 0.5) {
         if (fragGlow < 0.0) {
             discard;

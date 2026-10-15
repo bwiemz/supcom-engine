@@ -772,6 +772,47 @@ void test_strategic_icons(TestContext& ctx) {
                             "across, is the 6x6 pixels at twice its point ({} of 36 yellow, {} "
                             "around them)",
                             yellow, spilled));
+
+        const auto file = ctx.vfs.read_file(nuke_icon);
+        const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
+        int blocks = 0;
+        int blended = 0;
+        if (nuke && scene.width > 0 && dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK &&
+            !dds->mips.empty()) {
+            const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
+                reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
+            const auto x0 = static_cast<i32>(2.0f * nuke->x);
+            const auto y0 = static_cast<i32>(2.0f * nuke->y);
+            const auto at = [&](i32 x, i32 y) {
+                return &scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
+                                   4];
+            };
+            for (u32 v = 0; v < dds->height; ++v) {
+                for (u32 u = 0; u < dds->width; ++u) {
+                    if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
+                        continue;
+                    }
+                    const i32 px = x0 + 2 * static_cast<i32>(u);
+                    const i32 py = y0 + 2 * static_cast<i32>(dds->height - 1 - v);
+                    if (px < 0 || py < 0 || px + 1 >= static_cast<i32>(scene.width) ||
+                        py + 1 >= static_cast<i32>(scene.height)) {
+                        continue;
+                    }
+                    bool same = true;
+                    for (const auto& [dx, dy] :
+                         {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
+                        same = same && std::equal(at(px, py), at(px, py) + 3, at(px + dx, py + dy));
+                    }
+                    ++blocks;
+                    blended += same ? 0 : 1;
+                }
+            }
+        }
+        t.check(blocks > 0 && blended == 0,
+                fmt::format("Test 34: at a display scale of 2 each of the nuke icon's opaque "
+                            "texels is a 2x2 block of one colour in the scene, as the tank's "
+                            "icon: {} of {} blended",
+                            blended, blocks));
     }
 
     {
