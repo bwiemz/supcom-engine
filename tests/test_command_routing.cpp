@@ -371,3 +371,49 @@ TEST_CASE("A reclaim, capture, repair or build goes only to a unit of its catego
     CHECK(sim.route_command({drone}, order(CommandType::Reclaim), false) == 0);
     CHECK(sim.route_command({drone}, order(CommandType::Repair), false) == 0);
 }
+
+TEST_CASE("An enhancing unit takes no order that clears its queue but Stop", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const auto id = spawn_unit(sim);
+    Unit* acu = unit_of(sim, id);
+    UnitCommand enhance;
+    enhance.type = CommandType::Script;
+    enhance.command_id = 7;
+    acu->push_command(enhance, true);
+    acu->set_unit_state("Enhancing", true);
+
+    enhance.command_id = 0;
+    CHECK(sim.route_command({id}, move_to(100.0f, 0.0f), true) == 0);
+    CHECK(sim.route_command({id}, enhance, true) == 0);
+    REQUIRE(acu->command_queue().size() == 1);
+    CHECK(acu->command_queue().front().command_id == 7);
+    CHECK(sim.route_command({id}, move_to(100.0f, 0.0f), false) != 0);
+    CHECK(acu->command_queue().size() == 2);
+
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, true);
+    CHECK(acu->command_queue().empty());
+}
+
+TEST_CASE("A move, patrol or attack-move goes to no immobile unit", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto u = std::make_unique<Unit>();
+    u->set_army(0);
+    u->set_motion_type("RULEUMT_None");
+    const auto id = sim.entity_registry().register_entity(std::move(u));
+    UnitCommand upgrade;
+    upgrade.type = CommandType::Upgrade;
+    unit_of(sim, id)->push_command(upgrade, true);
+
+    for (const CommandType type :
+         {CommandType::Move, CommandType::Patrol, CommandType::AggressiveMove}) {
+        UnitCommand order = move_to(100.0f, 0.0f);
+        order.type = type;
+        CHECK(sim.route_command({id}, order, true) == 0);
+    }
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
+    CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Upgrade);
+}
