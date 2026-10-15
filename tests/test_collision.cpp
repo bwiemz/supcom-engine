@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
@@ -339,7 +340,13 @@ TEST_CASE("a shot's speed is MuzzleVelocity, randomised and slowed close in", "[
     CHECK(std::sin(2.0f * elevation) == Approx(Projectile::GRAVITY * 10.0f / 225.0f).epsilon(1e-3));
 }
 
-TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision]") {
+TEST_CASE("a shot falls at Moho's gravity unless its blueprint says UseGravity = false",
+          "[collision]") {
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {['/shell'] = {Physics = {}},"
+                          " ['/missile'] = {Physics = {TrackTarget = true}},"
+                          " ['/bolt'] = {Physics = {UseGravity = false}}}")
+                .ok());
     EntityRegistry reg;
     const u32 owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
     auto& owner = static_cast<Unit&>(*reg.find(owner_id));
@@ -351,9 +358,135 @@ TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision
 
     osc::sim::Weapon gun;
     gun.muzzle_velocity = 30;
-    const Projectile* shot = gun.launch(owner, {0, 20, 0}, nullptr, reg, nullptr, false);
+    for (const char* bp : {"/shell", "/missile"}) {
+        gun.projectile_bp_id = bp;
+        const Projectile* shot = gun.launch(owner, {0, 20, 0}, nullptr, reg, lua.raw(), false);
+        REQUIRE(shot);
+        CHECK(shot->ballistic_accel == Approx(-Projectile::GRAVITY));
+    }
+    gun.projectile_bp_id = "/bolt";
+    const Projectile* bolt = gun.launch(owner, {0, 20, 0}, nullptr, reg, lua.raw(), false);
+    REQUIRE(bolt);
+    CHECK(bolt->ballistic_accel == 0.0f);
+}
+
+TEST_CASE("a straight weapon lobs its falling shots onto their target", "[collision]") {
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string("__blueprints = {['/shell'] = {Physics = {}}}").ok());
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    const u32 owner_id = add_unit(reg, {100, 0, 100}, box(1, 1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    const u32 target_id = add_unit(reg, {100, 0, 130}, box(1, 1, 1, 1));
+    const auto& target = static_cast<const Unit&>(*reg.find(target_id));
+    osc::sim::Weapon gun;
+    gun.muzzle_velocity = 20;
+    gun.max_range = 40;
+    gun.projectile_bp_id = "/shell";
+    gun.projectile_physics = osc::sim::Weapon::ProjectilePhysics{};
+    const f32 level = target.target_point(-1).y;
+    Projectile* shot = gun.launch(owner, {100, level, 100}, &target, reg, lua.raw(), false);
     REQUIRE(shot);
-    CHECK(shot->ballistic_accel == 0.0f);
+    const Vector3 v = shot->velocity;
+    const f32 pitch = std::asin(v.y / std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
+    CHECK(std::sin(2.0f * pitch) == Approx(Projectile::GRAVITY * 30.0f / 400.0f).epsilon(1e-3));
+    for (int tick = 0; tick < 20 && !shot->destroyed(); ++tick) {
+        shot->update(0.1, reg, nullptr);
+    }
+    CHECK(shot->destroyed());
+    CHECK(shot->position().z == Approx(129.0f).margin(1e-3));
+}
+
+namespace {
+
+struct Turret {
+    osc::lua::LuaState lua;
+    osc::sim::BoneData bones;
+    EntityRegistry reg;
+    Unit* owner = nullptr;
+    osc::sim::AimManipulator* aim = nullptr;
+    osc::sim::Weapon gun;
+
+    explicit Turret(f32 muzzle_velocity) {
+        REQUIRE(lua.do_string("__blueprints = {['/shell'] = {Physics = {}}}").ok());
+        osc::sim::BoneInfo turret;
+        turret.name = "turret";
+        bones.bones.push_back(turret);
+        osc::sim::BoneInfo barrel;
+        barrel.name = "barrel";
+        barrel.parent_index = 0;
+        barrel.local_position = {0, 0.5f, 0.5f};
+        barrel.world_position = {0, 0.5f, 0.5f};
+        barrel.inverse_bind_pose = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -0.5f, -0.5f, 1};
+        bones.bones.push_back(barrel);
+        bones.name_to_index["turret"] = 0;
+        bones.name_to_index["barrel"] = 1;
+        owner = static_cast<Unit*>(reg.find(add_unit(reg, {0, 0, 0}, box(1, 1, 1, 1))));
+        owner->set_bone_data(&bones);
+        owner->init_animated_bones();
+        aim = static_cast<osc::sim::AimManipulator*>(
+            owner->add_manipulator(std::make_unique<osc::sim::AimManipulator>()));
+        aim->set_weapon(0, "Gun");
+        aim->set_yaw_bone(0);
+        aim->set_pitch_bone(1);
+        aim->set_firing_arc(-180.0f, 180.0f, 180.0f, -90.0f, 90.0f, 180.0f);
+        gun.label = "Gun";
+        gun.muzzle_bone_name = "barrel";
+        gun.max_range = 40;
+        gun.damage = 10;
+        gun.firing_tolerance = 1;
+        gun.muzzle_velocity = muzzle_velocity;
+        gun.projectile_bp_id = "/shell";
+        gun.projectile_physics = osc::sim::Weapon::ProjectilePhysics{};
+    }
+
+    Projectile* fire_at(const Vector3& at, int ticks) {
+        gun.set_target_ground(at);
+        for (int tick = 0; tick < ticks; ++tick) {
+            gun.update(*owner, reg, lua.raw());
+            if (gun.fire_clock > 0) {
+                break;
+            }
+            owner->tick_manipulators(0.1f, nullptr);
+        }
+        Projectile* shot = nullptr;
+        reg.for_each([&](osc::sim::Entity& e) {
+            if (e.is_projectile()) {
+                shot = static_cast<Projectile*>(&e);
+            }
+        });
+        return shot;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a straight weapon's turret pitches up to lob its falling shots", "[collision]") {
+    Turret t(20);
+    Projectile* shot = t.fire_at({0, 0, 30}, 30);
+    REQUIRE(shot);
+    const f32 v2 = 400.0f;
+    const f32 g = Projectile::GRAVITY;
+    const f32 d = 29.5f;
+    const f32 h = -0.5f;
+    const f32 low = std::atan((v2 - std::sqrt(v2 * v2 - g * (g * d * d + 2 * h * v2))) / (g * d));
+    CHECK(t.aim->pitch() == Approx(low).margin(1e-4));
+    Vector3 was = shot->position();
+    for (int tick = 0; tick < 30 && shot->position().y > 0.0f; ++tick) {
+        was = shot->position();
+        shot->update(0.1, t.reg, nullptr);
+    }
+    const Vector3 now = shot->position();
+    REQUIRE(now.y <= 0.0f);
+    const f32 landed = was.z + (now.z - was.z) * was.y / (was.y - now.y);
+    CHECK(landed == Approx(30.0f).margin(0.05f));
+}
+
+TEST_CASE("a straight weapon's turret holds, off target, where no arc reaches", "[collision]") {
+    Turret t(15);
+    CHECK(t.fire_at({0, 25, 30}, 30) == nullptr);
+    CHECK_FALSE(t.aim->on_target());
+    CHECK(t.aim->pitch() == 0.0f);
 }
 
 TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision]") {

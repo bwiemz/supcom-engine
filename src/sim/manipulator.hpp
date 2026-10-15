@@ -258,9 +258,18 @@ public:
     void set_builder_arm(bool b) { builder_arm_ = b; }
     bool builder_arm() const { return builder_arm_; }
     bool tracking() const { return tracking_; }
-    /// An arcing weapon's launch angle above the horizontal: the pitch to
+    /// A lobbing weapon's launch angle above the horizontal: the pitch to
     /// take instead of the straight line to the target (none: the line).
-    void set_elevation(std::optional<f32> radians) { elevation_ = radians; }
+    void set_elevation(std::optional<f32> radians) {
+        elevation_ = radians;
+        unsolved_ = false;
+    }
+    /// No arc reaches the target: it holds, off target (Moho's
+    /// CAimManipulator::ManipulatorUpdate when Aim gives no direction).
+    void set_unsolved() {
+        elevation_.reset();
+        unsolved_ = true;
+    }
 
 private:
     i32 yaw_bone_ = -1;
@@ -277,6 +286,7 @@ private:
     f32 aim_heading_offset_ = 0;
     Vector3 target_;
     std::optional<f32> elevation_;
+    bool unsolved_ = false;
     f32 tolerance_ = 0;
     f32 idle_time_ = 0;
     bool has_target_ = false;

@@ -820,6 +820,7 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         w.vec3(x.target_);
         w.b(x.elevation_.has_value());
         w.f32v(x.elevation_.value_or(0.0f));
+        w.b(x.unsolved_);
         w.f32v(x.tolerance_);
         w.f32v(x.idle_time_);
         w.b(x.has_target_);
@@ -968,6 +969,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         const bool has_elevation = r.b();
         const f32 elevation = r.f32v();
         x->elevation_ = has_elevation ? std::optional<f32>(elevation) : std::nullopt;
+        x->unsolved_ = r.b();
         x->tolerance_ = r.f32v();
         x->idle_time_ = r.f32v();
         x->has_target_ = r.b();

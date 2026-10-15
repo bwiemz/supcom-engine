@@ -736,12 +736,17 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
                                    bone >= 0 ? owner.bone_world_forward(bone) : owner_facing(owner))
                        : ground_target;
             aim->set_target(at, firing_tolerance * kDegToRad);
+            const f32 dx = at.x - from.x;
+            const f32 dz = at.z - from.z;
+            const f32 dist = std::sqrt(dx * dx + dz * dz);
             if (ballistic_arc != Arc::None && !need_compute_bomb_drop) {
-                const f32 dx = at.x - from.x;
-                const f32 dz = at.z - from.z;
-                aim->set_elevation(launch_elevation(std::sqrt(dx * dx + dz * dz), at.y - from.y));
-            } else {
+                aim->set_elevation(launch_elevation(dist, at.y - from.y));
+            } else if (!lobs_falling_shots()) {
                 aim->set_elevation(std::nullopt);
+            } else if (const std::optional<f32> pitch = firing_pitch(dist, at.y - from.y)) {
+                aim->set_elevation(pitch);
+            } else {
+                aim->set_unsolved();
             }
         } else {
             aim->clear_target();
@@ -801,9 +806,12 @@ f32 Weapon::muzzle_speed_at(f32 distance, SimRandom* rng) const {
 }
 
 f32 Weapon::launch_elevation(f32 dist, f32 rise) const {
+    return firing_pitch(dist, rise).value_or(kPi * 0.25f);
+}
+
+std::optional<f32> Weapon::firing_pitch(f32 dist, f32 rise) const {
     // tan(theta) = (v^2 -+ sqrt(v^4 - g(g d^2 + 2 h v^2))) / (g d): the low
-    // and the high arc through a point `dist` away and `rise` above. Out of
-    // reach there is none: 45 degrees goes furthest.
+    // and the high arc through a point `dist` away and `rise` above.
     // Right overhead (or below) the arcs meet the vertical: up for the high
     // arc or a target above, down onto one below for the low arc.
     if (dist <= 0.001f) {
@@ -815,9 +823,16 @@ f32 Weapon::launch_elevation(f32 dist, f32 rise) const {
     const f32 speed = muzzle_speed_at(std::sqrt(dist * dist + rise * rise), nullptr);
     const f32 v2 = speed * speed;
     const f32 disc = v2 * v2 - kGravity * (kGravity * dist * dist + 2.0f * rise * v2);
-    if (speed <= 0 || disc < 0) return kPi * 0.25f;
+    if (speed <= 0 || disc < 0) {
+        return std::nullopt;
+    }
     const f32 root = std::sqrt(disc);
     return osc::dmath::atan2(ballistic_arc == Arc::High ? v2 + root : v2 - root, kGravity * dist);
+}
+
+bool Weapon::lobs_falling_shots() const {
+    return ballistic_arc == Arc::None && !need_compute_bomb_drop && projectile_physics &&
+           !projectile_physics->track_target && projectile_physics->use_gravity;
 }
 
 Vector3 Weapon::aim_point(const Entity& target, const Unit& owner, const Vector3& muzzle,
@@ -898,6 +913,12 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     // The speed it leaves at, for its target's distance (Moho's
     // GetMuzzleVelocity, drawing MuzzleVelocityRandom).
     const f32 speed = muzzle_speed_at(std::sqrt(dist * dist + dy * dy), &registry.sim_random());
+    std::optional<f32> pitch;
+    if (arcs) {
+        pitch = launch_elevation(dist, dy);
+    } else if (lobs_falling_shots()) {
+        pitch = firing_pitch(dist, dy);
+    }
     Vector3 facing{};
     if (counted_projectile) {
         facing = muzzle_dir.value_or(Vector3{0.0f, 1.0f, 0.0f});
@@ -905,10 +926,9 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         facing = len > 0.001f ? Vector3{facing.x / len, facing.y / len, facing.z / len}
                               : Vector3{0.0f, 1.0f, 0.0f};
         vel = {facing.x * muzzle_velocity, facing.y * muzzle_velocity, facing.z * muzzle_velocity};
-    } else if (arcs) {
-        const f32 elevation = launch_elevation(dist, dy);
-        const f32 across = speed * osc::dmath::cos(elevation);
-        vel = {dx / dist * across, speed * osc::dmath::sin(elevation), dz / dist * across};
+    } else if (pitch) {
+        const f32 across = speed * osc::dmath::cos(*pitch);
+        vel = {dx / dist * across, speed * osc::dmath::sin(*pitch), dz / dist * across};
         flight_time = across > 0.001f ? dist / across : 0.0f;
     } else if (need_compute_bomb_drop) {
         vel = {dx / dist * muzzle_velocity, 0.0f, dz / dist * muzzle_velocity};
@@ -1015,12 +1035,10 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     }
     proj->arm_lost_target_aim(registry);
 
-    // An arc is gravity's: its shot falls whatever its blueprint says. A
-    // straight shot falls only if its blueprint says so, and a bomb unless it
-    // says not (none of retail's does: they fall at Moho's default).
-    if (arcs || (need_compute_bomb_drop ? physics.use_gravity.value_or(true)
-                                        : physics.use_gravity.value_or(false)))
+    // An arc is gravity's: its shot falls whatever its blueprint says.
+    if (arcs || physics.use_gravity.value_or(true)) {
         proj->ballistic_accel = -kGravity;
+    }
     proj->in_water = in_water;
     u32 proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));

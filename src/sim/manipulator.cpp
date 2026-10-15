@@ -545,6 +545,11 @@ void AimManipulator::tick(f32 dt) {
         tracking_ = false;
         return;
     }
+    if (has_target_ && unsolved_) {
+        idle_time_ = 0;
+        on_target_ = false;
+        return;
+    }
 
     f32 want_heading = 0;
     f32 want_pitch = 0;
