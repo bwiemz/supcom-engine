@@ -62,7 +62,8 @@ f32 projectile_icon_glow(f32 time);
 /// at any zoom, generic (structure, land, naval, air) in UnidentifiedColor
 /// until it's been seen. Ground icons first, then air, then high-priority
 /// (StrategicIconSortPriority under 'A'), then the selected; a stunned
-/// unit's badge over its icon.
+/// unit's badge over its icon, and the pause badge over a friendly unit's
+/// paused or with a toggle switched off, at any zoom.
 class StrategicIconRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
@@ -100,7 +101,7 @@ public:
         generic_loaded_ = false;
     }
 
-    /// Load these blueprints' icons (and the generic and stunned ones) now,
+    /// Load these blueprints' icons (and the generic, pause and stunned ones) now,
     /// as Moho loads a blueprint's icons with the blueprint.
     void preload(const std::vector<std::string>& blueprint_ids, TextureCache& tex_cache,
                  lua_State* L);
@@ -196,6 +197,8 @@ private:
         const GPUTexture* tex = nullptr;
         f32 r = 1, g = 1, b = 1;
         bool stunned = false;
+        bool paused = false;
+        bool base = true;
         const std::string* underlay_path = nullptr;
         const GPUTexture* underlay = nullptr;
     };
@@ -227,7 +230,7 @@ private:
     /// An underlay's texture (Unit:SetStrategicUnderlay's name, as a
     /// strategic icon's: under the icons' directory unless absolute).
     const std::string& underlay_texture(const std::string& name);
-    /// strategicIcons.lua's GenericIcons and StunnedIcons, read once.
+    /// strategicIcons.lua's GenericIcons, PauseIcons and StunnedIcons, read once.
     void load_generic_icons(lua_State* L);
 
     std::optional<u32> team_color(const sim::FrameView& view, i32 army) const;
@@ -256,7 +259,7 @@ private:
     std::unordered_map<std::string, IconBlueprint> icon_blueprints_;
     std::unordered_map<std::string, std::string> underlay_textures_;
     bool generic_loaded_ = false;
-    std::string generic_structure_, generic_land_, generic_naval_, generic_air_, stunned_;
+    std::string generic_structure_, generic_land_, generic_naval_, generic_air_, pause_, stunned_;
 
     VkDescriptorSet atlas_ds_ = VK_NULL_HANDLE;
     bool strategic_zoom_active_ = false;

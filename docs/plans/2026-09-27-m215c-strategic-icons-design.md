@@ -77,6 +77,13 @@ blips have icons.
 
 - The `_over` textures (the hovered unit: the engine doesn't track it yet)
   and the paused badge.
+  *Done (2026-10-15): the paused badge. strategicIcons.lua's
+  `PauseIcons.PauseRest` over the icon of a unit of the player's or an
+  ally's that is paused or has a toggle switched off (shield, jamming,
+  intel, production, stealth, generic, cloak; the shield's with its script
+  bit clear, the others' with it set), and alone, without the icon, while
+  the camera is inside the mesh's `IconFadeInZoom`. `--strategic-icon-test`
+  Tests 5b, 8b, 9b and 9c.*
 - Blinking when a friendly unit is hit; the underlay texture; carriers'
   and transported units' icons; projectile icons; formation ghosts.
 - Icons on the minimap (it still draws dots).

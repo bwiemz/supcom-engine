@@ -417,6 +417,8 @@ public:
     bool has_toggle_cap(const std::string& cap) const {
         return toggle_caps_.count(cap) > 0;
     }
+    /// Its toggle caps, a bit each as the script bits number them.
+    u16 toggle_cap_bits() const;
     void add_toggle_cap(const std::string& cap) { toggle_caps_.insert(cap); }
     void remove_toggle_cap(const std::string& cap) { toggle_caps_.erase(cap); }
     void restore_toggle_caps() { toggle_caps_ = original_toggle_caps_; }

@@ -205,6 +205,7 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.overcharge_paused = u.overcharge_paused();
     r.auto_surface = u.auto_surface_mode();
     r.stunned = u.is_stunned();
+    r.paused = u.is_paused();
     r.is_dying = u.is_dying();
     r.fuel_ratio = u.fuel_ratio();
     r.shield_ratio = u.shield_ratio();
@@ -265,6 +266,7 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
             {static_cast<u32>(std::max(w->weapon_index, 0)), w->min_range, w->max_range});
     r.weapon_range_count = static_cast<u32>(out.weapon_ranges.size()) - r.weapon_range_offset;
     r.script_bits = u.script_bits();
+    r.toggle_caps = u.toggle_cap_bits();
 
     r.adjacent_offset = static_cast<u32>(out.adjacent.size());
     out.adjacent.insert(out.adjacent.end(), u.adjacent_unit_ids().begin(),
