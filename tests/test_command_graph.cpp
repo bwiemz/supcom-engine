@@ -95,7 +95,7 @@ TEST_CASE("An order's kind names its CommandGraphParams entry; some draw none",
     CHECK(command_graph_key(CommandType::BuildFactory).empty());
 }
 
-TEST_CASE("An order's leg is a strip along it, on the ground", "[renderer][command_graph]") {
+TEST_CASE("A strip lies along its segment, on the ground", "[renderer][command_graph]") {
     using osc::sim::Vector3;
     std::array<Vector3, 4> c;
     REQUIRE(command_strip({0, 0, 0}, {10, 0, 0}, 0.5f, c));
@@ -118,18 +118,109 @@ TEST_CASE("An order chain bends through its waypoints, as Moho's command graph d
     using osc::renderer::command_curve;
     using osc::sim::Vector3;
     const Vector3 none{0, 0, 0};
-    for (const Vector3& p : command_curve({0, 0, 0}, {10, 0, 0}, none, {1, 0, 0}, 20, 1.0f)) {
-        CHECK(p.z == Catch::Approx(0.0f).margin(1e-5));
+    for (const auto& p : command_curve({0, 0, 0}, {10, 0, 0}, none, {1, 0, 0}, 20, 1.0f)) {
+        CHECK(p.position.z == Catch::Approx(0.0f).margin(1e-5));
     }
     const Vector3 bisector{std::sqrt(0.5f), 0, std::sqrt(0.5f)};
     const auto leg = command_curve({0, 0, 0}, {10, 0, 0}, none, bisector, 20, 1.0f);
     REQUIRE(leg.size() == 21);
-    CHECK(leg.front().x == Catch::Approx(0.0f));
-    CHECK(leg.back().x == Catch::Approx(10.0f));
-    CHECK(leg.back().z == Catch::Approx(0.0f));
-    CHECK(leg[15].z < -0.01f);
-    CHECK(std::abs(leg[10].z) < 0.25f * 10.0f);
+    CHECK(leg.front().position.x == Catch::Approx(0.0f));
+    CHECK(leg.back().position.x == Catch::Approx(10.0f));
+    CHECK(leg.back().position.z == Catch::Approx(0.0f));
+    CHECK(leg[15].position.z < -0.01f);
+    CHECK(std::abs(leg[10].position.z) < 0.25f * 10.0f);
     CHECK(command_curve({0, 0, 0}, {10, 0, 0}, none, bisector, 0, 1.0f).empty());
+}
+
+namespace {
+
+bool same_point(const osc::sim::Vector3& a, const osc::sim::Vector3& b) {
+    return std::abs(a.x - b.x) < 1e-5f && std::abs(a.y - b.y) < 1e-5f &&
+           std::abs(a.z - b.z) < 1e-5f;
+}
+
+} // namespace
+
+TEST_CASE("An order line's ribbon is whole along its curve", "[renderer][command_graph]") {
+    using osc::renderer::command_curve;
+    using osc::renderer::command_ribbon;
+    const osc::sim::Vector3 bisector{std::sqrt(0.5f), 0, std::sqrt(0.5f)};
+    const auto ribbon =
+        command_ribbon(command_curve({0, 0, 0}, {10, 0, 0}, {0, 0, 0}, bisector, 20, 2.0f), 1.0f);
+    REQUIRE(ribbon.size() == 20);
+    for (size_t k = 0; k + 1 < ribbon.size(); ++k) {
+        CAPTURE(k);
+        CHECK(same_point(ribbon[k][1], ribbon[k + 1][0]));
+        CHECK(same_point(ribbon[k][2], ribbon[k + 1][3]));
+    }
+}
+
+TEST_CASE("Two legs of an order line meet across their waypoint's tangent",
+          "[renderer][command_graph]") {
+    using osc::renderer::command_curve;
+    using osc::renderer::command_ribbon;
+    using osc::sim::CommandType;
+    using osc::sim::Vector3;
+    osc::sim::WorldSnapshot world;
+    osc::sim::EntityRecord e;
+    e.id = 1;
+    e.army = 0;
+    e.is_unit = true;
+    e.command_count = 2;
+    for (const Vector3& to : {Vector3{40, 0, 0}, Vector3{40, 0, 40}}) {
+        osc::sim::CommandRecord c;
+        c.type = CommandType::Move;
+        c.target_pos = to;
+        world.commands.push_back(c);
+    }
+    world.entities.push_back(e);
+    osc::renderer::CommandGraphStyle style;
+    const auto graph = osc::renderer::command_graph(
+        osc::renderer::command_graph_paths(osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0,
+                                           [&](CommandType) { return &style; }));
+    REQUIRE(graph.edges.size() == 2);
+    const auto ribbon_of = [](const osc::renderer::CommandGraphEdge& edge) {
+        return command_ribbon(
+            command_curve(edge.from, edge.to, edge.from_tangent, edge.to_tangent, 32, 2.0f), 1.0f);
+    };
+    const auto in = ribbon_of(graph.edges[0]);
+    const auto out = ribbon_of(graph.edges[1]);
+    REQUIRE_FALSE(in.empty());
+    REQUIRE_FALSE(out.empty());
+    CHECK(same_point(in.back()[1], out.front()[0]));
+    CHECK(same_point(in.back()[2], out.front()[3]));
+    const Vector3& tangent = graph.edges[1].from_tangent;
+    const Vector3 cap{out.front()[0].x - out.front()[3].x, 0, out.front()[0].z - out.front()[3].z};
+    CHECK(cap.x * tangent.x + cap.z * tangent.z == Catch::Approx(0.0f).margin(1e-5));
+    CHECK(std::hypot(cap.x, cap.z) == Catch::Approx(2.0f));
+}
+
+TEST_CASE("An order line's curve is as CommandWaypointParams sets it, else Moho's defaults",
+          "[renderer][command_graph]") {
+    osc::lua::LuaState lua;
+    REQUIRE(lua.do_string(R"(
+        Full = { ui_CurveSegments = 32, ui_CurveSmoothness = 35, ui_PathSmoothness = 2 }
+        Part = { ui_CurveSmoothness = 35 }
+    )")
+                .ok());
+    lua_State* L = lua.raw();
+    const int top = lua_gettop(L);
+    const auto read = [&](const char* name) {
+        lua_getglobal(L, name);
+        const auto params = osc::renderer::command_curve_params(L, lua_gettop(L));
+        lua_pop(L, 1);
+        return params;
+    };
+    const auto full = read("Full");
+    CHECK(full.segments == 32);
+    CHECK(full.smoothness == 35.0f);
+    const auto part = read("Part");
+    CHECK(part.segments == 20);
+    CHECK(part.smoothness == 35.0f);
+    const auto none = read("Missing");
+    CHECK(none.segments == 20);
+    CHECK(none.smoothness == 50.0f);
+    CHECK(lua_gettop(L) == top);
 }
 
 TEST_CASE("A build order's site is its structure's skirt", "[renderer][command_graph]") {

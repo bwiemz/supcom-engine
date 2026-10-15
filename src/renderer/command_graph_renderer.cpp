@@ -476,9 +476,10 @@ std::string command_graph_key(sim::CommandType type) {
     }
 }
 
-std::vector<Vector3> command_curve(const Vector3& a, const Vector3& b, const Vector3& ta,
-                                   const Vector3& tb, u32 segments, f32 width, f32 smoothness) {
-    std::vector<Vector3> out;
+std::vector<CommandCurvePoint> command_curve(const Vector3& a, const Vector3& b, const Vector3& ta,
+                                             const Vector3& tb, u32 segments, f32 width,
+                                             f32 smoothness) {
+    std::vector<CommandCurvePoint> out;
     if (segments == 0) {
         return out;
     }
@@ -497,8 +498,54 @@ std::vector<Vector3> command_curve(const Vector3& a, const Vector3& b, const Vec
         const f32 h10 = t3 - 2 * t2 + t;
         const f32 h01 = -2 * t3 + 3 * t2;
         const f32 h11 = t3 - t2;
-        out.push_back(add(add(scale(a, h00), scale(sa, h10)), add(scale(b, h01), scale(sb, h11))));
+        const f32 dh00 = 6 * t2 - 6 * t;
+        const f32 dh10 = 3 * t2 - 4 * t + 1;
+        const f32 dh01 = 6 * t - 6 * t2;
+        const f32 dh11 = 3 * t2 - 2 * t;
+        const Vector3 dp =
+            add(add(scale(a, dh00), scale(sa, dh10)), add(scale(b, dh01), scale(sb, dh11)));
+        const f32 dp_len = length(dp);
+        out.push_back({add(add(scale(a, h00), scale(sa, h10)), add(scale(b, h01), scale(sb, h11))),
+                       dp_len > 1e-6f ? scale(dp, 1.0f / dp_len) : Vector3{0, 0, 0}});
     }
+    return out;
+}
+
+std::vector<std::array<Vector3, 4>> command_ribbon(const std::vector<CommandCurvePoint>& curve,
+                                                   f32 half_width) {
+    std::vector<std::array<Vector3, 4>> out;
+    const auto side = [&](const CommandCurvePoint& p) {
+        return Vector3{p.tangent.z * half_width, 0.0f, -p.tangent.x * half_width};
+    };
+    for (size_t k = 0; k + 1 < curve.size(); ++k) {
+        const Vector3& a = curve[k].position;
+        const Vector3& b = curve[k + 1].position;
+        const Vector3 sa = side(curve[k]);
+        const Vector3 sb = side(curve[k + 1]);
+        out.push_back({add(a, sa), add(b, sb), sub(b, sb), sub(a, sa)});
+    }
+    return out;
+}
+
+CommandCurveParams command_curve_params(lua_State* L, int params) {
+    CommandCurveParams out;
+    if (params < 0) {
+        params = lua_gettop(L) + params + 1;
+    }
+    if (!lua_istable(L, params)) {
+        return out;
+    }
+    lua_pushstring(L, "ui_CurveSegments");
+    lua_gettable(L, params);
+    if (lua_isnumber(L, -1)) {
+        out.segments = static_cast<u32>(std::max(1, static_cast<int>(lua_tonumber(L, -1))));
+    }
+    lua_pushstring(L, "ui_CurveSmoothness");
+    lua_gettable(L, params);
+    if (lua_isnumber(L, -1)) {
+        out.smoothness = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_pop(L, 2);
     return out;
 }
 
@@ -576,6 +623,13 @@ const CommandGraphStyle* CommandGraphRenderer::style(sim::CommandType type, lua_
                          lua_isstring(L, -1) ? lua_tostring(L, -1) : "no table");
         }
         lua_settop(L, top);
+        static const char* const kWaypoints =
+            "return import('/lua/ui/game/commandwaypoint.lua').CommandWaypointParams";
+        if (luaL_loadbuffer(L, kWaypoints, std::strlen(kWaypoints), "CommandWaypointParams") == 0 &&
+            lua_pcall(L, 0, 1, 0) == 0) {
+            curve_ = command_curve_params(L, lua_gettop(L));
+        }
+        lua_settop(L, top);
     }
     const std::string key = command_graph_key(type);
     if (key.empty()) return nullptr;
@@ -623,7 +677,7 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     const CommandGraph graph = command_graph(paths, highlight_, hovered_unit_);
     for (const CommandGraphEdge& edge : graph.edges) {
         const CommandGraphStyle* s = edge.style;
-        if (lines.size() + kCurveSegments + 1 > MAX_QUADS) {
+        if (lines.size() + curve_.segments + 1 > MAX_QUADS) {
             break;
         }
         const GPUTexture* line_tex =
@@ -634,19 +688,20 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
         const f32 width = kLineWidth * std::min(std::sqrt(static_cast<f32>(edge.units)), 10.0f);
         const auto& col = edge.color;
         const f32 shift = -s->anim_rate * time;
-        const std::vector<Vector3> points = command_curve(edge.from, edge.to, edge.from_tangent,
-                                                          edge.to_tangent, kCurveSegments, width);
+        const std::vector<CommandCurvePoint> curve =
+            command_curve(edge.from, edge.to, edge.from_tangent, edge.to_tangent, curve_.segments,
+                          width, curve_.smoothness);
+        const auto ribbon = command_ribbon(curve, width * 0.5f);
         f32 u0 = 0.0f;
-        for (size_t k = 0; k + 1 < points.size(); ++k) {
-            std::array<Vector3, 4> q;
-            const f32 u1 = u0 + length(sub(points[k + 1], points[k])) / width * s->uv_aspect;
-            if (command_strip(points[k], points[k + 1], width * 0.5f, q)) {
-                const Vertex a = vertex(q[0], u0 + shift, 0.0f, col);
-                const Vertex b = vertex(q[1], u1 + shift, 0.0f, col);
-                const Vertex cc = vertex(q[2], u1 + shift, 1.0f, col);
-                const Vertex d = vertex(q[3], u0 + shift, 1.0f, col);
-                lines.push_back({line_tex->descriptor_set, {a, b, cc, a, cc, d}});
-            }
+        for (size_t k = 0; k < ribbon.size(); ++k) {
+            const auto& q = ribbon[k];
+            const f32 u1 =
+                u0 + length(sub(curve[k + 1].position, curve[k].position)) / width * s->uv_aspect;
+            const Vertex a = vertex(q[0], u0 + shift, 0.0f, col);
+            const Vertex b = vertex(q[1], u1 + shift, 0.0f, col);
+            const Vertex cc = vertex(q[2], u1 + shift, 1.0f, col);
+            const Vertex d = vertex(q[3], u0 + shift, 1.0f, col);
+            lines.push_back({line_tex->descriptor_set, {a, b, cc, a, cc, d}});
             u0 = u1;
         }
         legs_.push_back({edge.units, edge.type, edge.from, edge.to, col, s->line_texture});
