@@ -388,6 +388,20 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
     }
 }
 
+bool Unit::engage(UnitCommand& cmd, lua_State* L) {
+    cmd.engaged = true;
+    const UnitCommand* const order = &cmd;
+    for (size_t i = 0; i < weapons_.size(); ++i) {
+        if (destroyed() || is_dying()) {
+            return false;
+        }
+        weapons_[i]->drop_target(L);
+        weapons_[i]->target_check_clock = 0;
+    }
+    return !destroyed() && !is_dying() && !command_queue_.empty() &&
+           &command_queue_.front() == order;
+}
+
 OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     switch (cmd.type) {
     case CommandType::Stop: return order_stop(ctx.L);
@@ -542,8 +556,11 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // the target to the attacker and CalcMoveAir flies the combat tactics
     // from then on. It never parks at range.
     if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
+        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage_distance * engage_distance) &&
+            !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         if (cmd.engaged) {
             navigator_.abort_move();
             fly_attack_run(*this, *target, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
@@ -555,8 +572,11 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // GetTargetPosGun) at its target weapon's reach -- the first weapon that
     // can attack it -- facing it.
     if (circles(*this) && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
+        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage_distance * engage_distance) &&
+            !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         if (cmd.engaged) {
             navigator_.abort_move();
             CircleAround around;
@@ -671,15 +691,17 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // its EngageDistance, makes its runs over it. With no weapon that can
     // hit it, the order ends there (the attacker can't attack it).
     if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
-        const bool reached =
-            (weapon && weapon->in_firing_range(*this, at)) || dist2 < engage * engage;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
+        const bool reached = (weapon && weapon->in_firing_range(*this, at)) ||
+                             dist2 < engage_distance * engage_distance;
         if (!cmd.engaged && reached) {
             if (!weapon) {
                 command_queue_.pop_front();
                 return OrderStep::Next;
             }
-            cmd.engaged = true;
+            if (!engage(cmd, ctx.L)) {
+                return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+            }
         }
         if (cmd.engaged) {
             navigator_.abort_move();
@@ -690,10 +712,13 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // A hovering aircraft, handed the point alike, circles it at its
     // weapon's reach (with none, StartTurnDistance's circle).
     if (circles(*this) && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
         if (!cmd.engaged &&
-            ((weapon && weapon->in_firing_range(*this, at)) || dist2 < engage * engage))
-            cmd.engaged = true;
+            ((weapon && weapon->in_firing_range(*this, at)) ||
+             dist2 < engage_distance * engage_distance) &&
+            !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         if (cmd.engaged) {
             navigator_.abort_move();
             CircleAround around;
@@ -707,11 +732,15 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // A structure's attacker takes the point at once; its weapons fire when
     // it is in their range.
     if (!is_mobile()) {
-        cmd.engaged = true;
+        if (!cmd.engaged && !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         return OrderStep::Hold;
     }
     if (weapon && weapon->in_firing_range(*this, at)) {
-        cmd.engaged = true;
+        if (!cmd.engaged && !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         cmd.has_slot = false; // the formation dropped, as on a unit
         if (!can_fly()) {
             navigator_.abort_move();

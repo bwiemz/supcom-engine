@@ -1510,6 +1510,9 @@ private:
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
     void begin_order(UnitCommand& cmd, lua_State* L);
+    /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
+    /// target. False when a script took the unit or the order.
+    bool engage(UnitCommand& cmd, lua_State* L);
     /// Coasting, amphibious layer changes, fuel.
     bool tick_after_orders(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
