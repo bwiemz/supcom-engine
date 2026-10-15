@@ -1212,7 +1212,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.factory_assist_build_);
     // auto_attack_target_ isn't saved: a weapon sets it and the unit uses it
     // in the same update.
-    // air_stepped_ isn't saved: each update clears it before it is read.
+    // air_stepped_ and air_held_ aren't saved: each update clears them before they are read.
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
     w.b(u.build_repairs_);

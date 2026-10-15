@@ -1617,6 +1617,9 @@ private:
     /// AutoLandTime after its orders ran out, near where it is, it finds a
     /// place (PrepareMove), reserves it and comes down onto it.
     void tick_idle_landing(f64 dt, SimContext& ctx);
+    /// faf-re CUnitMotion::MotionTick: CalcMoveAir every tick; CAiNavigatorAir::AbortMove target.
+    void fly_unflown_tick(f64 dt, SimContext& ctx);
+    void rest_air_body();
     /// A hovering aircraft at work circles it (Moho's ComputeAirControl: its
     /// focus while Building, Repairing, Reclaiming or Capturing).
     bool circles_its_work() const;
@@ -1982,6 +1985,7 @@ private:
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
     bool air_stepped_ = false;
+    bool air_held_ = false;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)
