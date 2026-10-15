@@ -136,6 +136,7 @@ struct CirclingInput {
     f32 max_airspeed = 0.0f;
     f32 height = 0.0f; ///< AttackElevation plus the drawn offset
     bool reverse = false;
+    bool fly_in_water = false; ///< Air.FlyInWater
 };
 
 /// What the circling asks this tick (CalcCirclingOrientation).
@@ -147,9 +148,9 @@ struct CirclingSteer {
 };
 
 /// Moho's aim: the circle's point a MinAirspeed's step round from where
-/// the aircraft is, at its height over the terrain there (the terrain only,
-/// at the nearest whole coordinates). Its velocity heads there, in three
-/// dimensions.
+/// the aircraft is, at its height over the terrain or the water there (the
+/// terrain only if it flies in water), at the nearest whole coordinates. Its
+/// velocity heads there, in three dimensions.
 CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrain);
 
 /// What a circling aircraft circles.
