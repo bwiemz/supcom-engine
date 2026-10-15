@@ -870,6 +870,7 @@ public:
     /// terrain, `at` as given.
     void warp(const map::Terrain* terrain, const Vector3& at);
     /// Air.FlyInWater: an aircraft that may fly under the water's surface.
+    bool fly_in_water() const { return fly_in_water_; }
     void set_fly_in_water(bool b) { fly_in_water_ = b; }
     /// What an aircraft holds its height over at (x, z): the ground, or the
     /// water's surface above it unless it flies in water (Moho's CUnitMotion

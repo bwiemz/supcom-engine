@@ -52,15 +52,15 @@ f32 wrap(f32 a) {
 }
 
 /// `size` square, its height rising one a unit eastward (x) when `slope`,
-/// else flat at 10.
-std::unique_ptr<osc::map::Terrain> terrain(u32 size, bool slope) {
+/// else flat at 10; under `water` if that is above 0.
+std::unique_ptr<osc::map::Terrain> terrain(u32 size, bool slope, f32 water = 0.0f) {
     std::vector<osc::u16> heights(static_cast<size_t>(size + 1) * (size + 1), 1280);
     if (slope)
         for (size_t z = 0; z <= size; ++z)
             for (size_t x = 0; x <= size; ++x)
                 heights[z * (size + 1) + x] = static_cast<osc::u16>(x * 128);
     osc::map::Heightmap hm(size, size, 1.0f / 128.0f, std::move(heights));
-    return std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false);
+    return std::make_unique<osc::map::Terrain>(std::move(hm), water, water > 0.0f);
 }
 
 /// A sim on a flat 128 map with Moho-like gunships ('gunship'; 'steady'
@@ -300,6 +300,31 @@ TEST_CASE("circling_steer: a step round the circle, at its height over the terra
     // Overhead, it takes due east as the way to the centre.
     in.position = in.center;
     CHECK(std::abs(wrap(osc::sim::circling_steer(in, slope.get()).facing - kPi / 2)) < 1e-5f);
+}
+
+TEST_CASE("circling_steer: over water, its height is over the surface, unless it flies in water",
+          "[air_circling]") {
+    const auto shore = terrain(128, true, 50.0f);
+    CirclingInput in;
+    in.position = {30.0f, 70.0f, 40.0f};
+    in.center = {30.0f, 0.0f, 60.0f};
+    in.radius = 15.0f;
+    in.min_airspeed = 3.0f;
+    in.max_airspeed = 12.0f;
+    in.height = 10.0f;
+
+    CHECK(osc::sim::circling_steer(in, shore.get()).aim.y == 60.0f);
+    in.fly_in_water = true;
+    const auto under = osc::sim::circling_steer(in, shore.get());
+    CHECK(under.aim.y == 10.0f + std::nearbyint(under.aim.x));
+
+    in.position.x = 90.0f;
+    in.center.x = 90.0f;
+    for (const bool fly_in_water : {false, true}) {
+        in.fly_in_water = fly_in_water;
+        const auto land = osc::sim::circling_steer(in, shore.get());
+        CHECK(land.aim.y == 10.0f + std::nearbyint(land.aim.x));
+    }
 }
 
 TEST_CASE("Only a hovering flier circles: not winged, not HoverOverAttack, not under "

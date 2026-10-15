@@ -514,11 +514,14 @@ CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrai
     }
     CirclingSteer out;
     out.aim = {in.center.x + ox, 0.0f, in.center.z + oz};
-    // Its height over the terrain at the aim's nearest whole point
-    // (CHeightField::GetElevation(int, int)): water doesn't count.
-    const f32 ground =
-        terrain ? terrain->get_terrain_height(std::nearbyint(out.aim.x), std::nearbyint(out.aim.z))
-                : 0.0f;
+    // faf-re STIMap::GetElevation(int, int): the water's surface over a seabed.
+    const f32 ax = std::nearbyint(out.aim.x);
+    const f32 az = std::nearbyint(out.aim.z);
+    f32 ground = 0.0f;
+    if (terrain) {
+        ground = in.fly_in_water ? terrain->get_terrain_height(ax, az)
+                                 : terrain->get_surface_height(ax, az);
+    }
     out.aim.y = in.height + ground;
     Vector3 v{out.aim.x - in.position.x, out.aim.y - in.position.y, out.aim.z - in.position.z};
     const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
@@ -563,6 +566,7 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     in.max_airspeed = unit.max_airspeed();
     in.height = r.attack_elevation + st.circle_elevation;
     in.reverse = st.circle_reverse;
+    in.fly_in_water = unit.fly_in_water();
     const f32 to_x = around.center.x - pos.x;
     const f32 to_z = around.center.z - pos.z;
     unit.track_lift_ground(terrain, std::sqrt(to_x * to_x + to_z * to_z), sim.tick_count(), dt);
