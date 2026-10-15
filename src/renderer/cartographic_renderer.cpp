@@ -502,7 +502,18 @@ bool CartographicRenderer::prepare(u32 fi, u32 width, u32 height) {
     return ensure_target(fi, width, height);
 }
 
-void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view) {
+std::array<f32, 16> CartographicRenderer::view_proj(const View& view) const {
+    // Depths over the heights and the quad, which lies at the water's
+    // surface: a map flooded over its highest ground, or with its water
+    // under its lowest, must not clip it away; nor the overlays' volumes
+    const f32 surface = static_cast<f32>(surface_word_) / 128.0f;
+    return cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
+                                  std::min({params_.elev_min, surface, volume_bottom_}) - 1.0f,
+                                  std::max({params_.elev_max, surface, volume_top_}) + 1.0f);
+}
+
+void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
+                                  const Overlays& overlays) {
     if (!prepare(fi, view.width, view.height)) return;
     const Target& t = targets_[fi];
     const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
@@ -524,13 +535,7 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view)
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     TerrainPush push{};
-    // Depths over the heights and the quad, which lies at the water's
-    // surface: a map flooded over its highest ground, or with its water
-    // under its lowest, must not clip it away
-    const f32 surface = static_cast<f32>(surface_word_) / 128.0f;
-    const auto vp = cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
-                                           std::min(params_.elev_min, surface) - 1.0f,
-                                           std::max(params_.elev_max, surface) + 1.0f);
+    const auto vp = view_proj(view);
     std::memcpy(push.view_proj, vp.data(), sizeof(push.view_proj));
     std::memcpy(push.terrain_size_coeff, params_.terrain_size_coeff.data(),
                 sizeof(push.terrain_size_coeff));
@@ -545,6 +550,8 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view)
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                         &push);
     vkc::draw(cmd, 4, 1, 0, 0);
+    // The overlays, on the quad's depth
+    if (overlays) overlays(cmd, vp.data(), t.width, t.height);
     vkCmdEndRenderPass(cmd);
 
     // Stage 1, into the output: the contour lines

@@ -484,8 +484,13 @@ void Renderer::init_sub_renderers() {
     trail_renderer_.init(device_, allocator_, frame_.scene_pass(), texture_ds_layout_);
     // FA's sky (M210b)
     sky_renderer_.init(device_, allocator_, frame_.scene_pass());
-    // The cartographic view (the minimap's map)
+    // The cartographic view (the minimap's map), and the range rings and fog
+    // drawn into its frame
     cartographic_.init(device_, allocator_, depth_format_, texture_ds_layout_);
+    if (has_stencil()) {
+        minimap_ranges_.init(device_, allocator_, cartographic_.frame_pass());
+        minimap_vision_.init(device_, allocator_, cartographic_.frame_pass());
+    }
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, frame_.scene_pass());
     water_renderer_.set_frame_images(
@@ -1497,15 +1502,9 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     ground_ = terrain->heightmap();
     ground_flattenings_ = terrain->flattenings().size();
     ground_resets_ = terrain->flattenings_resets();
-    // The range overlays' volumes span the map's heights
-    {
-        const map::Heightmap& h = terrain->heightmap();
-        f32 lowest = h.max_height();
-        for (u32 gz = 0; gz < h.grid_height(); ++gz)
-            for (u32 gx = 0; gx < h.grid_width(); ++gx)
-                lowest = std::min(lowest, h.get_height_at_grid(gx, gz));
-        range_renderer_.set_heights(lowest, h.max_height());
-    }
+    // The range overlays' volumes span the map's heights, as the minimap's
+    // and its fog's do
+    set_volume_heights(terrain->heightmap());
     camera_.set_ground(&*ground_, terrain->has_water(), terrain->water_elevation());
     // The light camera fits the terrain in view (M210c).
     height_bounds_ = std::make_unique<HeightBounds>(*ground_);
@@ -2008,8 +2007,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // The movies' new frames, likewise.
     movie_textures_.record(cmd_buf_[fi]);
     record_terrain_sync(cmd_buf_[fi]);
-    // The cartographic frame the minimap's quad samples (its own passes)
-    if (cartographic_view_) cartographic_.record(cmd_buf_[fi], fi, *cartographic_view_);
+    // The cartographic frame the minimap's quad samples (its own passes),
+    // its range rings and fog drawn into it
+    if (cartographic_view_) {
+        cartographic_.record(cmd_buf_[fi], fi, *cartographic_view_,
+                             [&](VkCommandBuffer cmd, const f32* view_proj, u32 w, u32 h) {
+                                 draw_minimap_overlays(cmd, view_proj, w, h, fi);
+                             });
+    }
 
     // ==================== SHADOW PASS ====================
     record_shadow_pass(fi, vp);
@@ -2790,6 +2795,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
         range_renderer_.update(range_batches(*range_overlays_, scene), range_overlays_->settings(),
                                span, camera_.zoom() / camera_.max_zoom(), fi);
+        if (cartographic_view_) update_minimap_overlays(view, ghost, L, selected_ids, span, fi);
     }
 
     // Update game overlays (health bars, selection circles, game over)
@@ -3889,13 +3895,62 @@ bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
     return true;
 }
 
+void Renderer::set_volume_heights(const map::Heightmap& h) {
+    f32 lowest = h.max_height();
+    for (u32 gz = 0; gz < h.grid_height(); ++gz)
+        for (u32 gx = 0; gx < h.grid_width(); ++gx)
+            lowest = std::min(lowest, h.get_height_at_grid(gx, gz));
+    range_renderer_.set_heights(lowest, h.max_height());
+    minimap_ranges_.set_heights(lowest, h.max_height());
+    minimap_vision_.set_heights(lowest, h.max_height());
+    cartographic_.set_volume_heights(lowest - 5.0f, h.max_height());
+}
+
+void Renderer::update_minimap_overlays(const sim::FrameView& view, const BuildGhost* ghost,
+                                       lua_State* L, const std::unordered_set<u32>* selected_ids,
+                                       f32 span, u32 fi) {
+    // Cartographic::Render runs the range renderer with the minimap's
+    // camera: the units in its view (the whole map) at its zoom, its largest
+    // (minimap.lua's CameraReset, then SetMaxZoomMult(1.0) clamps it there)
+    const Frustum frustum(cartographic_.view_proj(*cartographic_view_));
+    const RangeScene scene =
+        collect_range_scene(*range_overlays_, view, frustum, player_army_, selected_ids, hovered_,
+                            ghost ? &ghost->blueprint_id : nullptr, ghost ? ghost->cursor_x : 0.0f,
+                            ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
+    minimap_ranges_.update(range_batches(*range_overlays_, scene), range_overlays_->settings(),
+                           span, 1.0f, fi);
+    // And the fog, but for an observer (no focus army: RenderFogOfWar isn't
+    // given the vision renderer) or with no fog of war
+    const sim::WorldSnapshot* cur = view.cur();
+    if (fog_enabled_ && player_army_ >= 0 && cur && cur->sight.army == player_army_ &&
+        !cur->sight.everywhere) {
+        minimap_vision_.update(vision_circles(view, player_army_), fi);
+    } else {
+        minimap_vision_.set_off();
+    }
+}
+
+void Renderer::draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, u32 width,
+                                     u32 height, u32 fi) const {
+    // Cartographic::Render's order: the range rings, then the fog
+    minimap_ranges_.render(cmd, width, height, view_proj, fi);
+    minimap_vision_.render(cmd, width, height, view_proj, fi);
+}
+
 std::optional<Renderer::CartographicImages>
-Renderer::capture_cartographic(const map::Terrain& terrain,
-                               const CartographicRenderer::View& view) {
+Renderer::capture_cartographic(const map::Terrain& terrain, const CartographicRenderer::View& view,
+                               const CartographicOverlayInput* overlays) {
     if (!device_ || view.width == 0 || view.height == 0) return std::nullopt;
     vkQueueWaitIdle(graphics_queue_);
     cartographic_.build(terrain, texture_cache_);
     if (!cartographic_.ready()) return std::nullopt;
+    if (overlays) {
+        set_volume_heights(terrain.heightmap());
+        minimap_ranges_.update(overlays->rings, range_overlays_->settings(), overlays->ring_span,
+                               1.0f, 0);
+        if (overlays->fog) minimap_vision_.update(*overlays->fog, 0);
+        else minimap_vision_.set_off();
+    }
 
     const VkDeviceSize image_bytes = static_cast<VkDeviceSize>(view.width) * view.height * 4;
     VkBufferCreateInfo buf_ci{};
@@ -3920,7 +3975,13 @@ Renderer::capture_cartographic(const map::Terrain& terrain,
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &begin);
-    cartographic_.record(cmd, 0, view);
+    if (overlays) {
+        cartographic_.record(cmd, 0, view, [&](VkCommandBuffer c, const f32* vp, u32 w, u32 h) {
+            draw_minimap_overlays(c, vp, w, h, 0);
+        });
+    } else {
+        cartographic_.record(cmd, 0, view);
+    }
     // Both stages (shader-readable) copied out
     const std::array<VkImage, 2> images = {cartographic_.frame(0).image,
                                            cartographic_.output(0).image};
@@ -4121,6 +4182,8 @@ void Renderer::shutdown() {
     command_graph_renderer_.destroy(device_, allocator_);
     selection_renderer_.destroy(device_, allocator_);
     range_renderer_.destroy(device_, allocator_);
+    minimap_ranges_.destroy(device_, allocator_);
+    minimap_vision_.destroy(device_, allocator_);
     resource_icon_renderer_.destroy(device_, allocator_);
     projectile_icon_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);

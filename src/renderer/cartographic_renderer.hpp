@@ -18,6 +18,7 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <functional>
 
 namespace osc::map {
 class Terrain;
@@ -55,10 +56,32 @@ public:
     /// no map built, or if they couldn't be made.
     bool prepare(u32 fi, u32 width, u32 height);
 
+    /// What is drawn into the frame over Stage 0, before Stage 1 finds the
+    /// contour lines (Moho's range rings, fog and boundary): given the
+    /// command buffer inside the frame's pass, its view-projection and size.
+    using Overlays =
+        std::function<void(VkCommandBuffer cmd, const f32* view_proj, u32 width, u32 height)>;
+
     /// Both stages into frame `fi`'s targets, outside any render pass; the
     /// output ends shader-readable. Nothing without a map built. Prepares
     /// the targets at the view's size first (see prepare()).
-    void record(VkCommandBuffer cmd, u32 fi, const View& view);
+    void record(VkCommandBuffer cmd, u32 fi, const View& view, const Overlays& overlays = {});
+
+    /// The frame's view-projection for `view` (record()'s): top down over
+    /// its world rect, its depth over the heights, the quad and the
+    /// overlays' volumes.
+    std::array<f32, 16> view_proj(const View& view) const;
+
+    /// The frame's pass, which the overlays' pipelines are made for (its
+    /// depth has a stencil where the format does).
+    VkRenderPass frame_pass() const { return frame_pass_; }
+    /// The heights the overlays' volumes span (the range rings' and fog's:
+    /// from 5 below the map's lowest point to its highest), which the
+    /// frame's depth range takes in so none is clipped.
+    void set_volume_heights(f32 bottom, f32 top) {
+        volume_bottom_ = bottom;
+        volume_top_ = top;
+    }
 
     /// Frame `fi`'s output for the UI to draw: the point sampler, so a frame
     /// drawn at its own size is copied pixel for pixel, and alpha read as 1.
@@ -118,6 +141,7 @@ private:
     CartographicParams params_{};
     i16 surface_word_ = 0;
     u32 span_x_ = 0, span_z_ = 0;
+    f32 volume_bottom_ = 0.0f, volume_top_ = 0.0f;
 };
 
 } // namespace osc::renderer
