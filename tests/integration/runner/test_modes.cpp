@@ -219,6 +219,7 @@ constexpr Mode kModesBefore[] = {
     {"--mobile-build-start-test", test_mobile_build_start, false},
     {"--drown-test", test_drown, false},
     {"--spawn-layer-test", test_spawn_layer, false},
+    {"--warp-test", test_warp, false},
     {"--attack-move-test", test_attack_move, false},
     {"--placement-layers-test", test_placement_layers, false},
     {"--yaw-only-test", test_yaw_only, false},
@@ -318,6 +319,7 @@ void IntegrationModes::print_usage() const {
               << "  --mobile-build-start-test An engineer's build start, tick by tick, as the original\n"
               << "  --drown-test       Units made in water: a land tank drowns, as the original\n"
               << "  --spawn-layer-test Where a unit made by script stands: subs, ships, aircraft\n"
+              << "  --warp-test        Where Warp puts a unit: its layer, height and move\n"
               << "  --chain-test       Full build chain: ACU -> factory -> engineer -> pgen\n"
               << "  --ai-test          AI ARMY_2: pgens + factory + engineers + guard assist\n"
               << "  --reclaim-test     Create prop, engineer reclaims it, verify mass gained\n"

@@ -147,14 +147,14 @@ void test_footfall(TestContext& ctx) {
     lua("setup: both sink below the ground", R"(
         for _, tank in {__osc_sunk, __osc_never} do
             local p = tank:GetPosition()
-            Warp(tank, {p[1], GetTerrainHeight(p[1], p[3]) - 3, p[3]})
+            tank:SetPosition({p[1], GetTerrainHeight(p[1], p[3]) - 3, p[3]}, true)
         end
     )");
     run(1);
     lua("setup: and rise above it", R"(
         for _, tank in {__osc_sunk, __osc_never} do
             local p = tank:GetPosition()
-            Warp(tank, {p[1], GetTerrainHeight(p[1], p[3]) + 3, p[3]})
+            tank:SetPosition({p[1], GetTerrainHeight(p[1], p[3]) + 3, p[3]}, true)
         end
     )");
     run(3);

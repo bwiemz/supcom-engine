@@ -294,3 +294,29 @@ TEST_CASE("An immobile unit claims its ground as it is made, and frees it as it 
     CHECK_FALSE(grid.ground_at(39, 9));
     CHECK(grid.ground_at(37, 27));
 }
+
+TEST_CASE("The starting layer: air footprints fly, a beacon floats, the rest by the water",
+          "[occupancy][layers]") {
+    // Moho's Entity::GetStartingLayer with no layer asked for (faf-re), which
+    // a unit's creation and Unit::Warp both read
+    using osc::sim::starting_layer;
+    const auto wet = terrain(true);
+    const auto is = [](const char* got, const char* want) { return std::string(got) == want; };
+    // An AIR footprint flies wherever it is; an experimental's starts on the ground
+    CHECK(is(starting_layer(oc::kAir, false, *wet, 10.0f, 10.0f), "Air"));
+    CHECK(is(starting_layer(oc::kAir, false, *wet, 40.0f, 10.0f), "Air"));
+    CHECK(is(starting_layer(oc::kAir, true, *wet, 10.0f, 10.0f), "Land"));
+    // Dry ground: Land, whatever else
+    CHECK(is(starting_layer(oc::kLand | oc::kWater, false, *wet, 40.0f, 10.0f), "Land"));
+    CHECK(is(starting_layer(oc::kLand, false, *wet, 40.0f, 10.0f, true), "Land"));
+    // Under the water: a sub dives (not an experimental), a WATER footprint or a
+    // FERRYBEACON floats, the rest stand on the seabed
+    CHECK(is(starting_layer(oc::kSub | oc::kWater, false, *wet, 10.0f, 10.0f), "Sub"));
+    CHECK(is(starting_layer(oc::kSub | oc::kWater, true, *wet, 10.0f, 10.0f), "Water"));
+    CHECK(is(starting_layer(oc::kLand | oc::kWater, false, *wet, 10.0f, 10.0f), "Water"));
+    CHECK(is(starting_layer(oc::kLand, false, *wet, 10.0f, 10.0f, true), "Water"));
+    CHECK(is(starting_layer(oc::kLand | oc::kSeabed, false, *wet, 10.0f, 10.0f), "Seabed"));
+    // No water on the map: Land
+    const auto dry = terrain(false);
+    CHECK(is(starting_layer(oc::kLand | oc::kSeabed, false, *dry, 10.0f, 10.0f), "Land"));
+}

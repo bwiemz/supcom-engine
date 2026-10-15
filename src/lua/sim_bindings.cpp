@@ -936,7 +936,8 @@ static int l_GetEntityById(lua_State* L) {
 
 static int l_Warp(lua_State* L) {
     // Warp(entity, position, [orientation]) — FA's teleport: the entity
-    // jumps to its new pose rather than being drawn sliding there.
+    // jumps to its new pose rather than being drawn sliding there. A unit
+    // lands on the layer and height a unit made there would (Unit::Warp).
     auto* sim = get_sim(L);
     if (!sim) return 0;
 
@@ -960,10 +961,11 @@ static int l_Warp(lua_State* L) {
         lua_rawgeti(L, 2, 3);
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
-        entity->set_position(v);
-        entity->note_snap();
         if (entity->is_unit()) {
-            static_cast<sim::Unit*>(entity)->reset_lift_ground();
+            static_cast<sim::Unit*>(entity)->warp(sim->terrain(), v);
+        } else {
+            entity->set_position(v);
+            entity->note_snap();
         }
     }
     // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.

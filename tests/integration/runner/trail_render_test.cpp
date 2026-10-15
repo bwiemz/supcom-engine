@@ -160,8 +160,9 @@ void test_trail_render(TestContext& ctx) {
         return id;
     };
     const auto height = [&](f32 x, f32 z) { return ctx.sim.terrain()->get_terrain_height(x, z); };
+    // Put at (x, y, z) as given (SetPosition: Warp would put it on the ground)
     const auto warp = [&](const char* global, f32 x, f32 z, f32 y) {
-        run_lua(ctx, fmt::format("Warp({}, Vector({}, {}, {}))\n", global, x, y, z));
+        run_lua(ctx, fmt::format("{}:SetPosition(Vector({}, {}, {}), true)\n", global, x, y, z));
     };
     // Movers keep the height they started at, so a segment's length is how
     // far they went across.

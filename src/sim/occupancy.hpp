@@ -82,10 +82,13 @@ constexpr u8 kAnyCaps = 0xFF;
 u8 footprint_fits(const blueprints::Footprint& fp, const map::Terrain& terrain,
                   const OccupancyGrid& grid, i32 x0, i32 z0, u8 caps = kAnyCaps);
 
-/// Moho's Entity::GetStartingLayer, for a footprint without AIR, with no
-/// layer asked for: the layer a unit whose footprint has `caps` is made on
-/// at (x, z).
-const char* starting_layer(u8 caps, bool experimental, const map::Terrain& terrain, f32 x, f32 z);
+/// Moho's Entity::GetStartingLayer with no layer asked for: the layer a
+/// unit whose footprint has `caps` is made or warped on at (x, z). An AIR
+/// footprint flies, but an experimental's starts on the ground; over dry
+/// ground it's Land; in water a sub (not an experimental) dives, a WATER
+/// footprint or a FERRYBEACON floats, the rest stands on the seabed.
+const char* starting_layer(u8 caps, bool experimental, const map::Terrain& terrain, f32 x, f32 z,
+                           bool beacon = false);
 
 /// What one entity occupies: its caps and rects (a footprint, or a
 /// blueprint's Physics.OccupyRects).

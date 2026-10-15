@@ -959,7 +959,7 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
                                  motion == "RULEUMT_Hover" || motion == "RULEUMT_Biped";
     if ((!unit.is_mobile() || walks_or_floats) && sim.terrain()) {
         unit.set_layer(sim::starting_layer(unit.footprint().caps, unit.has_category("EXPERIMENTAL"),
-                                           *sim.terrain(), x, z));
+                                           *sim.terrain(), x, z, unit.has_category("FERRYBEACON")));
     }
 }
 

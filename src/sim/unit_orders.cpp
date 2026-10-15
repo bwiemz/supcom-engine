@@ -429,6 +429,17 @@ OrderStep Unit::order_stop(lua_State* L) {
 }
 
 OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // Its move aborted by a Warp as it ran: Moho's move task hears it as a
+    // failure and the order ends, the unit coasting to a stop
+    if (warp_aborted_command_ != 0 && cmd.command_id == warp_aborted_command_) {
+        warp_aborted_command_ = 0;
+        command_queue_.pop_front();
+        if (is_air_unit() &&
+            (command_queue_.empty() || instant_order(command_queue_.front().type))) {
+            stop_air();
+        }
+        return OrderStep::Next;
+    }
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
         set_path_goal(cmd.target_pos, ctx);

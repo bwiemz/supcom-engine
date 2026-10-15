@@ -184,8 +184,9 @@ void test_particle_render(TestContext& ctx) {
     };
     const auto height = [&](f32 x, f32 z) { return ctx.sim.terrain()->get_terrain_height(x, z); };
     const auto lifted = [&](const Spot& s0) { return height(s0.x, s0.z) + kLift; };
+    // Put at (x, y, z) as given (SetPosition: Warp would put it on the ground)
     const auto warp = [&](const char* global, f32 x, f32 z, f32 y) {
-        run_lua(ctx, fmt::format("Warp({}, Vector({}, {}, {}))\n", global, x, y, z));
+        run_lua(ctx, fmt::format("{}:SetPosition(Vector({}, {}, {}), true)\n", global, x, y, z));
     };
     // An emitter `kind` ("OnEntity", "AtEntity") of `bp` on `unit`.
     const auto make = [&](const char* global, const char* kind, const char* unit,
