@@ -452,7 +452,9 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // Attack: move toward target if out of weapon range, else stop
     if (cmd.target_id == 0) return order_attack_ground(cmd, dt, ctx);
     auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed()) {
+    // faf-re CUnitAttackTargetTask::TaskTick, CAiTarget::HasTarget: a dying unit is no target.
+    const bool dead = target && target->is_unit() && static_cast<const Unit*>(target)->is_dying();
+    if (!target || target->destroyed() || (dead && command_queue_.size() >= 2)) {
         if (cmd.engaged) end_attack_run(*this); // the run ends with its target
         release_navigator();                    // and the chase
         command_queue_.pop_front();
@@ -474,6 +476,23 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     f32 dz = target->position().z - position().z;
     f32 dist2 = dx * dx + dz * dz;
     f32 range2 = best_range * best_range;
+    if (dead) {
+        if (cmd.engaged) {
+            end_attack_run(*this);
+            cmd.engaged = false;
+        }
+        if (dist2 <= range2) {
+            release_navigator();
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+        if (!navigator_.is_moving() || navigator_.goal().x != target->position().x ||
+            navigator_.goal().z != target->position().z) {
+            set_path_goal(target->position(), ctx);
+        }
+        nav_update(dt, ctx.terrain);
+        return OrderStep::Hold;
+    }
     // A guard's or patrol's fight goes only so far (Moho's acquire task,
     // CheckTargetGuardExempt): once the unit has come within reach of its
     // target, it gives up beyond GuardReturnRadius of what it guards, or of

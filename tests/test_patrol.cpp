@@ -1640,3 +1640,73 @@ TEST_CASE("The cursor passes through an UNTARGETABLE unit unless SELECTABLE or F
     shown->add_category("SELECTABLE");
     CHECK(input.right_button_order(sim, 40.0f, 40.0f) == CommandType::Attack);
 }
+
+TEST_CASE("An attack on a dying unit gives way to the next order at once; on a living one it "
+          "goes on",
+          "[attack]") {
+    for (const bool dying : {true, false}) {
+        INFO("dying " << dying);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        flat(sim);
+        two_armies(sim);
+        Unit* tank = walker(sim, 10.0f, 10.0f);
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = 5.0f;
+        tank->add_weapon(std::move(gun));
+        Unit* first = still(sim, 1, 60.0f, 10.0f);
+        Unit* second = still(sim, 1, 60.0f, 60.0f);
+        for (Unit* target : {first, second}) {
+            osc::sim::UnitCommand attack;
+            attack.type = CommandType::Attack;
+            attack.target_id = target->entity_id();
+            attack.target_pos = target->position();
+            tank->push_command(attack, false);
+        }
+        sim.tick();
+        REQUIRE(tank->command_queue().front().target_id == first->entity_id());
+        if (dying) {
+            first->begin_dying();
+        }
+        sim.tick();
+        CHECK(tank->command_queue().front().target_id ==
+              (dying ? second->entity_id() : first->entity_id()));
+    }
+}
+
+TEST_CASE("A lone attack on a dying unit ends within its reach of it; on a living one it goes on",
+          "[attack]") {
+    for (const bool dying : {true, false}) {
+        INFO("dying " << dying);
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        flat(sim);
+        two_armies(sim);
+        Unit* tank = walker(sim, 10.0f, 10.0f);
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = 5.0f;
+        tank->add_weapon(std::move(gun));
+        Unit* enemy = still(sim, 1, 40.0f, 10.0f);
+        osc::sim::UnitCommand attack;
+        attack.type = CommandType::Attack;
+        attack.target_id = enemy->entity_id();
+        attack.target_pos = enemy->position();
+        tank->push_command(attack, true);
+        sim.tick();
+        if (dying) {
+            enemy->begin_dying();
+        }
+        sim.tick();
+        CHECK_FALSE(tank->command_queue().empty());
+        int ticks = 0;
+        for (; ticks < 300 && !tank->command_queue().empty(); ++ticks) {
+            sim.tick();
+        }
+        if (dying) {
+            CHECK(ticks < 300);
+            CHECK(std::abs(tank->position().x - 40.0f) <= 5.0f + 0.5f);
+        } else {
+            CHECK(ticks == 300);
+        }
+    }
+}
