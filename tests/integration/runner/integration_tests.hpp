@@ -223,6 +223,7 @@ void test_need_unpack(TestContext& ctx);
 void test_guard_engage(TestContext& ctx);
 void test_rebuilder_guard(TestContext& ctx);
 void test_mobile_build_start(TestContext& ctx);
+void test_build_site_join(TestContext& ctx);
 void test_drown(TestContext& ctx);
 void test_spawn_layer(TestContext& ctx);
 void test_warp(TestContext& ctx);

@@ -243,7 +243,7 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
     if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
     for (const auto& pending : reserved())
         if (pending.overlaps(site)) return false;
-    return !structure_overlaps(site);
+    return !structure_overlaps(sim_.entity_registry(), site);
 }
 
 bool StructurePlacement::terrain_allows(const StructureSite& site, u8 layers) const {
@@ -307,10 +307,9 @@ bool StructurePlacement::in_playable(const StructureSite& site) const {
             site.z0 >= sim_.playable_z0() && site.z1 <= sim_.playable_z1());
 }
 
-bool StructurePlacement::structure_overlaps(const StructureSite& site) const {
+bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site) {
     const f32 reach =
         0.5f * osc::dmath::hypot(site.x1 - site.x0, site.z1 - site.z0) + MAX_STRUCTURE_HALF_EXTENT;
-    const auto& registry = sim_.entity_registry();
     for (const auto* e :
          registry.units_in_radius((site.x0 + site.x1) * 0.5f, (site.z0 + site.z1) * 0.5f, reach)) {
         const auto& unit = static_cast<const Unit&>(*e);

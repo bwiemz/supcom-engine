@@ -24,6 +24,7 @@ class Terrain;
 
 namespace osc::sim {
 
+class EntityRegistry;
 class SimState;
 struct ResourceDeposit;
 
@@ -116,6 +117,10 @@ struct StructureSite {
     bool touches(const StructureSite& o) const;
 };
 
+/// Whether a structure of any army, finished or under construction, takes
+/// part of `site`
+bool structure_overlaps(const EntityRegistry& registry, const StructureSite& site);
+
 /// Placement checks for one army at one moment. Collects the army's pending
 /// build orders once, the first time a site passes the terrain checks, so a
 /// query over many candidate sites stays cheap (and one the terrain rules
@@ -141,7 +146,6 @@ private:
     /// `layers`: the placement_layer bits occupy_layers allows there.
     bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool in_playable(const StructureSite& site) const;
-    bool structure_overlaps(const StructureSite& site) const;
     bool on_deposit(const PlacementRules& r, f32 x, f32 z) const;
 
     /// The army's pending build orders.

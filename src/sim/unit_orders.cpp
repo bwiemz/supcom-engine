@@ -871,7 +871,16 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.pop_front();
             return OrderStep::Next;
         }
-        if (turns_to_face(cmd.target_pos) || awaits_arm() || waits_paused(cmd)) {
+        if (turns_to_face(cmd.target_pos)) {
+            return OrderStep::Hold;
+        }
+        if (!find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos) &&
+            build_site_taken(L, registry, cmd.blueprint_id, cmd.target_pos)) {
+            command_queue_.pop_front();
+            call_lua_method(L, "OnFailedToBuild");
+            return destroyed() || !in_registry() ? OrderStep::Gone : OrderStep::Next;
+        }
+        if (awaits_arm() || waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         const u32 building = cmd.command_id; // cmd may go with the scripts' changes
