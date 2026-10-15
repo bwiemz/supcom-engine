@@ -403,9 +403,10 @@ void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State*
 /// (EndGame from the scenario's victory script, or the engine's own
 /// adjudication without one), the UI hears uimain.NoteGameOver. Retail's
 /// game-result UI (Sync.GameResult -> DoGameResult) announces the outcome and
-/// offers the score screen: nothing is paused and the view is not switched.
+/// offers the score screen; the view is not switched. The sim ticks no more,
+/// and the UI and its beats go on.
 void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr, lua_State* uiL) {
-    if (!sim || !sim->game_ended() || mgr.game_over()) return;
+    if (!sim || !sim->game_over() || mgr.game_over()) return;
     mgr.set_game_over(true);
     const osc::i32 result = sim->player_result();
     spdlog::info("Game over: {}", result == 1   ? "VICTORY"

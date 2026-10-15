@@ -91,6 +91,36 @@ TEST_CASE("Two lockstep peers stay in sync over a transport", "[lockstep]") {
     CHECK(ub->position().x > 0.0f);
 }
 
+TEST_CASE("Lockstep peers hold on the tick that ended the game", "[lockstep]") {
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr);
+    SimState b(gb.L, nullptr);
+    for (SimState* sim : {&a, &b}) {
+        sim->set_tick_observer([sim](const SimState&) {
+            if (sim->tick_count() == 5) {
+                sim->set_game_ended(true);
+            }
+        });
+    }
+
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
+    for (int round = 0; round < 30; ++round) {
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    }
+
+    CHECK(a.tick_count() == 5);
+    CHECK(b.tick_count() == 5);
+    CHECK_FALSE(sa.has_dropped(1));
+    CHECK_FALSE(sb.has_dropped(0));
+}
+
 TEST_CASE("A peer stalls until every participant confirms the frame", "[lockstep]") {
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr);

@@ -1487,6 +1487,9 @@ void SimState::enforce_no_rush() {
 }
 
 void SimState::tick() {
+    if (game_over_) {
+        return;
+    }
     PROFILE_ZONE("Sim::tick");
     tick_count_++;
     game_time_ = tick_count_ * SECONDS_PER_TICK;
@@ -1734,6 +1737,7 @@ void SimState::tick() {
         resume_tick_ = 0;
         playback_ = false;
     }
+    game_over_ = game_ended_;
 }
 
 void SimState::update_economies() {

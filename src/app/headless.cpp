@@ -158,7 +158,9 @@ int App::run_headless() {
             osc::Profiler::instance().begin_frame();
             tick_headless();
             osc::Profiler::instance().end_frame();
-            if (!after_headless_tick()) break;
+            if (!after_headless_tick() || sim_state->game_over()) {
+                break;
+            }
         }
     }
 

@@ -247,8 +247,11 @@ void App::Window::advance_sim(double dt) {
                                                  dt * game_state_mgr.speed(),
                                                  osc::sim::SimState::SECONDS_PER_TICK, 8);
             for (int t = 0; t < ticks; ++t) {
-                // A replay plays to its end, then holds there.
-                if (active_playback && active_playback->finished(*sim_state)) break;
+                // A game or a replay plays to its end, then holds there.
+                if (sim_state->game_over() ||
+                    (active_playback && active_playback->finished(*sim_state))) {
+                    break;
+                }
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
@@ -272,10 +275,10 @@ void App::Window::finish_world_ui_after_post_load() {
 
 void App::Window::run_beats(double dt, u32 beat_tick0) {
     // Moho's sim beat reaches the user side once per tick, and
-    // keeps running at the tick rate while paused.
+    // keeps running at the tick rate while paused or the game is over.
     if (sim_state && sim_lua_state) {
         osc::u32 beats = sim_state->tick_count() - beat_tick0;
-        if (game_state_mgr.paused()) {
+        if (game_state_mgr.paused() || sim_state->game_over()) {
             paused_beat_accumulator += dt;
             while (paused_beat_accumulator >= osc::sim::SimState::SECONDS_PER_TICK) {
                 paused_beat_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;

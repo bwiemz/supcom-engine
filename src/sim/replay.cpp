@@ -88,7 +88,7 @@ bool ReplayPlayback::check(const SimState& sim) {
 }
 
 bool ReplayPlayback::finished(const SimState& sim) const {
-    return sim.tick_count() >= replay_.final_tick;
+    return sim.game_over() || sim.tick_count() >= replay_.final_tick;
 }
 
 } // namespace osc::sim

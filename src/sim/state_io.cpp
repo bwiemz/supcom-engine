@@ -648,6 +648,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.next_command_id_ = r.u32v();
     sim.player_commands_issued_ = r.u32v();
     sim.game_ended_ = r.b();
+    sim.game_over_ = sim.game_ended_;
     sim.script_victory_ = r.b();
     sim.victory_condition_ = r.str();
     sim.victory_mode_ = enum8<VictoryMode>(r);
