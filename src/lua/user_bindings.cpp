@@ -1851,22 +1851,6 @@ static int l_GetRolloverInfo(lua_State* L) {
         return 1;
     }
 
-    // Fuel: -1 for units without any, which hides the unit view's fuel line
-    // (it multiplies Physics.FuelUseTime by the ratio). Fuel use is not
-    // simulated yet, so fuelled units report a full tank.
-    lua_Number fuel_ratio = -1;
-    if (push_entity_blueprint(L, unit)) {
-        lua_pushstring(L, "Physics");
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "FuelUseTime");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1) && lua_tonumber(L, -1) > 0) fuel_ratio = 1;
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 2); // Physics + blueprint
-    }
-
     lua_newtable(L); // result table
 
     set_str("blueprintId", unit->blueprint_id().c_str());
@@ -1879,7 +1863,7 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("armyIndex", static_cast<lua_Number>(unit->army()));
     set_num("workProgress", static_cast<lua_Number>(unit->work_progress()));
     set_num("shieldRatio", static_cast<lua_Number>(unit->shield_ratio()));
-    set_num("fuelRatio", fuel_ratio);
+    set_num("fuelRatio", static_cast<lua_Number>(unit->fuel_ratio()));
 
     const auto& econ = unit->economy();
     set_num("massProduced", static_cast<lua_Number>(econ.production_mass));
