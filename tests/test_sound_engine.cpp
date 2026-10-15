@@ -4,10 +4,15 @@
 #include "audio/sound_manager.hpp"
 #include "xact_fixtures.hpp"
 
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
+
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -43,6 +48,24 @@ struct Sounds {
         write(dir / "TestWaves.xwb", make_xwb("TestWaves", 4, 2205)); // 0.1 s waves
     }
     ~Sounds() { fs::remove_all(dir); }
+};
+
+struct LogCapture {
+    std::ostringstream text;
+    std::shared_ptr<spdlog::logger> previous = spdlog::default_logger();
+    LogCapture() {
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+            "capture", std::make_shared<spdlog::sinks::ostream_sink_st>(text)));
+    }
+    ~LogCapture() { spdlog::set_default_logger(previous); }
+    size_t count(const std::string& line) const {
+        const std::string all = text.str();
+        size_t n = 0;
+        for (size_t at = all.find(line); at != std::string::npos; at = all.find(line, at + 1)) {
+            ++n;
+        }
+        return n;
+    }
 };
 
 } // namespace
@@ -308,6 +331,40 @@ TEST_CASE("Sound engine: entity loops start in view and near, and stop as Moho's
     sm.set_world_enabled(false);
     sm.sync_entity_loops({});
     CHECK(sm.entity_loop(2) == second);
+}
+
+TEST_CASE("Sound engine: a world sound at a point that isn't finite is not heard",
+          "[audio][engine]") {
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    LogCapture log;
+    const f32 nan = std::numeric_limits<f32>::quiet_NaN();
+    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 1, 7}) == INVALID_SOUND);
+    CHECK(sm.play_world({"Test", "Click", "", {10, nan, 0}, false, 2, 7}) == INVALID_SOUND);
+
+    using EL = SoundManager::EntityLoop;
+    sm.set_global_variable("CameraDistance", 50);
+    std::vector<EL> want{EL{1, "Test", "Shot", "", {nan, nan, nan}, false, true, 8}};
+    sm.sync_entity_loops(want);
+    sm.sync_entity_loops(want);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+
+    want[0].pos = {10, 0, 0};
+    sm.sync_entity_loops(want);
+    const auto h = sm.entity_loop(1);
+    REQUIRE(h != INVALID_SOUND);
+    sm.update(0.2f);
+    want[0].pos = {nan, nan, nan};
+    sm.sync_entity_loops(want);
+    sm.update(0.1f);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sim::Vector3 at{};
+    REQUIRE(sm.position(h, at));
+    CHECK(at.x == 10.0f);
+
+    CHECK(log.count("Test/Click of entity #7 not played: its point (10, nan, 0)") == 1);
+    CHECK(log.count("Test/Shot of entity #8 not played") == 1);
+    CHECK(log.count("isn't finite") == 2);
 }
 
 TEST_CASE("Sound engine: stop_all stops every sound as a plain stop does", "[audio][engine]") {

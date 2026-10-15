@@ -33,7 +33,7 @@ void add_loops(std::vector<audio::SoundManager::EntityLoop>& loops, const sim::E
     const bool seen = in_view(at, radius);
     for (const auto& a : e.ambient_sounds())
         loops.push_back({entity_loop_key(e.entity_id(), a.name), a.bank, a.cue, a.lod_cutoff, at,
-                         underwater, seen});
+                         underwater, seen, e.entity_id()});
 }
 
 } // namespace

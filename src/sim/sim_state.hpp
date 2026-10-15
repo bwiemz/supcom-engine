@@ -822,6 +822,7 @@ public:
         std::string bank, cue, lod_cutoff;
         Vector3 pos;
         bool underwater = false; ///< a sub's or seabed unit's
+        u32 entity_id = 0;
     };
     void request_sound(SoundRequest r) { sound_requests_.push_back(std::move(r)); }
     const std::vector<SoundRequest>& sound_requests() const { return sound_requests_; }
