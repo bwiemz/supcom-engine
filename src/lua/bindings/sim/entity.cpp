@@ -324,12 +324,20 @@ static int entity_GetHealth(lua_State* L) {
     return 1;
 }
 
+// faf-re Entity::AdjustHealth; Lua's SetHealth goes through it too.
+static void adjust_health(sim::Entity& e, f32 delta) {
+    if (delta == 0.0f) {
+        return;
+    }
+    e.set_health(std::min(e.health() + delta, e.max_health()));
+}
+
 static int entity_SetHealth(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) return 0;
     // SetHealth(self, instigator, health)
     f32 h = static_cast<f32>(lua_tonumber(L, 3));
-    e->set_health(h);
+    adjust_health(*e, h - e->health());
     return 0;
 }
 
@@ -352,7 +360,7 @@ static int entity_AdjustHealth(lua_State* L) {
     if (!e) return 0;
     // AdjustHealth(self, instigator, delta)
     f32 delta = static_cast<f32>(lua_tonumber(L, 3));
-    e->set_health(e->health() + delta);
+    adjust_health(*e, delta);
     return 0;
 }
 

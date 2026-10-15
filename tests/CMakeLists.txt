@@ -53,6 +53,7 @@ add_executable(osc_tests
     test_build_assist.cpp
     test_bounded_props.cpp
     test_build_on_wreck.cpp
+    test_entity_health.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_frame_times.cpp
