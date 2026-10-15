@@ -128,14 +128,18 @@ u8 footprint_fits(const blueprints::Footprint& fp, const map::Terrain& terrain,
     return caps;
 }
 
-const char* starting_layer(u8 caps, bool experimental, const map::Terrain& terrain, f32 x, f32 z) {
+const char* starting_layer(u8 caps, bool experimental, const map::Terrain& terrain, f32 x, f32 z,
+                           bool beacon) {
+    if ((caps & oc::kAir) != 0) {
+        return experimental ? "Land" : "Air";
+    }
     if (!terrain.has_water() || terrain.water_elevation() <= terrain.get_terrain_height(x, z)) {
         return "Land";
     }
     if ((caps & oc::kSub) != 0 && !experimental) {
         return "Sub";
     }
-    if ((caps & oc::kWater) != 0) {
+    if ((caps & oc::kWater) != 0 || beacon) {
         return "Water";
     }
     return "Seabed";

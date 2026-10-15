@@ -860,6 +860,15 @@ public:
     /// no order (the original, probed).
     bool lifts_off() const { return lifts_off_; }
     void set_lifts_off(bool b) { lifts_off_ = b; }
+    /// Moho's Unit::Warp: to (at.x, at.z), on the layer GetStartingLayer
+    /// gives it there with none asked for, at the height CalcSpawnElevation
+    /// does: the ground or the seabed, the water's surface, a sub's depth
+    /// under it, an aircraft's height over its floor; an experimental
+    /// aircraft on the ground, to lift off. A sub's dive is over. Its move is
+    /// aborted, which the order running hears: a Move order ends (the
+    /// original, probed); one issued after, or not begun, goes on. Without a
+    /// terrain, `at` as given.
+    void warp(const map::Terrain* terrain, const Vector3& at);
     /// Air.FlyInWater: an aircraft that may fly under the water's surface.
     void set_fly_in_water(bool b) { fly_in_water_ = b; }
     /// What an aircraft holds its height over at (x, z): the ground, or the
@@ -2020,6 +2029,9 @@ private:
     bool tick_position_set_ = false; // (none before its first tick)
     bool moved_last_tick_ = false;
     bool lifts_off_ = false;
+    /// The order running as a Warp aborted its move (its command id, 0:
+    /// none): a Move order so tagged ends (warp()).
+    u32 warp_aborted_command_ = 0;
     Vector3 last_tick_motion_;      // its move over the last tick
     bool turned_last_tick_ = false; // and whether it turned
     bool auto_overcharge_ = false;

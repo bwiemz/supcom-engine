@@ -199,27 +199,27 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
     // A mesh blueprint as retail's are, with IconFadeInZoom (130, as most of
     // retail's): without one, Moho shows its unit's strategic icon at any
     // zoom (M215c), over what the test measures.
-    const std::string lua = fmt::format("local mesh = '{12}/{0}_plate'\n"
-                                        "__blueprints[mesh] = {{ BlueprintId = mesh, "
-                                        "IconFadeInZoom = 130, LODs = {{ {{\n"
-                                        "  LODCutoff = 1000, ShaderName = '{1}',\n"
-                                        "  MeshName = '{12}/{11}',\n"
-                                        "  AlbedoName = '{12}/{2}',\n"
-                                        "  SpecularName = '{12}/{10}',\n"
-                                        "  NormalsName = '{12}/{3}', LookupName = {4},\n"
-                                        "  SecondaryName = {13} }} }} }}\n"
-                                        "local bp = __blueprints['{5}']\n"
-                                        "bp.Display = bp.Display or {{}}\n"
-                                        "bp.Display.MeshBlueprint = mesh\n"
-                                        "bp.Display.UniformScale = 1\n"
-                                        "__osc_last_plate = {6}\n"
-                                        "if __osc_last_plate.BuildPointSlider then\n"
-                                        "  __osc_last_plate.BuildPointSlider:Destroy()\n"
-                                        "end\n"
-                                        "Warp(__osc_last_plate, Vector({7}, {8}, {9}))\n",
-                                        key, plate.shader, plate.albedo, plate.normals,
-                                        file(plate.lookup), bp, create, x, ground_y + 0.5f + lift,
-                                        z, plate.specteam, plate.mesh, root, file(plate.secondary));
+    const std::string lua = fmt::format(
+        "local mesh = '{12}/{0}_plate'\n"
+        "__blueprints[mesh] = {{ BlueprintId = mesh, "
+        "IconFadeInZoom = 130, LODs = {{ {{\n"
+        "  LODCutoff = 1000, ShaderName = '{1}',\n"
+        "  MeshName = '{12}/{11}',\n"
+        "  AlbedoName = '{12}/{2}',\n"
+        "  SpecularName = '{12}/{10}',\n"
+        "  NormalsName = '{12}/{3}', LookupName = {4},\n"
+        "  SecondaryName = {13} }} }} }}\n"
+        "local bp = __blueprints['{5}']\n"
+        "bp.Display = bp.Display or {{}}\n"
+        "bp.Display.MeshBlueprint = mesh\n"
+        "bp.Display.UniformScale = 1\n"
+        "__osc_last_plate = {6}\n"
+        "if __osc_last_plate.BuildPointSlider then\n"
+        "  __osc_last_plate.BuildPointSlider:Destroy()\n"
+        "end\n"
+        "__osc_last_plate:SetPosition(Vector({7}, {8}, {9}), true)\n",
+        key, plate.shader, plate.albedo, plate.normals, file(plate.lookup), bp, create, x,
+        ground_y + 0.5f + lift, z, plate.specteam, plate.mesh, root, file(plate.secondary));
     const auto made = ctx.lua_state.do_string(lua);
     if (!made) spdlog::warn("the plate: {}", made.error().message);
     ctx.sim.tick();

@@ -92,7 +92,15 @@ Every `WaitTicks(5)`, which is 4 ticks, it logs each one's layer and health unti
 
 At ticks 0, 1, 5, 20 and 60 it logs each one's layer, height and health. Its waits are timed so the log's `t` is the tick. It is done at `PROBE layers done`.
 
-Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, with #646, with #653, and with #655.
+**`warp/`** asks where `Warp` puts a unit. Units are made on SCMP_009's dry ground east of x 650 (the frigate in the sea west of x 450), and after 10 ticks each is warped, on its own row:
+- a tank 10 over the ground, and one 3 under it;
+- a tank and an amphibious unit (Wagner) into deep water at the surface's height;
+- a hover tank and a frigate over deep water, to height 0;
+- a scout and a CZAR on dry ground, to height 0.
+
+It logs each one's layer, height, health and orders before, at once after, and 1, 5 and 20 ticks after. Then a tank on its way to a point 80 east is warped 20 aside, and logged every 10 ticks until its orders are empty. It is done at `PROBE warp done`.
+
+Asked on 2026-10-14 (`warp` on 2026-10-15): the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, with #646, with #653, and with #655.
 
 | Probe | The original | The engine | So |
 |---|---|---|---|
@@ -110,4 +118,7 @@ Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); 
 | `drown` others | the amphibious tank, the hover tank and the engineer unharmed | the same | They are on layers their motion types allow. |
 | `layers` subs | on the Sub layer at the surface −1.5, even in water too shallow for a sub; the Seraphim sub surfaces by t=60 | the same (its surfacing within 0.06) | A sub starts at its depth (`IUnit::CalcSpawnElevation`). |
 | `layers` frigate | on the Water at the surface from t=0 | on the seabed (5.05) before #655; now the same | A ship starts at the water's surface. |
+| `warp` heights | the tanks warped over and under the ground stand on it; the tank and the Wagner in deep water on the Seabed at the ground under it; the hover tank and the frigate on the Water at the surface; the scout in the Air 18 over the ground; the CZAR on Land at the ground | each where Warp's height put it, on its old layer, before #672; now the same | `Unit::Warp` takes the place's layer with none asked for (`GetStartingLayer`) and its height (`CalcSpawnElevation`), as a unit made there. |
+| `warp` after | the tank in deep water drowns (297, 285, 240 at ticks 1, 5, 20); the CZAR is in the Air from tick 1, at 19.94, 24.88, 37.15 | the same | A warped unit is in the same state as one made there. |
+| `warp` mover | its move order is gone within 10 ticks; it coasts 2.04 and stops | it went on to its goal before #672; now its order ends, and it coasts 1.53 | Warp aborts the navigator's move, and the move task takes the abort as a failure (`CUnitMoveTask::OnEvent`). The coast differs with the unit's braking, not Warp. |
 | `layers` aircraft | the scout in the Air, 18 over the ground under it; the Soul Ripper and the CZAR on Land at the ground, in the Air and climbing from t=1 | the experimentals in the Air at full height before #655; now the same through t=5, within 0.25 after | `GetStartingLayer` puts an experimental aircraft on Land; it lifts off with no order. The scout's drift and the later climb are air physics, not ported. |

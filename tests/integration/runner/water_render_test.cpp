@@ -273,7 +273,7 @@ void test_water_render(TestContext& ctx) {
         const Spot g{view.x - 20, view.z - 20};
         (void)spawn_unit(ctx, "__osc_wt_g", "uel0105", "ARMY_1", g, 0);
         run_lua(ctx,
-                fmt::format("Warp(__osc_wt_g, Vector({}, {}, {}))\n"
+                fmt::format("__osc_wt_g:SetPosition(Vector({}, {}, {}), true)\n"
                             "__osc_wt_e = CreateEmitterAtEntity(__osc_wt_g, 1, '{}/glow.bp')\n",
                             g.x, w - 1.0f, g.z, kRoot));
         for (int i = 0; i < 3; ++i) {

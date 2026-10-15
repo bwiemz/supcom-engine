@@ -11,6 +11,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/occupancy.hpp"
 #include "sim/prop.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
@@ -21,6 +22,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <optional>
@@ -2569,6 +2571,48 @@ i32 Unit::transport_attach_bone() const {
     const i32 bone = bone_data() ? bone_data()->find_bone("AttachPoint") : -1;
     if (bone < 0 && motion_type_ == "RULEUMT_Air") return 0;
     return bone;
+}
+
+void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
+    Vector3 p = at;
+    if (terrain) {
+        const char* layer = starting_layer(footprint().caps, has_category("EXPERIMENTAL"), *terrain,
+                                           at.x, at.z, has_category("FERRYBEACON"));
+        lifts_off_ = false;
+        // Whatever dive a sub was in is over: it starts afresh on its layer
+        if (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None) {
+            sub_elevation_ = 0.0f;
+            vert_motion_ = VertMotion::None;
+            set_unit_state("MovingDown", false);
+            set_unit_state("MovingUp", false);
+            vert_event_ = "Top";
+        }
+        if (std::strcmp(layer, "Sub") == 0) {
+            start_submerged();
+            p.y = terrain->water_elevation() + sub_elevation();
+        } else {
+            set_layer(layer);
+            if (std::strcmp(layer, "Water") == 0) {
+                p.y = terrain->water_elevation();
+            } else if (std::strcmp(layer, "Air") == 0) {
+                set_current_altitude(elevation_target());
+                p.y = air_floor(terrain, at.x, at.z) + elevation_target();
+            } else {
+                p.y = terrain->get_terrain_height(at.x, at.z);
+                lifts_off_ = can_fly(); // an experimental aircraft: from the ground
+            }
+        }
+    }
+    set_position(p);
+    note_snap(); // a jump, not drawn sliding there
+    reset_lift_ground();
+    // CUnitMotion::Warp's target is where it now is, and the navigator's
+    // move is aborted: AINAVEVENT_Aborted reaches the task listening, the
+    // order running now (a Move's task takes it as a failure)
+    navigator_.abort_move();
+    warp_aborted_command_ = !command_queue_.empty() && command_queue_.front().begun
+                                ? command_queue_.front().command_id
+                                : 0;
 }
 
 f32 Unit::air_floor(const map::Terrain* terrain, f32 x, f32 z) const {
