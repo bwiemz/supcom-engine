@@ -64,6 +64,8 @@ public:
     /// `rise` above: its arc's, at its muzzle velocity under gravity (45
     /// degrees, the furthest, when out of reach).
     f32 launch_elevation(f32 dist, f32 rise) const;
+    /// launch_elevation, but none out of reach (Moho's AI_CalculateFiringPitch).
+    std::optional<f32> firing_pitch(f32 dist, f32 rise) const;
     /// The speed a shot leaves at for a target `distance` away (Moho's
     /// RUnitBlueprintWeapon::GetMuzzleVelocity): MuzzleVelocity, plus a
     /// normal draw times MuzzleVelocityRandom when `rng` is given, slowed by
@@ -318,6 +320,9 @@ private:
     /// Hand the target to this weapon's aim controllers (or take it away),
     /// telling the script OnStartTracking/OnStopTracking(label).
     void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);
+    /// No BallisticArc, but its shots fall and don't track: Moho's
+    /// CAimManipulator::Aim lobs them on the low arc.
+    bool lobs_falling_shots() const;
 };
 
 /// Moho's UserUnit::CanAttackTarget

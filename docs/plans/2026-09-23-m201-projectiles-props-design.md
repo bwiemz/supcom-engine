@@ -267,6 +267,14 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
   among them is the MA12 Striker's gun, a few degrees up at its range. Only
   `RULEUBA_None` weapons fly straight; they now aim at the target in three
   dimensions, where every shot used to leave level.
+  *Done (2026-10-15): a weapon's shot falls unless its projectile says
+  `UseGravity = false`, as Moho's `Projectile` does, and Moho's
+  `CAimManipulator::Aim` lobs a `RULEUBA_None` weapon's falling,
+  non-tracking shot on the low arc (`AI_CalculateFiringPitch`); with no arc
+  to its target the turret holds, off target. The shots of 22 retail
+  straight weapons now fall (the Phalanx, the Usha-Ah's guns, the
+  Megalith's), and 6 turreted ones whose projectiles already said
+  `UseGravity = true` are now lobbed too.*
 - **Arcs need exact gravity.** A shell stepped with velocity-then-position
   lands short of the parabola its angle was solved for. The step now takes
   half a tick's gravity back, so a Lobo's high arc (65.7 degrees at 14 u/s
