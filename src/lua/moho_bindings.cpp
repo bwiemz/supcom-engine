@@ -2210,11 +2210,16 @@ static int l_GetIdleEngineers(lua_State* L) {
     return 1;
 }
 
-/// GetIdleFactories() -> the focus army's idle factories, or nil.
+/// GetIdleFactories() -> the focus army's idle factories, as Moho's UserUnit
+/// counts them, or nil.
 static int l_GetIdleFactories(lua_State* L) {
-    push_ui_unit_array(
-        L, idle_focus_army_units(L, [](const sim::Unit& u) { return u.has_category("FACTORY"); }),
-        true);
+    push_ui_unit_array(L,
+                       idle_focus_army_units(L,
+                                             [](const sim::Unit& u) {
+                                                 return u.has_category("FACTORY") &&
+                                                        u.has_category("STRUCTURE");
+                                             }),
+                       true);
     return 1;
 }
 

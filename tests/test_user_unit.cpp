@@ -287,6 +287,22 @@ TEST_CASE("GetIdleEngineers leaves out commanders, scouts and untargetable units
     CHECK(lua_tonumber(w.ui.raw(), -1) == (category.empty() ? 1.0 : 0.0));
 }
 
+TEST_CASE("GetIdleFactories holds the factories that are structures", "[userunit]") {
+    const bool structure = GENERATE(false, true);
+    CAPTURE(structure);
+    UiWorld w;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_ui_bindings(w.ui, registry);
+    w.unit().add_category("FACTORY");
+    if (structure) {
+        w.unit().add_category("STRUCTURE");
+    }
+    auto result = w.ui.do_string("local f = GetIdleFactories() return f and table.getn(f) or 0");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(lua_tonumber(w.ui.raw(), -1) == (structure ? 1.0 : 0.0));
+}
+
 TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[userunit]") {
     UiWorld w;
     w.unit().add_category("FACTORY");
