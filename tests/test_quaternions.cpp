@@ -115,6 +115,25 @@ TEST_CASE("OrientFromDir faces the direction it is given", "[quaternion]") {
     }
 }
 
+TEST_CASE("CreatePropHPR takes its heading, pitch and roll in degrees", "[quaternion]") {
+    SimLua s;
+    const auto orientation = [&](const std::string& hpr) {
+        return s.quat("moho.entity_methods.GetOrientation(CreatePropHPR('/p_prop.bp', 0, 0, 0, " +
+                      hpr + "))");
+    };
+    const double h = std::sqrt(0.5);
+    const auto expect = [](const std::array<double, 4>& got, const std::array<double, 4>& want) {
+        for (size_t k = 0; k < 4; ++k) {
+            CHECK(got[k] == Catch::Approx(want[k]).margin(1e-6));
+        }
+    };
+    expect(orientation("0, 0, 0"), {0, 0, 0, 1});
+    expect(orientation("90, 0, 0"), {0, h, 0, h});
+    expect(orientation("180, 0, 0"), {0, 1, 0, 0});
+    expect(orientation("0, 90, 0"), {h, 0, 0, h});
+    expect(orientation("0, 0, 90"), {0, 0, h, h});
+}
+
 TEST_CASE("Vectors and quaternions share the one metatable FAF extends", "[quaternion]") {
     SimLua s;
     CHECK(s.check(R"(

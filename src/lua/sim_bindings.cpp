@@ -5192,19 +5192,22 @@ static int l_CreateShield(lua_State* L) {
 }
 
 // CreatePropHPR(blueprint_path, x, y, z, heading, pitch, roll) -> prop Lua table
+// The angles are degrees (faf-re cfunc_CreatePropHPRL).
 static int l_CreatePropHPR(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
+    constexpr f32 kDegToRad = 0.017453292f;
+    const auto angle = [L](int idx) {
+        return lua_isnumber(L, idx) ? static_cast<f32>(lua_tonumber(L, idx)) * kDegToRad : 0.0f;
+    };
     const char* bp_path = lua_isstring(L, 1) ? lua_tostring(L, 1) : "";
     f32 x = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0;
     f32 y = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0;
     f32 z = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 0;
-    f32 heading = lua_isnumber(L, 5) ? static_cast<f32>(lua_tonumber(L, 5)) : 0;
-    f32 pitch   = lua_isnumber(L, 6) ? static_cast<f32>(lua_tonumber(L, 6)) : 0;
-    f32 roll    = lua_isnumber(L, 7) ? static_cast<f32>(lua_tonumber(L, 7)) : 0;
 
-    sim::spawn_prop(L, *sim, bp_path, {x, y, z}, sim::euler_to_quat(heading, pitch, roll), true);
+    sim::spawn_prop(L, *sim, bp_path, {x, y, z}, sim::euler_to_quat(angle(5), angle(6), angle(7)),
+                    true);
     return 1;
 }
 
