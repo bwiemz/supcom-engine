@@ -7,6 +7,7 @@
 // are compared per pixel with each other.
 
 #include "integration_tests.hpp"
+#include "intel_probe.hpp"
 #include "render_probe.hpp"
 
 #include "map/heightmap.hpp"
@@ -15,7 +16,10 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -243,6 +247,53 @@ void test_strata(TestContext& ctx) {
         const f32 d = mean_abs_diff(flat_half, rock);
         t.check(d > 0.005f,
                 fmt::format("Test 6: a mask of one half changes the lit relief by {:.4f}", d));
+    }
+
+    {
+        std::vector<char> last_row_empty = blend_dds({255, 0, 0, 0});
+        std::fill(last_row_empty.end() - static_cast<std::ptrdiff_t>(kSize) * 4,
+                  last_row_empty.end(), 0);
+        const auto edge_frame = [&](std::vector<char> mask0) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            terrain.set_lighting(albedo_only(), std::move(env));
+            terrain.set_strata(gravel_and_grass(), std::move(mask0), blend_dds({0, 0, 0, 0}));
+            return shots.shoot_frame(terrain, kCentre, 2.0f, 20.0f, /*with_world=*/false);
+        };
+        const ImageRGBA8 edge = edge_frame(std::move(last_row_empty));
+        const ImageRGBA8 full_mask = edge_frame(blend_dds({255, 0, 0, 0}));
+        const auto pixel = [&](const ImageRGBA8& img, f32 x, f32 z) {
+            std::array<f32, 3> c{-1.0f, -1.0f, -1.0f};
+            const auto at = screen_of(shots.renderer(), {x, 0.0f, z});
+            if (!at || img.width == 0) {
+                return c;
+            }
+            const u32 px = std::min(static_cast<u32>((*at)[0]), img.width - 1);
+            const u32 py = std::min(static_cast<u32>((*at)[1]), img.height - 1);
+            const u8* q = &img.pixels[(static_cast<size_t>(py) * img.width + px) * 4];
+            for (int i = 0; i < 3; ++i) {
+                c[static_cast<size_t>(i)] = q[i] / 255.0f;
+            }
+            return c;
+        };
+        f32 worst = 0.0f;
+        int seen = 0;
+        for (int dx = -4; dx <= 4; ++dx) {
+            const f32 x = kCentre + static_cast<f32>(dx);
+            const auto a = pixel(edge, x, 0.1f);
+            const auto b = pixel(full_mask, x, 0.1f);
+            if (a[0] < 0.0f || b[0] < 0.0f) {
+                continue;
+            }
+            ++seen;
+            for (size_t i = 0; i < 3; ++i) {
+                worst = std::max(worst, std::abs(a[i] - b[i]));
+            }
+        }
+        t.check(seen == 9 && worst < 0.02f,
+                fmt::format("Test 7: along the map's first row ({} of 9 points in view), a mask "
+                            "whose last row is empty draws the ground {:.3f} off the full mask's",
+                            seen, worst));
     }
 
     spdlog::info("Strata test: {}/{} passed", t.pass, t.pass + t.fail);

@@ -1841,7 +1841,8 @@ void Renderer::bind_terrain_strata(const map::Terrain& terrain,
     std::array<VkDescriptorImageInfo, 20> img_infos{};
     std::array<VkWriteDescriptorSet, 20> writes{};
     for (u32 i = 0; i < 20; i++) {
-        img_infos[i].sampler = texture_sampler_;
+        // terrain.fx's UtilitySamplerA and B: the blend masks clamp
+        img_infos[i].sampler = i < 2 ? lookup_sampler_ : texture_sampler_;
         img_infos[i].imageView = views[i];
         img_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
