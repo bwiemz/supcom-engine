@@ -6,6 +6,7 @@
 #include "sim/air_combat.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/build_site_props.hpp"
 #include "sim/collision.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
@@ -1063,45 +1064,53 @@ bool Unit::auto_initiate_allowed(const EntityRegistry& registry) const {
 }
 
 Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L) {
-    // Call __osc_create_building_unit from Lua registry
-    lua_pushstring(L, "__osc_create_building_unit");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_isfunction(L, -1)) {
-        spdlog::warn("start_build: __osc_create_building_unit not registered");
-        lua_pop(L, 1);
-        return BuildStart::Failed;
-    }
-
-    lua_pushstring(L, cmd.blueprint_id.c_str());
-    lua_pushnumber(L, army() + 1); // 1-based for Lua
     bool build_at_self = (cmd.type == CommandType::BuildFactory ||
                           cmd.type == CommandType::Upgrade);
     f32 bx = build_at_self ? position().x : cmd.target_pos.x;
     f32 bz = build_at_self ? position().z : cmd.target_pos.z;
-    lua_pushnumber(L, bx);
-    // Built in place, at the builder's height; elsewhere, nil: where the
-    // structure stands there (__osc_create_building_unit works it out)
-    if (build_at_self) {
-        lua_pushnumber(L, position().y);
+    const Unit* frame = cmd.type == CommandType::BuildMobile
+                            ? find_build_site_frame(registry, cmd.blueprint_id, cmd.target_pos)
+                            : nullptr;
+    if (frame) {
+        lua_pushnumber(L, frame->entity_id());
+        lua_rawgeti(L, LUA_REGISTRYINDEX, frame->lua_table_ref());
     } else {
-        lua_pushnil(L);
-    }
-    lua_pushnumber(L, bz);
-    // Held to the unit cap, but for an upgrade (Moho makes those uncapped).
-    lua_pushboolean(L, cmd.type != CommandType::Upgrade);
-    lua_pushnumber(L, entity_id());
+        // Call __osc_create_building_unit from Lua registry
+        lua_pushstring(L, "__osc_create_building_unit");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (!lua_isfunction(L, -1)) {
+            spdlog::warn("start_build: __osc_create_building_unit not registered");
+            lua_pop(L, 1);
+            return BuildStart::Failed;
+        }
 
-    if (lua_pcall(L, 7, 2, 0) != 0) {
-        spdlog::warn("start_build pcall failed: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
-        return BuildStart::Failed;
-    }
+        lua_pushstring(L, cmd.blueprint_id.c_str());
+        lua_pushnumber(L, army() + 1); // 1-based for Lua
+        lua_pushnumber(L, bx);
+        // Built in place, at the builder's height; elsewhere, nil: where the
+        // structure stands there (__osc_create_building_unit works it out)
+        if (build_at_self) {
+            lua_pushnumber(L, position().y);
+        } else {
+            lua_pushnil(L);
+        }
+        lua_pushnumber(L, bz);
+        // Held to the unit cap, but for an upgrade (Moho makes those uncapped).
+        lua_pushboolean(L, cmd.type != CommandType::Upgrade);
+        lua_pushnumber(L, entity_id());
 
-    // Returns: entity_id, lua_table (nil, "cap" at the unit cap)
-    if (lua_isnil(L, -2)) {
-        const bool at_cap = lua_type(L, -1) == LUA_TSTRING;
-        lua_pop(L, 2);
-        return at_cap ? BuildStart::AtCap : BuildStart::Failed;
+        if (lua_pcall(L, 7, 2, 0) != 0) {
+            spdlog::warn("start_build pcall failed: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+            return BuildStart::Failed;
+        }
+
+        // Returns: entity_id, lua_table (nil, "cap" at the unit cap)
+        if (lua_isnil(L, -2)) {
+            const bool at_cap = lua_type(L, -1) == LUA_TSTRING;
+            lua_pop(L, 2);
+            return at_cap ? BuildStart::AtCap : BuildStart::Failed;
+        }
     }
 
     build_target_id_ = static_cast<u32>(lua_tonumber(L, -2));
@@ -1201,7 +1210,9 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
     // Call target:OnStartBeingBuilt(builder, layer)
     lua_pushstring(L, "OnStartBeingBuilt");
     lua_gettable(L, target_tbl);
-    if (lua_isfunction(L, -1)) {
+    if (frame) {
+        lua_pop(L, 1);
+    } else if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, target_tbl); // self
         if (lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
@@ -1218,7 +1229,7 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
     }
 
     lua_pop(L, 2); // pop entity_id + target_tbl from create_building_unit
-    work_progress_ = 0.0f;
+    work_progress_ = frame ? frame->fraction_complete() : 0.0f;
     return BuildStart::Started;
 }
 

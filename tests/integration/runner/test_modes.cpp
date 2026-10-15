@@ -222,6 +222,7 @@ constexpr Mode kModesBefore[] = {
     {"--guard-engage-test", test_guard_engage, false},
     {"--rebuilder-guard-test", test_rebuilder_guard, false},
     {"--mobile-build-start-test", test_mobile_build_start, false},
+    {"--build-site-join-test", test_build_site_join, false},
     {"--drown-test", test_drown, false},
     {"--spawn-layer-test", test_spawn_layer, false},
     {"--warp-test", test_warp, false},
@@ -322,6 +323,7 @@ void IntegrationModes::print_usage() const {
               << "  --economy-test     After ticks, log economy state for all armies\n"
               << "  --build-test       After ticks, build a T1 power gen near entity #1\n"
               << "  --mobile-build-start-test An engineer's build start, tick by tick, as the original\n"
+              << "  --build-site-join-test Builders sent to one site build one structure there\n"
               << "  --drown-test       Units made in water: a land tank drowns, as the original\n"
               << "  --spawn-layer-test Where a unit made by script stands: subs, ships, aircraft\n"
               << "  --warp-test        Where Warp puts a unit: its layer, height and move\n"
