@@ -285,8 +285,9 @@ int uu_IsDead(lua_State* L) {
 
 int uu_IsIdle(lua_State* L) {
     const auto* r = record(L);
-    lua_pushboolean(L, r && r->command_count == 0 && !r->is_building() && !r->is_being_built &&
-                               !r->is_repairing() && !r->is_capturing()
+    const sim::WorldSnapshot* world = r ? ui_world(L) : nullptr;
+    lua_pushboolean(L, world && world->orders_of(*r).empty() && !r->is_building() &&
+                               !r->is_being_built && !r->is_repairing() && !r->is_capturing()
                            ? 1
                            : 0);
     return 1;
