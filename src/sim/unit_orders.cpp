@@ -551,15 +551,18 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
     }
     // A hovering aircraft is handed its target alike, and from then on
-    // circles it (Moho's CalcCirclingOrientation) at its target weapon's
-    // reach -- the first weapon that can attack it -- facing it.
+    // circles its target point (Moho's CalcCirclingOrientation, at
+    // GetTargetPosGun) at its target weapon's reach -- the first weapon that
+    // can attack it -- facing it.
     if (circles(*this) && ctx.sim) {
         const f32 engage = air_combat_rules_.engage_distance;
         if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
         if (cmd.engaged) {
             navigator_.abort_move();
             CircleAround around;
-            around.center = target->position();
+            around.center = target->is_unit()
+                                ? static_cast<const Unit*>(target)->target_point(cmd.target_point)
+                                : target->position();
             around.move_goal = target->position();
             for (const auto& w : weapons_) {
                 if (w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim)) {
@@ -1084,6 +1087,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             attack.type = CommandType::Attack;
             attack.target_id = enemy->entity_id();
             attack.target_pos = enemy->position();
+            ctx.sim->pick_target_point(attack);
             // Moho's patrol task keeps where it broke off (GuardedPos): the
             // fight's leash runs from there.
             attack.leash_anchor_pos = position();
@@ -1599,6 +1603,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     attack.type = CommandType::Attack;
     attack.target_id = enemy->entity_id();
     attack.target_pos = enemy->position();
+    ctx.sim->pick_target_point(attack);
     attack.command_id = cmd.command_id;
     attack.from_guard = true;
     attack.leash_anchor_id = guarded ? guarded->entity_id() : 0;

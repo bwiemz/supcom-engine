@@ -152,6 +152,9 @@ struct UnitCommand {
     /// formation then).
     bool has_slot = false;
     Vector3 slot_offset;
+    /// An Attack's target point on its unit (Moho's CAiTarget targetPoint);
+    /// -1: the unit's centre.
+    i32 target_point = -1;
     /// A TransportUnload's cargo to drop, chosen when the order is issued
     /// (IssueTransportUnloadSpecific's category, as Moho's
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The

@@ -513,6 +513,9 @@ public:
     /// (func_ProcessUnitCommand). Checked here for Guard and Reclaim so far.
     bool takes_command(const Unit& unit, const UnitCommand& command,
                        bool clear_existing = false) const;
+    /// An Attack's target point, drawn as the order is made: one for all its
+    /// units (Moho's CAiTarget::UpdateTarget, Unit::PickTargetPoint).
+    void pick_target_point(UnitCommand& command);
     /// Whether a live unit still has the command in its queue (IsCommandDone
     /// is its negation: a command is done once no unit holds it).
     bool command_queued(u32 command_id) const;

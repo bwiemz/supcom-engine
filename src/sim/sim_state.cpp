@@ -806,6 +806,7 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
     UnitCommand issued = command;
     if (issued.type != CommandType::Stop && issued.command_id == 0)
         issued.command_id = next_command_id();
+    pick_target_point(issued);
     bool queued = false;
     for (const auto& [uid, cmd] : expand_group_command(unit_ids, issued)) {
         auto* e = entity_registry_.find(uid);
@@ -861,6 +862,16 @@ bool boards(const EntityRegistry& registry, const Unit& unit, u32 target_id) {
 }
 
 } // namespace
+
+void SimState::pick_target_point(UnitCommand& command) {
+    if (command.type != CommandType::Attack || command.target_id == 0) {
+        return;
+    }
+    const Entity* target = entity_registry_.find(command.target_id);
+    if (target && !target->destroyed() && target->is_unit()) {
+        command.target_point = static_cast<const Unit*>(target)->pick_target_point(sim_random_);
+    }
+}
 
 bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
                              bool clear_existing) const {
@@ -1413,6 +1424,7 @@ void SimState::dispatch_due_commands() {
             apply_factory_command(sc.unit_ids, base, sc.clear_existing);
             return;
         }
+        pick_target_point(base);
         for (auto& [uid, expanded] : expand_group_command(sc.unit_ids, base)) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;

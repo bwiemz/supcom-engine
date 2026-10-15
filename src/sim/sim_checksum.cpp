@@ -402,6 +402,10 @@ void mix_command(Fnv& orders, const UnitCommand& cmd, bool need_unpack) {
         orders.mix(0x46415454u | (cmd.has_slot ? 1ull << 32 : 0u)); // "FATT"
         if (cmd.has_slot) mix_vec(orders, cmd.slot_offset);
     }
+    if (cmd.target_point >= 0) {
+        orders.mix(0x54504e54u); // "TPNT"
+        orders.mix(static_cast<u64>(static_cast<u32>(cmd.target_point)));
+    }
     // A winged attack within reach, flying its runs, only then.
     if (cmd.engaged) orders.mix(0x454e4744u); // "ENGD"
     // A patrol's or guard's wait before it next looks about, only
