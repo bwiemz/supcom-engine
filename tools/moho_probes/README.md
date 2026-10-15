@@ -85,7 +85,14 @@ It is done at `PROBE eng-build done`.
 
 Every `WaitTicks(5)`, which is 4 ticks, it logs each one's layer and health until it is gone. The log's `t` counts 5 a step, so its `t=125` is the 100th tick. It is done at `PROBE drown done`.
 
-Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, with #646, and with #653.
+**`layers/`** asks the same of the motion types `drown/` left out, each made by script at the terrain's height:
+- T1 subs of each faction in deep water, and one in water too shallow for a sub;
+- a frigate in deep water;
+- a T1 scout and two experimental aircraft (Soul Ripper, CZAR) on dry ground.
+
+At ticks 0, 1, 5, 20 and 60 it logs each one's layer, height and health. Its waits are timed so the log's `t` is the tick. It is done at `PROBE layers done`.
+
+Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, with #646, with #653, and with #655.
 
 | Probe | The original | The engine | So |
 |---|---|---|---|
@@ -101,3 +108,6 @@ Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); 
 | `drown` layers | every tank, however shallow the water, and the amphibious tank on the Seabed; the hover tank and the engineer on the Water | all on Land before #653; now the same | A unit takes the layer of the place it is made (`Entity::GetStartingLayer`). |
 | `drown` tanks | 12 health off every 4 ticks (1% of 300 a tick); gone on the 100th tick | unharmed before #653; all 232 logged rows the same now | A surface unit on a layer its motion type can't be on loses 1% a tick (`CUnitMotion::CalcMoveCommon`). |
 | `drown` others | the amphibious tank, the hover tank and the engineer unharmed | the same | They are on layers their motion types allow. |
+| `layers` subs | on the Sub layer at the surface −1.5, even in water too shallow for a sub; the Seraphim sub surfaces by t=60 | the same (its surfacing within 0.06) | A sub starts at its depth (`IUnit::CalcSpawnElevation`). |
+| `layers` frigate | on the Water at the surface from t=0 | on the seabed until it moved, before #655; now the same | A ship starts at the water's surface. |
+| `layers` aircraft | the scout in the Air, 18 over the surface; the Soul Ripper and the CZAR on Land at the ground, in the Air and climbing from t=1 | the experimentals in the Air at full height before #655; now the same through t=5, within 0.25 after | `GetStartingLayer` puts an experimental aircraft on Land; it lifts off with no order. The scout's drift and the later climb are air physics, not ported. |
