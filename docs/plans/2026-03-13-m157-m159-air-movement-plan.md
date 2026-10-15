@@ -495,6 +495,8 @@ git commit -m "M157c: Implement heading-based air movement in Navigator::update_
 
 ### Task 4: Air Unit Separation (Boids Repulsion)
 
+*Removed (2026-10-15): Moho has no air separation: `CUnitMotion::CalcMoveAir` looks at no neighbours and `CAiSteeringImpl` skips flying units as obstacles; aircraft overlap and spread out only as they land.*
+
 **Files:**
 - Modify: `src/sim/unit.cpp` — add air separation in update()
 
