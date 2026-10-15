@@ -780,7 +780,7 @@ void StrategicIconRenderer::paint_map(const sim::FrameView& view, const MapArea&
             std::copy(rect.begin(), rect.end(), inst.rect);
             inst.uv[1] = 1.0f;
             inst.uv[2] = 1.0f;
-            std::fill(std::begin(inst.color), std::end(inst.color), 1.0f);
+            std::fill(std::begin(inst.color), std::end(inst.color), -1.0f);
             out.push_back({inst, tex.descriptor_set});
         });
 }

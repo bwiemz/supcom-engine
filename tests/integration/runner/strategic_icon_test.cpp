@@ -775,18 +775,19 @@ void test_strategic_icons(TestContext& ctx) {
 
         const auto file = ctx.vfs.read_file(nuke_icon);
         const auto dds = file ? renderer::parse_dds(*file) : std::nullopt;
-        int blocks = 0;
-        int blended = 0;
-        if (nuke && scene.width > 0 && dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK &&
-            !dds->mips.empty()) {
-            const std::vector<u8> texels = renderer::decode_bc3_to_rgba(
-                reinterpret_cast<const u8*>(dds->mips[0].data), dds->width, dds->height);
-            const auto x0 = static_cast<i32>(2.0f * nuke->x);
-            const auto y0 = static_cast<i32>(2.0f * nuke->y);
-            const auto at = [&](i32 x, i32 y) {
-                return &scene.rgba[(static_cast<size_t>(y) * scene.width + static_cast<size_t>(x)) *
-                                   4];
-            };
+        std::vector<u8> texels;
+        if (dds && dds->format == VK_FORMAT_BC3_UNORM_BLOCK && !dds->mips.empty()) {
+            texels = renderer::decode_bc3_to_rgba(reinterpret_cast<const u8*>(dds->mips[0].data),
+                                                  dds->width, dds->height);
+        }
+        const auto blocks_at = [&](f32 left, f32 top, u32 width, u32 height, const auto& at,
+                                   const std::vector<std::array<f32, 4>>& over) {
+            std::array<int, 2> n{};
+            if (texels.empty()) {
+                return n;
+            }
+            const auto x0 = static_cast<i32>(2.0f * left);
+            const auto y0 = static_cast<i32>(2.0f * top);
             for (u32 v = 0; v < dds->height; ++v) {
                 for (u32 u = 0; u < dds->width; ++u) {
                     if (texels[(static_cast<size_t>(v) * dds->width + u) * 4 + 3] != 255) {
@@ -794,8 +795,15 @@ void test_strategic_icons(TestContext& ctx) {
                     }
                     const i32 px = x0 + 2 * static_cast<i32>(u);
                     const i32 py = y0 + 2 * static_cast<i32>(dds->height - 1 - v);
-                    if (px < 0 || py < 0 || px + 1 >= static_cast<i32>(scene.width) ||
-                        py + 1 >= static_cast<i32>(scene.height)) {
+                    const bool covered =
+                        std::any_of(over.begin(), over.end(), [&](const std::array<f32, 4>& r) {
+                            return 2.0f * r[0] < static_cast<f32>(px + 2) &&
+                                   2.0f * (r[0] + r[2]) > static_cast<f32>(px) &&
+                                   2.0f * r[1] < static_cast<f32>(py + 2) &&
+                                   2.0f * (r[1] + r[3]) > static_cast<f32>(py);
+                        });
+                    if (covered || px < 0 || py < 0 || px + 1 >= static_cast<i32>(width) ||
+                        py + 1 >= static_cast<i32>(height)) {
                         continue;
                     }
                     bool same = true;
@@ -803,16 +811,53 @@ void test_strategic_icons(TestContext& ctx) {
                          {std::pair{1, 0}, std::pair{0, 1}, std::pair{1, 1}}) {
                         same = same && std::equal(at(px, py), at(px, py) + 3, at(px + dx, py + dy));
                     }
-                    ++blocks;
-                    blended += same ? 0 : 1;
+                    ++n[0];
+                    n[1] += same ? 0 : 1;
                 }
             }
+            return n;
+        };
+        std::array<int, 2> in_scene{};
+        if (nuke && scene.width > 0) {
+            in_scene = blocks_at(nuke->x, nuke->y, scene.width, scene.height,
+                                 [&](i32 x, i32 y) {
+                                     return &scene.rgba[(static_cast<size_t>(y) * scene.width +
+                                                         static_cast<size_t>(x)) *
+                                                        4];
+                                 },
+                                 {});
         }
-        t.check(blocks > 0 && blended == 0,
+        t.check(in_scene[0] > 0 && in_scene[1] == 0,
                 fmt::format("Test 34: at a display scale of 2 each of the nuke icon's opaque "
                             "texels is a 2x2 block of one colour in the scene, as the tank's "
                             "icon: {} of {} blended",
-                            blended, blocks));
+                            in_scene[1], in_scene[0]));
+
+        const renderer::GPUTexture* tex = big.texture_cache().get(nuke_icon);
+        std::array<int, 2> on_map{};
+        const auto& map_quads = big.minimap().quads();
+        for (size_t i = 0; i < map_quads.size(); ++i) {
+            const renderer::UIQuad& q = map_quads[i];
+            if (!tex || q.texture_ds != tex->descriptor_set || image.width == 0) {
+                continue;
+            }
+            std::vector<std::array<f32, 4>> later;
+            for (size_t j = i + 1; j < map_quads.size(); ++j) {
+                const auto& r = map_quads[j].inst.rect;
+                later.push_back({r[0], r[1], r[2], r[3]});
+            }
+            on_map = blocks_at(
+                q.inst.rect[0], q.inst.rect[1], image.width, image.height,
+                [&](i32 x, i32 y) {
+                    return &image.pixels[(static_cast<size_t>(y) * image.width +
+                                          static_cast<size_t>(x)) *
+                                         4];
+                },
+                later);
+        }
+        t.check(on_map[0] > 0 && on_map[1] == 0,
+                fmt::format("Test 35: so is its icon on the minimap: {} of {} blended", on_map[1],
+                            on_map[0]));
     }
 
     {

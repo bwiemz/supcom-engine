@@ -2244,7 +2244,9 @@ void main() {
         ivec2 size = textureSize(texSampler, 0);
         texColor = texelFetch(texSampler, clamp(ivec2(fragUV * vec2(size)), ivec2(0), size - 1), 0);
         vec3 d = texColor.rgb - vec3(0.5);
-        if (dot(d, d) < 0.25) texColor.rgb = fragColor.rgb;
+        if (fragColor.r >= 0.0 && dot(d, d) < 0.25) {
+            texColor.rgb = fragColor.rgb;
+        }
         outColor = texColor;
     } else {
         texColor = texture(texSampler, fragUV);
