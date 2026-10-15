@@ -408,6 +408,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.form_attack);
     w.b(c.has_slot);
     w.vec3(c.slot_offset);
+    w.i32v(c.target_point);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -464,6 +465,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.form_attack = r.b();
     c.has_slot = r.b();
     c.slot_offset = r.vec3();
+    c.target_point = r.i32v();
 }
 
 // ------------------------------------------------------------- Navigator

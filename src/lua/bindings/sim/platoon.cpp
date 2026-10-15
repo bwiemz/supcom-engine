@@ -453,6 +453,7 @@ static int platoon_AttackTarget(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
     cmd.command_id = cmd_id;
+    sim->pick_target_point(cmd);
 
     for (u32 id : order_units(L, *sim, *platoon, 3, 1, 2, true)) {
         static_cast<sim::Unit*>(sim->entity_registry().find(id))->push_command(cmd, false);
