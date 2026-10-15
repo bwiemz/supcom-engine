@@ -142,6 +142,45 @@ TEST_CASE("A repair of a unit under construction aims the arm and builds it as a
     CHECK_FALSE(arm_of(*eng).has_target());
 }
 
+TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothing",
+          "[build][assist]") {
+    AssistSim w;
+    const std::string code = R"(
+        function Builder:OnStopBuild(unit, order)
+            table.insert(log, self.name .. ' stop ' .. tostring(unit) .. ' ' .. tostring(order))
+        end
+        function Builder:OnFailedToBuild() table.insert(log, self.name .. ' failed') end
+    )";
+    REQUIRE(luaL_loadbuffer(w.L, code.c_str(), code.size(), "stop") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
+    Unit* eng = w.engineer("eng", 16.0f);
+    std::string stopped = "eng stop nil Repair";
+    SECTION("a repair of a unit under construction") {
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    }
+    SECTION("a guard's help with it") {
+        Unit* helper = w.engineer("helper", 14.0f);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+        helper->push_command(order(CommandType::Guard, *eng, 2), true);
+        stopped += ",helper stop nil Repair";
+    }
+    SECTION("a repair of a damaged unit") {
+        w.site->set_is_being_built(false);
+        w.site->set_fraction_complete(1.0f);
+        w.site->set_health(50.0f);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    }
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.log().find("start Repair") != std::string::npos);
+    const osc::u32 id = w.site->entity_id();
+    w.site->mark_destroyed();
+    w.sim.entity_registry().unregister_entity(id);
+    w.sim.tick();
+    CHECK(w.log() == stopped);
+}
+
 TEST_CASE("A guard helping a build aims its arm at what it helps build", "[build][assist]") {
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);

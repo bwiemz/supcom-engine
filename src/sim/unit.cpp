@@ -327,6 +327,32 @@ void destroy_unfinished(EntityRegistry& registry, lua_State* L, u32 target_id) {
     }
 }
 
+// A target that's gone goes as nil (faf-re CScriptObject::OnStopBuild).
+void tell_stop_build(const Unit& builder, lua_State* L, int target_ref, const char* order) {
+    if (!L || builder.lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, builder.lua_table_ref());
+    lua_pushstring(L, "OnStopBuild");
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2);
+        if (target_ref >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target_ref);
+        } else {
+            lua_pushnil(L);
+        }
+        if (order) {
+            lua_pushstring(L, order);
+        }
+        if (lua_pcall(L, order ? 3 : 2, 0, 0) != 0) {
+            spdlog::warn("OnStopBuild error: {}", lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+}
+
 void tell_build_failed(const Unit& builder, lua_State* L, int frame_ref, const char* order) {
     if (builder.destroyed() || builder.lua_table_ref() < 0) {
         return;
@@ -349,20 +375,10 @@ void tell_build_failed(const Unit& builder, lua_State* L, int frame_ref, const c
         }
         lua_settop(L, frame_tbl);
     }
-    if (!builder.destroyed()) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, builder.lua_table_ref());
-        lua_pushstring(L, "OnStopBuild");
-        lua_gettable(L, -2);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, -2);
-            lua_pushvalue(L, frame_tbl);
-            lua_pushstring(L, order);
-            if (lua_pcall(L, 3, 0, 0) != 0) {
-                spdlog::warn("OnStopBuild error: {}", lua_tostring(L, -1));
-            }
-        }
-    }
     lua_settop(L, top);
+    if (!builder.destroyed()) {
+        tell_stop_build(builder, L, frame_ref, order);
+    }
 }
 
 int lua_ref_of(const EntityRegistry& registry, u32 id) {
@@ -1200,7 +1216,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     if (built) *built = false;
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed()) {
-        finish_build(registry, L, false, grid);
+        fail_build(registry, L);
         return false;
     }
 
@@ -1216,7 +1232,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     }
 
     if (build_time_ <= 0 || build_rate_ <= 0) {
-        finish_build(registry, L, false, grid);
+        fail_build(registry, L);
         return false;
     }
 
@@ -1346,8 +1362,8 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             }
         }
 
-        call_build_callback(L, "OnStopBuild", registry.find(target_id),
-                            order.empty() ? nullptr : order.c_str());
+        tell_stop_build(*this, L, lua_ref_of(registry, target_id),
+                        order.empty() ? nullptr : order.c_str());
     } else if (target_id != 0) {
         spdlog::debug("finish_build: entity #{} failed/cancelled build of target #{}", entity_id(),
                       target_id);
@@ -1413,9 +1429,20 @@ void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
     work_progress_ = 0.0f;
     // A callback may clear the queue again or begin a new task.
     if (L && registry && target_id != 0) {
-        call_build_callback(L, "OnStopBuild", registry->find(target_id),
-                            order.empty() ? nullptr : order.c_str());
+        tell_stop_build(*this, L, lua_ref_of(*registry, target_id),
+                        order.empty() ? nullptr : order.c_str());
     }
+}
+
+void Unit::fail_build(EntityRegistry& registry, lua_State* L) {
+    if (build_order_ == "MobileBuild" || build_order_ == "Repair") {
+        release_build(L, registry);
+        return;
+    }
+    const int frame_ref = lua_ref_of(registry, build_target_id_);
+    const std::string order = build_order_;
+    finish_build(registry, L, false);
+    tell_build_failed(*this, L, frame_ref, order.c_str());
 }
 
 void Unit::release_build(lua_State* L, EntityRegistry& registry) {
@@ -1918,7 +1945,7 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
 
     // Call builder:OnStopBuild(target) — FA handles OnStopRepair inside
     if (target_id != 0) {
-        call_build_callback(L, "OnStopBuild", registry.find(target_id), "Repair");
+        tell_stop_build(*this, L, lua_ref_of(registry, target_id), "Repair");
     }
 }
 

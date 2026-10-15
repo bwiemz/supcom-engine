@@ -590,6 +590,9 @@ public:
                         bool* built = nullptr);
     void finish_build(EntityRegistry& registry, lua_State* L, bool success,
                       map::PathfindingGrid* grid = nullptr);
+    /// A build that ends unfinished, as its task ends in Moho (faf-re
+    /// ~CUnitRepairTask, ~CUnitMobileBuildTask, CBuildTaskHelper::OnStopBuild).
+    void fail_build(EntityRegistry& registry, lua_State* L);
 
     /// Assist helpers (Guard command)
     void stop_assisting(lua_State* L = nullptr, EntityRegistry* registry = nullptr);

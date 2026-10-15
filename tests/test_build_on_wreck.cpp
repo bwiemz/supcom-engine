@@ -318,6 +318,38 @@ TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame 
     CHECK(w.built()->is_being_built());
 }
 
+TEST_CASE("A build whose unit is gone stops with nil for it, and fails as its task does",
+          "[build]") {
+    WreckSite w(R"(
+        __heard = ''
+        function Engineer:OnStopBuild(u, order)
+            __heard = __heard .. 'stop ' .. tostring(u) .. ' ' .. tostring(order) .. ' '
+        end
+        function Engineer:OnFailedToBuild() __heard = __heard .. 'failed ' end
+    )");
+    std::string then;
+    SECTION("a mobile build") {
+        w.build("ueb1103");
+        w.start();
+        then = "stop nil MobileBuild failed ";
+    }
+    SECTION("a factory build") {
+        UnitCommand c;
+        c.type = CommandType::BuildFactory;
+        c.blueprint_id = "ueb1103";
+        w.engineer->push_command(c, true);
+        w.sim.tick();
+        then = "failed stop nil FactoryBuild ";
+    }
+    REQUIRE(w.built());
+    REQUIRE(w.engineer->build_target_id() == w.built_id);
+    w.built()->mark_destroyed();
+    w.sim.entity_registry().unregister_entity(w.built_id);
+    w.sim.tick();
+    CHECK(w.engineer->build_target_id() == 0);
+    CHECK(heard(w.L) == then);
+}
+
 TEST_CASE("A build callback can clear its orders without stopping the build twice", "[build]") {
     WreckSite w(R"(
         __stops = 0
