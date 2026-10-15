@@ -186,7 +186,12 @@ const Weapon* primary_weapon(const Unit& owner) {
 u32 attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
     if (queue.empty() || queue.front().type != CommandType::Attack) return 0;
-    return queue.front().target_id;
+    const UnitCommand& order = queue.front();
+    if (!order.engaged && owner.layer() == "Air" &&
+        (owner.air_combat_rules().winged || circles(owner))) {
+        return 0;
+    }
+    return order.target_id;
 }
 
 } // namespace
@@ -533,9 +538,10 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // The order gone, or the point out of this weapon's reach: it looks for
     // targets again.
     if (ground_from_order) set_target_entity(0);
-    // An aircraft's weapons take its ordered target at any range: Moho's
-    // CAcquireTargetTask gives a flier the attacker's desired target out of
-    // reach too, so it is kept through the runs' loops.
+    // An aircraft's weapons take its ordered target once the attack engages,
+    // then at any range: Moho's CAcquireTargetTask gives a flier the
+    // attacker's desired target out of reach too, so it is kept through the
+    // runs' loops.
     const u32 ordered = attack_order_target(owner);
     // A target this weapon can no longer shoot is dropped at once.
     if (target_entity_id != 0) {
