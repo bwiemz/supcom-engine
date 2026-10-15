@@ -908,7 +908,6 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     // from its silo) and steers itself onto its target: its blueprint's
     // acceleration and turn rate and its script fly it.
     Vector3 vel;
-    f32 flight_time = 0;
     const bool arcs = ballistic_arc != Arc::None && !need_compute_bomb_drop;
     // The speed it leaves at, for its target's distance (Moho's
     // GetMuzzleVelocity, drawing MuzzleVelocityRandom).
@@ -929,13 +928,11 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     } else if (pitch) {
         const f32 across = speed * osc::dmath::cos(*pitch);
         vel = {dx / dist * across, speed * osc::dmath::sin(*pitch), dz / dist * across};
-        flight_time = across > 0.001f ? dist / across : 0.0f;
     } else if (need_compute_bomb_drop) {
         vel = {dx / dist * muzzle_velocity, 0.0f, dz / dist * muzzle_velocity};
     } else {
         const f32 span = std::sqrt(dist * dist + dy * dy);
         vel = {dx / span * speed, dy / span * speed, dz / span * speed};
-        flight_time = speed > 0 ? span / speed : 0.0f;
     }
     // Which way it leaves (Moho's CreateProjectile): above is its firing
     // solution, but a shell leaves along its muzzle as the aim controller
@@ -982,13 +979,6 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->damage_amount = damage;
     proj->damage_radius = damage_radius;
     proj->damage_type = damage_type;
-    // Bombs drop from altitude so need more time; normal projectiles use flight time.
-    // A missile's flight can't be foretold: a minute outlasts any tactical
-    // missile's (strategic ones give their own Lifetime).
-    proj->lifetime = counted_projectile ? 60.0f
-                     : (need_compute_bomb_drop || muzzle_velocity <= 0)
-                         ? 10.0f // generous for high-altitude drops
-                         : flight_time + 2.0f;
 
     // Set projectile blueprint for rendering
     if (!projectile_bp_id.empty()) {
@@ -997,7 +987,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics =
         proj->apply_blueprint_physics(L, &registry.sim_random());
-    if (physics.lifetime) proj->lifetime = *physics.lifetime;
+    proj->lifetime = physics.lifetime;
     if (physics.realistic_ordinance) {
         // A bomb (RealisticOrdinance) leaves with its launcher's speed,
         // aimed flat from the launcher at its target -- or where a moving

@@ -49,6 +49,8 @@ public:
 
     /// Moho's gravity, in world units per second squared.
     static constexpr f32 GRAVITY = 4.9f;
+    /// Moho's RProjectileBlueprintPhysics::Lifetime default, in seconds.
+    static constexpr f32 DEFAULT_LIFETIME = 15.0f;
 
     Vector3 velocity;
     u32 target_entity_id = 0;
@@ -63,7 +65,7 @@ public:
     f32 damage_amount = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
-    f32 lifetime = 10.0f;
+    f32 lifetime = DEFAULT_LIFETIME;
 
     // Physics (set by Lua via SetMaxSpeed/SetAcceleration/etc.)
     f32 max_speed = 0;           // 0 = unlimited
@@ -120,7 +122,7 @@ public:
     /// What its blueprint's Physics leaves to whoever creates it.
     struct BlueprintPhysics {
         std::optional<bool> use_gravity; ///< Moho's default is to fall
-        std::optional<f32> lifetime;
+        f32 lifetime = DEFAULT_LIFETIME;
         /// Physics.RealisticOrdinance: a bomb, which leaves with its
         /// launcher's speed, aimed at the target (Moho's Projectile).
         bool realistic_ordinance = false;
