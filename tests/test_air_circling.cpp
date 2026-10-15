@@ -181,6 +181,14 @@ struct World {
         u.push_command(cmd, true);
     }
 
+    static void attack(Unit& u, const Unit& target) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = osc::sim::CommandType::Attack;
+        cmd.target_id = target.entity_id();
+        cmd.target_pos = target.position();
+        u.push_command(cmd, true);
+    }
+
     void tick(Unit& u) {
         for (const auto& w : u.weapons()) w->fire_clock = 1000000;
         sim.tick();
@@ -405,25 +413,59 @@ TEST_CASE("A gunship without MinAirspeed goes round its target by a MaxAirspeed'
     CHECK(std::abs(net) > 2.0f);
 }
 
-TEST_CASE("A HoverOverAttack aircraft hangs at its reach rather than circle", "[air_circling]") {
+TEST_CASE("A HoverOverAttack aircraft flies on past its reach and hangs over its target rather "
+          "than circle",
+          "[air_circling]") {
     World w;
     Unit& h = *w.make("hoverer", 20.0f, 64.0f);
     World::arm(h, 22.0f);
-    const Vector3 at{64.0f, 10.0f, 64.0f};
-    World::attack_ground(h, at);
-    REQUIRE(w.run_until(h, [&] { return engaged(h); }, 300) < 300);
-    for (int t = 0; t < 30; ++t) w.tick(h);
-    const Vector3 parked = h.position();
-    f32 drift = 0.0f;
-    Vector3 last = parked;
-    for (int t = 0; t < 60; ++t) {
+    Vector3 at{64.5f, 10.0f, 64.5f};
+    SECTION("a point on the ground") {
+        World::attack_ground(h, at);
+    }
+    SECTION("a unit") {
+        const Unit& target = *w.make("tank", 64.0f, 64.0f);
+        at = target.position();
+        World::attack(h, target);
+    }
+    REQUIRE(w.run_until(h, [&] { return flat_dist(h, at) < 22.0f; }, 300) < 300);
+    f32 nearest = 1e9f;
+    Vector3 last = h.position();
+    for (int t = 0; t < 300; ++t) {
         last = h.position();
         w.tick(h);
-        drift = std::max(drift, flat_dist(h, parked));
+        nearest = std::min(nearest, flat_dist(h, at));
     }
-    CHECK(drift < 1.0f);
+    INFO("nearest " << nearest << " final " << flat_dist(h, at));
+    CHECK(nearest < 1.0f);
+    CHECK(flat_dist(h, at) < 1.0f);
     CHECK(flat_dist(h, last) < 0.02f);
     CHECK_FALSE(h.air_combat().flying);
+}
+
+TEST_CASE("A unit that can't fly stops at its weapon's reach of its attack target",
+          "[air_circling]") {
+    World w;
+    Unit& g = *w.make("tank", 20.0f, 64.0f);
+    World::arm(g, 22.0f);
+    Vector3 at{64.5f, 10.0f, 64.5f};
+    SECTION("a point on the ground") {
+        World::attack_ground(g, at);
+    }
+    SECTION("a unit") {
+        const Unit& target = *w.make("tank", 64.0f, 64.0f);
+        at = target.position();
+        World::attack(g, target);
+    }
+    REQUIRE(w.run_until(g, [&] { return flat_dist(g, at) < 22.0f; }, 600) < 600);
+    f32 nearest = 1e9f;
+    for (int t = 0; t < 100; ++t) {
+        w.tick(g);
+        nearest = std::min(nearest, flat_dist(g, at));
+    }
+    INFO("nearest " << nearest);
+    CHECK(nearest > 20.0f);
+    CHECK_FALSE(g.navigator().busy());
 }
 
 TEST_CASE("A drone at work circles what it repairs at StartTurnDistance's ratio; it stops "
