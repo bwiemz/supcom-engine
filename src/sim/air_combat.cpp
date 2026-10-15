@@ -390,6 +390,9 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
     const f32 dz = move.target.z - pos.z;
     const f32 dist = std::sqrt(dx * dx + dz * dz);
     const f32 speed = move.top_speed ? top : std::min(dist, top);
+    if (dist > unit.start_turn_distance()) {
+        unit.set_unit_state("CannotFindPlaceToLand", false);
+    }
     Vector3 want{};
     if (dist > 0.0f) {
         want = {dx / dist * speed, 0.0f, dz / dist * speed};
