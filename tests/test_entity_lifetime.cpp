@@ -206,7 +206,7 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     SimState sim(L, nullptr);
 
     auto p = std::make_unique<osc::sim::Projectile>();
-    p->lifetime = 0.05f;
+    p->lifetime = 0.04f;
     auto* raw = p.get();
     const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
     lua_newtable(L);

@@ -54,25 +54,18 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
 
     // Tick lifetime
     lifetime -= static_cast<f32>(dt);
-    if (lifetime <= 0) {
-        // Its time is up. In flight it bursts where it is, as retail's
-        // scripts expect of an 'Air' (or 'Underwater') impact; one that has
-        // already impacted, lingering for its ImpactTimeout, just goes.
-        if (!impacted) {
-            const Vector3 at = position();
-            const bool under = terrain && terrain->has_water() && at.y < terrain->water_elevation();
-            on_impact(L, nullptr, registry, terrain, under ? "Underwater" : "Air");
-            return;
+    if (impacted) {
+        // Lingering for its ImpactTimeout, it just goes.
+        if (lifetime <= 0) {
+            mark_destroyed();
+            // The unregister hook nulls the Lua table's _c_object and releases
+            // its ref; releasing the ref here first left scripts holding a
+            // dangling pointer (UEF build-effect projectiles are destroyed from
+            // Lua after they expire).
+            registry.unregister_entity(entity_id());
         }
-        mark_destroyed();
-        // The unregister hook nulls the Lua table's _c_object and releases
-        // its ref; releasing the ref here first left scripts holding a
-        // dangling pointer (UEF build-effect projectiles are destroyed from
-        // Lua after they expire).
-        registry.unregister_entity(entity_id());
         return;
     }
-    if (impacted) return;
 
     // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
     // faces. One that doesn't track falls (Moho runs the ballistic step only
@@ -178,6 +171,15 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
             on_impact(L, nullptr, registry, terrain, "Air");
             return;
         }
+    }
+
+    // Its time up, it bursts where this tick's move took it, an 'Air' (or
+    // 'Underwater') impact: Moho's MotionTick tests the lifetime after
+    // CheckCollision. Moho ends it on the tick nearest its lifetime, having
+    // moved on the tick it was made; here that is half a tick past it.
+    if (lifetime < -0.5f * step) {
+        const bool under = terrain && terrain->has_water() && pos.y < terrain->water_elevation();
+        on_impact(L, nullptr, registry, terrain, under ? "Underwater" : "Air");
     }
 }
 
