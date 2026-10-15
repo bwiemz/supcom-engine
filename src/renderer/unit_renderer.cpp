@@ -270,6 +270,10 @@ void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
                  bp_ids.size(), loaded, failed);
 }
 
+static bool sorts_before(const MeshDrawGroup& a, const MeshDrawGroup& b) {
+    return a.mesh->sort_order < b.mesh->sort_order;
+}
+
 void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
                           TextureCache* tex_cache, const Camera* camera,
                           const std::unordered_set<u32>* selected_ids, const Frustum* frustum,
@@ -618,10 +622,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     // first (MeshBatchKeyLess; M211k): a shield's impacts (500), its fill
     // (999), then the shield (1000). Stable: the opaque groups still come
     // before the blended ones, whose SortOrder is the same.
-    std::stable_sort(mesh_groups_.begin(), mesh_groups_.end(),
-                     [](const MeshDrawGroup& a, const MeshDrawGroup& b) {
-                         return a.mesh->sort_order < b.mesh->sort_order;
-                     });
+    std::stable_sort(mesh_groups_.begin(), mesh_groups_.end(), sorts_before);
 }
 
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r, f32 g, f32 b,
@@ -674,7 +675,10 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z, f32 r,
 
         bind_mesh_textures(grp, tex_cache);
 
-        mesh_groups_.push_back(grp);
+        // Moho's build preview is a MeshRenderer instance, batched by its
+        // SortOrder with the rest (CBuildDragPreview::CreateBuildPreviewMeshInstance).
+        mesh_groups_.insert(
+            std::upper_bound(mesh_groups_.begin(), mesh_groups_.end(), grp, sorts_before), grp);
     }
 
     return true;
