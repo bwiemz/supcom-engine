@@ -92,6 +92,11 @@ struct World {
                  " KTurnDamping = 1.5, LiftFactor = 7, MaxAirspeed = 15, MinAirspeed = 10,"
                  " StartTurnDistance = 5, TurnSpeed = 1.5},"
                  " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
+                 "{BlueprintId = 'bomber', Categories = {'AIR', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1},"
+                 " Air = {CanFly = true, Winged = true, MaxAirspeed = 15, TurnSpeed = 0.7},"
+                 " Physics = {MotionType = 'RULEUMT_Air', Elevation = 18}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -104,7 +109,8 @@ struct World {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"gunship", "gun1", "fighter", "gunfwd", "level", "uea0102"}) {
+        for (const char* id :
+             {"gunship", "gun1", "fighter", "gunfwd", "level", "uea0102", "bomber"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -292,6 +298,13 @@ TEST_CASE("A winged aircraft's turn builds under KTurn toward KTurn x TurnSpeed 
     CHECK(first == Approx(0.0075f).margin(0.001f));
     CHECK(fastest > 0.09f);
     CHECK(fastest < 0.115f);
+}
+
+TEST_CASE("An aircraft without Air.TurnSpeed turns at Moho's default of 1 radian a second",
+          "[air_motion]") {
+    World w;
+    CHECK(w.make("gunship", 20.0f, 128.0f).turn_rate_rad() == 1.0f);
+    CHECK(w.make("bomber", 40.0f, 128.0f).turn_rate_rad() == 0.7f);
 }
 
 TEST_CASE("A winged aircraft banks into its turn by its BankFactor", "[air_motion]") {

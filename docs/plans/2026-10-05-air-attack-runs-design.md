@@ -400,7 +400,7 @@ Idle bombers therefore auto-attack ground units within 50 u (UEA0103: 1.25 × 40
 | `Air.KMoveDamping` | 1 | only with §6.3b |
 | `Physics.AttackElevation` | → Elevation when 0 | |
 
-  Also consider changing the TurnSpeed fallback from 1.5 to Moho's 1.0. That is a separate, tiny parity fix.
+  Also consider changing the TurnSpeed fallback from 1.5 to Moho's 1.0. That is a separate, tiny parity fix. *Done (2026-10-15).*
 - **Weapon:** `AutoInitiateAttackCommand` (default false), read at EN lua/sim_bindings.cpp near :534. Change the `bomb_drop_threshold` default at EN sim/weapon.hpp:79 from 25 to **1.5**.
 - **Projectile:** `Physics.RealisticOrdinance` (default false). Add it to `Projectile::BlueprintPhysics` (EN sim/projectile.hpp:97-103) and read it in `apply_blueprint_physics` (EN sim/projectile.cpp:349-399).
 
