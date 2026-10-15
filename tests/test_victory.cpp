@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "app/support.hpp"
+#include "core/game_state.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/session_manager.hpp"
@@ -667,4 +669,35 @@ TEST_CASE("The player's result is the focus army's; IsGameOver is the session's"
     CHECK(sim.player_result() == 2);
     CHECK_FALSE(sim.game_ended());
     CHECK_FALSE(game_over());
+}
+
+TEST_CASE("After the tick that called EndGame the sim ticks no more and the UI hears game over",
+          "[victory]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_sim_bindings(lua, sim);
+    sim.set_tick_observer([&](const SimState& s) {
+        if (s.tick_count() == 5) {
+            REQUIRE(lua.do_string("EndGame()").ok());
+        }
+    });
+    osc::lua::LuaState ui;
+    REQUIRE(ui.do_string("__noted = 0 function NoteGameOver() __noted = __noted + 1 end").ok());
+    osc::GameStateManager mgr;
+
+    for (int frame = 0; frame < 20; ++frame) {
+        sim.tick();
+        osc::app::note_game_over_if_ended(&sim, mgr, ui.raw());
+    }
+
+    CHECK(sim.tick_count() == 5);
+    CHECK(mgr.game_over());
+    lua_getglobal(ui.raw(), "__noted");
+    CHECK(lua_tonumber(ui.raw(), -1) == 1);
+    lua_pop(ui.raw(), 1);
+    REQUIRE(lua.do_string("__over = IsGameOver()").ok());
+    lua_getglobal(lua.raw(), "__over");
+    CHECK(lua_toboolean(lua.raw(), -1) != 0);
+    lua_pop(lua.raw(), 1);
 }

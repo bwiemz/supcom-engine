@@ -9500,7 +9500,10 @@ void test_formation(TestContext& ctx) {
         for i, brain in ArmyBrains do
             if i ~= 1 then
                 for _, acu in brain:GetListOfUnits(categories.COMMAND, false) do
-                    acu:Destroy()
+                    local p = acu:GetPosition()
+                    if VDist2(p[1], p[3], 680, 120) < 150 then
+                        acu:Destroy()
+                    end
                 end
             end
         end
@@ -19838,14 +19841,14 @@ void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_fr
     lua_ok("Test 8: NoteGameOver moved the player to observer", R"(
         if GetFocusArmy() ~= -1 then error('focus army ' .. GetFocusArmy()) end
     )");
-    // Moho does not pause at game over: the world plays on until the
-    // player opens the score screen, which ends the session (SessionEndGame).
     const auto tick = ctx.sim.tick_count();
     play(5);
-    if (ctx.sim.tick_count() > tick)
-        spdlog::info("[PASS] Test 9: the game plays on after game over");
-    else
-        osc::test_status::fail("[FAIL] Test 9: the sim stopped at game over");
+    if (ctx.sim.tick_count() == tick) {
+        spdlog::info("[PASS] Test 9: the sim ticks no more after game over");
+    } else {
+        osc::test_status::fail("[FAIL] Test 9: the sim ran {} ticks after game over",
+                               ctx.sim.tick_count() - tick);
+    }
 
     // Retail's score threads (aibrain.lua CollectCurrentScores and
     // SyncCurrentScores) read the engine's army stats under Moho's names;

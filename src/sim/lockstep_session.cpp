@@ -260,7 +260,8 @@ void LockstepSession::receive_and_advance() {
 
     // Advance as far as every peer's confirmations allow (a pause taken on
     // a tick holds before the next).
-    while (!sim_.network_paused() && sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
+    while (!sim_.network_paused() && !sim_.game_over() &&
+           sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
         sim_.tick();
         record_local_checksum(sim_.tick_count(), sim_.tick_checksum().values());
     }

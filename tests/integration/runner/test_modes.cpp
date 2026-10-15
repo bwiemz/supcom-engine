@@ -1182,6 +1182,7 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
 
         osc::i32 peak_entities = 0;
         osc::i32 tick_target = 10000;
+        bool result_noted = false;
 
         for (osc::i32 t = 0; t < tick_target; t++) {
             sim_state->tick();
@@ -1200,10 +1201,10 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
 
             // Check game-over — continue tracking but note it
             osc::i32 result = sim_state->player_result();
-            if (result != 0 && !sim_state->game_ended()) {
+            if (result != 0 && !result_noted) {
                 const char* result_str = result == 1 ? "VICTORY" : result == 2 ? "DEFEAT" : "DRAW";
                 spdlog::info("  Game over at tick {}: {}", t + 1, result_str);
-                sim_state->set_game_ended(true);
+                result_noted = true;
             }
         }
 

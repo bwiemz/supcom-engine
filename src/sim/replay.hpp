@@ -65,7 +65,7 @@ public:
     void resume(SimState& sim) const;
     /// After a tick: false from the first tick whose checksum differs.
     bool check(const SimState& sim);
-    /// Whether the sim has played every recorded tick.
+    /// Whether the sim has played every recorded tick, or its game is over.
     bool finished(const SimState& sim) const;
     /// The first tick whose checksum differed (0 = none yet).
     u32 diverged_at() const { return diverged_at_; }

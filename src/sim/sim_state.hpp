@@ -580,6 +580,9 @@ public:
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
+    /// Moho's mGameOver: game_ended() latched as a tick ends. From then on
+    /// tick() runs no more (faf-re Sim::AdvanceBeat).
+    bool game_over() const { return game_over_; }
 
     /// Whether the scenario's scripts decide the game (retail and FAF fork
     /// /lua/victory.lua's CheckVictory from BeginSession): then they call
@@ -1130,6 +1133,7 @@ private:
     u32 issuing_source_ = 0;
     u32 player_commands_issued_ = 0;
     bool game_ended_ = false;
+    bool game_over_ = false;
     bool script_victory_ = false;
     std::string victory_condition_ = "demoralization";
     VictoryMode victory_mode_ = VictoryMode::Demoralization;

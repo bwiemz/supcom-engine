@@ -278,7 +278,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
 /// other army loses its commander; the script defeats them (OnDefeat ->
 /// SetArmyOutOfGame and Sync.GameResult), declares the survivor's victory
 /// after its 15 s hold, and ends the session (EndGame); the UI hears each
-/// result (DoGameResult) and NoteGameOver, and the game is not paused.
+/// result (DoGameResult) and NoteGameOver, and the sim ticks no more.
 void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_frames,
                        const std::function<void(int)>& play,
                        const std::function<bool(const char*)>& sim_lua);

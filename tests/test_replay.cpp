@@ -146,6 +146,39 @@ TEST_CASE("Recording keeps what the sim applies, and a checksum each tick", "[re
     CHECK(sim.recorded_replay().commands[1].exec_tick == 3);
 }
 
+TEST_CASE("A replay ends on the tick that ended the game", "[replay]") {
+    const auto end_at_tick_5 = [](SimState& sim) {
+        sim.set_tick_observer([&sim](const SimState&) {
+            if (sim.tick_count() == 5) {
+                sim.set_game_ended(true);
+            }
+        });
+    };
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    setup(a);
+    end_at_tick_5(a);
+    a.set_recording(true);
+    for (int i = 0; i < 10; ++i) {
+        a.tick();
+    }
+    CHECK(a.recorded_replay().final_tick == 5);
+
+    Replay longer = a.recorded_replay();
+    longer.final_tick = 10;
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    setup(b);
+    end_at_tick_5(b);
+    osc::sim::ReplayPlayback playback(longer);
+    playback.start(b);
+    for (int i = 0; i < 10 && !playback.finished(b); ++i) {
+        b.tick();
+    }
+    CHECK(playback.finished(b));
+    CHECK(b.tick_count() == 5);
+}
+
 TEST_CASE("A lockstep peer's recording holds the other peers' commands", "[replay][lockstep]") {
     LuaGuard ga, gb;
     SimState a(ga.L, nullptr), b(gb.L, nullptr);
