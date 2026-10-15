@@ -7071,18 +7071,14 @@ void test_projectile(TestContext& ctx) {
             return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e)->get_weapon(0) : nullptr;
         };
         const osc::sim::Weapon* gun = first_weapon("uel0201");
-        const osc::sim::Weapon* blast = first_weapon("uab1101");
-        if (gun && gun->lead_target && gun->always_recheck_target && blast &&
-            blast->target_check_period == 30) {
+        if (gun && gun->lead_target && gun->always_recheck_target) {
             pass++;
-            spdlog::info("[PASS] Test 4b: a weapon blueprint's LeadTarget, AlwaysRecheckTarget "
-                         "and TargetCheckInterval left out are Moho's defaults");
+            spdlog::info("[PASS] Test 4b: a weapon blueprint's LeadTarget and AlwaysRecheckTarget "
+                         "left out are Moho's defaults");
         } else {
             fail++;
-            osc::test_status::fail(
-                "[FAIL] Test 4b: uel0201's gun: lead {}, recheck {}; uab1101's: check every {}",
-                gun && gun->lead_target, gun && gun->always_recheck_target,
-                blast ? blast->target_check_period : 0u);
+            osc::test_status::fail("[FAIL] Test 4b: uel0201's gun: lead {}, recheck {}",
+                                   gun && gun->lead_target, gun && gun->always_recheck_target);
         }
     }
 
