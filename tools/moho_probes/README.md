@@ -52,7 +52,7 @@ The original game answered on 2026-10-12: retail FA (Steam) under Proton, run tw
 | `scu-assist` | A support commander and an engineer guard a factory building tanks: does each build with it? | The engineer does; the support commander doesn't. The factory's progress is 0.09, 0.20 and 0.45 at ticks 60, 150 and 300. | Before: both did. Now: as the original. The factory's progress is 0.02, 0.05 and 0.11. | Moho's guard task takes up no live unit a `REBUILDER` guards. The low progress in both is the scenes' shared economy, starved of energy (the choke scene's Monkeylord upkeep among them), not the factory: see `economy` below. |
 | `scu-follow` | A support commander guards a tank driven 70 north: does it follow? | Yes: 16.7 and 31.0 behind at ticks 100 and 250 | Yes: 18.3 and 23.3 behind | Both follow; the original's lags a little more. |
 
-Found along the way: a land tank made in water 4 deep (at 560, 300) was gone by tick 250 in the original, while the engine's stood there unharmed. It is not yet a probe.
+Found along the way: a land tank made in water 4 deep (at 560, 300) was gone by tick 250 in the original, while the engine's stood there unharmed. `drown/` below asks why.
 
 The probes play the scenes at once, after the commanders' warp-in (tick 80). They make every other army neutral first, because the map's other commanders start near two of the scenes.
 
@@ -79,7 +79,13 @@ It also logs:
 
 It is done at `PROBE eng-build done`.
 
-Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, and with #646.
+**`drown/`** makes units in water their motion type can't be on, each on its own rows at the first spot as deep as it wants:
+- UEF T1 tanks (UEL0201, `RULEUMT_Land`) asked for at 0.2, 0.6, 1.2, 2.5 and 4 deep (the first spot within 0.1; on SCMP_009 they land 0.28, 0.53, 1.14, 2.42 and 4.10 deep);
+- in 4 deep, an amphibious tank (URL0203), a hover tank (UEL0203) and an engineer (UEL0105, `AmphibiousFloating`).
+
+Every `WaitTicks(5)`, which is 4 ticks, it logs each one's layer and health until it is gone. The log's `t` counts 5 a step, so its `t=125` is the 100th tick. It is done at `PROBE drown done`.
+
+Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); the engine on main 7f09e969, with #642, with #646, and with #653.
 
 | Probe | The original | The engine | So |
 |---|---|---|---|
@@ -92,3 +98,6 @@ Asked on 2026-10-14: the original once (`engineer` twice, with identical runs); 
 | `engineer` site | the frame at (262.5, 784.5) | (262, 784) before #646; now the same | The build task snaps its site to its footprint's cell, a script's order as the UI's. |
 | `engineer` start | `OnPrepareArmToBuild` after t=1, Building from t=2 | after t=0 before #646; now the same | The task's first tick only prepares (faf-re's `TASKSTATE_Preparing` returns 1). |
 | `engineer` arm | the open animation's wait ends after t=6; the turret turns 36° a tick from t=7 (36°, 72°, 108°, 144°) and settles at 155° at t=11; `OnStartBuild` after t=9 | the wait ended after t=4, the arm turned in one tick, `OnStartBuild` after t=5, before #646; all 32 logged rows the same now | Manipulators move before a unit's tasks (`Unit::MotionTick`), and `SetAimingArc`'s slews are degrees a second. |
+| `drown` layers | every tank, however shallow the water, and the amphibious tank on the Seabed; the hover tank and the engineer on the Water | all on Land before #653; now the same | A unit takes the layer of the place it is made (`Entity::GetStartingLayer`). |
+| `drown` tanks | 12 health off every 4 ticks (1% of 300 a tick); gone on the 100th tick | unharmed before #653; all 232 logged rows the same now | A surface unit on a layer its motion type can't be on loses 1% a tick (`CUnitMotion::CalcMoveCommon`). |
+| `drown` others | the amphibious tank, the hover tank and the engineer unharmed | the same | They are on layers their motion types allow. |
