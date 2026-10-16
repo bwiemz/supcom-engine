@@ -168,6 +168,21 @@ TEST_CASE("locate_game_install falls back to Steam retail FA", "[platform][insta
     CHECK(fs::equivalent(result.install->fa_path, fa));
     CHECK(result.install->init_file.filename() == "SupComDataPath.lua");
     CHECK(result.install->faf_data_path.empty());
+
+#ifdef __APPLE__
+    // macOS: Windows Steam in a CrossOver bottle
+    TempDir mac;
+    const fs::path steam = mac.path / "home" / "Library" / "Application Support" / "CrossOver" /
+                           "Bottles" / "Steam" / "drive_c" / "Program Files (x86)" / "Steam";
+    write_file(steam / "steamapps" / "appmanifest_9420.acf", kFaManifest);
+    const fs::path bottled = steam / "steamapps" / "common" / "Supreme Commander Forged Alliance";
+    write_file(bottled / "bin" / "SupComDataPath.lua", "path = {}\n");
+    auto bottle_result =
+        locate_game_install({}, fake_env({{"HOME", (mac.path / "home").string()}}));
+    REQUIRE(bottle_result.install.has_value());
+    CHECK(bottle_result.install->source == "steam");
+    CHECK(fs::equivalent(bottle_result.install->fa_path, bottled));
+#endif
 }
 
 TEST_CASE("locate_game_install prefers FAF when its init exists", "[platform][install]") {
