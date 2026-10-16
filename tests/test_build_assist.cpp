@@ -466,3 +466,33 @@ TEST_CASE("Repairing a script set goes when a repair of a unit under constructio
     REQUIRE(w.site->fraction_complete() == 1.0f);
     CHECK_FALSE(eng->has_unit_state("Repairing"));
 }
+
+TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is done or stopped",
+          "[build][assist][repair]") {
+    AssistSim w;
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->is_repairing());
+    CHECK(eng->focus_id() == w.site->entity_id());
+    for (int i = 0; i < 200 && eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.site->health() == w.site->max_health());
+    CHECK(eng->focus_id() == 0);
+
+    w.site->set_health(50.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 2), true);
+    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->focus_id() == w.site->entity_id());
+    eng->push_command(order(CommandType::Stop, *w.site, 3), true);
+    w.sim.tick();
+    CHECK(eng->focus_id() == 0);
+}

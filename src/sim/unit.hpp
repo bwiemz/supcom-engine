@@ -734,6 +734,19 @@ public:
     void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
     /// The silo whose missile this unit's Guard helps build, else 0.
     u32 silo_assist_id() const { return silo_assist_id_; }
+    /// What it works on (Moho's CBuildTaskHelper focus), else 0.
+    u32 focus_id() const {
+        if (build_target_id_ != 0) {
+            return build_target_id_;
+        }
+        if (capture_target_id_ != 0) {
+            return capture_target_id_;
+        }
+        if (silo_assist_id_ != 0) {
+            return silo_assist_id_;
+        }
+        return repair_target_id_;
+    }
 
     /// The weapon a launch order uses: the first enabled one with ManualFire
     /// and CountedProjectile (a NukeWeapon for a nuke), OverCharge aside.
