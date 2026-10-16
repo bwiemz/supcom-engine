@@ -1617,7 +1617,9 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     }
     // It looks every 6 ticks (Moho's Execute returns 7), and not while it
     // helps: Moho's help is a task of its own above the guard's.
-    if (is_building() || is_reclaiming() || is_repairing()) return std::nullopt;
+    if (is_building() || is_reclaiming() || is_repairing() || silo_assist_id_ != 0) {
+        return std::nullopt;
+    }
     if (cmd.patrol_scan > 0) {
         --cmd.patrol_scan;
         return std::nullopt;
@@ -1698,7 +1700,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY"))
         return guard_factory_queue(cmd, *target_unit, dt, ctx, econ_eff);
 
-    const bool task_waits = waits_out_task(cmd);
+    bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
     // after factory assist, before build, reclaim and repair help).
     if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), dt, ctx))
@@ -1757,6 +1759,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // commander guarding a factory doesn't build with it (probed
     // 2026-10-13, `scu-assist`). It still repairs it.
     const bool repairs = has_category("REPAIR") && build_rate_ > 0;
+    const auto needs_repair = [&] {
+        return target_unit->health() < target_unit->max_health() ||
+               target_unit->shield_needs_repair(registry, L);
+    };
     const bool reclaims = has_category("RECLAIM") && build_rate_ > 0 && !rebuilder;
 
     // Assist: if target is building, contribute build power
@@ -1863,7 +1869,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 }
             }
         }
-    } else if (repairs && !rebuilder && target_unit->silo_building() && !target_unit->is_paused()) {
+    } else if (repairs && !rebuilder && target_unit->silo_building() && !target_unit->is_paused() &&
+               (silo_assist_id_ == cmd.target_id || !needs_repair())) {
         // Assist a silo's missile: this unit's build power on it, at
         // its share of the cost (retail's UpdateConsumptionValues
         // for a SiloBuildingAmmo focus). A paused silo's helpers
@@ -1871,6 +1878,12 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         working = true;
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
+        if (repair_target_id_ == cmd.target_id) {
+            stop_repairing(L, registry);
+            cmd.task_wait = 6;
+            cmd.patrol_scan = 0;
+            task_waits = true;
+        }
         if (within_reach(*target_unit, true, false)) {
             // Moho's repair task on it, begun unpaused: focus, OnStartBuild,
             // Repairing, and the silo's progress for its own (faf-re
@@ -1909,18 +1922,19 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             }
         }
     } else {
-        // faf-re CUnitGuardTask::Execute returns 7: the guard looks 6 ticks after the silo's
-        // missile, and a task it hands out first runs 6 after that
+        // faf-re CUnitGuardTask::Execute returns 7: after the silo's missile the guard looks at
+        // once, then every 6 ticks, and a task it hands out first runs 6 ticks on
         if (silo_assist_id_ == cmd.target_id && !target_unit->silo_building()) {
-            cmd.task_wait = 12;
+            cmd.task_wait = needs_repair() ? 6 : 12;
+            cmd.patrol_scan = 0;
+            task_waits = true;
         }
         // Target not building/reclaiming — stop if we were
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged and we have build_rate
-        if (repairs && (target_unit->health() < target_unit->max_health() ||
-                        target_unit->shield_needs_repair(registry, L))) {
+        if (repairs && needs_repair()) {
             working = true;
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                 if (is_repairing()) stop_repairing(L, registry);
@@ -1942,6 +1956,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 }
                 if (repair_target_id_ != 0) {
                     progress_repair(dt, registry, L, econ_eff);
+                    if (repair_target_id_ == 0 && target_unit->silo_building()) {
+                        cmd.task_wait = 6;
+                        cmd.patrol_scan = 0;
+                    }
                 }
             }
         } else {
