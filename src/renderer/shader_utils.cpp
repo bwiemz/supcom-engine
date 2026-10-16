@@ -111,8 +111,8 @@ layout(set = 0, binding = 17) uniform sampler2D normalMap6;
 layout(set = 0, binding = 18) uniform sampler2D normalMap7;
 layout(set = 0, binding = 19) uniform sampler2D normalMap8;
 
-// Fog of war (binding 20)
-layout(set = 0, binding = 20) uniform sampler2D fogMap;
+// (Binding 20 was the fog of war's grid, before the fog was drawn as
+// Moho's RenderFogOfWar draws it, over the whole frame: VisionRenderer.)
 
 // The map's normal maps (binding 21, M212e): its tiles side by side, one
 // texel a world unit; x in alpha, z in green.
@@ -253,13 +253,6 @@ vec3 applyWaterColor(vec3 lit, vec2 blendUV) {
     vec4 waterTint = texture(waterRamp, vec2(waterDepth, 0.5));
     return mix(lit, waterTint.rgb, waterTint.a);
 }
-
-// Fog of war: what the army doesn't see is darkened as FA's frame.fx
-// Vision pass darkens it, black at alpha 0.33 over the colour (M215g).
-vec3 applyFogOfWar(vec3 lit, vec2 blendUV) {
-    float fogVal = texture(fogMap, blendUV).r;
-    return lit * mix(0.67, 1.0, fogVal);
-}
 )glsl";
 
 const char* kTerrainPush = R"glsl(#version 450
@@ -366,7 +359,6 @@ void main() {
     // Under the water (both techniques), then the fog of war. No distance
     // fog: FA's shaders have none (M210a).
     lit = applyWaterColor(lit, blendUV);
-    lit = applyFogOfWar(lit, blendUV);
 
     outColor = vec4(lit, glow);
 }
@@ -431,7 +423,6 @@ void main() {
         alpha = albedo.a * mask.a * pc.mapAlpha.z;
     }
     lit = applyWaterColor(lit, blendUV);
-    lit = applyFogOfWar(lit, blendUV);
     outColor = vec4(lit, alpha);
 }
 )glsl";
@@ -479,7 +470,7 @@ void main() {
                      clamp(dot(lightUbo.sunDirection.xyz, normal), 0.0, 1.0) * shadow +
                  lightUbo.sunAmbience.rgb;
     light = lightUbo.sunColor.w * light + lightUbo.shadowFill.rgb * (1.0 - light);
-    vec3 lit = applyFogOfWar(albedo * light, blendUV);
+    vec3 lit = albedo * light;
     outColor = vec4(lit, 0.0);
 }
 )glsl";
@@ -643,7 +634,6 @@ void main() {
     vec3 lit = lightTTerrain(albedo.rgb, clamped(decalSpec, fragDecalUV).r, worldNormal, worldPos,
                              pc.eye.xyz, 1.0, spec);
     lit = applyWaterColor(lit, blendUV);
-    lit = applyFogOfWar(lit, blendUV);
     outColor = vec4(lit, 0.01);
 }
 )glsl";
@@ -669,7 +659,7 @@ void main() {
     vec4 albedo = texture(splatAlbedo, clamp(fragSplatUV, edge, 1.0 - edge));
     // LowFidelitySplat (M212h, eye.w set): the albedo, unlit
     if (pc.eye.w > 0.5) {
-        outColor = vec4(applyFogOfWar(albedo.rgb, blendUV), albedo.a * fragAlpha);
+        outColor = vec4(albedo.rgb, albedo.a * fragAlpha);
         return;
     }
 
@@ -680,7 +670,6 @@ void main() {
     float spec;
     vec3 lit = lightTTerrain(albedo.rgb, 0.0, worldNormal, worldPos, pc.eye.xyz, shadow, spec);
     lit = applyWaterColor(lit, blendUV);
-    lit = applyFogOfWar(lit, blendUV);
     outColor = vec4(lit, albedo.a * fragAlpha);
 }
 )glsl";

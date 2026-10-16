@@ -35,7 +35,6 @@ add_library(osc_renderer STATIC
     projectile_icon_renderer.cpp
     hud_renderer.cpp
     selection_info_renderer.cpp
-    fog_renderer.cpp
     playable_rect.cpp
     recon_view.cpp
     decal_math.cpp

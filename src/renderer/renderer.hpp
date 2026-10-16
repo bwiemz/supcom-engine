@@ -30,7 +30,6 @@
 #include "renderer/sky_renderer.hpp"
 #include "renderer/cartographic_renderer.hpp"
 #include "renderer/water_renderer.hpp"
-#include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/wave_system.hpp"
 #include "renderer/particle_renderer.hpp"
@@ -254,6 +253,8 @@ public:
     /// (Moho's Cartographic::Render), as last updated.
     const RangeRenderer& minimap_ranges() const { return minimap_ranges_; }
     const VisionRenderer& minimap_vision() const { return minimap_vision_; }
+    /// The world's fog of war, as last updated
+    const VisionRenderer& world_vision() const { return vision_renderer_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
     void set_command_highlight(u32 command_id) { highlight_command_ = command_id; }
@@ -628,9 +629,12 @@ private:
         bool blend1 = false;
     };
     TerrainStrataViews terrain_strata_views(const map::Terrain& terrain);
-    /// The fog of war's texture, a texel per vision cell, into the terrain's
-    /// set (binding 20).
-    void init_fog_texture(const map::Terrain& terrain);
+    /// The terrain's set's binding 20, which nothing reads now (it held the
+    /// fog of war's grid): white, so the set is whole.
+    void bind_unused_terrain_slot();
+    /// This frame's fog of war: the focus army's vision circles, for the
+    /// world's and the minimap's vision renderers.
+    void update_fog(const sim::FrameView& view, u32 fi);
     /// The map's normal maps into the terrain's set (binding 21), and the
     /// normal target the normal pass draws (binding 26).
     void bind_terrain_normal_maps(const TerrainNormalMaps& normal_maps);
@@ -854,7 +858,9 @@ private:
     /// The cartographic frame a minimap view draws this frame (the first
     /// cartographic one painted), recorded before the scene's passes.
     std::optional<CartographicRenderer::View> cartographic_view_;
-    FogRenderer fog_renderer_;
+    VisionRenderer vision_renderer_; ///< the world's fog of war (scene pass)
+    bool fog_on_ = false;            ///< this frame's: a focus army, fog of war
+    std::vector<RangeRing> fog_circles_;
     UIRenderer ui_renderer_;
     MovieTextures movie_textures_; ///< Movie controls' frames (M216a)
     OverlayRenderer overlay_renderer_;

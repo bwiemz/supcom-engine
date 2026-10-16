@@ -406,7 +406,8 @@ void Renderer::create_descriptor_layouts() {
     }
 
     // Terrain texture descriptor set layout (set=0): bindings 0-1: blend maps,
-    // 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war, 21: the
+    // 2-10: stratum albedo, 11-19: stratum normal, 20: unused (it was the fog
+    // of war's grid; white), 21: the
     // map's normal maps (M212e), 22: the upper stratum's albedo (all combined
     // image samplers), 23: the strata's sizes (a uniform buffer, M212a).
     {
@@ -492,6 +493,8 @@ void Renderer::init_sub_renderers() {
     if (has_stencil()) {
         minimap_ranges_.init(device_, allocator_, cartographic_.frame_pass());
         minimap_vision_.init(device_, allocator_, cartographic_.frame_pass());
+        // The world's fog of war, drawn as Moho's RenderFogOfWar draws it
+        vision_renderer_.init(device_, allocator_, frame_.scene_pass());
     }
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, frame_.scene_pass());
@@ -1392,7 +1395,6 @@ void Renderer::clear_scene() {
     water_renderer_.clear();
     sky_renderer_.clear();
     cartographic_.clear(texture_cache_);
-    fog_renderer_.destroy(device_, allocator_);
 
     if (bone_ds_pool_) {
         vkDestroyDescriptorPool(device_, bone_ds_pool_, nullptr);
@@ -1568,8 +1570,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // Load terrain stratum textures and create terrain descriptor set
     bind_terrain_strata(*terrain, normal_maps);
 
-    // Init fog of war texture: a texel per cell of the vision grid
-    init_fog_texture(*terrain);
+    // Binding 20, no longer read: white, so the set is whole
+    bind_unused_terrain_slot();
 
     // The map's normal maps (M212e; binding 21), which the normal pass's
     // basis samples, and the normal target it draws (binding 26).
@@ -1618,28 +1620,20 @@ void Renderer::create_bone_descriptors() {
     }
 }
 
-void Renderer::init_fog_texture(const map::Terrain& terrain) {
-    const u32 cell = map::intel_cell_size(map::IntelLayer::Vision);
-    const u32 fog_w = std::max<u32>(static_cast<u32>(terrain.map_width()) / cell, 1);
-    const u32 fog_h = std::max<u32>(static_cast<u32>(terrain.map_height()) / cell, 1);
-    fog_renderer_.init(fog_w, fog_h, device_, allocator_, cmd_pool_, graphics_queue_);
-
-    // Write fog texture to terrain descriptor set binding 20
-    if (fog_renderer_.initialized() && terrain_tex_ds_) {
-        VkDescriptorImageInfo fog_info{};
-        fog_info.sampler = fog_renderer_.sampler();
-        fog_info.imageView = fog_renderer_.image_view();
-        fog_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        VkWriteDescriptorSet fog_write{};
-        fog_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        fog_write.dstSet = terrain_tex_ds_;
-        fog_write.dstBinding = 20;
-        fog_write.descriptorCount = 1;
-        fog_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        fog_write.pImageInfo = &fog_info;
-        vkc::update_descriptor_sets(device_, 1, &fog_write, 0, nullptr);
-    }
+void Renderer::bind_unused_terrain_slot() {
+    if (!terrain_tex_ds_) return;
+    VkDescriptorImageInfo info{};
+    info.sampler = texture_sampler_;
+    info.imageView = texture_cache_.fallback_view();
+    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = terrain_tex_ds_;
+    write.dstBinding = 20;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &info;
+    if (info.imageView) vkc::update_descriptor_sets(device_, 1, &write, 0, nullptr);
 }
 
 void Renderer::bind_terrain_normal_maps(const TerrainNormalMaps& normal_maps) {
@@ -1964,7 +1958,6 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     economy_overlay_renderer_.set_frame_index(fi);
     hud_renderer_.set_frame_index(fi);
     selection_info_renderer_.set_frame_index(fi);
-    fog_renderer_.set_frame_index(fi);
     profile_overlay_.set_frame_index(fi);
 
     // Camera shakes of the ticks since the last frame
@@ -2002,11 +1995,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     gpu_queries_.begin(cmd_buf_[fi], fi, frame_sequence_ + 1);
     mesh_draws_.fill(0); // this frame's, for tests (M211k)
 
-    // Upload fog of war texture (barriers + copy, before any render pass)
-    if (fog_renderer_.initialized()) {
-        fog_renderer_.record_upload(cmd_buf_[fi]);
-    }
-    // The movies' new frames, likewise.
+    // The movies' new frames (barriers + copy, before any render pass)
     movie_textures_.record(cmd_buf_[fi]);
     record_terrain_sync(cmd_buf_[fi]);
     // The cartographic frame the minimap's quad samples (its own passes),
@@ -2823,12 +2812,9 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
                             minimap_painter);
     }
 
-    // Stage fog of war data from visibility grid (CPU side)
-    if (fog_enabled_ && fog_renderer_.initialized() && view.cur()) {
-        if (player_army_ >= 0 && view.cur()->sight.army == player_army_)
-            fog_renderer_.stage(view.cur()->sight);
-        else fog_renderer_.stage_clear(); // an observer's: all visible
-    }
+    // The fog of war, from the focus army's vision circles (Moho's VisionDB),
+    // drawn over the world and on the minimap
+    update_fog(view, fi);
 
     // Effects are made at the player's graphics fidelity (graphics_Fidelity).
     beam_renderer_.set_fidelity(fidelity());
@@ -3196,6 +3182,10 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     // The last of the meshes, after the effects above the water: the
     // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
     draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
+    // The fog of war over all of it (WRenViewport::Render: after the meshes
+    // and effects, before the refracting effects and the world view's own
+    // overlays): what no vision circle holds, darkened to 67%
+    vision_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
     // The order lines and waypoints, over the world (TCommand)
     command_graph_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
     selection_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
@@ -3980,6 +3970,7 @@ void Renderer::set_volume_heights(const map::Heightmap& h) {
     range_renderer_.set_heights(lowest, h.max_height());
     minimap_ranges_.set_heights(lowest, h.max_height());
     minimap_vision_.set_heights(lowest, h.max_height());
+    vision_renderer_.set_heights(lowest, h.max_height());
     cartographic_.set_volume_heights(lowest - 5.0f, h.max_height());
 }
 
@@ -3996,14 +3987,26 @@ void Renderer::update_minimap_overlays(const sim::FrameView& view, const BuildGh
                             ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
     minimap_ranges_.update(range_batches(*range_overlays_, scene), range_overlays_->settings(),
                            span, 1.0f, fi);
-    // And the fog, but for an observer (no focus army: RenderFogOfWar isn't
-    // given the vision renderer) or with no fog of war
-    const sim::WorldSnapshot* cur = view.cur();
-    if (fog_enabled_ && player_army_ >= 0 && cur && cur->sight.army == player_army_ &&
-        !cur->sight.everywhere) {
-        minimap_vision_.update(vision_circles(view, player_army_), fi);
+    // And the fog, the world's (update_fog)
+    if (fog_on_) {
+        minimap_vision_.update(fog_circles_, fi);
     } else {
         minimap_vision_.set_off();
+    }
+}
+
+void Renderer::update_fog(const sim::FrameView& view, u32 fi) {
+    // None for an observer (no focus army: RenderFogOfWar isn't given the
+    // vision renderer) or with no fog of war
+    const sim::WorldSnapshot* cur = view.cur();
+    fog_on_ = fog_enabled_ && player_army_ >= 0 && cur && cur->sight.army == player_army_ &&
+              !cur->sight.everywhere;
+    fog_circles_.clear();
+    if (fog_on_) {
+        fog_circles_ = vision_circles(view, player_army_);
+        vision_renderer_.update(fog_circles_, fi);
+    } else {
+        vision_renderer_.set_off();
     }
 }
 
@@ -4249,7 +4252,7 @@ void Renderer::shutdown() {
     water_renderer_.destroy(device_, allocator_);
     sky_renderer_.destroy(device_, allocator_);
     cartographic_.destroy();
-    fog_renderer_.destroy(device_, allocator_);
+    vision_renderer_.destroy(device_, allocator_);
     movie_textures_.destroy();
     ui_renderer_.destroy(device_, allocator_);
     overlay_renderer_.destroy(device_, allocator_);
