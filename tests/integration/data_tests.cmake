@@ -49,7 +49,7 @@ set(OSC_DATA_TESTS_GATE
     patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-render-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test
     repair-test resource-icon-render-test right-click-test scale-test scissor-test scroll-render-test scrollbar-render-test selection-render-test session-command-test shadow-test
-    mesh-capacity-test shield-render-test shield-test silo-test sky-test cartographic-test cartographic-minimap-test cartographic-main-test world-fog-test world-shapes-test skirt-render-test smoke-test spatial-test strata-test
+    mesh-capacity-test shield-render-test shield-test silo-test sky-test cartographic-test cartographic-minimap-test cartographic-main-test playable-boundary-test world-fog-test world-shapes-test skirt-render-test smoke-test spatial-test strata-test
     specular-test stall-test stats-test shore-test steer-test strategic-icon-test stress-test stub-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test trail-render-test

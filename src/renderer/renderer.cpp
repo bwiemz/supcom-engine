@@ -494,6 +494,9 @@ void Renderer::init_sub_renderers() {
         minimap_ranges_.init(device_, allocator_, cartographic_.frame_pass());
         minimap_vision_.init(device_, allocator_, cartographic_.frame_pass());
         main_frame_ranges_.init(device_, allocator_, cartographic_.frame_pass());
+        // The playable area's boundary, in the world and in the frames
+        boundary_renderer_.init(device_, frame_.scene_pass());
+        frame_boundary_.init(device_, cartographic_.frame_pass());
         // The world's fog of war, drawn as Moho's RenderFogOfWar draws it
         vision_renderer_.init(device_, allocator_, frame_.scene_pass());
     }
@@ -2059,6 +2062,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             [&](VkCommandBuffer cmd, const f32* view_proj, u32 w, u32 h) {
                 main_frame_ranges_.render(cmd, w, h, view_proj, fi);
                 minimap_vision_.render(cmd, w, h, view_proj, fi);
+                frame_boundary_.render(cmd, w, h, view_proj);
             });
     }
 
@@ -2824,6 +2828,17 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     events.intel_flushes.clear();
     // A playable rect the scripts synced since: what's outside it now hides
     playable_rect_.apply(view);
+    // And outside it the world is blacked out (ren_PlayableBoundary, in a
+    // game, a playable rect smaller than the map)
+    if (playable_boundary_ && terrain_ && view.cur()) {
+        const auto w = static_cast<f32>(terrain_->map_width());
+        const auto h = static_cast<f32>(terrain_->map_height());
+        boundary_renderer_.update(w, h, playable_rect_.rect());
+        frame_boundary_.update(w, h, playable_rect_.rect());
+    } else {
+        boundary_renderer_.set_off();
+        frame_boundary_.set_off();
+    }
 
     // Before the meshes: its planned sites are ghosts among them
     command_graph_renderer_.set_highlight(highlight_command_, hovered_);
@@ -3271,8 +3286,7 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
 
     // 3. The meshes (real SCM models with GPU skinning): on a map with water,
     // those Moho draws before it (M213b)
-    draw_meshes(cmd_buf_[fi], fi, vp,
-                water_renderer_.has_water() ? MeshPass::BeforeWater : MeshPass::All);
+    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::BeforeWater);
 
     // 4. Draw cube fallback units (skip when strategic zoom active)
     if (!strategic_icon_renderer_.is_strategic_zoom() &&
@@ -3329,10 +3343,13 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
         // draws them once the water is down (Medium and High; Low drew them).
         if (fidelity() > 0)
             record_decals(cmd_buf_[fi], fi, DecalTechnique::WaterAlbedo, decal_water_pipeline_, vp);
-        // The meshes Moho draws after the water (M213b), which writes no
-        // depth: over it, unrefracted.
-        draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
     }
+    // The playable area's boundary (RenderPlayableBoundary), after the water
+    // and before the meshes Moho draws after it
+    boundary_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data());
+    // The meshes Moho draws after the water (M213b), which writes no depth:
+    // over it, unrefracted (on a dry map, in the same place)
+    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
 
     // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
     // Moho's CWorldParticles::RenderEffects draws them
@@ -4174,6 +4191,7 @@ void Renderer::draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, 
     // Cartographic::Render's order: the range rings, then the fog
     minimap_ranges_.render(cmd, width, height, view_proj, fi);
     minimap_vision_.render(cmd, width, height, view_proj, fi);
+    frame_boundary_.render(cmd, width, height, view_proj);
 }
 
 std::optional<Renderer::CartographicImages>
@@ -4425,6 +4443,8 @@ void Renderer::shutdown() {
     minimap_ranges_.destroy(device_, allocator_);
     minimap_vision_.destroy(device_, allocator_);
     main_frame_ranges_.destroy(device_, allocator_);
+    boundary_renderer_.destroy(device_);
+    frame_boundary_.destroy(device_);
     resource_icon_renderer_.destroy(device_, allocator_);
     projectile_icon_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);

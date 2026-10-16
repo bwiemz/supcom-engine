@@ -174,6 +174,7 @@ constexpr Mode kModesBefore[] = {
     {"--cartographic-minimap-test", test_cartographic_minimap, true},
     {"--world-fog-test", test_world_fog, false},
     {"--cartographic-main-test", test_cartographic_main, true},
+    {"--playable-boundary-test", test_playable_boundary, false},
     {"--world-shapes-test", test_world_shapes, true},
     {"--skirt-render-test", test_skirt_render, false},
     {"--water-reflection-test", test_water_reflection, false},
@@ -406,6 +407,7 @@ void IntegrationModes::print_usage() const {
               << "  --cartographic-minimap-test A cartographic minimap view draws that frame\n"
               << "  --world-fog-test   The fog of war over the world, as Moho draws it\n"
               << "  --cartographic-main-test  A cartographic main view: the map, orthographic\n"
+              << "  --playable-boundary-test  Outside a smaller playable rect, the world black\n"
               << "  --world-shapes-test FAF's OnRenderWorld draws its shapes in the world\n"
               << "  --skirt-render-test The terrain's skirt below the map's edges (TTerrainSkirt)\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"

@@ -105,7 +105,7 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     }};
     VkPipelineVertexInputStateCreateInfo vi{};
     vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    if (state.cast) {
+    if (state.cast && state.ring_input) {
         vi.vertexBindingDescriptionCount = static_cast<u32>(bindings.size());
         vi.pVertexBindingDescriptions = bindings.data();
         vi.vertexAttributeDescriptionCount = static_cast<u32>(attrs.size());
@@ -124,11 +124,11 @@ VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLa
     dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dyn.dynamicStateCount = static_cast<u32>(dyn_states.size());
     dyn.pDynamicStates = dyn_states.data();
-    // Both faces: Cast's two passes, one per facing, in one
+    // Both faces (Cast's two passes, one per facing, in one), unless culled
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     raster.polygonMode = VK_POLYGON_MODE_FILL;
-    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.cullMode = state.cull;
     raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo ms{};
