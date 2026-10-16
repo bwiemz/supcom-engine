@@ -64,6 +64,10 @@ enum class MeshTechnique : u32 {
     CommandFeedback = 28,  ///< CommandFeedbackVS(0.7), CommandFeedbackPS0
     CommandFeedback2 = 29, ///< CommandFeedbackVS(1.1), CommandFeedbackPS0
     RallyPoint = 30,       ///< CommandFeedbackVS(0.7), CommandFeedbackPS0 unfaded
+    /// The map's border (MapBorderAdd): MapImagerPS0, the albedo lit by the
+    /// sun where the SpecTeam's blue doesn't mask it, glowing nowhere; then
+    /// MapImagerPS1, the glow alone.
+    MapImager = 31,
 };
 
 /// The order marks' techniques, drawn by the feedback pipeline.
@@ -161,10 +165,12 @@ inline ShieldPasses shield_passes(MeshTechnique t) {
 
 /// A technique with a depth stage (STAGE_DEPTH), which casts a shadow. Not
 /// AeonBuild or AlphaFade: a unit Aeon are building, and UEF's build
-/// slices, cast none (M211f/g); nor do shields (M211k).
+/// slices, cast none (M211f/g); nor do shields (M211k), nor the map's
+/// border (MapImager_LowFi is PREWATER + PREEFFECT alone).
 inline bool has_depth_stage(MeshTechnique t) {
     return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
-           t != MeshTechnique::UnitPlace && !is_shield_technique(t) && !is_feedback_technique(t);
+           t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
+           !is_shield_technique(t) && !is_feedback_technique(t);
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`
@@ -251,6 +257,9 @@ public:
     /// set with SetMesh is a mesh blueprint, which has no scale: the
     /// entity's own blueprint gives it.
     f32 blueprint_scale(const std::string& blueprint_id, lua_State* L);
+    /// A mesh blueprint's own UniformScale (RMeshBlueprint's; 1 without
+    /// one), which the map's border is drawn at (MapImager::AddBorder).
+    f32 mesh_uniform_scale(const std::string& mesh_bp_id, lua_State* L);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

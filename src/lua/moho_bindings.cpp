@@ -3483,7 +3483,7 @@ static int l_SessionIsPaused(lua_State* L) {
 
 /// MapBorderClear() / MapBorderAdd(mesh): the decorative meshes around the
 /// map's edge (the skin's "imager" mesh; retail's UpdateWorldBorderState).
-/// They are kept for the world view; nothing draws them yet.
+/// Kept in order for the renderer, which draws each (map_border.hpp).
 static int l_MapBorderClear(lua_State* L) {
     lua_pushstring(L, "__osc_map_border_meshes");
     lua_newtable(L);

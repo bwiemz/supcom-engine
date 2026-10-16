@@ -25,6 +25,7 @@ extern "C" {
 #include "renderer/terrain_normal_maps.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/decal_math.hpp"
+#include "renderer/map_border.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/intel_grid.hpp"
 #include "ui/world_view.hpp"
@@ -1100,20 +1101,25 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     // by their alpha and write colour only; the build overlays that
     // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
     // leaves depth unwritten (M211g). The layouts match.
-    // The order marks (CommandFeedback) blend colour with no depth test.
-    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback };
+    // The order marks (CommandFeedback) blend colour with no depth test;
+    // the map border's second pass writes its glow alone.
+    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback, GlowOnly };
     const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
         const bool colour_only =
             blend == Blend::Fade || blend == Blend::FadeNoDepthWrite || blend == Blend::Feedback;
+        constexpr VkColorComponentFlags kGlowOnly = VK_COLOR_COMPONENT_A_BIT;
+        const VkColorComponentFlags written = blend == Blend::GlowOnly ? kGlowOnly
+                                              : colour_only            ? kColorOnly
+                                                                       : kColorAndGlow;
         return PipelineBuilder()
             .set_shaders(mv, mf)
             .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                               static_cast<u32>(attrs.size()))
             .set_depth_test(blend != Blend::Feedback,
                             blend != Blend::FadeNoDepthWrite && blend != Blend::Feedback)
-            .set_blend(blend != Blend::Opaque)
+            .set_blend(blend != Blend::Opaque && blend != Blend::GlowOnly)
             .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-            .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
+            .set_color_write_mask(written)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
             .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
                                    sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32) +
@@ -1133,6 +1139,7 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
     mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
+    mesh_glow_pipeline_ = build_mesh(Blend::GlowOnly, &mesh_glow_layout_);
 
     // The shields' (M211k): their own shaders, the mesh's input, push
     // block and sets, and mesh.fx's states. Each depth-tests; only the
@@ -1422,6 +1429,26 @@ void Renderer::inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDr
     for (const WorldMeshDraw& world_mesh : world_meshes) {
         inject(world_mesh.spec, world_mesh.created_tick, world_mesh.lifetime,
                world_mesh.lod_cutoff);
+    }
+}
+
+void Renderer::inject_map_border(lua_State* L, const std::vector<std::string>& meshes) {
+    if (meshes.empty() || !terrain_ || !height_bounds_) {
+        return;
+    }
+    // Over the heightfield as it is now (UpdateMeshStances, each frame)
+    const Box field = height_bounds_->box();
+    const f32 offset = terrain_->cartographic().imager_elevation_offset;
+    for (const std::string& id : meshes) {
+        const GPUMesh* mesh = mesh_cache_.get(id, L);
+        if (!mesh) {
+            continue;
+        }
+        MeshInstance inst{};
+        const auto model = map_border_model(field, offset, mesh_cache_.mesh_uniform_scale(id, L));
+        std::copy(model.begin(), model.end(), inst.model);
+        inst.r = inst.g = inst.b = inst.a = 1.0f;
+        unit_renderer_.inject_mesh(mesh, inst, &texture_cache_);
     }
 }
 
@@ -2347,10 +2374,10 @@ void Renderer::dump_frame(std::ostream& out) const {
 
 void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp,
                            MeshPass stage) {
-    // None when strategic zoom replaces 3D units with 2D icons.
-    if (strategic_icon_renderer_.is_strategic_zoom() || unit_renderer_.mesh_groups().empty() ||
-        !mesh_pipeline_)
-        return;
+    if (unit_renderer_.mesh_groups().empty() || !mesh_pipeline_) return;
+    // At strategic zoom the icons stand in for the meshes; all but the map's
+    // border, whose one LOD shows to 100000 (map-border_*_mesh.bp).
+    const bool strategic = strategic_icon_renderer_.is_strategic_zoom();
     const bool mirrored = stage == MeshPass::Reflection;
     const f32 surface = water_renderer_.water_elevation();
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline_);
@@ -2418,6 +2445,7 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // before the water or after it, or after the effects too (the
         // shields', M211k); only units are reflected.
         const MeshTechnique technique = drawn_technique(group);
+        if (strategic && technique != MeshTechnique::MapImager) continue;
         const bool after_effects = is_post_effect_technique(technique);
         const bool after_water = is_post_water_technique(technique);
         if ((stage == MeshPass::AfterEffects) != after_effects ||
@@ -2503,6 +2531,9 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         else if (technique == MeshTechnique::UnitPlace) {
             passes[0] = mesh_overlay_pipeline_;
         }
+        // The map's border: lit colour, then its glow alone.
+        else if (technique == MeshTechnique::MapImager)
+            passes[1] = mesh_glow_pipeline_;
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
         for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
@@ -2848,6 +2879,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
     const std::vector<WorldMeshDraw> world_meshes =
         ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
+    const std::vector<std::string> border_meshes = map_border_meshes(L);
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
@@ -2859,7 +2891,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
             static_cast<u32>(command_graph_renderer_.planned_sites().size()) +
             static_cast<u32>(formation_ghosts_.size()) +
             static_cast<u32>(feedback_blips_.blips().size()) +
-            static_cast<u32>(world_meshes.size()));
+            static_cast<u32>(world_meshes.size()) + static_cast<u32>(border_meshes.size()));
         unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
                               &frustum, meshes_drawn);
     }
@@ -2920,6 +2952,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
     feedback_blips_.update(frame_dt_);
     inject_feedback_blips(L, world_meshes);
+    inject_map_border(L, border_meshes);
 
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
@@ -3615,7 +3648,8 @@ void Renderer::bind_normal_target() {
 
 u32 Renderer::mesh_instance_count() const {
     u32 n = 0;
-    for (const MeshDrawGroup& g : unit_renderer_.mesh_groups()) n += g.instance_count;
+    for (const MeshDrawGroup& g : unit_renderer_.mesh_groups())
+        if (g.mesh && g.mesh->technique != MeshTechnique::MapImager) n += g.instance_count;
     return n;
 }
 
@@ -4511,6 +4545,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_cube_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_feedback_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_feedback_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_glow_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_glow_layout_, nullptr);
     for (u32 i = 0; i < kShieldStates; ++i) {
         vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
         vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);

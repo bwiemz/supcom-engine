@@ -421,8 +421,8 @@ public:
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
     /// The runtime decals and splats (M212c), as the last frame drew them.
     const RuntimeDecalRenderer& runtime_decals() const { return runtime_decals_; }
-    /// The unit meshes the last frame drew, and the cubes drawn for those
-    /// with none.
+    /// The unit meshes the last frame drew (not the map's border, there in
+    /// every frame), and the cubes drawn for those with none.
     u32 mesh_instance_count() const;
     u32 cube_instance_count() const { return unit_renderer_.cube_instance_count(); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
@@ -801,6 +801,10 @@ private:
     /// The order marks' (CommandFeedback): blended colour, no depth test.
     VkPipeline mesh_feedback_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_feedback_layout_ = VK_NULL_HANDLE;
+    /// The map border's glow pass (MapImager's P1, AlphaBlend_Disable_Write_A):
+    /// alpha alone, unblended, depth tested and written.
+    VkPipeline mesh_glow_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_glow_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -878,6 +882,8 @@ private:
     CommandFeedbackBlips feedback_blips_;
     /// This frame's marks and world meshes, into the unit renderer's instances.
     void inject_feedback_blips(lua_State* L, const std::vector<WorldMeshDraw>& world_meshes);
+    /// The map's border meshes (MapBorderAdd's), likewise.
+    void inject_map_border(lua_State* L, const std::vector<std::string>& meshes);
     /// FA's cursor as the window's own (Moho's hardware cursor): made from
     /// the UI cursor's image and hotspot, one per pair, while the window is
     /// the player's. An offscreen capture draws it with the UI instead.

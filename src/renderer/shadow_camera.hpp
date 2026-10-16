@@ -45,6 +45,10 @@ public:
     /// taken whole (so the box is conservative). Empty when none is inside.
     std::optional<Box> convex_intersection(const std::vector<Plane>& planes) const;
 
+    /// The whole heightfield's box (CHeightField::GetTierBox over every
+    /// tier): its extent in x and z, its lowest and highest heights in y.
+    Box box() const;
+
     u32 cells_x() const { return cells_x_; }
     u32 cells_z() const { return cells_z_; }
 

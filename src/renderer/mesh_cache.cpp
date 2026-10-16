@@ -241,6 +241,7 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "RallyPoint") {
         return MeshTechnique::RallyPoint;
     }
+    if (shader_name == "MapImager") return MeshTechnique::MapImager;
     return MeshTechnique::Unit;
 }
 
@@ -249,6 +250,12 @@ f32 MeshCache::blueprint_scale(const std::string& blueprint_id, lua_State* L) {
     const f32 scale = resolve_uniform_scale(blueprint_id, L);
     scale_cache_.emplace(blueprint_id, scale);
     return scale;
+}
+
+f32 MeshCache::mesh_uniform_scale(const std::string& mesh_bp_id, lua_State* L) {
+    const std::string id = resolve_mesh_bp_id(mesh_bp_id, L);
+    const f32 scale = id.empty() ? 0.0f : read_mesh_number(id, "UniformScale", L);
+    return scale > 0.0f ? scale : 1.0f;
 }
 
 bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
@@ -856,7 +863,10 @@ f32 MeshCache::resolve_uniform_scale(const std::string& bp_id,
     if (!store_ || !L) return 1.0f;
 
     auto* entry = store_->find(bp_id);
-    if (!entry) return 1.0f;
+    // A mesh blueprint has no Display (its own UniformScale is
+    // mesh_uniform_scale's); nor is its table the store's to push into
+    // another Lua state than the store's.
+    if (!entry || entry->type == blueprints::BlueprintType::Mesh) return 1.0f;
 
     store_->push_lua_table(*entry, L);
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return 1.0f; }

@@ -61,6 +61,15 @@ HeightBounds::HeightBounds(const map::Heightmap& heightmap)
     update(heightmap, 0, 0, cells_x_, cells_z_);
 }
 
+Box HeightBounds::box() const {
+    // The top level is one node, the whole field's (none on an empty map).
+    if (levels_.back().empty()) {
+        return {};
+    }
+    const Range& all = levels_.back().front();
+    return {{0.0f, all.lo, 0.0f}, {static_cast<f32>(cells_x_), all.hi, static_cast<f32>(cells_z_)}};
+}
+
 void HeightBounds::update(const map::Heightmap& heightmap, u32 x0, u32 z0, u32 x1, u32 z1) {
     x1 = std::min(x1, cells_x_);
     z1 = std::min(z1, cells_z_);
