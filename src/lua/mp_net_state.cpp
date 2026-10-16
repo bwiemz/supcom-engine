@@ -129,8 +129,8 @@ bool mp_attach_session(osc::sim::SimState& sim) {
         const osc::i32 army = s.army_of(source);
         sim.set_source_army(source, army);
         if (army >= 0 && sim.command_sources_known() && !sim.army_has_command_source(army, source))
-            spdlog::warn("[mp] source {} plays army {}, which doesn't take its commands", source,
-                         army);
+            spdlog::error("[mp] source {} plays army {}, which doesn't take its commands", source,
+                          army);
     }
     // Each source's pause timeouts, as Moho's: a player the game's Timeouts
     // ('0', '3', '-1': unlimited), an observer none
