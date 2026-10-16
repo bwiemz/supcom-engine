@@ -79,8 +79,7 @@ struct Scene {
 
 } // namespace
 
-TEST_CASE("With the fog on, a weapon doesn't pick what its army can't sense",
-          "[weapon][intel]") {
+TEST_CASE("With the fog on, a weapon doesn't pick what its army can't sense", "[weapon][intel]") {
     Scene s("explored", "RULEUMT_Land");
     s.ticks(35);
     CHECK(s.weapon->target_entity_id == 0);
@@ -93,8 +92,7 @@ TEST_CASE("It picks what its army sees", "[weapon][intel]") {
     CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
 }
 
-TEST_CASE("A unit gone from sight is dropped; a structure once seen is kept",
-          "[weapon][intel]") {
+TEST_CASE("A unit gone from sight is dropped; a structure once seen is kept", "[weapon][intel]") {
     SECTION("a unit") {
         Scene s("explored", "RULEUMT_Land");
         s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 1.0f);
