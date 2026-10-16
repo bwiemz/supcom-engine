@@ -107,4 +107,21 @@ bool write_saved_game(const sim::SavedGame& save, const std::filesystem::path& p
 /// Read a saved game; on an error (logged) `out` is left empty.
 sim::SaveLoadError read_saved_game(const std::filesystem::path& path, sim::SavedGame& out);
 
+/// The name of the profile L's UI has chosen (prefs.lua's GetCurrentProfile),
+/// or "" when it can't say.
+std::string current_profile(lua_State* L);
+
+/// Where this player's copy of the network game's save `name` is: their
+/// current profile's SaveGame folder (OE-128). Empty for a name that isn't a
+/// plain file name, or with no special files.
+std::filesystem::path network_save_path(lua_State* L, const std::string& name);
+
+/// A network game resumed from its save (OE-128): this player's copy of
+/// `name`, saved on `tick`, which the lobby's launch then plays. Empty when
+/// it's here and whole, else why not.
+std::string check_network_save(lua_State* L, const std::string& name, u32 tick,
+                               sim::SavedGame& out);
+/// Launch the game from this player's copy of `name` (check_network_save).
+void launch_network_save(lua_State* L, const std::string& name, const std::string& scenario);
+
 } // namespace osc::lua

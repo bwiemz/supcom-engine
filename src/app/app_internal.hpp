@@ -310,6 +310,11 @@ private:
     };
     Restore restore_save(const sim::SavedGame& save, std::string& why);
 
+    /// This player's copy of a network game's save every player agreed to
+    /// (OE-128), signed as their own, in their current profile's saves; the
+    /// UI hears of it (OnNetworkGameSaved(name, worked), when it has one).
+    void save_network_game(sim::SimState& sim, const std::string& name);
+
     /// FA's LastGame: the game just left, as recorded, in the current
     /// profile's replays -- when a new game starts, on the way back to the
     /// lobby, and at exit. Interactive games only; a replay isn't recorded.

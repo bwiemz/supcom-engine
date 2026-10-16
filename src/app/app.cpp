@@ -3,7 +3,9 @@
 #include "core/log.hpp"
 #include "core/test_status.hpp"
 #include "core/version.hpp"
+#include "lua/mp_net_state.hpp"
 #include "lua/smoke_test.hpp"
+#include "lua/special_files.hpp"
 #include "platform/crash_handler.hpp"
 
 #include "sim/sim_callback_queue.hpp"
@@ -181,12 +183,44 @@ App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
         return Restore::Failed;
     }
     restored_at = sim_state->tick_count();
+    // Each peer discards queued network state beyond the agreed save beat.
+    if (lua::mp_net_state().transport_ready) sim_state->command_scheduler().forget_network_state();
     spdlog::info("Saved game '{}': restored at tick {} in {:.0f} ms", save.name,
                  sim_state->tick_count(),
                  std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
                      .count());
     post_load();
     return Restore::Done;
+}
+
+void App::save_network_game(sim::SimState& sim, const std::string& name) {
+    lua_State* uiL = ui_lua_state.raw();
+    const fs::path path = lua::network_save_path(uiL, name);
+    bool worked = false;
+    if (path.empty() || !special_files) {
+        spdlog::warn("Network game: not saved as '{}' (not a plain name, or no saves folder)",
+                     name);
+    } else {
+        sim::SavedGame save = sim::save_game(sim, name);
+        (void)special_files->sign_snapshot(save);
+        worked = lua::write_saved_game(save, path);
+        if (worked)
+            spdlog::info("Network game saved as '{}' at tick {}: {}", name, save.tick,
+                         path.string());
+    }
+    // The UI's own word to the player, if its scripts have one
+    lua_pushstring(uiL, "OnNetworkGameSaved");
+    lua_rawget(uiL, LUA_GLOBALSINDEX);
+    if (lua_isfunction(uiL, -1)) {
+        lua_pushstring(uiL, name.c_str());
+        lua_pushboolean(uiL, worked ? 1 : 0);
+        if (lua_pcall(uiL, 2, 0, 0) != 0) {
+            spdlog::warn("OnNetworkGameSaved: {}", lua_tostring(uiL, -1));
+            lua_pop(uiL, 1);
+        }
+    } else {
+        lua_pop(uiL, 1);
+    }
 }
 
 void App::post_load() {

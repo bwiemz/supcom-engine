@@ -461,7 +461,11 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
     else if (cb.func_name == kCommandSourceTerminatedCallback) terminate_source(*this, cb);
     else if (cb.func_name == kPostLoadCallback) post_load(*this, L);
-    else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
+    else if (cb.func_name == kSaveGameCallback) {
+        const auto name = cb.args.find("Name");
+        if (name != cb.args.end() && std::holds_alternative<std::string>(name->second))
+            request_save(std::get<std::string>(name->second));
+    } else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
     else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);
     else if (cb.func_name == kSetCommandTypeCallback) set_command_type(*this, cb);
     else do_callback(*this, L, cb);

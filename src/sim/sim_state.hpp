@@ -429,6 +429,16 @@ public:
     void resume(u32 source);
     /// Paused, the beat that applies it runs its tick.
     void single_step(u32 source);
+    // --- A network game's save (OE-128) ---
+    /// A save was asked for (kSaveGameCallback) in this tick: the game is
+    /// saved as `name` once it ends (LockstepSession takes it).
+    void request_save(std::string name) { save_request_ = std::move(name); }
+    std::optional<std::string> take_save_request() {
+        std::optional<std::string> out = std::move(save_request_);
+        save_request_.reset();
+        return out;
+    }
+
     /// Paused: the source that paused (-1: not paused).
     i32 paused_by() const { return paused_by_; }
     bool paused() const { return paused_by_ >= 0; }
@@ -1163,6 +1173,8 @@ private:
     u32 tick_count_ = 0;
     u32 beat_count_ = 0;
     u32 post_loads_run_ = 0; ///< the host's count (post_loads_run), not game state
+    /// A save asked for in this tick (request_save): taken between ticks.
+    std::optional<std::string> save_request_;
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;

@@ -133,6 +133,17 @@ void set_game_speed(osc::sim::SimState& sim, osc::sim::LockstepSession& session)
 
 } // namespace
 
+namespace {
+MpSaveHandler& save_handler() {
+    static MpSaveHandler handler;
+    return handler;
+}
+} // namespace
+
+void mp_set_save_handler(MpSaveHandler handler) {
+    save_handler() = std::move(handler);
+}
+
 bool mp_attach_session(osc::sim::SimState& sim) {
     auto& s = mp_net_state();
     if (!s.transport_ready || !s.lobby_transport) return false;
@@ -166,8 +177,13 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     sim.set_local_callback_sink([session](osc::sim::SimCallbackEntry cb) {
         session->submit_local_callback(std::move(cb));
     });
-    // Every client seeds its sim from the host's shared seed so RNG matches.
-    sim.set_seed(s.seed);
+    // Every client seeds its sim from the host's shared seed so RNG matches;
+    // a resumed game's random numbers are its save's.
+    if (sim.tick_count() == 0) sim.set_seed(s.seed);
+    // Each player's copy of a save they all agreed to (OE-128)
+    session->set_save_handler([&sim](const std::string& name) {
+        if (save_handler()) save_handler()(sim, name);
+    });
     spdlog::info("[mp] LockstepSession attached (local source {}, seed {:#018x})",
                  s.local_source, s.seed);
     return true;

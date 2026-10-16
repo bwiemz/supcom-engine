@@ -139,6 +139,19 @@ void App::Window::handle_launch() {
                     // queued), so it saves again whole.
                     std::string why;
                     const Restore result = restore_save(*launch_save, why);
+                    if (result != Restore::Done && osc::lua::mp_net_state().transport_ready) {
+                        // A network game resumes only from each player's
+                        // own restored copy (OE-128): no catching up alone
+                        spdlog::error("Saved game '{}': can't resume the network game ({})",
+                                      launch_save->name, why);
+                        lua_pushstring(uiL, "__osc_front_end_notice");
+                        lua_pushstring(uiL, ("The saved game couldn't be resumed: " + why).c_str());
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        lua_pushstring(uiL, "__osc_return_to_lobby");
+                        lua_pushboolean(uiL, 1);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        return;
+                    }
                     if (result == Restore::Failed) {
                         spdlog::warn("Saved game '{}': not restored ({}); catching up",
                                      launch_save->name, why);
@@ -160,6 +173,12 @@ void App::Window::handle_launch() {
                 // transport (HostGame/JoinGame), build the lockstep
                 // session over it now that the game's sim exists.
                 // No-op in single-player.
+                // Each player's copy of a save the players agree to
+                // (OE-128), as this player's profile keeps its saves
+                osc::lua::mp_set_save_handler(
+                    [this](osc::sim::SimState& sim, const std::string& name) {
+                        app.save_network_game(sim, name);
+                    });
                 if (sim_state && !active_playback && osc::lua::mp_attach_session(*sim_state)) {
                     // Each peer plays its own source's army, and
                     // sees the world through its intel (M215a); an
