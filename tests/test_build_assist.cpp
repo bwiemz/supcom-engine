@@ -23,6 +23,15 @@ using osc::sim::UnitCommand;
 
 namespace {
 
+int set_unit_state(lua_State* L) {
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* unit = static_cast<Unit*>(static_cast<osc::sim::Entity*>(lua_touserdata(L, -1)));
+    lua_pop(L, 1);
+    unit->set_unit_state(luaL_checkstring(L, 2), lua_toboolean(L, 3) != 0);
+    return 0;
+}
+
 struct AssistSim {
     lua_State* L = lua_open();
     SimState sim{L, nullptr};
@@ -32,6 +41,7 @@ struct AssistSim {
         luaopen_base(L);
         luaopen_table(L);
         lua_settop(L, 0);
+        lua_register(L, "SetUnitState", set_unit_state);
         const char* code = R"(
             log = {}
             __blueprints = {site = {Economy = {BuildTime = 100, BuildCostMass = 10, BuildCostEnergy = 10}}}
@@ -94,6 +104,18 @@ struct AssistSim {
         sim.entity_registry().register_entity(std::move(u));
         bind(*raw, name);
         return raw;
+    }
+
+    void script_sets_repairing() {
+        const std::string code = R"(
+            local start = Builder.OnStartBuild
+            Builder.OnStartBuild = function(self, unit, order)
+                if order == 'Repair' then SetUnitState(self, 'Repairing', true) end
+                start(self, unit, order)
+            end
+        )";
+        REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "faf") == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
     }
 
     std::string log() {
@@ -336,4 +358,72 @@ TEST_CASE("A guard that must face what it helps build turns to it first", "[buil
     }
     CHECK(helper->is_building());
     CHECK(osc::sim::quat_yaw(helper->orientation()) > 1.2f);
+}
+
+TEST_CASE("Repairing a script set goes when a repair of a damaged unit ends, done or stopped",
+          "[build][assist][repair]") {
+    AssistSim w;
+    w.script_sets_repairing();
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->is_repairing());
+    REQUIRE(eng->has_unit_state("Repairing"));
+    for (int i = 0; i < 200 && eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.site->health() == w.site->max_health());
+    CHECK_FALSE(eng->has_unit_state("Repairing"));
+
+    w.site->set_health(50.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 2), true);
+    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->has_unit_state("Repairing"));
+    eng->push_command(order(CommandType::Stop, *w.site, 3), true);
+    w.sim.tick();
+    REQUIRE_FALSE(eng->is_repairing());
+    CHECK_FALSE(eng->has_unit_state("Repairing"));
+}
+
+TEST_CASE("Repairing a script set goes when a repair of a unit under construction ends, done or "
+          "stopped",
+          "[build][assist][repair]") {
+    AssistSim w;
+    w.script_sets_repairing();
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->is_building());
+    REQUIRE(helper->is_building());
+    REQUIRE(eng->has_unit_state("Repairing"));
+    REQUIRE(helper->has_unit_state("Repairing"));
+    eng->push_command(order(CommandType::Stop, *w.site, 3), true);
+    w.sim.tick();
+    w.sim.tick();
+    REQUIRE_FALSE(eng->is_building());
+    REQUIRE_FALSE(helper->is_building());
+    CHECK_FALSE(eng->has_unit_state("Repairing"));
+    CHECK_FALSE(helper->has_unit_state("Repairing"));
+
+    eng->push_command(order(CommandType::Repair, *w.site, 4), true);
+    for (int i = 0; i < 3 && !eng->is_building(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->has_unit_state("Repairing"));
+    for (int i = 0; i < 200 && eng->is_building(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.site->fraction_complete() == 1.0f);
+    CHECK_FALSE(eng->has_unit_state("Repairing"));
 }

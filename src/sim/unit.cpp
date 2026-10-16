@@ -1270,7 +1270,9 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
     const std::string order = std::exchange(build_order_, std::string());
     build_command_id_ = 0;
     build_released_with_order_ = false;
-    build_repairs_ = false;
+    if (std::exchange(build_repairs_, false)) {
+        set_unit_state("Repairing", false);
+    }
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
     economy_.consumption_active = false;
@@ -1430,7 +1432,9 @@ void Unit::stop_assisting(lua_State* L, EntityRegistry* registry) {
     const std::string order = std::exchange(build_order_, std::string());
     build_command_id_ = 0;
     build_released_with_order_ = false;
-    build_repairs_ = false;
+    if (std::exchange(build_repairs_, false)) {
+        set_unit_state("Repairing", false);
+    }
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
     economy_.consumption_active = false;
@@ -1942,6 +1946,9 @@ void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
     economy_.consumption_active = false;
+    // Moho's CUnitRepairTask clears Repairing as it ends, whoever set it
+    // (FAF's Unit.OnStartRepair sets it from Lua)
+    set_unit_state("Repairing", false);
 
     // Call builder:OnStopBuild(target) — FA handles OnStopRepair inside
     if (target_id != 0) {
