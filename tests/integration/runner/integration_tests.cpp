@@ -9750,7 +9750,7 @@ void test_missile(TestContext& ctx) {
             return u
         end
         function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
-        for _, army in {'ARMY_1', 'ARMY_3', 'ARMY_4'} do
+        for _, army in {'ARMY_1', 'ARMY_3', 'ARMY_4', 'ARMY_5', 'ARMY_6'} do
             local brain = GetArmyBrain(army)
             brain:GiveStorage('MASS', 100000)
             brain:GiveStorage('ENERGY', 5000000)
@@ -9857,6 +9857,21 @@ void test_missile(TestContext& ctx) {
                 WaitTicks(1)
             end
         end)
+        -- F with an ACU helping, G with four engineers. Halfway through, an
+        -- enemy tank 24 from the ACU (guard scan 25, guns 22); G at half health.
+        __osc_f = __osc_spawn('ueb2108', 'ARMY_5', 720, 100)
+        __osc_f_acu = __osc_spawn('uel0001', 'ARMY_5', 712, 100)
+        IssueGuard({__osc_f_acu}, __osc_f)
+        __osc_g = __osc_spawn('ueb2108', 'ARMY_6', 600, 260)
+        __osc_g_engineers = {}
+        for i = 1, 4 do
+            table.insert(__osc_g_engineers, __osc_spawn('uel0105', 'ARMY_6', 594 + 3 * i, 255))
+        end
+        IssueGuard(__osc_g_engineers, __osc_g)
+        for i = 1, 2 do
+            IssueSiloBuildTactical({__osc_f})
+            IssueSiloBuildTactical({__osc_g})
+        end
         __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
         __osc_s:GiveNukeSiloAmmo(1)
         __osc_zero = __osc_at(560, 600)
@@ -9892,6 +9907,46 @@ void test_missile(TestContext& ctx) {
         if __osc_e1:IsDead() then error('the target is dead') end
         local progress = __osc_a:GetWorkProgress()
         if math.abs(progress - 0.5) > 0.01 then error('A is ' .. progress .. ' done') end
+    )");
+    lua_check("setup: the enemy tank by F's ACU; G damaged", R"(
+        __osc_foe = __osc_spawn('uel0201', 'ARMY_2', 688, 100)
+        __osc_foe:SetFireState(1)
+        __osc_foe:SetMaxHealth(1000000)
+        __osc_foe:SetHealth(__osc_foe, 1000000)
+        __osc_g:SetHealth(__osc_g, __osc_g:GetMaxHealth() / 2)
+        __osc_f_rec = {from = GetGameTick()}
+        __osc_g_rec = {hp = __osc_g:GetHealth()}
+        ForkThread(function()
+            local f, g, e = __osc_f_rec, __osc_g_rec, __osc_g_engineers[1]
+            while not (f.attack and g.back) do
+                local t = GetGameTick()
+                local q = __osc_f_acu:GetCommandQueue()
+                if not f.done then
+                    if __osc_f:GetTacticalSiloAmmoCount() > 0 then
+                        f.done = t
+                    elseif not __osc_f_acu:IsUnitState('Repairing') or table.getn(q) ~= 1 then
+                        f.left = f.left or t
+                    end
+                elseif not f.attack and __osc_f_acu:IsUnitState('Attacking') then
+                    f.attack = t
+                end
+                local hp = __osc_g:GetHealth()
+                if not g.done then
+                    if __osc_g:GetTacticalSiloAmmoCount() > 0 then
+                        g.done = t
+                    elseif hp ~= g.hp then
+                        g.healed_early = t
+                    end
+                elseif not g.heal and hp > g.hp then
+                    g.heal = t
+                elseif g.heal and not g.full and hp >= __osc_g:GetMaxHealth() then
+                    g.full = t
+                elseif g.full and not g.back and e:GetFocusUnit() == __osc_g then
+                    g.back = t
+                end
+                WaitTicks(1)
+            end
+        end)
     )");
     lua_check("Test 2b: A's economy data asks for its missile's cost over its build time", R"(
         -- 180 M and 3600 E over 30 s.
@@ -9979,6 +10034,29 @@ void test_missile(TestContext& ctx) {
         end
         if r.back - r.done < 12 or r.back - r.done > 17 then
             error('it helps again ' .. (r.back - r.done) .. ' ticks after the missile')
+        end
+    )");
+    lua_check("Test 4e: an ACU helping F's missile takes on the tank only when the missile is done",
+              R"(
+        local r = __osc_f_rec
+        if r.left then error('it stopped helping at ' .. (r.left - r.from) .. ' ticks') end
+        if not r.done or not r.attack then
+            error(string.format('done at %s, attacking at %s', tostring(r.done), tostring(r.attack)))
+        end
+        if r.attack - r.done > 7 then error('it attacked ' .. (r.attack - r.done) .. ' ticks after the missile') end
+    )");
+    lua_check("Test 4f: damaged G is repaired once its missile is done, then helped again", R"(
+        local r = __osc_g_rec
+        if r.healed_early then error('repaired as its missile was built') end
+        if not (r.done and r.heal and r.full and r.back) then
+            error(string.format('done %s, repaired %s, whole %s, helped %s', tostring(r.done), tostring(r.heal),
+                                tostring(r.full), tostring(r.back)))
+        end
+        if r.heal - r.done < 6 or r.heal - r.done > 11 then
+            error('repaired ' .. (r.heal - r.done) .. ' ticks after its missile')
+        end
+        if r.back - r.full < 6 or r.back - r.full > 11 then
+            error('helped again ' .. (r.back - r.full) .. ' ticks after its repair')
         end
     )");
     lua_check("Test 5: the order fired as the missile was done, and it killed its target", R"(
