@@ -46,7 +46,7 @@ from pathlib import Path
 from gpgnet_lobby import Link, listening
 
 SKIPPED = 77
-CONNECT_SECONDS = 120  # the games load FA's data first
+CONNECT_SECONDS = 120  # the games load FA's data and build their renderers first
 REPLY_SECONDS = 30
 LAUNCH_SECONDS = 120  # the launch loads the map
 PLAY_SECONDS = 180  # loading the map, then the ticks
@@ -166,7 +166,7 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
                 print(f"client: the {name} never connected")
                 return 1
             links[name] = Link(conn)
-            links[name].expect("GameState", ["Idle"], REPLY_SECONDS)
+            links[name].expect("GameState", ["Idle"], CONNECT_SECONDS)
 
         host, joiner = links["host"], links["joiner"]
         host_lobby, joiner_lobby = roles["host"][1], roles["joiner"][1]

@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 SKIPPED = 77
-CONNECT_SECONDS = 120  # the game loads FA's data first
+CONNECT_SECONDS = 120  # the game loads FA's data and builds its renderer first
 REPLY_SECONDS = 30
 EXIT_SECONDS = 60
 
@@ -147,7 +147,7 @@ def run(exe: str, port: int, user_dir: Path) -> int:
             print(f"client: the game never connected (exit {code})")
             return 1
         link = Link(conn)
-        link.expect("GameState", ["Idle"], REPLY_SECONDS)
+        link.expect("GameState", ["Idle"], CONNECT_SECONDS)
         link.send("CreateLobby", 0, lobby_port, "Tester", 42, 1)
         link.expect("GameState", ["Lobby"], REPLY_SECONDS)
         link.send("HostGame", "SCMP_009")
