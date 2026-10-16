@@ -17,6 +17,7 @@
 #include "core/image.hpp"
 #include "core/ui_registry_keys.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/user_bindings.hpp"
 #include "map/terrain.hpp"
 #include "renderer/cartographic_renderer.hpp"
 #include "renderer/range_overlays.hpp"
@@ -116,10 +117,24 @@ void test_cartographic_main(TestContext& ctx) {
         t.check(icon && icon->width > 0, fmt::format("the commander's icon ({}) is loaded", name));
     }
 
+    // A main view made before the window published its renderer (a --map
+    // launch builds FA's interface at boot), made cartographic meanwhile:
+    // bound late, its camera takes that mode
+    lua_pushstring(L, "__osc_renderer");
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    (void)ctx.lua_state.do_string(make_view("__osc_cm_early", "WorldCamera", false) +
+                                  set_cartographic("__osc_cm_early", true));
+    t.check(!cam.ortho(), "a view with no camera yet leaves the camera alone");
+
     // The views' bindings reach this renderer's camera
     lua_pushstring(L, "__osc_renderer");
     lua_pushlightuserdata(L, &r);
     lua_rawset(L, LUA_REGISTRYINDEX);
+    lua::bind_unbound_world_views(L);
+    t.check(cam.ortho() && is_cartographic(L, ctx.lua_state, "__osc_cm_early"),
+            "bound when the renderer is published, its camera takes its cartographic mode");
+    (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_early", false));
 
     // A minimap view's flag leaves the camera as it is
     const auto made = ctx.lua_state.do_string(make_view("__osc_cm_mini", "MiniMap", true) +

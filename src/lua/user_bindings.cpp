@@ -205,14 +205,24 @@ static void bind_world_view(lua_State* L, ui::WorldView* wv) {
     if (sim && sim->terrain()) wv->set_terrain(sim->terrain());
     if (!wv->is_minimap()) {
         // A new view's camera looks in perspective (CameraImpl's mIsOrtho
-        // starts 0); its Register restores a saved cartographic mode
-        if (r) r->camera().set_ortho(false);
+        // starts 0), its Register then restoring a saved cartographic mode;
+        // one bound late keeps the mode it was given meanwhile
+        if (r) r->camera().set_ortho(wv->is_cartographic());
         lua_pushstring(L, "__osc_world_view");
         lua_pushlightuserdata(L, wv);
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     spdlog::debug("WorldView bound: camera='{}', viewport={}x{}", wv->camera_name(),
                   wv->viewport_width(), wv->viewport_height());
+}
+
+void bind_unbound_world_views(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg || !get_renderer(L)) return;
+    for (const auto& control : reg->all()) {
+        auto* wv = dynamic_cast<ui::WorldView*>(control.get());
+        if (wv && !wv->destroyed() && !wv->camera()) bind_world_view(L, wv);
+    }
 }
 
 static int worldview_init(lua_State* L) {

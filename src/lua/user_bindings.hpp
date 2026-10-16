@@ -26,6 +26,12 @@ void register_user_bindings(LuaState& state);
 /// the command mode and GetRightMouseButtonOrder
 void update_world_view_cursor(lua_State* L);
 
+/// The world views made before the window published its renderer (FA's
+/// game interface, which a --map launch builds at boot), bound to its
+/// camera as a new one is: their projections, picking and cartographic mode
+/// reach it from then on.
+void bind_unbound_world_views(lua_State* L);
+
 /// The engine statistics FAF's UI reads from __EngineStats, which Moho fills
 /// each frame: Camera > Cursor > Position ("x=338.09,y=24.16,z=436.07"),
 /// Elevation (the ground under the cursor, below any water) and OCell
