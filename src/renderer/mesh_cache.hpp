@@ -1,9 +1,11 @@
 #pragma once
 
+#include "renderer/cartographic_technique.hpp"
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
 #include "sim/entity.hpp"
 
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -192,6 +194,9 @@ struct GPUMesh {
     std::string secondary_path; // VFS path to the LOD's SecondaryName (the build shaders')
     bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
     MeshTechnique technique = MeshTechnique::Unit;
+    /// What a cartographic view draws it with, at graphics fidelity 0, 1
+    /// and 2 (its shader's cartographicTechnique, by lane)
+    std::array<CartographicTechnique, 3> cartographic{};
     /// The mesh blueprint's SortOrder: Moho draws meshes by it, smallest
     /// first (MeshBatchKeyLess; M211k).
     f32 sort_order = 0.0f;
@@ -232,10 +237,10 @@ public:
     /// Get the full LODSet for introspection. Returns nullptr if not loaded.
     const LODSet* get_lod_set(const std::string& blueprint_id) const;
 
-    /// An SCM file drawn with `albedo` by `technique` (a UI world mesh's,
-    /// MeshName's), loaded once. Null if it can't be.
+    /// An SCM file drawn with `albedo` by the shader `shader` (a UI world
+    /// mesh's, MeshName's), loaded once. Null if it can't be.
     const GPUMesh* get_file(const std::string& scm_path, const std::string& albedo,
-                            MeshTechnique technique);
+                            const std::string& shader);
 
     /// The SCM file a blueprint's LOD 0 draws (empty without one).
     std::string mesh_file(const std::string& blueprint_id, lua_State* L) {

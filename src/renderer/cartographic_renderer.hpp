@@ -109,6 +109,12 @@ public:
     }
 
     bool ready() const { return built_ && terrain_pipeline_ && edge_pipeline_; }
+    /// The map's height ramp (the texture cache's set for it), which a
+    /// cartographic view's features take their colour from; null until
+    /// built.
+    VkDescriptorSet hypsometric_descriptor() const {
+        return built_ ? hypsometric_ds_ : VK_NULL_HANDLE;
+    }
     const CartographicParams& params() const { return params_; }
     /// Frame `fi`'s targets, as the last record left them.
     const AllocatedImage& frame(u32 fi) const { return targets_[fi].frame; }
@@ -166,6 +172,7 @@ private:
     std::array<VkDescriptorSet, FRAMES_IN_FLIGHT> main_frame_sets_{};
 
     bool built_ = false;
+    VkDescriptorSet hypsometric_ds_ = VK_NULL_HANDLE;
     CartographicParams params_{};
     i16 surface_word_ = 0;
     u32 span_x_ = 0, span_z_ = 0;

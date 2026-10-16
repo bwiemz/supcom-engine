@@ -79,6 +79,7 @@ add_executable(osc_tests
     test_blueprint_loading.cpp
     test_map.cpp
     test_cartographic_math.cpp
+    test_cartographic_technique.cpp
     test_transport_slots.cpp
     test_influence_map.cpp
     test_jammer_fakes.cpp

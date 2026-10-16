@@ -42,6 +42,11 @@ extern const char* mesh_frag;
 /// pipelines' input, push block and sets.
 const char* shield_vert();
 const char* shield_frag();
+/// A cartographic view's meshes (cartographic_mesh_shaders.cpp): mesh.fx's
+/// CartographicVS and its six techniques' pixel shaders, with the mesh
+/// pipelines' vertex input.
+const char* cartographic_mesh_vert();
+const char* cartographic_mesh_frag();
 extern const char* decal_lit_vert; // the map's decals over the terrain's vertices (M212b)
 /// The map's decals, lit as the terrain is (DecalsPS, DecalAlbedoXP; M212b).
 const char* decal_lit_frag();
