@@ -213,11 +213,15 @@ std::string current_profile(lua_State* L) {
 
 fs::path network_save_path(lua_State* L, const std::string& name) {
     const SpecialFiles* files = get_special_files(L);
+    return files ? network_save_path(*files, current_profile(L), name) : fs::path();
+}
+
+fs::path network_save_path(const SpecialFiles& files, std::string profile,
+                           const std::string& name) {
     const SpecialFiles::Type* type = SpecialFiles::find_type("SaveGame");
-    if (!files || !type || !SpecialFiles::plain_name(name)) return {};
-    std::string profile = current_profile(L);
+    if (!type || !SpecialFiles::plain_name(name)) return {};
     if (!SpecialFiles::plain_name(profile)) profile = "multiplayer";
-    return files->path(*type, profile, name);
+    return files.path(*type, profile, name);
 }
 
 std::string check_network_save(lua_State* L, const std::string& name, u32 tick,

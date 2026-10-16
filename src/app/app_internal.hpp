@@ -41,6 +41,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -112,6 +113,13 @@ struct Options {
     u32 lan_game_self_destruct_at = 0; ///< --lan-game-self-destruct-at: the joiner's Ctrl-K
     std::string lan_game_save;
     std::string lan_game_resume;
+
+    bool sim_thread = true;      ///< --no-sim-thread: ticks on the main thread (OE-134)
+    /// --play-for <seconds>: a game played offscreen for this long, its
+    /// frames paced as a 60 Hz display's are (the rest of each frame waited
+    /// out, as a present waits for the display), and their times logged:
+    /// how often the sim's ticks hold a frame back (OE-134). 0: none.
+    double play_for = 0;
 
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
@@ -200,19 +208,32 @@ struct WorldInterp {
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
 
-    /// Follow a new sim's beats from its first one, each beat's Sync queued
-    /// for the user state when there is one. Must outlive `sim`.
+    bool staged = false;
+    /// Capture on the sim owner; UI Sync delivery runs after collection.
     void attach(osc::sim::SimState& sim, osc::lua::LuaState* ui = nullptr) {
         history.clear();
         clock.reset();
         one_tick_next = true;
         sim.set_beat_observer([this, ui](const osc::sim::SimState& s) {
+            if (staged) {
+                history.capture_staged(s);
+                if (ui) osc::lua::queue_sync(s.lua_state(), nullptr);
+                return;
+            }
+
             history.capture(s);
             clock.on_tick();
             if (ui) {
                 osc::lua::queue_sync(s.lua_state(), ui->raw());
             }
         });
+    }
+
+    /// The sim thread's `ticks` ticks done: the newest one's world published,
+    /// and the clock told of each.
+    void publish(osc::u32 ticks) {
+        history.publish();
+        for (osc::u32 t = 0; t < ticks; ++t) clock.on_tick();
     }
 
     osc::sim::FrameView view() const {
@@ -317,6 +338,13 @@ private:
     /// (OE-128), signed as their own, in their current profile's saves; the
     /// UI hears of it (OnNetworkGameSaved(name, worked), when it has one).
     void save_network_game(sim::SimState& sim, const std::string& name);
+    /// Tell the UI of the network saves written since (between frames).
+    void deliver_network_save_notices();
+    /// The profile whose saves a network game's go in: the UI's when the
+    /// game began (the sim's thread can't ask it).
+    std::string network_profile;
+    std::mutex network_saves_mutex;
+    std::vector<std::pair<std::string, bool>> network_save_notices; ///< name, worked
 
     /// FA's LastGame: the game just left, as recorded, in the current
     /// profile's replays -- when a new game starts, on the way back to the

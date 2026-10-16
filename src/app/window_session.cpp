@@ -30,6 +30,7 @@ void App::Window::handle_launch() {
         lua_rawget(uiL, LUA_REGISTRYINDEX);
         if (lua_toboolean(uiL, -1)) {
             lua_pop(uiL, 1);
+            quiesce_sim(); // the game being left finishes its tick first
 
             // Clear the flag
             lua_pushstring(uiL, "__osc_launch_requested");
@@ -175,6 +176,7 @@ void App::Window::handle_launch() {
                 // No-op in single-player.
                 // Each player's copy of a save the players agree to
                 // (OE-128), as this player's profile keeps its saves
+                app.network_profile = osc::lua::current_profile(uiL);
                 osc::lua::mp_set_save_handler(
                     [this](osc::sim::SimState& sim, const std::string& name) {
                         app.save_network_game(sim, name);
@@ -218,6 +220,7 @@ void App::Window::handle_return_to_lobby() {
         lua_rawget(uiL, LUA_REGISTRYINDEX);
         if (lua_toboolean(uiL, -1)) {
             lua_pop(uiL, 1);
+            quiesce_sim(); // the game being left finishes its tick first
 
             // Clear the flag
             lua_pushstring(uiL, "__osc_return_to_lobby");

@@ -16,6 +16,7 @@
 #include "sim/unit_blocking.hpp"
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iosfwd>
 #include <map>
@@ -419,6 +420,13 @@ public:
     bool cheats_enabled();
     /// Whether cheats are on, unlogged (the user session's copy of it).
     bool cheats_option() const { return cheats_enabled_; }
+    // --- The sim's own thread (OE-134) ---
+    /// A tick runs on the sim's thread: until it is collected, nothing else
+    /// may read the live sim (the UI reads its last published snapshot).
+    void set_ticking_elsewhere(bool on) { ticking_elsewhere_ = on; }
+    bool ticking_elsewhere() const { return ticking_elsewhere_; }
+
+
 
     // --- The game's pause (M218f), as Moho's sim takes it ---
     /// `source` asks to pause, in a beat every peer shares: taken unless
@@ -1175,6 +1183,7 @@ private:
     u32 post_loads_run_ = 0; ///< the host's count (post_loads_run), not game state
     /// A save asked for in this tick (request_save): taken between ticks.
     std::optional<std::string> save_request_;
+    std::atomic<bool> ticking_elsewhere_{false}; ///< the host's (set_ticking_elsewhere)
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;

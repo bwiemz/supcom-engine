@@ -115,6 +115,9 @@ std::string current_profile(lua_State* L);
 /// current profile's SaveGame folder (OE-128). Empty for a name that isn't a
 /// plain file name, or with no special files.
 std::filesystem::path network_save_path(lua_State* L, const std::string& name);
+/// The same, for the profile named `profile` (no Lua: the sim's thread).
+std::filesystem::path network_save_path(const SpecialFiles& files, std::string profile,
+                                        const std::string& name);
 
 /// A network game resumed from its save (OE-128): this player's copy of
 /// `name`, saved on `tick`, which the lobby's launch then plays. Empty when

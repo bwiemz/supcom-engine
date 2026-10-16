@@ -107,18 +107,48 @@ props that haven't changed.
 seen, 186 ms) and the Lua collection every 70 ticks (stop-the-world, up to
 130 ms). The slow-thread lines name the scripts.
 
+## Stutters in play: frames, and the sim's own thread
+
+What a player sees is frames, not ticks: at 60 Hz a frame over ~20 ms is a
+dropped frame. **`--play-for <seconds>`** plays a game in real time,
+offscreen, its frames paced as a 60 Hz display paces them (the rest of each
+frame waited out, as a present waits), and logs at the end:
+
+```
+Frames in the game: 17943, mean 16.7 ms, over 20 ms: 44, over 33 ms: 16, over 50 ms: 4, worst 188.9 ms (sim thread: on)
+```
+
+Since OE-134 the sim ticks on its own thread while the frame draws
+(`docs/plans/2026-10-16-sim-thread-design.md`); `--no-sim-thread` puts it
+back on the main thread for comparison. Five real-time minutes of the
+eight-AI match, the two run side by side:
+
+| Sim thread | Frames over 20 ms | over 33 ms | over 50 ms |
+| --- | --- | --- | --- |
+| off | 220 | 51 | 11 |
+| on | 44 | 16 | 4 |
+
+(A second pair, with CI building on the same PC: over 33 ms 48 against 15,
+over 50 ms 7 against 4; single dropped frames rose for both with the load.)
+
+The tick still has to finish within about a frame and a half to drop
+nothing: the Lua collection's pause (OE-135) and the longest AI ticks still
+show as single hitches.
+
+**Rules the sim's thread brings.** While a tick runs there, nothing on the
+main thread reads the live sim: the UI's frame callbacks and events run
+before the tick starts (`Renderer::run_ui_frame`), and the UI's world reads
+the published snapshot (`ui_world`). Test runs (LAN games, fast matches,
+`--play-for`) install a check that fails the run if the sim's Lua state is
+used off its thread (`lua/lua_thread_check.hpp`): that is how the UI reading
+the live sim from a frame callback, which desynced network games, was found.
+
 ## Ideas not yet done
 
 - Props: the snapshot and `update_entities` visit every prop every tick;
   a prop that hasn't moved, fallen or changed could keep its record and be
   skipped.
 - The replay checksum walks every entity every tick again.
-- The sim on its own thread: the snapshot already separates what the
-  renderer reads from the live sim, so a slow tick would no longer hold a
-  frame back.
-- GridPresence's update (half of the AIs' Lua now): each label's flood fill
-  and neighbour passes walk all 256 cells; walking each label's own cells,
-  in the same order, would draw the same random numbers.
 - `CategoryMatcher` compiled again on each call; `GetBlueprintStat`
   building a string set per blueprint.
 - The Lua collection's stop-the-world mark (every 70 ticks, 35-95 ms): only

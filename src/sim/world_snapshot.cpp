@@ -16,6 +16,7 @@
 #include <cassert>
 #include <cmath>
 #include <functional>
+#include <iterator>
 #include <type_traits>
 
 namespace osc::sim {
@@ -598,13 +599,18 @@ std::vector<std::string> world_blueprints(const SimState& sim) {
 }
 
 void WorldHistory::capture(const SimState& sim) {
-    cur_ = 1 - cur_;
-    WorldSnapshot& now = snaps_[cur_];
-    capture_world(sim, now, sight_army_);
-    static u64 next_serial = 0;
+    capture_staged(sim);
+    publish();
+}
+
+void WorldHistory::capture_staged(const SimState& sim) {
+    WorldSnapshot& now = snaps_[staged_];
+    capture_world(sim, now, sight_army_.load());
+    static std::atomic<u64> next_serial{0};
     now.serial = ++next_serial;
-    // Each entity's record in the capture before (both ascending by id).
-    const WorldSnapshot& before = snaps_[1 - cur_];
+    // Each entity's record in the capture it will follow (both ascending by
+    // id): the current one, which becomes the previous when this is published.
+    const WorldSnapshot& before = snaps_[cur_];
     now.previous.assign(now.entities.size(), WorldSnapshot::kNoPrevious);
     now.previous_serial = 0;
     if (captured_ > 0 && before.serial != 0) {
@@ -618,21 +624,43 @@ void WorldHistory::capture(const SimState& sim) {
         }
         now.previous_serial = before.serial;
     }
-    ++captured_;
+    staged_ready_ = true;
     // The sim forgets its events once the tick is over: keep them until
     // the renderer shows them.
     for (const auto& d : sim.death_events())
-        events_.deaths.push_back({d.x, d.y, d.z, d.scale, d.army});
+        staged_events_.deaths.push_back({d.x, d.y, d.z, d.scale, d.army});
     for (const auto& s : sim.camera_shake_events())
-        events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
+        staged_events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
     for (const auto& f : sim.camera_follow_events()) {
-        events_.camera_follows.push_back({f.source, f.projectile, f.timeout});
+        staged_events_.camera_follows.push_back({f.source, f.projectile, f.timeout});
     }
     for (const auto& f : sim.intel_flush_events())
-        events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
+        staged_events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
     for (const auto& r : sim.sound_requests())
-        events_.sounds.push_back(
+        staged_events_.sounds.push_back(
             {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater, r.entity_id});
+
+}
+
+bool WorldHistory::publish() {
+    if (!staged_ready_) return false;
+    const int old_prev = prev_;
+    prev_ = cur_;
+    cur_ = staged_;
+    staged_ = old_prev;
+    staged_ready_ = false;
+    ++captured_;
+    const auto take = [](auto& to, auto& from) {
+        to.insert(to.end(), std::make_move_iterator(from.begin()),
+                  std::make_move_iterator(from.end()));
+        from.clear();
+    };
+    take(events_.deaths, staged_events_.deaths);
+    take(events_.shakes, staged_events_.shakes);
+    take(events_.camera_follows, staged_events_.camera_follows);
+    take(events_.intel_flushes, staged_events_.intel_flushes);
+    take(events_.sounds, staged_events_.sounds);
+    return true;
 }
 
 void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
@@ -653,7 +681,9 @@ void WorldHistory::refresh_pending(const SimState& sim) {
 void WorldHistory::clear() {
     for (auto& s : snaps_) s.clear();
     captured_ = 0;
+    staged_ready_ = false;
     events_.clear();
+    staged_events_.clear();
 }
 
 FrameView::Pair FrameView::lookup(u32 id) const {

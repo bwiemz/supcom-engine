@@ -8,6 +8,7 @@
 #include "sim/unit_command.hpp"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <span>
@@ -393,8 +394,17 @@ struct WorldEvents {
 /// The last two captured beats, and the events not yet shown.
 class WorldHistory {
 public:
-    /// The previous current becomes previous; `sim` is captured as current.
+    /// The previous current becomes previous; `sim` is captured as current
+    /// (capture_staged, then publish).
     void capture(const SimState& sim);
+    /// The sim thread's half (OE-134): `sim`, as its tick left it, captured
+    /// aside with its events, where the frame being drawn doesn't read. A
+    /// later capture before the publish replaces it.
+    void capture_staged(const SimState& sim);
+    /// The main thread's half, between ticks: the staged capture becomes
+    /// current (the current previous) and its events the renderer's. False
+    /// when nothing was staged.
+    bool publish();
     /// Whose sight the captures carry: the army the player watches. Given
     /// the sim, a new army's sight is taken into the newest capture at once,
     /// not at the next tick.
@@ -404,18 +414,25 @@ public:
     /// Forget everything (a new session).
     void clear();
 
-    const WorldSnapshot& prev() const { return snaps_[1 - cur_]; }
+    const WorldSnapshot& prev() const { return snaps_[prev_]; }
     const WorldSnapshot& cur() const { return snaps_[cur_]; }
     u32 ticks_captured() const { return captured_; }
     /// The renderer takes these (and clears them) as it shows them.
     WorldEvents& events() { return events_; }
 
 private:
-    std::array<WorldSnapshot, 2> snaps_;
+    /// The previous, the current and the staged capture (a rotation of the
+    /// three: the sim thread writes the staged one while a frame reads the
+    /// other two).
+    std::array<WorldSnapshot, 3> snaps_;
+    int prev_ = 1;
     int cur_ = 0;
+    int staged_ = 2;
+    bool staged_ready_ = false;
     u32 captured_ = 0;
-    i32 sight_army_ = -1;
+    std::atomic<i32> sight_army_{-1}; ///< (set between ticks, read by the sim thread)
     WorldEvents events_;
+    WorldEvents staged_events_;
 };
 
 /// What one frame draws: the last two beats and how far between them the

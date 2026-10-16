@@ -177,6 +177,37 @@ TEST_CASE("WorldHistory keeps the last two ticks and follows the sim's ticks",
     CHECK(history.cur().entities.empty());
 }
 
+TEST_CASE("A capture staged on the sim thread shows only once published (OE-134)",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.tick(); // tick 1, published at once
+    sim.tick(); // tick 2
+
+    // The sim thread's next two ticks: staged, the frame's two untouched
+    sim.set_tick_observer([&](const SimState& s) { history.capture_staged(s); });
+    entity(sim, id).set_position({5, 0, 5});
+    sim.tick();
+    sim.tick();
+    CHECK(history.prev().tick == 1);
+    CHECK(history.cur().tick == 2);
+    CHECK(history.cur().find(id)->position.x == 1.0f);
+    CHECK(history.ticks_captured() == 2);
+
+    // Published between frames: the newest is current, the last current
+    // previous, and each record knows its previous self
+    CHECK(history.publish());
+    CHECK(history.prev().tick == 2);
+    CHECK(history.cur().tick == 4);
+    CHECK(history.cur().find(id)->position.x == 5.0f);
+    CHECK(history.cur().previous_serial == history.prev().serial);
+    CHECK(history.ticks_captured() == 3);
+    CHECK_FALSE(history.publish()); // nothing new
+}
+
 // --- FrameView ---------------------------------------------------------------
 
 namespace {

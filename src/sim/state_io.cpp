@@ -412,6 +412,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     // post_loads_run_: the host's count of post-loads, not game state
     // stepping_events_: the economy events the entity walk steps, within it
     // save_request_: a save asked for this tick, taken before the next
+    // ticking_elsewhere_: the host's, whose thread runs the tick
 
     save(w, sim.command_scheduler_);
     w.u32v(sim.command_delay_);

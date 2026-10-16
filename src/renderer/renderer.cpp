@@ -3054,21 +3054,18 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
 
     // The frame's step, as render() takes it (fixed for scripted runs and
     // captures).
-    {
-        const f64 now = glfwGetTime();
-        f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
-        last_frame_time_ = now;
-        if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
-        frame_dt_ = dt;
-    }
+    frame_dt_ = take_frame_dt();
 
     // The UI, before the command buffer: its frame callbacks (the movies
     // play on there), its events, then its quads, with the movies' new
     // frames staged for the copy below.
     if (ui_registry && L) {
-        if (frame_dt_ > 0.0f && frame_dt_ < 1.0f)
-            ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(frame_dt_));
-        ui_dispatch_.dispatch_events(L, *ui_registry);
+        if (!ui_ran_early_) {
+            if (frame_dt_ > 0.0f && frame_dt_ < 1.0f)
+                ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(frame_dt_));
+            ui_dispatch_.dispatch_events(L, *ui_registry);
+        }
+        ui_ran_early_ = false;
         movie_textures_.prepare(*ui_registry, fi);
         update_system_cursor(L);
         ui_renderer_.set_scale(ui_scale_);
@@ -3180,6 +3177,28 @@ void Renderer::update_world_shapes(lua_State* L, const sim::FrameView& frame,
     world_shapes_batch_.upload(quads, fi);
 }
 
+f32 Renderer::take_frame_dt() {
+    if (ui_ran_early_) return early_dt_;
+    const f64 now = glfwGetTime();
+    f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
+    last_frame_time_ = now;
+    if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
+    return dt;
+}
+
+void Renderer::run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world) {
+    ui_ran_early_ = false;
+    early_dt_ = take_frame_dt();
+    ui_ran_early_ = true;
+    if (!ui_registry || !L) return;
+    if (early_dt_ > 0.0f && early_dt_ < 1.0f) {
+        if (world) ui_renderer_.advance_animations(L, *ui_registry, early_dt_);
+        ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(early_dt_));
+    }
+    ui_dispatch_.dispatch_events(L, *ui_registry);
+
+}
+
 void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                                   const sim::FrameView& view, sim::WorldEvents& events,
                                   const BuildGhost* ghost, lua_State* L,
@@ -3208,12 +3227,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     // The frame's step, which the particles and overlays run on, with or
     // without a UI (an offscreen test has none).
     {
-        const f64 now = glfwGetTime();
-        f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
-        last_frame_time_ = now;
-        if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
-        frame_dt_ = dt;
-        wave_clock_ += static_cast<f64>(dt);
+        frame_dt_ = take_frame_dt();
+        wave_clock_ += static_cast<f64>(frame_dt_);
     }
     // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
     feedback_blips_.update(frame_dt_);
@@ -3227,11 +3242,14 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         PROFILE_ZONE("Render::ui_update");
         const f32 dt = frame_dt_;
         total_time_ += dt;
-        if (dt > 0.0f && dt < 1.0f) {
-            ui_renderer_.advance_animations(L, *ui_registry, dt);
-            ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
+        if (!ui_ran_early_) {
+            if (dt > 0.0f && dt < 1.0f) {
+                ui_renderer_.advance_animations(L, *ui_registry, dt);
+                ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
+            }
+            ui_dispatch_.dispatch_events(L, *ui_registry);
         }
-        ui_dispatch_.dispatch_events(L, *ui_registry);
+        ui_ran_early_ = false;
         // FA's minimap WorldView shows the minimap, drawn with the UI.
         WorldViewPainter minimap_painter;
         if (!legacy_hud_active_) {

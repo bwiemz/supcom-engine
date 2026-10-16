@@ -13,6 +13,7 @@
 #include "app/self_destruct_flow_test.hpp"
 #include "app/render_bench.hpp"
 #include "app/scripted_mouse.hpp"
+#include "app/sim_thread.hpp"
 #include "app/ui_clicks.hpp"
 #include "app/window_mode.hpp"
 #include "app/world_sounds.hpp"
@@ -24,6 +25,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -74,8 +76,25 @@ private:
     void update_world_sounds();
     void count_fps(double dt);
     /// The sim's ticks for this frame: a loaded game catching up, a
-    /// lockstep game's rounds, or the local clock's.
+    /// lockstep game's rounds, or the local clock's (on this thread).
     void advance_sim(double dt);
+    /// Whether this frame's ticks run on the sim's own thread (OE-134): not
+    /// under --profile (its profiler is the main thread's), with a test
+    /// harness (it reads the sim as frames are drawn), while a loaded game
+    /// catches up, or with --no-sim-thread.
+    bool sim_threaded() const;
+    /// The ticks the last frame started on the sim thread, done: their
+    /// world published, the clock told, dropped peers let go. The tick count
+    /// the job began at (the beats' base); with none, the sim's tick.
+    u32 collect_sim();
+    /// This frame's ticks, as advance_sim decides them, started on the sim
+    /// thread: the frame draws while they run.
+    void start_sim(double dt);
+    /// No tick running: the one in flight waited for and published (before
+    /// a game is left, replaced or the window closes).
+    void quiesce_sim();
+    /// The sim's tick count, as of the last tick collected while one runs.
+    u32 settled_tick() const;
     /// The sim's beat to the user side, once a tick (paused too).
     void run_beats();
     /// The scripted flows' frame: replay, LAN, GPGNet, mods, load.
@@ -88,7 +107,10 @@ private:
     /// and orders.
     void update_input(double dt, const sim::FrameView& frame_view);
     /// This frame drawn, and captured when it is the capture's.
-    void render(const sim::FrameView& frame_view);
+    /// `before_draw(drawn)` runs once what reads the live sim is done, right
+    /// before the draw (it starts the sim thread's ticks), told whether this
+    /// frame is drawn at all.
+    void render(const sim::FrameView& frame_view, const std::function<void(bool)>& before_draw);
     void update_title(double dt);
 
     // window_session.cpp: the UI's requests between games.
@@ -187,6 +209,22 @@ private:
     /// SimCallback queue (UI→Sim bridge, M138a)
     osc::sim::SimCallbackQueue sim_callback_queue;
     double sim_accumulator = 0.0;
+    /// The sim's own thread (OE-134), and its job's state: the tick it began
+    /// at, the tick count when last collected, and the peers its lockstep
+    /// rounds dropped (let go at the collect).
+    std::unique_ptr<SimThread> sim_thread;
+    u32 job_tick0 = 0;
+    u32 collected_tick = 0;
+    std::vector<u32> job_dropped;
+    /// The frames' wall times while a game plays: how many, their sum, the
+    /// worst, and those over 20, 33 and 50 ms (at 60 fps: one frame dropped,
+    /// two, three).
+    struct FrameTimes {
+        u64 frames = 0;
+        double total_ms = 0, worst_ms = 0;
+        u64 over_20 = 0, over_33 = 0, over_50 = 0;
+        double in_game_s = 0; ///< for --play-for
+    } game_frames;
     /// The last frames' times (Moho's RollingFrameRates), whose median the
     /// session runs on: begin_frame's session_dt. The engine loads a game
     /// before its first frame, where Moho's loading screen runs frames, so the

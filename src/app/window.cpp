@@ -8,7 +8,9 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "app/window_commands.hpp"
+#include "lua/lua_thread_check.hpp"
 #include "lua/mp_net_state.hpp"
+#include "core/test_status.hpp"
 #include "platform/paths.hpp"
 #include "sim/formation.hpp"
 #include "sim/lockstep_session.hpp"
@@ -29,7 +31,15 @@ App::Window::Window(App& app)
     : app(app), offscreen_capture(!parse_string_arg(argc, argv, "--screenshot", "").empty() ||
                                   !parse_string_arg(argc, argv, "--golden", "").empty() ||
                                   !opt.render_bench_report.empty() || opt.scripted_window ||
-                                  opt.fast_match_ticks > 0) {}
+                                  opt.fast_match_ticks > 0 || opt.play_for > 0) {
+    // The sim's own thread (OE-134), unless asked not to; the runs that
+    // test the game check no other thread touches the sim's Lua meanwhile
+    if (opt.sim_thread) {
+        sim_thread = std::make_unique<SimThread>();
+        if (opt.lan_game_test() || opt.fast_match_ticks > 0 || opt.play_for > 0)
+            lua::install_lua_thread_check();
+    }
+}
 
 std::optional<int> App::Window::run() {
     // The render benchmark's frames are 1920x1080 (M223b); captures keep
@@ -452,10 +462,23 @@ bool App::Window::running() const {
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
            !(self_destruct_flow && self_destruct_flow->done()) &&
-           !(campaign_flow && campaign_flow->done());
+           !(campaign_flow && campaign_flow->done()) &&
+           !(opt.play_for > 0 && game_frames.in_game_s >= opt.play_for);
+
 }
 
 std::optional<int> App::Window::finish() {
+    quiesce_sim(); // the last frame's ticks, before anything reads the game
+    if (const u64 off = lua::lua_thread_violations(); off > 0)
+        osc::test_status::fail("[FAIL] the sim's Lua was used off its thread {} times while it "
+                               "ticked (OE-134)",
+                               off);
+    if (game_frames.frames > 0)
+        spdlog::info("Frames in the game: {}, mean {:.1f} ms, over 20 ms: {}, over 33 ms: {}, "
+                     "over 50 ms: {}, worst {:.1f} ms (sim thread: {})",
+                     game_frames.frames, game_frames.total_ms / game_frames.frames,
+                     game_frames.over_20, game_frames.over_33, game_frames.over_50,
+                     game_frames.worst_ms, sim_thread ? "on" : "off");
     if (app.telemetry)
         app.telemetry->finish(sim_state.get(), fast_match_done() ? "ticks" : "closed");
     // The render benchmark's report, while the renderer and the game are up
@@ -596,7 +619,8 @@ bool App::Window::fast_match_in_game() const {
 }
 
 bool App::Window::fast_match_done() const {
-    return opt.fast_match_ticks > 0 && sim_state && sim_state->tick_count() >= opt.fast_match_ticks;
+    return opt.fast_match_ticks > 0 && sim_state && settled_tick() >= opt.fast_match_ticks;
+
 }
 
 std::optional<int> App::Window::run_without_renderer() {

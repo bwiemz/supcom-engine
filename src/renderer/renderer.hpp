@@ -165,6 +165,13 @@ public:
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during the loading screen and front end, when there is no world.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
+    /// The UI's frame ahead of the draw (OE-134): its controls' frame
+    /// callbacks, its events and (`world`: with a world drawn) its
+    /// animations, which run its scripts, and they may read the live sim:
+    /// run while no tick runs on the sim's thread. The frame's step is taken
+    /// here; the next render or render_ui_only draws with it and doesn't run
+    /// them again.
+    void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world);
 
     /// An order's feedback blip from the UI (AddCommandFeedbackBlip), made
     /// at the newest game tick and shown for its duration.
@@ -587,6 +594,12 @@ public:
     const std::string& device_name() const { return device_name_; }
 
 private:
+    /// The frame's step: the one run_ui_frame took, else the clock's.
+    f32 take_frame_dt();
+    bool ui_ran_early_ = false; ///< run_ui_frame ran this frame
+    f32 early_dt_ = 0.0f;       ///< the step it took
+
+
     static VkBool32 VKAPI_CALL vulkan_debug_callback(
         VkDebugUtilsMessageSeverityFlagBitsEXT severity,
         VkDebugUtilsMessageTypeFlagsEXT type,

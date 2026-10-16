@@ -24,8 +24,12 @@
 ** or when reading immutable fields from global objects
 ** (such as string values and udata values). 
 */
+/* OpenSupCom (OE-134): the engine may install a check that a state is
+** used only from the thread that owns it now (the sim's own thread runs the
+** sim's state while the main thread draws); none installed, none made. */
+extern void (*osc_lua_lock_check)(lua_State *L);
 #ifndef lua_lock
-#define lua_lock(L)	((void) 0)
+#define lua_lock(L)	(osc_lua_lock_check ? osc_lua_lock_check(L) : (void) 0)
 #endif
 
 #ifndef lua_unlock

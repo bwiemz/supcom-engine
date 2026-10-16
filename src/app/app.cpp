@@ -194,8 +194,10 @@ App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
 }
 
 void App::save_network_game(sim::SimState& sim, const std::string& name) {
-    lua_State* uiL = ui_lua_state.raw();
-    const fs::path path = lua::network_save_path(uiL, name);
+    // (on the sim's thread, OE-134: no Lua but the sim's; the profile as it
+    // was when the game began, and the player told between frames)
+    const fs::path path =
+        special_files ? lua::network_save_path(*special_files, network_profile, name) : fs::path();
     bool worked = false;
     if (path.empty() || !special_files) {
         spdlog::warn("Network game: not saved as '{}' (not a plain name, or no saves folder)",
@@ -208,18 +210,31 @@ void App::save_network_game(sim::SimState& sim, const std::string& name) {
             spdlog::info("Network game saved as '{}' at tick {}: {}", name, save.tick,
                          path.string());
     }
-    // The UI's own word to the player, if its scripts have one
-    lua_pushstring(uiL, "OnNetworkGameSaved");
-    lua_rawget(uiL, LUA_GLOBALSINDEX);
-    if (lua_isfunction(uiL, -1)) {
-        lua_pushstring(uiL, name.c_str());
-        lua_pushboolean(uiL, worked ? 1 : 0);
-        if (lua_pcall(uiL, 2, 0, 0) != 0) {
-            spdlog::warn("OnNetworkGameSaved: {}", lua_tostring(uiL, -1));
+    const std::lock_guard<std::mutex> lock(network_saves_mutex);
+    network_save_notices.emplace_back(name, worked);
+}
+
+void App::deliver_network_save_notices() {
+    std::vector<std::pair<std::string, bool>> notices;
+    {
+        const std::lock_guard<std::mutex> lock(network_saves_mutex);
+        notices.swap(network_save_notices);
+    }
+    lua_State* uiL = ui_lua_state.raw();
+    for (const auto& [name, worked] : notices) {
+        // The UI's own word to the player, if its scripts have one
+        lua_pushstring(uiL, "OnNetworkGameSaved");
+        lua_rawget(uiL, LUA_GLOBALSINDEX);
+        if (lua_isfunction(uiL, -1)) {
+            lua_pushstring(uiL, name.c_str());
+            lua_pushboolean(uiL, worked ? 1 : 0);
+            if (lua_pcall(uiL, 2, 0, 0) != 0) {
+                spdlog::warn("OnNetworkGameSaved: {}", lua_tostring(uiL, -1));
+                lua_pop(uiL, 1);
+            }
+        } else {
             lua_pop(uiL, 1);
         }
-    } else {
-        lua_pop(uiL, 1);
     }
 }
 
