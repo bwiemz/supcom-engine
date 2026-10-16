@@ -153,6 +153,34 @@ static int nav_GetGoal(lua_State* L) {
     return 1;
 }
 
+// navigator:GetCurrentTargetPos() — where it heads now: with Moho's pathing
+// its path navigator's target cell's centre, at the unit's height (Moho's
+// CAiNavigatorLand::GetCurrentTargetPos, CAiPathNavigator::GetTargetPos;
+// once there, the cell it last stood on); else its current waypoint, or
+// where it stands once there.
+static int nav_GetCurrentTargetPos(lua_State* L) {
+    auto* unit = check_nav_unit(L);
+    if (!unit || unit->destroyed()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* nav = check_navigator(L);
+    if (!nav) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const sim::Vector3& at = unit->position();
+    const auto* sim = get_sim(L);
+    // (Before its first update Moho's answers cell (0, 0)'s centre.)
+    if (nav->moho_active() || (sim && sim->moho_pathing() && !unit->is_air_unit())) {
+        push_vector3(L, {nav->moho_path().target_x(), at.y, nav->moho_path().target_z()});
+        return 1;
+    }
+    const sim::Vector3* waypoint = nav->waypoint();
+    push_vector3(L, waypoint ? *waypoint : at);
+    return 1;
+}
+
 // navigator:GetCurrentTargetSpeed() — returns speed if moving, 0 otherwise
 static int nav_GetCurrentTargetSpeed(lua_State* L) {
     auto* unit = check_nav_unit(L);
@@ -175,6 +203,7 @@ static int nav_SetSpeedThroughGoal(lua_State* L) {
 // navigator
 // clang-format off
 const MethodEntry navigator_methods[] = {
+    {"GetCurrentTargetPos",     nav_GetCurrentTargetPos},
     {"GetCurrentTargetSpeed",   nav_GetCurrentTargetSpeed},
     {"SetSpeedThroughGoal",     nav_SetSpeedThroughGoal},
     {"SetGoal",                 nav_SetGoal},

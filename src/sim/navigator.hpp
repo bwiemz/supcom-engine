@@ -35,6 +35,10 @@ public:
     void abort_move();
 
     const Vector3& goal() const { return goal_; }
+    /// The waypoint it drives at now, while it has one.
+    const Vector3* waypoint() const {
+        return waypoint_index_ < waypoints_.size() ? &waypoints_[waypoint_index_] : nullptr;
+    }
     Status status() const { return status_; }
     /// True only while following a path. False while waiting for one, so the
     /// usual `if (!is_moving() || goal changed) set_goal(...)` retries it.

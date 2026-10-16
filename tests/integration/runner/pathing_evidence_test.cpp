@@ -210,10 +210,12 @@ void test_choke(TestContext& ctx) {
                           through, round, clipped, stranded, last))
         if __osc_moho_pathing then
             -- Moho's drive moves a unit only where its footprint fits, and
-            -- bounces one back from ground it won't (CalcMoveCommon). In
-            -- retail FA all 24 get across; one still stops short here.
+            -- bounces one back from ground it won't (CalcMoveCommon). Its
+            -- navigator looks down the way every 7 ticks and asks again
+            -- before the wall, so the crowd makes for the gap, not the
+            -- wall's face. In retail FA all 24 get across.
             if clipped > 0 then error(clipped .. ' went through wall cells') end
-            if stranded > 1 then error(stranded .. ' stopped short of the gap') end
+            if stranded > 0 then error(stranded .. ' stopped short of the gap') end
         else
             -- The grid's pathing gets each one across; its smoothed paths
             -- cut the wall's corners (a known gap of the default pathing).

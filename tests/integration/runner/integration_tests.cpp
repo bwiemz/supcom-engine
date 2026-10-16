@@ -9188,8 +9188,9 @@ void test_steer(TestContext& ctx) {
         return;
 
     // Moho's path navigator aims no farther than 50 cells along its path
-    // (CAiPathNavigator, faf-re's target pick): with a goal past that, a
-    // unit aims at the path's cluster portals, a lane apart from one that
+    // (CAiPathNavigator, faf-re's target pick), and picks its next target
+    // only halfway to the one it has (the shipped exe): with a far goal, a
+    // unit makes for the path's cluster portals, a lane apart from one that
     // aims straight at a nearer goal, and the two never meet. With Moho's
     // pathing each case's goals are nearer, so both keep one lane.
     const bool moho = ctx.sim.moho_pathing();
@@ -9223,7 +9224,13 @@ void test_steer(TestContext& ctx) {
 
     // 2. Crossing: two Strikers meet at right angles. One stops for the
     //    other; they don't run into each other.
-    lua(R"(
+    lua(moho ? R"(
+        __osc_east = __osc_spawn('uel0201', 'ARMY_1', -20, 0, math.pi / 2)
+        __osc_north = __osc_spawn('uel0201', 'ARMY_2', 0, -20, 0)
+        __osc_move(__osc_east, 20, 0)
+        __osc_move(__osc_north, 0, 20)
+    )"
+             : R"(
         __osc_east = __osc_spawn('uel0201', 'ARMY_1', -40, 0, math.pi / 2)
         __osc_north = __osc_spawn('uel0201', 'ARMY_2', 0, -40, 0)
         __osc_move(__osc_east, 40, 0)
@@ -9257,7 +9264,11 @@ void test_steer(TestContext& ctx) {
     )");
     {
         const Watch w = watch("__osc_big", "__osc_eng", 600, true, true);
-        check(w.held[1] && !w.held[0] && !w.stepped[0] && w.stray[0] < 0.5f && w.arrived[0] &&
+        // With Moho's pathing the Pillar first makes for a cell of its path a
+        // row off its line, until it is halfway there (as Moho's navigator
+        // picks its next target): it may stray up to a cell, not step aside.
+        const float keeps_line = moho ? 1.0f : 0.5f;
+        check(w.held[1] && !w.held[0] && !w.stepped[0] && w.stray[0] < keeps_line && w.arrived[0] &&
                   w.arrived[1],
               fmt::format("Test 3: head-on, the engineer stops and the Pillar keeps its line "
                           "(engineer held {}, Pillar held {} strayed {:.2f}, arrived {} {})",

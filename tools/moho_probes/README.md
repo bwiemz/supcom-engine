@@ -122,3 +122,24 @@ Asked on 2026-10-14 (`warp` on 2026-10-15): the original once (`engineer` twice,
 | `warp` after | the tank in deep water drowns (297, 285, 240 at ticks 1, 5, 20); the CZAR is in the Air from tick 1, at 19.94, 24.88, 37.15 | the same | A warped unit is in the same state as one made there. |
 | `warp` mover | its move order is gone within 10 ticks; it coasts 2.04 and stops | it went on to its goal before #672; now its order ends, and it coasts 1.53 | Warp aborts the navigator's move, and the move task takes the abort as a failure (`CUnitMoveTask::OnEvent`). The coast differs with the unit's braking, not Warp. |
 | `layers` aircraft | the scout in the Air, 18 over the ground under it; the Soul Ripper and the CZAR on Land at the ground, in the Air and climbing from t=1 | the experimentals in the Air at full height before #655; now the same through t=5, within 0.25 after | `GetStartingLayer` puts an experimental aircraft on Land; it lifts off with no order. The scout's drift and the later climb are air physics, not ported. |
+
+**`crowd/`** asks how a crowd gets through a gap. It uses `choke`'s scene: a wall along z 175 from x 650 to 790, with a gap 4 wide at x 718–722, and 24 Strikers sent to (720, 200). It runs that scene six times, one after another:
+- v0 as `choke` places the crowd;
+- v1–v5 with each spawn point moved up to 0.8 by a fixed sine.
+
+Every 2 ticks it logs each Striker's position and the length of its order queue. After 400 ticks it logs those that never crossed. It is done at `PROBE tr-all-done`.
+
+**`navigator/`** asks which cells a lone Striker's navigator heads for on the way to the gap. With no crowd, Strikers start one at a time from (730, 154), (742, 158) and (700, 168). Every tick it logs:
+- the position;
+- `navigator:GetCurrentTargetPos()`, the path navigator's target cell centre;
+- `GetStatus()`.
+
+It is done at `PROBE target-all-done`.
+
+Asked on 2026-10-15: the original once each; the engine on main 44d01b33 and with the path navigator ported from the binary.
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `crowd` stopped short | 0, 0, 0, 0, 1, 0: one Striker of 144 stands south of the gap (720.99, 171.11) with its order ended | 1, 2, 2, 2, 3, 1 on main; 0 in all six now | On main, the crowd's units were pinned against the wall's face. |
+| `crowd` the wall | 139 of 143 Strikers first reach z 173.8 at x 716–723, at the gap (the others at 703–715); at most 6 at the wall's face at once; none but the one stopped short stands still more than 22 ticks | on main 73 of 144 at the gap and the rest along the face from 711 to 731, up to 15 at the face, some still for 272–312 ticks; now 140 of 144 at the gap (the others at 724–727), at most 6, none still more than 16 | Moho's units make for the gap before they get to the wall. |
+| `navigator` targets | from (730, 154): (724, 160) at t=3, (724, 171) at t=36, (721, 174) at t=53, (720, 198) at t=75, the goal at t=113. Likewise from the other two starts. | on main: (724, 160), then (724, 192), the far side's portal, through the wall, until the wall refuses it at t≈70; now the original's cells (but one: (720, 199) for (720, 198)), one to seven ticks sooner. (The original's Striker barely moves for its first ten ticks or so, turning; the engine's sets off sooner.) | Moho's navigator advances the target only halfway to it, and looks down the way every 7 ticks. Where nothing ahead can be reached straight, it asks the way cell by cell. faf-re's text differs from the shipped exe in these, and in five more rules: see the engine's `path_navigator.cpp`. |

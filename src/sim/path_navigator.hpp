@@ -2,11 +2,15 @@
 
 // Moho's CAiPathNavigator (roadmap item 4c-2b, faf-re CAiPathNavigator.cpp):
 // a ground unit's path, asked of its army's path queue and followed cell by
-// cell. Each tick it notes the unit's cell, drops the cells behind it, and
-// picks the farthest cell ahead its footprint can slide straight to (Moho's
-// string-pulling: the path itself is never smoothed). It asks again for the
-// way to its next cell when it strays, stalls, or changes layer, merges the
-// answer into what is left, and gives up after enough failures.
+// cell. Each tick it notes the unit's cell and drops the cells behind it.
+// Halfway to its target cell it picks the farthest cell ahead its footprint
+// can slide straight to (Moho's string-pulling: the path itself is never
+// smoothed). It asks again for the way to its next cell when none can be
+// reached straight, when the way ahead looks blocked, when it stalls, or (a
+// submarine) when it changes layer; it merges the answer into what is left,
+// and gives up after enough failures. Where faf-re's text and the shipped
+// binary differ, it follows the binary (FA's SupremeCommander.exe,
+// UpdateCurrentPosition at 0x005B4DA0).
 
 #include "blueprints/footprint.hpp"
 #include "core/types.hpp"
@@ -28,6 +32,13 @@ struct NavUnit {
     bool attacking = false;             ///< UNITSTATE_Attacking
     u32 layer = 0;                      ///< its layer, as a token
     bool waiting_for_transport = false; ///< UNITSTATE_WaitingForTransport
+    u32 tick = 0;                       ///< the sim's tick
+    /// Its entity id mod 7 (Moho's mTickBucket7): it looks down the way to
+    /// its target on the ticks whose number mod 7 is this.
+    u32 probe_bucket = 0;
+    f32 max_speed = 0;          ///< its blueprint's Physics.MaxSpeed
+    bool turns_wide = false;    ///< Physics.TurnRadius > Physics.TurnRate
+    bool surfacing_sub = false; ///< MotionType RULEUMT_SurfacingSub
 };
 
 class PathNavigator final : public PathListener {
@@ -94,6 +105,9 @@ private:
     void set_current(f32 x, f32 z);
     void set_target_point(i32 index);
     bool try_advance_target_point();
+    /// The look down the way to its target, `dist` cells off, it takes once
+    /// every 7 ticks: whether it should ask for the way again.
+    bool way_ahead_blocked(f32 dist) const;
     void request_path(i32 mode);
     void request_continuation(i32 mode);
     void queue_search(SearchType type);
@@ -119,6 +133,7 @@ private:
     i32 retry_delay_ = 0;
     i32 no_forward_fail_count_ = 0;
     f32 repath_threshold_ = std::numeric_limits<f32>::infinity();
+    u32 last_repath_tick_ = 0; ///< Moho's mLastRepathTick
     i32 no_progress_ticks_ = 0;
     bool forward_probe_ = false;
     bool repath_requested_ = false;

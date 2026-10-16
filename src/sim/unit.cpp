@@ -904,7 +904,22 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     if (turned_in_place_ && ctx.terrain && snaps_to_ground()) {
         stand_on_ground(ctx.terrain, position(), orientation());
     }
-    if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
+    if (!drove_ && !is_air_unit()) {
+        const Vector3 was = position();
+        const Quaternion facing = orientation();
+        coast(dt, ctx.terrain);
+        // With Moho's pathing, a unit stopping is braked by its motion
+        // (CUnitMotion::Stop, then CalcMoveCommon), which puts a step onto
+        // ground it won't fit back, as the drive does: it stops there.
+        const Vector3& now = position();
+        if (ctx.sim && ctx.sim->moho_pathing() &&
+            ctx.sim->footprint_fits_at(footprint(), now.x, now.z) == 0 &&
+            ctx.sim->footprint_fits_at(footprint(), was.x, was.z) != 0) {
+            set_position(was);
+            set_orientation(facing);
+            ground_speed_ = 0;
+        }
+    }
 
     // A sub dives or surfaces, moving or not (M206o).
     tick_dive(ctx.terrain, L);

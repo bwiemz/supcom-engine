@@ -22,6 +22,14 @@ bool overlap(const OccupancyRect& a, const OccupancyRect& b) {
     return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
 }
 
+/// The binary's test of a rect against the windows it remembers
+/// (ShouldSearchRect, 0x005B1356): edges that touch count, where faf-re's
+/// text has the strict overlap. A cluster just past a window's edge is
+/// searched cell by cell too.
+bool touches(const OccupancyRect& a, const OccupancyRect& b) {
+    return a.x0 <= b.x1 && b.x0 <= a.x1 && a.z0 <= b.z1 && b.z0 <= a.z1;
+}
+
 bool inside(const OccupancyRect& inner, const OccupancyRect& outer) {
     return outer.x0 <= inner.x0 && inner.x1 <= outer.x1 && outer.z0 <= inner.z0 &&
            inner.z1 <= outer.z1;
@@ -108,7 +116,7 @@ bool PathFinder::should_search_rect(const OccupancyRect& r) const {
     if (type_ == SearchType::None) {
         if (contains(r, anchor_)) return true;
     } else if (std::any_of(history_.begin(), history_.end(),
-                           [&r](const OccupancyRect& h) { return overlap(r, h); })) {
+                           [&r](const OccupancyRect& h) { return strict(h) && touches(r, h); })) {
         return true;
     }
     if (!overlap(r, goal_.outer) || !strict(goal_.outer)) return false;
