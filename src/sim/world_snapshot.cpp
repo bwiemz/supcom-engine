@@ -16,6 +16,7 @@
 #include <cassert>
 #include <cmath>
 #include <functional>
+#include <type_traits>
 
 namespace osc::sim {
 
@@ -171,6 +172,24 @@ void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
     }
 }
 
+/// `r` as a new record. An entity's is plain memory (its names interned),
+/// so this is a copy; an effect's keeps its strings' buffers (an empty
+/// string assigned keeps its own) rather than allocating them again.
+static_assert(std::is_trivially_copyable_v<EntityRecord>, "a record is copied whole each tick");
+
+template <class Record> void recycle(Record& r) {
+    static const Record kBlank{};
+    r = kBlank;
+}
+
+/// The next record of `records` to fill: a recycled one while there are
+/// some, else a new one. `used` counts those handed out.
+template <class Record> Record& next_record(std::vector<Record>& records, size_t& used) {
+    if (used == records.size()) records.emplace_back();
+    else recycle(records[used]);
+    return records[used++];
+}
+
 CommandRecord command_record(const UnitCommand& c, bool pending) {
     return {c.type,       c.target_id,
             c.target_pos, c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(),
@@ -179,12 +198,13 @@ CommandRecord command_record(const UnitCommand& c, bool pending) {
 }
 
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
-    r.unit_id = u.unit_id();
+    r.unit_id = u.interned_unit_id();
     r.icon = icon_class(u);
     r.is_mobile = u.is_mobile();
     r.footprint_size_x = u.footprint_size_x();
     r.footprint_size_z = u.footprint_size_z();
-    r.is_structure = u.has_category("STRUCTURE");
+    static const CategoryName kStructure{"STRUCTURE"};
+    r.is_structure = u.has_category(kStructure);
     r.skirt_size_x = u.skirt_size_x();
     r.skirt_size_z = u.skirt_size_z();
     r.skirt_offset_x = u.skirt_offset_x();
@@ -382,21 +402,23 @@ void capture_sight(const SimState& sim, i32 army, SightMap& out) {
 
 void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     out.tick = sim.tick_count();
-    out.entities.clear();
     out.bones.clear();
     out.commands.clear();
     out.intel.clear();
     out.weapon_ranges.clear();
     out.adjacent.clear();
-    out.effects.clear();
     out.armies.clear();
     out.fake_blips.clear();
     capture_fake_blips(sim, out);
     out.deposits.assign(sim.resource_deposits().begin(), sim.resource_deposits().end());
 
+    // The records are kept from capture to capture and rewritten in place
+    // (next_record): made anew, with their strings, they took a third of an
+    // eight-AI match's tick.
+    size_t entities = 0;
     sim.entity_registry().for_each([&](const Entity& e) {
         if (e.destroyed()) return;
-        EntityRecord& r = out.entities.emplace_back();
+        EntityRecord& r = next_record(out.entities, entities);
         r.id = e.entity_id();
         r.position = e.position();
         r.orientation = e.orientation();
@@ -424,8 +446,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.beam_enabled = e.beam_enabled();
         r.is_wreckage = e.is_wreckage();
         r.army = e.army();
-        r.blueprint_id = e.blueprint_id();
-        r.mesh_override = e.mesh_override();
+        r.blueprint_id = e.interned_blueprint_id();
+        r.mesh_override = e.interned_mesh_override();
         r.mesh_changes = e.mesh_changes();
         r.scale_x = e.scale_x();
         r.scale_y = e.scale_y();
@@ -433,8 +455,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.fraction_complete = e.fraction_complete();
         r.health = e.health();
         r.max_health = e.max_health();
-        r.custom_name = e.custom_name();
-        r.strategic_underlay = e.strategic_underlay();
+        r.custom_name = e.interned_custom_name();
+        r.strategic_underlay = e.interned_strategic_underlay();
         if (e.is_unit()) {
             capture_unit(static_cast<const Unit&>(e), r, out);
             capture_recon(sim, static_cast<const Unit&>(e), r);
@@ -457,14 +479,16 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
             r.shield_size = s.size;
         }
     });
+    out.entities.resize(entities);
     // The registry walks in id order, which find()'s binary search relies on.
     assert(
         std::is_sorted(out.entities.begin(), out.entities.end(),
                        [](const EntityRecord& a, const EntityRecord& b) { return a.id < b.id; }));
 
+    size_t effects = 0;
     for (const auto& fx : sim.effect_registry().all()) {
         if (!fx || fx->destroyed()) continue;
-        EffectRecord& r = out.effects.emplace_back();
+        EffectRecord& r = next_record(out.effects, effects);
         r.id = fx->id();
         r.type = fx->type();
         r.blueprint_path = fx->blueprint_path();
@@ -494,6 +518,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         capture_anchor(sim, *fx, r);
         capture_frame(sim, *fx, r);
     }
+    out.effects.resize(effects);
 
     for (size_t i = 0; i < sim.army_count(); ++i) {
         ArmyRecord& a = out.armies.emplace_back();

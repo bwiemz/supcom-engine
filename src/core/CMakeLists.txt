@@ -12,6 +12,7 @@ add_library(osc_core STATIC
     utf8.cpp
     version.cpp
     sha256.cpp
+    interned_string.cpp
 )
 add_library(osc::core ALIAS osc_core)
 

@@ -186,7 +186,7 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.f32v(e.footprint_size_x_);
     w.f32v(e.footprint_size_z_);
     w.b(e.destroyed_);
-    w.str(e.blueprint_id_);
+    w.str(e.blueprint_id_.str());
     w.i32v(e.lua_table_ref_);
     w.size(e.ambient_sounds_.size());
     for (const auto& a : e.ambient_sounds_) {
@@ -198,8 +198,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     // bone_data_: from the bone cache (load_unit / load_prop)
     w.b(e.do_not_target_);
     w.b(e.reclaimable_);
-    w.str(e.custom_name_);
-    w.str(e.strategic_underlay_);
+    w.str(e.custom_name_.str());
+    w.str(e.strategic_underlay_.str());
     w.f32v(e.scale_x_);
     w.f32v(e.scale_y_);
     w.f32v(e.scale_z_);
@@ -212,7 +212,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     // cell_link_: its order alone (seq); its cells follow from its committed transform, and mark
     // is a gather's own
     w.u64v(e.cell_link_.seq);
-    w.str(e.mesh_override_); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
+    w.str(e.mesh_override_.str()); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
+
     w.b(e.unselectable_);
     w.b(e.is_wreckage_);
     w.u32v(e.parent_entity_id_);
@@ -287,7 +288,7 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.footprint_size_x_ = r.f32v();
     e.footprint_size_z_ = r.f32v();
     e.destroyed_ = r.b();
-    e.blueprint_id_ = r.str();
+    e.blueprint_id_ = InternedString(r.str());
     e.lua_table_ref_ = r.i32v();
     e.ambient_sounds_.resize(r.size(16));
     for (auto& a : e.ambient_sounds_) {
@@ -298,9 +299,9 @@ void StateIO::load(StateReader& r, Entity& e) {
     }
     e.do_not_target_ = r.b();
     e.reclaimable_ = r.b();
-    e.custom_name_ = r.str();
+    e.custom_name_ = InternedString(r.str());
     // ui_refresh_requests_ isn't saved: the selection's refresh only looks for a change in it
-    e.strategic_underlay_ = r.str();
+    e.strategic_underlay_ = InternedString(r.str());
     e.scale_x_ = r.f32v();
     e.scale_y_ = r.f32v();
     e.scale_z_ = r.f32v();
@@ -313,7 +314,8 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.default_collision_shape_ = load_shape(r);
     e.cell_link_ = CellLink{};
     e.cell_link_.seq = r.u64v(); // linked in this order once all are loaded
-    e.mesh_override_ = r.str();
+    e.mesh_override_ = InternedString(r.str());
+
     e.unselectable_ = r.b();
     e.is_wreckage_ = r.b();
     e.parent_entity_id_ = r.u32v();
@@ -1081,7 +1083,7 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
 void StateIO::save(StateWriter& w, const Unit& u) {
     save(w, static_cast<const Entity&>(u));
     w.tag("UNIT");
-    w.str(u.unit_id_);
+    w.str(u.unit_id_.str());
     w.str(u.armor_type_);
     w.f32v(u.build_rate_);
     w.f32v(u.cap_cost_);
@@ -1485,7 +1487,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
 void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     load(r, static_cast<Entity&>(u));
     r.tag("UNIT");
-    u.unit_id_ = r.str();
+    u.unit_id_ = InternedString(r.str());
     u.armor_type_ = r.str();
     u.build_rate_ = r.f32v();
     u.cap_cost_ = r.f32v();

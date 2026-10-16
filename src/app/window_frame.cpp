@@ -35,11 +35,22 @@ bool App::Window::frame() {
     note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
-    advance_sim(session_dt);
-    app.begin_match_record();
-    if (app.telemetry && sim_state) app.telemetry->after_tick(*sim_state);
+    {
+        PROFILE_ZONE("Frame::sim");
+        advance_sim(session_dt);
+    }
 
-    run_beats();
+    app.begin_match_record();
+    if (app.telemetry && sim_state) {
+        PROFILE_ZONE("Frame::telemetry");
+        app.telemetry->after_tick(*sim_state);
+    }
+
+    {
+        PROFILE_ZONE("Frame::beats");
+        run_beats();
+    }
+
     finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
@@ -47,7 +58,10 @@ bool App::Window::frame() {
 
     run_flows();
 
-    update_ui(dt);
+    {
+        PROFILE_ZONE("Frame::ui");
+        update_ui(dt);
+    }
 
     if (sim_state) {
         world_interp.history.refresh_pending(*sim_state);
@@ -55,8 +69,14 @@ bool App::Window::frame() {
     // This frame's world, between the last two ticks: what is
     // drawn and what clicks pick.
     const osc::sim::FrameView frame_view = world_interp.view();
-    update_input(dt, frame_view);
-    render(frame_view);
+    {
+        PROFILE_ZONE("Frame::input");
+        update_input(dt, frame_view);
+    }
+    {
+        PROFILE_ZONE("Frame::render");
+        render(frame_view);
+    }
     update_title(dt);
 
     if (exit_requested()) return false;

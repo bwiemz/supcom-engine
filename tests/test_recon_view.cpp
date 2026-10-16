@@ -333,7 +333,7 @@ TEST_CASE("ReconView: a structure gone unseen is maybe dead, until its spot is s
           "[renderer][recon]") {
     World w;
     sim::EntityRecord& pd = w.unit(7, 1, 100, 100, false);
-    pd.blueprint_id = "ueb2101";
+    pd.blueprint_id = osc::InternedString("ueb2101");
     pd.bone_count = 1;
     w.snap.bones.push_back(sim::BoneMatrix{});
     w.unit(8, 1, 200, 200, true); // a tank: mobile, never a ghost
@@ -421,7 +421,7 @@ TEST_CASE("ReconView: a FlushIntelInRect forgets what it took from the player's 
 TEST_CASE("ReconView: a jammer's fakes its army senses show as blips", "[renderer][recon]") {
     World w;
     sim::EntityRecord& frigate = w.unit(7, 1, 100, 100, true);
-    frigate.blueprint_id = "ues0103";
+    frigate.blueprint_id = osc::InternedString("ues0103");
     w.snap.fake_blips = {{7, 0, 2, {110, 0, 95}}, {7, 1, 0, {90, 0, 90}}};
     ReconView recon;
     recon.set_focus_army(0);

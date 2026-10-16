@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "core/interned_string.hpp"
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/resource_deposit.hpp"
@@ -84,17 +85,18 @@ struct EntityRecord {
     bool is_wreckage = false;
 
     i32 army = -1;
-    std::string blueprint_id;
-    std::string mesh_override;
+    // (interned: a record is plain memory, copied whole each tick)
+    InternedString blueprint_id;
+    InternedString mesh_override;
     u32 mesh_changes = 0; ///< Entity::mesh_changes
     f32 scale_x = 1, scale_y = 1, scale_z = 1;
     f32 fraction_complete = 1;
     f32 health = 0, max_health = 0;
 
     // Units
-    std::string unit_id;
-    std::string custom_name;
-    std::string strategic_underlay; ///< Unit:SetStrategicUnderlay's icon name
+    InternedString unit_id;
+    InternedString custom_name;
+    InternedString strategic_underlay; ///< Unit:SetStrategicUnderlay's icon name
     IconClass icon = IconClass::Generic;
     f32 footprint_size_x = 1;
     f32 footprint_size_z = 1;

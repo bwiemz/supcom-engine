@@ -1,8 +1,10 @@
 #include "sim/thread_manager.hpp"
+#include "core/profiler.hpp"
 #include "core/test_status.hpp"
 #include "sim/waitable.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cstring>
 #include <iterator>
@@ -301,7 +303,21 @@ void ThreadManager::resume_all(u32 current_tick) {
         // is [fn, arg1, ..., argN] so nargs = gettop - 1.  After a yield
         // we clear the stack (settop 0), so gettop - 1 = -1 → clamp to 0.
         int nargs = std::max(0, lua_gettop(t.coroutine) - 1);
+        // Under --profile, a resume long enough to be a hitch says where
+        // it stopped and where it was forked: a stutter's script.
+        const bool timed = Profiler::instance().enabled();
+        const auto started = timed ? std::chrono::steady_clock::now()
+                                   : std::chrono::steady_clock::time_point{};
         int status = lua_resume(t.coroutine, nargs);
+        if (timed) {
+            const f64 ms = std::chrono::duration<f64, std::milli>(
+                               std::chrono::steady_clock::now() - started)
+                               .count();
+            if (ms > kSlowResumeMs)
+                spdlog::info("Slow Lua thread: {:.1f} ms at tick {}, stopped at {}, forked at {}",
+                             ms, current_tick, where_in(t.coroutine),
+                             t.source.empty() ? "?" : t.source);
+        }
 
         // Clear hook after resume
         if (need_hook) {
@@ -374,18 +390,23 @@ void ThreadManager::resume_all(u32 current_tick) {
     cleanup_dead_threads();
 }
 
+std::string ThreadManager::where_in(lua_State* co) {
+    std::string where;
+    lua_Debug ar;
+    for (int level = 0; level < 4 && lua_getstack(co, level, &ar); ++level) {
+        lua_getinfo(co, "Sln", &ar);
+        if (!where.empty()) where += " <- ";
+        where += std::string(ar.short_src) + ":" + std::to_string(ar.currentline);
+        if (ar.name) where += std::string(" (") + ar.name + ")";
+    }
+    return where;
+}
+
 std::vector<std::string> ThreadManager::describe_threads() const {
     std::vector<std::string> out;
     for (const auto& t : threads_) {
         if (t.dead) continue;
-        std::string where;
-        lua_Debug ar;
-        for (int level = 0; level < 4 && lua_getstack(t.coroutine, level, &ar); ++level) {
-            lua_getinfo(t.coroutine, "Sln", &ar);
-            if (!where.empty()) where += " <- ";
-            where += std::string(ar.short_src) + ":" + std::to_string(ar.currentline);
-            if (ar.name) where += std::string(" (") + ar.name + ")";
-        }
+        const std::string where = where_in(t.coroutine);
         out.push_back("next tick " + std::to_string(t.wait_until_tick) + " | at " +
                       (where.empty() ? std::string("?") : where) + " | forked at " +
                       (t.source.empty() ? std::string("?") : t.source));

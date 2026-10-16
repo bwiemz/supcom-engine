@@ -198,6 +198,7 @@ int App::run_headless() {
     // Print profiling summary if enabled
     if (opt.profile_enabled) {
         osc::Profiler::instance().log_summary();
+        osc::Profiler::instance().log_totals();
     }
 
     if (!opt.save_path.empty() && !save_written) {

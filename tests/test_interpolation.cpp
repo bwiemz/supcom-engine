@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "core/fixed_step.hpp"
+#include "core/interned_string.hpp"
 #include "core/tick_clock.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -22,7 +23,10 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <fmt/format.h>
+
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -335,6 +339,57 @@ TEST_CASE("FrameView pairs records through the history's index as a search would
     CHECK(indexed.position(*indexed.find(moving)).x == Approx(5.0f));
     CHECK(indexed.position(*indexed.find(warped)).x == Approx(500.0f));
     CHECK(indexed.position(*indexed.find(fresh)).x == Approx(50.0f));
+}
+
+TEST_CASE("A capture's record reused for another entity keeps nothing of the last one's",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 builder = spawn_at(sim, {1, 0, 1});
+    Unit& u = unit(sim, builder);
+    u.set_unit_id("uel0105");
+    u.set_blueprint_id("uel0105");
+    u.set_custom_name("Bob");
+    u.set_vet_level(3);
+    u.set_build_target_id(77);
+    u.animated_bone_matrices().assign(2, filled(1.0f));
+    auto rock = std::make_unique<Entity>();
+    rock->set_position({9, 0, 9});
+    rock->set_blueprint_id("/env/common/props/rocks/rock01_prop.bp");
+    const osc::u32 prop = sim.entity_registry().register_entity(std::move(rock));
+
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 2);
+    CHECK(snap.entities[0].custom_name == "Bob");
+    CHECK(snap.entities[0].build_target_id == 77);
+
+    // The builder goes: the rock takes its record, which must hold no unit's
+    entity(sim, builder).mark_destroyed();
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 1);
+    const auto& r = snap.entities[0];
+    CHECK(r.id == prop);
+    CHECK_FALSE(r.is_unit);
+    CHECK(r.blueprint_id == "/env/common/props/rocks/rock01_prop.bp");
+    CHECK(r.unit_id.empty());
+    CHECK(r.custom_name.empty());
+    CHECK(r.vet_level == 0);
+    CHECK(r.build_target_id == 0);
+    CHECK(r.bone_count == 0);
+    CHECK(r.position.x == 9.0f);
+}
+
+TEST_CASE("An interned string is one copy per text", "[interp][snapshot]") {
+    const osc::InternedString a("uel0105");
+    const osc::InternedString b(std::string("uel") + "0105");
+    CHECK(a == b);
+    CHECK(&a.str() == &b.str()); // the same copy
+    CHECK(a == "uel0105");
+    CHECK_FALSE(a == osc::InternedString("uel0106"));
+    CHECK(osc::InternedString().empty());
+    CHECK(osc::InternedString("") == osc::InternedString());
+    CHECK(fmt::format("{}", a) == "uel0105");
 }
 
 TEST_CASE("An entity counts its mesh override's changes", "[interp][snapshot]") {

@@ -577,6 +577,7 @@ std::optional<int> App::Window::finish() {
         spdlog::info("Fast match: {} ticks ({:.1f}s game time) in {} frames, {} drawn",
                      sim_state->tick_count(), sim_state->game_time(), fast_match_frames,
                      fast_match_drawn);
+        if (opt.profile_enabled) osc::Profiler::instance().log_totals();
         return 0;
     }
     return std::nullopt;
