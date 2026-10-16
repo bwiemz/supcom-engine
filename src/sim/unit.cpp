@@ -4475,6 +4475,7 @@ void Unit::end_silo_assist(lua_State* L, EntityRegistry& registry) {
         economy_.consumption_active = false;
         work_progress_ = 0;
     }
+    set_unit_state("Repairing", false);
     tell_stop_build(*this, L, lua_ref_of(registry, silo), "Repair");
 }
 

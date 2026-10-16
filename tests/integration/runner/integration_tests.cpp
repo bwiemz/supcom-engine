@@ -9834,6 +9834,7 @@ void test_missile(TestContext& ctx) {
             local e, f, call = __osc_engineers[1], __osc_engineers[1][name], name
             e[name] = function(self, unit, order)
                 if unit == __osc_b then table.insert(__osc_b_calls, call .. ' ' .. tostring(order)) end
+                if call == 'OnStartBuild' and order == 'Repair' then self:SetUnitState('Repairing', true) end
                 local ok, err = pcall(f, self, unit, order)
                 if not ok then table.insert(__osc_b_calls, call .. ' failed: ' .. tostring(err)) end
             end
