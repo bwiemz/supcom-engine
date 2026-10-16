@@ -121,6 +121,23 @@ fs::path home_dir(const EnvLookup& env) {
 
 fs::path known_folder(KnownFolder folder, const EnvLookup& env) {
     fs::path home = home_dir(env); // not const: returned by move below
+#ifdef __APPLE__
+    // macOS keeps per-user data in ~/Library, not the XDG tree; an XDG
+    // variable the user set still wins. A ~/.config/opensupcom made by an
+    // earlier build is still read (and written), so its settings stay.
+    const fs::path support = home / "Library" / "Application Support";
+    std::error_code ec;
+    const bool legacy_config = fs::is_directory(home / ".config" / "opensupcom", ec);
+    const fs::path data_home = support;
+    const fs::path config_home = legacy_config ? home / ".config" : support;
+    const fs::path cache_home = home / "Library" / "Caches";
+    const fs::path state_home = support;
+#else
+    const fs::path data_home = home / ".local" / "share";
+    const fs::path config_home = home / ".config";
+    const fs::path cache_home = home / ".cache";
+    const fs::path state_home = home / ".local" / "state";
+#endif
     switch (folder) {
     case KnownFolder::Documents: {
         if (auto p = xdg_var(env, "XDG_DOCUMENTS_DIR")) return *p;
@@ -128,14 +145,10 @@ fs::path known_folder(KnownFolder folder, const EnvLookup& env) {
         if (auto p = user_dirs_documents(config, home)) return *p;
         return home / "Documents";
     }
-    case KnownFolder::LocalAppData:
-        return xdg_var(env, "XDG_DATA_HOME").value_or(home / ".local" / "share");
-    case KnownFolder::Config:
-        return xdg_var(env, "XDG_CONFIG_HOME").value_or(home / ".config");
-    case KnownFolder::Cache:
-        return xdg_var(env, "XDG_CACHE_HOME").value_or(home / ".cache");
-    case KnownFolder::State:
-        return xdg_var(env, "XDG_STATE_HOME").value_or(home / ".local" / "state");
+    case KnownFolder::LocalAppData: return xdg_var(env, "XDG_DATA_HOME").value_or(data_home);
+    case KnownFolder::Config: return xdg_var(env, "XDG_CONFIG_HOME").value_or(config_home);
+    case KnownFolder::Cache: return xdg_var(env, "XDG_CACHE_HOME").value_or(cache_home);
+    case KnownFolder::State: return xdg_var(env, "XDG_STATE_HOME").value_or(state_home);
     }
     return home;
 }
