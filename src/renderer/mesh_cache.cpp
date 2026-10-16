@@ -16,6 +16,14 @@ extern "C" {
 
 namespace osc::renderer {
 
+namespace {
+/// The mesh's cartographic technique at each fidelity, by its resolved shader.
+void set_cartographic(GPUMesh& mesh, const std::string& shader) {
+    for (int lane = 0; lane < 3; ++lane)
+        mesh.cartographic[static_cast<size_t>(lane)] = cartographic_technique(shader, lane);
+}
+} // namespace
+
 /// Lowercase a string in-place (blueprint IDs in __blueprints are lowercased).
 static void to_lower(std::string& s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -44,11 +52,11 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
 }
 
 const GPUMesh* MeshCache::get_file(const std::string& scm_path, const std::string& albedo,
-                                   MeshTechnique technique) {
+                                   const std::string& shader) {
     if (device_ == VK_NULL_HANDLE || scm_path.empty()) return nullptr;
     // Kept beside the blueprints' meshes, under a key no blueprint id has.
-    const std::string key =
-        "file:" + scm_path + "|" + albedo + "|" + std::to_string(static_cast<u32>(technique));
+    const std::string resolved = resolve_shader_name(shader);
+    const std::string key = "file:" + scm_path + "|" + albedo + "|" + resolved;
     if (auto it = lod_cache_.find(key); it != lod_cache_.end())
         return it->second.lods.empty() ? nullptr : &it->second.lods.front().mesh;
     if (failed_.count(key)) return nullptr;
@@ -58,7 +66,8 @@ const GPUMesh* MeshCache::get_file(const std::string& scm_path, const std::strin
         return nullptr;
     }
     mesh.texture_path = albedo;
-    mesh.technique = technique;
+    mesh.technique = mesh_technique(resolved);
+    set_cartographic(mesh, resolved);
     LODSet set;
     set.lods.push_back({std::move(mesh), 0.0f});
     return &lod_cache_.emplace(key, std::move(set)).first->second.lods.front().mesh;
@@ -167,6 +176,7 @@ namespace {
 bool is_wreckage_shader(const std::string& shader) {
     return shader == "Wreckage";
 }
+
 } // namespace
 
 std::string resolve_shader_name(const std::string& shader_name) {
@@ -275,6 +285,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         const std::string shader = read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
+        set_cartographic(gpu, resolve_shader_name(shader));
         gpu.sort_order = sort_order;
         gpu.scrolling = read_lod_flag(mesh_bp_id, lod_index, "Scrolling", L);
 
@@ -319,6 +330,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         const std::string shader = read_lod_string_field(mesh_bp_id, 1, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
+        set_cartographic(gpu, resolve_shader_name(shader));
         gpu.sort_order = sort_order;
         gpu.scrolling = read_lod_flag(mesh_bp_id, 1, "Scrolling", L);
 

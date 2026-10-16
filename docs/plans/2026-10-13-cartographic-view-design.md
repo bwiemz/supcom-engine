@@ -208,6 +208,20 @@ Not implementable from what is on hand. First extract `/effects/mesh.fx` from re
 - Meshes get no terrain depth, no shadows, no lighting from the scene.
 - Minimap meshes are a few pixels each and the icons cover them; the visible effect is mostly the main view, so this phase belongs with phase 7.
 
+**As built (P6, 2026-10-15), the main view's meshes.** From retail's `mesh.fx`, read from `effects.scd`:
+- **The technique.** It is the `cartographicTechnique` annotation of the lane the fidelity resolves to (High uses Medium, Medium and Low use each other). `cartographic_technique(shader, fidelity)` holds the table, and each GPU mesh caches it for the three lanes from its resolved shader name. The engine's `MeshTechnique` folds several shaders into Unit, so it can't be used.
+  - Units: Unit, Metal, Insect, Aeon, AeonCZAR, Seraphim and SeraphimPersonalShield.
+  - Features: props, trees, wrecks and NormalMappedTerrain.
+  - Feedback: order marks and rally points.
+  - Place: build and formation ghosts, at every fidelity, since only a Low lane exists.
+  - Build: the four build techniques.
+  - Shield: the faction shields and PhaseShield. So a UEF, Cybran or Aeon commander wearing its phase-shield mesh (its warp-in) draws as a highlight.
+  - At Low, NormalMappedAlphaNoShadow and BloatingNormalMappedAlpha are Unit.
+  - Everything else is not drawn.
+- **The shaders.** `CartographicVS`: the world matrix alone, no growth, crumple, sway or feedback scaling. Then the six pixel shaders, and five pass states (colour, glow, opaque, opaque with alpha, shield), culled as the meshes are.
+- **The draw.** After Stage 1, in the scene pass, over the frame. The meshes are the main view's own batch (frustum, LOD, intel), not drawn at the strategic zoom, as `draw_meshes`.
+- **Not yet:** the minimap's meshes. They need a gather of their own over the whole map, and Moho's LOD cutoffs leave few at that zoom.
+
 ### 3.8 Main view cartographic (phase 7)
 
 - `Camera` gains an ortho flag and the `UpdateCoords` ortho branch (1.0), fixed top-down, no shake; `WorldView::set_cartographic` on the main view sets it, with the prefs key and `ToggleMainCartographicView` working through retail's Lua unchanged.

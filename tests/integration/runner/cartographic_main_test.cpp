@@ -7,6 +7,8 @@
 // - the scene is the map's cartographic frame through that camera, pixel
 //   for pixel the frame drawn over the same world rect, alpha 0 (no glow);
 // - the strategic icons are on at every zoom while it draws;
+// - its meshes are drawn in their materials' cartographic techniques
+//   (P6): the commander in its army's colour, its edges glowing;
 // - a click picks the ground straight under the cursor;
 // - SetCartographic(false) brings the world back.
 
@@ -20,6 +22,7 @@
 #include "lua/user_bindings.hpp"
 #include "map/terrain.hpp"
 #include "renderer/cartographic_renderer.hpp"
+#include "renderer/cartographic_technique.hpp"
 #include "renderer/range_overlays.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
@@ -148,8 +151,11 @@ void test_cartographic_main(TestContext& ctx) {
     lua_pushboolean(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
 
-    constexpr f32 kDistance = 40.0f; // nearer than the scout's icon shows
-    (void)shots.shoot_frame(*terrain, x, z, kDistance);
+    // Far out, at the strategic zoom, where no mesh is drawn (the icons
+    // replace them): the frame alone. Near, the commander's mesh, which a
+    // perspective view this near shows without its icon.
+    constexpr f32 kFar = 300.0f;
+    constexpr f32 kNear = 40.0f;
     const auto scene = [&]() {
         shots.recapture();
         renderer::Renderer::SceneImage image;
@@ -158,11 +164,9 @@ void test_cartographic_main(TestContext& ctx) {
         shots.redraw();
         return image;
     };
+    (void)shots.shoot_frame(*terrain, x, z, kFar);
     const renderer::Renderer::SceneImage world = scene();
-    const u32 icons_world = r.strategic_icons().quad_count();
-    t.check(
-        !r.cartographic_main() && icons_world == 0,
-        fmt::format("in perspective, the world is drawn and no icons this near ({})", icons_world));
+    t.check(!r.cartographic_main(), "in perspective, the world is drawn");
 
     // Cartographic: the camera goes orthographic
     (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", true));
@@ -170,26 +174,24 @@ void test_cartographic_main(TestContext& ctx) {
             "SetCartographic(true) on the main view: its camera is orthographic");
     const renderer::Renderer::SceneImage map = scene();
     t.check(r.cartographic_main(), "the frame draws the main view cartographic");
-    const u32 icons_map = r.strategic_icons().quad_count();
-    t.check(icons_map > 0,
-            fmt::format("its strategic icons are on at this zoom ({} quads)", icons_map));
 
-    // The scene is the frame drawn over the camera's world rect: the zoom
-    // across, centred on the focus, less Moho's shift of half a unit's
-    // worth of the view (1/int(zoom) of it across, 1/int(extent) down)
+    // The frame drawn over the camera's world rect: the zoom across, centred
+    // on the focus, less Moho's shift of half a unit's worth of the view
+    // (1/int(zoom) of it across, 1/int(extent) down)
     const u32 w = r.width();
     const u32 h = r.height();
-    const f32 zoom = cam.zoom();
-    const f32 extent = zoom / (static_cast<f32>(w) / static_cast<f32>(h));
-    const f32 x0 = cam.focus_x() - zoom * 0.5f + zoom * 0.5f / std::floor(zoom);
-    const f32 z0 = cam.focus_z() - extent * 0.5f + extent * 0.5f / std::floor(extent);
-    renderer::CartographicRenderer::View view;
-    view.width = w;
-    view.height = h;
-    view.x0 = x0;
-    view.z0 = z0;
-    view.x1 = x0 + zoom;
-    view.z1 = z0 + extent;
+    const auto camera_view = [&]() {
+        const f32 zoom = cam.zoom();
+        const f32 extent = zoom / (static_cast<f32>(w) / static_cast<f32>(h));
+        renderer::CartographicRenderer::View view;
+        view.width = w;
+        view.height = h;
+        view.x0 = cam.focus_x() - zoom * 0.5f + zoom * 0.5f / std::floor(zoom);
+        view.z0 = cam.focus_z() - extent * 0.5f + extent * 0.5f / std::floor(extent);
+        view.x1 = view.x0 + zoom;
+        view.z1 = view.z0 + extent;
+        return view;
+    };
     // How many of the scene's pixels are the frame's (each channel within
     // one step), and how many have alpha
     struct Match {
@@ -199,7 +201,7 @@ void test_cartographic_main(TestContext& ctx) {
     const auto match = [&](const renderer::Renderer::SceneImage& got,
                            const renderer::Renderer::CartographicOverlayInput* overlays) {
         Match m;
-        const auto drawn = r.capture_cartographic(*terrain, view, overlays);
+        const auto drawn = r.capture_cartographic(*terrain, camera_view(), overlays);
         if (!drawn || got.rgba.size() != static_cast<size_t>(w) * h * 4 ||
             drawn->output.size() != got.rgba.size())
             return m;
@@ -221,13 +223,12 @@ void test_cartographic_main(TestContext& ctx) {
         // A pixel whose point lies on a ramp texel's edge may take its
         // neighbour (the camera's interpolation is not the frame's)
         t.check(m.ok && m.same * 1000 >= m.pixels * 995,
-                fmt::format("the scene is the cartographic frame over the camera's rect: {} of "
-                            "{} pixels",
+                fmt::format("far out, the scene is the cartographic frame over the camera's "
+                            "rect: {} of {} pixels",
                             m.same, m.pixels));
         t.check(m.ok && m.glow == 0, fmt::format("with no glow: {} pixels have alpha", m.glow));
-        bool differs = world.rgba.size() == map.rgba.size();
         size_t changed = 0;
-        for (size_t i = 0; differs && i < map.rgba.size(); ++i)
+        for (size_t i = 0; world.rgba.size() == map.rgba.size() && i < map.rgba.size(); ++i)
             changed += std::abs(world.rgba[i] - map.rgba[i]) > 0.02f ? 1 : 0;
         t.check(changed * 2 > map.rgba.size(),
                 fmt::format("which is not the world drawn before ({} of {} channels changed)",
@@ -295,18 +296,68 @@ void test_cartographic_main(TestContext& ctx) {
                             px, pz));
     }
 
+    // Near: in perspective, the commander's mesh and no icon. (Its warp-in
+    // first plays out: the commander's bones hold it at no size, then it
+    // wears the phase shield's mesh, which a cartographic view draws as a
+    // shield's highlight, until its own comes back.)
+    for (int i = 0; i < 250; ++i) ctx.sim.tick();
+    (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", false));
+    (void)shots.shoot_frame(*terrain, acu_entity->position().x, acu_entity->position().z, kNear);
+    const renderer::Renderer::SceneImage near_world = scene();
+    const u32 icons_world = r.strategic_icons().quad_count();
+    t.check(!cam.ortho() && !r.cartographic_main() && icons_world == 0,
+            fmt::format("near, in perspective: no icons ({})", icons_world));
+    (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", true));
+    const renderer::Renderer::SceneImage near_map = scene();
+    const u32 icons_map = r.strategic_icons().quad_count();
+    t.check(
+        r.cartographic_main() && icons_map > 0,
+        fmt::format("cartographic, its strategic icons are on at this zoom ({} quads)", icons_map));
+    // RenderMeshes: the commander in CartographicUnit, both passes; the
+    // map's props in CartographicFeature
+    {
+        using CT = renderer::CartographicTechnique;
+        const u32 unit = r.cartographic_mesh_draws(CT::Unit);
+        t.check(unit >= 2 && unit % 2 == 0,
+                fmt::format("its meshes: the commander's CartographicUnit, both passes ({} "
+                            "draws), the props' CartographicFeature ({})",
+                            unit, r.cartographic_mesh_draws(CT::Feature)));
+        // Over the frame where they stand, the rest of it as it was; the
+        // unit's edges glow
+        const Match m = match(near_map, nullptr);
+        const size_t covered = m.pixels - m.same;
+        t.check(m.ok && covered > 0 && covered * 20 < m.pixels && m.glow > 0,
+                fmt::format("they cover {} of the frame's {} pixels, {} glowing", covered, m.pixels,
+                            m.glow));
+        // The commander's middle: its army's colour, half over the frame
+        // where its top faces up (alpha 0.5), more where it turns away
+        const auto at = screen_of(r, acu_entity->position());
+        if (at) {
+            const size_t i =
+                (static_cast<size_t>((*at)[1]) * w + static_cast<size_t>((*at)[0])) * 4;
+            const bool coloured = i + 2 < near_map.rgba.size() &&
+                                  (std::abs(near_map.rgba[i] - near_world.rgba[i]) > 0.02f ||
+                                   std::abs(near_map.rgba[i + 2] - near_world.rgba[i + 2]) > 0.02f);
+            t.check(coloured, "the commander is drawn at its place");
+        } else {
+            t.check(false, "the commander is on the screen");
+        }
+    }
+
     // Off again: the world, in perspective
     (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", false));
     const renderer::Renderer::SceneImage again = scene();
-    t.check(!cam.ortho() && !r.cartographic_main() && r.strategic_icons().quad_count() == 0,
+    t.check(!cam.ortho() && !r.cartographic_main() && r.strategic_icons().quad_count() == 0 &&
+                r.cartographic_mesh_draws(renderer::CartographicTechnique::Unit) == 0,
             "SetCartographic(false): the world in perspective, no icons this near");
-    // (a tick on: the commander has moved a little since)
     size_t kept = 0;
-    for (size_t i = 0; again.rgba.size() == world.rgba.size() && i < world.rgba.size(); ++i)
-        kept += std::abs(again.rgba[i] - world.rgba[i]) < 0.02f ? 1 : 0;
-    t.check(
-        kept * 100 >= world.rgba.size() * 98,
-        fmt::format("the world is drawn as it was ({} of {} channels)", kept, world.rgba.size()));
+    for (size_t i = 0; again.rgba.size() == near_world.rgba.size() && i < near_world.rgba.size();
+         ++i)
+        kept += std::abs(again.rgba[i] - near_world.rgba[i]) < 0.02f ? 1 : 0;
+    // (the commander's idle animation goes on between the frames)
+    t.check(kept * 100 >= near_world.rgba.size() * 90,
+            fmt::format("the world is drawn as it was ({} of {} channels)", kept,
+                        near_world.rgba.size()));
 
     // A new main view's camera starts in perspective (its Register then
     // restores a saved mode)

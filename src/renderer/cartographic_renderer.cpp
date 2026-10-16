@@ -443,6 +443,7 @@ void CartographicRenderer::build(const map::Terrain& terrain, TextureCache& text
     }
     write_samplers(device_, lookup_set_, point_,
                    {elev->image.view, hypso->image.view, topo->image.view});
+    hypsometric_ds_ = hypso->descriptor_set;
     built_ = true;
 }
 
@@ -631,6 +632,7 @@ void CartographicRenderer::clear(TextureCache& textures) {
         textures.evict(kTopographicKey);
     }
     built_ = false;
+    hypsometric_ds_ = VK_NULL_HANDLE;
     params_ = {};
 }
 
