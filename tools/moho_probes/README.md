@@ -122,3 +122,22 @@ Asked on 2026-10-14 (`warp` on 2026-10-15): the original once (`engineer` twice,
 | `warp` after | the tank in deep water drowns (297, 285, 240 at ticks 1, 5, 20); the CZAR is in the Air from tick 1, at 19.94, 24.88, 37.15 | the same | A warped unit is in the same state as one made there. |
 | `warp` mover | its move order is gone within 10 ticks; it coasts 2.04 and stops | it went on to its goal before #672; now its order ends, and it coasts 1.53 | Warp aborts the navigator's move, and the move task takes the abort as a failure (`CUnitMoveTask::OnEvent`). The coast differs with the unit's braking, not Warp. |
 | `layers` aircraft | the scout in the Air, 18 over the ground under it; the Soul Ripper and the CZAR on Land at the ground, in the Air and climbing from t=1 | the experimentals in the Air at full height before #655; now the same through t=5, within 0.25 after | `GetStartingLayer` puts an experimental aircraft on Land; it lifts off with no order. The scout's drift and the later climb are air physics, not ported. |
+
+**`carto/`** asks how the main view looks cartographic. It works from the interface's side (a hook on `gamemain.lua`'s `OnFirstUpdate`):
+1. Past the opening's camera, it resets the main view to the whole map (`GetCamera('WorldCamera'):Reset()`) and dumps a frame.
+2. It makes the main view cartographic (retail's `ToggleMainCartographicView`) and dumps a frame again.
+
+It is done at `PROBE carto done`.
+- **The original** writes the frames with its `dump_Frame` console command as `SCFrame_<time>_<n>.bmp`, into the folder `PROBE_DUMP_DIR` names. It doesn't make that folder, so `mkdir /tmp/carto_dump` first.
+- **The engine** has no `dump_Frame`. Capture it with `--screenshot-frame 1500 --screenshot <png>`.
+
+Run both at the same size: `/windowed 1600 900` on the original, the size of the engine's captures.
+
+Asked on 2026-10-16: the original once; the engine with #677.
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `carto` colours | deep water (48, 94, 121), its shallows (94, 135, 150), the lowland (80, 68, 72) and (80, 68, 73): the most common colours of the frame | the same colours, in the same order | The height ramp, its water lanes and the contour bands match the port of `Cartographic`. The water is the decompile's two blues: colour [1] never shows. |
+| `carto` framing | the whole map 640 pixels high: the zoom limit is 1.4 times the map | 900 pixels: 1.0 times | Retail's `minimap.lua` sets its *own* camera's limit to 1.0 (`GetCamera('MiniMap')`). The engine's `GetCamera` gave every name the main view's camera, so this cut the main view's. It is fixed in the PR that added this probe: only `WorldCamera` is the engine's camera. |
+| `carto` lines | the contour lines, the shore's bands and the small contour islands | the same shapes, aligned within a pixel once framed alike (the camera fix), except at sub-pixel steps along the lines | The edge detect matches. |
+| `carto` deposit icons | no halo round the mass and hydrocarbon icons in either frame, the world's or the map's | a halo in both | Open. Retail's `ResourceIconPS` glow pass writes alpha 0.6·sin²(t − 10·α), which pulses, so two frames can't tell its timing from a difference in the bloom. A series of frames would. |

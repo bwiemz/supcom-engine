@@ -233,6 +233,30 @@ void test_camera_moves(TestContext& ui, TestContext& sim, const std::function<vo
                             moving, waiting, sim_done(), cam.target_x(), want_x));
     }
 
+    // Test 6: the WorldCamera is the engine's one camera. Retail's minimap.lua
+    // sets its own camera's ('MiniMap') zoom limit to 1.0 and resets it,
+    // which leaves the main view's limit at 1.4 and its target where it was
+    {
+        cam.set_max_zoom_mult(renderer::Camera::kDefaultMaxZoomMult);
+        cam.set_target(300.0f, 700.0f);
+        step(0.0);
+        const f32 far = cam.max_zoom();
+        const f32 x0 = cam.target_x();
+        const f32 z0 = cam.target_z();
+        const bool mini = run("GetCamera('MiniMap'):SetMaxZoomMult(1.0)\n"
+                              "GetCamera('MiniMap'):Reset()\n");
+        const bool kept =
+            std::abs(cam.max_zoom() - far) < 1e-3f && cam.target_x() == x0 && cam.target_z() == z0;
+        const bool world = run("GetCamera('WorldCamera'):SetMaxZoomMult(1.0)\n");
+        const f32 cut = cam.max_zoom();
+        t.check(mini && kept && world && std::abs(cut - far / 1.4f) < 0.01f,
+                fmt::format("Test 6: the minimap's camera calls leave the main view's zoom "
+                            "limit ({:.1f}) and target alone ({}); the WorldCamera's reach it "
+                            "({:.1f})",
+                            far, kept, cut));
+        cam.set_max_zoom_mult(renderer::Camera::kDefaultMaxZoomMult);
+    }
+
     lua_pushstring(L, "__osc_renderer");
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
