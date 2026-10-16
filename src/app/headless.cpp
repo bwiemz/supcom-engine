@@ -4,6 +4,7 @@
 #include "app/app_internal.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
+#include "sim/lua_profile.hpp"
 #include "core/test_status.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
@@ -199,6 +200,7 @@ int App::run_headless() {
     if (opt.profile_enabled) {
         osc::Profiler::instance().log_summary();
         osc::Profiler::instance().log_totals();
+        osc::sim::lua_profile::log_report(40);
     }
 
     if (!opt.save_path.empty() && !save_written) {

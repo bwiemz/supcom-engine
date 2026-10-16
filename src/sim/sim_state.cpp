@@ -1,5 +1,6 @@
 #include "sim/sim_state.hpp"
 #include "sim/fnv.hpp"
+#include "sim/lua_profile.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -1845,6 +1846,7 @@ void SimState::enforce_no_rush() {
 
 void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
+    if (L_ && Profiler::instance().enabled()) lua_profile::attach(L_);
     ++beat_count_;
     if (rng_trace_) {
         const bool on = tick_count_ + 1 >= rng_trace_from_ && tick_count_ + 1 <= rng_trace_to_;

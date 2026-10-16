@@ -1,6 +1,7 @@
 #include "sim/thread_manager.hpp"
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
+#include "sim/lua_profile.hpp"
 #include "sim/waitable.hpp"
 
 #include <algorithm>
@@ -306,6 +307,7 @@ void ThreadManager::resume_all(u32 current_tick) {
         // Under --profile, a resume long enough to be a hitch says where
         // it stopped and where it was forked: a stutter's script.
         const bool timed = Profiler::instance().enabled();
+        if (timed && !need_hook) lua_profile::attach(t.coroutine);
         const auto started =
             timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         int status = lua_resume(t.coroutine, nargs);

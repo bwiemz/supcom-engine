@@ -46,6 +46,7 @@ add_library(osc_sim STATIC
     unit_blocking.cpp
     entity_registry.cpp
     thread_manager.cpp
+    lua_profile.cpp
     transport_slots.cpp
     replay.cpp
     category_set.cpp

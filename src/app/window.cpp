@@ -3,6 +3,7 @@
 // App::Window's (step 2c, window_frame.cpp and window_session.cpp).
 
 #include "core/profiler.hpp"
+#include "sim/lua_profile.hpp"
 #include "app/window_loop.hpp"
 #include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
@@ -577,7 +578,10 @@ std::optional<int> App::Window::finish() {
         spdlog::info("Fast match: {} ticks ({:.1f}s game time) in {} frames, {} drawn",
                      sim_state->tick_count(), sim_state->game_time(), fast_match_frames,
                      fast_match_drawn);
-        if (opt.profile_enabled) osc::Profiler::instance().log_totals();
+        if (opt.profile_enabled) {
+            osc::Profiler::instance().log_totals();
+            osc::sim::lua_profile::log_report(40);
+        }
         return 0;
     }
     return std::nullopt;
