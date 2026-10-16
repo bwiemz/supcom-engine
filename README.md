@@ -292,7 +292,8 @@ The engine needs FA game data and finds it on its own. The search order is:
    `bin/SupComDataPath.lua` init script
 5. The folder you chose: when nothing else is found, the game asks where FA is
    installed (native dialogs; on Linux through zenity or kdialog) and keeps the
-   answer in `~/.config/opensupcom/settings.json` (`%LOCALAPPDATA%` on Windows)
+   answer in `~/.config/opensupcom/settings.json` (`%LOCALAPPDATA%` on Windows,
+   `~/Library/Application Support/opensupcom` on macOS)
 
 To see what it picked and everything it checked, run:
 
