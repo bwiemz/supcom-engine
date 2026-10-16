@@ -151,6 +151,7 @@ std::optional<int> App::boot_game() {
         sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
         sim_state->set_moho_pathing(game_setup.moho_pathing);
         sim_state->set_moho_random(game_setup.moho_random);
+        sim_state->set_faf_exe(!config.faf_data_path.empty());
         spdlog::info("Game seed {:#018x}{}", game_setup.seed,
                      game_setup.moho_random ? ", Moho's random stream" : "");
 

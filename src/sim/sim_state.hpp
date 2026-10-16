@@ -181,6 +181,12 @@ public:
     /// the cells as CAiPathNavigator does. Off by default for now.
     bool moho_pathing() const { return moho_pathing_; }
     void set_moho_pathing(bool on) { moho_pathing_ = on; }
+    /// Whether the game runs on FAF's data, so the engine plays FAF's
+    /// patched exe (FA-Binary-Patches) where it changes Moho's rules:
+    /// ChangeUnitArmy gives commanders and units being built
+    /// (hooks/HTransferACUs.cpp). The host's, as the executable is.
+    bool faf_exe() const { return faf_exe_; }
+    void set_faf_exe(bool on) { faf_exe_ = on; }
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
@@ -1065,6 +1071,7 @@ private:
     std::unique_ptr<PathTables> path_tables_;
     UnitBlockers unit_blockers_{*this};
     bool moho_pathing_ = false;
+    bool faf_exe_ = false; // see faf_exe
     /// Stored units whose carrier is gone, destroyed at a safe point of the
     /// tick (destroy_orphaned_stored_units).
     std::vector<u32> stored_to_destroy_;

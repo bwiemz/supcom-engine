@@ -353,7 +353,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.u32v(sim.intel_pass_);
     // sound_manager_, tick_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
-    // entity_trace_from_, entity_trace_to_: the host's; bone_cache_,
+    // entity_trace_from_, entity_trace_to_, faf_exe_: the host's; bone_cache_,
     // anim_cache_: caches
     {
         std::vector<std::string> armor;

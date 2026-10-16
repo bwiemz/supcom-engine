@@ -157,6 +157,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
     sim_state->set_moho_pathing(setup.moho_pathing);
     sim_state->set_moho_random(setup.moho_random);
+    sim_state->set_faf_exe(!config.faf_data_path.empty());
     spdlog::info("Game seed {:#018x}{}", seed, setup.moho_random ? ", Moho's random stream" : "");
 
     // 7. Audio (the application's engine, kept in the UI state), bone
