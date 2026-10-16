@@ -4,6 +4,7 @@
 #include "sim/command_scheduler.hpp"
 #include "sim/sim_state.hpp"
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <string>
@@ -191,6 +192,11 @@ private:
     u32 drop_timeout() const;
 
     bool dropping(u32 source) const { return drop_votes_.count(source) > 0; }
+    /// One of the game's command sources. A message naming any other (the
+    /// engine's kEngineSource among them) is forged or corrupt.
+    bool participant(u32 source) const {
+        return std::binary_search(all_sources_.begin(), all_sources_.end(), source);
+    }
     void begin_drop(u32 source);
     void take_drop_report(ByteReader& r);
     void finalize_drops();

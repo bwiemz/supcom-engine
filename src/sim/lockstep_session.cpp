@@ -175,7 +175,7 @@ void LockstepSession::receive_and_advance() {
         if (type == kResumeMessage) {
             const u32 source = r.u32v();
             const u32 serial = r.u32v();
-            if (r.ok() && source != local_source_ && !has_dropped(source))
+            if (r.ok() && participant(source) && source != local_source_ && !has_dropped(source))
                 sim_.resume_pause(serial);
             continue;
         }
@@ -183,7 +183,7 @@ void LockstepSession::receive_and_advance() {
             const u32 source = r.u32v();
             const u32 clock = r.u32v();
             const auto rate = static_cast<i32>(r.u32v());
-            if (r.ok() && source != local_source_ && !has_dropped(source))
+            if (r.ok() && participant(source) && source != local_source_ && !has_dropped(source))
                 apply_speed(clock, source, rate);
             continue;
         }
@@ -195,10 +195,15 @@ void LockstepSession::receive_and_advance() {
         }
         if (type != kFrameMessage) continue;
         u32 source = r.u32v();
+        // Only the game's sources play: a frame from any other (the engine's,
+        // whose callbacks defeat armies, among them) would gate the scheduler
+        // on a source that never confirms, and carry orders no player gave.
         // Ignore a source that is dropped or being dropped: late frames must
         // neither re-register it in the scheduler gate (re-stalling the
         // survivors) nor move the last frame this peer reported for it.
-        if (has_dropped(source) || dropping(source) || source == local_source_) continue;
+        if (!participant(source) || has_dropped(source) || dropping(source) ||
+            source == local_source_)
+            continue;
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
         u32 cs_tick = r.u32v();
@@ -326,7 +331,9 @@ void LockstepSession::take_drop_report(ByteReader& r) {
         }
         relayed.emplace(frame, std::move(commands));
     }
-    if (!r.ok() || reporter == local_source_ || reporter == source) return;
+    if (!r.ok() || !participant(reporter) || !participant(source) || reporter == local_source_ ||
+        reporter == source)
+        return;
     if (source == local_source_) {
         if (!ejected_)
             spdlog::error("[lockstep] peer {} reports this peer as dropped; the game can't "

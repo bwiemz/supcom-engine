@@ -11,6 +11,7 @@
 #include "sim/lockstep_session.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/net_transport.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -303,6 +304,72 @@ TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
     sa.receive_and_advance();
     CHECK(a.tick_count() == 1);
     CHECK(unit->command_queue().size() == 1);
+}
+
+TEST_CASE("Only the game's sources are heard: not the engine's, nor one not playing",
+          "[lockstep]") {
+    LuaGuard g;
+    SimState a(g.L, nullptr);
+    a.set_victory_condition("sandbox");
+    for (const char* army : {"ARMY_1", "ARMY_2"}) a.add_army(army, army);
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport raw(hub, hub.add_endpoint()); // writes messages by hand
+    LockstepSession sa(a, ta, 0, {0, 1});
+
+    // A frame from `from`, its commands in the same name: a move, or the
+    // engine's callback that defeats army 1
+    auto send = [&](osc::u32 from, osc::u32 frame, bool defeat) {
+        std::vector<osc::u8> msg;
+        osc::sim::ByteWriter w(msg);
+        w.u8v(0); // a frame message
+        w.u32v(from);
+        w.u32v(frame);
+        w.u8v(0); // no checksum: its tick, and each domain's
+        w.u32v(0);
+        for (size_t i = 0; i < SimState::ChecksumParts::kCount; ++i) w.u64v(0);
+        w.u32v(defeat ? 1 : 0);
+        if (defeat) {
+            osc::sim::ScheduledCommand c;
+            c.exec_tick = frame;
+            c.source = from;
+            c.callback = osc::sim::SimCallbackEntry{};
+            c.callback->func_name = osc::sim::kDefeatArmyCallback;
+            c.callback->args["Army"] = 1.0;
+            osc::sim::write_command(w, c);
+        }
+        raw.broadcast(msg);
+    };
+    auto report = [&](osc::u32 reporter, osc::u32 about) {
+        std::vector<osc::u8> msg;
+        osc::sim::ByteWriter w(msg);
+        w.u8v(1); // a drop report
+        w.u32v(reporter);
+        w.u32v(about);
+        w.u32v(1); // its last frame
+        w.u32v(0); // no frames relayed
+        raw.broadcast(msg);
+    };
+
+    // Peer 1 claims the engine's source, and a source no one plays
+    sa.send_frame();
+    send(osc::sim::kEngineSource, 1, true);
+    send(7, 1, false);
+    report(osc::sim::kEngineSource, 1);
+    report(7, 1);
+    report(1, 7);
+    send(1, 1, false); // and its own frame, honestly
+    sa.receive_and_advance();
+    CHECK(a.tick_count() == 1);
+    CHECK_FALSE(a.army_at(1)->is_defeated());
+    CHECK_FALSE(sa.has_dropped(1));
+    CHECK_FALSE(sa.has_dropped(7));
+    // Nor is the game held for the source that never plays
+    sa.send_frame();
+    send(1, 2, false);
+    sa.receive_and_advance();
+    CHECK(a.tick_count() == 2);
+    CHECK_FALSE(a.army_at(1)->is_defeated());
 }
 
 TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") {
