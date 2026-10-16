@@ -361,6 +361,7 @@ TEST_CASE("A lobby's game gives each army its owner's source, as the lobby numbe
         REQUIRE(mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta).ok());
         mp.reset();
         std::vector<std::vector<osc::u32>> out;
+        out.reserve(4);
         for (osc::i32 army = 0; army < 4; ++army) out.push_back(sim.army_command_sources(army));
         return out;
     };
