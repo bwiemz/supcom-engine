@@ -103,6 +103,13 @@ bool is_weapon_targetable(const Unit& owner, const Entity& target, const SimStat
     return true;
 }
 
+/// Whether `owner`'s army knows `target` (SimState::weapons_know): a unit
+/// it senses, or a structure it has seen. A projectile is a weapon's to see.
+bool known_to_army(const Unit& owner, const Entity& target, const SimState* sim) {
+    if (!sim || !target.is_unit() || owner.army() < 0) return true;
+    return sim->weapons_know(static_cast<const Unit&>(target), static_cast<u32>(owner.army()));
+}
+
 bool is_underwater(const std::string& layer) {
     return layer == "Sub" || layer == "Seabed";
 }
@@ -603,7 +610,9 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     if (target_entity_id != 0) {
         const Entity* target = registry.find(target_entity_id);
         const bool in_reach = !(flier && target_entity_id == ordered);
-        if (!target || !can_target(owner, *target, sim, in_reach)) target_entity_id = 0;
+        if (!target || !can_target(owner, *target, sim, in_reach) ||
+            (target_entity_id != ordered && !known_to_army(owner, *target, sim)))
+            target_entity_id = 0;
     }
 
     // An attack order's target comes first, for every weapon that can hit
@@ -650,6 +659,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
             continue;
         }
+        if (!known_to_army(owner, *e, sim)) continue;
         // A missile already held by as many weapons as it wants shooting at
         // it (a nuke's DesiredShooterCap is 1) is left to them.
         if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;

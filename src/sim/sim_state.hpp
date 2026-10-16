@@ -955,6 +955,12 @@ public:
         const auto it = los_ever_.find(id);
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
     }
+    /// Whether army `army`'s weapons may pick unit `u` (Moho's
+    /// Unit::UpdateBlipsInRange keeps only what the army's recon database
+    /// has a blip of): it senses it, by any sense, its allies' included, as
+    /// of the last visibility pass; or `u` is a structure it has seen. With
+    /// the fog off every unit is known.
+    bool weapons_know(const Unit& u, u32 army) const;
 
     /// FlushIntelInRect(x0, z0, x1, z1): every army forgets its blips of
     /// units within the rect (edges in), as Moho's
