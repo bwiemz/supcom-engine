@@ -14,6 +14,7 @@
 #include "pathing_evidence_test.hpp"
 #include "movie_test.hpp"
 #include "combo_click_test.hpp"
+#include "command_sources_test.hpp"
 #include "edit_text_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
@@ -288,13 +289,13 @@ constexpr Mode kModesAfter[] = {
 
 /// Modes with code of their own (below), and the windowed ones.
 constexpr const char* kOwnModes[] = {
-    "--gameui-test",          "--victory-test",      "--audio-data-test",   "--lobby-flow-test",
-    "--dualstate-test",       "--construction-test", "--phase2-test",       "--phase3-test",
-    "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
-    "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
-    "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
-    "--options-test",         "--lan-screen-test",   "--edit-text-test",    "--focus-army-test",
-    "--combo-click-test",
+    "--gameui-test",          "--victory-test",         "--audio-data-test",   "--lobby-flow-test",
+    "--dualstate-test",       "--construction-test",    "--phase2-test",       "--phase3-test",
+    "--phase4-test",          "--phase5-test",          "--smoke-test",        "--draw-test",
+    "--stress-test",          "--full-smoke-test",      "--movie-test",        "--keymap-test",
+    "--session-command-test", "--keyboard-test",        "--camera-moves-test", "--window-test",
+    "--options-test",         "--lan-screen-test",      "--edit-text-test",    "--focus-army-test",
+    "--combo-click-test",     "--command-sources-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -474,6 +475,7 @@ void IntegrationModes::print_usage() const {
               << "  --count-marks <N>  Run N frames; fail if no order's mark (feedback blip) is drawn\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --focus-army-test  A launch's player in the second slot plays and watches it\n"
+              << "  --command-sources-test A launch's player commands its army; FAF's union and common armies\n"
               << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --edit-text-test   Retail's name dialog draws a non-ASCII name typed in\n"
@@ -886,6 +888,10 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
                                    sim_focus, focus);
         }
         return finish_test_run("focus-army-test");
+    }
+    if (has("--command-sources-test") && !map_path.empty()) {
+        osc::test::run_command_sources_test(e);
+        return finish_test_run("command-sources-test");
     }
 
     // === Full Smoke Test: 5-phase game lifecycle ===

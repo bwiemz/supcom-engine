@@ -19730,6 +19730,10 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not paused or SessionIsPaused() then error('pause not reported') end
     )");
 
+    // Moho's session is over before the UI hears it (CWldSession sets
+    // IsGameOver, then UI_NoteGameOver), and only then may a player watch
+    // as an observer
+    ctx.sim.set_game_ended(true);
     lua_ok("Test 9a: NoteGameOver requests observer focus", R"(
         import('/lua/ui/uimain.lua').NoteGameOver()
         if GetFocusArmy() == -1 then error('focus changed before the beat') end

@@ -121,6 +121,16 @@ public:
                          index) != ai_army_indices_.end();
     }
 
+    /// A civilian army, by its name.
+    static bool is_civilian_army(const std::string& name) {
+        return name.find("CIVILIAN") != std::string::npos ||
+               name.find("NEUTRAL") != std::string::npos;
+    }
+    /// A player plays it (ArmySetup's Human): neither a civilian nor an AI's.
+    bool is_human_army(int index, const std::string& name) const {
+        return !is_civilian_army(name) && !is_ai_army(index);
+    }
+
     /// The lobby's prebuilt units, after BeginSession (Moho's
     /// Sim::PostInitialize): with ScenarioInfo.Options.PrebuiltUnits "On",
     /// the script's InitializePrebuiltUnits for each army but the civilians.

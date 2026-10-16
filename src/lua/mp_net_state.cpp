@@ -122,10 +122,16 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     if (!s.transport_ready || !s.lobby_transport) return false;
     s.session = std::make_unique<osc::sim::LockstepSession>(sim, *s.lobby_transport, s.local_source,
                                                             s.all_sources);
-    // Each source plays its army (as a dropped peer's defeat and GetFocusArmy
-    // take it): each peer's orders move only its own army's units, and an
-    // observer's none.
-    for (const osc::u32 source : s.all_sources) sim.set_source_army(source, s.army_of(source));
+    // Each source plays its army (the focus army it starts with). What it may
+    // command the session gave each army as it began (its command sources,
+    // numbered as the lobby numbers them): say so if they disagree.
+    for (const osc::u32 source : s.all_sources) {
+        const osc::i32 army = s.army_of(source);
+        sim.set_source_army(source, army);
+        if (army >= 0 && sim.command_sources_known() && !sim.army_has_command_source(army, source))
+            spdlog::error("[mp] source {} plays army {}, which doesn't take its commands", source,
+                          army);
+    }
     // Each source's pause timeouts, as Moho's: a player the game's Timeouts
     // ('0', '3', '-1': unlimited), an observer none
     const osc::i32 timeouts = game_timeouts(sim);

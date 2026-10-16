@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 57; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 58; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -84,6 +84,7 @@ constexpr u32 kVersion = 57; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 55: experimental aircraft made on the ground;
                              // 56: aim controllers with no arc to their target
                              // 57: units' order a Warp aborted
+                             // 58: armies' command sources and the cheats option
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -286,6 +287,15 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(source);
         w.i32v(army);
     }
+    w.b(sim.command_sources_known_);
+    w.size(sim.army_sources_.size());
+    for (const auto& [army, sources] : sim.army_sources_) {
+        w.i32v(army);
+        w.size(sources.size());
+        for (const u32 source : sources) w.u32v(source);
+    }
+    // current_command_source_: none between ticks
+    w.b(sim.cheats_enabled_);
     w.i32v(sim.paused_by_);
     w.u32v(sim.pause_serial_);
     w.u32v(sim.resumed_serial_);
@@ -487,6 +497,15 @@ void StateIO::load(StateReader& r, SimState& sim) {
         const u32 source = r.u32v();
         sim.source_armies_[source] = r.i32v();
     }
+    sim.command_sources_known_ = r.b();
+    sim.army_sources_.clear();
+    const size_t source_armies = r.size(8);
+    for (size_t i = 0; i < source_armies; ++i) {
+        std::set<u32>& set = sim.army_sources_[r.i32v()];
+        const size_t count = r.size(4);
+        for (size_t j = 0; j < count; ++j) set.insert(r.u32v());
+    }
+    sim.cheats_enabled_ = r.b();
     sim.paused_by_ = r.i32v();
     sim.pause_serial_ = r.u32v();
     sim.resumed_serial_ = r.u32v();

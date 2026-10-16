@@ -6,6 +6,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -88,9 +89,16 @@ TEST_CASE("Sim GetFocusArmy defaults to first playable army", "[focus]") {
     REQUIRE(lua_tonumber(state.raw(), -1) == 1.0);
     lua_pop(state.raw(), 1);
 
-    result = state.do_string("SetFocusArmy(2); return GetFocusArmy()");
+    // FAF's sim SetFocusArmy is 0-based and asks for the next sync beat
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    result = state.do_string("SetFocusArmy(1); return GetFocusArmy()");
     REQUIRE(result.ok());
-    REQUIRE(lua_tonumber(state.raw(), -1) == 2.0);
+    REQUIRE(lua_tonumber(state.raw(), -1) == 1.0); // not yet
+    lua_pop(state.raw(), 1);
+    lua_pushstring(state.raw(), osc::lua::kFocusArmyRequestKey);
+    lua_rawget(state.raw(), LUA_REGISTRYINDEX);
+    REQUIRE(lua_tonumber(state.raw(), -1) == 1.0);
     lua_pop(state.raw(), 1);
 }
 

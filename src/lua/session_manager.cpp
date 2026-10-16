@@ -78,6 +78,10 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
             sim.set_share_condition(value.string_value);
         } else if (key == "FogOfWar" && value.type == GameOptionValue::Type::String) {
             sim.set_fog_of_war(value.string_value);
+        } else if (key == "CheatsEnabled") {
+            // As Moho's lobby launch reads it: the string "true", exactly
+            sim.set_cheats_enabled(value.type == GameOptionValue::Type::String &&
+                                   value.string_value == "true");
         } else if (key == "NoRushOption") {
             no_rush_minutes = option_as_number(value);
         } else if (key == "NoRushRadius") {
@@ -91,8 +95,7 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
                        v != "Off" && v != "off" && v != "false" && v != "none" &&
                        !v.empty());
             sim.set_common_army(on);
-        } else if (key == "TeamShareOverflow" &&
-                   value.type == GameOptionValue::Type::String) {
+        } else if (key == "TeamShareOverflow" && value.type == GameOptionValue::Type::String) {
             // FAF values: 'enabled' / 'disabled'. Enable only when explicitly on.
             const std::string& v = value.string_value;
             sim.set_team_share_overflow(v == "enabled" || v == "on" ||
@@ -458,6 +461,18 @@ Result<void> SessionManager::start_session(LuaState& state,
         return Error("All army brain creations failed");
     }
 
+    // Each player's army takes its player's commands, before BeginSession
+    // (where FAF's union and common armies share them out). The players'
+    // command sources are numbered by their armies' order -- a lobby's
+    // owners by slot, its observers after them -- as Moho's launch gives
+    // each army its unit sources, and as FAF's scripts count them
+    // (simInit's humanIndex).
+    sim.begin_command_sources();
+    u32 next_source = 0;
+    for (size_t i = 0; i < army_limit; i++)
+        if (is_human_army(static_cast<int>(i), armies[i]))
+            sim.set_command_source(static_cast<i32>(i), next_source++, true);
+
     // Step 5: Call BeginSession()
     spdlog::info("  Calling BeginSession()...");
     auto begin_result = call_begin_session(L);
@@ -641,17 +656,15 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
         lua_pushstring(L, army_name.c_str());
         lua_newtable(L);
 
-        // Civilian check (must be before Human flag)
-        bool is_civilian = army_name.find("CIVILIAN") != std::string::npos ||
-                           army_name.find("NEUTRAL") != std::string::npos;
+        const bool is_civilian = is_civilian_army(army_name);
         lua_pushstring(L, "Civilian");
         lua_pushboolean(L, is_civilian ? 1 : 0);
         lua_rawset(L, -3);
 
         // Human flag — non-civilian armies are human unless marked as AI
-        bool is_ai = !is_civilian && is_ai_army(static_cast<int>(i));
+        const bool is_ai = !is_civilian && is_ai_army(static_cast<int>(i));
         lua_pushstring(L, "Human");
-        lua_pushboolean(L, (is_civilian || is_ai) ? 0 : 1);
+        lua_pushboolean(L, is_human_army(static_cast<int>(i), army_name) ? 1 : 0);
         lua_rawset(L, -3);
 
         // ArmyName

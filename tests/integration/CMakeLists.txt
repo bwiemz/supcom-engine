@@ -15,6 +15,7 @@ add_executable(osc_integration
     runner/wave_test.cpp
     runner/movie_test.cpp
     runner/combo_click_test.cpp
+    runner/command_sources_test.cpp
     runner/edit_text_test.cpp
     runner/keymap_test.cpp
     runner/pathing_evidence_test.cpp
@@ -347,6 +348,23 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
+    # FAF's union and common armies on FAF's own scripts: SetCommandSource,
+    # MergeArmyPair and AbandonedByPlayer (the retail run is a gate mode).
+    # Without FAF data it skips, as the saves' do: registered either way,
+    # so every machine counts the same gate.
+    if(_osc_faf_data)
+        add_test(NAME data.command_sources_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --command-sources-test)
+    else()
+        add_test(NAME data.command_sources_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.command_sources_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
 
     # M199b: retail's replay dialog path -- GetSpecialFiles lists the
     # recording, LaunchReplaySession opens it -- and the game plays it to

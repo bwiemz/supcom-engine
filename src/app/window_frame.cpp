@@ -228,13 +228,14 @@ void App::Window::advance_sim(double dt) {
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
-                // A timed-out peer is defeated so the match resolves
-                // instead of stalling in "waiting for players": the
-                // survivors agree on its last frame, and the session
-                // defeats its army on the same tick on every one of
-                // them (a command, so replays keep it).
+                // A timed-out peer leaves so the match resolves instead
+                // of stalling in "waiting for players": the survivors
+                // agree on its last frame, and its command source ends on
+                // the same tick on every one of them (a command, so
+                // replays keep it) -- an army it leaves with no player is
+                // abandoned to its brain, which retail's defeats.
                 for (osc::u32 src : session->take_dropped()) {
-                    spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
+                    spdlog::warn("[mp] peer {} dropped — its source ends", src);
                     osc::lua::mp_disconnect_source(src); // M218e
                 }
             }

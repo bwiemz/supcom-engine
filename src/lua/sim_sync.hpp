@@ -6,9 +6,10 @@ struct lua_State;
 
 namespace osc::lua {
 
-/// Registry key (UI state) of a pending SetFocusArmy request: 0-based army
-/// or -1 for observer. While a world session runs, the UI's SetFocusArmy is
-/// a request the next sim beat applies, as Moho's CWldSession does.
+/// Registry key (UI state, or the sim's) of a pending SetFocusArmy request:
+/// 0-based army or -1 for observer. While a world session runs, the UI's
+/// SetFocusArmy is a request the next sim beat applies, as Moho's
+/// CWldSession does; so is the sim's (FAF's), the UI's winning a tie.
 inline constexpr const char* kFocusArmyRequestKey = "__osc_focus_army_request";
 
 /// The UI state's focus army: 0-based, -1 for an observer (0 when unset).

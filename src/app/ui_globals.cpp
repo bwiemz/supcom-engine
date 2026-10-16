@@ -274,15 +274,23 @@ static int l_GetArmiesTable(lua_State* L) {
             lua_pushboolean(L, brain->is_civilian() ? 0 : 1);
             lua_rawset(L, -3);
 
-            // The command sources that play it (1-based), as chat.lua finds
-            // an army's clients by them: a network game's sources of the
+            // The command sources it takes commands from (1-based), as
+            // chat.lua finds an army's clients by them, and FAF's union
+            // army offers its allies: the sim's (Moho's mValidCommandSources);
+            // before a session numbers them, a network game's sources of the
             // army, a single-player game's one player
             lua_pushstring(L, "authorizedCommandSources");
             lua_newtable(L);
             {
                 const auto& mp = osc::lua::mp_net_state();
                 int n = 0;
-                if (mp.active() || !mp.clients.empty()) {
+                if (sim->command_sources_known()) {
+                    for (const osc::u32 source :
+                         sim->army_command_sources(static_cast<osc::i32>(i))) {
+                        lua_pushnumber(L, static_cast<double>(source) + 1);
+                        lua_rawseti(L, -2, ++n);
+                    }
+                } else if (mp.active() || !mp.clients.empty()) {
                     for (const osc::u32 source : mp.all_sources)
                         if (mp.army_of(source) == static_cast<int>(i)) {
                             lua_pushnumber(L, static_cast<double>(source + 1));

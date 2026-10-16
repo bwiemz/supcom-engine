@@ -849,7 +849,7 @@ TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallba
     SimCallbackEntry defeat;
     defeat.func_name = osc::sim::kDefeatArmyCallback;
     defeat.args["Army"] = 1.0;
-    w.sim.schedule_callback(0, defeat);
+    w.sim.schedule_callback(osc::sim::kEngineSource, defeat); // the engine's, never a player's
     CHECK_FALSE(w.sim.army_at(1)->is_defeated()); // not between ticks
     w.sim.tick();
     CHECK(w.sim.army_at(1)->is_defeated());
@@ -857,7 +857,7 @@ TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallba
     CHECK(w.sim.recorded_replay().commands.size() == 1); // a replay defeats it too
 
     defeat.args["Army"] = 7.0; // no such army: nothing happens
-    w.sim.schedule_callback(0, defeat);
+    w.sim.schedule_callback(osc::sim::kEngineSource, defeat);
     w.sim.tick();
     CHECK_FALSE(w.sim.army_at(0)->is_defeated());
 }
