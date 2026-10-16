@@ -294,6 +294,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.size(sources.size());
         for (const u32 source : sources) w.u32v(source);
     }
+    // current_command_source_: none between ticks
     w.b(sim.cheats_enabled_);
     w.i32v(sim.paused_by_);
     w.u32v(sim.pause_serial_);
