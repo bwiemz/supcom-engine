@@ -4474,6 +4474,7 @@ void Unit::set_silo_blocks(i32 blocks) {
 
 void Unit::end_silo_assist(lua_State* L, EntityRegistry& registry) {
     const u32 silo = std::exchange(silo_assist_id_, 0);
+    aim_builder_arms(nullptr, L);
     if (!is_building() && !is_reclaiming() && !is_repairing() && !is_capturing() && !enhancing_) {
         economy_.consumption_energy = 0;
         economy_.consumption_mass = 0;
