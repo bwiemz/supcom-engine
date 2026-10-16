@@ -404,6 +404,8 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
     CHECK(mp.local_source == 0);
     CHECK(mp.all_sources == std::vector<osc::u32>{0, 1, 2});
     CHECK(mp.source_armies == std::vector<osc::i32>{0, 2, -1});
+    // and the armies' sources: Alice's, none for the AI's, the host's
+    CHECK(mp.army_sources == std::vector<osc::i32>{0, -1, 1});
     CHECK(mp.local_army() == 0);
     // Seeded by the host's time, which the welcome brought
     const auto* alice_net = static_cast<osc::sim::LobbyGameTransport*>(mp.lobby_transport.get());
@@ -430,7 +432,8 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
 
     // Slots 2, 5 and 7 taken, the rest empty (random spawn leaves gaps):
     // the armies are the slots taken, in order, as Moho packs them, however
-    // the table iterates (these keys sit in its hash part)
+    // the table iterates (these keys sit in its hash part). Gap plays slots
+    // 2 and 5: one source, which both its armies take.
     {
         auto transport = std::move(host);
         REQUIRE(w.run(R"(
@@ -443,7 +446,7 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
         REQUIRE(w.run(R"(
             local players = {}
             players[7] = {Human = false, AIPersonality = 'adaptive'}
-            players[5] = {Human = false, AIPersonality = 'adaptive'}
+            players[5] = {Human = true, OwnerID = '0', PlayerName = 'Gap'}
             players[2] = {Human = true, OwnerID = '0', PlayerName = 'Gap'}
             local order = {}
             for slot in players do table.insert(order, slot) end
@@ -455,6 +458,7 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
         UNSCOPED_INFO("the table iterates its slots as " << lua_tostring(w.state.raw(), -1));
         lua_pop(w.state.raw(), 1);
         CHECK(osc::lua::mp_net_state().source_armies == std::vector<osc::i32>{0});
+        CHECK(osc::lua::mp_net_state().army_sources == std::vector<osc::i32>{0, 0, -1});
         take_launched();
         host = std::move(transport);
     }

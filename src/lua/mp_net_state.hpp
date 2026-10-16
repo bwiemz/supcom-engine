@@ -36,6 +36,8 @@ struct MpNetState {
     std::unique_ptr<osc::sim::INetTransport> lobby_transport;
     osc::sim::LobbyGameTransport* lobby_game = nullptr; ///< non-owning: lobby_transport
     std::vector<osc::i32> source_armies;
+    /// Army a's command source as the launch gave it (-1: none, an AI's).
+    std::vector<osc::i32> army_sources;
     /// The clients, by client index (= command source), M218d
     std::vector<SessionClient> clients;
 
@@ -44,6 +46,9 @@ struct MpNetState {
     osc::i32 army_of(osc::u32 source) const;
     /// The army this player plays (-1: an observer).
     osc::i32 local_army() const { return army_of(local_source); }
+    /// The command source army `army` takes, as the launch gave it (-1:
+    /// none). The session gives the armies these before BeginSession.
+    osc::i32 source_of_army(osc::i32 army) const;
     void reset();
 };
 
@@ -55,10 +60,12 @@ MpNetState& mp_net_state();
 // owners by slot, then the observers); `armies[s]` is source s's army (-1:
 // an observer's), and `local_source` this player's. Replaces any game set
 // up before.
-/// `clients[s]`: source s's owner and name.
+/// `clients[s]`: source s's owner and name. `army_sources[a]`: army a's
+/// source (-1: none); without it, each source's army takes that source.
 void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport,
                          osc::u32 local_source, std::vector<osc::i32> armies,
-                         std::vector<SessionClient> clients, osc::u64 seed);
+                         std::vector<SessionClient> clients, osc::u64 seed,
+                         std::vector<osc::i32> army_sources = {});
 
 // At game launch: if a lobby's game is ready, build the LockstepSession over
 // its connections, install SimState's command sink, and seed the sim (making

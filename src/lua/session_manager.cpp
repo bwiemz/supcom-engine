@@ -1,6 +1,7 @@
 #include "lua/session_manager.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/mp_net_state.hpp"
 #include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/game_colors.hpp"
@@ -453,16 +454,23 @@ Result<void> SessionManager::start_session(LuaState& state,
     }
 
     // Each player's army takes its player's commands, before BeginSession
-    // (where FAF's union and common armies share them out). The players'
-    // command sources are numbered by their armies' order -- a lobby's
-    // owners by slot, its observers after them -- as Moho's launch gives
-    // each army its unit sources, and as FAF's scripts count them
-    // (simInit's humanIndex).
+    // (where FAF's union and common armies share them out), as Moho's
+    // launch gives each army its unit sources. A lobby's game takes the
+    // lobby's: each army its owner's source, numbered by slot, the
+    // observers after (the sources its peers' frames carry). Otherwise
+    // the players' armies are numbered in order, as FAF's scripts count
+    // them (simInit's humanIndex), and as a lobby numbers them too.
     sim.begin_command_sources();
-    u32 next_source = 0;
-    for (size_t i = 0; i < army_limit; i++)
-        if (is_human_army(static_cast<int>(i), armies[i]))
-            sim.set_command_source(static_cast<i32>(i), next_source++, true);
+    if (const MpNetState& mp = mp_net_state(); mp.transport_ready) {
+        for (size_t i = 0; i < army_limit; i++)
+            if (const i32 source = mp.source_of_army(static_cast<i32>(i)); source >= 0)
+                sim.set_command_source(static_cast<i32>(i), static_cast<u32>(source), true);
+    } else {
+        u32 next_source = 0;
+        for (size_t i = 0; i < army_limit; i++)
+            if (is_human_army(static_cast<int>(i), armies[i]))
+                sim.set_command_source(static_cast<i32>(i), next_source++, true);
+    }
 
     // Step 5: Call BeginSession()
     spdlog::info("  Calling BeginSession()...");

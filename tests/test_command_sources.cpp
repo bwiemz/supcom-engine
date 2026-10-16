@@ -8,6 +8,8 @@
 #include "core/game_state.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/mp_net_state.hpp"
+#include "lua/session_manager.hpp"
 #include "lua/sim_bindings.hpp"
 #include "lua/sim_sync.hpp"
 #include "sim/army_brain.hpp"
@@ -19,6 +21,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "ui/ui_control.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -331,6 +334,41 @@ TEST_CASE("A player's frame can't end a source or defeat an army", "[sources][dr
     w.sim.tick();
     CHECK(w.sim.army_command_sources(0) == std::vector<osc::u32>{0});
     CHECK_FALSE(w.sim.army_at(0)->is_defeated());
+}
+
+TEST_CASE("A lobby's game gives each army its owner's source, as the lobby numbered them",
+          "[sources][lobby]") {
+    struct MpReset {
+        MpReset() { osc::lua::mp_net_state().reset(); }
+        ~MpReset() { osc::lua::mp_net_state().reset(); }
+    } reset;
+    const auto start = [](bool lobby) {
+        osc::lua::LuaState lua;
+        SimState sim(lua.raw(), nullptr);
+        osc::lua::SessionManager mgr;
+        osc::lua::ScenarioMetadata meta;
+        meta.armies = {"ARMY_1", "ARMY_2", "ARMY_3", "ARMY_4"};
+        for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3", "ARMY_4"}) sim.add_army(army, army);
+        mgr.set_ai_armies({1});
+        REQUIRE(lua.do_string("ScenarioInfo = {}").ok());
+        auto& mp = osc::lua::mp_net_state();
+        mp.reset();
+        if (lobby) {
+            // Source 0 owns slots 1 and 4, source 1 slot 3; slot 2 an AI's
+            mp.transport_ready = true;
+            mp.army_sources = {0, -1, 1, 0};
+        }
+        REQUIRE(mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta).ok());
+        mp.reset();
+        std::vector<std::vector<osc::u32>> out;
+        for (osc::i32 army = 0; army < 4; ++army) out.push_back(sim.army_command_sources(army));
+        return out;
+    };
+    using Sources = std::vector<std::vector<osc::u32>>;
+    // The lobby's, whatever the players' order would give
+    CHECK(start(true) == Sources{{0}, {}, {1}, {0}});
+    // Without one, the players' armies in order
+    CHECK(start(false) == Sources{{0}, {}, {1}, {2}});
 }
 
 TEST_CASE("Command sources and the cheats option survive a save", "[sources][save]") {
