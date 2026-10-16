@@ -39,6 +39,8 @@ private:
 };
 
 /// For fmt and spdlog: an interned string prints as its text.
-inline std::string_view format_as(const InternedString& s) { return s.str(); }
+inline std::string_view format_as(const InternedString& s) {
+    return s.str();
+}
 
 } // namespace osc

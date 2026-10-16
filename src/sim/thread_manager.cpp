@@ -306,13 +306,13 @@ void ThreadManager::resume_all(u32 current_tick) {
         // Under --profile, a resume long enough to be a hitch says where
         // it stopped and where it was forked: a stutter's script.
         const bool timed = Profiler::instance().enabled();
-        const auto started = timed ? std::chrono::steady_clock::now()
-                                   : std::chrono::steady_clock::time_point{};
+        const auto started =
+            timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         int status = lua_resume(t.coroutine, nargs);
         if (timed) {
-            const f64 ms = std::chrono::duration<f64, std::milli>(
-                               std::chrono::steady_clock::now() - started)
-                               .count();
+            const f64 ms =
+                std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - started)
+                    .count();
             if (ms > kSlowResumeMs)
                 spdlog::info("Slow Lua thread: {:.1f} ms at tick {}, stopped at {}, forked at {}",
                              ms, current_tick, where_in(t.coroutine),
