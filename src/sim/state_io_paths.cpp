@@ -204,6 +204,7 @@ void StateIO::save(StateWriter& w, const path::PathNavigator& n) {
     w.i32v(n.retry_delay_);
     w.i32v(n.no_forward_fail_count_);
     w.f32v(n.repath_threshold_);
+    w.u32v(n.last_repath_tick_);
     w.i32v(n.no_progress_ticks_);
     w.b(n.forward_probe_);
     w.b(n.repath_requested_);
@@ -240,6 +241,7 @@ void StateIO::load(StateReader& r, path::PathNavigator& n, SimState& sim, i32 ar
     n.retry_delay_ = r.i32v();
     n.no_forward_fail_count_ = r.i32v();
     n.repath_threshold_ = r.f32v();
+    n.last_repath_tick_ = r.u32v();
     n.no_progress_ticks_ = r.i32v();
     n.forward_probe_ = r.b();
     n.repath_requested_ = r.b();

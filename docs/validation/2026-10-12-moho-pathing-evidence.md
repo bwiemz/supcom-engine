@@ -98,6 +98,11 @@ Both games ran three at a time beside others.
    - **Answered, 2026-10-13:** the original game gets all 24 across, and none of its units stands still for more than 17 ticks (`tools/moho_probes`).
    - The difference is in the motion, not the navigator. A Moho unit whose step won't fit is bounced back (`CUnitMotion::CalcMoveCommon`, `AddImpulse` at its top speed x 0.01), and its steering asks for the way afresh once the push dies down. A unit against the wall is therefore never still for the 30 ticks after which its navigator gives up.
    - The engine's drive now bounces it too. With Moho's pathing 23 of 24 get across; one still stops short.
+   - **Closed, 2026-10-15:** the last one was the navigator, not the motion.
+     - What it was: pressed against the wall's face, its continuation searches found nothing nearer its next cell than its own, twice running, so it gave up.
+     - What the original showed: its Strikers never get pinned there. `tools/moho_probes/navigator` shows a lone Striker's target cells turn toward the gap ten cells before the wall, where faf-re's navigator would drive at the far side's portal until the wall refused it.
+     - Five functions in the shipped exe differ from faf-re's text: `CAiPathNavigator`'s `UpdateCurrentPosition`, `TryAdvanceTargetPoint`, `RequestContinuationPath` and `OnEvent`, and `CAiPathFinder::ShouldSearchRect`. The target advances only halfway to it. Every 7 ticks the unit looks down the way to its target. With nothing ahead reachable straight, it asks the way cell by cell. The remembered search windows count a touching cluster.
+     - Ported from the binary: all 24 get across in the choke scene. In 24 variants with the crowd's spawn points jittered, 1 of 576 Strikers stops short (43 before). In the original's six variants of `tools/moho_probes/crowd`, 1 of 144 did.
 2. **The games differ.** The AIs play otherwise with Moho's pathing, so the goldens and benchmarks that hold a pinned game will need re-recording when the default changes.
 3. **What the switch would retire:** the grid's corner-cutting through wall cells (6 of 24 above).
 

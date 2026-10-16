@@ -98,6 +98,8 @@ struct Walk {
     f32 z = 0;
     i32 cls = 0;
     u32 layer = 1;
+    /// A submarine's motion type: it asks the way on as it changes layer.
+    bool surfacing_sub = false;
     bool frozen = false;
     /// Steered at a cell its footprint can't take (the move refused, as
     /// Moho's unit motion refuses it).
@@ -136,6 +138,10 @@ struct Walk {
         unit.z = z;
         unit.moved = moved;
         unit.layer = layer;
+        unit.tick = static_cast<u32>(ticks);
+        unit.probe_bucket = 0;
+        unit.max_speed = speed * 10.0f; // a tick is a tenth of a second
+        unit.surfacing_sub = surfacing_sub;
         nav.update(unit, world(), queue);
         if (nav.state() == State::Idle || nav.state() == State::Failed) return false;
         if (!frozen) {
@@ -217,9 +223,13 @@ TEST_CASE("A navigator asks its army, then takes its unit to the goal, cutting s
     CHECK(w.ticks < 200); // about 130 cells at one a tick
 }
 
-TEST_CASE("Through a gap in a wall: steered at a portal across the wall, the unit is pushed "
-          "back and asks the way there cell by cell, as Moho's steering makes it",
+TEST_CASE("Through a gap in a wall: given a portal across the wall, the unit asks the way "
+          "there cell by cell before it reaches the wall",
           "[path_navigator]") {
+    // In the original game a Striker sent through a gap never touches the
+    // wall's face: with no straight way to the portal it asks for the way at
+    // once, not after the wall refuses it (the binary's UpdateCurrentPosition
+    // and its look down the way every 7 ticks).
     for (const i32 cls : {0, 1}) {
         INFO("class " << cls);
         Walk w;
@@ -229,6 +239,7 @@ TEST_CASE("Through a gap in a wall: steered at a portal across the wall, the uni
         w.run();
         CHECK(w.nav.state() == State::Idle);
         CHECK(w.nav.current() == Cell{100, 20});
+        CHECK_FALSE(w.bumped);
         CHECK(w.ticks < 300);
     }
 }
@@ -263,9 +274,20 @@ TEST_CASE("A unit that can't get there stops short, and one held still gives up 
     CHECK(held.nav.current() == Cell{20, 20});
 }
 
-TEST_CASE("A new layer asks for the way on; the answer goes in front of what is left",
+TEST_CASE("A submarine on a new layer asks for the way on; the answer goes in front of what "
+          "is left. Another unit doesn't ask",
           "[path_navigator]") {
+    // The binary asks only of a MotionType RULEUMT_SurfacingSub (0x005B4F88).
+    Walk land;
+    land.start(0, 10.5f, 10.5f, {100, 10});
+    for (int i = 0; i < 20; ++i) land.step();
+    REQUIRE(land.nav.state() == State::HasPath);
+    land.layer = 8;
+    land.step();
+    CHECK(land.nav.state() == State::HasPath);
+
     Walk w;
+    w.surfacing_sub = true;
     w.start(0, 10.5f, 10.5f, {100, 10});
     for (int i = 0; i < 20; ++i) w.step();
     REQUIRE(w.nav.state() == State::HasPath);
@@ -287,7 +309,9 @@ TEST_CASE("Strayed from its last cell with a unit standing there, a navigator wa
     // there (a repath asked, the way still clear) sets its repath distance
     // to half the way left. Then pushed off further than that, the way
     // swept blocked, it can't go on: count the ticks until it asks again
-    // (Continuing), with a unit on the goal or without.
+    // (Continuing), with a unit on the goal or without. Further off than
+    // its threshold, it finds the way blocked when it next looks down it,
+    // on its turn of the 7 ticks.
     const auto ticks_to_ask = [](bool unit_on_goal, int& at_asked) {
         FakeBlockers fake;
         Walk w;
@@ -320,6 +344,65 @@ TEST_CASE("Strayed from its last cell with a unit standing there, a navigator wa
     INFO("blocked " << blocked << " free " << free);
     CHECK(asked_blocked >= 1);
     CHECK(asked_free >= 1);
-    CHECK(free == 1);
+    CHECK(free >= 1);
+    CHECK(free <= 7);
     CHECK(blocked == free + 10);
+}
+
+TEST_CASE("A navigator picks its next target only once halfway to the one it has",
+          "[path_navigator]") {
+    // The binary's UpdateCurrentPosition (0x005B55F7) advances the target when
+    // the unit is within its repath threshold, half the way it had when the
+    // target was picked; faf-re's text advanced it every tick.
+    Walk w;
+    w.start(0, 10.5f, 10.5f, {100, 90});
+    Cell target = w.nav.target();
+    f32 picked_at = 0;
+    f32 last_dist = 0;
+    int changes = 0;
+    while (w.ticks < 400 && w.step()) {
+        const Cell now = w.nav.target();
+        const Cell at = w.nav.current();
+        const auto dist = [](Cell a, Cell b) {
+            return std::hypot(static_cast<f32>(a.x - b.x), static_cast<f32>(a.z - b.z));
+        };
+        if (w.nav.state() != State::HasPath) continue;
+        if (now != target) {
+            // The old target was given up only once it was half as far as
+            // when picked (the first, picked on the unit's own cell, aside).
+            if (changes > 0) CHECK(last_dist <= picked_at * 0.5f + 1.5f);
+            ++changes;
+            target = now;
+            picked_at = dist(at, now);
+        }
+        last_dist = dist(at, target);
+    }
+    CHECK(w.nav.current() == Cell{100, 90});
+    CHECK(changes >= 2);
+}
+
+TEST_CASE("A wall put across its way: within 7 ticks it asks the way again, before it gets "
+          "there",
+          "[path_navigator]") {
+    // Once every 7 ticks the binary's navigator looks down the way to its
+    // target, as far as four times its top speed in cells: ground it won't
+    // fit there and it asks again (0x005B4FB7..0x005B5105, missing from
+    // faf-re's text).
+    Walk w;
+    w.start(0, 10.5f, 64.5f, {110, 64});
+    for (int i = 0; i < 15; ++i) w.step();
+    REQUIRE(w.nav.state() == State::HasPath);
+    REQUIRE(w.x < 40.0f);
+    const osc::sim::OccupancyRect wall{60, 30, 62, 100};
+    w.grid.fill(oc::kLand, wall, true);
+    w.tables->dirty(wall);
+    const int put_at = w.ticks;
+    int asked_at = -1;
+    while (w.ticks < 600 && w.step()) {
+        if (asked_at < 0 && w.nav.state() == State::Continuing) asked_at = w.ticks;
+    }
+    CHECK(asked_at > put_at);
+    CHECK(asked_at - put_at <= 7);
+    CHECK_FALSE(w.bumped);
+    CHECK(w.nav.current() == Cell{110, 64});
 }

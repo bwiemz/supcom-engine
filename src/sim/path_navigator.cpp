@@ -34,6 +34,25 @@ Cell goal_centre(const NavGoal& g) {
             static_cast<i16>((g.outer.z0 + g.outer.z1) / 2)};
 }
 
+/// The binary's 0x005B4C40: the cell `dist` along the way from `from` to
+/// `to`, each axis truncated toward zero, the cells read as 16 bits
+/// unsigned (so a cell past the map's low edge wraps, as Moho's does).
+/// (Its x87 runs at double precision, as MSVC sets it.)
+Cell cell_toward(Cell from, Cell to, f32 dist) {
+    const auto fx = static_cast<i32>(static_cast<u16>(from.x));
+    const auto fz = static_cast<i32>(static_cast<u16>(from.z));
+    auto dx = static_cast<f32>(static_cast<i32>(static_cast<u16>(to.x)) - fx);
+    auto dz = static_cast<f32>(static_cast<i32>(static_cast<u16>(to.z)) - fz);
+    const f32 length_sq = dx * dx + dz * dz;
+    if (length_sq != 0.0f) {
+        const double scale = static_cast<double>(dist) / std::sqrt(static_cast<double>(length_sq));
+        dx = static_cast<f32>(static_cast<double>(dx) * scale);
+        dz = static_cast<f32>(static_cast<double>(dz) * scale);
+    }
+    return {static_cast<i16>(static_cast<u16>(fx + static_cast<i32>(dx))),
+            static_cast<i16>(static_cast<u16>(fz + static_cast<i32>(dz)))};
+}
+
 SearchType search_type(i32 mode) {
     switch (mode) {
     case 1: return SearchType::Initial;
@@ -229,17 +248,35 @@ bool PathNavigator::try_advance_target_point() {
         if (first > 0) consume_prefix(first - 1);
         return false;
     }
+    // (The binary measures to the path's first cell here, and on success
+    // clears the extended probe, 0x005B6512; faf-re's text has the target
+    // cell, and clears the within-one-cell flag SetTargetPoint just set.)
     if (selected == 0 && furthest > first && path_.size() > 1 &&
-        !can_transition(path_[0], path_[1]) && cell_distance(current_, target_) < 10.0f) {
+        !can_transition(path_[0], path_[1]) && cell_distance(current_, path_[0]) < 10.0f) {
         consume_prefix(1);
         return false;
     }
     if (no_progress_ticks_ <= 30 || selected > 0) {
         set_target_point(selected);
-        target_within_one_cell_ = false;
+        extended_probe_ = false;
         return true;
     }
     return false;
+}
+
+bool PathNavigator::way_ahead_blocked(f32 dist) const {
+    // Only from ground it fits now (OCCUPY_FootprintFits, its map caps).
+    if (!world_.terrain || !world_.grid ||
+        footprint_fits(footprint_, *world_.terrain, *world_.grid, current_.x, current_.z) == 0)
+        return false;
+    // As far as four times its top speed in cells, or its footprint's span.
+    const auto span = static_cast<f32>(std::max(footprint_.size_x, footprint_.size_z));
+    const f32 reach = std::max(span * 4.0f, unit_.max_speed * 4.0f);
+    const Cell ahead = dist > reach ? cell_toward(current_, target_, reach) : target_;
+    // Ground it won't fit on the way, or a unit there: it asks again. One
+    // that turns wider than it turns fast asks again every 10 ticks anyway.
+    if (!can_occupy(current_, ahead) || !can_transition(current_, ahead)) return true;
+    return unit_.turns_wide && unit_.tick > last_repath_tick_ + 10;
 }
 
 void PathNavigator::queue_search(SearchType type) {
@@ -273,10 +310,14 @@ void PathNavigator::request_continuation(i32 mode) {
             return;
         }
     }
-    // The cells it is on or beside go.
+    // The cells it is on or beside go, and so do those it can't stand on:
+    // ground it won't fit, or a unit there. It asks the way to the first
+    // it can. (The binary, 0x005B5781; faf-re's text stops at a unit.)
     while (path_.size() > 1) {
         const Cell first = path_[0];
-        if (!can_transition(first, first) || manhattan(first, current_) > 1) break;
+        if (can_occupy(first, first) && can_transition(first, first) &&
+            manhattan(first, current_) > 1)
+            break;
         consume_prefix(1);
     }
     update_forward_probe();
@@ -331,18 +372,32 @@ void PathNavigator::update(const NavUnit& unit, const PathWorld& world, PathQueu
         target_ = current_;
         return;
     }
-    if (!try_advance_target_point()) target_ = path_[0];
-    // A new layer: the way on, asked again. (A new goal clears the layer it
-    // last pathed on, so its first step with a path asks once.)
-    if (unit.layer != last_layer_) {
+    // From here the binary (0x005B4F76 on) and faf-re's text part ways: the
+    // text advances the target every tick and repaths when the target is
+    // more than the threshold away; the binary advances it only in the
+    // branch below, entered once the unit is within the threshold.
+    //
+    // A submarine on a new layer asks the way on again (the binary asks only
+    // of a MotionType RULEUMT_SurfacingSub; a new goal clears the layer it
+    // last pathed on).
+    if (unit.surfacing_sub && unit.layer != last_layer_) {
         last_layer_ = unit.layer;
         request_continuation(2);
         return;
     }
+    // Once every 7 ticks (its id's turn) it looks down the way to its
+    // target; blocked, it asks again before it gets there, not at the wall.
+    bool repath = repath_requested_;
+    const f32 dist = cell_distance(current_, target_);
+    if (current_ != target_ && !target_within_one_cell_ && !repath &&
+        unit.tick % 7 == unit.probe_bucket && way_ahead_blocked(dist))
+        repath = true;
     if (!unit.moved && !unit.immobile) ++no_progress_ticks_;
     else no_progress_ticks_ = 0;
-    if (repath_threshold_ < cell_distance(current_, target_) || repath_requested_ ||
-        no_progress_ticks_ > 30) {
+    // Halfway to its target cell (the threshold is half the way it had; a
+    // new path's is infinite), it looks for the next one.
+    if (repath_threshold_ >= dist || repath || no_progress_ticks_ > 30) {
+        last_repath_tick_ = unit.tick;
         const Cell aimed = target_; // as it was before the advance
         if (try_advance_target_point()) {
             repath_threshold_ = cell_distance(current_, target_) * 0.5f;
@@ -429,7 +484,7 @@ void PathNavigator::on_path_event(bool /*reached*/, const std::vector<Cell>& cel
     if (!merged) {
         if (!path_.empty() && incoming <= 2) {
             const Cell first = path_[0];
-            if (can_transition(first, first)) {
+            if (can_occupy(first, first) && can_transition(first, first)) {
                 // Short of a cell it could stand on twice running: give up.
                 const u32 packed = pack_cell(first);
                 if (last_blocked_cell_ == packed) {
@@ -453,12 +508,13 @@ void PathNavigator::on_path_event(bool /*reached*/, const std::vector<Cell>& cel
         }
         path_.insert(path_.begin(), cells.begin(), cells.end());
     }
-    no_forward_fail_count_ = 0;
+    // (Its count of searches that found no way on runs on: only a reset
+    // clears it, in the binary as in faf-re's ResetPathState.)
     retry_delay_ = 0;
     repath_threshold_ = kInfinity;
     finder_.set_type(SearchType::None);
-    if (last_node_index_ < 0) last_node_index_ = static_cast<i32>(path_.size()) - 1;
-    else last_node_index_ += incoming - (merged ? 1 : 0);
+    const i32 added = incoming - (merged ? 1 : 0);
+    last_node_index_ = last_node_index_ < 0 ? added : last_node_index_ + added;
     state_ = State::HasPath;
 }
 
@@ -489,6 +545,7 @@ void PathNavigator::fingerprint(Fnv& f) const {
     f.mix(static_cast<u32>(retry_delay_));
     f.mix(static_cast<u32>(no_forward_fail_count_));
     f.mix_f32(repath_threshold_);
+    f.mix(last_repath_tick_);
     f.mix(static_cast<u32>(no_progress_ticks_));
     f.mix(static_cast<u64>(forward_probe_ ? 1 : 0) |
           static_cast<u64>(repath_requested_ ? 1 : 0) << 1 |

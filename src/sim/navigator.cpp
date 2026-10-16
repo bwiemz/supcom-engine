@@ -270,6 +270,13 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
     nav.layer = layer_token(unit.layer());
     nav.waiting_for_transport = !unit.command_queue().empty() &&
                                 unit.command_queue().front().type == CommandType::TransportLoad;
+    nav.tick = sim_->tick_count();
+    nav.probe_bucket = unit.entity_id() % 7;
+    nav.max_speed = unit.max_speed();
+    // TurnRadius against TurnRate in its blueprint's units, degrees a second.
+    constexpr f32 kRadToDeg = 180.0f / 3.14159265358979f;
+    nav.turns_wide = unit.drive().turn_radius > unit.drive().turn_rate * kRadToDeg;
+    nav.surfacing_sub = unit.motion_type() == "RULEUMT_SurfacingSub";
     const OccupancyRect playable = sim_->move_bounds(unit.army(), false);
     path::PathWorld world{map, &sim_->occupancy(), playable, army->use_whole_map(),
                           default_pathcap(std::max(map->map_width(), map->map_height()))};
