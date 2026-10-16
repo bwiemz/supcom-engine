@@ -1782,7 +1782,6 @@ static int l_sim_ResumeSim(lua_State* L) {
 // Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
 #include "lua/lua_stubs.hpp"
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
-static int (*const stub_zero)(lua_State*) = lua_stubs::return_zero;
 static int (*const stub_nil)(lua_State*) = lua_stubs::return_nil;
 
 // Returns a dummy object (table) whose methods are no-ops that return self
