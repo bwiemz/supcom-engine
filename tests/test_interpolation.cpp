@@ -13,6 +13,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -378,6 +379,37 @@ TEST_CASE("A capture's record reused for another entity keeps nothing of the las
     CHECK(r.build_target_id == 0);
     CHECK(r.bone_count == 0);
     CHECK(r.position.x == 9.0f);
+}
+
+TEST_CASE("A prop's record reused for another prop keeps no pose of the last one's",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto wreck = std::make_unique<osc::sim::Prop>();
+    wreck->set_blueprint_id("/env/wrecks/uel0101_wreck.bp");
+    wreck->pose.assign(2, filled(3.0f)); // the pose its unit died in
+    const osc::u32 posed = sim.entity_registry().register_entity(std::move(wreck));
+    auto tree = std::make_unique<osc::sim::Prop>();
+    tree->set_blueprint_id("/env/evergreen/props/trees/pine06_prop.bp");
+    tree->set_position({4, 0, 4});
+    const osc::u32 plain = sim.entity_registry().register_entity(std::move(tree));
+
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 2);
+    CHECK(snap.entities[0].bone_count == 2);
+
+    // The wreck goes: the tree takes its record
+    entity(sim, posed).mark_destroyed();
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 1);
+    const auto& r = snap.entities[0];
+    CHECK(r.id == plain);
+    CHECK(r.is_prop);
+    CHECK(r.bone_count == 0);
+    CHECK(r.bone_offset == 0);
+    CHECK(r.blueprint_id == "/env/evergreen/props/trees/pine06_prop.bp");
+    CHECK(r.position.x == 4.0f);
 }
 
 TEST_CASE("An interned string is one copy per text", "[interp][snapshot]") {

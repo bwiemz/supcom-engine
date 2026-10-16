@@ -63,15 +63,17 @@ std::vector<std::pair<std::string, uint64_t>> top(size_t count) {
     return out;
 }
 
-uint64_t total() { return samples().total; }
+uint64_t total() {
+    return samples().total;
+}
 
 void log_report(size_t count) {
     const uint64_t all = total();
     if (all == 0) return;
     spdlog::info("=== Lua profile: {} samples, one per {} instructions ===", all, kInstructions);
     for (const auto& [where, n] : top(count))
-        spdlog::info("  {:>5.1f}% {:>9}  {}", 100.0 * static_cast<double>(n) / static_cast<double>(all),
-                     n, where);
+        spdlog::info("  {:>5.1f}% {:>9}  {}",
+                     100.0 * static_cast<double>(n) / static_cast<double>(all), n, where);
 }
 
 } // namespace osc::sim::lua_profile
