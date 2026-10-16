@@ -196,6 +196,13 @@ void defeat_dropped_army(SimState& sim, const SimCallbackEntry& cb) {
     sim.defeat_army(static_cast<i32>(*army));
 }
 
+/// A dropped player's command source ends.
+void terminate_source(SimState& sim, const SimCallbackEntry& cb) {
+    const auto* source = number_in(cb, "Source", 0, static_cast<f64>(kEngineSource) - 1);
+    if (!source) return;
+    sim.terminate_command_source(static_cast<u32>(*source));
+}
+
 bool retargetable(CommandType type) {
     switch (type) {
     case CommandType::Move:
@@ -449,6 +456,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
     else if (cb.func_name == kIncreaseBuildCountCallback) increase_build_count(*this, cb);
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
+    else if (cb.func_name == kCommandSourceTerminatedCallback) terminate_source(*this, cb);
     else if (cb.func_name == kPostLoadCallback) post_load(*this, L);
     else if (cb.func_name == kSetCommandTargetCallback) set_command_target(*this, L, cb);
     else if (cb.func_name == kRemoveCommandCallback) remove_command(*this, L, cb);

@@ -54,18 +54,28 @@ void set_registry_int(lua_State* L, const char* key, int v) {
 /// 0-based army (-1 observer) -> Lua's 1-based (-1 stays).
 lua_Number to_lua_army(int army) { return army >= 0 ? army + 1 : -1; }
 
-void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
-    lua_pushstring(ui_L, kFocusArmyRequestKey);
-    lua_rawget(ui_L, LUA_REGISTRYINDEX);
-    if (!lua_isnumber(ui_L, -1)) {
-        lua_pop(ui_L, 1);
-        return;
+/// Take (and clear) a focus request pending in `L`'s registry.
+bool take_focus_request(lua_State* L, int& requested) {
+    lua_pushstring(L, kFocusArmyRequestKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool pending = lua_isnumber(L, -1) != 0;
+    if (pending) requested = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    if (pending) {
+        lua_pushstring(L, kFocusArmyRequestKey);
+        lua_pushnil(L);
+        lua_rawset(L, LUA_REGISTRYINDEX);
     }
-    const int requested = static_cast<int>(lua_tonumber(ui_L, -1));
-    lua_pop(ui_L, 1);
-    lua_pushstring(ui_L, kFocusArmyRequestKey);
-    lua_pushnil(ui_L);
-    lua_rawset(ui_L, LUA_REGISTRYINDEX);
+    return pending;
+}
+
+void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
+    // The sim's (FAF's SetFocusArmy), then the UI's: both set the driver's
+    // pending focus in Moho, the later winning
+    int requested = 0;
+    const bool from_sim = take_focus_request(sim_L, requested);
+    const bool from_ui = take_focus_request(ui_L, requested);
+    if (!from_sim && !from_ui) return;
 
     const int old = registry_int(ui_L, "__osc_focus_army", 0);
     if (requested == old) return;

@@ -181,6 +181,7 @@ add_executable(osc_tests
     test_lobby_wire.cpp
     test_net_lobby.cpp
     test_command_routing.cpp
+    test_command_sources.cpp
     test_sim_rand.cpp
     test_video_decoder.cpp
 )

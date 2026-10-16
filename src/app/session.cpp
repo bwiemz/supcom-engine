@@ -111,6 +111,17 @@ std::optional<osc::sim::Replay> load_replay(const std::string& path) {
     return replay;
 }
 
+namespace {
+
+/// --scripted-orders: the player (command source 0) commands army 1 beside
+/// its AI, as no launch numbers it (every army is an AI's). A replay plays
+/// the orders as they were applied, and a save keeps the army's sources.
+void give_army_the_player(osc::sim::SimState& sim) {
+    sim.set_command_source(0, 0, true);
+}
+
+} // namespace
+
 /// --scripted-orders: army 1 also takes a player's orders, routed as a
 /// player's so a recording holds them: moves, now and then a fire state or
 /// a pause (SimCallbacks) and a Stop. Picked from their own random stream,
@@ -170,6 +181,7 @@ void issue_scripted_orders(osc::sim::SimState& sim, osc::u32 tick) {
         break;
     }
     }
+    give_army_the_player(sim);
     sim.set_human_input_active(true);
     sim.route_command(ids, cmd, true);
     sim.set_human_input_active(false);
@@ -191,6 +203,7 @@ void issue_order_before_save(osc::sim::SimState& sim) {
     osc::sim::UnitCommand cmd;
     cmd.type = osc::sim::CommandType::Move;
     cmd.target_pos = {sim.terrain()->map_width() * 0.5f, 0.0f, sim.terrain()->map_height() * 0.5f};
+    give_army_the_player(sim);
     sim.set_human_input_active(true);
     sim.route_command({mover}, cmd, true);
     sim.set_human_input_active(false);

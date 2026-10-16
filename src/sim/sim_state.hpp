@@ -366,11 +366,45 @@ public:
     u32 schedule_command(u32 source, const std::vector<u32>& unit_ids,
                          const UnitCommand& command, bool clear_existing);
 
-    /// The army a command source plays. A source with one moves only that
-    /// army's units: a peer can't order another's by naming them (a lockstep
-    /// frame is checked only against its sender). Unmapped sources (the
-    /// single-player player, the engine) are not limited.
+    /// The army a command source plays (-1: none, an observer's), for the
+    /// focus army it starts with. What it may command is the armies' command
+    /// sources (below).
     void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+
+    // --- Command sources (Moho's SSTIArmyVariableData::mValidCommandSources) ---
+    /// The game numbers its command sources: from now on an army takes
+    /// orders and callbacks only from the sources it lists (none until
+    /// given), as Moho's armies do from their launch. Before it (a bare sim:
+    /// tests, tools) every source may act for every army.
+    void begin_command_sources();
+    bool command_sources_known() const { return command_sources_known_; }
+    /// Add or remove `source` among the ones `army` takes commands from
+    /// (FAF's SetCommandSource). Ignored for an army that doesn't exist.
+    void set_command_source(i32 army, u32 source, bool valid);
+    bool army_has_command_source(i32 army, u32 source) const;
+    /// `army`'s command sources, ascending.
+    std::vector<u32> army_command_sources(i32 army) const;
+    /// The source whose order or callback is running (Moho's
+    /// mCurCommandSource); kEngineSource (none) between them.
+    u32 current_command_source() const { return current_command_source_; }
+    /// Moho's Sim::OkayToMessWith(army): the running source may command
+    /// `army` -- one in the game that lists it -- or cheats are on. (Every
+    /// army, before the sources are known.)
+    bool okay_to_mess_with(i32 army);
+    /// A source left the game (Moho's OnCommandSourceTerminated): no army
+    /// takes its commands any more, and an army left with none is abandoned:
+    /// its brain's AbandonedByPlayer runs (retail's calls OnDefeat; FAF's may
+    /// share the army with allies instead). A brain without one is defeated
+    /// outright, as is (before the sources are known) the army the source
+    /// plays.
+    void terminate_command_source(u32 source);
+    /// The game's CheatsEnabled option.
+    void set_cheats_enabled(bool on) { cheats_enabled_ = on; }
+    /// Moho's Sim::CheatsEnabled: whether cheats are on, logging the running
+    /// source's attempt either way.
+    bool cheats_enabled();
+    /// Whether cheats are on, unlogged (the user session's copy of it).
+    bool cheats_option() const { return cheats_enabled_; }
 
     // --- A network game's pause (M218f), as Moho's sim takes it ---
     /// `source` asks to pause, at a tick every peer shares: taken unless
@@ -1015,6 +1049,10 @@ private:
     mutable u32 tick_checksum_tick_ = 0;
     mutable bool tick_checksum_valid_ = false;
     std::map<u32, i32> source_armies_; // see set_source_army
+    bool command_sources_known_ = false;         // see begin_command_sources
+    std::map<i32, std::set<u32>> army_sources_;  // army -> its command sources
+    u32 current_command_source_ = kEngineSource; // see current_command_source
+    bool cheats_enabled_ = false;
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
     u32 resumed_serial_ = 0; // the latest pause resumed

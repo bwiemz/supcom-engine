@@ -398,26 +398,20 @@ void LockstepSession::finalize_drop(u32 source, const DropVote& vote) {
     newly_dropped_.push_back(source);
     recent_frames_.erase(source);
 
-    // Its army -- the one its source plays, which a lobby's game numbers
-    // apart from its source (an observer's plays none) -- is defeated on the
-    // tick after its last frame, on every survivor, by the engine rather
-    // than any player.
-    const i32 army = sim_.army_of_source(source);
-    if (army < 0) {
-        spdlog::warn("[lockstep] peer source {} (watching) dropped after its frame {}", source,
-                     last);
-        return;
-    }
-    ScheduledCommand defeat;
-    defeat.exec_tick = last + 1;
-    defeat.source = kEngineSource;
-    defeat.callback = SimCallbackEntry{};
-    defeat.callback->func_name = kDefeatArmyCallback;
-    defeat.callback->args["Army"] = static_cast<f64>(army);
-    sim_.command_scheduler().submit(std::move(defeat));
-    spdlog::warn("[lockstep] peer source {} dropped after its frame {}; its army {} is defeated "
-                 "at tick {}",
-                 source, last, army, last + 1);
+    // Its source ends on the tick after its last frame, on every survivor,
+    // by the engine rather than any player (Moho's CommandSourceTerminated):
+    // the armies it commanded lose it, and one left with no player is
+    // abandoned (SimState::terminate_command_source).
+    ScheduledCommand terminated;
+    terminated.exec_tick = last + 1;
+    terminated.source = kEngineSource;
+    terminated.callback = SimCallbackEntry{};
+    terminated.callback->func_name = kCommandSourceTerminatedCallback;
+    terminated.callback->args["Source"] = static_cast<f64>(source);
+    sim_.command_scheduler().submit(std::move(terminated));
+    spdlog::warn("[lockstep] peer source {} (army {}) dropped after its frame {}; its source "
+                 "ends at tick {}",
+                 source, sim_.army_of_source(source), last, last + 1);
 }
 
 std::vector<u32> LockstepSession::take_dropped() {

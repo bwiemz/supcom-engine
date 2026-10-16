@@ -131,7 +131,8 @@ TEST_CASE("Another army's player can't move an order", "[order_edit]") {
     w.order({a.entity_id()}, CommandType::Move, 100, 15);
     w.ticks(2);
     const osc::u32 id = a.command_queue().front().command_id;
-    w.sim->set_source_army(1, 1);
+    w.sim->begin_command_sources();
+    w.sim->set_command_source(1, 1, true); // source 1 commands army 1
     w.sim->schedule_callback(1, retarget(id, {a.entity_id()}, 30, 90));
     w.ticks(2);
     CHECK(a.command_queue().front().target_pos.x == 100.0f);
@@ -348,7 +349,8 @@ TEST_CASE("Another army's player can't take an order off", "[order_edit]") {
     w.order({a.entity_id()}, CommandType::Move, 100, 10);
     w.ticks(2);
     const auto before = ids_of(a);
-    w.sim->set_source_army(1, 1);
+    w.sim->begin_command_sources();
+    w.sim->set_command_source(1, 1, true); // source 1 commands army 1
     w.sim->schedule_callback(1, removal(before[0], {a.entity_id()}));
     w.ticks(2);
     CHECK(ids_of(a) == before);
@@ -638,7 +640,8 @@ TEST_CASE("Only a move is made a patrol, and only of the sender's units", "[orde
         cb.unit_ids = {unit};
         return cb;
     };
-    w.sim->set_source_army(1, 0);
+    w.sim->begin_command_sources();
+    w.sim->set_command_source(0, 1, true); // source 1 commands army 0
     w.sim->schedule_callback(
         1, patrol(a.command_queue()[1].command_id, a.entity_id(), CommandType::Patrol));
     w.sim->schedule_callback(

@@ -1261,28 +1261,122 @@ void SimState::resume_pause(u32 serial) {
     }
 }
 
+void SimState::begin_command_sources() {
+    command_sources_known_ = true;
+    army_sources_.clear();
+}
+
+void SimState::set_command_source(i32 army, u32 source, bool valid) {
+    if (!get_army(army)) return;
+    if (valid) army_sources_[army].insert(source);
+    else if (const auto it = army_sources_.find(army); it != army_sources_.end())
+        it->second.erase(source);
+}
+
+bool SimState::army_has_command_source(i32 army, u32 source) const {
+    const auto it = army_sources_.find(army);
+    return it != army_sources_.end() && it->second.count(source) != 0;
+}
+
+std::vector<u32> SimState::army_command_sources(i32 army) const {
+    const auto it = army_sources_.find(army);
+    if (it == army_sources_.end()) return {};
+    return {it->second.begin(), it->second.end()};
+}
+
+bool SimState::cheats_enabled() {
+    // As Moho's, which names the source's player ("???" without one)
+    if (!cheats_enabled_) {
+        if (current_command_source_ == kEngineSource) spdlog::warn("??? is trying to cheat!");
+        else spdlog::warn("source {} is trying to cheat!", current_command_source_);
+    }
+    return cheats_enabled_;
+}
+
+bool SimState::okay_to_mess_with(i32 army) {
+    if (!command_sources_known_) return true;
+    const ArmyBrain* brain = get_army(army);
+    if (!brain) return cheats_enabled();
+    if (brain->is_defeated()) return false; // out of the game
+    if (current_command_source_ != kEngineSource &&
+        army_has_command_source(army, current_command_source_))
+        return true;
+    return cheats_enabled();
+}
+
+void SimState::terminate_command_source(u32 source) {
+    if (!command_sources_known_) {
+        defeat_army(army_of_source(source));
+        return;
+    }
+    spdlog::info("Command source {} terminated tick {}", source, tick_count_);
+    for (auto& [army, sources] : army_sources_) {
+        if (sources.erase(source) == 0 || !sources.empty()) continue;
+        // Abandoned: the brain decides (retail's AbandonedByPlayer calls
+        // OnDefeat; FAF's may share the army with its allies instead)
+        ArmyBrain* brain = get_army(army);
+        if (!brain) continue;
+        spdlog::info("Army {} ({}) abandoned: no player commands it", army, brain->name());
+        bool called = false;
+        if (L_ && brain->lua_table_ref() >= 0) {
+            const int top = lua_gettop(L_);
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, brain->lua_table_ref());
+            lua_pushstring(L_, "AbandonedByPlayer");
+            lua_gettable(L_, -2);
+            if (lua_isfunction(L_, -1)) {
+                called = true;
+                lua_pushvalue(L_, top + 1);
+                if (lua_pcall(L_, 1, 0, 0) != 0) {
+                    const char* err = lua_tostring(L_, -1);
+                    spdlog::warn("AbandonedByPlayer (army {}): {}", army, err ? err : "?");
+                }
+            }
+            lua_settop(L_, top);
+        }
+        if (!called) defeat_army(army);
+    }
+}
+
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
     command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& scheduled) {
-        // A player's order, or UI callback, moves only its own army's units.
         ScheduledCommand sc = scheduled;
-        if (const auto owner = source_armies_.find(sc.source); owner != source_armies_.end()) {
-            const auto own_only = [&](std::vector<u32>& ids) {
+        // Its source runs it, as Moho's sim plays a source's part of the
+        // command stream (the engine's own commands have none).
+        current_command_source_ = sc.source;
+        struct SourceDone {
+            u32& source;
+            ~SourceDone() { source = kEngineSource; }
+        } source_done{current_command_source_};
+        // A player's end comes from the engine, never from a player's frame
+        if (sc.callback && sc.source != kEngineSource &&
+            (sc.callback->func_name == kDefeatArmyCallback ||
+             sc.callback->func_name == kCommandSourceTerminatedCallback)) {
+            spdlog::warn("[commands] source {} sent the engine's {}; ignored", sc.source,
+                         sc.callback->func_name);
+            return;
+        }
+        // A player's order, or UI callback, moves only the units its source
+        // may command (Moho's IssueCommand and ProcessInfoPair pass over the
+        // rest). A recording holds them as applied, so a replay's are
+        // taken as they come.
+        if (sc.source != kEngineSource && !playback_) {
+            const auto commandable_only = [&](std::vector<u32>& ids) {
                 const size_t named = ids.size();
                 ids.erase(std::remove_if(ids.begin(), ids.end(),
                                          [&](u32 id) {
                                              const Entity* e = entity_registry_.find(id);
-                                             return !e || e->army() != owner->second;
+                                             return !e || !okay_to_mess_with(e->army());
                                          }),
                           ids.end());
                 if (ids.size() != named)
-                    spdlog::warn("[commands] source {} named {} units outside its army {}; "
+                    spdlog::warn("[commands] source {} named {} units it can't command; "
                                  "ignored",
-                                 sc.source, named - ids.size(), owner->second);
+                                 sc.source, named - ids.size());
             };
-            own_only(sc.unit_ids);
-            if (sc.callback) own_only(sc.callback->unit_ids);
+            commandable_only(sc.unit_ids);
+            if (sc.callback) commandable_only(sc.callback->unit_ids);
         }
         // A recording keeps what the sim applies, where it applies it: local
         // and networked commands alike, on the tick they ran.
