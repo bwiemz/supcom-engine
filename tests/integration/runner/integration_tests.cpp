@@ -9750,7 +9750,7 @@ void test_missile(TestContext& ctx) {
             return u
         end
         function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
-        for _, army in {'ARMY_1', 'ARMY_3'} do
+        for _, army in {'ARMY_1', 'ARMY_3', 'ARMY_4'} do
             local brain = GetArmyBrain(army)
             brain:GiveStorage('MASS', 100000)
             brain:GiveStorage('ENERGY', 5000000)
@@ -9839,6 +9839,24 @@ void test_missile(TestContext& ctx) {
                 if not ok then table.insert(__osc_b_calls, call .. ' failed: ' .. tostring(err)) end
             end
         end
+        -- E, two missiles, an engineer helping from 6 off: when it is
+        -- done with the first, and when it helps again.
+        __osc_e = __osc_spawn('ueb2108', 'ARMY_4', 600, 210)
+        __osc_e_helper = __osc_spawn('uel0105', 'ARMY_4', 594, 210)
+        IssueGuard({__osc_e_helper}, __osc_e)
+        IssueSiloBuildTactical({__osc_e})
+        IssueSiloBuildTactical({__osc_e})
+        __osc_e_rec = {}
+        ForkThread(function()
+            while not __osc_e_rec.back do
+                if not __osc_e_rec.done then
+                    if __osc_e:GetTacticalSiloAmmoCount() > 0 then __osc_e_rec.done = GetGameTick() end
+                elseif __osc_e_helper:IsUnitState('Repairing') then
+                    __osc_e_rec.back = GetGameTick()
+                end
+                WaitTicks(1)
+            end
+        end)
         __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
         __osc_s:GiveNukeSiloAmmo(1)
         __osc_zero = __osc_at(560, 600)
@@ -9928,8 +9946,8 @@ void test_missile(TestContext& ctx) {
               R"(
         local b = __osc_b.__osc.builds[1]
         if not b or not b.done then error('B never finished') end
-        -- 80 + 4 x 5 build rate: 24 s.
-        if math.abs((b.done - b.start) - 240) > 1 then error('B took ' .. (b.done - b.start) .. ' ticks') end
+        -- 80 + 4 x 5 build rate: 24 s, from when the engineers' arms are on B.
+        if b.done - b.start < 240 or b.done - b.start > 243 then error('B took ' .. (b.done - b.start) .. ' ticks') end
         -- The missile's cost, and the engineers' grants that run ahead of
         -- their work (Moho's ResourceConsumed: a grant is worked the tick
         -- after, and given back to the army if they stop first, which the
@@ -9952,6 +9970,15 @@ void test_missile(TestContext& ctx) {
         end
         if table.getn(__osc_b_calls) ~= 2 or string.sub(__osc_b_calls[2], 1, 11) ~= 'OnStopBuild' then
             error('its calls: ' .. table.concat(__osc_b_calls, ', '))
+        end
+    )");
+    lua_check("Test 4d: E's missile done, its engineer helps again 12 ticks on, its arm on E", R"(
+        local r = __osc_e_rec
+        if not r.done or not r.back then
+            error(string.format('done at %s, back at %s', tostring(r.done), tostring(r.back)))
+        end
+        if r.back - r.done < 12 or r.back - r.done > 17 then
+            error('it helps again ' .. (r.back - r.done) .. ' ticks after the missile')
         end
     )");
     lua_check("Test 5: the order fired as the missile was done, and it killed its target", R"(

@@ -325,6 +325,7 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
+        silo_assist_id_ == 0 &&
         (command_queue_.empty() || (command_queue_.front().type != CommandType::BuildMobile &&
                                     command_queue_.front().task_wait <= 0))) {
         aim_builder_arms(nullptr, ctx.L);
@@ -1841,16 +1842,23 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             // Repairing, and the silo's progress for its own (faf-re
             // CUnitRepairTask, CBuildTaskHelper)
             if (silo_assist_id_ != cmd.target_id && !paused_) {
-                if (silo_assist_id_ != 0) {
-                    end_silo_assist(ctx.L, registry);
-                }
-                silo_assist_id_ = cmd.target_id;
-                call_build_callback(ctx.L, "OnStartBuild", target_unit, "Repair");
+                const Vector3 at = target_unit->position();
+                aim_builder_arms(&at, ctx.L);
                 if (destroyed() || !in_registry()) {
                     return OrderStep::Gone;
                 }
-                if (target_unit->destroyed() || !target_unit->silo_building()) {
-                    return OrderStep::Hold;
+                if (!turns_to_face(at) && !awaits_arm() && !task_waits) {
+                    if (silo_assist_id_ != 0) {
+                        end_silo_assist(ctx.L, registry);
+                    }
+                    silo_assist_id_ = cmd.target_id;
+                    call_build_callback(ctx.L, "OnStartBuild", target_unit, "Repair");
+                    if (destroyed() || !in_registry()) {
+                        return OrderStep::Gone;
+                    }
+                    if (target_unit->destroyed() || !target_unit->silo_building()) {
+                        return OrderStep::Hold;
+                    }
                 }
             }
             if (silo_assist_id_ == cmd.target_id) {
@@ -1867,6 +1875,11 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             }
         }
     } else {
+        // faf-re CUnitGuardTask::Execute returns 7: the guard looks 6 ticks after the silo's
+        // missile, and a task it hands out first runs 6 after that
+        if (silo_assist_id_ == cmd.target_id && !target_unit->silo_building()) {
+            cmd.task_wait = 12;
+        }
         // Target not building/reclaiming — stop if we were
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
