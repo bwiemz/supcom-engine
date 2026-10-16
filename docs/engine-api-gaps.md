@@ -13,7 +13,6 @@ How to read it:
 
 | Missing | Effect | Evidence | Status |
 |---|---|---|---|
-| FAF: `SetCommandSource(army, source, bool)` is a no-op | FAF: with the Union army option, orders to an ally's units are dropped; with Common army, the merged players can't command the team army | FA-Binary-Patches `section/SimSetCommandSource.cpp`; FAF `/lua/simInit.lua:461-526`; engine `sim_bindings.cpp` stub_noop, `sim/sim_state.cpp` source armies | Open |
 
 ## UI Lua API
 
@@ -50,11 +49,13 @@ How to read it:
 |---|---|---|---|
 | A moving unit's intel is repainted once it has moved a third of its radius, or after 30 ticks | Also after 5 ticks: a slow unit's vision and radar trail it by at most 0.5 s instead of 3 s | faf-re `CIntelPosHandle::UpdatePos`; FA-Binary-Patches `hooks/IntelUpdate.cpp`; engine `intel_sources.hpp` | Open |
 | Double-clicking a wall selects nothing more | Selects the walls of that type on screen | faf-re `HandleDoubleClickSelection`; FA-Binary-Patches `hooks/WallSelection.cpp`; engine `input_handler.cpp` | Open |
+| `ChangeUnitArmy` gives nothing for a commander, a unit being built, or a dead or doomed one | Gives any of them; FAF's Lua puts the commander rule back unless its third argument (`noRestrictions`) is set. FAF's common army's `MergeArmyPair` sets it, so a merged player's commander stays in its old army here | faf-re `cfunc_ChangeUnitArmyL` (the branch at 0x0075B816 patched to NOPs); FA-Binary-Patches `hooks/HTransferACUs.cpp`; FAF `/lua/SimHooks.lua:44-56`, `/lua/simInit.lua:530`; engine `sim_bindings.cpp` `l_ChangeUnitArmy`; `--command-sources-test` Test 5 | Open |
 
 ## Closed since the audits
 
 | Item | PR |
 |---|---|
+| Command sources (Moho's per-army `mValidCommandSources`): FAF's `SetCommandSource`, `GetCurrentCommandSource`, `OkayToMessWithArmy`, `CheatsEnabled`, FAF's 0-based sim `SetFocusArmy`, the UI's focus checks and console `SetFocusArmy`, and a dropped player's `AbandonedByPlayer` | this PR |
 | `Warp(unit, position)` puts the unit on the layer and at the height a unit made there gets (Moho's `Unit::Warp`: `GetStartingLayer` with none asked for, then `CalcSpawnElevation`), and aborts its move, so the Move order running ends. A tank warped into the sea stands on the seabed and drowns; a frigate floats; a scout flies 18 over the ground; a CZAR lands, then lifts off. The engine kept the height given and the old layer, and a warped mover went on to its goal. The original game was probed for each (tools/moho_probes `warp`) | [#672](https://github.com/bwiemz/supcom-engine/pull/672) |
 | FAF: world drawing. With `WorldView:SetCustomRender(true)` the main world view's `OnRenderWorld(self, delta)` runs each frame, and `UI_DrawLine`, `UI_DrawCircle` (48 segments) and `UI_DrawRect` (Moho's `DRAW_Rect` border) draw flat in the world, over it, at least two pixels thick (FA-Binary-Patches `DrawFunc.cpp`, `HDraw.cpp`); outside `OnRenderWorld` they raise an error. FAF's `WorldViewShapeComponent` shapes show. Other views (the minimap) don't call it yet | [#675](https://github.com/bwiemz/supcom-engine/pull/675) |
 | `IssueBuildMobile(units, position, blueprint, cells)` gives the build to the one unit that can build it nearest the site (3-D distance), and to none if no unit can (faf-re `cfunc_IssueBuildMobileL`); the engine gave it to every unit. Retail's scripts never call it; FAF's do, and its fifth argument, true, gives it to every unit, as FAF's `IssueBuildAllMobile` asks | [#658](https://github.com/bwiemz/supcom-engine/pull/658) |
