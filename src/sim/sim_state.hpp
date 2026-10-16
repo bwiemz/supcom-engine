@@ -597,14 +597,8 @@ public:
     void set_fog_of_war(const std::string& mode);
     FogMode fog_mode() const { return fog_mode_; }
 
-    /// Common Army: allied (same-team) armies pool their mass/energy each tick,
-    /// so a teammate's reserves back up one that is stalling. Off by default.
-    void set_common_army(bool on) { common_army_ = on; }
-    bool common_army() const { return common_army_; }
-
     /// Team Share Overflow: resources a teammate would waste at full storage
-    /// flow to allies with room, instead of being lost. Off by default. Ignored
-    /// when Common Army is on (full pooling already covers it).
+    /// flow to allies with room, instead of being lost. Off by default.
     void set_team_share_overflow(bool on) { team_share_overflow_ = on; }
     bool team_share_overflow() const { return team_share_overflow_; }
 
@@ -950,7 +944,7 @@ private:
     }
 
     void update_economies();
-    /// Pool mass/energy across allied teams (Common Army). No-op unless enabled.
+    /// Pass allies' overflow on (Team Share Overflow). No-op unless enabled.
     void share_team_economy();
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
@@ -1138,7 +1132,6 @@ private:
     FogMode fog_mode_ = FogMode::Explored;
     f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
     f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
-    bool common_army_ = false;     // pool allied economies when true
     bool team_share_overflow_ = false; // route wasted overflow to allies
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<CameraFollowEvent> camera_follow_events_;
