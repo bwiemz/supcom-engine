@@ -26,9 +26,11 @@ public:
     void update(const ParticleSystem& particles, TextureCache& tex_cache, u32 fi);
 
     /// Draw the particles under the water (a negative SortOrder's) or the
-    /// others, but the refracting; the scene pass must be open.
+    /// others, but the refracting; the scene pass must be open. With
+    /// `only_light`, the light particles alone (TLight's: a cartographic
+    /// view's, Cartographic::RenderParticles).
     void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
-                bool under_water, u32 fi) const;
+                bool under_water, u32 fi, bool only_light = false) const;
 
     /// The copy of the frame the refracting particles bend (M214d; set again
     /// after a resize).

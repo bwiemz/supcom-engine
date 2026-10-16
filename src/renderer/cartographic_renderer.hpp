@@ -10,6 +10,10 @@
 //   pixel darkened by how far its band's shade stands over its eight
 //   neighbours': the contour lines.
 // Both targets are 8-bit, as Moho's are, and one pair a frame in flight.
+//
+// A cartographic main view (SetCartographic, its camera orthographic) has a
+// frame of its own at the window's size, seen through the camera; its
+// Stage 1 draws straight into the scene, as Moho's draws into the head.
 
 #include "core/types.hpp"
 #include "renderer/cartographic_math.hpp"
@@ -42,9 +46,10 @@ public:
 
     /// Samplers, layouts, passes and pipelines, once. `ui_layout` is the
     /// UI's texture set layout (one combined sampler), which ui_descriptor's
-    /// sets take.
+    /// sets take; `scene_pass` the scene's, which the main view's Stage 1
+    /// draws in.
     void init(VkDevice device, VmaAllocator allocator, VkFormat depth_format,
-              VkDescriptorSetLayout ui_layout);
+              VkDescriptorSetLayout ui_layout, VkRenderPass scene_pass);
 
     /// The map's lookup data (Cartographic::InitializeTerrain), made once
     /// from its heights as they are now. Waits for the device.
@@ -66,6 +71,18 @@ public:
     /// output ends shader-readable. Nothing without a map built. Prepares
     /// the targets at the view's size first (see prepare()).
     void record(VkCommandBuffer cmd, u32 fi, const View& view, const Overlays& overlays = {});
+
+    /// The main view's Stage 0, and its overlays, into its frame for `fi`
+    /// at `width` x `height` (the scene's), through `view_proj` (the
+    /// camera's), outside any render pass; the frame ends shader-readable.
+    /// A new size waits for the device. False, and nothing drawn, without a
+    /// map built or if the frame couldn't be made.
+    bool record_main_frame(VkCommandBuffer cmd, u32 fi, u32 width, u32 height, const f32* view_proj,
+                           const Overlays& overlays = {});
+    /// The main view's Stage 1 over the whole of the open scene pass (which
+    /// is the frame's size): the frame less its contour lines, alpha 0 (no
+    /// glow). After record_main_frame drew it this frame.
+    void record_main_edge(VkCommandBuffer cmd, u32 fi) const;
 
     /// The frame's view-projection for `view` (record()'s): top down over
     /// its world rect, its depth over the heights, the quad and the
@@ -96,6 +113,8 @@ public:
     /// Frame `fi`'s targets, as the last record left them.
     const AllocatedImage& frame(u32 fi) const { return targets_[fi].frame; }
     const AllocatedImage& output(u32 fi) const { return targets_[fi].output; }
+    /// The main view's frame for `fi`, as record_main_frame left it.
+    const AllocatedImage& main_frame(u32 fi) const { return main_targets_[fi].frame; }
     u32 width(u32 fi) const { return targets_[fi].width; }
     u32 height(u32 fi) const { return targets_[fi].height; }
 
@@ -115,8 +134,14 @@ private:
         VkFramebuffer output_fb = VK_NULL_HANDLE;
     };
 
-    /// Frame `fi`'s targets at a size, made again when it changes.
-    bool ensure_target(u32 fi, u32 width, u32 height);
+    /// A target at a size, made again when it changes: with an output for
+    /// Stage 1 and the UI's view of it (the minimap's), or the frame alone
+    /// (the main view's). `frame_set` takes the frame, `ui_set` the output.
+    bool ensure_target(Target& t, u32 width, u32 height, bool with_output,
+                       VkDescriptorSet frame_set, VkDescriptorSet ui_set);
+    /// Stage 0 into `t`'s frame through `view_proj`, then the overlays.
+    void record_stage0(VkCommandBuffer cmd, const Target& t, const f32* view_proj,
+                       const Overlays& overlays) const;
     void destroy_target(Target& t);
 
     VkDevice device_ = VK_NULL_HANDLE;
@@ -135,7 +160,10 @@ private:
     VkPipelineLayout edge_layout_ = VK_NULL_HANDLE;
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;
     VkPipeline edge_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline scene_edge_pipeline_ = VK_NULL_HANDLE; ///< Stage 1 in the scene
     std::array<Target, FRAMES_IN_FLIGHT> targets_{};
+    std::array<Target, FRAMES_IN_FLIGHT> main_targets_{};
+    std::array<VkDescriptorSet, FRAMES_IN_FLIGHT> main_frame_sets_{};
 
     bool built_ = false;
     CartographicParams params_{};

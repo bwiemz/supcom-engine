@@ -58,6 +58,7 @@ add_executable(osc_integration
     runner/sky_test.cpp
     runner/cartographic_test.cpp
     runner/world_fog_test.cpp
+    runner/cartographic_main_test.cpp
     runner/world_shapes_test.cpp
     runner/mobile_build_start_test.cpp
     runner/drown_test.cpp

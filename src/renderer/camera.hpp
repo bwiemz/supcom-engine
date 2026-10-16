@@ -227,6 +227,14 @@ public:
     /// When false, update() ignores keyboard and mouse (scripted captures).
     void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
 
+    /// CameraSetOrtho (a cartographic world view: CUIWorldView's
+    /// SetOrthographic): UpdateCoords' other branch, the view from straight
+    /// above over the focus, -z at the top, through an orthographic
+    /// projection the zoom wide; and no shake (CanShake). The glide, clamps,
+    /// pan and heading and pitch go on as before, unseen.
+    void set_ortho(bool on) { ortho_ = on; }
+    bool ortho() const { return ortho_; }
+
     // The options' console variables (M217i), the k* above their defaults:
     // cam_ZoomAmount, ui_KeyboardPanSpeed, ui_KeyboardPanAccelerateMultiplier,
     // ui_KeyboardRotateSpeed, ui_KeyboardRotateAccelerateMultiplier,
@@ -261,7 +269,8 @@ public:
     void eye_position(f32& out_x, f32& out_y, f32& out_z) const;
     /// The view matrix (column-major): from the eye to the focus.
     std::array<f32, 16> view() const;
-    /// D3D's FOV projection (horizontal FOV at aspect > 1), Vulkan's depth.
+    /// D3D's FOV projection (horizontal FOV at aspect > 1), Vulkan's depth;
+    /// ortho, Moho's orthographic one (see ortho_projection).
     std::array<f32, 16> projection(f32 aspect) const;
     std::array<f32, 16> view_proj(f32 aspect) const;
     /// The clip planes: max(0.01 d, 0.01) and d + 17000.
@@ -286,10 +295,14 @@ public:
     /// Accumulate camera shake intensity (called from renderer per frame).
     void apply_shake(f32 intensity);
 
-    /// The unit view direction, from the eye toward the focus.
+    /// The unit view direction, from the eye toward the focus: straight
+    /// down when ortho.
     std::array<f32, 3> direction() const;
 
 private:
+    /// The heading and pitch's direction, which the focus is found along
+    /// (UpdateBasis) whether or not the view is ortho.
+    std::array<f32, 3> basis_direction() const;
     void decay_shake();
     f64 now() const { return game_clock_ ? game_time_ : system_time_; }
     void timed_move_init(f32 seconds, f32 transition);
@@ -392,6 +405,7 @@ private:
     f32 last_mouse_y_ = 0.0f;
 
     f32 shake_intensity_ = 0;
+    bool ortho_ = false; ///< mIsOrtho
 };
 
 // Inline matrix math (no GLM dependency)
@@ -406,6 +420,12 @@ std::array<f32, 16> perspective(f32 fov_rad, f32 aspect, f32 near, f32 far);
 
 /// Orthographic projection with Vulkan [0,1] depth, no Y-flip (for shadow maps).
 std::array<f32, 16> ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near, f32 far);
+
+/// CameraImpl::UpdateCoords' orthographic projection, `zoom` wide at
+/// `aspect`, with Vulkan's Y-flip: Moho's rows, including the shift of
+/// -1/int(zoom) across and +1/int(zoom / aspect) up (a D3D9 half-texel
+/// correction, in world units), and its depth from `near` to `far`.
+std::array<f32, 16> ortho_projection(f32 zoom, f32 aspect, f32 near, f32 far);
 
 /// Multiply two 4x4 column-major matrices: result = a * b.
 std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,

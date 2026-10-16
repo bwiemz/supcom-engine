@@ -255,6 +255,11 @@ public:
     const VisionRenderer& minimap_vision() const { return minimap_vision_; }
     /// The world's fog of war, as last updated
     const VisionRenderer& world_vision() const { return vision_renderer_; }
+    /// Whether the last frame drew the main view cartographic (its world
+    /// view's SetCartographic: the camera ortho), and the range rings drawn
+    /// into that frame.
+    bool cartographic_main() const { return cartographic_main_; }
+    const RangeRenderer& main_frame_ranges() const { return main_frame_ranges_; }
     /// The unit under the cursor (0: none) and the drag box's corners on the
     /// ground, for the next render()
     void set_command_highlight(u32 command_id) { highlight_command_ = command_id; }
@@ -657,9 +662,9 @@ private:
                             const BuildGhost* ghost, lua_State* L,
                             ui::UIControlRegistry* ui_registry,
                             const std::unordered_set<u32>* selected_ids);
-    /// The cartographic minimap's range rings and fog this frame (its view
-    /// drawn, so cartographic_view_ set): Moho's range renderer with the
-    /// minimap's camera, and its fog from the focus army's vision circles.
+    /// The cartographic minimap's range rings this frame (its view drawn,
+    /// so cartographic_view_ set): Moho's range renderer with the minimap's
+    /// camera. Its fog, the world's circles, update_fog gives it.
     void update_minimap_overlays(const sim::FrameView& view, const BuildGhost* ghost, lua_State* L,
                                  const std::unordered_set<u32>* selected_ids, f32 span, u32 fi);
     /// The minimap's rings and fog into its cartographic frame (record()'s
@@ -695,6 +700,11 @@ private:
     /// selection, the refracting effects. Its pass is left open (the
     /// composite ends it).
     void record_main_pass(u32 fi, const std::array<f32, 16>& vp);
+    /// A cartographic main view's scene in its place, in the open pass (the
+    /// rest of Moho's Cartographic::Render): the frame's Stage 1, the light
+    /// particles, then the world view's own drawing. No sky, terrain, water,
+    /// meshes or other effects; the range rings and fog are in the frame.
+    void record_cartographic_main(u32 fi, const std::array<f32, 16>& vp);
     /// The screen's 2D layers over the composited scene: the strategic
     /// icons, the overlays, the legacy HUD, FA's interface, then the profile
     /// overlay on top.
@@ -854,7 +864,10 @@ private:
     vfs::VirtualFileSystem* vfs_ = nullptr; ///< where the cursor's images are read
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
-    CartographicRenderer cartographic_; ///< the minimap's map
+    CartographicRenderer cartographic_; ///< the minimap's map, and a main view's
+    /// This frame's: the main view is cartographic, its frame drawn (from
+    /// when the frame is recorded; set_forced the icons before that)
+    bool cartographic_main_ = false;
     /// The cartographic frame a minimap view draws this frame (the first
     /// cartographic one painted), recorded before the scene's passes.
     std::optional<CartographicRenderer::View> cartographic_view_;
@@ -1036,7 +1049,10 @@ private:
     RangeOverlays* range_overlays_ = &own_range_overlays_;
     RangeRenderer range_renderer_;
     RangeRenderer minimap_ranges_; ///< in the cartographic frame's pass
+    /// The cartographic frames' fog (the minimap's, and a main view's: the
+    /// same circles)
     VisionRenderer minimap_vision_;
+    RangeRenderer main_frame_ranges_; ///< a cartographic main view's, likewise
     RangeBlueprints range_blueprints_;
     u32 hovered_ = 0;
     u32 highlight_command_ = 0;

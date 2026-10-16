@@ -698,8 +698,8 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         // An icon fades in with the camera out past its mesh's IconFadeInZoom
         // (no further than 0.89 of the farthest zoom, as Moho caps it).
         const f32 fade_cap = camera.max_zoom() * 0.89f;
-        const Runs runs =
-            collect(view, selected_ids, tex_cache, L, !always_, cam_dist, fade_cap, place);
+        const Runs runs = collect(view, selected_ids, tex_cache, L, !(always_ || forced_), cam_dist,
+                                  fade_cap, place);
         emit_runs(runs, tex_cache,
                   [&](f32 x, f32 y, const std::string& path, const GPUTexture& tex, f32 r, f32 g,
                       f32 b) { emit_icon(x, y, path, tex, r, g, b); });

@@ -489,10 +489,11 @@ void Renderer::init_sub_renderers() {
     sky_renderer_.init(device_, allocator_, frame_.scene_pass());
     // The cartographic view (the minimap's map), and the range rings and fog
     // drawn into its frame
-    cartographic_.init(device_, allocator_, depth_format_, texture_ds_layout_);
+    cartographic_.init(device_, allocator_, depth_format_, texture_ds_layout_, frame_.scene_pass());
     if (has_stencil()) {
         minimap_ranges_.init(device_, allocator_, cartographic_.frame_pass());
         minimap_vision_.init(device_, allocator_, cartographic_.frame_pass());
+        main_frame_ranges_.init(device_, allocator_, cartographic_.frame_pass());
         // The world's fog of war, drawn as Moho's RenderFogOfWar draws it
         vision_renderer_.init(device_, allocator_, frame_.scene_pass());
     }
@@ -1988,6 +1989,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     Frustum frustum(vp);
 
     cartographic_view_.reset(); // until a minimap view draws it
+    // A cartographic main view (its camera ortho) draws the map's frame in
+    // place of the world, the strategic icons on at every zoom
+    cartographic_main_ = camera_.ortho() && cartographic_.ready();
+    strategic_icon_renderer_.set_forced(cartographic_main_);
     update_frame_scene(fi, vp, frustum, view, events, ghost, L, ui_registry, selected_ids);
 
     // Record command buffer
@@ -2005,6 +2010,16 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                              [&](VkCommandBuffer cmd, const f32* view_proj, u32 w, u32 h) {
                                  draw_minimap_overlays(cmd, view_proj, w, h, fi);
                              });
+    }
+    // A cartographic main view's frame, through the camera, at the scene's
+    // size: its range rings (the main view's, at its zoom) and the fog
+    if (cartographic_main_) {
+        cartographic_main_ = cartographic_.record_main_frame(
+            cmd_buf_[fi], fi, window_width_, window_height_, vp.data(),
+            [&](VkCommandBuffer cmd, const f32* view_proj, u32 w, u32 h) {
+                main_frame_ranges_.render(cmd, w, h, view_proj, fi);
+                minimap_vision_.render(cmd, w, h, view_proj, fi);
+            });
     }
 
     // ==================== SHADOW PASS ====================
@@ -2047,6 +2062,25 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     gpu_queries_.end(cmd_buf_[fi], fi); // the frame's, not a capture's readback
     const bool capturing = record_capture(cmd_buf_[fi], image_index);
     submit_and_present(fi, image_index, true, capturing, scene_capturing);
+}
+
+void Renderer::record_cartographic_main(u32 fi, const std::array<f32, 16>& vp) {
+    VkCommandBuffer cmd = cmd_buf_[fi];
+    // Stage 1 over the scene, cleared black as Moho clears the head for it:
+    // the map less its contour lines, no glow
+    cartographic_.record_main_edge(cmd, fi);
+    // RenderParticles: RenderEffects(camera, renderWaterSurface 0,
+    // suppressTLight 1), which draws the light particles alone (no beams,
+    // no trails)
+    particle_renderer_.render(cmd, window_width_, window_height_, vp.data(), false, fi, true);
+    // RenUI and the world view's own drawing: the order lines, selection,
+    // the resource and projectile icons, FAF's world drawing (the strategic
+    // icons are the screen's layer, on at every zoom)
+    command_graph_renderer_.render(cmd, window_width_, window_height_, vp.data(), fi);
+    selection_renderer_.render(cmd, window_width_, window_height_, vp.data(), fi);
+    resource_icon_renderer_.render(cmd, window_width_, window_height_, resource_icon_time_, fi);
+    projectile_icon_renderer_.render(cmd, window_width_, window_height_, fi);
+    world_shapes_batch_.render(cmd, window_width_, window_height_, vp.data(), fi);
 }
 
 void Renderer::record_terrain_sync(VkCommandBuffer cmd) {
@@ -2853,8 +2887,13 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
             ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
         const auto& rect = camera_.playable_rect();
         const f32 span = std::max(rect[2] - rect[0], rect[3] - rect[1]);
-        range_renderer_.update(range_batches(*range_overlays_, scene), range_overlays_->settings(),
-                               span, camera_.zoom() / camera_.max_zoom(), fi);
+        const auto batches = range_batches(*range_overlays_, scene);
+        range_renderer_.update(batches, range_overlays_->settings(), span,
+                               camera_.zoom() / camera_.max_zoom(), fi);
+        // A cartographic main view draws them into its frame instead
+        if (cartographic_main_)
+            main_frame_ranges_.update(batches, range_overlays_->settings(), span,
+                                      camera_.zoom() / camera_.max_zoom(), fi);
         if (cartographic_view_) update_minimap_overlays(view, ghost, L, selected_ids, span, fi);
     }
 
@@ -3000,8 +3039,10 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
     // the frame. Below graphics fidelity 2 there is neither: the low
     // fidelity water refracts nothing, and Moho draws no refracting effects
     // (M213d).
-    const bool high_water = water_renderer_.has_water() && fidelity() >= 2;
-    const bool refracting = fidelity() >= 2 && particle_renderer_.refracting();
+    // A cartographic main view draws neither
+    const bool high_water = !cartographic_main_ && water_renderer_.has_water() && fidelity() >= 2;
+    const bool refracting =
+        !cartographic_main_ && fidelity() >= 2 && particle_renderer_.refracting();
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp_begin.renderPass = high_water || refracting ? frame_.first_pass() : frame_.scene_pass();
@@ -3013,6 +3054,11 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
 
     // Dynamic viewport + scissor
     set_window_viewport(cmd_buf_[fi]);
+
+    if (cartographic_main_) {
+        record_cartographic_main(fi, vp);
+        return;
+    }
 
     // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b),
     // unless ren_SkyDome is off (the render_skydome option): the clear shows
@@ -3970,6 +4016,7 @@ void Renderer::set_volume_heights(const map::Heightmap& h) {
     range_renderer_.set_heights(lowest, h.max_height());
     minimap_ranges_.set_heights(lowest, h.max_height());
     minimap_vision_.set_heights(lowest, h.max_height());
+    main_frame_ranges_.set_heights(lowest, h.max_height());
     vision_renderer_.set_heights(lowest, h.max_height());
     cartographic_.set_volume_heights(lowest - 5.0f, h.max_height());
 }
@@ -3987,12 +4034,6 @@ void Renderer::update_minimap_overlays(const sim::FrameView& view, const BuildGh
                             ghost ? ghost->cursor_z : 0.0f, range_blueprints_, L);
     minimap_ranges_.update(range_batches(*range_overlays_, scene), range_overlays_->settings(),
                            span, 1.0f, fi);
-    // And the fog, the world's (update_fog)
-    if (fog_on_) {
-        minimap_vision_.update(fog_circles_, fi);
-    } else {
-        minimap_vision_.set_off();
-    }
 }
 
 void Renderer::update_fog(const sim::FrameView& view, u32 fi) {
@@ -4002,11 +4043,15 @@ void Renderer::update_fog(const sim::FrameView& view, u32 fi) {
     fog_on_ = fog_enabled_ && player_army_ >= 0 && cur && cur->sight.army == player_army_ &&
               !cur->sight.everywhere;
     fog_circles_.clear();
+    // The world's, and the cartographic frames' (the minimap's, a main
+    // view's): the same circles
     if (fog_on_) {
         fog_circles_ = vision_circles(view, player_army_);
         vision_renderer_.update(fog_circles_, fi);
+        minimap_vision_.update(fog_circles_, fi);
     } else {
         vision_renderer_.set_off();
+        minimap_vision_.set_off();
     }
 }
 
@@ -4265,6 +4310,7 @@ void Renderer::shutdown() {
     range_renderer_.destroy(device_, allocator_);
     minimap_ranges_.destroy(device_, allocator_);
     minimap_vision_.destroy(device_, allocator_);
+    main_frame_ranges_.destroy(device_, allocator_);
     resource_icon_renderer_.destroy(device_, allocator_);
     projectile_icon_renderer_.destroy(device_, allocator_);
     gpu_queries_.destroy(device_);

@@ -234,7 +234,8 @@ void ParticleRenderer::update(const ParticleSystem& particles, TextureCache& tex
 }
 
 void ParticleRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                              const f32* view_proj, bool under_water, u32 fi) const {
+                              const f32* view_proj, bool under_water, u32 fi,
+                              bool only_light) const {
     if (groups_.empty() || !instance_buf_[fi].buffer) return;
     VkViewport viewport{};
     viewport.width = static_cast<f32>(viewport_w);
@@ -249,6 +250,7 @@ void ParticleRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_
     VkPipeline bound = VK_NULL_HANDLE;
     for (const Group& g : groups_) {
         if (g.under_water != under_water || g.blendmode == kBlendRefract) continue;
+        if (only_light && !g.light) continue;
         const auto blend = static_cast<size_t>(g.blendmode);
         if (blend >= pipelines_.size()) {
             continue;

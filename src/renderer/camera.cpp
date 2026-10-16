@@ -413,9 +413,15 @@ f32 Camera::zoom_pitch() const {
     return (kNearPitchDeg + zoom_fraction() * (kFarPitchDeg - kNearPitchDeg)) * kDegToRad;
 }
 
-std::array<f32, 3> Camera::direction() const {
+std::array<f32, 3> Camera::basis_direction() const {
     const f32 cp = std::cos(pitch_);
     return {std::sin(heading_) * cp, -std::sin(pitch_), std::cos(heading_) * cp};
+}
+
+std::array<f32, 3> Camera::direction() const {
+    // COORDS_Orient(pi, pi/2): straight down
+    if (ortho_) return {0.0f, -1.0f, 0.0f};
+    return basis_direction();
 }
 
 void Camera::pan(f32 dx, f32 dy) {
@@ -481,7 +487,8 @@ void Camera::clamp_target() {
 
 void Camera::clamp_focus() {
     // ClampFocusPos: the view's line through the target, onto the surface
-    const std::array<f32, 3> d = direction();
+    // (the heading and pitch's, ortho or not)
+    const std::array<f32, 3> d = basis_direction();
     const f32 from[3] = {focus_[0] - d[0] * kReach, focus_[1] - d[1] * kReach,
                          focus_[2] - d[2] * kReach};
     f32 hit[3];
@@ -653,7 +660,7 @@ void Camera::interpolate_basis() {
     if (!steered && target_type_ != CameraTarget::Entity) pitch_ = zoom_pitch();
     fov_ = (kNearFovDeg + zoom_fraction() * (kFarFovDeg - kNearFovDeg)) * kDegToRad;
     // The focus onto the ground ahead of it along the view
-    const std::array<f32, 3> d = direction();
+    const std::array<f32, 3> d = basis_direction();
     f32 hit[3];
     if (surface_hit(focus_.data(), d.data(), kReach, hit)) focus_ = {hit[0], hit[1], hit[2]};
     if (progress >= 1.0f && target_type_ != CameraTarget::NoseCam &&
@@ -803,6 +810,7 @@ f32 Camera::tan_half_fov_y(f32 aspect) const {
 }
 
 std::array<f32, 16> Camera::projection(f32 aspect) const {
+    if (ortho_) return math::ortho_projection(target_zoom_, aspect, near_clip(), far_clip());
     return math::perspective(2.0f * std::atan(tan_half_fov_y(aspect)), aspect, near_clip(),
                              far_clip());
 }
@@ -819,10 +827,16 @@ std::array<f32, 16> Camera::view() const {
     f32 ey = 0;
     f32 ez = 0;
     eye_position(ex, ey, ez);
+    // Ortho, from straight above: the world's up is the view's line, so -z
+    // (the heading pi's way) is the screen's up
+    if (ortho_)
+        return math::look_at(ex, ey, ez, focus_[0], focus_[1], focus_[2], 0.0f, 0.0f, -1.0f);
     return math::look_at(ex, ey, ez, focus_[0], focus_[1], focus_[2], 0.0f, 1.0f, 0.0f);
 }
 
 std::array<f32, 16> Camera::view_proj(f32 aspect) const {
+    // An ortho view doesn't shake (CanShake)
+    if (ortho_) return math::mat4_mul(projection(aspect), view());
     f32 ex = 0;
     f32 ey = 0;
     f32 ez = 0;
@@ -902,6 +916,33 @@ std::array<f32, 16> ortho(f32 l, f32 r, f32 b, f32 t, f32 n, f32 f) {
     };
 }
 
+std::array<f32, 16> ortho_projection(f32 zoom, f32 aspect, f32 near, f32 far) {
+    // UpdateCoords' rows (row vectors, near and far negated) as columns:
+    // x' = x 2/zoom - 1/int(zoom), y' = y 2/extent + 1/int(extent) (then
+    // flipped for Vulkan), z' = (-z - near)/(far - near), w' = 1. A view
+    // under one unit high (a window more than five times as wide as the
+    // nearest zoom) would divide by zero in Moho; it takes one instead.
+    const f32 extent = zoom / aspect;
+    const f32 shift_x = 1.0f / static_cast<f32>(std::max(static_cast<int>(zoom), 1));
+    const f32 shift_y = 1.0f / static_cast<f32>(std::max(static_cast<int>(extent), 1));
+    return {2.0f / zoom,
+            0,
+            0,
+            0,
+            0,
+            -2.0f / extent,
+            0,
+            0,
+            0,
+            0,
+            -1.0f / (far - near),
+            0,
+            -shift_x,
+            -shift_y,
+            -near / (far - near),
+            1};
+}
+
 std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,
                              const std::array<f32, 16>& b) {
     std::array<f32, 16> r{};
@@ -932,6 +973,19 @@ bool Camera::screen_ray(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h, 
     f32 aspect = window_w / window_h;
 
     eye_position(origin[0], origin[1], origin[2]);
+    if (ortho_) {
+        // Straight down, from the point over the pixel: the projection
+        // undone, its shift with it (right is +x, up is -z)
+        const auto p = projection(aspect);
+        const f32 right = (ndc_x - p[12]) / p[0];
+        const f32 up = (-ndc_y - p[13]) / p[5];
+        origin[0] += right;
+        origin[2] -= up;
+        dir[0] = 0.0f;
+        dir[1] = -1.0f;
+        dir[2] = 0.0f;
+        return true;
+    }
     const auto v = view();
     // Right/up/forward from the view matrix (column-major, transposed rotation)
     f32 rx = v[0], ry = v[4], rz = v[8];     // right

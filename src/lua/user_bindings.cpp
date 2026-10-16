@@ -204,6 +204,9 @@ static void bind_world_view(lua_State* L, ui::WorldView* wv) {
     auto* sim = get_sim(L);
     if (sim && sim->terrain()) wv->set_terrain(sim->terrain());
     if (!wv->is_minimap()) {
+        // A new view's camera looks in perspective (CameraImpl's mIsOrtho
+        // starts 0); its Register restores a saved cartographic mode
+        if (r) r->camera().set_ortho(false);
         lua_pushstring(L, "__osc_world_view");
         lua_pushlightuserdata(L, wv);
         lua_rawset(L, LUA_REGISTRYINDEX);

@@ -214,6 +214,15 @@ Not implementable from what is on hand. First extract `/effects/mesh.fx` from re
 - `record_main_pass` branches on the main WorldView's flag: it skips the sky, terrain, decals, water and shadow passes and draws the cartographic frame (window-sized), then the existing meshes/particles/icons/UI layers on top. `ui_AlwaysRenderStrategicIcons` is forced for the duration.
 - Needs the zoom/aspect/clamp rules of `moho-camera-semantics` extended to ortho, and the cinematic restore of `gamemain.lua:546-571` to keep working.
 
+**As built (P7, 2026-10-15).** Researched further in faf-re (`CameraImpl::UpdateCoords`, `WRenViewport::RenderCartographic`, `CWorldParticles::RenderEffects`, `RenderParticleBucket`):
+- The ortho camera changes only UpdateCoords. The zoom, its glide and clamps, pan, and the heading and pitch (still found along for the focus) go on as in perspective. So `Camera::set_ortho` swaps the view (from straight above the focus, -z up), the projection, picking (straight down from over the pixel) and the shake (none).
+- The projection's `r[3].x = -1/int(zoom)` and `r[3].y = +1/int(zoom/aspect)` are kept. They are a D3D9-style half-texel correction in world units, shifting the world by `width/(2·zoom)` pixels. Picking, the icons and the frame all go through the same matrix, so nothing misaligns. A view under one unit high takes one unit instead of dividing by zero.
+- All the engine's world views share the renderer's camera, so only a main (non-minimap) view's `SetCartographic` switches it. A new main view starts in perspective, as a new `CameraImpl` does; retail's `Register` then restores the saved mode.
+- The frame: Stage 0 and the overlays (the main view's range rings at its zoom, the fog's circles) into a window-sized frame of the main view's own, through the camera's matrix. Stage 1 draws straight into the scene pass, clamped as the 8-bit head clamps it, with alpha 0 (no glow).
+- After Stage 1: the particles as `RenderEffects(camera, 0, 1)` draws them, which is the TLight ones alone (no beams, no trails), then the order lines, selection, resource and projectile icons and FAF's world drawing. The strategic icons are forced on (`set_forced`) without touching the player's convar.
+- The shadow, normal and reflection passes still run (Moho draws the world for the view and then paints over it). Skipping them is an optimisation left for later.
+- Tests: `--cartographic-main-test` (the scene is pixel for pixel the frame over the camera's rect, fogged with the army's circles; rings at the main view's zoom; icons; picking; toggling back and a new view), and `tests/test_camera_ortho.cpp`.
+
 ### 3.9 Left out at first (and why)
 
 - **The playable boundary pass**: the engine has no BoundaryRenderer at all (`ren_PlayableBoundary`); not part of this design.

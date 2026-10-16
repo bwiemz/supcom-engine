@@ -126,6 +126,9 @@ public:
     /// meshes, past no IconFadeInZoom.
     void set_always(bool on) { always_ = on; }
     bool always() const { return always_; }
+    /// A cartographic main view's: Cartographic::Render turns
+    /// ui_AlwaysRenderStrategicIcons on while it draws, and back after.
+    void set_forced(bool on) { forced_ = on; }
     /// ui_NisRenderIcons ("nis toggle for strat icons"): off, no icons at
     /// all, as a campaign's NIS turns them off.
     void set_nis_icons(bool on) { nis_icons_ = on; }
@@ -264,6 +267,7 @@ private:
     bool projectile_icons_on_ = true;
     bool projectile_glow_ = true;
     bool always_ = false;
+    bool forced_ = false;
     bool team_color_mode_ = false;
     i32 focus_army_ = -1;
     sim::TeamColors team_colors_;
