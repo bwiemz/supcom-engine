@@ -390,6 +390,9 @@ std::optional<int> App::Window::start_flows() {
         lan_game.emplace(opt.lan_game_host,
                          opt.lan_game_join.empty() ? "127.0.0.1" : opt.lan_game_join,
                          opt.lan_game_port, opt.lan_game_quit_at, opt.lan_game_self_destruct_at);
+        lan_game->save_as(opt.lan_game_save);
+        lan_game->resume(opt.lan_game_resume);
+
         if (!lan_game->start(ui_lua_state)) {
             lan_game->finish(nullptr);
             return finish_test_run("lan-game-test");

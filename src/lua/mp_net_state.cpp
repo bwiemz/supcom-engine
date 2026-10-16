@@ -2,6 +2,7 @@
 
 #include "lua/session_clients.hpp"
 #include "sim/lobby_net.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/lockstep_session.hpp"
 #include "sim/net_transport.hpp"
 #include "sim/sim_state.hpp"
@@ -144,9 +145,57 @@ void mp_set_save_handler(MpSaveHandler handler) {
     save_handler() = std::move(handler);
 }
 
+namespace {
+/// The player who played `army` in the game `sim` runs: its
+/// ScenarioInfo.ArmySetup entry's PlayerName ("" if none).
+std::string player_of(const osc::sim::SimState& sim, const std::string& army) {
+    lua_State* L = sim.lua_state();
+    if (!L) return {};
+    const int top = lua_gettop(L);
+    std::string name;
+    lua_pushstring(L, "ScenarioInfo");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "ArmySetup");
+        lua_gettable(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, army.c_str());
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "PlayerName");
+                lua_gettable(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING) name = lua_tostring(L, -1);
+            }
+        }
+    }
+    lua_settop(L, top);
+    return name;
+}
+} // namespace
+
 bool mp_attach_session(osc::sim::SimState& sim) {
     auto& s = mp_net_state();
     if (!s.transport_ready || !s.lobby_transport) return false;
+    // A resumed game (OE-128): each player plays the army their name played
+    // in it, whatever slot the new lobby seated them in (its spawn was drawn
+    // again); an observer stays one
+    if (sim.tick_count() > 0) {
+        for (size_t source = 0; source < s.clients.size() && source < s.source_armies.size();
+             ++source) {
+            if (s.source_armies[source] < 0) continue;
+            bool found = false;
+            for (size_t a = 0; a < sim.army_count() && !found; ++a) {
+                const osc::sim::ArmyBrain* brain = sim.army_at(a);
+                if (brain && player_of(sim, brain->name()) == s.clients[source].name) {
+                    s.source_armies[source] = static_cast<osc::i32>(a);
+                    found = true;
+                }
+            }
+            if (!found)
+                spdlog::warn("[mp] resumed game: no army played as '{}'; it keeps slot army {}",
+                             s.clients[source].name, s.source_armies[source]);
+        }
+    }
     s.session = std::make_unique<osc::sim::LockstepSession>(sim, *s.lobby_transport, s.local_source,
                                                             s.all_sources);
     // Each source plays its army (the focus army it starts with). What it may

@@ -110,6 +110,9 @@ struct Options {
     u16 lan_game_port = 47624;
     u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
     u32 lan_game_self_destruct_at = 0; ///< --lan-game-self-destruct-at: the joiner's Ctrl-K
+    std::string lan_game_save;
+    std::string lan_game_resume;
+
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
     /// link to, instead of the front end (M220a).

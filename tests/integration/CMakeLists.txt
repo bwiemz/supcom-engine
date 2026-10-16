@@ -498,6 +498,18 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # OE-128: a network game saved and resumed together. A first lobby game
+    # in which the host saves (every player writes their own copy), then a
+    # second whose lobby resumes the save from each player's copy: both play
+    # in step from the saved tick and reach the first game's checksum.
+    add_test(NAME data.lan_game_resume
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game_resume.py
+                     $<TARGET_FILE:opensupcom> 29763)
+    set_tests_properties(data.lan_game_resume PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
+
     # M220a: a matchmaking client (this script, standing in for FAF's)
     # launches the game over GPGNet: Idle, CreateLobby to a lobby, HostGame
     # hosting it on the next port, and the game ending with the link.

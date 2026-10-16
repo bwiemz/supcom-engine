@@ -22,6 +22,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 | --- | --- |
 | Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,719<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan, MSVC and macOS. |
 | Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->279<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below; two save/load flows run on FAF's data instead, where FAF's client is installed. |
+
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->7<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list, and a mouse held through the window's input (`--mouse`): a wall dragged out, and a drag formation settled. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->5<!-- /metric --> |
 | Architecture checks (`ctest -L arch`) | <!-- metric:arch_tests -->22<!-- /metric -->: no library cycle or layer reaching up; every serialized type's fields in its serializer; the blueprint-field, Lua-stub, retail-hook and shader-name baselines; every blueprint lookup through one owner; this document's metrics. |
@@ -51,6 +52,7 @@ Each area, what is accepted and by what. "Last verified" names the validation re
 | Rendering | FA's terrain, water, sky, unit materials, decals, shadows, effects, strategic icons and fog, by FA's own shaders; drawn between the sim's ticks. FA's range overlays, as Moho's `RangeRenderer` draws them: stencil-volume rings on the ground for the selection, the hovered unit, a placement and the active filters (#407). | The `*-render-test` modes (`data.range-render-test` among them), `data.shadow-map-test`, `data.water-render-test`, goldens | [adb79465](validation/2026-10-13-adb79465.md) |
 | UI | Retail's own interface: the MAUI controls, focus and keys, the key map and console, the orders and construction panels, selection (units picked where they are drawn, by a 3D ray and a screen box, #401), the minimap. Build templates (#410) are placed whole, as Moho places them: each structure previewed and ordered from the lead's cell, one that can't stand left out, drags laying copies a span apart. | `data.{gameui,ui,controls,keyboard,keymap,selection-render}-test`, `test_selection_geometry.cpp`, goldens | [adb79465](validation/2026-10-13-adb79465.md) |
 | Audio | FA's XACT data through an app-owned cue engine: interface, voice, music, unit and weapon sounds, as Moho plays them. Checked by data and timing tests only. | `data.audio-test`, `data.audio-data-test`, `data.unitsound-test` | [adb79465](validation/2026-10-13-adb79465.md) |
+
 | Performance | See *Benchmarks* below. | `tools/bench.py` | See below |
 
 ## Benchmarks
