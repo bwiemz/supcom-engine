@@ -265,6 +265,23 @@ bool Renderer::create_instance(bool offscreen, vkb::Instance& vkb_inst) {
         true;
 #endif
     if (const char* v = std::getenv("OSC_VK_VALIDATION")) validation = v[0] == '1';
+#ifdef __APPLE__
+    // macOS has no system Vulkan driver: MoltenVK comes from Homebrew or the
+    // LunarG SDK, whose ICD manifests the vcpkg-built loader doesn't search
+    // (it looks under its own install prefix). Add the first one found
+    // unless the user already chose drivers.
+    if (!std::getenv("VK_DRIVER_FILES") && !std::getenv("VK_ICD_FILENAMES")) {
+        for (const char* icd : {"/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json",
+                                "/usr/local/etc/vulkan/icd.d/MoltenVK_icd.json",
+                                "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json"}) {
+            std::error_code ec;
+            if (std::filesystem::exists(icd, ec)) {
+                platform::set_env_default("VK_ADD_DRIVER_FILES", icd);
+                break;
+            }
+        }
+    }
+#endif
 #ifdef OSC_VULKAN_LAYER_PATH
     if (validation) platform::set_env_default("VK_ADD_LAYER_PATH", OSC_VULKAN_LAYER_PATH);
 #endif
