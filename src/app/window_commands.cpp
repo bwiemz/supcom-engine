@@ -366,6 +366,8 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
                   &Renderer::set_projectile_glow);
     renderer_bool("ren_SelectBoxes", true, &Renderer::select_boxes, &Renderer::set_select_boxes);
     renderer_bool("ren_bloom", true, &Renderer::bloom_enabled, &Renderer::set_bloom_enabled);
+    renderer_bool("ren_PlayableBoundary", true, &Renderer::playable_boundary,
+                  &Renderer::set_playable_boundary);
     // ren_ShadowBlur: the High lane's five-tap shadows at shadow fidelity 3
     // (Moho's default on, M211m)
     const auto video_bool = [&](const char* name, bool Renderer::VideoOptions::* field) {

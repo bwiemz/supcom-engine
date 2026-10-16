@@ -28,6 +28,7 @@
 #include "renderer/recon_view.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/sky_renderer.hpp"
+#include "renderer/boundary_renderer.hpp"
 #include "renderer/cartographic_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -358,6 +359,12 @@ public:
         selection_renderer_.set_enabled(on);
     }
     bool select_boxes() const { return overlay_renderer_.select_boxes(); }
+    /// ren_PlayableBoundary (Moho's default on): outside a playable rect
+    /// smaller than the map, the world blacked out (RenderPlayableBoundary)
+    void set_playable_boundary(bool on) { playable_boundary_ = on; }
+    bool playable_boundary() const { return playable_boundary_; }
+    /// The world's boundary, as last updated (tests read it)
+    const BoundaryRenderer& world_boundary() const { return boundary_renderer_; }
     /// The strategic icons drawn last frame (tests read them).
     const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
     const ResourceIconRenderer& resource_icons() const { return resource_icon_renderer_; }
@@ -1052,7 +1059,11 @@ private:
     /// The cartographic frames' fog (the minimap's, and a main view's: the
     /// same circles)
     VisionRenderer minimap_vision_;
-    RangeRenderer main_frame_ranges_; ///< a cartographic main view's, likewise
+    RangeRenderer main_frame_ranges_;    ///< a cartographic main view's, likewise
+    BoundaryRenderer boundary_renderer_; ///< the world's playable boundary (scene pass)
+    /// The cartographic frames' (the minimap's, a main view's)
+    BoundaryRenderer frame_boundary_;
+    bool playable_boundary_ = true; ///< ren_PlayableBoundary
     RangeBlueprints range_blueprints_;
     u32 hovered_ = 0;
     u32 highlight_command_ = 0;

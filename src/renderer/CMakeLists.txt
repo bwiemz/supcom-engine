@@ -51,6 +51,7 @@ add_library(osc_renderer STATIC
     range_renderer.cpp
     stencil_volume.cpp
     vision_renderer.cpp
+    boundary_renderer.cpp
     world_shapes.cpp
     build_template.cpp
     effect_blueprint_file.cpp

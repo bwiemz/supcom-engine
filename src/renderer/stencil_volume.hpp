@@ -42,10 +42,17 @@ struct PassState {
     VkStencilOpState front{}, back{};
     VkColorComponentFlags write = 0;
     bool blend = false; ///< SrcAlpha, InvSrcAlpha
+    /// A cast takes the ring volume's vertices and rings; without, its
+    /// vertex shader makes its own (the boundary's boxes)
+    bool ring_input = true;
+    /// The faces culled: none (both facings in one pass), or one, for a
+    /// cast whose facings must count in turn (the boundary's saturate)
+    VkCullModeFlags cull = VK_CULL_MODE_NONE;
 };
 
-/// A pass's pipeline in `render_pass`: both faces drawn (a cast's two
-/// passes, one per facing, in one), viewport and scissor dynamic.
+/// A pass's pipeline in `render_pass`: both faces drawn unless `cull` says
+/// otherwise (a cast's two passes, one per facing, in one), viewport and
+/// scissor dynamic.
 VkPipeline make_pipeline(VkDevice device, VkRenderPass render_pass, VkPipelineLayout layout,
                          VkShaderModule vert, VkShaderModule frag, const PassState& state);
 
