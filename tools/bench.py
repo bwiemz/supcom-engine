@@ -345,6 +345,10 @@ def golden_dir() -> Path:
         return Path(golden)
     if sys.platform == "win32":
         state = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        # As platform::known_folder on macOS: ~/Library, unless XDG is set
+        state = Path(os.environ.get("XDG_STATE_HOME")
+                     or Path.home() / "Library" / "Application Support")
     else:
         state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
     return state / "opensupcom" / "golden"
