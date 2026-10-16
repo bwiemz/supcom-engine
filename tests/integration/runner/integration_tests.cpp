@@ -5595,8 +5595,8 @@ void test_massstub2(TestContext& ctx) {
             local w = u:GetWeapon(1)
             if not w then error('no weapon') end
             local bp = w:GetProjectileBlueprint()
-            if type(bp) ~= 'string' and bp ~= nil then
-                error('GetProjectileBlueprint expected string or nil, got ' .. type(bp))
+            if type(bp) ~= 'table' then
+                error('GetProjectileBlueprint expected a projectile blueprint, got ' .. type(bp))
             end
             w:SetTargetGround(true)
             -- SetFireControl/IsFireControl name an aim controller by label.
@@ -9829,6 +9829,16 @@ void test_missile(TestContext& ctx) {
         end
         IssueGuard(__osc_engineers, __osc_b)
         IssueSiloBuildTactical({__osc_b})
+        __osc_b_calls = {}
+        for _, name in {'OnStartBuild', 'OnStopBuild'} do
+            local e, f, call = __osc_engineers[1], __osc_engineers[1][name], name
+            e[name] = function(self, unit, order)
+                if unit == __osc_b then table.insert(__osc_b_calls, call .. ' ' .. tostring(order)) end
+                if call == 'OnStartBuild' and order == 'Repair' then self:SetUnitState('Repairing', true) end
+                local ok, err = pcall(f, self, unit, order)
+                if not ok then table.insert(__osc_b_calls, call .. ' failed: ' .. tostring(err)) end
+            end
+        end
         __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
         __osc_s:GiveNukeSiloAmmo(1)
         __osc_zero = __osc_at(560, 600)
@@ -9872,6 +9882,17 @@ void test_missile(TestContext& ctx) {
            math.abs(e.massConsumed - 6) > 1e-3 or math.abs(e.energyConsumed - 120) > 1e-3 then
             error(string.format('A asks %g M, %g E and spends %g M, %g E a second',
                                 e.massRequested, e.energyRequested, e.massConsumed, e.energyConsumed))
+        end
+    )");
+    lua_check("Test 4b: an engineer helping B repairs it: B its focus, B's progress its own", R"(
+        local e = __osc_engineers[1]
+        if not e:IsUnitState('Repairing') then error('it is not Repairing') end
+        if e:GetFocusUnit() ~= __osc_b then error('its focus is ' .. tostring(e:GetFocusUnit())) end
+        if math.abs(e:GetWorkProgress() - __osc_b:GetWorkProgress()) > 0.005 then
+            error(string.format('its progress is %.4f, B is %.4f done', e:GetWorkProgress(), __osc_b:GetWorkProgress()))
+        end
+        if table.concat(__osc_b_calls, ', ') ~= 'OnStartBuild Repair' then
+            error('its calls: ' .. table.concat(__osc_b_calls, ', '))
         end
     )");
     {
@@ -9919,6 +9940,18 @@ void test_missile(TestContext& ctx) {
         end
         for _, e in __osc_engineers do
             if e:GetConsumptionPerSecondEnergy() > 0 then error('an engineer still pays') end
+        end
+    )");
+    lua_check("Test 4c: B's missile done, its engineers stop repairing it", R"(
+        for _, e in __osc_engineers do
+            if e:IsUnitState('Repairing') or e:GetFocusUnit() or e:GetWorkProgress() ~= 0 then
+                error(string.format('an engineer: Repairing %s, focus %s, progress %.4f',
+                                    tostring(e:IsUnitState('Repairing')), tostring(e:GetFocusUnit()),
+                                    e:GetWorkProgress()))
+            end
+        end
+        if table.getn(__osc_b_calls) ~= 2 or string.sub(__osc_b_calls[2], 1, 11) ~= 'OnStopBuild' then
+            error('its calls: ' .. table.concat(__osc_b_calls, ', '))
         end
     )");
     lua_check("Test 5: the order fired as the missile was done, and it killed its target", R"(
@@ -10109,6 +10142,35 @@ void test_missile(TestContext& ctx) {
         local last = m.path[table.getn(m.path)]
         local miss = math.sqrt((last[1] - __osc_spot2[1]) ^ 2 + (last[3] - __osc_spot2[3]) ^ 2)
         if miss > 4 then error('it came down ' .. miss .. ' from where it was sent') end
+    )");
+
+    lua_check("setup: H's missile under way, an engineer helping it", R"(
+        __osc_h = __osc_spawn('ueb2108', 'ARMY_3', 700, 330)
+        __osc_helper = __osc_spawn('uel0105', 'ARMY_3', 694, 325)
+        __osc_h_calls = {}
+        for _, name in {'OnStartBuild', 'OnStopBuild'} do
+            local e, f, call = __osc_helper, __osc_helper[name], name
+            e[name] = function(self, unit, order)
+                local of = unit == __osc_h and 'H' or tostring(unit)
+                table.insert(__osc_h_calls, call .. ' ' .. of .. ' ' .. tostring(order))
+                local ok, err = pcall(f, self, unit, order)
+                if not ok then table.insert(__osc_h_calls, call .. ' failed: ' .. tostring(err)) end
+            end
+        end
+        IssueGuard({__osc_helper}, __osc_h)
+        IssueSiloBuildTactical({__osc_h})
+    )");
+    run(10);
+    lua_check("setup: H destroyed while its engineer helps", R"(
+        if not __osc_helper:IsUnitState('Repairing') then error('the engineer is not helping H') end
+        __osc_h:Destroy()
+    )");
+    run(2);
+    lua_check("Test 16b: H gone, its helper's OnStopBuild is given nil and 'Repair'", R"(
+        if table.concat(__osc_h_calls, ', ') ~= 'OnStartBuild H Repair, OnStopBuild nil Repair' then
+            error('its calls: ' .. table.concat(__osc_h_calls, ', '))
+        end
+        if __osc_helper:IsUnitState('Repairing') then error('it is still Repairing') end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 17: no script errors");

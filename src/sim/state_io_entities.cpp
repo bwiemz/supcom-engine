@@ -1320,7 +1320,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(sb.energy);
     w.f64v(sb.mass);
     w.i32v(u.silo_blocks_);
-    w.b(u.assisting_silo_);
+    w.u32v(u.silo_assist_id_); // (silo_assist_renewed_ isn't: a tick's update sets it afresh)
     w.b(u.teleporting_);
     w.u32v(u.teleport_snap_);
     w.b(u.overcharge_armed_);
@@ -1733,7 +1733,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     sb.energy = r.f64v();
     sb.mass = r.f64v();
     u.silo_blocks_ = r.i32v();
-    u.assisting_silo_ = r.b();
+    u.silo_assist_id_ = r.u32v();
     u.teleporting_ = r.b();
     u.teleport_snap_ = r.u32v();
     u.overcharge_armed_ = r.b();

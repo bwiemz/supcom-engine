@@ -732,6 +732,8 @@ public:
     i32 silo_blocks() const { return silo_blocks_; }
     /// An assisting engineer's build power, `rate`, on the missile under way.
     void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
+    /// The silo whose missile this unit's Guard helps build, else 0.
+    u32 silo_assist_id() const { return silo_assist_id_; }
 
     /// The weapon a launch order uses: the first enabled one with ManualFire
     /// and CountedProjectile (a NukeWeapon for a nuke), OverCharge aside.
@@ -1517,7 +1519,8 @@ private:
     bool tick_after_orders(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
-    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff);
+    void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
 
@@ -1923,7 +1926,8 @@ private:
     std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
     SiloBuild silo_build_;
     i32 silo_blocks_ = 0;
-    bool assisting_silo_ = false; // this tick, a Guard lent a silo its build power
+    u32 silo_assist_id_ = 0;           // the silo a Guard lends its build power, Repairing it
+    bool silo_assist_renewed_ = false; // ...lent this tick
     // Orders handed to the script (M206d): a teleport charging (and the snap
     // count its warp will change), an OverCharge weapon switched on.
     bool teleporting_ = false;
