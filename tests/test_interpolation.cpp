@@ -388,7 +388,7 @@ TEST_CASE("An interned string is one copy per text", "[interp][snapshot]") {
     CHECK(a == "uel0105");
     CHECK_FALSE(a == osc::InternedString("uel0106"));
     CHECK(osc::InternedString().empty());
-    CHECK(osc::InternedString("") == osc::InternedString());
+    CHECK(&osc::InternedString("").str() == &osc::InternedString().str()); // one empty
     CHECK(fmt::format("{}", a) == "uel0105");
 }
 
