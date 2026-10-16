@@ -20,7 +20,9 @@ namespace {
 
 /// Any TrueType font on this machine; the tests skip without one.
 fs::path find_system_ttf() {
-    for (const char* dir : {"/usr/share/fonts", "/usr/local/share/fonts"}) {
+    // Linux's font directories, then macOS's (where /usr/share/fonts doesn't exist)
+    for (const char* dir :
+         {"/usr/share/fonts", "/usr/local/share/fonts", "/System/Library/Fonts/Supplemental"}) {
         std::error_code ec;
         for (auto it = fs::recursive_directory_iterator(dir, ec);
              !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
