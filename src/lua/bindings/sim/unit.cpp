@@ -372,9 +372,7 @@ static int unit_GetFocusUnit(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushnil(L); return 1; }
 
-    u32 focus_id = u->build_target_id();
-    if (focus_id == 0) focus_id = u->capture_target_id();
-    if (focus_id == 0) focus_id = u->silo_assist_id();
+    const u32 focus_id = u->focus_id();
     if (focus_id == 0) { lua_pushnil(L); return 1; }
 
     auto* sim = get_sim(L);

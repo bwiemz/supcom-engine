@@ -11081,6 +11081,18 @@ void test_range(TestContext& ctx) {
         if __osc_from(__osc_reclaimer, 620.5, 80.5) > 0.1 then error('the reclaimer moved') end
         if __osc_from(__osc_taker, 640.5, 80.5) > 0.1 then error('the taker moved') end
     )");
+    lua_check(
+        "Test 2b: the mender's focus is the tank, and it pays the tank's cost at its build rate",
+        R"(
+        if __osc_mender:GetFocusUnit() ~= __osc_hurt then
+            error('its focus is ' .. tostring(__osc_mender:GetFocusUnit()))
+        end
+        -- 56 mass and 266 energy over the tank's 280 build time at build rate 5 (retail-probe repair)
+        local m, e = __osc_mender:GetConsumptionPerSecondMass(), __osc_mender:GetConsumptionPerSecondEnergy()
+        if math.abs(m - 1) > 1e-3 or math.abs(e - 4.75) > 1e-3 then
+            error(string.format('it pays %g mass and %g energy a second', m, e))
+        end
+    )");
 
     // The repair's target moves off: within twice the reach it goes on.
     lua_check("setup: the hurt tank moves 11 off", "Warp(__osc_hurt, __osc_at(586.5, 80.5))");
