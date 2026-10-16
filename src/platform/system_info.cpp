@@ -73,8 +73,13 @@ std::string os_description() {
 unsigned long long peak_memory_bytes() {
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) != 0) return 0;
-    // Linux gives kilobytes (macOS would give bytes)
+#ifdef __APPLE__
+    // macOS gives bytes (its getrusage(2) man page)
+    return static_cast<unsigned long long>(usage.ru_maxrss);
+#else
+    // Linux gives kilobytes
     return static_cast<unsigned long long>(usage.ru_maxrss) * 1024ULL;
+#endif
 }
 
 #endif
