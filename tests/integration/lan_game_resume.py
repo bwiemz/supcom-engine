@@ -15,7 +15,7 @@ one did: all four checksums at tick 150 the same. And each player must play
 the army they played before, though the second lobby draws spawns again.
 
 Usage:
-    lan_game_resume.py <opensupcom> <port>
+    lan_game_resume.py <opensupcom> <port> [-- extra args for both...]
 
 Exits 77 (skipped) when the game has no data to run on.
 """
@@ -73,14 +73,15 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     exe, port = argv[0], argv[1]
+    extra = argv[argv.index("--") + 1 :] if "--" in argv else []
     with tempfile.TemporaryDirectory(prefix="osc-lan-resume-") as tmp:
         root = Path(tmp)
-        saved = run(exe, port, root, "saved", ["--lan-game-save", SAVE])
+        saved = run(exe, port, root, "saved", ["--lan-game-save", SAVE, *extra])
         if isinstance(saved, int):
             if saved == SKIPPED:
                 print("no game data: skipped")
             return saved
-        resumed = run(exe, port, root, "resumed", ["--lan-game-resume", SAVE])
+        resumed = run(exe, port, root, "resumed", ["--lan-game-resume", SAVE, *extra])
         if isinstance(resumed, int):
             return resumed
         print(f"saved run: {saved}")
