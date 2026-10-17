@@ -15,7 +15,9 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <cctype>
+#include <map>
 #include <string>
+#include <vector>
 
 namespace osc::lua {
 
@@ -194,6 +196,35 @@ bool mp_attach_session(osc::sim::SimState& sim) {
             if (!found)
                 spdlog::warn("[mp] resumed game: no army played as '{}'; it keeps slot army {}",
                              s.clients[source].name, s.source_armies[source]);
+        }
+        // The armies' command sources it saved are numbered as its first
+        // lobby numbered its players, which the new draw may not: each saved
+        // source becomes the one now playing the army it played (one no
+        // player plays now goes)
+        if (sim.command_sources_known()) {
+            std::map<osc::u32, osc::u32> renumbered;
+            for (size_t a = 0; a < sim.army_count(); ++a)
+                for (const osc::u32 saved : sim.army_command_sources(static_cast<osc::i32>(a))) {
+                    const osc::i32 played = sim.army_of_source(saved);
+                    for (osc::u32 now = 0; now < s.source_armies.size(); ++now)
+                        if (played >= 0 && s.source_armies[now] == played) renumbered[saved] = now;
+                }
+            for (size_t a = 0; a < sim.army_count(); ++a) {
+                const auto army = static_cast<osc::i32>(a);
+                const std::vector<osc::u32> saved = sim.army_command_sources(army);
+                for (const osc::u32 source : saved) sim.set_command_source(army, source, false);
+                for (const osc::u32 source : saved)
+                    if (const auto it = renumbered.find(source); it != renumbered.end())
+                        sim.set_command_source(army, it->second, true);
+            }
+        }
+        s.army_sources.assign(s.army_sources.size(), -1);
+        for (osc::u32 source = 0; source < s.source_armies.size(); ++source) {
+            const osc::i32 army = s.source_armies[source];
+            if (army < 0) continue;
+            if (static_cast<size_t>(army) >= s.army_sources.size())
+                s.army_sources.resize(static_cast<size_t>(army) + 1, -1);
+            s.army_sources[static_cast<size_t>(army)] = static_cast<osc::i32>(source);
         }
     }
     s.session = std::make_unique<osc::sim::LockstepSession>(sim, *s.lobby_transport, s.local_source,

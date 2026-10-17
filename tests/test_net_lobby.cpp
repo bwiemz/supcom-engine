@@ -942,3 +942,37 @@ TEST_CASE("A matchmaking client's EjectPlayer ejects the client with that uid (M
     // This client reports Alice's source dropped, as EjectSessionClient does
     CHECK(osc::lua::mp_net_state().session->ejectors(1) == std::vector<osc::u32>{0});
 }
+
+TEST_CASE("A resumed game's saved command sources follow its players into the new lobby (OE-128)",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    // The saved game: its lobby seated Alice first (source 0, ARMY_1), the
+    // host second (source 1, ARMY_2), each commanding their own army
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    REQUIRE(w.run(R"(
+        ScenarioInfo = {ArmySetup = {ARMY_1 = {PlayerName = 'Alice'}, ARMY_2 = {PlayerName = 'Host'}}}
+    )"));
+    w.sim.set_source_army(0, 0);
+    w.sim.set_source_army(1, 1);
+    w.sim.begin_command_sources();
+    w.sim.set_command_source(0, 0, true);
+    w.sim.set_command_source(1, 1, true);
+    w.sim.tick();
+    REQUIRE(w.sim.tick_count() > 0);
+    // The new lobby seats the host first: source 0 now, Alice source 1
+    osc::lua::mp_begin_lobby_game(
+        std::make_unique<osc::sim::LobbyGameTransport>(
+            std::make_unique<osc::sim::LobbyNet>("Host", 1), osc::lua::net_lobby_clock_ms),
+        0, {0, 1}, {{10, "Host"}, {42, "Alice"}}, 1);
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    // Each plays the army they played, and that army takes their commands
+    const auto& mp = osc::lua::mp_net_state();
+    CHECK(mp.army_of(0) == 1);
+    CHECK(mp.army_of(1) == 0);
+    CHECK(mp.source_of_army(0) == 1);
+    CHECK(mp.source_of_army(1) == 0);
+    CHECK(w.sim.army_command_sources(0) == std::vector<osc::u32>{1});
+    CHECK(w.sim.army_command_sources(1) == std::vector<osc::u32>{0});
+}
