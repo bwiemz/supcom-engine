@@ -232,6 +232,15 @@ bool Renderer::create_window(u32 width, u32 height, const std::string& title, bo
         glfwTerminate();
         return false;
     }
+    // An offscreen capture is the size asked for, whatever the screen's:
+    // Windows keeps a window within the screens' height unless its own
+    // limits allow more (a 2x capture of a laptop's frame outgrows a 1440p
+    // screen)
+    if (offscreen) {
+        glfwSetWindowSizeLimits(window_, GLFW_DONT_CARE, GLFW_DONT_CARE, static_cast<int>(width),
+                                static_cast<int>(height));
+        glfwSetWindowSize(window_, static_cast<int>(width), static_cast<int>(height));
+    }
     // The system's cursor stays hidden until FA's cursor is made it
     // (update_system_cursor); offscreen, the engine draws FA's
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
