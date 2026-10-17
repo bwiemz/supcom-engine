@@ -3906,7 +3906,8 @@ void register_console_commands(ui::Console& console) {
             spdlog::info("SetFocusArmy: no session");
             return;
         }
-        request_focus_army(L, std::atoi(args[1].c_str()));
+        request_focus_army(
+            L, static_cast<i32>(std::strtol(args[1].c_str(), nullptr, 10))); // Moho: atoi
     });
     // The sim rate (Moho's WLD_* commands).
     console.add("WLD_GameSpeed", [](lua_State* L, const Args& args) {
