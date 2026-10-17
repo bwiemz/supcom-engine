@@ -3038,6 +3038,15 @@ Vector3 normalized(const Vector3& v) {
     return {v.x * inv, v.y * inv, v.z * inv};
 }
 
+Quaternion quat_normalized(const Quaternion& q) {
+    const f32 length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (length <= 0.0f) {
+        return q;
+    }
+    const f32 inv = 1.0f / length;
+    return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
+}
+
 } // namespace
 
 // Moho's COORDS_Tilt and BuildTiltShortestArcDelta (faf-re Entity.cpp,
@@ -3127,7 +3136,8 @@ Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z
         normal.y += hover_tilt_.y + wobble_offset_.y;
         normal.z += hover_tilt_.z + wobble_offset_.z;
     }
-    return {y, tilt_to(facing, normal)};
+    // Moho's MoveTo normalizes the orientation SnapToGround tilted (faf-re CUnitMotion.cpp).
+    return {y, quat_normalized(tilt_to(facing, normal))};
 }
 
 namespace {
