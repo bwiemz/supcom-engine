@@ -13,6 +13,7 @@
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/saved_game.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -494,6 +495,46 @@ TEST_CASE("A patrol point added while the patrol has broken off joins the loop",
     CHECK(q[1].command_id == 2);
     CHECK(q[2].command_id == 3);
     CHECK(q[3].command_id == 1);
+}
+
+TEST_CASE("A patrol point moved while the patrol has broken off moves, before its tick too",
+          "[patrol][order_edit]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    two_armies(sim);
+    Unit* eng = engineer(sim, 10.0f, 10.0f);
+    eng->push_command(patrol(60.0f, 10.0f, 1), true);
+    eng->push_command(patrol(60.0f, 60.0f, 2), false);
+    for (int t = 0; t < 400 && eng->command_queue().front().command_id != 2; ++t) {
+        sim.tick();
+    }
+    REQUIRE(eng->command_queue().front().command_id == 2);
+    rock(sim, 62.0f, 40.0f, 1.0f, 0.0f);
+    for (int t = 0; t < 12 && !eng->command_queue().front().from_patrol; ++t) {
+        sim.tick();
+    }
+    REQUIRE(eng->command_queue().front().from_patrol);
+    osc::sim::SimCallbackEntry cb;
+    cb.func_name = osc::sim::kSetCommandTargetCallback;
+    cb.args["Command"] = 2.0;
+    cb.args["X"] = 20.0;
+    cb.args["Z"] = 60.0;
+    cb.unit_ids = {eng->entity_id()};
+    sim.submit_callback(cb);
+    const auto leg_x = [](const auto& orders) {
+        for (const auto& c : orders) {
+            if (c.command_id == 2 && !c.from_patrol) {
+                return c.target_pos.x;
+            }
+        }
+        return -1.0f;
+    };
+    const auto pending = sim.queues_with_pending();
+    REQUIRE(pending.count(eng->entity_id()) == 1);
+    CHECK(leg_x(pending.at(eng->entity_id()).orders) == 20.0f);
+    sim.tick();
+    CHECK(leg_x(eng->command_queue()) == 20.0f);
 }
 
 TEST_CASE("A unit that broke off its patrol is still Patrolling", "[patrol][lua]") {
