@@ -3186,6 +3186,12 @@ f32 Renderer::take_frame_dt() {
     return dt;
 }
 
+void Renderer::skip_ui_frame() {
+    ui_ran_early_ = false;
+    early_dt_ = take_frame_dt();
+    ui_ran_early_ = true;
+}
+
 void Renderer::run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world) {
     ui_ran_early_ = false;
     early_dt_ = take_frame_dt();

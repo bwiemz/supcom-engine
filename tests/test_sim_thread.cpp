@@ -15,6 +15,23 @@ extern "C" {
 #include <stdexcept>
 #include <thread>
 
+TEST_CASE("A frame can ask whether the sim thread's job is done without waiting", "[simthread]") {
+    // A game sped past its sim's pace draws while the job runs (draw_while_ticking)
+    osc::app::SimThread sim;
+    CHECK(sim.done()); // none started
+    std::atomic<bool> release{false};
+    sim.start([&] {
+        while (!release) std::this_thread::yield();
+    });
+    CHECK(sim.busy());
+    CHECK_FALSE(sim.done()); // still running: not waited for
+    release = true;
+    while (!sim.done()) std::this_thread::yield();
+    CHECK(sim.busy()); // finished, and still to be collected
+    sim.wait();
+    CHECK_FALSE(sim.busy());
+}
+
 TEST_CASE("The sim thread runs a job off the caller's thread, one at a time", "[simthread]") {
     osc::app::SimThread sim;
     CHECK_FALSE(sim.busy());

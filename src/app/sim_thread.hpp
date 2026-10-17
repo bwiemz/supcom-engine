@@ -29,6 +29,8 @@ public:
     void wait();
     /// A job started and not yet waited for.
     bool busy() const { return pending_; }
+    /// The job started last has finished: wait() would not block.
+    bool done();
     /// The thread the jobs run on.
     std::thread::id id() const { return thread_.get_id(); }
 

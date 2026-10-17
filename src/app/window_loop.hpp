@@ -69,6 +69,16 @@ private:
     /// The profiler's frame, a resized root frame, and this frame's time.
     double begin_frame();
     bool fixed_step() const;
+    /// A frame while the sim's ticks still run on its thread (a game sped
+    /// past what its sim keeps up with): the window's input and the camera,
+    /// and the world drawn from its last published ticks; nothing that
+    /// reads the live sim or runs the UI's scripts.
+    void draw_while_ticking(double dt, std::chrono::high_resolution_clock::time_point started);
+    /// The frame's time, counted in the game's frame statistics.
+    void count_game_frame();
+    /// --play-for: the rest of a 60 Hz frame, waited out.
+    void pace_play_for(std::chrono::high_resolution_clock::time_point started) const;
+
     /// The camera as the sound's listener.
     void update_audio(double dt);
     /// The world's sounds for this frame: the ticks' one-shots and the

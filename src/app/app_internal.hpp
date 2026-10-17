@@ -120,6 +120,8 @@ struct Options {
     /// out, as a present waits for the display), and their times logged:
     /// how often the sim's ticks hold a frame back (OE-134). 0: none.
     double play_for = 0;
+    /// --play-rate: the game speed --play-for plays at (Moho's sim rate, 0 normal)
+    int play_rate = 0;
 
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to

@@ -135,6 +135,22 @@ The tick still has to finish within about a frame and a half to drop
 nothing: the Lua collection's pause (OE-135) and the longest AI ticks still
 show as single hitches.
 
+**A game sped up past its sim's pace** (Ryan, 2026-10-17: the frame rate
+fell when he sped the game up). A frame used to wait for the ticks the last
+one started; sped up, a frame starts up to 8 of them, and late in a match
+that held each frame for a fifth of a second. Now a frame that finds them
+still running only draws (`Window::draw_while_ticking`): the window's input,
+the camera and the world from the published ticks, the game's time owed to
+the next ticks (at most 8), and no UI script or live-sim read. The game
+slows to what its sim keeps up with; the frames don't. `--play-rate <n>`
+plays `--play-for` at game speed n. The eight-AI match, two minutes at 10x
+speed (rate 10), the same build:
+
+| Frame | Mean | Over 33 ms | Over 50 ms | Worst | Ticks played |
+| --- | --- | --- | --- | --- | --- |
+| waits for the ticks | 72.2 ms | 1,131 | 1,011 | 711 ms | 5,349 |
+| draws while they run | 16.7 ms | 1 | 1 | 139 ms | 4,921 |
+
 **Rules the sim's thread brings.** While a tick runs there, nothing on the
 main thread reads the live sim: the UI's frame callbacks and events run
 before the tick starts (`Renderer::run_ui_frame`), and the UI's world reads

@@ -37,6 +37,11 @@ void SimThread::wait() {
     if (failure) std::rethrow_exception(failure);
 }
 
+bool SimThread::done() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !running_;
+}
+
 void SimThread::loop() {
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;) {

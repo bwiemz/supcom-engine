@@ -140,6 +140,7 @@ void print_usage() {
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --no-sim-thread    Run the sim's ticks on the main thread (OE-134)\n"
               << "  --play-for <secs>  Close after this long in a game; log its frame times\n"
+              << "  --play-rate <n>    ...played at game speed n (Moho's sim rate: 10 is 10x)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --log <file>       Write the log there (default: a player's game logs to\n"
               << "                     the user's state folder, anything else to ./opensupcom.log)\n"
@@ -372,6 +373,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.lan_game_resume = parse_string_arg(argc, argv, "--lan-game-resume", "");
     o.sim_thread = !parse_flag(argc, argv, "--no-sim-thread");
     o.play_for = std::strtod(parse_string_arg(argc, argv, "--play-for", "0").c_str(), nullptr);
+    o.play_rate = std::atoi(parse_string_arg(argc, argv, "--play-rate", "0").c_str());
 
     // --lan-game-quit-at <tick>: the joiner leaves the game then (M218e)
     if (const auto quit = parse_string_arg(argc, argv, "--lan-game-quit-at", "");

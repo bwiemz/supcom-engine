@@ -29,26 +29,33 @@ bool App::Window::frame() {
     const auto frame_started = std::chrono::high_resolution_clock::now();
     const double dt = begin_frame();
 
+    // The ticks the last frame started on the sim thread still running (a
+    // game sped up past what its sim keeps up with): this frame draws and
+    // doesn't wait for them, so the game slows and the frame rate holds.
+    // (A --fast-match wants its sim's speed alone, and waits.)
+    const bool threaded = sim_threaded();
+    if (threaded && sim_thread->busy() && !sim_thread->done() && !fast_match_in_game()) {
+        draw_while_ticking(dt, frame_started);
+        return true;
+    }
+
     // The ticks the last frame started on the sim thread, done (OE-134):
     // from here until this frame starts its own, nothing else runs the sim
-    const bool threaded = sim_threaded();
     osc::u32 beat_tick0 = collect_sim();
     world_interp.staged = threaded;
+    if (opt.play_for > 0 && game_state_mgr.current() == osc::GameState::GAME) {
+        // --play-rate: a hosted game's speed is its lockstep's
+        if (auto* session = osc::lua::mp_net_state().session.get()) {
+            if (session->speed() != opt.play_rate) session->set_speed_option(opt.play_rate, true);
+        } else if (game_state_mgr.sim_rate() != opt.play_rate) {
+            game_state_mgr.set_sim_rate(opt.play_rate);
+        }
+    }
 
     update_audio(dt);
 
     count_fps(dt);
-    if (sim_state && game_state_mgr.current() == osc::GameState::GAME &&
-        sim_state->tick_count() > 0) {
-        const double ms = wall_dt * 1000.0;
-        ++game_frames.frames;
-        game_frames.total_ms += ms;
-        game_frames.worst_ms = std::max(game_frames.worst_ms, ms);
-        game_frames.over_20 += ms > 20.0 ? 1 : 0;
-        game_frames.over_33 += ms > 33.0 ? 1 : 0;
-        game_frames.over_50 += ms > 50.0 ? 1 : 0;
-        game_frames.in_game_s += wall_dt;
-    }
+    count_game_frame();
 
     // Pause, game speed and Escape come from retail's key map
     // (Pause, NumPlus/NumMinus/NumStar, Esc): see UIDispatch.
@@ -113,14 +120,7 @@ bool App::Window::frame() {
         });
     }
 
-    // --play-for: the rest of a 60 Hz display's frame, waited out as a
-    // present would wait for it (the sim thread's tick runs meanwhile)
-    // (Windows sleeps in its timer's steps, about 15.6 ms: the last of the
-    // wait is spun, so the frame ends on time)
-    if (opt.play_for > 0) {
-        const auto frame_end = frame_started + std::chrono::microseconds(16667);
-        while (std::chrono::high_resolution_clock::now() < frame_end) std::this_thread::yield();
-    }
+    pace_play_for(frame_started);
 
     if (exit_requested()) {
         quiesce_sim();
@@ -131,6 +131,56 @@ bool App::Window::frame() {
 
     osc::Profiler::instance().end_frame();
     return true;
+}
+
+void App::Window::draw_while_ticking(double dt,
+                                     std::chrono::high_resolution_clock::time_point started) {
+    count_fps(dt);
+    count_game_frame();
+    // The window's events (its callbacks only queue the UI's, for the next
+    // full frame) and the camera's keys and mouse
+    renderer.poll_events(dt);
+    // The world moves on between the ticks it has (held at the newest), and
+    // the game's time owed to the sim: the next ticks started make it up, as
+    // many as consume_fixed_steps lets a frame start (the rest is let go: the
+    // game slows to what its sim keeps up with)
+    world_interp.clock.advance(dt * game_state_mgr.speed());
+    // (at most a frame's worth of ticks: a network game's rounds take what
+    // is owed without a limit of their own)
+    if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped())
+        sim_accumulator = std::min(sim_accumulator + dt * game_state_mgr.speed(),
+                                   8 * osc::sim::SimState::SECONDS_PER_TICK);
+    {
+        PROFILE_ZONE("Frame::render");
+        render(world_interp.view(), [this](bool) { renderer.skip_ui_frame(); });
+    }
+    pace_play_for(started);
+    osc::Profiler::instance().end_frame();
+}
+
+void App::Window::count_game_frame() {
+    if (!sim_state || game_state_mgr.current() != osc::GameState::GAME) return;
+    // (the live sim's tick count is the sim thread's while it ticks: the
+    // collected one is the frame's)
+    if (settled_tick() == 0) return;
+    const double ms = wall_dt * 1000.0;
+    ++game_frames.frames;
+    game_frames.total_ms += ms;
+    game_frames.worst_ms = std::max(game_frames.worst_ms, ms);
+    game_frames.over_20 += ms > 20.0 ? 1 : 0;
+    game_frames.over_33 += ms > 33.0 ? 1 : 0;
+    game_frames.over_50 += ms > 50.0 ? 1 : 0;
+    game_frames.in_game_s += wall_dt;
+}
+
+void App::Window::pace_play_for(std::chrono::high_resolution_clock::time_point started) const {
+    // --play-for: the rest of a 60 Hz display's frame, waited out as a
+    // present would wait for it (the sim thread's tick runs meanwhile)
+    // (Windows sleeps in its timer's steps, about 15.6 ms: the last of the
+    // wait is spun, so the frame ends on time)
+    if (opt.play_for <= 0) return;
+    const auto frame_end = started + std::chrono::microseconds(16667);
+    while (std::chrono::high_resolution_clock::now() < frame_end) std::this_thread::yield();
 }
 
 double App::Window::begin_frame() {

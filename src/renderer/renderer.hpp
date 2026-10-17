@@ -172,6 +172,10 @@ public:
     /// here; the next render or render_ui_only draws with it and doesn't run
     /// them again.
     void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world);
+    /// A frame drawn while the sim's ticks run (its UI scripts may read the
+    /// live sim): the frame's step is taken, and its UI frame callbacks,
+    /// events and animations wait for the next frame that runs them.
+    void skip_ui_frame();
 
     /// An order's feedback blip from the UI (AddCommandFeedbackBlip), made
     /// at the newest game tick and shown for its duration.
