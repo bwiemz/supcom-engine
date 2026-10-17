@@ -10,6 +10,8 @@
 #include "platform/game_install.hpp"
 
 #include <algorithm>
+#include <charconv>
+
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -373,7 +375,10 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.lan_game_resume = parse_string_arg(argc, argv, "--lan-game-resume", "");
     o.sim_thread = !parse_flag(argc, argv, "--no-sim-thread");
     o.play_for = std::strtod(parse_string_arg(argc, argv, "--play-for", "0").c_str(), nullptr);
-    o.play_rate = std::atoi(parse_string_arg(argc, argv, "--play-rate", "0").c_str());
+    {
+        const std::string rate = parse_string_arg(argc, argv, "--play-rate", "0");
+        std::from_chars(rate.data(), rate.data() + rate.size(), o.play_rate);
+    }
 
     // --lan-game-quit-at <tick>: the joiner leaves the game then (M218e)
     if (const auto quit = parse_string_arg(argc, argv, "--lan-game-quit-at", "");
