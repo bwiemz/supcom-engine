@@ -319,6 +319,54 @@ TEST_CASE("A yaw-only aim controller is on target by its heading, whatever its p
     }
 }
 
+TEST_CASE("An aim controller's pitch arc is measured from its barrel as the animation left it",
+          "[pose][aim]") {
+    constexpr f32 kDeg = 0.0174533f;
+    for (const f32 tilt : {0.0f, 30.0f}) {
+        BoneData bd = make_two_bones();
+        bd.bones[1].local_rotation = quat_axis_angle('x', -90.0f * kDeg);
+        Unit unit;
+        unit.set_bone_data(&bd);
+        unit.init_animated_bones();
+        SCAData sca = root_slide();
+        sca.num_bones = 2;
+        sca.bone_names.push_back("child");
+        sca.parent_indices.push_back(0);
+        for (auto& frame : sca.frames) {
+            frame.bones[0].position = {0, 0, 0};
+            frame.bones.push_back({{0, 0, 1}, quat_axis_angle('x', -tilt * kDeg)});
+        }
+        AnimCache cache(nullptr);
+        cache.inject("/unpack.sca", sca);
+        auto& anim = static_cast<AnimManipulator&>(
+            *unit.add_manipulator(std::make_unique<AnimManipulator>()));
+        anim.play_anim("/unpack.sca", false, &cache);
+        anim.set_rate(1.0f);
+        unit.tick_manipulators(1.0f, nullptr);
+
+        auto& aim =
+            static_cast<AimManipulator&>(*unit.add_manipulator(std::make_unique<AimManipulator>()));
+        aim.set_precedence(10);
+        aim.set_yaw_bone(0);
+        aim.set_pitch_bone(1);
+        aim.set_firing_arc(-180.0f, 180.0f, 90.0f, -45.0f, 45.0f, 90.0f);
+        const f32 up = 70.0f * kDeg;
+        const f32 heading = 30.0f * kDeg;
+        aim.set_target({1000.0f * std::cos(up) * std::sin(heading), 1000.0f * std::sin(up),
+                        1000.0f * std::cos(up) * std::cos(heading)},
+                       2.0f * kDeg);
+        bool ever = false;
+        for (int t = 0; t < 30; ++t) {
+            unit.tick_manipulators(0.1f, nullptr);
+            ever = ever || aim.on_target();
+        }
+        CHECK(ever == (tilt > 0.0f));
+        const Vector3 barrel = quat_rotate(unit.bone_pose(1).rotation, {0, 0, 1});
+        const f32 elevation = std::asin(barrel.y);
+        CHECK_THAT(elevation, WithinAbs((tilt > 0.0f ? 70.0f : 45.0f) * kDeg, 2.0f * kDeg));
+    }
+}
+
 TEST_CASE("AttachBoneToEntityBone pins the unit's bone to the entity", "[pose][lua]") {
     // sim/Unit.lua's debris: self:AttachBoneToEntityBone(partBone, boneProj, -1, false)
     lua::LuaState lua;
