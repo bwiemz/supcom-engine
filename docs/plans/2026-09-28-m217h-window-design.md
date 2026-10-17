@@ -87,6 +87,10 @@ The rules come from faf-re:
 - **HiDPI:** cursor positions are scaled from window units to framebuffer
   pixels, everywhere they're read: the UI dispatch, the camera, world
   clicks, the minimap, `GetMouseWorldPos`.
+  *Changed (2026-10-09):* the UI's root frame is the window's size in
+  points, drawn at the framebuffer's scale (text rasterised at it); the
+  cursor stays in points for the UI, input and Lua, and is scaled to pixels
+  for the camera only. `--capture-scale` captures at a scale, `--hidpi-test`.
 - **vsync:** the present mode is FIFO with vsync on, and MAILBOX
   (IMMEDIATE if there's no MAILBOX) with it off.
 - **Tests and captures** keep their fixed offscreen 1600×900. Options

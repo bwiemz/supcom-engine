@@ -166,7 +166,40 @@ void test_world_shapes(TestContext& ctx) {
     (void)shots.grab();
     t.check(r.world_shapes().quads().empty(), "an OnRenderWorld that errors draws nothing");
 
+    (void)ctx.lua_state.do_string(fmt::format(
+        "do local v = rawget(_G, '__osc_shapes_view')\n"
+        "v.OnRenderWorld = function(self)\n"
+        "    UI_DrawLine({{{0} + 20, {1}, {2}}}, {{{0} + 40, {1}, {2}}}, 'ffff0000', 0.01)\n"
+        "end end\n",
+        x, y, z));
+    const auto line_width = [](const renderer::Renderer& rr) {
+        const auto& quads = rr.world_shapes().quads();
+        if (quads.size() != 1) {
+            return 0.0f;
+        }
+        const auto& c = quads[0].corners;
+        return std::hypot(c[0].x - c[3].x, c[0].z - c[3].z);
+    };
+    (void)shots.grab();
+    const f32 thin = line_width(r);
     shots.set_ui(nullptr);
+    f32 thin_retina = 0.0f;
+    {
+        OffscreenShots retina(ctx, 2.0f);
+        if (retina.ok()) {
+            retina.renderer().init_ui_caches(&ctx.vfs);
+            (void)retina.shoot_frame(*terrain, x + 10.0f, z, 120.0f);
+            retina.set_ui(registry);
+            (void)retina.grab();
+            thin_retina = line_width(retina.renderer());
+            retina.set_ui(nullptr);
+        }
+    }
+    t.check(thin > 0.01f && std::abs(thin_retina - thin) < thin * 0.01f,
+            fmt::format("a line thinner than two of the UI's points is two points wide, as wide "
+                        "in the world at a display scale of 2 as at 1: {:.4f} and {:.4f}",
+                        thin_retina, thin));
+
     lua_pushstring(L, core::kWorldUiActiveKey);
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);

@@ -33,8 +33,8 @@ public:
                 VkDescriptorSet icon_atlas_ds,
                 u32 viewport_w, u32 viewport_h);
 
-    void render(VkCommandBuffer cmd, VkPipelineLayout layout,
-                u32 viewport_w, u32 viewport_h);
+    void render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w, u32 viewport_h,
+                f32 scale = 1.0f);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

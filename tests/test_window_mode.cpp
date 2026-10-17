@@ -173,3 +173,20 @@ TEST_CASE("A cursor in window units maps to framebuffer pixels (M217h)", "[windo
     CHECK(minimized[0] == 5.0);
     CHECK(minimized[1] == 6.0);
 }
+
+TEST_CASE("A Retina window's UI is its size in points, drawn at the framebuffer's scale",
+          "[window]") {
+    const f32 retina = core::content_scale(1512, 3024);
+    CHECK(retina == 2.0f);
+    CHECK(core::ui_extent(3024, 1964, retina) == std::array<u32, 2>{1512, 982});
+    CHECK(core::ui_to_pixels(100.5, 200.0, retina) == std::array<f64, 2>{201.0, 400.0});
+
+    const f32 wayland = core::content_scale(1000, 1500);
+    CHECK(wayland == 1.5f);
+    CHECK(core::ui_extent(1500, 900, wayland) == std::array<u32, 2>{1000, 600});
+
+    CHECK(core::content_scale(1600, 1600) == 1.0f);
+    CHECK(core::content_scale(0, 0) == 1.0f);
+    CHECK(core::ui_extent(1600, 900, 1.0f) == std::array<u32, 2>{1600, 900});
+    CHECK(core::ui_to_pixels(100.0, 200.0, 1.0f) == std::array<f64, 2>{100.0, 200.0});
+}

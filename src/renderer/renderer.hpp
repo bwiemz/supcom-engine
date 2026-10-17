@@ -127,6 +127,7 @@ public:
     /// NVIDIA's proprietary driver), for machines without any display.
     bool init(u32 width, u32 height, const std::string& title,
               bool offscreen = false);
+    void set_offscreen_scale(f32 scale) { offscreen_scale_ = scale; }
 
     /// One-time scene upload (terrain mesh, static buffers, and the meshes
     /// of `preload`, e.g. sim::world_blueprints).
@@ -176,6 +177,7 @@ public:
 
     /// Access texture cache (for MapPreview uploads).
     TextureCache& texture_cache() { return texture_cache_; }
+    const FontCache& font_cache() const { return font_cache_; }
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -438,9 +440,13 @@ public:
     bool legacy_hud_active() const { return legacy_hud_active_; }
     u32 width() const { return window_width_; }
     u32 height() const { return window_height_; }
+    f32 ui_scale() const { return ui_scale_; }
+    u32 ui_width() const { return core::ui_extent(window_width_, window_height_, ui_scale_)[0]; }
+    u32 ui_height() const { return core::ui_extent(window_width_, window_height_, ui_scale_)[1]; }
 
-    /// Get current mouse position in screen pixels.
+    /// Get current mouse position in framebuffer pixels.
     void mouse_position(f64& x, f64& y) const;
+    void ui_mouse_position(f64& x, f64& y) const;
     /// Put `text` (UTF-8) on the desktop's clipboard (FAF's CopyToClipboard).
     /// False without a window, and offscreen, so that a scripted run never
     /// replaces what the player copied.
@@ -719,14 +725,14 @@ private:
     /// particles, then the world view's own drawing. No sky, terrain, water,
     /// meshes or other effects; the range rings and fog are in the frame.
     void record_cartographic_main(u32 fi, const std::array<f32, 16>& vp);
+    void record_view_drawing(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp);
     /// The meshes a cartographic main view draws (MeshRenderer::
     /// RenderCartographic): each group by its material's cartographic
     /// technique at this fidelity (none: not drawn), over the frame, with
     /// no lighting, shadow or terrain.
     void draw_cartographic_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp);
-    /// The screen's 2D layers over the composited scene: the strategic
-    /// icons, the overlays, the legacy HUD, FA's interface, then the profile
-    /// overlay on top.
+    /// The screen's 2D layers over the composited scene: the overlays, the
+    /// legacy HUD, FA's interface, then the profile overlay on top.
     void record_screen_layers(u32 fi);
     /// End slot `fi`'s commands, submit them and present `image_index`,
     /// delivering the captures recorded (`capturing`, `scene_capturing`)
@@ -734,11 +740,14 @@ private:
     /// counts its commands and its sequence (a UI-only frame's aren't one).
     void submit_and_present(u32 fi, u32 image_index, bool world, bool capturing,
                             bool scene_capturing);
+    void refresh_ui_scale();
 
     // GLFW
     GLFWwindow* window_ = nullptr;
     u32 window_width_ = 0;
     u32 window_height_ = 0;
+    f32 ui_scale_ = 1.0f;
+    f32 offscreen_scale_ = 1.0f;
 
     // Vulkan core
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -1005,6 +1014,8 @@ private:
     // UI 2D pipeline
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
+    VkPipeline scene_ui_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout scene_ui_layout_ = VK_NULL_HANDLE;
 
     // Shadow mapping (Moho's, M210c): the map, its depth and the blur's
     // targets (shadow_map.hpp); B of the second is the terrain's mask.

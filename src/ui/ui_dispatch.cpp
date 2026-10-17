@@ -1,6 +1,5 @@
 #include "ui/ui_dispatch.hpp"
 #include "ui/keyboard_focus.hpp"
-#include "core/cursor.hpp"
 #include "ui/ui_control.hpp"
 #include "core/game_state.hpp"
 #include "ui/console.hpp"
@@ -58,18 +57,10 @@ void UIDispatch::install_callbacks(GLFWwindow* window) {
                                            int action, int mods) {
         if (s_dispatch) s_dispatch->on_mouse_button(button, action, mods);
     });
-    // The cursor in framebuffer pixels, the UI's units (M217h: they differ
-    // from the window's on a scaled display)
-    glfwSetCursorPosCallback(window, [](GLFWwindow* w, double x, double y) {
-        if (!s_dispatch) return;
-        int ww = 0;
-        int wh = 0;
-        int fw = 0;
-        int fh = 0;
-        glfwGetWindowSize(w, &ww, &wh);
-        glfwGetFramebufferSize(w, &fw, &fh);
-        const auto p = core::to_framebuffer(x, y, ww, wh, fw, fh);
-        s_dispatch->on_cursor_pos(p[0], p[1]);
+    glfwSetCursorPosCallback(window, [](GLFWwindow*, double x, double y) {
+        if (s_dispatch) {
+            s_dispatch->on_cursor_pos(x, y);
+        }
     });
     glfwSetCharCallback(window, [](GLFWwindow*, unsigned int cp) {
         if (s_dispatch) s_dispatch->on_char(cp);

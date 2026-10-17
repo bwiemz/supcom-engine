@@ -36,19 +36,19 @@ struct MapArea {
 /// where a minimap view shows a map_w x map_h map.
 MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h);
 
-/// A minimap view drawing the cartographic frame: `rect` is the view's rect
-/// in whole pixels, the ones the UI renderer clips the view to (its Left,
-/// Top, Width and Height each truncated; at least a pixel each way), so the
-/// frame, drawn at `frame`'s size, is copied pixel for pixel. Its
-/// world rect fills that rect with the map where fit_map_area fits it (as
-/// Moho's SetMaxZoomMult(1.0) camera frames it); past the map is the
-/// frame's black. Nothing for a map with no size.
+/// A minimap view drawing the cartographic frame: `rect`, in the UI's
+/// points, spans the whole pixels the UI renderer clips the view to at
+/// `scale` (its Left, Top, Width and Height each truncated; at least a point
+/// each way), so the frame, drawn at `frame`'s size in those pixels, is
+/// copied pixel for pixel. Its world rect fills that rect with the map where
+/// fit_map_area fits it (as Moho's SetMaxZoomMult(1.0) camera frames it);
+/// past the map is the frame's black. Nothing for a map with no size.
 struct CartographicMinimap {
     MapArea rect;
     CartographicRenderer::View frame;
 };
 std::optional<CartographicMinimap> cartographic_minimap(f32 x, f32 y, f32 w, f32 h, f32 map_w,
-                                                        f32 map_h);
+                                                        f32 map_h, f32 scale = 1.0f);
 
 /// The world point under screen point (mx, my) on a minimap view `view`
 /// showing the map at `area`: false outside the view. A point in the
@@ -115,8 +115,8 @@ public:
                VkDescriptorSet cartographic = VK_NULL_HANDLE);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
-    void render(VkCommandBuffer cmd, VkPipelineLayout layout,
-                u32 viewport_w, u32 viewport_h);
+    void render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w, u32 viewport_h,
+                f32 scale = 1.0f);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

@@ -270,6 +270,29 @@ void test_resource_icon_render(TestContext& ctx) {
     t.check(scaled && icon_quad(r, *hydro, terrain, size) != nullptr,
             "Test 8: at ui_DepositIconScale 2 the icon is twice as wide about its centre, and "
             "back at 1");
+
+    OffscreenShots retina(ctx, 2.0f);
+    bool device_sized = false;
+    if (retina.ok()) {
+        retina.renderer().camera().set_free(false);
+        (void)retina.shoot(terrain, mx, mz, 300.0f);
+        device_sized = icon_quad(retina.renderer(), *mass, terrain, size) != nullptr;
+    }
+    t.check(device_sized,
+            fmt::format("Test 9: at a display scale of 2 the mass icon is still {}x{} of its "
+                        "pixels ({} icons in all)",
+                        size, size, retina.renderer().resource_icons().quads().size()));
+
+    bool composed = false;
+    if (retina.ok()) {
+        retina.renderer().set_deposit_icon_scale(2.0f);
+        retina.redraw();
+        composed = icon_quad(retina.renderer(), *mass, terrain, 2.0f * size) != nullptr;
+    }
+    t.check(composed,
+            fmt::format("Test 10: at a display scale of 2 and ui_DepositIconScale 2 the mass icon "
+                        "is {}x{} of its pixels",
+                        2.0f * size, 2.0f * size));
 }
 
 } // namespace osc::test

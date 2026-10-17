@@ -70,8 +70,8 @@ double App::Window::begin_frame() {
     osc::Profiler::instance().begin_frame();
     // A resized window: the UI's root frame follows it (M217h)
     if (renderer.take_resized()) {
-        root_width = renderer.width();
-        root_height = renderer.height();
+        root_width = renderer.ui_width();
+        root_height = renderer.ui_height();
         size_root_frame(ui_lua_state.raw(), root_width, root_height);
     }
     if (osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
@@ -345,8 +345,8 @@ void App::Window::drive_scripted_mouse() {
         if (!sim_state || !sim_state->terrain()) {
             return std::nullopt;
         }
-        const auto w = static_cast<f32>(renderer.width());
-        const auto h = static_cast<f32>(renderer.height());
+        const auto w = static_cast<f32>(renderer.ui_width());
+        const auto h = static_cast<f32>(renderer.ui_height());
         const sim::Vector3 at{
             static_cast<f32>(x),
             sim_state->terrain()->get_surface_height(static_cast<f32>(x), static_cast<f32>(z)),
@@ -377,7 +377,7 @@ void App::Window::update_ui(double dt) {
     renderer.set_ui_keys_blocked(ui_registry.key_down_blocked());
     {
         osc::f64 mx = 0, my = 0;
-        renderer.mouse_position(mx, my);
+        renderer.ui_mouse_position(mx, my);
         renderer.camera().set_mouse_enabled(!mouse_over_ui(ui_lua_state.raw(), mx, my));
     }
     if (sim_state && sim_state->has_playable_rect()) {
@@ -451,7 +451,7 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
         sync_build_ghost(*sim_state, current_command_mode, ghost_from_mode);
         input_handler.update(renderer, *sim_state, dt, [&] {
             osc::f64 mx = 0, my = 0;
-            renderer.mouse_position(mx, my);
+            renderer.ui_mouse_position(mx, my);
             return mouse_over_ui(ui_lua_state.raw(), mx, my);
         });
         if (input_handler.cursor_world()) {

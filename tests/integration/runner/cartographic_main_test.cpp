@@ -40,6 +40,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace osc::test {
 
@@ -174,6 +175,40 @@ void test_cartographic_main(TestContext& ctx) {
             "SetCartographic(true) on the main view: its camera is orthographic");
     const renderer::Renderer::SceneImage map = scene();
     t.check(r.cartographic_main(), "the frame draws the main view cartographic");
+    {
+        (void)ctx.lua_state.do_string(
+            "moho.UIWorldView.EnableResourceRendering(rawget(_G, '__osc_cm_main'), false)\n");
+        const std::vector<renderer::UIInstance> quads = r.strategic_icons().quads();
+        const renderer::Renderer::SceneImage with = scene();
+        r.set_nis_icons(false);
+        const renderer::Renderer::SceneImage without = scene();
+        r.set_nis_icons(true);
+        (void)ctx.lua_state.do_string(
+            "moho.UIWorldView.EnableResourceRendering(rawget(_G, '__osc_cm_main'), true)\n");
+        const u32 sw = r.width();
+        const u32 sh = r.height();
+        size_t changed = 0;
+        if (with.rgba.size() == static_cast<size_t>(sw) * sh * 4 &&
+            without.rgba.size() == with.rgba.size()) {
+            const auto fw = static_cast<f32>(sw);
+            const auto fh = static_cast<f32>(sh);
+            for (const renderer::UIInstance& q : quads) {
+                const auto x0 = static_cast<u32>(std::clamp(q.rect[0], 0.0f, fw));
+                const auto y0 = static_cast<u32>(std::clamp(q.rect[1], 0.0f, fh));
+                const auto x1 = static_cast<u32>(std::clamp(q.rect[0] + q.rect[2], 0.0f, fw));
+                const auto y1 = static_cast<u32>(std::clamp(q.rect[1] + q.rect[3], 0.0f, fh));
+                for (u32 py = y0; py < y1; ++py) {
+                    for (u32 px = x0; px < x1; ++px) {
+                        const size_t i = (static_cast<size_t>(py) * sw + px) * 4;
+                        changed += std::abs(with.rgba[i] - without.rgba[i]) > 0.02f ? 1 : 0;
+                    }
+                }
+            }
+        }
+        t.check(changed > 0, fmt::format("they are drawn into its scene, as the world view's "
+                                         "are: {} pixels of their quads change with them off",
+                                         changed));
+    }
 
     // The frame drawn over the camera's world rect: the zoom across, centred
     // on the focus, less Moho's shift of half a unit's worth of the view
