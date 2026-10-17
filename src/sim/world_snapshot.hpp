@@ -119,6 +119,7 @@ struct EntityRecord {
     u32 adjacent_offset = 0, adjacent_count = 0; ///< into WorldSnapshot::adjacent
     u32 weapon_range_offset = 0, weapon_range_count = 0; ///< into WorldSnapshot::weapon_ranges
     u16 script_bits = 0; ///< its toggles' script bits (Unit::script_bits)
+    u16 toggle_caps = 0; ///< Unit::toggle_cap_bits
 
     // What the UI's unit objects read (UserUnit, M191 step 3)
     bool auto_mode = false;
@@ -126,6 +127,7 @@ struct EntityRecord {
     bool overcharge_paused = false;
     bool auto_surface = false;
     bool stunned = false;
+    bool paused = false;
     bool is_dying = false;
     f32 fuel_ratio = -1;
     f32 shield_ratio = 0;

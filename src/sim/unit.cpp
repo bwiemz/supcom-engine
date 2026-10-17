@@ -26,6 +26,7 @@
 #include <initializer_list>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <spdlog/spdlog.h>
 
@@ -3676,6 +3677,22 @@ void Unit::pause(lua_State* L, bool p) {
     }
     call_lua_method(L, p ? "OnPaused" : "OnUnpaused");
     set_paused(p);
+}
+
+u16 Unit::toggle_cap_bits() const {
+    static constexpr std::array<std::string_view, 9> kToggles = {
+        "RULEUTC_ShieldToggle",  "RULEUTC_WeaponToggle",     "RULEUTC_JammingToggle",
+        "RULEUTC_IntelToggle",   "RULEUTC_ProductionToggle", "RULEUTC_StealthToggle",
+        "RULEUTC_GenericToggle", "RULEUTC_SpecialToggle",    "RULEUTC_CloakToggle"};
+    u16 bits = 0;
+    for (const std::string& cap : toggle_caps_) {
+        for (size_t i = 0; i < kToggles.size(); ++i) {
+            if (cap == kToggles[i]) {
+                bits |= static_cast<u16>(1u << i);
+            }
+        }
+    }
+    return bits;
 }
 
 void Unit::call_lua_method(lua_State* L, const char* method_name) {

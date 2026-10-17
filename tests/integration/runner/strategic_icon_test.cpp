@@ -5,9 +5,11 @@
 // once the camera is out past its mesh's IconFadeInZoom, and a blip's at any
 // zoom: generic (structure, land, naval, air) in UnidentifiedColor until the
 // unit has been seen. The runs draw ground, air, high-priority, selected; a
-// stunned unit's badge goes over its icon; a unit being built has none. On
-// dry ground away from the starts stand ARMY_1's units, all senses off but
-// a radar, and beyond them ARMY_2's, on that radar.
+// stunned unit's badge goes over its icon, as the pause badge over a
+// friendly unit's paused or switched off, which zoomed in shows alone; a
+// unit being built has none. On dry ground away from the starts stand
+// ARMY_1's units, all senses off but a radar, and beyond them ARMY_2's, on
+// that radar.
 
 #include "integration_tests.hpp"
 #include "intel_probe.hpp"
@@ -79,6 +81,8 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 picked = spawn_unit(ctx, "__osc_ic_picked", "uel0201", "ARMY_1", {sx, sz - 24});
     const u32 dazed = spawn_unit(ctx, "__osc_ic_dazed", "uel0201", "ARMY_1", {sx + 24, sz - 24});
     const u32 dying = spawn_unit(ctx, "__osc_ic_dying", "uel0201", "ARMY_1", {sx - 24, sz - 24});
+    const u32 off = spawn_unit(ctx, "__osc_ic_off", "uel0201", "ARMY_1", {sx + 24, sz + 24});
+    const u32 paused = spawn_unit(ctx, "__osc_ic_paused", "uel0105", "ARMY_1", {sx - 24, sz + 24});
     (void)spawn_unit(ctx, "__osc_ic_radar", "ueb1101", "ARMY_1", {sx, sz + 60});
     // ARMY_2's, 24 beyond the radar (it reaches 60): an engineer, a power
     // generator, an air scout (none of them ever seen), and a tank to be
@@ -87,14 +91,19 @@ void test_strategic_icons(TestContext& ctx) {
     const u32 e_gen = spawn_unit(ctx, "__osc_ic_egen", "ueb1101", "ARMY_2", {sx, sz + 84});
     const u32 e_air = spawn_unit(ctx, "__osc_ic_eair", "uea0101", "ARMY_2", {sx + 20, sz + 84});
     const u32 e_tank = spawn_unit(ctx, "__osc_ic_etank", "uel0201", "ARMY_2", {sx + 40, sz + 84});
-    run_lua(ctx,
-            "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
-            "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar} do\n"
-            "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
-            "end\n"
-            "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
-            "__osc_ic_radar:EnableIntel('Radar')\n"
-            "__osc_ic_dazed:SetStunned(100)\n");
+    run_lua(ctx, "for _, u in {__osc_ic_tank, __osc_ic_scout, __osc_ic_sacu, __osc_ic_unbuilt,\n"
+                 "              __osc_ic_picked, __osc_ic_dazed, __osc_ic_dying, __osc_ic_radar,\n"
+                 "              __osc_ic_off, __osc_ic_paused} do\n"
+                 "  u:DisableIntel('Vision') u:DisableIntel('Radar') u:DisableIntel('Omni')\n"
+                 "end\n"
+                 "__osc_ic_radar:InitIntel(1, 'Radar', 60)\n"
+                 "__osc_ic_radar:EnableIntel('Radar')\n"
+                 "__osc_ic_dazed:SetStunned(100)\n"
+                 "for _, u in {__osc_ic_off, __osc_ic_etank} do\n"
+                 "  u:AddToggleCap('RULEUTC_StealthToggle')\n"
+                 "  u:SetScriptBit('RULEUTC_StealthToggle', true)\n"
+                 "end\n"
+                 "__osc_ic_paused:SetPaused(true)\n");
     if (auto* e = ctx.sim.entity_registry().find(unbuilt); e && e->is_unit())
         static_cast<sim::Unit*>(e)->set_is_being_built(true);
     if (auto* e = ctx.sim.entity_registry().find(dying); e && e->is_unit()) {
@@ -200,6 +209,16 @@ void test_strategic_icons(TestContext& ctx) {
                 fmt::format("Test 5: the stunned tank's badge over its icon ({} icons there)",
                             at.size()));
     }
+    const std::string pause_badge = dir + "pause_rest.dds";
+    const auto badged = [&](const Frame& frame, u32 id) {
+        const auto at = icons_at(frame, id);
+        return at.size() == 2 && at[1] == at[0] + 1 && frame.icons[at[1]].texture == pause_badge &&
+               same_colour(frame.icons[at[1]], 1.0f, 1.0f, 1.0f);
+    };
+    t.check(badged(f, off) && badged(f, paused) && icons_at(f, tank).size() == 1,
+            fmt::format("Test 5b: the tank with its stealth switched off and the paused engineer "
+                        "have the pause badge over their icons ({} and {} there), the tank none",
+                        icons_at(f, off).size(), icons_at(f, paused).size()));
 
     // Test 6: FA's StrategicIconPS gives the icon's grey texels the tint
     // itself and keeps the rest: inside the tank's icon, some pixels are its
@@ -254,6 +273,8 @@ void test_strategic_icons(TestContext& ctx) {
     f = next();
     t.check(shows(f, e_tank, icon_texture(ctx, "uel0201", "rest"), army_tint(1)),
             "Test 8: the tank seen once shows its own icon, in ARMY_2's colour");
+    t.check(icons_at(f, e_tank).size() == 1,
+            "Test 8b: ARMY_2's tank, its stealth switched off too, has no pause badge");
 
     // Test 9: zoomed in, inside IconFadeInZoom: ARMY_1's units, drawn as
     // themselves, have none; the blips keep theirs.
@@ -263,6 +284,19 @@ void test_strategic_icons(TestContext& ctx) {
     t.check(icons_at(f, tank).empty() && icons_at(f, scout).empty() && !icons_at(f, e_eng).empty(),
             fmt::format("Test 9: zoomed in, the tank has no icon ({}), the blip has ({})",
                         icons_at(f, tank).size(), icons_at(f, e_eng).size()));
+    const auto badge_alone = [&](const Frame& frame, u32 id) {
+        const auto at = icons_at(frame, id);
+        return at.size() == 1 && frame.icons[at[0]].texture == pause_badge;
+    };
+    t.check(badge_alone(f, off) && badge_alone(f, paused),
+            fmt::format("Test 9b: zoomed in, the switched-off tank and the paused engineer show "
+                        "the pause badge alone ({} and {} icons there)",
+                        icons_at(f, off).size(), icons_at(f, paused).size()));
+    run_lua(ctx, "__osc_ic_off:SetScriptBit('RULEUTC_StealthToggle', false)\n"
+                 "__osc_ic_paused:SetPaused(false)\n");
+    f = next();
+    t.check(icons_at(f, off).empty() && icons_at(f, paused).empty(),
+            "Test 9c: stealth switched back on and unpaused, zoomed in, they have none");
 
     // Test 10: an objective's underlay (Unit:SetStrategicUnderlay) beneath
     // the tank's icon, at its own colour; "" takes it away.
@@ -731,7 +765,16 @@ void test_strategic_icons(TestContext& ctx) {
                     }
                     const i32 px = x0 + k * static_cast<i32>(u);
                     const i32 py = y0 + k * static_cast<i32>(v);
-                    if (px < 0 || py < 0 || px + k > static_cast<i32>(image.width) ||
+                    // An icon drawn later (a badge, a unit nearby) may lie over it.
+                    const bool covered = std::any_of(
+                        quads.begin() + static_cast<std::ptrdiff_t>(i) + 1, quads.end(),
+                        [&](const renderer::UIInstance& q) {
+                            return 2.0f * q.rect[0] < static_cast<f32>(px + k) &&
+                                   2.0f * (q.rect[0] + q.rect[2]) > static_cast<f32>(px) &&
+                                   2.0f * q.rect[1] < static_cast<f32>(py + k) &&
+                                   2.0f * (q.rect[1] + q.rect[3]) > static_cast<f32>(py);
+                        });
+                    if (covered || px < 0 || py < 0 || px + k > static_cast<i32>(image.width) ||
                         py + k > static_cast<i32>(image.height)) {
                         continue;
                     }
