@@ -175,6 +175,7 @@ constexpr Mode kModesBefore[] = {
     {"--world-fog-test", test_world_fog, false},
     {"--cartographic-main-test", test_cartographic_main, true},
     {"--playable-boundary-test", test_playable_boundary, false},
+    {"--map-border-test", test_map_border, true},
     {"--world-shapes-test", test_world_shapes, true},
     {"--skirt-render-test", test_skirt_render, false},
     {"--water-reflection-test", test_water_reflection, false},

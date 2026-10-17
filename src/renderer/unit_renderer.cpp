@@ -723,8 +723,10 @@ bool UnitRenderer::inject_mesh(const GPUMesh* mesh, const MeshInstance& instance
     grp.mesh = mesh;
     // A UI world mesh is made reflected, as every mesh instance no entity
     // made is (M213b); not an order mark, which tests no depth and would
-    // show through the reflected world.
-    grp.reflected = !is_feedback_technique(mesh->technique);
+    // show through the reflected world, nor the map's border, whose
+    // technique has no reflection stage.
+    grp.reflected =
+        !is_feedback_technique(mesh->technique) && mesh->technique != MeshTechnique::MapImager;
     grp.fading = is_blended_technique(mesh->technique);
     grp.instance_offset = total;
     grp.instance_count = 1;

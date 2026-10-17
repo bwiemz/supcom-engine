@@ -1775,6 +1775,21 @@ void main() {
                         0.2);
         return;
     }
+    if (pc.technique == 31u) {
+        // MapImagerPS0: the albedo, brightened by its alpha, lit by the sun
+        // but where the SpecTeam's blue masks it, glowing nowhere; then
+        // MapImagerPS1, the glow alone (that blue plus glowMinimum). Moho's
+        // 8-bit target saturates them.
+        float mask = texture(texSpecTeam, fragUV).b;
+        if (pc.pass == 0u) {
+            vec4 albedo = texture(texAlbedo, fragUV);
+            float shade = mix(clamp(dot(S, worldNormal), 0.0, 1.0), 1.0, mask);
+            outColor = vec4(clamp(shade * (albedo.rgb + albedo.aaa) + vec3(0.02), 0.0, 1.0), 0.0);
+        } else {
+            outColor = vec4(0.0, 0.0, 0.0, clamp(mask + 0.010, 0.0, 1.0));
+        }
+        return;
+    }
     float NdotL = dot(worldNormal, S);
     float shadow = calcShadow(fragWorldPos);
     vec3 light = computeLight(NdotL, shadow, 1.0, 1.0);

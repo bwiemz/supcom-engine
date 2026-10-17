@@ -165,6 +165,7 @@ void test_cartographic_minimap(TestContext& ctx);
 void test_world_fog(TestContext& ctx);
 void test_cartographic_main(TestContext& ctx);
 void test_playable_boundary(TestContext& ctx);
+void test_map_border(TestContext& ctx);
 void test_world_shapes(TestContext& ctx);
 /// --skirt-render-test, in skirt_render_test.cpp.
 void test_skirt_render(TestContext& ctx);

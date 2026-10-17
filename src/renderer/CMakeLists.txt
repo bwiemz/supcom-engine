@@ -46,6 +46,7 @@ add_library(osc_renderer STATIC
     beam_blueprint.cpp
     beam_renderer.cpp
     command_feedback.cpp
+    map_border.cpp
     command_graph_renderer.cpp
     world_quad_batch.cpp
     selection_renderer.cpp

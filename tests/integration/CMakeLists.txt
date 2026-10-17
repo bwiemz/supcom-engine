@@ -61,6 +61,7 @@ add_executable(osc_integration
     runner/world_fog_test.cpp
     runner/cartographic_main_test.cpp
     runner/playable_boundary_test.cpp
+    runner/map_border_test.cpp
     runner/world_shapes_test.cpp
     runner/mobile_build_start_test.cpp
     runner/drown_test.cpp
