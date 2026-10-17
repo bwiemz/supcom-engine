@@ -1504,7 +1504,7 @@ private:
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
     void begin_order(UnitCommand& cmd, lua_State* L);
-    /// Coasting, amphibious layer changes, air separation, fuel.
+    /// Coasting, amphibious layer changes, fuel.
     bool tick_after_orders(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.

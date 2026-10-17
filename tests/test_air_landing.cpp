@@ -194,6 +194,35 @@ TEST_CASE("Two aircraft idle at one spot land apart: the second keeps off the fi
     CHECK(std::sqrt(dx * dx + dz * dz) >= 2.0f); // their 2x2 places apart
 }
 
+TEST_CASE("Aircraft sent to one point all finish the move there and land", "[air_landing]") {
+    World w;
+    std::vector<Unit*> planes;
+    for (int i = 0; i < 5; ++i) {
+        planes.push_back(w.make("plane", 30.0f + 3.0f * static_cast<f32>(i), 30.0f));
+        World::move(*planes.back(), 64.0f, 64.0f);
+    }
+    std::vector<int> finished(planes.size(), -1);
+    int tick = 0;
+    const int t = w.run_until(
+        [&] {
+            for (size_t i = 0; i < planes.size(); ++i) {
+                if (finished[i] < 0 && planes[i]->command_queue().empty()) {
+                    finished[i] = tick;
+                }
+            }
+            ++tick;
+            return std::all_of(planes.begin(), planes.end(),
+                               [](const Unit* p) { return !p->is_air_unit(); });
+        },
+        800);
+    INFO("ticks " << t);
+    for (size_t i = 0; i < planes.size(); ++i) {
+        INFO("plane " << i << " finished its move at tick " << finished[i]);
+        CHECK(finished[i] >= 0);
+        CHECK_FALSE(planes[i]->is_air_unit());
+    }
+}
+
 TEST_CASE("With nowhere to land an aircraft stays up, CannotFindPlaceToLand; one that never "
           "lands idles in the air",
           "[air_landing]") {

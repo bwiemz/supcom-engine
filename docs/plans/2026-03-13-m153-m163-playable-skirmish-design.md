@@ -167,6 +167,7 @@ This also means: update the UI state's `osc_sim_state` registry pointer (defined
 - Respect playable area bounds (set by M154's SetPlayableRect)
 
 **Air unit separation (boids-style):**
+*Removed (2026-10-15): Moho has no air separation: `CUnitMotion::CalcMoveAir` looks at no neighbours and `CAiSteeringImpl` skips flying units as obstacles; aircraft overlap and spread out only as they land.*
 - Without repulsion, 50 interceptors ordered to the same point will merge into a single infinitely-dense point. FA avoids this with flocking.
 - Implement lightweight separation only (no alignment/cohesion needed): each tick, if an air unit is within separation radius (~5-10 game units) of another air unit on the same layer, add a small repulsive vector to `heading_`
 - Use the existing spatial hash grid (M66, 32u cells) for neighbor queries — O(K) per unit where K is nearby count
