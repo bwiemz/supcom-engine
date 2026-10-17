@@ -7,6 +7,7 @@
 #include "sim/game_colors.hpp"
 
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -17,6 +18,7 @@ struct lua_State;
 namespace osc::sim {
 class FrameView;
 struct ArmyRecord;
+struct EntityRecord;
 }
 
 namespace osc::renderer {
@@ -129,9 +131,15 @@ public:
     /// (between the last two ticks).
     /// `meshes_drawn` false (strategic zoom, which draws icons in their
     /// place): no instances, only each entity's mesh birth kept.
+    /// `lod_metric`: an orthographic view's LOD metric, the same for every
+    /// entity (the cartographic minimap's, minimap_meshes.hpp). Then only a
+    /// mesh whose LOD reach takes it is drawn, at the LOD it picks in place
+    /// of the eye's distance; a unit without one draws no cube, and no birth
+    /// is kept (the cartographic techniques read no time).
     void update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
                 TextureCache* tex_cache = nullptr, const Camera* camera = nullptr,
-                const Frustum* frustum = nullptr, bool meshes_drawn = true);
+                const Frustum* frustum = nullptr, bool meshes_drawn = true,
+                std::optional<f32> lod_metric = std::nullopt);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
@@ -237,6 +245,15 @@ private:
 
     // Per-frame draw groups (rebuilt each frame)
     std::vector<MeshDrawGroup> mesh_groups_;
+    /// Each entity's LOD reach, for an update at a fixed metric, by entity
+    /// id: the registry's ids run from 1 and are never reused, so a table,
+    /// each read at the entity's mesh_changes (a SetMesh reads it again).
+    /// A whole map's props then cost a look each, not a blueprint lookup.
+    struct CachedReach {
+        u32 mesh_changes = 0;
+        f32 reach = -1.0f; ///< below 0: not read
+    };
+    std::vector<CachedReach> reaches_;
 
     sim::GameColors game_colors_;
     const ReconView* recon_ = nullptr;

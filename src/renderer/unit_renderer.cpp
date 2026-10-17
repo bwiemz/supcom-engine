@@ -271,7 +271,7 @@ void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
 
 void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua_State* L,
                           TextureCache* tex_cache, const Camera* camera, const Frustum* frustum,
-                          bool meshes_drawn) {
+                          bool meshes_drawn, std::optional<f32> lod_metric) {
     mesh_groups_.clear();
     cube_instance_count_ = 0;
 
@@ -316,13 +316,26 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // depth fill and its impacts, script entities given one by SetMesh.
         const bool script_mesh = !entity.is_unit && !entity.is_prop && !entity.is_projectile;
         if (script_mesh && entity.mesh_override.empty()) return;
+        // At a fixed metric (Mesh::ComputeLOD), a mesh no LOD of which takes
+        // it shows nothing: first, before anything else is looked up
+        if (lod_metric) {
+            if (entity.id >= reaches_.size())
+                reaches_.resize(std::max<size_t>(entity.id + 1, reaches_.size() * 3 / 2));
+            CachedReach& cached = reaches_[entity.id];
+            if (cached.reach < 0.0f || cached.mesh_changes != entity.mesh_changes) {
+                const std::string& id =
+                    entity.mesh_override.empty() ? entity.blueprint_id : entity.mesh_override;
+                cached = {entity.mesh_changes, id.empty() ? 0.0f : mesh_cache.lod_reach(id, L)};
+            }
+            if (cached.reach < *lod_metric) return;
+        }
         // Outside the playable rect when the scripts last synced it.
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view): its blueprint never changes, its
         // override's changes are counted.
-        const u32 birth = births_.tick(entity.id, entity.mesh_changes, now);
+        const u32 birth = lod_metric ? 0 : births_.tick(entity.id, entity.mesh_changes, now);
         // Strategic zoom draws none: the rest is wasted (24,000 instances
         // in M223b's strategic scene)
         if (!meshes_drawn) return;
@@ -358,9 +371,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         f32 r, g, b, a;
         get_army_color(entity, view, r, g, b, a);
 
-        // Compute camera distance for LOD selection
-        f32 cam_dist = 0.0f;
-        if (camera) {
+        // Compute camera distance for LOD selection (or the view's metric)
+        f32 cam_dist = lod_metric.value_or(0.0f);
+        if (camera && !lod_metric) {
             const f32 dx = pos.x - eye_x;
             const f32 dy = pos.y - eye_y;
             const f32 dz = pos.z - eye_z;
@@ -448,7 +461,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
             }
 
             mesh_count++;
-        } else if (entity.is_unit) {
+        } else if (entity.is_unit && !lod_metric) {
             // FA draws nothing for an entity without a mesh: projectiles that
             // only carry effects (NullShell, the ACU's warp-in) and markers.
             // A unit without one is a gap worth seeing, so it stands in as a
@@ -744,6 +757,7 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     allocator_ = VK_NULL_HANDLE;
     cube_instance_count_ = 0;
     mesh_groups_.clear();
+    reaches_.clear(); // the next map's entities
 }
 
 void UnitRenderer::dump(std::ostream& out) const {

@@ -267,7 +267,7 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     vkCreateSampler(device, &sampler, nullptr, &point_);
 
     frame_pass_ = make_pass(device, depth_format, true);
-    output_pass_ = make_pass(device, depth_format, false);
+    output_pass_ = make_pass(device, depth_format, true);
     lookup_layout_ = sampler_layout(device, 3);
     frame_layout_ = sampler_layout(device, 1);
 
@@ -401,13 +401,13 @@ void CartographicRenderer::init(VkDevice device, VmaAllocator allocator, VkForma
     depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     build(terrain_vert, terrain_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, &depth, terrain_layout_,
           frame_pass_, terrain_pipeline_);
-    // Terrain_Stage1: Depth_Disable (its pass has none)
-    build(edge_vert, edge_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, nullptr, edge_layout_,
-          output_pass_, edge_pipeline_);
-    // And into the scene, for a cartographic main view: Depth_Disable over
-    // the scene's depth
+    // Terrain_Stage1: Depth_Disable, over the output's depth (which the
+    // meshes test after it); and into the scene, for a cartographic main
+    // view, over the scene's
     VkPipelineDepthStencilStateCreateInfo no_depth{};
     no_depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    build(edge_vert, edge_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, &no_depth, edge_layout_,
+          output_pass_, edge_pipeline_);
     if (scene_pass)
         build(edge_vert, edge_frag, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, &no_depth, edge_layout_,
               scene_pass, scene_edge_pipeline_);
@@ -497,9 +497,11 @@ bool CartographicRenderer::ensure_target(Target& t, u32 width, u32 height, bool 
     fb.pAttachments = frame_views.data();
     vkCreateFramebuffer(device_, &fb, nullptr, &t.frame_fb);
     if (with_output) {
+        // The frame's depth again, cleared: Stage 0 is done with it
+        const std::array<VkImageView, 2> output_views = {t.output.view, t.depth.view};
         fb.renderPass = output_pass_;
-        fb.attachmentCount = 1;
-        fb.pAttachments = &t.output.view;
+        fb.attachmentCount = 2;
+        fb.pAttachments = output_views.data();
         vkCreateFramebuffer(device_, &fb, nullptr, &t.output_fb);
     }
     if (!t.frame_fb || (with_output && !t.output_fb)) {
@@ -526,6 +528,14 @@ std::array<f32, 16> CartographicRenderer::view_proj(const View& view) const {
     return cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
                                   std::min({params_.elev_min, surface, volume_bottom_}) - 1.0f,
                                   std::max({params_.elev_max, surface, volume_top_}) + 1.0f);
+}
+
+std::array<f32, 16> CartographicRenderer::mesh_view_proj(const View& view) const {
+    const f32 surface = static_cast<f32>(surface_word_) / 128.0f;
+    return cartographic_view_proj(view.x0, view.z0, view.x1, view.z1,
+                                  std::min({params_.elev_min, surface, volume_bottom_}) - 1.0f,
+                                  std::max({params_.elev_max, surface, volume_top_}) + 1.0f +
+                                      kMeshHeadroom);
 }
 
 void CartographicRenderer::record_stage0(VkCommandBuffer cmd, const Target& t, const f32* view_proj,
@@ -568,7 +578,7 @@ void CartographicRenderer::record_stage0(VkCommandBuffer cmd, const Target& t, c
 }
 
 void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
-                                  const Overlays& overlays) {
+                                  const Overlays& overlays, const Meshes& meshes) {
     if (!prepare(fi, view.width, view.height)) return;
     const Target& t = targets_[fi];
     const auto vp = view_proj(view);
@@ -578,15 +588,17 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
     const VkViewport viewport{0.0f, 0.0f, static_cast<f32>(t.width), static_cast<f32>(t.height),
                               0.0f, 1.0f};
     const VkRect2D scissor{{0, 0}, {t.width, t.height}};
-    VkClearValue clear{};
-    clear.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    // Black, and a depth of 1 for the meshes (Moho clears the head's)
+    std::array<VkClearValue, 2> clears{};
+    clears[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clears[1].depthStencil = {1.0f, 0};
     VkRenderPassBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     begin.renderPass = output_pass_;
     begin.framebuffer = t.output_fb;
     begin.renderArea = scissor;
-    begin.clearValueCount = 1;
-    begin.pClearValues = &clear;
+    begin.clearValueCount = static_cast<u32>(clears.size());
+    begin.pClearValues = clears.data();
     vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
@@ -594,6 +606,11 @@ void CartographicRenderer::record(VkCommandBuffer cmd, u32 fi, const View& view,
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, edge_layout_, 0, 1,
                               &frame_sets_[fi], 0, nullptr);
     vkc::draw(cmd, 3, 1, 0, 0);
+    // RenderMeshes, after Stage 1
+    if (meshes) {
+        const auto mesh_vp = mesh_view_proj(view);
+        meshes(cmd, mesh_vp.data());
+    }
     vkCmdEndRenderPass(cmd);
 }
 

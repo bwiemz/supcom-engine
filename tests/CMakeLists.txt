@@ -31,6 +31,7 @@ add_executable(osc_tests
     test_primary_weapon_target.cpp
     test_command_feedback.cpp
     test_map_border.cpp
+    test_minimap_meshes.cpp
     test_seabed_layer.cpp
     test_raised_platforms.cpp
     test_favors_water.cpp

@@ -5,7 +5,20 @@
 
 namespace osc::ui {
 
+namespace {
+/// cam_DefaultMiniLOD, a global convar as Moho's is.
+f32 g_default_mini_lod = WorldView::kDefaultMiniLod;
+} // namespace
+
 WorldView::WorldView() = default;
+
+f32 WorldView::default_mini_lod() {
+    return g_default_mini_lod;
+}
+
+void WorldView::set_default_mini_lod(f32 scale) {
+    g_default_mini_lod = scale;
+}
 
 void WorldView::register_camera(const std::string& name,
                                 renderer::Camera* cam) {

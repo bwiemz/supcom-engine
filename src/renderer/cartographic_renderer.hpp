@@ -67,10 +67,16 @@ public:
     using Overlays =
         std::function<void(VkCommandBuffer cmd, const f32* view_proj, u32 width, u32 height)>;
 
+    /// What is drawn into the output after Stage 1 (Moho's RenderMeshes:
+    /// the minimap's meshes), through mesh_view_proj, over a depth cleared
+    /// to 1: given the command buffer inside the output's pass.
+    using Meshes = std::function<void(VkCommandBuffer cmd, const f32* view_proj)>;
+
     /// Both stages into frame `fi`'s targets, outside any render pass; the
     /// output ends shader-readable. Nothing without a map built. Prepares
     /// the targets at the view's size first (see prepare()).
-    void record(VkCommandBuffer cmd, u32 fi, const View& view, const Overlays& overlays = {});
+    void record(VkCommandBuffer cmd, u32 fi, const View& view, const Overlays& overlays = {},
+                const Meshes& meshes = {});
 
     /// The main view's Stage 0, and its overlays, into its frame for `fi`
     /// at `width` x `height` (the scene's), through `view_proj` (the
@@ -88,6 +94,14 @@ public:
     /// its world rect, its depth over the heights, the quad and the
     /// overlays' volumes.
     std::array<f32, 16> view_proj(const View& view) const;
+    /// The meshes' (Meshes): view_proj's, its top raised by kMeshHeadroom,
+    /// so what flies over the highest ground is not clipped away.
+    std::array<f32, 16> mesh_view_proj(const View& view) const;
+    static constexpr f32 kMeshHeadroom = 1000.0f;
+    /// The output's pass (Stage 1, then the meshes, over a depth with a
+    /// stencil where the format has one), which the meshes' pipelines are
+    /// made for.
+    VkRenderPass output_pass() const { return output_pass_; }
 
     /// The frame's pass, which the overlays' pipelines are made for (its
     /// depth has a stencil where the format does).

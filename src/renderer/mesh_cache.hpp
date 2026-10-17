@@ -7,6 +7,7 @@
 
 #include <array>
 #include <string>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -261,6 +262,13 @@ public:
     /// one), which the map's border is drawn at (MapImager::AddBorder).
     f32 mesh_uniform_scale(const std::string& mesh_bp_id, lua_State* L);
 
+    /// How far the mesh a blueprint draws with shows (lod_reach of its mesh
+    /// blueprint's LODs, minimap_meshes.hpp), cached: a unit's or prop's
+    /// Display.MeshBlueprint, or a mesh blueprint itself. 0 without one.
+    f32 lod_reach(const std::string& bp_id, lua_State* L);
+    /// A new map's blueprints: the reaches are read again.
+    void forget_reaches() { reach_cache_.clear(); }
+
     void destroy(VkDevice device, VmaAllocator allocator);
 
 private:
@@ -318,6 +326,14 @@ private:
 
     std::unordered_map<std::string, LODSet> lod_cache_;
     std::unordered_map<std::string, f32> scale_cache_;
+    std::unordered_map<std::string, f32> reach_cache_;
+    /// A mesh blueprint's LODs: each one's LODCutoff (none if it gives none)
+    /// and resolved ShaderName.
+    struct LodFields {
+        std::optional<f32> cutoff;
+        std::string shader;
+    };
+    std::vector<LodFields> read_lods(const std::string& mesh_bp_id, lua_State* L);
     std::unordered_set<std::string> failed_;
 
     VkDevice device_ = VK_NULL_HANDLE;

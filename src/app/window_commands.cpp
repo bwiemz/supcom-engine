@@ -10,6 +10,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/camera.hpp"
 #include "ui/console.hpp"
+#include "ui/world_view.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -368,6 +369,11 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
     renderer_bool("ren_bloom", true, &Renderer::bloom_enabled, &Renderer::set_bloom_enabled);
     renderer_bool("ren_PlayableBoundary", true, &Renderer::playable_boundary,
                   &Renderer::set_playable_boundary);
+    // cam_DefaultMiniLOD: the LOD scale a minimap view's camera is made with
+    // (Moho's global, read when the view is made; FAF's toggle sets it to 0)
+    ui::add_float_var(
+        console, "cam_DefaultMiniLOD", [](lua_State*) { return ui::WorldView::default_mini_lod(); },
+        [](lua_State*, f32 v) { ui::WorldView::set_default_mini_lod(v); });
     // ren_ShadowBlur: the High lane's five-tap shadows at shadow fidelity 3
     // (Moho's default on, M211m)
     const auto video_bool = [&](const char* name, bool Renderer::VideoOptions::* field) {
