@@ -16,6 +16,9 @@ namespace osc::test {
 
 void test_hull_facing(TestContext& ctx) {
     spdlog::info("=== HULL FACING TEST: slaved weapons and AttackAngle turn the hull ===");
+    // Weapons pick only what their army senses (SimState::weapons_know); this
+    // tests the weapon, not intel, so with the fog off it sees everything.
+    ctx.sim.set_fog_of_war("none");
     Tally t;
     const auto lua = [&](const char* what, const char* code) {
         auto r = ctx.lua_state.do_string(code);

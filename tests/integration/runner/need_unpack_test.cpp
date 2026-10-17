@@ -36,6 +36,9 @@ namespace osc::test {
 
 void test_need_unpack(TestContext& ctx) {
     spdlog::info("=== NEED UNPACK TEST: a deployed artillery piece packs up to move ===");
+    // Weapons pick only what their army senses (SimState::weapons_know); this
+    // tests the weapon, not intel, so with the fog off it sees everything.
+    ctx.sim.set_fog_of_war("none");
     Tally t;
     const auto spot = quiet_spot(ctx.sim);
     if (!spot) {

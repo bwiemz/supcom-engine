@@ -7603,6 +7603,9 @@ void test_targeting(TestContext& ctx) {
 // at their slew speeds and it fires once on target, from the turned muzzle.
 void test_aim(TestContext& ctx) {
     spdlog::info("=== AIM TEST: turrets turn before they fire ===");
+    // Weapons pick only what their army senses (SimState::weapons_know); this
+    // tests the weapon, not intel, so with the fog off it sees everything.
+    ctx.sim.set_fog_of_war("none");
     int pass = 0, fail = 0;
     auto lua_check = [&](const char* what, const char* code) {
         auto r = ctx.lua_state.do_string(code);
@@ -8298,6 +8301,9 @@ void test_impact(TestContext& ctx) {
 // target; a weapon that leads aims where a moving target will be.
 void test_arc(TestContext& ctx) {
     spdlog::info("=== ARC TEST: shots fly ballistic arcs ===");
+    // Weapons pick only what their army senses (SimState::weapons_know); this
+    // tests the weapon, not intel, so with the fog off it sees everything.
+    ctx.sim.set_fog_of_war("none");
     int pass = 0, fail = 0;
     auto lua_check = [&](const char* what, const char* code) {
         auto r = ctx.lua_state.do_string(code);
