@@ -196,31 +196,37 @@ void run_command_sources_test(app::Engine& e) {
 
     // Test 5: FAF's common army merges player two into player one
     // (MergeArmyPair(into, from, its commander, humanIndex), once the
-    // commander is in): the control, units and -- for one watching it --
-    // the focus go to the army merged into. (Not the commander: the engine
-    // keeps retail's ChangeUnitArmy, which FAF's exe opens to commanders,
-    // FA-Binary-Patches hooks/HTransferACUs.cpp.)
+    // commander is in): the control, units -- its commander too, which
+    // FAF's exe gives (FA-Binary-Patches hooks/HTransferACUs.cpp) -- and,
+    // for one watching it, the focus go to the army merged into.
     (void)ask_focus(2);
     const bool watched_two = lua::focus_army(uL) == 1;
-    // Player two has an engineer to hand over besides its commander
+    // Player two has an engineer to hand over besides its commander. Asked
+    // without noRestrictions, FAF's Lua keeps the commander (SimHooks.lua).
     const bool merging = static_cast<bool>(sim_lua.do_string(R"(
         local acu = ArmyBrains[2]:GetListOfUnits(categories.COMMAND, false)[1]
+        __osc_commander_kept = ChangeUnitArmy(acu, 1) == nil
         local x, y, z = unpack(acu:GetPosition())
         CreateUnitHPR('uel0105', 'ARMY_2', x + 4, y, z, 0, 0, 0)
         ForkThread(MergeArmyPair, 1, 2, acu, 1)
     )"));
+    const bool kept = truth_of(sim_lua, "__osc_commander_kept");
     for (int i = 0; i < 60 && sim.army_has_command_source(1, 1); ++i) beat(10);
     beat(2);
     const f64 left = number_of(sim_lua, "table.getn(ArmyBrains[2]:GetListOfUnits("
-                                        "categories.ALLUNITS - categories.COMMAND, false))");
+                                        "categories.ALLUNITS, false))");
     const f64 given = number_of(sim_lua, "table.getn(ArmyBrains[1]:GetListOfUnits("
                                          "categories.ENGINEER - categories.COMMAND, false))");
+    const f64 commanders = number_of(sim_lua, "table.getn(ArmyBrains[1]:GetListOfUnits("
+                                              "categories.COMMAND, false))");
     const int focus = lua::focus_army(uL);
-    t.check(watched_two && merging && left == 0 && given >= 1 && sources_of(sim, 0) == "[0, 1]" &&
-                sources_of(sim, 1) == "[0]" && focus == 0,
-            fmt::format("Test 5: merged: player one's army {} with {} engineers, player two's "
-                        "{} with {} units left, focus {} (was on two {})",
-                        sources_of(sim, 0), given, sources_of(sim, 1), left, focus, watched_two));
+    t.check(watched_two && merging && kept && left == 0 && given >= 1 && commanders == 2 &&
+                sources_of(sim, 0) == "[0, 1]" && sources_of(sim, 1) == "[0]" && focus == 0,
+            fmt::format("Test 5: merged: player one's army {} with {} engineers and {} "
+                        "commanders (kept when asked plainly {}), player two's {} with {} units "
+                        "left, focus {} (was on two {})",
+                        sources_of(sim, 0), given, commanders, kept, sources_of(sim, 1), left,
+                        focus, watched_two));
 
     // Test 6: union control upon disconnect: player one drops; player two's
     // old army, left with no player, is abandoned, and FAF's brain shares it

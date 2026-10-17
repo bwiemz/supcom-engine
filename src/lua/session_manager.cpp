@@ -1,6 +1,7 @@
 #include "lua/session_manager.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/mp_net_state.hpp"
 #include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/game_colors.hpp"
@@ -86,15 +87,6 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
             no_rush_minutes = option_as_number(value);
         } else if (key == "NoRushRadius") {
             no_rush_radius = option_as_number(value);
-        } else if (key == "CommonArmy") {
-            // FAF values: Off / Union / Common / UnionWhenDisconnected. Any of
-            // the sharing variants pools the allied economy ("Off"/false do not).
-            const std::string& v = value.string_value;
-            bool on = (value.type == GameOptionValue::Type::Boolean && value.bool_value) ||
-                      (value.type == GameOptionValue::Type::String &&
-                       v != "Off" && v != "off" && v != "false" && v != "none" &&
-                       !v.empty());
-            sim.set_common_army(on);
         } else if (key == "TeamShareOverflow" && value.type == GameOptionValue::Type::String) {
             // FAF values: 'enabled' / 'disabled'. Enable only when explicitly on.
             const std::string& v = value.string_value;
@@ -462,16 +454,23 @@ Result<void> SessionManager::start_session(LuaState& state,
     }
 
     // Each player's army takes its player's commands, before BeginSession
-    // (where FAF's union and common armies share them out). The players'
-    // command sources are numbered by their armies' order -- a lobby's
-    // owners by slot, its observers after them -- as Moho's launch gives
-    // each army its unit sources, and as FAF's scripts count them
-    // (simInit's humanIndex).
+    // (where FAF's union and common armies share them out), as Moho's
+    // launch gives each army its unit sources. A lobby's game takes the
+    // lobby's: each army its owner's source, numbered by slot, the
+    // observers after (the sources its peers' frames carry). Otherwise
+    // the players' armies are numbered in order, as FAF's scripts count
+    // them (simInit's humanIndex), and as a lobby numbers them too.
     sim.begin_command_sources();
-    u32 next_source = 0;
-    for (size_t i = 0; i < army_limit; i++)
-        if (is_human_army(static_cast<int>(i), armies[i]))
-            sim.set_command_source(static_cast<i32>(i), next_source++, true);
+    if (const MpNetState& mp = mp_net_state(); mp.transport_ready) {
+        for (size_t i = 0; i < army_limit; i++)
+            if (const i32 source = mp.source_of_army(static_cast<i32>(i)); source >= 0)
+                sim.set_command_source(static_cast<i32>(i), static_cast<u32>(source), true);
+    } else {
+        u32 next_source = 0;
+        for (size_t i = 0; i < army_limit; i++)
+            if (is_human_army(static_cast<int>(i), armies[i]))
+                sim.set_command_source(static_cast<i32>(i), next_source++, true);
+    }
 
     // Step 5: Call BeginSession()
     spdlog::info("  Calling BeginSession()...");

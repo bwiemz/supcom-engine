@@ -27,6 +27,7 @@ void MpNetState::reset() {
     lobby_game = nullptr;
     lobby_transport.reset();
     source_armies.clear();
+    army_sources.clear();
     clients.clear();
     transport_ready = false;
 }
@@ -36,6 +37,10 @@ osc::i32 MpNetState::army_of(osc::u32 source) const {
     return source < source_armies.size() ? source_armies[source] : -1;
 }
 
+osc::i32 MpNetState::source_of_army(osc::i32 army) const {
+    return army >= 0 && static_cast<size_t>(army) < army_sources.size() ? army_sources[army] : -1;
+}
+
 MpNetState& mp_net_state() {
     static MpNetState s;
     return s;
@@ -43,13 +48,24 @@ MpNetState& mp_net_state() {
 
 void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport,
                          osc::u32 local_source, std::vector<osc::i32> armies,
-                         std::vector<SessionClient> clients, osc::u64 seed) {
+                         std::vector<SessionClient> clients, osc::u64 seed,
+                         std::vector<osc::i32> army_sources) {
     auto& s = mp_net_state();
     s.reset(); // any game set up before goes
     s.local_source = local_source;
     s.all_sources.clear();
     for (osc::u32 source = 0; source < armies.size(); ++source) s.all_sources.push_back(source);
     s.source_armies = std::move(armies);
+    if (army_sources.empty()) {
+        for (osc::u32 source = 0; source < s.source_armies.size(); ++source) {
+            const osc::i32 army = s.source_armies[source];
+            if (army < 0) continue;
+            if (static_cast<size_t>(army) >= army_sources.size())
+                army_sources.resize(static_cast<size_t>(army) + 1, -1);
+            army_sources[static_cast<size_t>(army)] = static_cast<osc::i32>(source);
+        }
+    }
+    s.army_sources = std::move(army_sources);
     s.seed = seed;
     s.clients = std::move(clients);
     s.lobby_game = transport.get();

@@ -1803,7 +1803,7 @@ void distribute_overflow(std::vector<ResourceState*>& res, f64 pool) {
 } // namespace
 
 void SimState::share_team_economy() {
-    if (!common_army_ && !team_share_overflow_) return;
+    if (!team_share_overflow_) return;
     PROFILE_ZONE("Sim::share_econ");
     for (const auto& team : alliance_teams()) {
         if (team.size() < 2) continue;
@@ -1816,37 +1816,20 @@ void SimState::share_team_economy() {
         }
         if (members.size() < 2) continue;
 
-        if (common_army_) {
-            // Full pool: every member ends at the same storage fill ratio.
-            f64 mass_pool = 0.0, mass_cap = 0.0;
-            f64 energy_pool = 0.0, energy_cap = 0.0;
-            for (auto* b : members) {
-                mass_pool += b->economy().mass.stored;
-                mass_cap += b->economy().mass.max_storage;
-                energy_pool += b->economy().energy.stored;
-                energy_cap += b->economy().energy.max_storage;
-            }
-            for (auto* b : members) {
-                auto& econ = b->economy();
-                if (mass_cap > 0.0)
-                    econ.mass.stored = mass_pool * (econ.mass.max_storage / mass_cap);
-                if (energy_cap > 0.0)
-                    econ.energy.stored = energy_pool * (econ.energy.max_storage / energy_cap);
-            }
-        } else {
-            // Overflow only: resources members would waste at full storage flow
-            // to allies with room.
-            f64 mass_overflow = 0.0, energy_overflow = 0.0;
-            std::vector<ResourceState*> mass_res, energy_res;
-            for (auto* b : members) {
-                mass_overflow += b->economy().mass.overflow;
-                energy_overflow += b->economy().energy.overflow;
-                mass_res.push_back(&b->economy().mass);
-                energy_res.push_back(&b->economy().energy);
-            }
-            distribute_overflow(mass_res, mass_overflow);
-            distribute_overflow(energy_res, energy_overflow);
+        // Resources members would waste at full storage flow to allies with
+        // room. Allies keep their own reserves otherwise: Moho has no pool
+        // (FAF's Union keeps each player's resources; its Common army is one
+        // army, merged by its scripts).
+        f64 mass_overflow = 0.0, energy_overflow = 0.0;
+        std::vector<ResourceState*> mass_res, energy_res;
+        for (auto* b : members) {
+            mass_overflow += b->economy().mass.overflow;
+            energy_overflow += b->economy().energy.overflow;
+            mass_res.push_back(&b->economy().mass);
+            energy_res.push_back(&b->economy().energy);
         }
+        distribute_overflow(mass_res, mass_overflow);
+        distribute_overflow(energy_res, energy_overflow);
     }
 }
 

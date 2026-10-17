@@ -171,7 +171,6 @@ add_executable(osc_tests
     test_checksum_coverage.cpp
     test_sha256.cpp
     test_platform_secrets.cpp
-    test_common_army.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp
     test_lockstep.cpp

@@ -95,24 +95,23 @@ TEST_CASE("Overflow is not shared with enemies", "[shareoverflow]") {
     CHECK_THAT(mass(sim, 1), WithinAbs(0.0, 1e-6));
 }
 
-TEST_CASE("Common Army takes precedence over overflow sharing", "[shareoverflow]") {
+TEST_CASE("Allies keep their own reserves: only overflow moves", "[shareoverflow]") {
+    // Moho has no pooled economy (FAF's Union keeps each player's resources).
     LuaGuard g;
     SimState sim(g.L, nullptr);
     sim.set_victory_condition("sandbox");
-    sim.set_common_army(true);
     sim.set_team_share_overflow(true);
     sim.add_army("ARMY_1", "ARMY_1");
-    sim.get_army(0)->set_extra_storage(200.0, 200.0); // storage to pool in
+    sim.get_army(0)->set_extra_storage(200.0, 200.0);
     sim.add_army("ARMY_2", "ARMY_2");
-    sim.get_army(1)->set_extra_storage(200.0, 200.0); // storage to pool in
+    sim.get_army(1)->set_extra_storage(200.0, 200.0);
     sim.set_alliance(0, 1, Alliance::Ally);
-    sim.get_army(0)->set_stored_resources(200.0, 0.0);
+    sim.get_army(0)->set_stored_resources(200.0, 0.0); // full, but producing nothing
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
 
     sim.tick();
-    // Full pool (100/100), not the overflow path.
-    CHECK_THAT(mass(sim, 0), WithinAbs(100.0, 1e-6));
-    CHECK_THAT(mass(sim, 1), WithinAbs(100.0, 1e-6));
+    CHECK_THAT(mass(sim, 0), WithinAbs(200.0, 1e-6));
+    CHECK_THAT(mass(sim, 1), WithinAbs(0.0, 1e-6));
 }
 
 TEST_CASE("Overflow distribution is capped by available room", "[shareoverflow]") {

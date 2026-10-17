@@ -189,7 +189,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
 
 - Multiplayer beyond LAN basics: LAN lockstep works (lobby handshake, command routing, desync detection, peer drop), but pipelined command delay, slot/faction sync over the wire, LAN discovery, cross-OS determinism and FAF client integration remain (see `docs/ROADMAP.md`, Phases D and G)
 - Retail (non-FAF) FA data boots and simulates, but some retail-only engine API and the retail front end are still missing (`docs/ROADMAP.md`, Phase B)
-- Some lobby options are parsed but not yet enforced in C++: difficulty-tier cheat multipliers (consumed by FA's AI Lua), PrebuiltUnits (NoRush, CommonArmy shared economy, TeamShareOverflow, and per-army handicap are now enforced)
+- Some lobby options are parsed but not yet enforced in C++: difficulty-tier cheat multipliers (consumed by FA's AI Lua), PrebuiltUnits (NoRush, TeamShareOverflow, and per-army handicap are now enforced; FAF's CommonArmy is its scripts', over the armies' command sources)
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites

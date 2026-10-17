@@ -627,6 +627,7 @@ std::optional<size_t> ffa_army_count(lua_State* L, int info) {
 struct LaunchSources {
     std::vector<u32> owners;        ///< source s's owner (a lobby uid)
     std::vector<i32> armies;        ///< source s's army (-1: an observer's)
+    std::vector<i32> army_sources;  ///< army a's command source (-1: none, an AI's)
     std::vector<std::string> names; ///< source s's PlayerName in the config
     size_t players = 0;             ///< PlayerOptions' entries, AIs too
 };
@@ -691,11 +692,17 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
     out.players = players.size();
     // The armies are the slots taken, in order (Moho's: players in slots 1
     // and 5 play armies 0 and 1); a slot that is no number plays none
+    // Each army takes its owner's commands (Moho's ArmyLaunchInfo
+    // mUnitSources): an owner of two slots commands both, an AI's none
     i32 army = 0;
     for (const Entry& e : players) {
         const bool slot = e.key != std::numeric_limits<double>::infinity();
         if (e.human && e.owned) add(e.owner, slot ? army : -1, e.name);
-        if (slot) ++army;
+        if (!slot) continue;
+        const auto owner = std::find(out.owners.begin(), out.owners.end(), e.owner);
+        out.army_sources.push_back(e.human && e.owned ? static_cast<i32>(owner - out.owners.begin())
+                                                      : -1);
+        ++army;
     }
     for (const Entry& e : read("Observers"))
         if (e.owned) add(e.owner, -1, e.name);
@@ -776,7 +783,7 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
     }
     mp_begin_lobby_game(
         std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), local,
-        sources.armies, std::move(clients), seed);
+        sources.armies, std::move(clients), seed, sources.army_sources);
     // The session, as single-player's starts: the frame loop loads it
     lua_pushvalue(L, 2);
     if (lua_pcall(L, 1, 0, 0) != 0) {
