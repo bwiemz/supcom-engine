@@ -688,9 +688,17 @@ static int entity_SetFractionComplete(lua_State* L) {
     return 0;
 }
 
+static u32 launcher_of(const sim::Entity& e) {
+    if (e.is_projectile()) {
+        return static_cast<const sim::Projectile&>(e).launcher_id;
+    }
+    return e.entity_id();
+}
+
 // entity:CreateProjectile(bp, offX, offY, offZ, dirX, dirY, dirZ): a
 // projectile at the entity's centre plus the offset (each may be nil),
-// launched by it. A direction points it, at its blueprint's InitialSpeed.
+// launched by it, or by its launcher if it is a projectile (faf-re
+// Projectile::Projectile). A direction points it, at its blueprint's InitialSpeed.
 static int entity_CreateProjectile(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
@@ -705,7 +713,7 @@ static int entity_CreateProjectile(lua_State* L) {
                         at.y + static_cast<f32>(luaL_optnumber(L, 4, 0)),
                         at.z + static_cast<f32>(luaL_optnumber(L, 5, 0))});
     proj->set_army(e->army());
-    proj->launcher_id = e->entity_id();
+    proj->launcher_id = launcher_of(*e);
     apply_script_projectile_physics(L, *proj);
     if (lua_isnumber(L, 6) && lua_isnumber(L, 7) && lua_isnumber(L, 8)) {
         aim_projectile(L, sim, *proj,
@@ -737,7 +745,7 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     proj->set_blueprint_id(lowercase_arg(L, 2));
     proj->set_position(bone_world_position(e, bone_idx));
     proj->set_army(e->army());
-    proj->launcher_id = e->entity_id();
+    proj->launcher_id = launcher_of(*e);
     apply_script_projectile_physics(L, *proj);
     const auto* bd = e->bone_data();
     const sim::Quaternion model_rot =
