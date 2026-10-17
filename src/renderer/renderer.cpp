@@ -2906,8 +2906,8 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
             static_cast<u32>(formation_ghosts_.size()) +
             static_cast<u32>(feedback_blips_.blips().size()) +
             static_cast<u32>(world_meshes.size()) + static_cast<u32>(border_meshes.size()));
-        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, selected_ids,
-                              &frustum, meshes_drawn);
+        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_, &frustum,
+                              meshes_drawn);
     }
     // A bone SSBO the update grew is a new buffer for this slot's set.
     if (bone_ds_[fi] && bone_ds_generation_[fi] != unit_renderer_.bone_ssbo_generation(fi))
