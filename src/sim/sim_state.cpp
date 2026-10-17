@@ -813,7 +813,7 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
         auto* unit = static_cast<Unit*>(e);
         if (cmd.type == CommandType::Stop && clear_existing) {
             stop_unit(*unit);
-        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd)) {
+        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd, clear_existing)) {
             if (clear_existing) {
                 unit->clear_commands(entity_registry_, L_);
                 if (unit->destroyed()) {
@@ -862,9 +862,17 @@ bool boards(const EntityRegistry& registry, const Unit& unit, u32 target_id) {
 
 } // namespace
 
-bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
+bool SimState::takes_command(const Unit& unit, const UnitCommand& command,
+                             bool clear_existing) const {
     if (unit.is_being_built() && !unit.takes_orders_unfinished()) {
         return false;
+    }
+    if (clear_existing && command.type != CommandType::Stop && unit.has_unit_state("Enhancing")) {
+        return false;
+    }
+    if (command.type == CommandType::Move || command.type == CommandType::Patrol ||
+        command.type == CommandType::AggressiveMove) {
+        return unit.motion_type() != "RULEUMT_None";
     }
     if (command.type == CommandType::BuildMobile || command.type == CommandType::BuildFactory) {
         return unit.has_category("FACTORY") || unit.has_category("ENGINEER") ||
@@ -1035,7 +1043,8 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
                 continue;
             }
             if (cmd.type == CommandType::SiloBuildNuke ||
-                cmd.type == CommandType::SiloBuildTactical || !takes_command(*unit, cmd)) {
+                cmd.type == CommandType::SiloBuildTactical ||
+                !takes_command(*unit, cmd, scheduled.clear_existing)) {
                 continue;
             }
             if (scheduled.clear_existing) {
@@ -1426,7 +1435,7 @@ void SimState::dispatch_due_commands() {
             }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            if (!takes_command(*unit, cmd)) continue;
+            if (!takes_command(*unit, cmd, sc.clear_existing)) continue;
             if (sc.clear_existing) {
                 unit->clear_commands(entity_registry_, L_);
                 if (unit->destroyed()) {
