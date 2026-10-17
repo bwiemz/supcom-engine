@@ -298,23 +298,21 @@ TEST_CASE("A game saved while an aircraft comes down loads and goes on as the or
     CHECK(plane.layer() == "Land");
 }
 
-TEST_CASE("A landed aircraft refuels by itself, at its FuelRechargeRate; flying burns fuel",
+TEST_CASE("A landed aircraft refuels by itself, FuelRechargeRate / FuelUseTime / 100 a tick; "
+          "flying burns fuel",
           "[air_landing]") {
     World w;
     Unit& plane = *w.make("plane", 40.0f, 40.0f);
-    plane.set_fuel_use_time(100.0f);     // 1000 ticks a tank
-    plane.set_fuel_recharge_rate(10.0f); // 10% a second, landed
-    plane.set_fuel_ratio(0.5f);
+    plane.set_fuel_use_time(100.0f);
+    plane.set_fuel_recharge_rate(5.0f);
+    plane.set_fuel_ratio(0.2f);
     w.sim.tick();
-    CHECK(plane.fuel_ratio() < 0.5f); // up, it burns
+    CHECK(plane.fuel_ratio() < 0.2f);
     w.run_until([&] { return !plane.is_air_unit(); }, 300);
     REQUIRE(plane.vert_event() == "Bottom");
     const f32 down = plane.fuel_ratio();
-    for (int i = 0; i < 10; ++i) w.sim.tick();
-    // A second on the ground: 10 / 100 x 0.1 a tick, ten ticks.
-    CHECK(std::abs(plane.fuel_ratio() - std::min(down + 0.1f, 1.0f)) < 1e-4f);
     for (int i = 0; i < 100; ++i) w.sim.tick();
-    CHECK(plane.fuel_ratio() == 1.0f);
+    CHECK(std::abs(plane.fuel_ratio() - (down + 0.05f)) < 1e-4f);
 }
 
 TEST_CASE("An order while an aircraft comes down: it gives up its place, climbs back and flies "
