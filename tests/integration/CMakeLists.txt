@@ -77,6 +77,7 @@ add_executable(osc_integration
     runner/skirt_render_test.cpp
     runner/gpu_pass_timing_test.cpp
     runner/shield_render_test.cpp
+    runner/viz_render_test.cpp
     runner/mesh_capacity_test.cpp
     runner/water_reflection_test.cpp
     runner/refract_render_test.cpp

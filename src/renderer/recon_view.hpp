@@ -47,6 +47,18 @@ public:
         return focus_ < 0 || army == focus_ ||
                (army >= 0 && army < 32 && (allies_ >> army & 1u) != 0);
     }
+    /// Whether `e`'s script hides it from the player (SetVizToFocusPlayer,
+    /// ...Allies, ...Enemies, ...Neutrals 'Never'): by the player's tie to
+    /// its army, its own player's mode for an observer, an army-less
+    /// entity's neutrals' (FAF's ShieldCollider, the box that falls with a
+    /// crashing aircraft, hides itself from all four).
+    bool viz_never(const sim::EntityRecord& e) const {
+        int relation = 2; // an enemy's (no alliance tells a neutral here)
+        if (e.army < 0) relation = 3;
+        else if (focus_ < 0 || e.army == focus_) relation = 0;
+        else if (e.army < 32 && (allies_ >> e.army & 1u) != 0) relation = 1;
+        return e.viz_to(relation) == sim::VizMode::NEVER;
+    }
 
     /// Bring the sights up to the view's newest tick (a tick seen already is
     /// skipped). `flushes`, the FlushIntelInRects since the last update:

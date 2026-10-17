@@ -25,6 +25,7 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 
 
 
+
 | Golden captures (`ctest -L golden`) | <!-- metric:golden_tests -->7<!-- /metric --> pixel comparisons at 0.1%: FA's game interface at frame 600 (with and without the minimap), retail's skirmish lobby and its map list, and a mouse held through the window's input (`--mouse`): a wall dragged out, and a drag formation settled. |
 | Two-process MP tests (`ctest -L mp`, data-free) | <!-- metric:mp_tests -->5<!-- /metric --> |
 | Architecture checks (`ctest -L arch`) | <!-- metric:arch_tests -->22<!-- /metric -->: no library cycle or layer reaching up; every serialized type's fields in its serializer; the blueprint-field, Lua-stub, retail-hook and shader-name baselines; every blueprint lookup through one owner; this document's metrics. |

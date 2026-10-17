@@ -86,6 +86,16 @@ struct EntityRecord {
     bool is_wreckage = false;
 
     i32 army = -1;
+    /// Who is shown it (Moho's SetVizToFocusPlayer, ...Allies, ...Enemies,
+    /// ...Neutrals): a VizMode each, two bits apiece in that order; Intel
+    /// for all by default.
+    u8 viz = kVizDefault;
+    static constexpr u8 kVizDefault = 0x55;
+    /// The VizMode for its own army's player (0), allies (1), enemies (2),
+    /// neutrals (3).
+    VizMode viz_to(int relation) const {
+        return static_cast<VizMode>((viz >> (relation * 2)) & 3u);
+    }
     // (interned: a record is plain memory, copied whole each tick)
     InternedString blueprint_id;
     InternedString mesh_override;

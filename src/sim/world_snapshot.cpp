@@ -434,6 +434,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
             } else {
                 slot = &next_record(out.entities, entities);
 
+
             }
             EntityRecord& r = *slot;
             r.id = e.entity_id();

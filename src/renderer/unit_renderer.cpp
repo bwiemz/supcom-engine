@@ -335,6 +335,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         }
         // Outside the playable rect when the scripts last synced it.
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
+        // What its script hides from the player (SetVizTo...('Never')).
+        if (recon_ ? recon_->viz_never(entity) : entity.viz_to(0) == sim::VizMode::NEVER) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view): its blueprint never changes, its
