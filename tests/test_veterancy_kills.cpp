@@ -39,6 +39,8 @@ struct KillWorld {
                  " Economy = {BuildCostMass = 56}}",
                  "{BlueprintId = 'wall', Categories = {'BENIGN'}, Defense = {MaxHealth = 100},"
                  " Economy = {BuildCostMass = 56}}",
+                 "{BlueprintId = 'plane', Categories = {'AIR'}, Defense = {MaxHealth = 100},"
+                 " Physics = {FuelUseTime = 100}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -60,8 +62,9 @@ struct KillWorld {
                     .ok());
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const auto& [id, cls] : {std::pair{"tank", "Plain"}, std::pair{"wall", "Plain"},
-                                      std::pair{"scripted", "Scripted"}}) {
+        for (const auto& [id, cls] :
+             {std::pair{"tank", "Plain"}, std::pair{"wall", "Plain"}, std::pair{"plane", "Plain"},
+              std::pair{"scripted", "Scripted"}}) {
             lua_pushstring(L, id);
             lua_getglobal(L, cls);
             lua_rawset(L, -3);
@@ -134,6 +137,26 @@ TEST_CASE("GetRolloverInfo reports the unit's KILLS", "[veterancy][ui]") {
     REQUIRE(w.check("killer = CreateUnit('tank', 1, 0, 0, 0) killer:SetStat('KILLS', 4)"));
     input.set_selected({w.unit("killer")->entity_id()});
     CHECK(w.check("assert(GetRolloverInfo().kills == 4, 'kills ' .. GetRolloverInfo().kills)"));
+}
+
+TEST_CASE("GetRolloverInfo reports the unit's fuel ratio, and -1 for a unit without fuel", "[ui]") {
+    KillWorld w;
+    w.state.set_blueprint_store(&w.store);
+    osc::lua::register_user_bindings(w.state);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(w.check(R"(
+        plane = CreateUnit('plane', 1, 0, 0, 0)
+        plane:SetFuelRatio(0.25)
+        tank = CreateUnit('tank', 1, 5, 0, 0)
+    )"));
+    input.set_selected({w.unit("plane")->entity_id()});
+    CHECK(w.check("assert(GetRolloverInfo().fuelRatio == 0.25, GetRolloverInfo().fuelRatio)"));
+    input.set_selected({w.unit("tank")->entity_id()});
+    CHECK(w.check("assert(GetRolloverInfo().fuelRatio == -1, GetRolloverInfo().fuelRatio)"));
 }
 
 TEST_CASE("GetRolloverInfo tells only a blip's army, and a seen one's blueprint but no stats",
