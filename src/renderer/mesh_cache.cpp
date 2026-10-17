@@ -1,4 +1,6 @@
 #include "renderer/mesh_cache.hpp"
+#include "renderer/cartographic_technique.hpp"
+#include "renderer/minimap_meshes.hpp"
 #include "sim/scm_parser.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -256,6 +258,61 @@ f32 MeshCache::mesh_uniform_scale(const std::string& mesh_bp_id, lua_State* L) {
     const std::string id = resolve_mesh_bp_id(mesh_bp_id, L);
     const f32 scale = id.empty() ? 0.0f : read_mesh_number(id, "UniformScale", L);
     return scale > 0.0f ? scale : 1.0f;
+}
+
+std::vector<MeshCache::LodFields> MeshCache::read_lods(const std::string& mesh_bp_id,
+                                                       lua_State* L) {
+    std::vector<LodFields> lods;
+    if (!L) return lods;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, mesh_bp_id.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "LODs");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                for (int i = 1;; ++i) {
+                    lua_rawgeti(L, -1, i);
+                    if (!lua_istable(L, -1)) {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    LodFields lod;
+                    lua_pushstring(L, "LODCutoff");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1)) lod.cutoff = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "ShaderName");
+                    lua_rawget(L, -2);
+                    lod.shader = resolve_shader_name(
+                        lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "");
+                    lua_pop(L, 2); // ShaderName, the LOD
+                    lods.push_back(std::move(lod));
+                }
+            }
+            lua_pop(L, 1); // LODs
+        }
+        lua_pop(L, 1); // the mesh blueprint
+    }
+    lua_pop(L, 1); // __blueprints
+    return lods;
+}
+
+f32 MeshCache::lod_reach(const std::string& bp_id, lua_State* L) {
+    if (auto it = reach_cache_.find(bp_id); it != reach_cache_.end()) return it->second;
+    const std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
+    std::vector<std::optional<f32>> cutoffs;
+    if (!mesh_bp_id.empty()) {
+        const std::vector<LodFields> lods = read_lods(mesh_bp_id, L);
+        cutoffs.reserve(lods.size());
+        for (const LodFields& lod : lods) cutoffs.push_back(lod.cutoff);
+    }
+    const f32 reach = renderer::lod_reach(cutoffs);
+    // Not cached without a state to read the blueprints from
+    if (L) reach_cache_.emplace(bp_id, reach);
+    return reach;
 }
 
 bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
@@ -906,6 +963,7 @@ void MeshCache::destroy(VkDevice device, VmaAllocator allocator) {
     lod_cache_.clear();
     failed_.clear();
     scale_cache_.clear();
+    forget_reaches();
 }
 
 } // namespace osc::renderer

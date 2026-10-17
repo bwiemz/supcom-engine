@@ -242,6 +242,23 @@ public:
         const auto i = static_cast<size_t>(technique);
         return i < cartographic_mesh_draws_.size() ? cartographic_mesh_draws_[i] : 0;
     }
+    /// FAF's patched game (its data in use): while cam_DefaultMiniLOD is 0
+    /// the cartographic minimap draws no meshes (FA-Binary-Patches
+    /// MinimapMesh.cpp), as FAF's minimap toggle has it.
+    void set_faf_exe(bool on) { faf_exe_ = on; }
+    /// The cartographic minimap's meshes the last frame (minimap_meshes.hpp):
+    /// whether they were gathered (not without a cartographic minimap, or
+    /// with FAF's toggle off), the minimap camera's LOD metric, the instances
+    /// gathered, and the passes drawn with `technique`.
+    bool minimap_meshes_gathered() const { return minimap_meshes_gathered_; }
+    f32 minimap_lod_metric() const { return minimap_lod_metric_; }
+    u32 minimap_mesh_instances() const;
+    u32 minimap_mesh_draws(CartographicTechnique technique) const {
+        const auto i = static_cast<size_t>(technique);
+        return i < minimap_mesh_draws_.size() ? minimap_mesh_draws_[i] : 0;
+    }
+    /// The minimap's gathered meshes, in their groups (tests read them).
+    const UnitRenderer& minimap_units() const { return minimap_units_; }
     /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
     /// M212f).
     f32 terrain_time() const { return terrain_time_.value(); }
@@ -310,10 +327,12 @@ public:
     /// Draw `terrain`'s cartographic frame for `view` now, outside any frame,
     /// built from its heights as they are, and read both stages back (tests
     /// of the port). Nothing without a device, or before the texture cache is
-    /// up (a scene built, or init_ui_caches).
+    /// up (a scene built, or init_ui_caches). `with_meshes`: the output takes
+    /// the minimap's meshes the last frame gathered too (draw_minimap_meshes).
     std::optional<CartographicImages>
     capture_cartographic(const map::Terrain& terrain, const CartographicRenderer::View& view,
-                         const CartographicOverlayInput* overlays = nullptr);
+                         const CartographicOverlayInput* overlays = nullptr,
+                         bool with_meshes = false);
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -731,6 +750,28 @@ private:
     /// technique at this fidelity (none: not drawn), over the frame, with
     /// no lighting, shadow or terrain.
     void draw_cartographic_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp);
+    /// The cartographic minimap's (RenderMeshes after Stage 1), into its
+    /// output: what update_minimap_meshes gathered for slot `fi`.
+    void draw_minimap_meshes(VkCommandBuffer cmd, u32 fi, const f32* view_proj);
+    /// Either's groups, each by its cartographic technique at this
+    /// fidelity, `draws` counting the passes.
+    void draw_cartographic_groups(VkCommandBuffer cmd, const UnitRenderer& units,
+                                  VkDescriptorSet bones,
+                                  const std::array<VkPipeline, kCartographicMeshStates>& pipelines,
+                                  VkPipelineLayout layout, const f32* view_proj,
+                                  std::array<u32, 7>& draws);
+    /// The minimap's meshes for this frame (Cartographic::RenderMeshes'
+    /// Batch through its camera): every entity whose mesh reaches the
+    /// camera's LOD metric, its view's width times the LOD scale the view
+    /// was made with. None when FAF's toggle turns them off.
+    void update_minimap_meshes(const sim::FrameView& view, lua_State* L, u32 fi);
+    /// The cartographic mesh pipeline for `state` in `pass` (the scene's,
+    /// or the minimap output's).
+    VkPipeline build_cartographic_mesh_pipeline(VkShaderModule cv, VkShaderModule cf,
+                                                CartographicMeshState state, VkRenderPass pass,
+                                                VkPipelineLayout* layout);
+    /// The minimap's set of them, once the cartographic renderer is made.
+    void create_minimap_mesh_pipelines();
     /// The screen's 2D layers over the composited scene: the overlays, the
     /// legacy HUD, FA's interface, then the profile overlay on top.
     void record_screen_layers(u32 fi);
@@ -829,6 +870,11 @@ private:
     std::array<u32, 32> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
+    /// The cartographic minimap's mesh pipelines (its output's pass), and
+    /// its passes drawn last frame
+    std::array<VkPipeline, kCartographicMeshStates> minimap_mesh_pipelines_{};
+    std::array<VkPipelineLayout, kCartographicMeshStates> minimap_mesh_layouts_{};
+    std::array<u32, 7> minimap_mesh_draws_{};
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
     // The glowing and glow-mask decals' (M212d): decal_layout_'s sets and push
@@ -863,6 +909,10 @@ private:
     u32 bone_ds_generation_[FRAMES_IN_FLIGHT] = {};
     /// Point slot `fi`'s bone set at the unit renderer's SSBO for that slot.
     void write_bone_descriptor(u32 fi);
+    /// The minimap's units' bone sets, likewise.
+    VkDescriptorSet minimap_bone_ds_[FRAMES_IN_FLIGHT] = {};
+    u32 minimap_bone_ds_generation_[FRAMES_IN_FLIGHT] = {};
+    void write_minimap_bone_descriptor(u32 fi);
 
     // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
     VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;
@@ -911,6 +961,15 @@ private:
     /// The cartographic frame a minimap view draws this frame (the first
     /// cartographic one painted), recorded before the scene's passes.
     std::optional<CartographicRenderer::View> cartographic_view_;
+    /// That minimap view's camera's LOD scale (cam_DefaultMiniLOD when made)
+    f32 minimap_lod_scale_ = 1.8f;
+    /// The minimap's meshes, gathered through its camera apart from the
+    /// world view's (their own instances and bones)
+    UnitRenderer minimap_units_;
+    bool minimap_meshes_gathered_ = false;
+    f32 minimap_lod_metric_ = 0.0f;
+    u32 minimap_fi_ = 0; ///< the slot the last gather filled
+    bool faf_exe_ = false;
     VisionRenderer vision_renderer_; ///< the world's fog of war (scene pass)
     bool fog_on_ = false;            ///< this frame's: a focus army, fog of war
     std::vector<RangeRing> fog_circles_;

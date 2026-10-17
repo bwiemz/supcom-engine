@@ -93,6 +93,8 @@ std::optional<int> App::Window::set_up() {
     // Player input handler (ARMY_1 = index 0)
     input_handler.set_player_army(0);
     renderer.set_player_army(0);
+    // FAF's data runs as FAF's patched game would (its minimap mesh toggle)
+    renderer.set_faf_exe(!app.config.faf_data_path.empty());
     input_handler.set_recon(&renderer.recon()); // clicks pick what it shows
 
     publish_window_objects();

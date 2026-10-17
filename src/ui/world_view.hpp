@@ -65,7 +65,25 @@ public:
     void set_global_camera_commands(bool g) { global_cam_cmds_ = g; }
 
     bool is_minimap() const { return is_minimap_; }
-    void set_minimap(bool m) { is_minimap_ = m; }
+    /// Made a minimap (UIWorldView's isMiniMap): its camera takes the LOD
+    /// scale cam_DefaultMiniLOD holds now, as CUIWorldView's does when made;
+    /// setting the convar later leaves it.
+    void set_minimap(bool m) {
+        is_minimap_ = m;
+        lod_scale_ = m ? default_mini_lod() : kDefaultLod;
+    }
+    /// Its camera's LOD scale (GeomCamera3's lodScale): the LOD metric is the
+    /// view's width times it, so a larger one shows less detail.
+    f32 lod_scale() const { return lod_scale_; }
+
+    /// Moho's cam_DefaultMiniLOD (1.8): the LOD scale a minimap view's camera
+    /// is made with. FAF's patched game draws no minimap meshes while it is
+    /// 0 (FA-Binary-Patches MinimapMesh.cpp).
+    static f32 default_mini_lod();
+    static void set_default_mini_lod(f32 scale);
+    /// cam_DefaultLOD's, any other view's (1).
+    static constexpr f32 kDefaultLod = 1.0f;
+    static constexpr f32 kDefaultMiniLod = 1.8f;
 
     bool resource_rendering() const { return resource_rendering_; }
     void set_resource_rendering(bool on) { resource_rendering_ = on; }
@@ -87,6 +105,7 @@ private:
     bool highlight_enabled_ = true;
     bool global_cam_cmds_ = false;
     bool is_minimap_ = false;
+    f32 lod_scale_ = kDefaultLod;
     bool resource_rendering_ = true;
     bool custom_render_ = false;
 };

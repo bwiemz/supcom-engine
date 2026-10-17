@@ -222,6 +222,17 @@ Not implementable from what is on hand. First extract `/effects/mesh.fx` from re
 - **The draw.** After Stage 1, in the scene pass, over the frame. The meshes are the main view's own batch (frustum, LOD, intel), not drawn at the strategic zoom, as `draw_meshes`.
 - **Not yet:** the minimap's meshes. They need a gather of their own over the whole map, and Moho's LOD cutoffs leave few at that zoom.
 
+**As built (2026-10-17), the minimap's meshes.** From faf-re `Cartographic::RenderMeshes`, `GeomCamera3::Init`, `Mesh::ComputeLOD` and `RMeshBlueprintLOD`, and FAF's `MinimapMesh.cpp` patch:
+- **The gather.** `RenderMeshes` batches every mesh through the minimap's own camera, so the engine gathers apart from the world view: a second `UnitRenderer`, with its own instances and bones, culled by the minimap frame's volume.
+- **The LOD.** The minimap camera is orthographic, so its LOD metric is the same everywhere: the view's width times its LOD scale. A minimap view's camera takes `cam_DefaultMiniLOD` (1.8) when the view is made, and keeps it if the convar changes later.
+  - A mesh shows while some LOD takes the metric. A LOD with a cutoff of 0 or less takes any metric; any other LOD takes metrics up to its `LODCutoff`, which defaults to 1000 where the blueprint gives none.
+  - The reach is read from the mesh blueprint's LODs, because the engine's loaded LOD set can be a single-LOD fallback.
+  - Unit counts, from retail's blueprints: 89 of 563 units on 5 km maps, 15 on 10 km, none on 20 km. But some meshes reach any metric: a ping's (99999), and those with `LODCutoff = -1`, such as the cruise missile, the nuke's stem, explosions, build effects and DevTest props. Every map's minimap therefore batches its entities each frame, as Moho's does. FAF's patch comment calls this "thousands of useless LOD calculations".
+  - Which LOD a shown mesh draws comes from the engine's loaded set. That is often LOD 0 alone, because retail's unit LODs name no `MeshName`. At a few pixels a unit, this is not visible.
+  - Each entity's reach is cached in a table indexed by entity id and read again on `SetMesh`. A minimap with nothing to draw costs a look per entity: about a tenth of the world view's gather on SCMP_009's 8,700 entities.
+- **The draw.** The meshes go into the minimap's output after Stage 1, in their cartographic techniques. The output's pass now has a depth, the frame's own, cleared after Stage 0 is done with it. The view-projection is the frame's, with its top raised by 1000 so that aircraft are not clipped.
+- **FAF.** FAF's patched game skips `RenderMeshes` while `cam_DefaultMiniLOD` is 0, which FAF's minimap toggle and `minimap.lua` set. The engine does the same when FAF's data is in use.
+
 ### 3.8 Main view cartographic (phase 7)
 
 - `Camera` gains an ortho flag and the `UpdateCoords` ortho branch (1.0), fixed top-down, no shake; `WorldView::set_cartographic` on the main view sets it, with the prefs key and `ToggleMainCartographicView` working through retail's Lua unchanged.
