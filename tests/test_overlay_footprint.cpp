@@ -1,7 +1,9 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "renderer/camera.hpp"
 #include "renderer/overlay_renderer.hpp"
+#include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <cmath>
@@ -89,4 +91,38 @@ TEST_CASE("A ghost lights the pads it touches edge on, its span inside", "[overl
 
     const StructureSite other{36.5f, 36.5f, 44.5f, 44.5f};
     CHECK(osc::renderer::adjacency_lit({factory, other}, beside) == std::vector<bool>{true, true});
+}
+
+TEST_CASE("A silo's stored missiles draw nothing over it", "[overlay]") {
+    osc::sim::WorldSnapshot world;
+    osc::sim::EntityRecord silo;
+    silo.id = 1;
+    silo.is_unit = true;
+    silo.is_structure = true;
+    silo.army = 0;
+    silo.health = silo.max_health = 100.0f;
+    silo.position = {256, 0, 256};
+    world.entities.push_back(silo);
+    osc::renderer::Camera camera;
+    camera.init(512.0f, 512.0f);
+    camera.set_input_enabled(false);
+    camera.set_viewport(800.0f, 600.0f);
+    camera.set_zoom(40.0f);
+    camera.set_pitch(0.87f);
+    camera.set_target(256.0f, 256.0f);
+    const auto vp = camera.view_proj(800.0f / 600.0f);
+    osc::renderer::TextureCache textures;
+    const auto quads = [&](osc::i32 nukes, osc::i32 tactical) {
+        world.entities[0].nuke_silo_ammo = nukes;
+        world.entities[0].tactical_silo_ammo = tactical;
+        osc::renderer::OverlayRenderer overlays;
+        osc::sim::WorldEvents events;
+        overlays.update(osc::sim::FrameView(&world, &world, 1.0f), events, camera, vp, nullptr,
+                        textures, 800, 600);
+        return overlays.quads().size();
+    };
+    const size_t bars = quads(0, 0);
+    CHECK(bars > 0);
+    CHECK(quads(2, 0) == bars);
+    CHECK(quads(0, 3) == bars);
 }

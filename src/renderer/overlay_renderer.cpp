@@ -494,38 +494,6 @@ void OverlayRenderer::add_unit_overlays(const sim::FrameView& view, const sim::W
                           0.3f, 0.8f, 1.0f, 0.8f); // light blue
             }
         }
-
-        // --- Silo ammo indicators (nuke = red, tactical = blue) ---
-        if (unit_bars_ && cam_dist < 400.0f) {
-            i32 nuke = unit->nuke_silo_ammo;
-            i32 tac = unit->tactical_silo_ammo;
-            if (nuke > 0 || tac > 0) {
-                constexpr f32 AMMO_DOT = 5.0f;
-                constexpr f32 AMMO_GAP = 2.0f;
-                constexpr f32 AMMO_Y = 14.0f; // below unit center
-                f32 ax = sx;
-                // Nuke ammo (red dots, left side)
-                if (nuke > 0) {
-                    i32 nd = nuke > 5 ? 5 : nuke;
-                    f32 nw = nd * AMMO_DOT + (nd - 1) * AMMO_GAP;
-                    f32 nx_start = ax - nw - 2.0f;
-                    for (i32 ni = 0; ni < nd; ni++) {
-                        emit_quad(nx_start + ni * (AMMO_DOT + AMMO_GAP),
-                                  sy + AMMO_Y, AMMO_DOT, AMMO_DOT,
-                                  1.0f, 0.15f, 0.1f, 0.9f); // red
-                    }
-                }
-                // Tactical ammo (blue dots, right side)
-                if (tac > 0) {
-                    i32 td = tac > 5 ? 5 : tac;
-                    for (i32 ti = 0; ti < td; ti++) {
-                        emit_quad(ax + 2.0f + ti * (AMMO_DOT + AMMO_GAP),
-                                  sy + AMMO_Y, AMMO_DOT, AMMO_DOT,
-                                  0.2f, 0.4f, 1.0f, 0.9f); // blue
-                    }
-                }
-            }
-        }
     }
 }
 

@@ -147,8 +147,7 @@ private:
     /// can't be built is dim magenta.
     void add_build_ghost(const sim::FrameView& view, const BuildGhost& ghost,
                          const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh);
-    /// Each unit in view: its lifebars, veterancy chevrons, cargo dots and
-    /// silo ammo dots.
+    /// Each unit in view: its lifebars, veterancy chevrons and cargo dots.
     void add_unit_overlays(const sim::FrameView& view, const sim::WorldSnapshot& snap,
                            const Camera& camera, const std::array<f32, 16>& vp_matrix,
                            const std::unordered_set<u32>* selected_ids, const Frustum* frustum,
