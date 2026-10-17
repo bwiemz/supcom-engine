@@ -143,3 +143,22 @@ Asked on 2026-10-15: the original once each; the engine on main 44d01b33 and wit
 | `crowd` stopped short | 0, 0, 0, 0, 1, 0: one Striker of 144 stands south of the gap (720.99, 171.11) with its order ended | 1, 2, 2, 2, 3, 1 on main; 0 in all six now | On main, the crowd's units were pinned against the wall's face. |
 | `crowd` the wall | 139 of 143 Strikers first reach z 173.8 at x 716–723, at the gap (the others at 703–715); at most 6 at the wall's face at once; none but the one stopped short stands still more than 22 ticks | on main 73 of 144 at the gap and the rest along the face from 711 to 731, up to 15 at the face, some still for 272–312 ticks; now 140 of 144 at the gap (the others at 724–727), at most 6, none still more than 16 | Moho's units make for the gap before they get to the wall. |
 | `navigator` targets | from (730, 154): (724, 160) at t=3, (724, 171) at t=36, (721, 174) at t=53, (720, 198) at t=75, the goal at t=113. Likewise from the other two starts. | on main: (724, 160), then (724, 192), the far side's portal, through the wall, until the wall refuses it at t≈70; now the original's cells (but one: (720, 199) for (720, 198)), one to seven ticks sooner. (The original's Striker barely moves for its first ten ticks or so, turning; the engine's sets off sooner.) | Moho's navigator advances the target only halfway to it, and looks down the way every 7 ticks. Where nothing ahead can be reached straight, it asks the way cell by cell. faf-re's text differs from the shipped exe in these, and in five more rules: see the engine's `path_navigator.cpp`. |
+
+**`carto/`** asks how the main view looks cartographic. It works from the interface's side (a hook on `gamemain.lua`'s `OnFirstUpdate`):
+1. Past the opening's camera, it resets the main view to the whole map (`GetCamera('WorldCamera'):Reset()`) and dumps a frame.
+2. It makes the main view cartographic (retail's `ToggleMainCartographicView`) and dumps a frame again.
+
+It is done at `PROBE carto done`.
+- **The original** writes the frames with its `dump_Frame` console command as `SCFrame_<time>_<n>.bmp`, into the folder `PROBE_DUMP_DIR` names. It doesn't make that folder, so `mkdir /tmp/carto_dump` first.
+- **The engine** has no `dump_Frame`. Capture it with `--screenshot-frame 1500 --screenshot <png>`.
+
+Run both at the same size: `/windowed 1600 900` on the original, the size of the engine's captures.
+
+Asked on 2026-10-16: the original once; the engine with #677.
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `carto` colours | deep water (48, 94, 121), its shallows (94, 135, 150), the lowland (80, 68, 72) and (80, 68, 73): the most common colours of the frame | the same colours, in the same order | The height ramp, its water lanes and the contour bands match the port of `Cartographic`. The water is the decompile's two blues: colour [1] never shows. |
+| `carto` framing | the whole map 640 pixels high: the zoom limit is 1.4 times the map | 900 pixels: 1.0 times | Retail's `minimap.lua` sets its *own* camera's limit to 1.0 (`GetCamera('MiniMap')`). The engine's `GetCamera` gave every name the main view's camera, so this cut the main view's. It is fixed in the PR that added this probe: only `WorldCamera` is the engine's camera. |
+| `carto` lines | the contour lines, the shore's bands and the small contour islands | the same shapes, aligned within a pixel once framed alike (the camera fix), except at sub-pixel steps along the lines | The edge detect matches. |
+| `carto` deposit icons | no halo round the mass and hydrocarbon icons in the first run. Retail's `bloom_render` option is off by default, and a fresh `/prefs` gets that. With `ren_bloom 1`, ten frames 0.3 s apart show a halo pulsing across the icons as a wave. | a halo, its glow the same 0.6·sin²(t − 10·α) wave | The same. The engine's captures keep bloom on, while a player's game applies retail's option. |
