@@ -2423,6 +2423,24 @@ void main() {
 }
 )glsl";
 
+const char* prim_alpha_test_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D tex;
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec4 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = texture(tex, fragUV) * fragColor;
+    if (outColor.a <= 0.0) {
+        discard;
+    }
+}
+)glsl";
+
 // ---------------------------------------------------------------------------
 // FA's trails (M214b): particle.fx's TrailVS/TrailPS. The ribbon is built on
 // the CPU; each vertex carries its end's age fraction t, V across the ribbon
