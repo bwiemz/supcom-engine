@@ -341,6 +341,9 @@ order that set it, as Moho's does.
   *2b done (2026-10-18) — tick/s2b-air-motion-step, with 2c: an aircraft's orders leave a course (attack run,
   circling, winged guard, a transport's hover, a hold, settling onto a platform) that `motion_tick` flies once
   after the fuel; the air-step latch is gone; the beam up and teleports stay in the order, as Moho's.*
+  *2d done (2026-10-18) — tick/s2d-unit-step-order: a unit's step runs its silo, counts its stun down, moves
+  (wrong-layer damage after the layer update) and raises its motion events before the pose; a stun of n ticks
+  set from Lua at T keeps the layer still until T+n−1. What stun stops stays in §7.*
 
 **Step 3. `AdvanceBeat`'s phases.** Three PRs.
 - **3a. Weapons in the army phase.** Armies in index order → each army's units in creation order → for each

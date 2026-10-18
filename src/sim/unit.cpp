@@ -958,6 +958,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
         follow_transport(dt, ctx);
         return;
     }
+    // Moho's Unit::MotionTick: SiloTick, the stun countdown, then CUnitMotion::MotionTick.
+    tick_silo(dt, ctx);
+    if (destroyed() || !in_registry() || dying_) {
+        return;
+    }
+    if (stun_ticks_ > 0) {
+        --stun_ticks_;
+    }
     drove_ = false;
     const bool goes_on = motion_tick(dt, ctx);
     if (destroyed() || !in_registry()) {
@@ -965,6 +973,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
     }
     if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
+    }
+    // Moho raises the motion events at the end of CalcMove*, before UpdateManipulators.
+    if (goes_on && !is_being_built()) {
+        update_motion_horz(ctx.L);
+        update_motion_turn(ctx.L);
+        if (destroyed() || !in_registry()) {
+            return;
+        }
     }
     // Moho's Unit::MotionTick builds the pose on the transform its motion wrote.
     tick_manipulators(static_cast<f32>(dt), ctx.L);
@@ -1035,6 +1051,15 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
+    // Moho's CUnitMotion::MotionTick: ProcessFuelLevels, the layer from the committed transform,
+    // then CalcMove*.
+    if (!tick_fuel(dt, ctx, nullptr)) {
+        return false;
+    }
+    update_current_layer(ctx.terrain, L);
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
     // of its health a tick, moving or not, unless being built, carried, falling or flying.
     if (is_mobile() && !can_fly() && !is_being_built() && !crashing_ && parent_entity_id() == 0 &&
@@ -1044,16 +1069,6 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
             ctx.sim->kill_unit(*this, "");
             return false;
         }
-    }
-
-    // Moho's CUnitMotion::MotionTick: ProcessFuelLevels, the layer from the committed transform,
-    // then CalcMove*.
-    if (!tick_fuel(dt, ctx, nullptr)) {
-        return false;
-    }
-    update_current_layer(ctx.terrain, L);
-    if (destroyed() || !in_registry()) {
-        return false;
     }
     bool flown = step_course(dt, ctx);
     if (destroyed() || !in_registry()) {
@@ -1114,10 +1129,22 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     return true;
 }
 
+void Unit::tick_silo(f64 dt, SimContext& ctx) {
+    if (is_being_built() || !(silo_building() || !silo_orders_.empty() || auto_mode_)) {
+        return;
+    }
+    // A missile asks through a request of its own (Moho's CAiSiloBuildImpl), granted this tick.
+    f32 silo_eff = 1.0f;
+    if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES && ctx.sim &&
+        ctx.sim->get_army(army())) {
+        silo_eff = static_cast<f32>(
+            ctx.army_grants[static_cast<u32>(army())].of(economy_.silo_mass, economy_.silo_energy));
+    }
+    update_silo(dt, silo_eff, ctx.L);
+}
+
 void Unit::tick_upkeep(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
-
-    if (stun_ticks_ > 0) --stun_ticks_; // a stun wears off a tick at a time
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
     if (!is_being_built() && regen_rate() > 0 && health() > 0 && health() < max_health()) {
@@ -1126,26 +1153,6 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx) {
     } else if (is_being_built() && !dying_ && L && ctx.sim &&
                static_cast<i64>(ctx.sim->tick_count()) - static_cast<i64>(creation_tick_) > 1) {
         decay(L);
-        if (destroyed() || !in_registry()) {
-            return;
-        }
-    }
-
-    if (!is_being_built()) {
-        // Its silo builds beside everything else (paused, it waits).
-        if (!dying_ && (silo_building() || !silo_orders_.empty() || auto_mode_)) {
-            // A missile asks through a request of its own (Moho's
-            // CAiSiloBuildImpl), granted this tick, not the unit's
-            f32 silo_eff = 1.0f;
-            if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES &&
-                ctx.sim && ctx.sim->get_army(army()))
-                silo_eff = static_cast<f32>(ctx.army_grants[static_cast<u32>(army())].of(
-                    economy_.silo_mass, economy_.silo_energy));
-            update_silo(dt, silo_eff, L);
-            if (destroyed() || dying_) return;
-        }
-        update_motion_horz(L);
-        update_motion_turn(L);
     }
 }
 

@@ -1556,6 +1556,7 @@ private:
     bool engage(UnitCommand& cmd, lua_State* L);
     /// The layer, the step its orders asked for, coasting, fuel.
     bool motion_tick(f64 dt, SimContext& ctx);
+    void tick_silo(f64 dt, SimContext& ctx);
     void tick_upkeep(f64 dt, SimContext& ctx);
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
