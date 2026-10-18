@@ -1,6 +1,8 @@
 // A tick's phases in Moho's order (faf-re Sim::AdvanceBeat): each army's
-// weapons, then every unit's orders, then the Lua threads, then the entities.
+// weapons, then every unit's orders, then the Lua threads, then the entities,
+// a unit's step in Unit::MotionTick's order.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -10,7 +12,9 @@
 #include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/anim_cache.hpp"
 #include "sim/projectile.hpp"
+#include "sim/sca_parser.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -65,6 +69,9 @@ struct Phases {
                  "{BlueprintId = 't1', CategoriesHash = {MOBILE = true, TECH1 = true},"
                  " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1},"
                  " Defense = {MaxHealth = 10}}",
+                 "{BlueprintId = 'ship', Categories = {'NAVAL', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
+                 " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Water'}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -75,7 +82,7 @@ struct Phases {
                     " Plain.__index = Plain"));
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "fac", "t1"}) {
+        for (const char* id : {"tank", "fac", "t1", "ship"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -134,6 +141,35 @@ struct Phases {
         }
         u.add_weapon(std::move(gun));
         return *u.weapons().back();
+    }
+
+    static void drive_east(Unit& u) {
+        u.add_command_cap("RULEUCC_Move");
+        u.set_max_speed(5.0f);
+        u.set_orientation(osc::sim::euler_to_quat(1.5707964f, 0.0f, 0.0f));
+        Unit::Drive drive;
+        drive.max_accel = 50.0f;
+        u.set_drive(drive);
+        UnitCommand move;
+        move.type = CommandType::Move;
+        move.target_pos = {u.position().x + 30.0f, 10.0f, u.position().z};
+        u.push_command(move, false);
+    }
+
+    void add_animation(const char* path) {
+        osc::sim::SCAData sca;
+        sca.num_frames = 2;
+        sca.num_bones = 1;
+        sca.duration = 1.0f;
+        sca.bone_names.push_back("root");
+        sca.parent_indices.push_back(-1);
+        const osc::sim::Quaternion identity{0, 0, 0, 1};
+        sca.frames.push_back({0.0f, {{{0, 0, 0}, identity}}});
+        sca.frames.push_back({1.0f, {{{1, 0, 0}, identity}}});
+        if (!sim.anim_cache()) {
+            sim.set_anim_cache(std::make_unique<osc::sim::AnimCache>(nullptr));
+        }
+        sim.anim_cache()->inject(path, std::move(sca));
     }
 };
 
@@ -298,4 +334,105 @@ TEST_CASE("A unit attached to another starts no order until it is let go", "[tic
     w.sim.tick();
     REQUIRE(tank.command_queue().size() == 1);
     CHECK(tank.command_queue().front().begun);
+}
+
+namespace {
+
+osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in) {
+    Phases w;
+    std::vector<osc::u16> heights(static_cast<size_t>(257) * 257);
+    for (size_t z = 0; z <= 256; ++z) {
+        for (size_t x = 0; x <= 256; ++x) {
+            const f32 ground = 10.0f + (128.0f - static_cast<f32>(x)) * 0.05f;
+            heights[z * 257 + x] = static_cast<osc::u16>(ground * 128.0f);
+        }
+    }
+    osc::map::Heightmap hm(256, 256, 1.0f / 128.0f, std::move(heights));
+    w.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 10.7f, true));
+    w.sim.build_pathfinding_grid();
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    tank.set_motion_type("RULEUMT_Amphibious");
+    Phases::drive_east(tank);
+    REQUIRE(w.run("stunned = 0"));
+    for (int t = 0; t < 100; ++t) {
+        if (stun_seconds > 0 && w.sim.tick_count() + 1 == stun_tick) {
+            REQUIRE(w.run("ForkThread(function() tank:SetStunned(" + std::to_string(stun_seconds) +
+                          ") stunned = GetGameTick() end)"));
+        }
+        w.sim.tick();
+        if (tank.layer() == "Seabed") {
+            *stunned_in = static_cast<osc::u32>(w.number("stunned"));
+            return w.sim.tick_count();
+        }
+    }
+    return 0;
+}
+
+} // namespace
+
+TEST_CASE("A stun a Lua thread sets is counted down before that tick's motion step",
+          "[tick-phases]") {
+    osc::u32 none = 0;
+    const osc::u32 shore = seabed_tick(0.0f, 0, &none);
+    REQUIRE(shore > 2);
+    const osc::u32 ticks = GENERATE(1u, 10u);
+    CAPTURE(ticks);
+    osc::u32 stunned = 0;
+    const osc::u32 entered = seabed_tick(static_cast<f32>(ticks) / 10.0f, shore, &stunned);
+    REQUIRE(stunned == shore);
+    CHECK(entered == stunned + ticks - 1);
+}
+
+TEST_CASE("A ship its step finds on land is hurt in that step", "[tick-phases]") {
+    Phases w;
+    Unit& ship = w.make("ship", "ship", 1, 100.0f, 100.0f);
+    REQUIRE(ship.layer() == "Water");
+    w.sim.tick();
+    REQUIRE(ship.health() == 100.0f);
+    ship.set_velocity({5.0f, 0.0f, 0.0f});
+    w.sim.tick();
+    REQUIRE(ship.layer() == "Land");
+    CHECK(ship.health() == Catch::Approx(99.0f));
+}
+
+TEST_CASE("An animator a motion event sets going plays in that tick's pose", "[tick-phases]") {
+    Phases w;
+    w.add_animation("/walk.sca");
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    REQUIRE(w.run("walk = CreateAnimator(tank):PlayAnim('/walk.sca', true):SetRate(0) started = 0"
+                  " function tank:OnMotionHorzEventChange(new, old)"
+                  "   if old == 'Stopped' then started = GetGameTick() walk:SetRate(1) end"
+                  " end"));
+    Phases::drive_east(tank);
+    for (int t = 0; t < 10 && w.number("started") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("started") == static_cast<f32>(w.sim.tick_count()));
+    REQUIRE(w.run("played = walk:GetAnimationFraction()"));
+    CHECK(w.number("played") == Catch::Approx(0.1f));
+}
+
+TEST_CASE("An animator a silo's OnSiloBuildStart sets going plays in that tick's pose",
+          "[tick-phases]") {
+    Phases w;
+    w.add_animation("/hatch.sca");
+    Unit& silo = w.make("silo", "tank", 1, 100.0f, 100.0f);
+    REQUIRE(w.run("__blueprints['/nuke'] = {Economy = {BuildTime = 100, BuildCostEnergy = 1,"
+                  " BuildCostMass = 1}}"
+                  " hatch = CreateAnimator(silo):PlayAnim('/hatch.sca'):SetRate(0) started = 0"
+                  " function silo:OnSiloBuildStart(weapon) started = GetGameTick() hatch:SetRate(1)"
+                  " end"));
+    Weapon& launcher = w.arm(silo, nullptr);
+    launcher.counted_projectile = true;
+    launcher.nuke_weapon = true;
+    launcher.max_projectile_storage = 1;
+    launcher.projectile_bp_id = "/nuke";
+    silo.set_build_rate(10.0f);
+    silo.order_silo_build(true);
+    for (int t = 0; t < 5 && w.number("started") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("started") == static_cast<f32>(w.sim.tick_count()));
+    REQUIRE(w.run("played = hatch:GetAnimationFraction()"));
+    CHECK(w.number("played") == Catch::Approx(0.1f));
 }
