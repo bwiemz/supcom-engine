@@ -60,6 +60,7 @@ SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
     // Sim code (e.g. weapons) draws randomness from this seeded stream via the
     // registry, so every lockstep client rolls identically.
     entity_registry_.set_sim_random(&sim_random_);
+    entity_registry_.set_tick_source(&tick_count_);
     entity_registry_.set_unregister_hook(
         [this](Entity& entity) { on_entity_unregistered(entity); });
 }
@@ -2076,12 +2077,12 @@ void SimState::tick_unit_orders() {
 
 void SimState::update_entities() {
     PROFILE_ZONE("Sim::entities");
-    // Snapshot IDs to avoid iterator invalidation if update() triggers removal
     std::vector<u32> ids;
     ids.reserve(entity_registry_.count());
     entity_registry_.for_each([&](Entity& e) {
         ids.push_back(e.entity_id());
     });
+    const u32 made_during = entity_registry_.next_id();
 
     SimContext ctx = sim_context();
 
@@ -2100,14 +2101,16 @@ void SimState::update_entities() {
     // Units on paths look ahead for others they would meet (M203c).
     steer_ground_units(*this);
 
-    for (u32 id : ids) {
+    const auto step = [&](u32 id) {
         auto* e = entity_registry_.find(id);
-        if (!e || e->destroyed()) continue;
+        if (!e || e->destroyed()) {
+            return;
+        }
         e->tick_scroller();
         if (e->is_unit()) {
             collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
             if (e->destroyed()) {
-                continue;
+                return;
             }
             const Vector3 before = e->position();
             const u32 snaps = e->snap_serial();
@@ -2136,6 +2139,13 @@ void SimState::update_entities() {
                 prop->set_position(p);
             }
         }
+    };
+    for (const u32 id : ids) {
+        step(id);
+    }
+    // CTaskStage::UserFrame runs its list to the end: an entity made during stage A steps in it.
+    for (u32 id = made_during; id < entity_registry_.next_id(); ++id) {
+        step(id);
     }
     stepping_events_.clear();
     separate_ground_units();

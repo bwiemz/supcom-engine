@@ -15,10 +15,12 @@
 #include "sim/anim_cache.hpp"
 #include "sim/projectile.hpp"
 #include "sim/sca_parser.hpp"
+#include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "sim/world_snapshot.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -76,6 +78,8 @@ struct Phases {
                  "{BlueprintId = 'gen', CategoriesHash = {MOBILE = true, TECH1 = true},"
                  " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1,"
                  " ProductionPerSecondEnergy = 5}, Defense = {MaxHealth = 10}}",
+                 "{BlueprintId = 'healer', Categories = {'LAND', 'MOBILE'},"
+                 " Defense = {MaxHealth = 100, RegenRate = 10}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -84,10 +88,11 @@ struct Phases {
         store.expose_to_lua(L);
         REQUIRE(run("Plain = setmetatable({}, {__index = moho.unit_methods})"
                     " Plain.__index = Plain"
-                    " function WaitTicks(n) coroutine.yield(n) end"));
+                    " function WaitTicks(n) coroutine.yield(n) end"
+                    " EM = moho.entity_methods PM = moho.projectile_methods"));
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "fac", "t1", "ship", "gen"}) {
+        for (const char* id : {"tank", "fac", "t1", "ship", "gen", "healer"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -158,6 +163,61 @@ struct Phases {
         }
         u.add_weapon(std::move(gun));
         return *u.weapons().back();
+    }
+
+    void projectile_class(const char* bp, const std::string& fields) {
+        REQUIRE(run("ProjClass = setmetatable({" + fields +
+                    "}, {__index = moho.projectile_methods}) ProjClass.__index = ProjClass"));
+        lua_State* L = state.raw();
+        lua_pushstring(L, "__osc_proj_script_classes");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_pushstring(L, "__osc_proj_script_classes");
+            lua_pushvalue(L, -2);
+            lua_rawset(L, LUA_REGISTRYINDEX);
+        }
+        lua_pushstring(L, bp);
+        lua_getglobal(L, "ProjClass");
+        lua_rawset(L, -3);
+        lua_settop(L, 0);
+    }
+
+    void drop_shell() {
+        REQUIRE(run("ForkThread(function()"
+                    "   local shot = EM.CreateProjectile(shooter, '/shell', 0, 5, 0)"
+                    "   PM.SetBallisticAcceleration(shot, 0)"
+                    "   PM.SetVelocity(shot, 0, -35, 0)"
+                    " end)"));
+    }
+
+    void fire_at_rival(Unit& rival) {
+        osc::sim::CollisionShape box;
+        box.type = osc::sim::CollisionShapeType::BOX;
+        box.cy = 1.0f;
+        box.sx = 1.0f;
+        box.sy = 1.0f;
+        box.sz = 1.0f;
+        rival.set_collision_shape(box);
+        REQUIRE(run("checked = 0 Plain.OnCollisionCheck = function(self, other)"
+                    "   checked = GetGameTick() return true"
+                    " end"));
+        projectile_class("/shell", "OnImpact = function(self, kind, other)"
+                                   "   hit = GetGameTick()"
+                                   "   hit_x = EM.GetPosition(self)[1]"
+                                   "   Damage(self, other, 10, 'Normal')"
+                                   "   EM.Destroy(self)"
+                                   " end");
+        REQUIRE(run("hit = 0 hit_x = 0 seen = 0 seen_x = 0 ForkThread(function()"
+                    "   shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
+                    "   PM.SetBallisticAcceleration(shot, 0)"
+                    "   PM.SetVelocity(shot, 35, 0, 0)"
+                    "   while not EM.BeenDestroyed(shot) do"
+                    "     seen = GetGameTick() seen_x = EM.GetPosition(shot)[1]"
+                    "     WaitTicks(1)"
+                    "   end"
+                    " end)"));
     }
 
     static void drive_east(Unit& u) {
@@ -691,4 +751,167 @@ TEST_CASE("An army's overflow reaches a higher-index ally that tick, a lower-ind
         w.sim.tick();
     }
     CHECK(w.number("arrived") == static_cast<f32>(2 + giver));
+}
+
+TEST_CASE("A projectile's hit is found by one step and dealt at the start of its next",
+          "[tick-phases]") {
+    Phases w;
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
+    w.fire_at_rival(rival);
+    osc::u32 damaged = 0;
+    for (int t = 0; t < 8 && w.number("hit") == 0; ++t) {
+        w.sim.tick();
+        if (damaged == 0 && rival.health() < rival.max_health()) {
+            damaged = w.sim.tick_count();
+        }
+    }
+    REQUIRE(w.number("checked") > 0);
+    CHECK(w.number("hit") == w.number("checked") + 1);
+    CHECK(static_cast<f32>(damaged) == w.number("hit"));
+    CHECK(w.number("hit_x") == Catch::Approx(109.0f));
+    CHECK(w.number("seen") == w.number("hit"));
+    CHECK(w.number("seen_x") == Catch::Approx(w.number("hit_x")));
+}
+
+TEST_CASE("The snapshot of the tick that finds a hit holds the projectile at the impact point",
+          "[tick-phases]") {
+    Phases w;
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
+    w.fire_at_rival(rival);
+    osc::u32 shot_id = 0;
+    for (int t = 0; t < 8 && w.number("checked") == 0; ++t) {
+        w.sim.tick();
+        w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+            if (e.is_projectile()) {
+                shot_id = e.entity_id();
+            }
+        });
+    }
+    REQUIRE(w.number("checked") > 0);
+    REQUIRE(shot_id != 0);
+    osc::sim::WorldSnapshot snap;
+    osc::sim::capture_world(w.sim, snap);
+    const osc::sim::EntityRecord* shot = snap.find(shot_id);
+    REQUIRE(shot);
+    CHECK(shot->position.x == Catch::Approx(109.0f));
+}
+
+TEST_CASE("A fragment made in its parent's OnImpact moves in that tick", "[tick-phases]") {
+    Phases w;
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    w.projectile_class("/shell", "OnImpact = function(self, kind)"
+                                 "   local c = PM.CreateChildProjectile(self, '/frag')"
+                                 "   PM.SetBallisticAcceleration(c, 0)"
+                                 "   PM.SetCollideSurface(c, false)"
+                                 "   PM.SetVelocity(c, 0, 20, 0)"
+                                 "   made = GetGameTick()"
+                                 "   made_y = EM.GetPosition(c)[2]"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    REQUIRE(w.run("made = 0 made_y = 0"));
+    w.drop_shell();
+    for (int t = 0; t < 8 && w.number("made") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("made") > 0);
+    const osc::sim::Entity* frag = nullptr;
+    w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+        if (e.is_projectile() && e.blueprint_id() == "/frag") {
+            frag = &e;
+        }
+    });
+    REQUIRE(frag);
+    CHECK(frag->position().y == Catch::Approx(w.number("made_y") + 2.0f));
+}
+
+TEST_CASE("A unit made during the entity walk takes its step in that tick", "[tick-phases]") {
+    Phases w;
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    w.projectile_class("/shell", "OnImpact = function(self, kind)"
+                                 "   made = GetGameTick()"
+                                 "   healer = CreateUnit('healer', 1, 150, 10, 150)"
+                                 "   EM.SetHealth(healer, healer, 50)"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    REQUIRE(w.run("made = 0"));
+    w.drop_shell();
+    for (int t = 0; t < 8 && w.number("made") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("made") > 0);
+    lua_State* L = w.state.raw();
+    lua_getglobal(L, "healer");
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, -2);
+    const auto* healer = static_cast<const Unit*>(lua_touserdata(L, -1));
+    lua_settop(L, 0);
+    REQUIRE(healer);
+    CHECK(healer->health() == Catch::Approx(51.0f));
+}
+
+TEST_CASE("SetLifetime(0.5) from OnLostTarget leaves a projectile six steps", "[tick-phases]") {
+    Phases w;
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    w.make("rival", "tank", 2, 110.0f, 100.0f);
+    w.projectile_class("/missile", "OnLostTarget = function(self)"
+                                   "   lost = GetGameTick()"
+                                   "   PM.SetLifetime(self, 0.5)"
+                                   " end,"
+                                   " OnImpact = function(self, kind)"
+                                   "   hit = GetGameTick() hit_kind = kind"
+                                   "   hit_x = EM.GetPosition(self)[1]"
+                                   "   EM.Destroy(self)"
+                                   " end");
+    REQUIRE(w.run("lost = 0 hit = 0 hit_x = 0 hit_kind = '' ForkThread(function()"
+                  "   local shot = EM.CreateProjectile(shooter, '/missile', 0, 50, 0)"
+                  "   PM.SetBallisticAcceleration(shot, 0)"
+                  "   PM.SetVelocityAlign(shot, false)"
+                  "   PM.SetVelocity(shot, 10, 0, 0)"
+                  "   PM.SetNewTarget(shot, rival)"
+                  "   PM.TrackTarget(shot, true)"
+                  "   WaitTicks(3)"
+                  "   EM.Destroy(rival)"
+                  " end)"));
+    osc::u32 shot_id = 0;
+    std::vector<f32> xs;
+    for (int t = 0; t < 20 && w.number("hit") == 0; ++t) {
+        w.sim.tick();
+        w.sim.entity_registry().for_each([&](osc::sim::Entity& e) {
+            if (e.is_projectile()) {
+                shot_id = e.entity_id();
+            }
+        });
+        const osc::sim::Entity* shot = w.sim.entity_registry().find(shot_id);
+        xs.push_back(shot ? shot->position().x : 0.0f);
+    }
+    REQUIRE(w.number("lost") > 1);
+    REQUIRE(w.number("hit") > 0);
+    CHECK(w.text("hit_kind") == "Air");
+    CHECK(w.number("hit") == w.number("lost") + 6);
+    const f32 before_lost = xs[static_cast<size_t>(w.number("lost")) - 2];
+    CHECK(w.number("hit_x") - before_lost == Catch::Approx(6.0f));
+}
+
+TEST_CASE("A projectile's sweep finds a shield a tenth of a step past the step's end",
+          "[tick-phases]") {
+    Phases w;
+    auto bubble = std::make_unique<osc::sim::Shield>();
+    bubble->set_position({130.0f, 30.0f, 100.0f});
+    osc::sim::CollisionShape sphere;
+    sphere.type = osc::sim::CollisionShapeType::SPHERE;
+    sphere.sx = 13.0f;
+    bubble->set_collision_shape(sphere);
+    w.sim.entity_registry().register_entity(std::move(bubble));
+    auto made = std::make_unique<osc::sim::Projectile>();
+    made->set_position({102.825f, 30.0f, 100.0f});
+    made->velocity = {35.0f, 0.0f, 0.0f};
+    const osc::u32 shot_id = w.sim.entity_registry().register_entity(std::move(made));
+    for (int t = 0; t < 4; ++t) {
+        w.sim.tick();
+    }
+    const osc::sim::Entity* shot = w.sim.entity_registry().find(shot_id);
+    REQUIRE(shot);
+    CHECK(shot->position().x == Catch::Approx(117.0f).margin(0.001f));
 }

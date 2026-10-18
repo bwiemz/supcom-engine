@@ -172,11 +172,11 @@ TEST_CASE("A projectile a script makes lives Moho's 15 seconds unless its bluepr
         const auto* child = static_cast<const osc::sim::Projectile*>(lua_touserdata(L, -1));
         lua_settop(L, 0);
         REQUIRE(child);
-        return child->lifetime;
+        return child->lifetime_end;
     };
-    CHECK(lifetime("shell") == 15.0f);
-    CHECK(lifetime("timed") == 3.0f);
-    CHECK(lifetime("typo") == 15.0f);
+    CHECK(lifetime("shell") == 150);
+    CHECK(lifetime("timed") == 30);
+    CHECK(lifetime("typo") == 150);
 }
 
 TEST_CASE("A projectile stays upright if its blueprint says StayUpright", "[blueprints]") {
@@ -196,7 +196,7 @@ TEST_CASE("A projectile stays upright if its blueprint says StayUpright", "[blue
         (void)made->apply_blueprint_physics(state.raw());
         made->collide_surface = false;
         made->collide_entity = false;
-        made->lifetime = 100;
+        made->set_lifetime(100.0f, 0);
         made->angular_velocity = {3, 4, 0};
         auto* p = static_cast<osc::sim::Projectile*>(
             registry.find(registry.register_entity(std::move(made))));

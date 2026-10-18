@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 66; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 67; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -92,7 +92,8 @@ constexpr u32 kVersion = 66; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 63: the silo a unit's Guard helps;
                              // 64: navigators' move ended in the last motion step;
                              // 65: every attack order engages in reach;
-                             // 66: armies' resource banks; units' held storage
+                             // 66: armies' resource banks; units' held storage;
+                             // 67: projectiles' waiting impact and lifetime end tick
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -171,7 +172,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     // and their order; moves_ is empty between ticks, and move_stamp_ and
     // gather_ only tell one tick's moves and one gather's finds apart
     w.u64v(reg.cells_.link_count());
-    // default_random_, sim_random_: the sim's generator (SimState's);
+    // default_random_, sim_random_: the sim's generator (SimState's); tick_: its tick count;
     // walking_: no walk is under way between ticks; unregister_hook_: the
     // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
     // prop_grid_height_: the map's

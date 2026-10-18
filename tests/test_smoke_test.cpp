@@ -1005,7 +1005,7 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     proj.turn_rate = 360.0f; // 36 degrees a tick
     proj.acceleration = 10.0f;
     proj.max_speed = 10.0f;
-    proj.lifetime = 5.0f;
+    proj.set_lifetime(5.0f, 0);
     proj.target_entity_id = tid;
 
     proj.update(0.1, registry, nullptr, nullptr);
@@ -1036,7 +1036,7 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     torpedo.tracking = true;
     torpedo.turn_rate = 165.0f;
     torpedo.max_speed = 15.0f;
-    torpedo.lifetime = 10.0f;
+    torpedo.set_lifetime(10.0f, 0);
     torpedo.ballistic_accel = -osc::sim::Projectile::GRAVITY;
     torpedo.target_entity_id = tid;
     osc::sim::Projectile shell = torpedo;

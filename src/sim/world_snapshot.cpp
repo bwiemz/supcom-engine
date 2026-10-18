@@ -5,6 +5,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/projectile.hpp"
 #include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -403,6 +404,18 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.orientation = e.orientation();
         r.beam_end = e.beam_endpoint();
         r.snap_serial = e.snap_serial();
+        if (e.is_projectile()) {
+            const auto& p = static_cast<const Projectile&>(e);
+            if (p.impact_waiting()) {
+                r.step_scale =
+                    p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
+            }
+            if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
+                r.launched = true;
+                r.launch_position = p.launch_position;
+                r.launch_orientation = p.launch_orientation;
+            }
+        }
         r.scroll_start = e.scroll_start();
         r.scroll_end = e.scroll_end();
         r.is_unit = e.is_unit();
@@ -637,14 +650,23 @@ FrameView::Pair FrameView::pair_for(const EntityRecord& e) const {
     return {from, &e};
 }
 
+// UserEntity::GetInterpolatedTransform: last to current by clamp(mCurImpactValue * alpha).
 Vector3 FrameView::position(const EntityRecord& e) const {
     const Pair p = pair_for(e);
-    return p.from ? lerp(p.from->position, e.position, alpha_) : e.position;
+    const f32 a = std::clamp(alpha_ * e.step_scale, 0.0f, 1.0f);
+    if (p.from) {
+        return lerp(p.from->position, e.position, a);
+    }
+    return e.launched ? lerp(e.launch_position, e.position, a) : e.position;
 }
 
 Quaternion FrameView::orientation(const EntityRecord& e) const {
     const Pair p = pair_for(e);
-    return p.from ? nlerp(p.from->orientation, e.orientation, alpha_) : e.orientation;
+    const f32 a = std::clamp(alpha_ * e.step_scale, 0.0f, 1.0f);
+    if (p.from) {
+        return nlerp(p.from->orientation, e.orientation, a);
+    }
+    return e.launched ? nlerp(e.launch_orientation, e.orientation, a) : e.orientation;
 }
 
 Vector3 FrameView::beam_end(const EntityRecord& e) const {

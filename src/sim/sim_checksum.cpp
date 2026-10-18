@@ -91,7 +91,7 @@ void mix_projectile(Fnv& projectiles, const Projectile& p) {
     if (p.target_point != -1)
         projectiles.mix(0x5450543a00000000ull | static_cast<u32>(p.target_point)); // "TPT:"
     mix_vec(projectiles, p.target_position);
-    projectiles.mix_f32(p.lifetime);
+    projectiles.mix(p.lifetime_end);
     projectiles.mix((p.impacted ? 1u : 0u) | (p.tracking ? 2u : 0u));
 }
 

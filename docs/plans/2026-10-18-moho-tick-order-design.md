@@ -390,7 +390,9 @@ impact point. The sweep reaches a tenth of a step past each end, which P2 shows 
   the projectile at the impact point.
 - Acceptance: P2 — `OnImpact` and damage a tick after the hit is found, `GetPosition()` in that tick the impact
   point, fragments moving on their creation tick, the shield broken on 19 and removed on 20, the first damage to
-  the generator on 26.
+  the generator on 26. *Done (2026-10-18) — tick/s4-projectiles: P2 `OnImpact` and damage a tick after the step
+  that finds the hit (44/44), `GetPosition()` in that tick the impact point, fragments moving on their creation
+  tick (20/20), the shield found on 9/12/15/18, broken on 19, removed on 20, the generator first damaged on 26.*
 
 **Step 5. Committed transforms.** `position()`/`orientation()` return the committed transform; the motion
 step writes the pending one; the end of the tick commits (`AdvanceCoords`): collision cells, intel, the

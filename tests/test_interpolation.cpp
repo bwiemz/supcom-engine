@@ -11,6 +11,7 @@
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/projectile.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -226,6 +227,59 @@ TEST_CASE("FrameView draws a new entity where it is, not where it wasn't", "[int
 
     const FrameView view(&w.history.prev(), &w.history.cur(), 0.25f);
     CHECK(view.position(entity(w.sim, fresh)).x == Approx(50.0f));
+}
+
+TEST_CASE("FrameView draws a projectile's first step from where it was made", "[interp][view]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    history.capture(sim);
+    auto made = std::make_unique<osc::sim::Projectile>();
+    made->set_position({100, 30, 100});
+    made->velocity = {35, 0, 0};
+    const osc::u32 id = sim.entity_registry().register_entity(std::move(made));
+    sim.tick();
+    history.capture(sim);
+
+    const auto x = [&](float alpha) {
+        return FrameView(&history.prev(), &history.cur(), alpha).position(entity(sim, id)).x;
+    };
+    CHECK(x(0.0f) == Approx(100.0f));
+    CHECK(x(0.5f) == Approx(101.75f));
+    CHECK(x(1.0f) == Approx(103.5f));
+}
+
+TEST_CASE("FrameView draws a projectile reaching its impact point at the share of the step",
+          "[interp][view]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    const osc::u32 target = spawn_at(sim, {110, 10, 100});
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.cy = 1;
+    box.sx = 1;
+    box.sy = 1;
+    box.sz = 1;
+    entity(sim, target).set_collision_shape(box);
+    auto made = std::make_unique<osc::sim::Projectile>();
+    made->set_position({100, 11, 100});
+    made->velocity = {35, 0, 0};
+    const osc::u32 id = sim.entity_registry().register_entity(std::move(made));
+    for (int t = 0; t < 3; ++t) {
+        sim.tick();
+    }
+    REQUIRE(entity(sim, id).position().x == Approx(109.0f));
+
+    const auto x = [&](float alpha) {
+        return FrameView(&history.prev(), &history.cur(), alpha).position(entity(sim, id)).x;
+    };
+    const float share = (109.0f - (107.0f - 0.35f)) / 3.5f;
+    CHECK(x(0.0f) == Approx(107.0f));
+    CHECK(x(share * 0.5f) == Approx(108.0f));
+    CHECK(x(share) == Approx(109.0f));
+    CHECK(x(1.0f) == Approx(109.0f));
 }
 
 TEST_CASE("FrameView jumps a teleported entity instead of sliding it", "[interp][view]") {

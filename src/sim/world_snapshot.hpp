@@ -65,6 +65,10 @@ struct EntityRecord {
     Quaternion orientation;
     Vector3 beam_end;     ///< collision beams' far end (unused otherwise)
     u32 snap_serial = 0;  ///< changes when the entity teleports (see Entity::note_snap)
+    f32 step_scale = 1;   ///< Moho's mCurImpactValue
+    bool launched = false;
+    Vector3 launch_position;
+    Quaternion launch_orientation;
     Scroll scroll_start, scroll_end;
     u32 bone_offset = 0;  ///< into WorldSnapshot::bones
     u32 bone_count = 0;   ///< 0 = no animated pose
