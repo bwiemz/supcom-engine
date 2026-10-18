@@ -586,10 +586,11 @@ public:
         return out;
     }
 
-    /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
-    /// orders (tick_orders), the layer, the step, coasting and fuel
-    /// (motion_tick), the manipulators, then the silo, regeneration and
-    /// weapons (tick_upkeep).
+    /// Moho's attacker stage, in its army's step of CArmyImpl::OnTick.
+    void tick_weapons(SimContext& ctx);
+    /// Moho's stage B: its IAiCommandDispatchImpl and the order's task.
+    void tick_commands(f64 dt, SimContext& ctx);
+    /// Moho's stage A: Unit::MotionTick.
     void update(f64 dt, SimContext& ctx);
 
     /// Lua callback helpers: call self:method() or self:method(entity)
@@ -1542,11 +1543,7 @@ private:
         if (navigator_.busy()) navigator_.abort_move();
     }
 
-    // update's phases. Each but the last says whether the tick goes on.
-    /// Dying (the death animation), or carried (following the transport):
-    /// nothing else this tick.
-    bool tick_lifecycle(f64 dt, SimContext& ctx);
-    bool tick_orders_and_motion(f64 dt, SimContext& ctx, f32& econ_eff);
+    void follow_transport(f64 dt, SimContext& ctx);
     /// Run orders from the head of the queue until one holds (unit_orders.cpp).
     bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
     /// An order's first run (on a patrol, each leg's): what Moho's task
@@ -1559,9 +1556,7 @@ private:
     bool engage(UnitCommand& cmd, lua_State* L);
     /// The layer, the step its orders asked for, coasting, fuel.
     bool motion_tick(f64 dt, SimContext& ctx);
-    /// A silo assist ended, regeneration, the silo, motion events, weapons.
-    /// Runs while paused too.
-    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff);
+    void tick_upkeep(f64 dt, SimContext& ctx);
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
@@ -1729,8 +1724,6 @@ private:
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
     OrderStep order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx);
-    /// A tick of a unit attached to a staging platform: its refuel order, if
-    /// that is still its head, and its fuel and repair.
     void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
     /// A patrolling aircraft that needs fuel or repair (Moho's
     /// Unit::FindPlatform): the first of its army's idle staging platforms

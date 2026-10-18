@@ -347,6 +347,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         // allocated until the tick ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
+            // IAiCommandDispatchImpl::Execute starts no command while its unit is attached.
+            if (parent_entity_id() != 0) {
+                return true;
+            }
             // Its scripts may change the queue, or kill the unit: look again.
             begin_order(command_queue_.front(), ctx.L);
             continue;
@@ -618,6 +622,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         // In reach, the formation is dropped: from now on the unit attacks
         // as a plain attack does (TaskTick's Processing: mFormation = null).
         cmd.has_slot = false;
+        cmd.engaged = true;
         // CUnitAttackTargetTask::TaskTick, Complete: AbortNavigation unless Air.CanFly.
         if (can_fly()) {
             close_in();

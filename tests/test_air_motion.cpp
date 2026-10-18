@@ -547,7 +547,34 @@ TEST_CASE("An aircraft's weapon takes its ordered target only once the attack en
     }
     REQUIRE(a.command_queue().front().engaged);
     CHECK_FALSE(early);
+    CHECK(weapon.target_entity_id == 0);
+    a.weapons().front()->fire_clock = 1000000;
+    w.sim.tick();
     CHECK(weapon.target_entity_id == tank.entity_id());
+}
+
+TEST_CASE("An idle aircraft whose weapon picks a target flies its attack run that tick",
+          "[air_motion]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 25.0f;
+    gun->damage = 10.0f;
+    gun->target_check_period = 1;
+    gun->auto_initiate_attack_command = true;
+    a.add_weapon(std::move(gun));
+    for (int t = 0; t < 5; ++t) {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    }
+    REQUIRE(a.command_queue().empty());
+    REQUIRE_FALSE(a.air_combat().flying);
+    w.make("tank", 45.0f, 128.0f, 2);
+    a.weapons().front()->fire_clock = 1000000;
+    w.sim.tick();
+    REQUIRE_FALSE(a.command_queue().empty());
+    CHECK(a.command_queue().front().type == osc::sim::CommandType::Attack);
+    CHECK(a.air_combat().flying);
 }
 
 TEST_CASE("An attack that engages makes the weapons drop their target, then take the order's",
@@ -584,6 +611,9 @@ TEST_CASE("An attack that engages makes the weapons drop their target, then take
         w.sim.tick();
     }
     REQUIRE(a.command_queue().front().engaged);
+    REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'lost')").ok());
+    a.weapons().front()->fire_clock = 1000000;
+    w.sim.tick();
     REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'lost got')").ok());
     CHECK(weapon.target_entity_id == tank.entity_id());
 }

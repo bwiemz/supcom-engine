@@ -962,6 +962,11 @@ private:
     void share_team_economy();
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
+    SimContext sim_context();
+    /// Moho's CArmyImpl::OnTick, each army in turn: its units' weapons.
+    void tick_army_weapons();
+    /// Moho's stage B: each unit's orders, in creation order.
+    void tick_unit_orders();
     void update_entities();
     /// Ground units that overlap are pushed apart (M203b): an idle unit
     /// makes way for a moving one, otherwise the smaller gives more, and a

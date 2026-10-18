@@ -524,12 +524,8 @@ void Unit::tick_docked(f64 dt, SimContext& ctx, Unit& platform) {
         if (refuels(head) && head.target_id == platform_id &&
             head.dock_phase == DockPhase::Docked) {
             order_refuel(head, dt, ctx);
-            if (destroyed() || !in_registry()) return;
         }
     }
-    // Still aboard, it refuels; let go this tick, it flies.
-    Unit* pad = transport_id_ == platform_id ? live_unit(ctx.registry, platform_id) : nullptr;
-    tick_fuel(dt, ctx, pad);
 }
 
 bool Unit::tick_fuel(f64 dt, SimContext& ctx, Unit* platform) {

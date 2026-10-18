@@ -182,13 +182,13 @@ const Weapon* primary_weapon(const Unit& owner) {
     return nullptr;
 }
 
-/// The unit an attack order at the head of the queue names, or 0.
+/// The unit an attack order at the head of the queue has handed its attacker (Moho's desired
+/// target), or 0.
 u32 attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
     if (queue.empty() || queue.front().type != CommandType::Attack) return 0;
     const UnitCommand& order = queue.front();
-    if (!order.engaged && owner.layer() == "Air" &&
-        (owner.air_combat_rules().winged || circles(owner))) {
+    if (!order.engaged) {
         return 0;
     }
     return order.target_id;
@@ -301,39 +301,86 @@ bool Weapon::call_script(lua_State* L, const char* method, const char* arg) cons
 }
 
 void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
-    if (fire_clock > 0) --fire_clock;
-
-    if (!enabled || fire_on_death) return;
-    // A nuke's damage is its script's (Damage 0): a manual weapon fires
-    // whatever its damage.
-    if (max_range <= 0 || (damage <= 0 && !manual_fire)) return;
-
-    const TargetMark previous = target_mark();
-    if (manual_fire) {
-        // It fires only at what its unit's launch order names, whatever the
-        // fire state.
-        take_order_target(owner, registry);
-    } else {
-        // HoldFire (1) = don't auto-target or fire at all
-        if (owner.fire_state() == 1) return;
-        update_targeting(owner, registry, sim);
+    fire_step(owner, registry, L, sim);
+    if (owner.destroyed() || owner.is_dying()) {
+        return;
     }
-    if (aim_spot_target != target_entity_id) pick_aim_spot(registry, sim);
-    update_aim(owner, registry, L);
-    if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
+    acquire_step(owner, registry, L, sim);
+}
 
+void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
+    if (fire_clock > 0) {
+        --fire_clock;
+    }
+    if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0 ||
+        owner.fire_state() == 1) {
+        return;
+    }
     if (L && fires_through_script()) {
-        update_scripted(owner, registry, L, previous, sim);
+        fire_scripted(owner, registry, L, sim);
         return;
     }
+    fire_direct(owner, registry, L, sim);
+}
 
-    if (!has_target() || fire_clock > 0 || ground_fire_barred()) return;
-    const std::optional<Vector3> at = target_point(registry);
-    if (!at || !in_firing_range(owner, *at) || !in_heading_arc(owner, *at)) return;
-    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return;
-    if (const AimManipulator* aim = fire_control(owner);
-        aim && !(aim->enabled() && aim->on_target()))
+void Weapon::acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L,
+                          const SimState* sim) {
+    if (!enabled || fire_on_death || manual_fire || max_range <= 0 || damage <= 0 ||
+        owner.fire_state() == 1) {
         return;
+    }
+    const TargetMark previous = target_mark();
+    update_targeting(owner, registry, sim);
+    if (L && fires_through_script()) {
+        report_target_change(owner, L, previous);
+        if (owner.destroyed() || owner.is_dying()) {
+            return;
+        }
+    }
+    if (aim_spot_target != target_entity_id) {
+        pick_aim_spot(registry, sim);
+    }
+    update_aim(owner, registry, L);
+}
+
+void Weapon::fire_at_order(Unit& owner, EntityRegistry& registry, lua_State* L,
+                           const SimState* sim) {
+    if (!enabled || fire_on_death || !manual_fire || max_range <= 0) {
+        return;
+    }
+    const TargetMark previous = target_mark();
+    take_order_target(owner, registry);
+    if (aim_spot_target != target_entity_id) {
+        pick_aim_spot(registry, sim);
+    }
+    update_aim(owner, registry, L);
+    if (owner.destroyed() || owner.is_dying()) {
+        return;
+    }
+    if (L && fires_through_script()) {
+        if (report_target_change(owner, L, previous)) {
+            fire_scripted(owner, registry, L, sim);
+        }
+        return;
+    }
+    fire_direct(owner, registry, L, sim);
+}
+
+void Weapon::fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim) {
+    if (!has_target() || fire_clock > 0 || ground_fire_barred()) {
+        return;
+    }
+    const std::optional<Vector3> at = target_point(registry);
+    if (!at || !in_firing_range(owner, *at) || !in_heading_arc(owner, *at)) {
+        return;
+    }
+    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) {
+        return;
+    }
+    if (const AimManipulator* aim = fire_control(owner);
+        aim && !(aim->enabled() && aim->on_target())) {
+        return;
+    }
     if (try_fire(owner, registry, L, sim)) {
         fire_clock = fire_period();
         ++shots_at_target;
@@ -376,35 +423,44 @@ void Weapon::drop_target(lua_State* L) {
     if (had && fires_through_script()) call_script(L, "OnLostTarget");
 }
 
-void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
-                             const TargetMark& previous, const SimState* sim) {
-    // Each callback may kill the unit or disable the weapon.
+bool Weapon::report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous) {
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
     };
-    if (!(target_mark() == previous)) {
-        if (previous.entity != 0 || previous.ground) {
-            // A manual weapon whose order went: its script must not fire on
-            // (Moho's OnHaltFire, "so we won't fire if the target reticle is
-            // moved"); an unpacking launcher packs up on losing its target.
-            if (manual_fire) {
-                call_script(L, "OnHaltFire");
-                if (!still_firing()) return;
+    if (target_mark() == previous) {
+        return true;
+    }
+    if (previous.entity != 0 || previous.ground) {
+        // Moho's OnHaltFire: a manual weapon whose order went must not fire on.
+        if (manual_fire) {
+            call_script(L, "OnHaltFire");
+            if (!still_firing()) {
+                return false;
             }
-            call_script(L, "OnLostTarget");
-            if (!still_firing()) return;
         }
-        if (has_target()) {
-            call_script(L, "OnGotTarget");
-            if (!still_firing()) return;
+        call_script(L, "OnLostTarget");
+        if (!still_firing()) {
+            return false;
         }
     }
+    if (has_target()) {
+        call_script(L, "OnGotTarget");
+        if (!still_firing()) {
+            return false;
+        }
+    }
+    return true;
+}
 
-    // The fire clock: when it is ready and the weapon can fire, the script
-    // gets OnFire (its state machine decides what that means) and the clock
-    // restarts.
-    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry, sim)) return;
-    if (!call_script(L, "CanWeaponFire") || !still_firing()) return;
+void Weapon::fire_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
+                           const SimState* sim) {
+    if (fire_clock > 0 || ground_fire_barred() || !can_fire(owner, registry, sim)) {
+        return;
+    }
+    if (!call_script(L, "CanWeaponFire") || owner.destroyed() || owner.is_dying() ||
+        !fires_through_script()) {
+        return;
+    }
     call_script(L, "OnFire");
     fire_clock = fire_period();
     ++shots_at_target;

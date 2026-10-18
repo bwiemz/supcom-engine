@@ -130,6 +130,8 @@ void store(SimState& sim, double mass, double energy) {
     // has no units with storage)
     sim.army_at(0)->set_extra_storage(1000.0, 1000.0);
     auto& economy = sim.army_at(0)->economy();
+    economy.mass.max_storage = 1000.0;
+    economy.energy.max_storage = 1000.0;
     economy.mass.stored = mass;
     economy.energy.stored = energy;
 }

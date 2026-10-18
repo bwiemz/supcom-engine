@@ -14154,6 +14154,20 @@ void test_air_turn(TestContext& ctx) {
         IssueMove({__osc_f}, {400, GetTerrainHeight(400, 790), 790})
         __osc_a_id = __osc_a:GetEntityId()
         __osc_f_id = __osc_f:GetEntityId()
+        __osc_a_moved, __osc_a_closed, __osc_a_x, __osc_a_z = -1, -1, 0, 0
+        ForkThread(function()
+            local start = __osc_a:GetPosition()
+            for t = 1, 260 do
+                local p = __osc_a:GetPosition()
+                if __osc_a_moved < 0 and (p[1] ~= start[1] or p[3] ~= start[3]) then
+                    __osc_a_moved = t
+                end
+                if __osc_a_closed < 0 and table.getn(__osc_a:GetCommandQueue()) == 0 then
+                    __osc_a_closed, __osc_a_x, __osc_a_z = t, p[1], p[3]
+                end
+                WaitTicks(1)
+            end
+        end)
     )");
     if (!r) {
         check(false, "probe script: " + r.error().message);
@@ -14202,14 +14216,19 @@ void test_air_turn(TestContext& ctx) {
     const auto off = [](const osc::sim::Vector3& p, float x, float z) {
         return std::hypot(p.x - x, p.z - z);
     };
-    // Retail: 86 ticks into its flight, 0.167 off at (320.36, 720.59), its order done.
-    check(a.closed > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
+    // Retail, as its probe's thread saw it: 86 ticks into its flight, 0.167 off at
+    // (320.36, 720.59), its order done.
+    a.closed = static_cast<int>(number("__osc_a_closed"));
+    a.at_close = {static_cast<float>(number("__osc_a_x")), 0.0f,
+                  static_cast<float>(number("__osc_a_z"))};
+    const int a_moved = static_cast<int>(number("__osc_a_moved"));
+    check(a.closed > 0 && a_moved > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
               off(a.at_close, 320.36f, 720.59f) < 0.05f &&
-              std::abs(a.closed - a.moved + 1 - 86) <= 1,
+              std::abs(a.closed - a_moved + 1 - 86) <= 1,
           fmt::format("the interceptor passes its goal {:.3f} off at ({:.2f}, {:.2f}), {} ticks "
                       "into its flight, and its order is done there",
                       off(a.at_close, 320.5f, 720.5f), a.at_close.x, a.at_close.z,
-                      a.closed - a.moved + 1));
+                      a.closed - a_moved + 1));
     // Retail: it lands 96 ticks later at (329.32, 721.20).
     const auto a_end = a.unit->position();
     check(a.landed > 0 && off(a_end, 329.32f, 721.2f) < 0.1f &&
@@ -14466,10 +14485,12 @@ void test_air_staging(TestContext& ctx) {
 
     // Docked: fuel rises by FuelRechargeRate / FuelUseTime / 10 times the
     // pad's multiplier a tick (5 / 300 / 10 x 50), and it heard
-    // OnStartRefueling once. Its repair is asked for at once, and heals from
-    // the next tick: 500 / 10 a tick.
+    // OnStartRefueling once. Its repair is asked for in the tick it docks
+    // (Moho's ProcessFuelLevels runs after the refuel task docks it), and heals
+    // from the next tick: 500 / 10 a tick.
     const float f0 = a->fuel_ratio();
     const float h0 = a->health();
+    const double asked_docking = a->economy().dock_repair_energy;
     step();
     const float f1 = a->fuel_ratio();
     const float h1 = a->health();
@@ -14487,10 +14508,12 @@ void test_air_staging(TestContext& ctx) {
           fmt::format("docked, the tank rises {:.5f} a tick", f1 - f0));
     check(number("__osc_started") == 1,
           fmt::format("OnStartRefueling heard {} time(s)", number("__osc_started")));
-    check(h1 == h0 && std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f &&
-              ask_e == 50.0 && ask_m == 5.0,
-          fmt::format("repair: asks 50E 5M a second ({}, {}), heals from the next tick ({} {} {})",
-                      ask_e, ask_m, h0, h1, h2));
+    check(asked_docking == 50.0 && std::abs(h1 - std::min(a->max_health(), h0 + 50.0f)) < 0.01f &&
+              std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f && ask_e == 50.0 &&
+              ask_m == 5.0,
+          fmt::format("repair: asks 50E 5M a second ({}, {}) from the tick it docks ({}), heals "
+                      "from the next tick ({} {} {})",
+                      ask_e, ask_m, asked_docking, h0, h1, h2));
 
     // Full and repaired, it is let go at the pad's next look (every 9 ticks
     // from the tick after it docked), where it sat, and climbs away.

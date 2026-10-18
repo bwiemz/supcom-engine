@@ -366,6 +366,11 @@ order that set it, as Moho's does.
   - Tests: a trigger true from the start fires at tick 11; consumption raised by a Lua thread works at
     N+2; a unit finished in N shows in `GetEconomyIncome` at N+1.
 
+*3a and 3b done (2026-10-18) — tick/s3ab-weapons-orders-lua: P2 `OnGotTarget` 3, `OnFire` 13 and every projectile in its
+`OnFire` tick (46/46, retail 3/13, 51/51); P3 `OnStartBuild` at T+1, a factory's unit `DetachFrom` at S and `Moving` at
+S+1, as retail; the Corsair's first rocket in its `OnFire` tick, 756 a salvo and 49% within 2; the scout's
+`OnGotTarget`/`OnFire` 87/91 (retail 86/90: the scout's own move starts two ticks early, D10).*
+
 **Step 4. Projectiles as Moho's.** The entity walk includes entities made during it (a projectile always
 moves on its creation tick); the impact runs at the start of the next step, with the pending position at the
 impact point; the lifetime is an absolute tick (#701's half-tick compensation goes); the display reaches the
