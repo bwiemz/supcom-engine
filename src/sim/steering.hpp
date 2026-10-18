@@ -2,6 +2,8 @@
 
 #include "core/types.hpp"
 
+#include <vector>
+
 namespace osc::sim {
 
 class SimState;
@@ -17,6 +19,7 @@ class Unit;
 /// Units and candidates are taken in id order, so every platform decides the
 /// same.
 void steer_ground_units(SimState& sim);
+void steer_units(SimState& sim, const std::vector<u32>& ids);
 
 /// The formation a unit moves in, as a key (0: none): Moho's
 /// mInfoCache.mFormationLayer (Unit::GetFormation, kept only for a form
