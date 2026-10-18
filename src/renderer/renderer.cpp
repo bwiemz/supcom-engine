@@ -3084,7 +3084,8 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     submit_and_present(fi, image_index, false, capturing, false);
 }
 
-void Renderer::update_world_shapes(lua_State* L, u32 fi) {
+void Renderer::update_world_shapes(lua_State* L, const sim::FrameView& frame,
+                                   const Frustum& frustum, const BuildGhost* ghost, u32 fi) {
     // The world's size of one of the UI's points at a spot: the LOD metric
     // (the view's width at its depth) over the view's width in points
     sim::Vector3 eye;
@@ -3099,6 +3100,19 @@ void Renderer::update_world_shapes(lua_State* L, u32 fi) {
     world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
         return lod_metric(p, eye, forward, fov) / width;
     });
+
+    // Placing a structure: its pad and the pads of the structures standing or
+    // under way, outlined on the ground, those in view (build_outlines)
+    if (ghost) {
+        for (const PadOutline& o : build_outlines(structure_pads(frame, &recon_), *ghost)) {
+            const f32 cx = (o.site.x0 + o.site.x1) * 0.5f;
+            const f32 cz = (o.site.z0 + o.site.z1) * 0.5f;
+            const f32 reach = std::max(o.site.x1 - o.site.x0, o.site.z1 - o.site.z0);
+            if (!frustum.is_sphere_visible(cx, o.y, cz, reach)) continue;
+            world_shapes_.box({o.site.x0, o.y, o.site.z0}, o.site.x1 - o.site.x0,
+                              o.site.z1 - o.site.z0, o.color, 0.0f);
+        }
+    }
 
     const ui::WorldView* view = view_world_view_;
     if (!view && L) {
@@ -3395,7 +3409,7 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
     selection_renderer_.update(view, *view_camera_, view_points()[1], selected_ids, hovered_,
                                player_army_, drag_box_, texture_cache_, mesh_cache_, L, fi);
 
-    update_world_shapes(L, fi);
+    update_world_shapes(L, view, frustum, ghost, fi);
     if (!primary && fog_on_) {
         vision_renderer_.update(fog_circles_, fi);
         minimap_vision_.update(fog_circles_, fi);
@@ -3429,7 +3443,7 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
         overlay_renderer_.set_hovered(hovered_);
         overlay_renderer_.update(view, events, *view_camera_, vp, selected_ids, texture_cache_,
                                  view_points()[0], view_points()[1], game_result, frame_dt_,
-                                 &frustum, ghost);
+                                 &frustum);
     }
 
     // FA's water: this frame's camera and time (M213a)
