@@ -612,12 +612,19 @@ void test_trail_render(TestContext& ctx) {
         ImageRGBA8 half;
         r.request_capture([&](ImageRGBA8 image) { half = std::move(image); });
         r.render(sim::FrameView(&seen.prev(), &seen.cur(), 0.5f), seen.events(), nullptr, ctx.L);
+        // Beyond the drawn head the additive trail adds no red and no blue
+        // (Test 8's test ahead of the head). The frame is 13.5 ticks after
+        // `without`, so the trees there have swayed: a leaf's edge may cross
+        // the probe's pixel and darken it, by how a driver rounds the sway
+        // (MoltenVK's fast-math sin does; KosmicKrisp's and MoltenVK's
+        // without fast math don't). A darker pixel says nothing about the
+        // trail, which only adds; a head drawn at G (30) adds red here.
         const f32 behind = bright(added(half, on(g0, 25.5f)));
-        const f32 beyond = bright(added(half, on(g0, 28.5f)));
-        t.check(behind > 0.3f && std::abs(beyond) < 0.05f,
+        const auto beyond = added(half, on(g0, 28.5f));
+        t.check(behind > 0.3f && beyond[0] < 0.05f && beyond[2] < 0.05f,
                 fmt::format("Test 8b: halfway into a tick, 1.5 behind the drawn head {:+.2f}, 1.5 "
-                            "beyond it {:+.2f}",
-                            behind, beyond));
+                            "beyond it r{:+.2f} b{:+.2f}",
+                            behind, beyond[0], beyond[2]));
     }
 
     // Test 9: a SortOrder below -101's trail draws under the water: where
