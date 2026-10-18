@@ -203,6 +203,31 @@ TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothin
     CHECK(w.log() == stopped);
 }
 
+TEST_CASE("A guard's help ends with OnStopBuild when what it guards is gone", "[build][assist]") {
+    // An upgrade's end: the structure upgrading destroys itself once the
+    // new one stands, and its helpers' guards go with it. Each helper's
+    // script must hear its build stop (retail's OnStopBuild ends the build
+    // effects and the commander's build pose); it had gone on building in
+    // silence until some later build order.
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(helper->is_building());
+    w.log();
+    const osc::u32 id = eng->entity_id();
+    eng->mark_destroyed();
+    w.sim.entity_registry().unregister_entity(id);
+    w.sim.tick();
+    CHECK(w.log() == "helper stop");
+    CHECK_FALSE(helper->is_building());
+    CHECK(helper->command_queue().empty());
+}
+
 TEST_CASE("A guard helping a build aims its arm at what it helps build", "[build][assist]") {
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);

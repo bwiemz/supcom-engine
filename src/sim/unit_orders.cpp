@@ -1520,7 +1520,11 @@ void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
         assist_rolloff_wait_ = 0;
         cancel_factory_build(registry, L);
     } else if (is_building()) {
-        stop_assisting();
+        // Its script hears the stop (OnStopBuild ends retail's build effects
+        // and the commander's build pose): a structure upgrading destroys
+        // itself once the new one stands, and its helpers had gone on in the
+        // pose until some later build order.
+        stop_assisting(L, &registry);
     }
 }
 
@@ -1681,16 +1685,21 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     const bool rebuilder = has_category("REBUILDER");
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed() || !target->is_unit()) {
-        end_guard_build(registry, L);
+        const u32 cmd_id = cmd.command_id;
+        end_guard_build(registry, L); // scripts may run: `cmd` may be gone
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
         if (rebuilder) {
             // Its repair of it goes with it: the Guard staying, nothing else
             // would stop it (Unit::update keeps a guard's repair).
             if (is_repairing()) stop_repairing(L, registry);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
+            if (command_queue_.empty() || command_queue_.front().command_id != cmd_id)
+                return OrderStep::Next;
             return order_guard_point(cmd, dt, ctx);
         }
         release_navigator(); // the walk to it ends too
-        command_queue_.pop_front();
+        if (!command_queue_.empty() && command_queue_.front().command_id == cmd_id)
+            command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target_unit = static_cast<Unit*>(target);
