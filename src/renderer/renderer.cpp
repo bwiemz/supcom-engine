@@ -235,10 +235,12 @@ bool Renderer::create_window(u32 width, u32 height, const std::string& title, bo
     // An offscreen capture is the size asked for, whatever the screen's:
     // Windows keeps a window within the screens' height unless its own
     // limits allow more (a 2x capture of a laptop's frame outgrows a 1440p
-    // screen)
+    // screen). The limit is a Vulkan image's usual largest, so a test that
+    // resizes the window later can still grow it.
     if (offscreen) {
-        glfwSetWindowSizeLimits(window_, GLFW_DONT_CARE, GLFW_DONT_CARE, static_cast<int>(width),
-                                static_cast<int>(height));
+        constexpr int kLargestImage = 16384;
+        glfwSetWindowSizeLimits(window_, GLFW_DONT_CARE, GLFW_DONT_CARE, kLargestImage,
+                                kLargestImage);
         glfwSetWindowSize(window_, static_cast<int>(width), static_cast<int>(height));
     }
     // The system's cursor stays hidden until FA's cursor is made it
