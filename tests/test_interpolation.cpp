@@ -61,6 +61,11 @@ Entity& entity(SimState& sim, osc::u32 id) {
 
 Unit& unit(SimState& sim, osc::u32 id) { return static_cast<Unit&>(entity(sim, id)); }
 
+void end_tick(SimState& sim, WorldHistory& history) {
+    sim.entity_registry().advance_coords();
+    history.capture(sim);
+}
+
 std::array<osc::f32, 16> filled(osc::f32 v) {
     std::array<osc::f32, 16> m{};
     m.fill(v);
@@ -180,9 +185,9 @@ struct TwoTicks {
 
     TwoTicks(Vector3 from, Vector3 to) {
         id = spawn_at(sim, from);
-        history.capture(sim);
+        end_tick(sim, history);
         entity(sim, id).set_position(to);
-        history.capture(sim);
+        end_tick(sim, history);
     }
     FrameView view(float alpha) const { return {&history.prev(), &history.cur(), alpha}; }
 };
@@ -223,7 +228,7 @@ TEST_CASE("FrameView turns orientation along the shorter arc", "[interp][view]")
 TEST_CASE("FrameView draws a new entity where it is, not where it wasn't", "[interp][view]") {
     TwoTicks w({0, 0, 0}, {10, 0, 0});
     const osc::u32 fresh = spawn_at(w.sim, {50, 0, 50});
-    w.history.capture(w.sim); // prev: no `fresh`; cur: `fresh` at 50,50
+    end_tick(w.sim, w.history); // prev: no `fresh`; cur: `fresh` at 50,50
 
     const FrameView view(&w.history.prev(), &w.history.cur(), 0.25f);
     CHECK(view.position(entity(w.sim, fresh)).x == Approx(50.0f));
@@ -233,13 +238,13 @@ TEST_CASE("FrameView draws a projectile's first step from where it was made", "[
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    history.capture(sim);
+    end_tick(sim, history);
     auto made = std::make_unique<osc::sim::Projectile>();
     made->set_position({100, 30, 100});
     made->velocity = {35, 0, 0};
     const osc::u32 id = sim.entity_registry().register_entity(std::move(made));
     sim.tick();
-    history.capture(sim);
+    end_tick(sim, history);
 
     const auto x = [&](float alpha) {
         return FrameView(&history.prev(), &history.cur(), alpha).position(entity(sim, id)).x;
@@ -287,10 +292,10 @@ TEST_CASE("FrameView jumps a teleported entity instead of sliding it", "[interp]
     SimState sim(g.L, nullptr);
     WorldHistory history;
     const osc::u32 id = spawn_at(sim, {0, 0, 0});
-    history.capture(sim);
+    end_tick(sim, history);
     entity(sim, id).set_position({500, 0, 500});
     entity(sim, id).note_snap(); // Warp / SetPosition(pos, true)
-    history.capture(sim);
+    end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, id)).x == Approx(500.0f));
@@ -304,13 +309,13 @@ TEST_CASE("FrameView pairs records through the history's index as a search would
     const osc::u32 moving = spawn_at(sim, {0, 0, 0});
     const osc::u32 dying = spawn_at(sim, {5, 0, 5});
     const osc::u32 warped = spawn_at(sim, {9, 0, 9});
-    history.capture(sim);
+    end_tick(sim, history);
     entity(sim, moving).set_position({10, 0, 0});
     entity(sim, dying).mark_destroyed();
     entity(sim, warped).set_position({500, 0, 500});
     entity(sim, warped).note_snap();
     const osc::u32 fresh = spawn_at(sim, {50, 0, 50});
-    history.capture(sim);
+    end_tick(sim, history);
     REQUIRE(history.cur().previous_serial == history.prev().serial);
 
     // The same pair, the index dropped: a search.
@@ -349,12 +354,12 @@ TEST_CASE("FrameView jumps an attachment with its teleported parent", "[interp][
     const osc::u32 parent = spawn_at(sim, {0, 0, 0});
     const osc::u32 child = spawn_at(sim, {0, 0, 0});
     entity(sim, child).set_parent(parent, -1, -1);
-    history.capture(sim);
+    end_tick(sim, history);
 
     entity(sim, parent).set_position({500, 0, 500});
     entity(sim, parent).note_snap();
     sim.follow_attachments();
-    history.capture(sim);
+    end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, child)).x == Approx(500.0f));
@@ -372,14 +377,14 @@ TEST_CASE("A chain of attachments jumps link by link as each one follows", "[int
     entity(sim, mid).set_parent(root, -1, -1);
     entity(sim, leaf).set_parent(mid, -1, -1);
     sim.follow_attachments();
-    history.capture(sim);
+    end_tick(sim, history);
 
     entity(sim, root).set_position({500, 0, 500});
     entity(sim, root).note_snap();
     sim.follow_attachments(); // mid jumps
-    history.capture(sim);
+    end_tick(sim, history);
     sim.follow_attachments(); // leaf jumps
-    history.capture(sim);
+    end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, mid)).x == Approx(500.0f));
@@ -392,11 +397,11 @@ TEST_CASE("Attaching an entity jumps it onto its parent", "[interp][view]") {
     WorldHistory history;
     const osc::u32 parent = spawn_at(sim, {100, 0, 100});
     const osc::u32 child = spawn_at(sim, {0, 0, 0});
-    history.capture(sim);
+    end_tick(sim, history);
 
     entity(sim, child).set_parent(parent, -1, -1); // AttachTo / AttachBoneTo
     sim.follow_attachments();
-    history.capture(sim);
+    end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, child)).x == Approx(100.0f));
@@ -404,7 +409,7 @@ TEST_CASE("Attaching an entity jumps it onto its parent", "[interp][view]") {
     // Riding along afterwards interpolates as usual.
     entity(sim, parent).set_position({110, 0, 100});
     sim.follow_attachments();
-    history.capture(sim);
+    end_tick(sim, history);
     const FrameView riding(&history.prev(), &history.cur(), 0.5f);
     CHECK(riding.position(entity(sim, child)).x == Approx(105.0f));
 }
@@ -415,9 +420,9 @@ TEST_CASE("FrameView interpolates collision-beam endpoints", "[interp][view]") {
     WorldHistory history;
     const osc::u32 id = spawn_at(sim, {0, 0, 0});
     entity(sim, id).set_beam_endpoint({0, 0, 0});
-    history.capture(sim);
+    end_tick(sim, history);
     entity(sim, id).set_beam_endpoint({0, 0, 20});
-    history.capture(sim);
+    end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.beam_end(entity(sim, id)).z == Approx(10.0f));
@@ -429,9 +434,9 @@ TEST_CASE("FrameView blends bone poses between ticks", "[interp][view]") {
     WorldHistory history;
     const osc::u32 id = spawn_at(sim, {0, 0, 0});
     unit(sim, id).animated_bone_matrices().assign(2, filled(0.0f));
-    history.capture(sim);
+    end_tick(sim, history);
     unit(sim, id).animated_bone_matrices().assign(2, filled(4.0f));
-    history.capture(sim);
+    end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.25f);
     std::vector<std::array<osc::f32, 16>> out;
@@ -441,7 +446,7 @@ TEST_CASE("FrameView blends bone poses between ticks", "[interp][view]") {
 
     // A pose whose bone count changed (a new mesh) is taken as it is.
     unit(sim, id).animated_bone_matrices().assign(3, filled(8.0f));
-    history.capture(sim);
+    end_tick(sim, history);
     const FrameView view2(&history.prev(), &history.cur(), 0.25f);
     REQUIRE(view2.bones(id, out));
     REQUIRE(out.size() == 3);
@@ -457,8 +462,8 @@ TEST_CASE("FrameView without history reads the live sim", "[interp][view]") {
 
     // An entity spawned after the last capture also reads live.
     WorldHistory history;
-    history.capture(sim);
-    history.capture(sim);
+    end_tick(sim, history);
+    end_tick(sim, history);
     const osc::u32 late = spawn_at(sim, {9, 9, 9});
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, late)).x == 9.0f);
@@ -486,6 +491,8 @@ TEST_CASE("Warp and an immediate SetPosition teleport; a plain SetPosition moves
 
     REQUIRE(lua.do_string("moho.entity_methods.SetPosition(ent, {1, 0, 1})").ok());
     CHECK(e.snap_serial() == 0);
+    CHECK(e.position().x == 0.0f);
+    sim.entity_registry().advance_coords();
     CHECK(e.position().x == 1.0f);
 
     REQUIRE(lua.do_string("moho.entity_methods.SetPosition(ent, {2, 0, 2}, true)").ok());
@@ -733,7 +740,7 @@ TEST_CASE("An order given and not yet run is in its unit's orders before its tic
     move.target_pos = {20, 0, 10};
     unit(sim, id).push_command(move, true);
     WorldHistory history;
-    history.capture(sim);
+    end_tick(sim, history);
     const auto orders = [&] {
         history.refresh_pending(sim);
         std::vector<osc::f32> xs;
@@ -777,7 +784,7 @@ TEST_CASE("An order moved or removed and not yet run is so in its unit's orders 
     move.command_id = 8;
     unit(sim, id).push_command(move, false);
     WorldHistory history;
-    history.capture(sim);
+    end_tick(sim, history);
     const auto orders = [&] {
         history.refresh_pending(sim);
         std::vector<std::pair<osc::u32, osc::f32>> out;
@@ -824,7 +831,7 @@ TEST_CASE("A patrol's break-off isn't in its unit's orders before or after a new
     unit(sim, id).push_command(reclaim, true);
     unit(sim, id).append_command(patrol);
     WorldHistory history;
-    history.capture(sim);
+    end_tick(sim, history);
     const auto types = [&](std::span<const osc::sim::CommandRecord> orders) {
         std::vector<osc::sim::CommandType> out;
         for (const auto& c : orders) {
@@ -858,7 +865,7 @@ TEST_CASE("A player's order not yet run has its id, and is taken off by it", "[i
     sim.route_player_command({id}, move, false);
     sim.set_human_input_active(false);
     WorldHistory history;
-    history.capture(sim);
+    end_tick(sim, history);
     history.refresh_pending(sim);
     const auto shown = history.cur().orders_of(*history.cur().find(id));
     REQUIRE(shown.size() == 2);

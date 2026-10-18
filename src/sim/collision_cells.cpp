@@ -46,13 +46,11 @@ void CollisionCells::init(u32 width, u32 height) {
     const size_t cells = initialized() ? static_cast<size_t>(width_) * height_ : 0;
     units_.assign(cells, {});
     props_.assign(cells, {});
-    moves_.clear();
 }
 
 void CollisionCells::clear() {
     for (auto& cell : units_) cell.clear();
     for (auto& cell : props_) cell.clear();
-    moves_.clear();
 }
 
 CollisionCells::Rect CollisionCells::query_rect(f32 x0, f32 z0, f32 x1, f32 z1) {
@@ -147,34 +145,9 @@ void CollisionCells::link(Entity& e) {
 
 void CollisionCells::unlink(Entity& e) {
     CellLink& l = e.cell_link();
-    if (l.moved != 0) {
-        std::erase_if(moves_, [&](const Move& m) { return m.entity == &e; });
-        l.moved = 0;
-    }
     if (l.seq == 0) return;
     remove(e);
     l = CellLink{};
-}
-
-void CollisionCells::moved(Entity& e) {
-    if (!initialized() || !lists_for(e)) return;
-    CellLink& l = e.cell_link();
-    l.moved = ++move_stamp_;
-    moves_.push_back({&e, l.moved});
-}
-
-void CollisionCells::advance() {
-    // Relinking runs no script, so nothing moves meanwhile; swap out anyway.
-    std::vector<Move> moves;
-    moves.swap(moves_);
-    for (const Move& m : moves) {
-        CellLink& l = m.entity->cell_link();
-        if (l.moved != m.stamp) continue; // it moved again later
-        l.moved = 0;
-        link(*m.entity);
-    }
-    moves.clear();
-    if (moves_.empty()) moves_.swap(moves); // keep the capacity
 }
 
 std::vector<Entity*> CollisionCells::gather(const Rect& r, bool units, bool props) {

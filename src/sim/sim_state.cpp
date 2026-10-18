@@ -362,8 +362,8 @@ void SimState::follow_attachments() {
         const BonePose at = pose_compose(bone, {e.parent_offset(), Quaternion{}});
         const Vector3& p = at.position;
         const Quaternion& q = at.rotation;
-        const Vector3& c = e.position();
-        const Quaternion& o = e.orientation();
+        const Vector3& c = e.pending_position();
+        const Quaternion& o = e.pending_orientation();
         const bool snap = e.followed_parent_snap() != parent->snap_serial();
         if (snap || c.x != p.x || c.y != p.y || c.z != p.z || o.x != q.x || o.y != q.y ||
             o.z != q.z || o.w != q.w)
@@ -552,7 +552,7 @@ bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevat
         if (unit.layer() != "Land" && unit.layer() != "Seabed") {
             return;
         }
-        Vector3 p = unit.position();
+        Vector3 p = unit.pending_position();
         if (std::abs(p.x - mid_x) > reach_x || std::abs(p.z - mid_z) > reach_z) {
             return;
         }
@@ -1485,7 +1485,7 @@ void SimState::enforce_no_rush() {
         const ArmyBrain* brain = army_at(static_cast<size_t>(unit->army()));
         if (!brain || brain->is_civilian()) return; // wildlife/props aren't confined
         const Vector3& c = brain->start_position();
-        const Vector3& p = unit->position();
+        const Vector3& p = unit->pending_position();
         f32 dx = p.x - c.x;
         f32 dz = p.z - c.z;
         f32 dist_sq = dx * dx + dz * dz;
@@ -1537,10 +1537,6 @@ void SimState::tick() {
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
-    // Where each unit stands as the tick begins, and whether it moved over
-    // the last one: Moho commits entities' moves at the end of each beat,
-    // and its path code asks whether a unit's committed position changed.
-    entity_registry_.for_each_unit([](Entity& e) { static_cast<Unit&>(e).note_tick_position(); });
     // Moho's UpdatePaths: the clusters' background rebuild, before the
     // armies tick (Sim::AdvanceBeat).
     if (path_tables_) {
@@ -1586,7 +1582,7 @@ void SimState::tick() {
                 entity_registry_.unregister_entity(id);
                 continue;
             }
-            const Vector3 p = e->position();
+            const Vector3 p = e->pending_position();
             const bool water = terrain_ && terrain_->has_water() &&
                                terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
             // On the ground it is a land unit now: its wreck follows the
@@ -1690,10 +1686,8 @@ void SimState::tick() {
         lua_setgcthreshold(L_, 0);
     }
 
-    // What moved this tick relinks in the collision cells (Moho's
-    // AdvanceCoords, near the end of the beat): the rect queries see each
-    // tick's moves from the next one on.
-    entity_registry_.advance_collision_cells();
+    // Moho's AdvanceCoords, after KillCleanup: the tick's moves are committed at once.
+    entity_registry_.advance_coords();
 
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe,
@@ -2131,19 +2125,9 @@ void SimState::update_entities() {
             if (e->destroyed()) {
                 return;
             }
-            const Vector3 before = e->position();
-            const u32 snaps = e->snap_serial();
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
             if (auto* moved = entity_registry_.find(id); moved && !moved->destroyed()) {
                 static_cast<Unit*>(moved)->note_queue_head();
-                // A teleport or a boarding jumps: no speed to lead by.
-                const Vector3 after = moved->position();
-                const auto per_second = static_cast<f32>(1.0 / SECONDS_PER_TICK);
-                static_cast<Unit*>(moved)->set_velocity(
-                    moved->snap_serial() != snaps ? Vector3{}
-                                                  : Vector3{(after.x - before.x) * per_second,
-                                                            (after.y - before.y) * per_second,
-                                                            (after.z - before.z) * per_second});
             }
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK, entity_registry_, L_,
@@ -2153,7 +2137,7 @@ void SimState::update_entities() {
             auto* prop = static_cast<Prop*>(e);
             prop->step_fall(terrain_.get());
             if (prop->sink_rate != 0) {
-                Vector3 p = prop->position();
+                Vector3 p = prop->pending_position();
                 p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
                 prop->set_position(p);
             }
@@ -2249,7 +2233,7 @@ void SimState::separate_ground_units() {
     for (u32 i = 0; i < bodies.size(); ++i) {
         if (push_x[i] == 0 && push_z[i] == 0) continue;
         Unit& u = *bodies[i].unit;
-        Vector3 p = u.position();
+        Vector3 p = u.pending_position();
         p.x += push_x[i];
         p.z += push_z[i];
         if (pathfinding_grid_) {
@@ -2262,12 +2246,13 @@ void SimState::separate_ground_units() {
         // With Moho pathing, as its drive does (Moho's CUnitMotion): no push
         // onto ground the unit won't fit, from ground it does.
         if (moho_pathing_ && footprint_fits_at(u.footprint(), p.x, p.z) == 0 &&
-            footprint_fits_at(u.footprint(), u.position().x, u.position().z) != 0)
+            footprint_fits_at(u.footprint(), u.pending_position().x, u.pending_position().z) != 0) {
             continue;
+        }
         // On the surface as it drives; a submarine keeps its depth.
         if (terrain_ && !bodies[i].sub) {
             const Unit::GroundStance stance =
-                u.ground_stance(terrain_.get(), p.x, p.z, u.orientation());
+                u.ground_stance(terrain_.get(), p.x, p.z, u.pending_orientation());
             p.y = stance.y;
             u.set_orientation(stance.orientation);
         }

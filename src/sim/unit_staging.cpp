@@ -54,10 +54,10 @@ bool refuels(const UnitCommand& cmd) {
 /// forward, flattened.
 f32 bone_heading(const Unit& platform, i32 bone) {
     const Quaternion facing =
-        quat_multiply(platform.orientation(), platform.bone_pose(bone).rotation);
+        quat_multiply(platform.pending_orientation(), platform.bone_pose(bone).rotation);
     const Vector3 forward = quat_rotate(facing, Vector3{0.0f, 0.0f, 1.0f});
     if (forward.x * forward.x + forward.z * forward.z < 1e-6f)
-        return quat_yaw(platform.orientation());
+        return quat_yaw(platform.pending_orientation());
     return dmath::atan2(forward.x, forward.z);
 }
 
@@ -140,15 +140,15 @@ void Unit::settle_step(const Vector3& at, f32 heading, f64 dt, const map::Terrai
     // Settling: straight over the point, slowing to a hover, down to it and
     // turned the way it faces (Moho's move onto the land layer, at the
     // point's height and facing).
-    const f32 dx = at.x - position().x;
-    const f32 dz = at.z - position().z;
+    const f32 dx = at.x - pending_position().x;
+    const f32 dz = at.z - pending_position().z;
     const f32 dist = std::sqrt(dx * dx + dz * dz);
     const f32 speed = dist > kOverBone
                           ? std::max(current_airspeed_ - accel_rate_ * accel_mult_ * fdt,
                                      std::max(climb_rate_, 1.0f))
                           : 0.0f;
     current_airspeed_ = speed;
-    Vector3 to = position();
+    Vector3 to = pending_position();
     if (dist > kOverBone) {
         const f32 step = std::min(dist, speed * fdt);
         to.x += (at.x - to.x) / dist * step;

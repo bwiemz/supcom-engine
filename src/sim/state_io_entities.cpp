@@ -170,6 +170,11 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.i32v(e.army_);
     w.vec3(e.position_);
     w.quat(e.orientation_);
+    w.vec3(e.pending_position_);
+    w.quat(e.pending_orientation_);
+    w.vec3(e.last_position_);
+    w.quat(e.last_orientation_);
+    // placed_: every registered entity's
     w.u32v(e.snap_serial_);
     w.u32v(e.followed_parent_snap_);
     w.f32v(e.health_);
@@ -202,9 +207,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     enum8(w, e.viz_neutrals_);
     save_shape(w, e.collision_shape_);
     save_shape(w, e.default_collision_shape_);
-    // cell_link_: its order alone (seq); its cells follow from where it is
-    // (between ticks the cells have advanced, so no move is pending, and
-    // moved is 0), and mark is a gather's own
+    // cell_link_: its order alone (seq); its cells follow from its committed transform, and mark
+    // is a gather's own
     w.u64v(e.cell_link_.seq);
     w.str(e.mesh_override_); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
     w.b(e.unselectable_);
@@ -265,6 +269,11 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.army_ = r.i32v();
     e.position_ = r.vec3();
     e.orientation_ = r.quat();
+    e.pending_position_ = r.vec3();
+    e.pending_orientation_ = r.quat();
+    e.last_position_ = r.vec3();
+    e.last_orientation_ = r.quat();
+    e.placed_ = true;
     e.snap_serial_ = r.u32v();
     e.followed_parent_snap_ = r.u32v();
     e.health_ = r.f32v();
@@ -1430,17 +1439,12 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.crashing_);
     w.b(u.crash_impacted_);
     w.vec3(u.velocity_);
+    // motion_step_: taken by the tick's commit, zero between ticks
     w.f32v(u.crash_velocity_y_);
     w.f32v(u.crash_spin_rate_);
     w.u32v(u.creator_id_);
-    w.vec3(u.tick_position_);
-    w.quat(u.tick_orientation_);
-    w.b(u.tick_position_set_);
-    w.b(u.moved_last_tick_);
     w.b(u.lifts_off_);
     w.u32v(u.warp_aborted_command_);
-    w.vec3(u.last_tick_motion_);
-    w.b(u.turned_last_tick_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1847,14 +1851,8 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.crash_velocity_y_ = r.f32v();
     u.crash_spin_rate_ = r.f32v();
     u.creator_id_ = r.u32v();
-    u.tick_position_ = r.vec3();
-    u.tick_orientation_ = r.quat();
-    u.tick_position_set_ = r.b();
-    u.moved_last_tick_ = r.b();
     u.lifts_off_ = r.b();
     u.warp_aborted_command_ = r.u32v();
-    u.last_tick_motion_ = r.vec3();
-    u.turned_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();

@@ -72,6 +72,11 @@ Projectile* add_shot(EntityRegistry& reg, const Vector3& at, const Vector3& velo
     return static_cast<Projectile*>(reg.find(reg.register_entity(std::move(p))));
 }
 
+void fly(EntityRegistry& reg, Projectile& p) {
+    p.update(0.1, reg, nullptr);
+    reg.advance_coords();
+}
+
 } // namespace
 
 TEST_CASE("a blueprint's footprint is its own, else its size rounded up", "[collision]") {
@@ -202,11 +207,11 @@ TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
     // From inside its launcher, which it passes, at 60 u/s: both boxes lie
     // on this tick's path (100..106).
     Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 60}, shooter);
-    shot->update(0.1, reg, nullptr);
+    fly(reg, *shot);
     // It met the nearer box's face at z = 103.
     CHECK_FALSE(shot->destroyed());
     CHECK(shot->position().z == Approx(103.0f));
-    shot->update(0.1, reg, nullptr);
+    fly(reg, *shot);
     CHECK(shot->destroyed());
     CHECK(shot->position().z == Approx(103.0f));
 }
@@ -217,7 +222,7 @@ TEST_CASE("a shot with entity collision off flies through", "[collision]") {
     add_unit(reg, {100, 0, 102}, box(1, 1, 1, 1));
     Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 40});
     shot->collide_entity = false;
-    shot->update(0.1, reg, nullptr);
+    fly(reg, *shot);
     CHECK_FALSE(shot->destroyed());
     CHECK(shot->position().z == Approx(104.0f));
 }
@@ -231,12 +236,12 @@ TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
     reg.register_entity(std::move(shield));
 
     Projectile* out = add_shot(reg, {100, 1, 105}, {0, 0, 80});
-    out->update(0.1, reg, nullptr);
+    fly(reg, *out);
     CHECK_FALSE(out->destroyed());
 
     Projectile* in = add_shot(reg, {100, 1, 115}, {0, 0, -80});
-    in->update(0.1, reg, nullptr);
-    in->update(0.1, reg, nullptr);
+    fly(reg, *in);
+    fly(reg, *in);
     CHECK(in->destroyed());
     CHECK(in->position().z == Approx(100.0f + std::sqrt(100.0f - 1.0f)).margin(1e-3));
 }
@@ -395,7 +400,7 @@ TEST_CASE("a straight weapon lobs its falling shots onto their target", "[collis
     const f32 pitch = std::asin(v.y / std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z));
     CHECK(std::sin(2.0f * pitch) == Approx(Projectile::GRAVITY * 30.0f / 400.0f).epsilon(1e-3));
     for (int tick = 0; tick < 20 && !shot->destroyed(); ++tick) {
-        shot->update(0.1, reg, nullptr);
+        fly(reg, *shot);
     }
     CHECK(shot->destroyed());
     CHECK(shot->position().z == Approx(129.0f).margin(1e-3));
@@ -478,7 +483,7 @@ TEST_CASE("a straight weapon's turret pitches up to lob its falling shots", "[co
     Vector3 was = shot->position();
     for (int tick = 0; tick < 30 && shot->position().y > 0.0f; ++tick) {
         was = shot->position();
-        shot->update(0.1, t.reg, nullptr);
+        fly(t.reg, *shot);
     }
     const Vector3 now = shot->position();
     REQUIRE(now.y <= 0.0f);

@@ -1007,7 +1007,7 @@ public:
     GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z,
                                const Quaternion& facing) const;
     f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
-        return ground_stance(terrain, x, z, orientation()).y;
+        return ground_stance(terrain, x, z, pending_orientation()).y;
     }
     void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing);
     bool snaps_to_ground() const {
@@ -1052,10 +1052,11 @@ public:
     /// CUnitMotion::IsOnValidLayer). A surface unit that can't drowns.
     bool on_valid_layer() const;
 
-    /// How far it moved over its last tick, per second (SimState sets it):
-    /// weapons that LeadTarget aim ahead by it.
+    /// Per second, as of the last commit: off the air layer a mobile unit's own motion step, else
+    /// its move between the last two commits. Weapons that LeadTarget aim ahead by it.
     const Vector3& velocity() const { return velocity_; }
     void set_velocity(const Vector3& v) { velocity_ = v; }
+    void advance_coords() override;
 
     // A killed aircraft's fall (see begin_dying).
     bool is_crashing() const { return crashing_; }
@@ -1069,30 +1070,10 @@ public:
 
     // Misc flags
     u32 creator_id() const { return creator_id_; }
-    /// Whether it moved over the last tick: its position as this tick began
-    /// against the last's (Moho's committed transform against the one
-    /// before). A new unit hasn't.
-    bool moved_last_tick() const { return moved_last_tick_; }
-    /// Where it stood as this tick began (the next tick's moved_last_tick).
-    const Vector3& tick_position() const { return tick_position_; }
-    /// Note where it stands as a tick begins (SimState::tick), and how it
-    /// moved and turned over the last.
-    void note_tick_position() {
-        const Vector3& p = position();
-        const Quaternion& q = orientation();
-        moved_last_tick_ =
-            tick_position_set_ &&
-            (p.x != tick_position_.x || p.y != tick_position_.y || p.z != tick_position_.z);
-        last_tick_motion_ =
-            tick_position_set_
-                ? Vector3{p.x - tick_position_.x, p.y - tick_position_.y, p.z - tick_position_.z}
-                : Vector3{};
-        turned_last_tick_ =
-            tick_position_set_ && (q.x != tick_orientation_.x || q.y != tick_orientation_.y ||
-                                   q.z != tick_orientation_.z || q.w != tick_orientation_.w);
-        tick_position_ = p;
-        tick_orientation_ = q;
-        tick_position_set_ = true;
+    /// Whether its last commit moved it (Moho's current position against the last).
+    bool moved_last_tick() const {
+        return position().x != last_position().x || position().y != last_position().y ||
+               position().z != last_position().z;
     }
     /// Moho's CAnimationManipulator motion scaling (CreateAnimator(unit, true)).
     f32 anim_motion_scale(f32 dt) const;
@@ -2082,20 +2063,15 @@ private:
     bool crashing_ = false;
     bool crash_impacted_ = false; // set on landing, taken by SimState
     Vector3 velocity_{};
+    Vector3 motion_step_{};
     f32 crash_velocity_y_ = 0;
     f32 crash_spin_rate_ = 0;
     // Misc flags
     u32 creator_id_ = 0;
-    Vector3 tick_position_{};        // where it stood as this tick began
-    Quaternion tick_orientation_{};
-    bool tick_position_set_ = false; // (none before its first tick)
-    bool moved_last_tick_ = false;
     bool lifts_off_ = false;
     /// The order running as a Warp aborted its move (its command id, 0:
     /// none): a Move order so tagged ends (warp()).
     u32 warp_aborted_command_ = 0;
-    Vector3 last_tick_motion_;      // its move over the last tick
-    bool turned_last_tick_ = false; // and whether it turned
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
     bool cloaked_ = false;

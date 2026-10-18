@@ -915,3 +915,180 @@ TEST_CASE("A projectile's sweep finds a shield a tenth of a step past the step's
     REQUIRE(shot);
     CHECK(shot->position().x == Catch::Approx(117.0f).margin(0.001f));
 }
+
+namespace {
+
+void give_box(Unit& u) {
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.cy = 1.0f;
+    box.sx = 1.0f;
+    box.sy = 1.0f;
+    box.sz = 1.0f;
+    u.set_collision_shape(box);
+}
+
+void watch_rival(Phases& w) {
+    REQUIRE(w.run("rival_x = {} ForkThread(function()"
+                  "   while true do"
+                  "     rival_x[GetGameTick()] = EM.GetPosition(rival)[1]"
+                  "     WaitTicks(1)"
+                  "   end"
+                  " end)"));
+}
+
+struct Meeting {
+    f32 checked = 0;
+    f32 hit_x = 0;
+    f32 rival_x = 0;
+};
+
+Meeting shell_meets_tank(bool tank_first) {
+    Phases w;
+    w.make("shooter", "tank", 1, 140.0f, 100.0f);
+    REQUIRE(w.run("checked = 0 hit_x = 0 Plain.OnCollisionCheck = function(self, other)"
+                  "   checked = GetGameTick() return true"
+                  " end"));
+    w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
+                                 "   hit_x = EM.GetPosition(self)[1]"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    const auto shoot = [&] {
+        REQUIRE(w.run("shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
+                      " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, -35, 0, 0)"));
+    };
+    if (!tank_first) {
+        shoot();
+    }
+    Unit& tank = w.make("rival", "tank", 2, 100.0f, 100.0f);
+    if (tank_first) {
+        shoot();
+    }
+    give_box(tank);
+    Phases::drive_east(tank);
+    watch_rival(w);
+    for (int t = 0; t < 20 && w.number("hit_x") == 0; ++t) {
+        w.sim.tick();
+    }
+    Meeting m;
+    m.checked = w.number("checked");
+    m.hit_x = w.number("hit_x");
+    REQUIRE(w.run("seen_x = rival_x[checked] or 0"));
+    m.rival_x = w.number("seen_x");
+    return m;
+}
+
+f32 blast_by_tank(bool tank_first) {
+    Phases w;
+    w.make("shooter", "tank", 1, 140.0f, 100.0f);
+    REQUIRE(w.run("damaged = 0 Plain.OnDamage = function(self) damaged = GetGameTick() end"));
+    w.projectile_class("/shell", "OnImpact = function(self, kind)"
+                                 "   local at = EM.GetPosition(self)"
+                                 "   local r = math.abs(rival_x[GetGameTick()] - at[1]) + 0.25"
+                                 "   DamageArea(self, at, r, 10, 'Normal', false)"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    const auto shoot = [&] {
+        REQUIRE(w.run("shot = EM.CreateProjectile(shooter, '/shell', -42, 5, 0)"
+                      " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, 0, -35, 0)"));
+    };
+    if (!tank_first) {
+        shoot();
+    }
+    Unit& tank = w.make("rival", "tank", 2, 100.0f, 100.0f);
+    if (tank_first) {
+        shoot();
+    }
+    tank.set_collision_shape({});
+    Phases::drive_east(tank);
+    watch_rival(w);
+    for (int t = 0; t < 8; ++t) {
+        w.sim.tick();
+    }
+    return w.number("damaged");
+}
+
+} // namespace
+
+TEST_CASE("A projectile meets a moving unit where the unit stood as the tick began",
+          "[tick-phases][committed]") {
+    const bool tank_first = GENERATE(true, false);
+    CAPTURE(tank_first);
+    const Meeting m = shell_meets_tank(tank_first);
+    REQUIRE(m.checked > 0);
+    CHECK(m.hit_x == Catch::Approx(m.rival_x + 1.0f));
+}
+
+TEST_CASE("A shot meets its target and a blast reaches a unit alike whichever was made first",
+          "[tick-phases][committed]") {
+    const Meeting a = shell_meets_tank(true);
+    const Meeting b = shell_meets_tank(false);
+    REQUIRE(a.checked > 0);
+    CHECK(a.checked == b.checked);
+    CHECK(a.hit_x == Catch::Approx(b.hit_x));
+    CHECK(blast_by_tank(true) > 0);
+    CHECK(blast_by_tank(true) == blast_by_tank(false));
+}
+
+TEST_CASE("A unit Warp moves is found at its new place by GetUnitsInRect in the same thread",
+          "[tick-phases][committed]") {
+    Phases w;
+    w.sim.build_spatial_grid();
+    Unit& tank = w.make("rival", "tank", 2, 100.0f, 100.0f);
+    give_box(tank);
+    w.sim.tick();
+    REQUIRE(w.run("there = 0 here = 0 ForkThread(function()"
+                  "   Warp(rival, {150, 10, 150})"
+                  "   there = table.getn(GetUnitsInRect(148, 148, 152, 152) or {})"
+                  "   here = table.getn(GetUnitsInRect(98, 98, 102, 102) or {})"
+                  " end)"));
+    w.sim.tick();
+    CHECK(w.number("there") == 1.0f);
+    CHECK(w.number("here") == 0.0f);
+}
+
+TEST_CASE("SetPosition from Lua moves an entity when the tick's moves are committed or at once",
+          "[tick-phases][committed]") {
+    const bool immediate = GENERATE(false, true);
+    CAPTURE(immediate);
+    Phases w;
+    w.make("site", "fac", 1, 100.0f, 100.0f);
+    w.sim.tick();
+    REQUIRE(w.run(std::string("same = 0 next = 0 ForkThread(function()"
+                              "   EM.SetPosition(site, {120, 10, 100}, ") +
+                  (immediate ? "true" : "false") +
+                  ")"
+                  "   same = EM.GetPosition(site)[1]"
+                  "   WaitTicks(1)"
+                  "   next = EM.GetPosition(site)[1]"
+                  " end)"));
+    w.sim.tick();
+    w.sim.tick();
+    CHECK(w.number("same") == Catch::Approx(immediate ? 120.0f : 100.0f));
+    CHECK(w.number("next") == Catch::Approx(120.0f));
+}
+
+TEST_CASE("A unit's velocity is its move between the last two commits, or its own motion's "
+          "off the air layer",
+          "[tick-phases][committed]") {
+    Phases w;
+    const Unit& site = w.make("site", "fac", 1, 100.0f, 100.0f);
+    Unit& rider = w.make("rider", "tank", 1, 110.0f, 100.0f);
+    w.sim.tick();
+    rider.set_parent(site.entity_id(), -1);
+    REQUIRE(w.run("moved = {} ForkThread(function()"
+                  "   EM.SetPosition(site, {101, 10, 100})"
+                  "   for i = 1, 2 do"
+                  "     WaitTicks(1)"
+                  "     moved[i] = moho.unit_methods.GetVelocity(site)"
+                  "   end"
+                  " end)"));
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.run("moved1 = moved[1] moved2 = moved[2]"));
+    CHECK(w.number("moved1") == Catch::Approx(1.0f));
+    CHECK(w.number("moved2") == Catch::Approx(0.0f));
+    CHECK(rider.position().x == Catch::Approx(101.0f));
+    CHECK(rider.velocity().x == 0.0f);
+}

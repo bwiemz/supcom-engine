@@ -130,11 +130,13 @@ TEST_CASE("A slaved weapon's target turns the hull past its arc, until under hal
     gun(*u).slaved_arc_range = 30.0f;
     Unit* foe = dummy(sim, 0, 0);
     foe->set_position(at_bearing(*u, 20.0f, 20.0f));
+    foe->place_now();
     gun(*u).set_target_entity(foe->entity_id());
     ticks(sim, 50);
     CHECK(std::abs(heading_deg(*u)) < 0.01f); // 20 off: inside its 30
 
     foe->set_position(at_bearing(*u, 31.0f, 20.0f));
+    foe->place_now();
     ticks(sim, 10);
     // 9 a tick: 9, 18; then 13 off, under 15, and it stops.
     CHECK(std::abs(heading_deg(*u) - 18.0f) < 0.05f);
@@ -154,6 +156,7 @@ TEST_CASE("The default arc is 1 degree; a weapon not slaved, or an arc of 180, t
     for (Unit* u : {by_default, unslaved, wide}) {
         Unit* foe = dummy(sim, 0, 0);
         foe->set_position(at_bearing(*u, 2.0f, 20.0f));
+        foe->place_now();
         gun(*u).set_target_entity(foe->entity_id());
     }
     ticks(sim, 5);
@@ -175,7 +178,9 @@ TEST_CASE("The first slaved weapon with a target decides", "[hull-facing]") {
     Unit* left = dummy(sim, 0, 0);
     Unit* right = dummy(sim, 0, 0);
     left->set_position(at_bearing(*u, -40.0f, 20.0f));
+    left->place_now();
     right->set_position(at_bearing(*u, 40.0f, 20.0f));
+    right->place_now();
     gun(*u, 1).set_target_entity(right->entity_id());
     ticks(sim, 10);
     CHECK(std::abs(heading_deg(*u) - 40.0f) < 0.5f); // only the second has one
@@ -233,6 +238,7 @@ TEST_CASE("AttackAngle puts the target that far off the bow, on its own side", "
         gun(*u).slaved_to_body = true;
         Unit* foe = dummy(sim, 0, 0);
         foe->set_position(at_bearing(*u, c.target, 30.0f)); // in range or not: no matter
+        foe->place_now();
         gun(*u).set_target_entity(foe->entity_id());
         ships.push_back(u);
         x += 30.0f;
@@ -253,6 +259,7 @@ TEST_CASE("A parked attack's AttackAngle faces the target off the bow, every 9 t
     fatboy->set_attack_angle(10.0f); // no slaved weapon
     Unit* foe = dummy(sim, 0, 0);
     foe->set_position(at_bearing(*fatboy, 50.0f, 20.0f)); // within its 40
+    foe->place_now();
     UnitCommand attack;
     attack.type = CommandType::Attack;
     attack.target_id = foe->entity_id();
@@ -262,6 +269,7 @@ TEST_CASE("A parked attack's AttackAngle faces the target off the bow, every 9 t
     CHECK(std::abs(wrap_deg(heading_deg(*fatboy) - 40.0f)) < 0.5f);
     // The target moves to 90: the facing is asked again only on the cadence.
     foe->set_position(at_bearing(*fatboy, 90.0f, 20.0f));
+    foe->place_now();
     ticks(sim, 12);
     CHECK(std::abs(wrap_deg(heading_deg(*fatboy) - 80.0f)) < 0.5f);
     // A move clears it.
@@ -288,6 +296,7 @@ TEST_CASE("A mobile unit's slaved weapon holds a target out of its arc and fires
     for (Unit* u : {tank, tower, plain}) {
         Unit* behind = dummy(sim, 0, 0);
         behind->set_position(at_bearing(*u, 180.0f, 20.0f));
+        behind->place_now();
         INFO("unit at " << u->position().x << ", " << u->position().z);
         const bool holds = gun(*u).can_target(*u, *behind, &sim);
         CHECK(holds == (u == tank));
@@ -313,6 +322,7 @@ TEST_CASE("Held still or stunned it turns; an aircraft doesn't", "[hull-facing]"
         gun(*u).slaved_to_body = true;
         Unit* foe = dummy(sim, 0, 0);
         foe->set_position(at_bearing(*u, 45.0f, 20.0f));
+        foe->place_now();
         gun(*u).set_target_entity(foe->entity_id());
     }
     ticks(sim, 10);
@@ -331,6 +341,7 @@ TEST_CASE("A landed aircraft doesn't turn to its slaved weapon's target", "[hull
     gun(*plane).slaved_arc_range = 50.0f;
     Unit* foe = dummy(sim, 0, 0);
     foe->set_position(at_bearing(*plane, 120.0f, 20.0f));
+    foe->place_now();
     gun(*plane).set_target_entity(foe->entity_id());
     ticks(sim, 20);
     CHECK(std::abs(heading_deg(*plane)) < 0.01f);
@@ -344,6 +355,7 @@ TEST_CASE("A turn in place is a move: Cruise, then Stopping, then Stopped", "[hu
     gun(*u).slaved_to_body = true;
     Unit* foe = dummy(sim, 0, 0);
     foe->set_position(at_bearing(*u, 90.0f, 20.0f));
+    foe->place_now();
     gun(*u).set_target_entity(foe->entity_id());
     std::vector<Unit::MotionHorz> seen;
     for (int t = 0; t < 20; ++t) {
@@ -387,6 +399,7 @@ TEST_CASE("A unit that stops to fire brakes straight on while its hull turns", "
     const f32 z = u->position().z;
     Unit* foe = dummy(sim, 0, 0);
     foe->set_position({u->position().x, 7.8f, u->position().z + 30.0f}); // abeam, in range 40
+    foe->place_now();
     gun(*u).set_target_entity(foe->entity_id());
     UnitCommand attack;
     attack.type = CommandType::Attack;
@@ -438,6 +451,7 @@ TEST_CASE("A turret on a turning hull fires along its aim", "[hull-facing][weapo
     w.firing_tolerance = 2.0f;
     Unit* foe = dummy(sim, 0, 0);
     foe->set_position(at_bearing(*u, 90.0f, 20.0f));
+    foe->place_now();
     w.set_target_entity(foe->entity_id());
 
     std::set<u32> seen;

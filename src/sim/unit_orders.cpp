@@ -2435,6 +2435,7 @@ void Unit::abandon_beam_up(const map::Terrain* terrain, lua_State* L) {
     beam_up_ticks_ = 0;
     stand_on_ground(terrain, position(), euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
     note_snap();
+    place_now();
     call_lua_method(L, "OnStopTransportBeamUp");
 }
 
@@ -2447,7 +2448,7 @@ void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
     current_altitude_ = alt;
     current_airspeed_ = 0.0f;
     rest_air_body();
-    Vector3 at = position();
+    Vector3 at = pending_position();
     at.y = air_floor(terrain, at.x, at.z) + alt;
     set_position(at);
 }
@@ -2541,6 +2542,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
                 stand_on_ground(ctx.terrain, position(),
                                 euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
                 note_snap();
+                place_now();
                 return finish_order();
             }
             attach_to_transport(transport, registry, L);
@@ -2552,14 +2554,14 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         const f32 blend =
             dmath::cos(static_cast<f32>(beam_up_ticks_) * 3.14159265f * 0.1f) * 0.5f + 0.5f;
         const Quaternion bone_facing =
-            slot
-                ? quat_multiply(transport->orientation(), transport->bone_pose(slot->bone).rotation)
-                : transport->orientation();
+            slot ? transport->bone_world_rotation(slot->bone) : transport->orientation();
         const Vector3 to{bone_at.x, bone_at.y - size_y_, bone_at.z};
         set_position({beam_from_.x + (to.x - beam_from_.x) * blend,
                       beam_from_.y + (to.y - beam_from_.y) * blend,
                       beam_from_.z + (to.z - beam_from_.z) * blend});
         set_orientation(blend_orientation(beam_from_orientation_, bone_facing, blend));
+        // CUnitCallTransport::TaskTick: SetPendingTransform, then AdvanceCoords.
+        advance_coords();
         --beam_up_ticks_;
         return OrderStep::Hold;
     }
@@ -2983,6 +2985,7 @@ OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
             teleporting_ = false;
             set_position(to);
             note_snap();
+            place_now();
             command_queue_.pop_front();
             return OrderStep::Next;
         }

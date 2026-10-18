@@ -374,7 +374,6 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
         check("the next search's type",
               [&] { nav.finder().set_type(osc::sim::path::SearchType::Leader); });
         check("a repath asked", [&] { nav.request_repath(); });
-        check("whether it moved last tick", [&] { moving->note_tick_position(); });
         check("a new goal", [&] {
             nav.set_goal({{100, 100, 104, 104}, {}}, moving->position().x, moving->position().z);
         });
