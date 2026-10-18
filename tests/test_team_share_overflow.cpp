@@ -57,6 +57,7 @@ TEST_CASE("TeamShareOverflow routes wasted overflow to an ally", "[shareoverflow
     add_producer(sim, 0, 1000.0); // income 1000 → +100/tick, overflows by 100
 
     sim.tick();
+    sim.tick();
     CHECK_THAT(mass(sim, 0), WithinAbs(200.0, 1e-6)); // donor stays full
     CHECK_THAT(mass(sim, 1), WithinAbs(100.0, 1e-6)); // ally gains the overflow
 }
@@ -75,6 +76,7 @@ TEST_CASE("Overflow is not shared when the option is off", "[shareoverflow]") {
     add_producer(sim, 0, 1000.0);
 
     sim.tick();
+    sim.tick();
     CHECK_THAT(mass(sim, 1), WithinAbs(0.0, 1e-6)); // wasted, not shared
 }
 
@@ -91,6 +93,7 @@ TEST_CASE("Overflow is not shared with enemies", "[shareoverflow]") {
     sim.get_army(1)->set_stored_resources(0.0, 0.0);
     add_producer(sim, 0, 1000.0);
 
+    sim.tick();
     sim.tick();
     CHECK_THAT(mass(sim, 1), WithinAbs(0.0, 1e-6));
 }
@@ -128,6 +131,7 @@ TEST_CASE("Overflow distribution is capped by available room", "[shareoverflow]"
     sim.get_army(1)->set_stored_resources(180.0, 0.0); // only 20 room
     add_producer(sim, 0, 1000.0); // overflow 100, but ally can take only 20
 
+    sim.tick();
     sim.tick();
     CHECK_THAT(mass(sim, 1), WithinAbs(200.0, 1e-6)); // filled to cap, rest lost
 }

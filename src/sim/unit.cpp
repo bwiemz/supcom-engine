@@ -945,9 +945,36 @@ void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) {
         return;
     }
+    take_step(dt, ctx);
+    if (!destroyed() && in_registry()) {
+        manage_resources(ctx.sim ? ctx.sim->get_army(army()) : nullptr);
+    }
+}
+
+void Unit::manage_resources(ArmyBrain* army) {
+    const bool upkeep = economy_.maintenance_active && economy_.energy_maintenance_override > 0.0;
+    economy_.resource_consumed = economy_.consumption_active || upkeep ? economy_.granted : 0.0;
+    holds_storage_ = producing();
+    if (holds_storage_ && army) {
+        army->bank(economy_.production_mass, economy_.production_energy);
+    }
+}
+
+void Unit::bank_reclaim(ArmyBrain* army) const {
+    if (army && (economy_.reclaim_mass != 0.0 || economy_.reclaim_energy != 0.0)) {
+        army->bank(economy_.reclaim_mass, economy_.reclaim_energy);
+    }
+}
+
+void Unit::take_step(f64 dt, SimContext& ctx) {
     if (dying_) {
         tick_dying(static_cast<f32>(dt), ctx.terrain);
-        tick_manipulators(static_cast<f32>(dt), ctx.L);
+        if (ctx.sim) {
+            ctx.sim->step_economy_events(*this);
+        }
+        if (!destroyed() && in_registry()) {
+            tick_manipulators(static_cast<f32>(dt), ctx.L);
+        }
         return;
     }
     report_health_band(ctx.L);
@@ -956,6 +983,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
     }
     if (transport_id_ != 0) {
         follow_transport(dt, ctx);
+        if (ctx.sim && !destroyed() && in_registry()) {
+            ctx.sim->step_economy_events(*this);
+        }
         return;
     }
     // Moho's Unit::MotionTick: SiloTick, the stun countdown, then CUnitMotion::MotionTick.
@@ -978,6 +1008,12 @@ void Unit::update(f64 dt, SimContext& ctx) {
     if (goes_on && !is_being_built()) {
         update_motion_horz(ctx.L);
         update_motion_turn(ctx.L);
+        if (destroyed() || !in_registry()) {
+            return;
+        }
+    }
+    if (ctx.sim) {
+        ctx.sim->step_economy_events(*this);
         if (destroyed() || !in_registry()) {
             return;
         }

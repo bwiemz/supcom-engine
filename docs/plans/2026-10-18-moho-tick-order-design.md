@@ -374,6 +374,12 @@ order that set it, as Moho's does.
 S+1, as retail; the Corsair's first rocket in its `OnFire` tick, 756 a salvo and 49% within 2; the scout's
 `OnGotTarget`/`OnFire` 87/91 (retail 86/90: the scout's own move starts two ticks early, D10).*
 
+*3c done (2026-10-18) — tick/s3c-economy-army-phase: each army's economy, stats triggers (from tick 11) and unit-cap
+stats run in its army phase; a unit's step banks its production and sets its `ResourceConsumed`, storage and economy
+events, reclaim is banked in the order phase, overflow shared within each economy; on retail's economy probe the events
+step and finish on retail's ticks; `GiveResource` is banked, so the commander's starting gift is income at tick 6 and
+fills the stores then, as retail's (the engine's own gift goes); a34 and P3 unchanged.*
+
 **Step 4. Projectiles as Moho's.** The entity walk includes entities made during it (a projectile always
 moves on its creation tick); the impact runs at the start of the next step, with the pending position at the
 impact point; the lifetime is an absolute tick (#701's half-tick compensation goes); the display reaches the

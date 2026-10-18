@@ -758,29 +758,6 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
         return 1;
     }
 
-    // Read storage from blueprint for initial resource gift
-    // (mirrors GiveInitialResources in ACUUnit.lua which errors before running)
-    f64 gift_mass = 0.0, gift_energy = 0.0;
-    auto* store = sim->blueprint_store();
-    auto* entry = store ? store->find(bp_id) : nullptr;
-    if (entry) {
-        store->push_lua_table(*entry, L);
-        lua_pushstring(L, "Economy");
-        lua_gettable(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "StorageMass");
-            lua_gettable(L, -2);
-            if (lua_isnumber(L, -1)) gift_mass = lua_tonumber(L, -1);
-            lua_pop(L, 1);
-
-            lua_pushstring(L, "StorageEnergy");
-            lua_gettable(L, -2);
-            if (lua_isnumber(L, -1)) gift_energy = lua_tonumber(L, -1);
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 2); // Economy + bp_table
-    }
-
     const auto& pos = brain->start_position();
     lua_settop(L, 0);
     lua_pushstring(L, bp_id.c_str());
@@ -789,20 +766,7 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
     lua_pushnumber(L, pos.y);
     lua_pushnumber(L, pos.z);
     // Not held to the unit cap (Moho makes it without Sim::CreateUnit's gate).
-    int result = create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
-
-    // Give initial resources (mirrors GiveInitialResources in ACUUnit.lua)
-    if (gift_mass > 0.0 || gift_energy > 0.0) {
-        auto& econ = brain->economy();
-        econ.mass.stored = std::min(econ.mass.stored + gift_mass,
-                                     econ.mass.max_storage);
-        econ.energy.stored = std::min(econ.energy.stored + gift_energy,
-                                       econ.energy.max_storage);
-        spdlog::debug("GiveInitialResources: army={} mass={:.0f} energy={:.0f}",
-                      army_idx, gift_mass, gift_energy);
-    }
-
-    return result;
+    return create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
 }
 
 // ====================================================================
@@ -3005,7 +2969,7 @@ static int l_CreateEconomyEvent(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
 
     auto* unit = extract_entity(L, 1);
-    u32 unit_id = (unit && !unit->destroyed()) ? unit->entity_id() : 0;
+    u32 unit_id = (unit && !unit->destroyed() && unit->is_unit()) ? unit->entity_id() : 0;
     f64 energy = luaL_optnumber(L, 2, 0.0);
     f64 mass = luaL_optnumber(L, 3, 0.0);
     f64 duration = luaL_optnumber(L, 4, 0.0);

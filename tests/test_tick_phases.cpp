@@ -1,6 +1,6 @@
 // A tick's phases in Moho's order (faf-re Sim::AdvanceBeat): each army's
-// weapons, then every unit's orders, then the Lua threads, then the entities,
-// a unit's step in Unit::MotionTick's order.
+// economy and weapons, then every unit's orders, then the Lua threads, then the
+// entities, a unit's step in Unit::MotionTick's order.
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -27,6 +27,7 @@ extern "C" {
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using osc::f32;
@@ -72,6 +73,9 @@ struct Phases {
                  "{BlueprintId = 'ship', Categories = {'NAVAL', 'MOBILE'},"
                  " Defense = {MaxHealth = 100}, SizeX = 1, SizeZ = 1,"
                  " Footprint = {SizeX = 1, SizeZ = 1}, Physics = {MotionType = 'RULEUMT_Water'}}",
+                 "{BlueprintId = 'gen', CategoriesHash = {MOBILE = true, TECH1 = true},"
+                 " Economy = {BuildTime = 10, BuildCostMass = 1, BuildCostEnergy = 1,"
+                 " ProductionPerSecondEnergy = 5}, Defense = {MaxHealth = 10}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -79,10 +83,11 @@ struct Phases {
         }
         store.expose_to_lua(L);
         REQUIRE(run("Plain = setmetatable({}, {__index = moho.unit_methods})"
-                    " Plain.__index = Plain"));
+                    " Plain.__index = Plain"
+                    " function WaitTicks(n) coroutine.yield(n) end"));
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "fac", "t1", "ship"}) {
+        for (const char* id : {"tank", "fac", "t1", "ship", "gen"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -124,6 +129,18 @@ struct Phases {
         lua_settop(L, 0);
         REQUIRE(u);
         return *u;
+    }
+
+    void brain(const char* global, int army) {
+        lua_State* L = state.raw();
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, sim.get_army(army));
+        lua_rawset(L, -3);
+        lua_pushvalue(L, -1);
+        sim.get_army(army)->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+        lua_setglobal(L, global);
+        REQUIRE(run(std::string("setmetatable(") + global + ", {__index = moho.aibrain_methods})"));
     }
 
     Weapon& arm(Unit& u, const char* script) {
@@ -435,4 +452,243 @@ TEST_CASE("An animator a silo's OnSiloBuildStart sets going plays in that tick's
     REQUIRE(w.number("started") == static_cast<f32>(w.sim.tick_count()));
     REQUIRE(w.run("played = hatch:GetAnimationFraction()"));
     CHECK(w.number("played") == Catch::Approx(0.1f));
+}
+
+TEST_CASE("A stats trigger that holds from the start fires on tick 11, in its army's turn",
+          "[tick-phases]") {
+    Phases w;
+    w.brain("brain", 0);
+    REQUIRE(w.run("fired = 0 forked = 0"
+                  " function brain:OnStatsTrigger(name)"
+                  "   fired = GetGameTick()"
+                  "   ForkThread(function() forked = GetGameTick() end)"
+                  " end"));
+    w.sim.get_army(0)->add_stat_trigger({"Economy_Ratio_Mass", "Low", "LessThan", 0.1, ""});
+    for (int t = 0; t < 15; ++t) {
+        w.sim.tick();
+    }
+    CHECK(w.number("fired") == 11.0f);
+    CHECK(w.number("forked") == 11.0f);
+}
+
+TEST_CASE("The unit-cap stats are counted after their army's triggers", "[tick-phases]") {
+    Phases w;
+    w.brain("brain", 0);
+    REQUIRE(
+        w.run("fired = 0 made = 0 function brain:OnStatsTrigger(name) fired = GetGameTick() end"));
+    for (int t = 0; t < 12; ++t) {
+        w.sim.tick();
+    }
+    const double before = w.sim.get_army(0)->get_stat("UnitCap_Current");
+    w.sim.get_army(0)->add_stat_trigger({"UnitCap_Current", "More", "GreaterThan", before, ""});
+    REQUIRE(
+        w.run("ForkThread(function() made = GetGameTick() CreateUnit('tank', 1, 50, 10, 50) end)"));
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("made") > 0);
+    CHECK(w.number("fired") == w.number("made") + 2);
+}
+
+TEST_CASE("Consumption a Lua thread turns on is paid at the next tick's economy and worked the "
+          "tick after",
+          "[tick-phases]") {
+    Phases w;
+    osc::sim::ArmyBrain& army = *w.sim.get_army(0);
+    army.set_extra_storage(0.0, 1000.0);
+    army.set_stored_resources(0.0, 500.0);
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.economy().consumption_energy = 10.0;
+    w.sim.tick();
+    REQUIRE(army.economy().energy.stored == 500.0);
+    REQUIRE(w.run(
+        "consumed = {} ForkThread(function()"
+        "   eng:SetConsumptionActive(true)"
+        "   while true do WaitTicks(1) consumed[GetGameTick()] = eng:GetResourceConsumed() end"
+        " end)"));
+    w.sim.tick();
+    const auto asked = static_cast<int>(w.sim.tick_count());
+    CHECK(army.economy().energy.stored == 500.0);
+    w.sim.tick();
+    CHECK(army.economy().energy.stored == Catch::Approx(499.0));
+    w.sim.tick();
+    REQUIRE(w.run("next = consumed[" + std::to_string(asked + 1) + "] after = consumed[" +
+                  std::to_string(asked + 2) + "]"));
+    CHECK(w.number("next") == 0.0f);
+    CHECK(w.number("after") == 1.0f);
+}
+
+TEST_CASE("A unit finished in a tick's orders is in its army's income from the next tick",
+          "[tick-phases]") {
+    Phases w;
+    w.brain("brain", 0);
+    Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);
+    fac.economy().production_mass = 100.0;
+    fac.economy().production_energy = 100.0;
+    fac.economy().production_active = true;
+    REQUIRE(w.run(
+        "done = 0 income = {}"
+        " function Plain:OnStopBeingBuilt() done = GetGameTick() end"
+        " ForkThread(function()"
+        "   while true do income[GetGameTick()] = brain:GetEconomyIncome('ENERGY') WaitTicks(1) end"
+        " end)"));
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "gen";
+    fac.push_command(build, false);
+    for (int t = 0; t < 30 && w.number("done") == 0; ++t) {
+        w.sim.tick();
+    }
+    const auto done = static_cast<int>(w.number("done"));
+    REQUIRE(done > 0);
+    CHECK(w.sim.get_army(0)->economy().energy.income == 100.0);
+    w.sim.tick();
+    REQUIRE(w.run("was = income[" + std::to_string(done) + "] next = income[" +
+                  std::to_string(done + 1) + "]"));
+    CHECK(w.number("was") == Catch::Approx(10.0));
+    CHECK(w.number("next") == Catch::Approx(10.5));
+}
+
+namespace {
+
+std::pair<double, double> killed_in_its_step(const char* what, double stored_energy) {
+    Phases w;
+    w.brain("brain", 0);
+    osc::sim::ArmyBrain& army = *w.sim.get_army(0);
+    army.set_extra_storage(0.0, 100.0);
+    army.set_stored_resources(0.0, stored_energy);
+    Unit& ship = w.make("ship", "ship", 1, 100.0f, 100.0f);
+    ship.economy().production_energy = 5.0;
+    ship.economy().production_active = true;
+    ship.economy().storage_energy = 100.0;
+    ship.economy().consumption_energy = 1.0;
+    ship.economy().consumption_active = true;
+    w.sim.tick();
+    REQUIRE(ship.layer() == "Water");
+    ship.set_health(0.5f);
+    ship.set_velocity({5.0f, 0.0f, 0.0f});
+    REQUIRE(w.run(std::string("seen = {} ForkThread(function()"
+                              "   while true do seen[GetGameTick()] = ") +
+                  what + " WaitTicks(1) end end)"));
+    const osc::u32 id = ship.entity_id();
+    w.sim.tick();
+    REQUIRE(w.sim.tick_count() == 2);
+    const auto* left = w.sim.entity_registry().find(id);
+    REQUIRE((!left || left->destroyed() || static_cast<const Unit*>(left)->is_dying()));
+    w.sim.tick();
+    REQUIRE(w.run("at2 = seen[2] at3 = seen[3]"));
+    return {w.number("at2"), w.number("at3")};
+}
+
+} // namespace
+
+TEST_CASE("A unit its own step kills produces nothing for the next economy", "[tick-phases]") {
+    const auto [before, after] = killed_in_its_step("brain:GetEconomyIncome('ENERGY')", 0.0);
+    CHECK(before == Catch::Approx(0.5));
+    CHECK(after == 0.0);
+}
+
+TEST_CASE("A unit its own step kills takes its storage away by the next economy", "[tick-phases]") {
+    const auto [before, after] = killed_in_its_step("brain:GetEconomyStoredRatio('ENERGY')", 50.0);
+    CHECK(before == Catch::Approx(50.0 / 200.0).epsilon(0.05));
+    CHECK(after == Catch::Approx(50.0 / 100.0).epsilon(0.05));
+}
+
+TEST_CASE("A unit its own step kills reads no ResourceConsumed from the next tick",
+          "[tick-phases]") {
+    const auto [before, after] = killed_in_its_step("ship:GetResourceConsumed()", 50.0);
+    CHECK(before == 1.0);
+    CHECK(after == 0.0);
+}
+
+TEST_CASE("An economy event a Lua thread makes takes its first step in its unit's step of the "
+          "next tick",
+          "[tick-phases]") {
+    Phases w;
+    osc::sim::ArmyBrain& army = *w.sim.get_army(0);
+    army.set_extra_storage(0.0, 1000.0);
+    army.set_stored_resources(0.0, 500.0);
+    w.make("u", "tank", 1, 100.0f, 100.0f);
+    w.sim.tick();
+    REQUIRE(w.run(
+        "made = 0 stepped = 0 waited = 0 ForkThread(function()"
+        "   made = GetGameTick()"
+        "   local e = CreateEconomyEvent(u, 10, 0, 0.1, function() stepped = GetGameTick() end)"
+        "   WaitFor(e)"
+        "   waited = GetGameTick()"
+        " end)"));
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("made") > 0);
+    CHECK(w.number("stepped") == w.number("made") + 1);
+    CHECK(w.number("waited") == w.number("made") + 2);
+}
+
+TEST_CASE("Reclaim is banked in the order phase", "[tick-phases]") {
+    Phases w;
+    w.brain("brain", 0);
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.economy().reclaim_mass = 10.0;
+    w.sim.tick();
+    REQUIRE(w.run(
+        "seen = {} killed = 0 ForkThread(function()"
+        "   killed = GetGameTick() eng:Kill()"
+        "   while true do WaitTicks(1) seen[GetGameTick()] = brain:GetEconomyIncome('MASS') end"
+        " end)"));
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("killed") > 0);
+    REQUIRE(w.run("next = seen[killed + 1]"));
+    CHECK(w.number("next") == Catch::Approx(1.0));
+}
+
+TEST_CASE("A resource a Lua thread gives is income at the next economy, stored through it",
+          "[tick-phases]") {
+    Phases w;
+    w.brain("brain", 0);
+    w.sim.get_army(0)->set_extra_storage(650.0, 4000.0);
+    w.sim.tick();
+    REQUIRE(
+        w.run("given = 0 ForkThread(function()"
+              "   given = GetGameTick() brain:GiveResource('Mass', 650)"
+              "   now = brain:GetEconomyStored('MASS') WaitTicks(1)"
+              "   stored = brain:GetEconomyStored('MASS') income = brain:GetEconomyIncome('MASS')"
+              " end)"));
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("given") > 0);
+    CHECK(w.number("now") == 0.0f);
+    CHECK(w.number("stored") == Catch::Approx(650.0));
+    CHECK(w.number("income") == Catch::Approx(650.0));
+}
+
+TEST_CASE("An army's overflow reaches a higher-index ally that tick, a lower-index one the next",
+          "[tick-phases]") {
+    const int giver = GENERATE(0, 1);
+    CAPTURE(giver);
+    const int taker = 1 - giver;
+    Phases w;
+    w.sim.set_team_share_overflow(true);
+    w.sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
+    w.brain("taker", taker);
+    for (int a = 0; a < 2; ++a) {
+        w.sim.get_army(a)->set_extra_storage(200.0, 200.0);
+    }
+    w.sim.get_army(giver)->set_stored_resources(200.0, 0.0);
+    Unit& producer = w.make("producer", "tank", giver + 1, 100.0f, 100.0f);
+    producer.economy().production_mass = 1000.0;
+    producer.economy().production_active = true;
+    REQUIRE(w.run("arrived = 0 ForkThread(function()"
+                  "   while arrived == 0 do"
+                  "     if taker:GetEconomyStored('MASS') > 0 then arrived = GetGameTick() end"
+                  "     WaitTicks(1)"
+                  "   end"
+                  " end)"));
+    for (int t = 0; t < 6; ++t) {
+        w.sim.tick();
+    }
+    CHECK(w.number("arrived") == static_cast<f32>(2 + giver));
 }

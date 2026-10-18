@@ -36,6 +36,7 @@ class Terrain;
 namespace osc::sim {
 
 struct SimContext;
+class ArmyBrain;
 class EntityRegistry;
 class SimRandom;
 class SimState;
@@ -285,6 +286,8 @@ public:
     bool is_being_built() const { return is_being_built_; }
     void set_is_being_built(bool b) { is_being_built_ = b; }
     bool producing() const { return economy_.production_active && !is_being_built_ && !dying_; }
+    /// Whether its last step kept its storage in its army's (Moho's CEconStorage).
+    bool holds_storage() const { return holds_storage_; }
 
     f32 max_speed() const { return max_speed_; }
     void set_max_speed(f32 s) { max_speed_ = s; }
@@ -592,6 +595,10 @@ public:
     void tick_commands(f64 dt, SimContext& ctx);
     /// Moho's stage A: Unit::MotionTick.
     void update(f64 dt, SimContext& ctx);
+    /// Moho's Unit::HandleResourceManagement, the end of its stage-A step.
+    void manage_resources(ArmyBrain* army);
+    /// Moho's CUnitReclaimTask banks what it reclaims in its army.
+    void bank_reclaim(ArmyBrain* army) const;
 
     /// Lua callback helpers: call self:method() or self:method(entity)
     void call_lua_method(lua_State* L, const char* method_name);
@@ -1556,6 +1563,7 @@ private:
     bool engage(UnitCommand& cmd, lua_State* L);
     /// The layer, the step its orders asked for, coasting, fuel.
     bool motion_tick(f64 dt, SimContext& ctx);
+    void take_step(f64 dt, SimContext& ctx);
     void tick_silo(f64 dt, SimContext& ctx);
     void tick_upkeep(f64 dt, SimContext& ctx);
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
@@ -2035,6 +2043,7 @@ private:
     /// Docked and damaged, it asked its army for its repair last tick: the
     /// heal comes from the next tick (Moho's economy request).
     bool dock_repair_asked_ = false;
+    bool holds_storage_ = false;
     bool air_class_ = false;     // Transport.AirClass
     i32 docking_slots_ = 0;      // Transport.DockingSlots
     StagingRules staging_rules_; // a staging platform's service

@@ -1366,6 +1366,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.fuel_recharge_rate_);
     w.b(u.refuel_started_);
     w.b(u.dock_repair_asked_);
+    w.b(u.holds_storage_);
     w.b(u.air_class_);
     w.i32v(u.docking_slots_);
     const StagingRules& st = u.staging_rules_;
@@ -1779,6 +1780,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.fuel_recharge_rate_ = r.f32v();
     u.refuel_started_ = r.b();
     u.dock_repair_asked_ = r.b();
+    u.holds_storage_ = r.b();
     u.air_class_ = r.b();
     u.docking_slots_ = r.i32v();
     StagingRules& st = u.staging_rules_;
