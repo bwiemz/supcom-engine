@@ -2882,7 +2882,8 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     submit_and_present(fi, image_index, false, capturing, false);
 }
 
-void Renderer::update_world_shapes(lua_State* L, u32 fi) {
+void Renderer::update_world_shapes(lua_State* L, const sim::FrameView& frame,
+                                   const Frustum& frustum, const BuildGhost* ghost, u32 fi) {
     // The world's size of one of the UI's points at a spot: the LOD metric
     // (the view's width at its depth) over the view's width in points
     sim::Vector3 eye;
@@ -2897,6 +2898,19 @@ void Renderer::update_world_shapes(lua_State* L, u32 fi) {
     world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
         return lod_metric(p, eye, forward, fov) / width;
     });
+
+    // Placing a structure: its pad and the pads of the structures standing or
+    // under way, outlined on the ground, those in view (build_outlines)
+    if (ghost) {
+        for (const PadOutline& o : build_outlines(structure_pads(frame, &recon_), *ghost)) {
+            const f32 cx = (o.site.x0 + o.site.x1) * 0.5f;
+            const f32 cz = (o.site.z0 + o.site.z1) * 0.5f;
+            const f32 reach = std::max(o.site.x1 - o.site.x0, o.site.z1 - o.site.z0);
+            if (!frustum.is_sphere_visible(cx, o.y, cz, reach)) continue;
+            world_shapes_.box({o.site.x0, o.y, o.site.z0}, o.site.x1 - o.site.x0,
+                              o.site.z1 - o.site.z0, o.color, 0.0f);
+        }
+    }
 
     const ui::WorldView* view = nullptr;
     if (L) {
@@ -3143,7 +3157,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     selection_renderer_.update(view, camera_, ui_height(), selected_ids, hovered_, player_army_,
                                drag_box_, texture_cache_, mesh_cache_, L, fi);
 
-    update_world_shapes(L, fi);
+    update_world_shapes(L, view, frustum, ghost, fi);
 
     // FA's range overlays (Moho's RangeRenderer), for the focus army
     {
@@ -3171,7 +3185,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
         overlay_renderer_.set_hovered(hovered_);
         overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
-                                 ui_width(), ui_height(), game_result, frame_dt_, &frustum, ghost);
+                                 ui_width(), ui_height(), game_result, frame_dt_, &frustum);
     }
 
     // FA's water: this frame's camera and time (M213a)

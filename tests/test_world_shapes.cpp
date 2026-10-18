@@ -61,6 +61,36 @@ TEST_CASE("A circle is 48 segments either side of its radius, level", "[renderer
           Approx(11.0f));
 }
 
+TEST_CASE("A box is a rect of any aspect, its corners mitred alike", "[renderer][shapes]") {
+    WorldShapes shapes;
+    shapes.begin({});
+    shapes.box({10, 3, 20}, 8.0f, 4.0f, 0xFF0000FFu, 2.0f);
+    REQUIRE(shapes.quads().size() == 4);
+    const f32 d = 1.0f / std::sqrt(2.0f);
+    const auto& top = shapes.quads()[0];
+    CHECK(top.corners[0].x == Approx(10.0f - d)); // top outer left
+    CHECK(top.corners[0].z == Approx(20.0f - d));
+    CHECK(top.corners[3].x == Approx(18.0f + d)); // top outer right
+    CHECK(top.corners[3].z == Approx(20.0f - d));
+    const auto& right = shapes.quads()[1];
+    CHECK(right.corners[3].x == Approx(18.0f + d)); // bottom outer right
+    CHECK(right.corners[3].z == Approx(24.0f + d));
+    const auto& left = shapes.quads()[3];
+    CHECK(left.corners[1].x == Approx(10.0f - d)); // bottom outer left
+    CHECK(left.corners[1].z == Approx(24.0f + d));
+    // A square box is the rect
+    WorldShapes square;
+    square.begin({});
+    square.rect({10, 3, 20}, 8.0f, 0xFF0000FFu, 2.0f);
+    shapes.begin({});
+    shapes.box({10, 3, 20}, 8.0f, 8.0f, 0xFF0000FFu, 2.0f);
+    for (size_t q = 0; q < 4; ++q)
+        for (size_t c = 0; c < 4; ++c) {
+            CHECK(shapes.quads()[q].corners[c].x == Approx(square.quads()[q].corners[c].x));
+            CHECK(shapes.quads()[q].corners[c].z == Approx(square.quads()[q].corners[c].z));
+        }
+}
+
 TEST_CASE("A rect is DRAW_Rect's border from its corner, size across", "[renderer][shapes]") {
     WorldShapes shapes;
     shapes.begin({}); // no camera: the thickness as given

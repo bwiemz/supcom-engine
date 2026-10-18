@@ -695,7 +695,8 @@ private:
     /// FAF's world drawing: the main world view's OnRenderWorld(self,
     /// delta), with its custom rendering on (SetCustomRender), collecting
     /// the shapes UI_DrawLine and its kin draw; into frame slot `fi`.
-    void update_world_shapes(lua_State* L, u32 fi);
+    void update_world_shapes(lua_State* L, const sim::FrameView& frame, const Frustum& frustum,
+                             const BuildGhost* ghost, u32 fi);
     void update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                             const sim::FrameView& view, sim::WorldEvents& events,
                             const BuildGhost* ghost, lua_State* L,

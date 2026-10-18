@@ -3,6 +3,7 @@
 
 #include "renderer/camera.hpp"
 #include "renderer/overlay_renderer.hpp"
+#include "renderer/renderer.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
@@ -34,21 +35,51 @@ TEST_CASE("A footprint on screen is filled row by row, within its edges", "[over
     CHECK(convex_rows({0, 10, 20, 30}, {5, 5, 5, 5}, 2.0f).empty());
 }
 
-TEST_CASE("A placement outline covers its edges and leaves the middle", "[overlay]") {
-    const auto rows = osc::renderer::outline_rows({0, 20, 20, 0}, {0, 0, 20, 20}, 2.0f);
-    const auto covered = [&](f32 x, f32 y) {
-        for (const auto& q : rows) {
-            if (x >= q[0] && x <= q[0] + q[2] && y >= q[1] && y <= q[1] + q[3]) {
-                return true;
-            }
-        }
-        return false;
-    };
-    CHECK(covered(10, 0.5f));
-    CHECK(covered(19.5f, 10));
-    CHECK(covered(0.5f, 19.5f));
-    CHECK_FALSE(covered(10, 10));
-    CHECK_FALSE(covered(10, 3));
+TEST_CASE("Placing a structure outlines its pad and the standing pads, lit where adjacent",
+          "[overlay]") {
+    using osc::renderer::BuildGhost;
+    using osc::sim::StructureSite;
+    const std::vector<std::pair<StructureSite, osc::f32>> pads = {
+        {{26.5f, 36.5f, 34.5f, 44.5f}, 4.0f}, {{60.0f, 60.0f, 68.0f, 68.0f}, 2.0f}};
+    BuildGhost ghost;
+    ghost.blueprint_id = "ueb0101";
+    ghost.y = 5.0f;
+    ghost.pad_x0 = 34.5f;
+    ghost.pad_z0 = 39.5f;
+    ghost.pad_x1 = 36.5f;
+    ghost.pad_z1 = 41.5f;
+    // Beside the first pad: both lit; the other dim
+    auto out = osc::renderer::build_outlines(pads, ghost);
+    REQUIRE(out.size() == 3);
+    CHECK(out[0].site.x0 == Catch::Approx(34.5f));
+    CHECK(out[0].y == Catch::Approx(5.0f));
+    CHECK(out[0].color == osc::renderer::kOutlineLit);
+    CHECK(out[1].color == osc::renderer::kOutlineLit);
+    CHECK(out[1].y == Catch::Approx(4.0f));
+    CHECK(out[2].color == osc::renderer::kOutlineDim);
+    // A site that can't be built lights nothing and is red
+    ghost.valid = false;
+    out = osc::renderer::build_outlines(pads, ghost);
+    CHECK(out[0].color == osc::renderer::kOutlineInvalid);
+    CHECK(out[1].color == osc::renderer::kOutlineDim);
+    // A drag's line: each site its own outline, a pad lit by any of them
+    ghost.valid = true;
+    ghost.pad_x0 = 0;
+    ghost.pad_z0 = 0;
+    ghost.pad_x1 = 2;
+    ghost.pad_z1 = 2;
+    BuildGhost beside = ghost;
+    beside.pad_x0 = 68.0f;
+    beside.pad_z0 = 62.0f;
+    beside.pad_x1 = 70.0f;
+    beside.pad_z1 = 64.0f;
+    ghost.line.push_back(beside);
+    out = osc::renderer::build_outlines(pads, ghost);
+    REQUIRE(out.size() == 4);
+    CHECK(out[0].color == osc::renderer::kOutlineDim);
+    CHECK(out[1].color == osc::renderer::kOutlineLit);
+    CHECK(out[2].color == osc::renderer::kOutlineDim);
+    CHECK(out[3].color == osc::renderer::kOutlineLit);
 }
 
 TEST_CASE("Placing a structure outlines the pads of those standing", "[overlay]") {
