@@ -11,7 +11,8 @@
 namespace osc::renderer {
 
 /// Textured quads in the world, drawn over it as primbatcher.fx's TCommand:
-/// texture × colour, alpha blended, no depth test, no alpha written.
+/// texture × colour, alpha blended, no depth test, no alpha written. With
+/// `depth_test`, as its TAlphaBlendLinearSample: hidden by what is nearer.
 class WorldQuadBatch {
 public:
     struct Vertex {
@@ -25,7 +26,8 @@ public:
     };
 
     void init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
-              VkDescriptorSetLayout texture_ds_layout, u32 max_quads, const char* name);
+              VkDescriptorSetLayout texture_ds_layout, u32 max_quads, const char* name,
+              bool depth_test = false);
 
     /// This frame's quads, drawn in order (at most the batch's max)
     void upload(const std::vector<Quad>& quads, u32 fi);

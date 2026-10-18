@@ -90,6 +90,7 @@ private:
     const SelectionBlueprint& box_blueprint(const std::string& id, lua_State* L);
 
     WorldQuadBatch batch_;
+    WorldQuadBatch drag_batch_;
     bool enabled_ = true;
     std::vector<Bracket> brackets_;
     bool drew_drag_box_ = false;
