@@ -564,7 +564,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         if (cmd.engaged) {
             navigator_.abort_move();
-            fly_attack_run(*this, *target, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            set_course({.kind = AirCourse::Kind::Run, .target_id = target->entity_id()});
             return OrderStep::Hold;
         }
     }
@@ -593,7 +593,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             }
             around.target_in_air =
                 target->is_unit() && static_cast<const Unit*>(target)->layer() == "Air";
-            fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            set_course({.kind = AirCourse::Kind::Circle, .around = around});
             return OrderStep::Hold;
         }
     }
@@ -706,7 +706,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         if (cmd.engaged) {
             navigator_.abort_move();
-            fly_attack_run(*this, at, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            set_course({.kind = AirCourse::Kind::Run, .at = at});
             return OrderStep::Hold;
         }
     }
@@ -726,7 +726,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             around.center = at;
             around.move_goal = at;
             around.weapon_radius = weapon ? weapon->max_range : 0.0f;
-            fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+            set_course({.kind = AirCourse::Kind::Circle, .around = around});
             return OrderStep::Hold;
         }
     }
@@ -1658,7 +1658,7 @@ OrderStep Unit::order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // round its point rather than hanging still (flies_winged_on_guard).
     if (flies_winged_on_guard(*this) && ctx.sim) {
         navigator_.abort_move();
-        fly_winged_to(*this, cmd.target_pos, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+        set_course({.kind = AirCourse::Kind::Winged, .at = cmd.target_pos});
         return OrderStep::Hold;
     }
     const f32 dx = cmd.target_pos.x - position().x;
@@ -2120,7 +2120,7 @@ OrderStep Unit::guard_follow(const Unit& target, bool working,
                 : approach_point(*this, target.position(), target.skirt_size_x() * 0.5f,
                                  target.skirt_size_z() * 0.5f);
         navigator_.abort_move();
-        fly_winged_to(*this, goal, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+        set_course({.kind = AirCourse::Kind::Winged, .at = goal});
         return OrderStep::Hold;
     }
     if (!working && !destroyed() && in_registry()) {
@@ -2381,10 +2381,16 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
     }
     // Over the centre, it comes down to its hover height; only then is it at
     // the pickup (Moho's move there is onto the land layer).
-    const bool low = hover_low(dt, ctx);
-    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    const auto hover = [&] {
+        if (is_air_unit()) {
+            set_course({.kind = AirCourse::Kind::HoverLow});
+        }
+        return OrderStep::Hold;
+    };
     if (pickup_phase_ == PickupPhase::Landing) {
-        if (!low) return OrderStep::Hold;
+        if (is_air_unit() && current_altitude_ != transport_hover_height_) {
+            return hover();
+        }
         pickup_phase_ = PickupPhase::Waiting;
     }
     // At the pickup: hover while the units come aboard, as long as the wait
@@ -2399,7 +2405,9 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
         if (transport_slots_) transport_slots_->release(id);
         return true;
     });
-    if (!pickup_ids_.empty() && pickup_ticks_ <= kPickupTimeoutTicks) return OrderStep::Hold;
+    if (!pickup_ids_.empty() && pickup_ticks_ <= kPickupTimeoutTicks) {
+        return hover();
+    }
     finish_pickup(pickup_ticks_ <= kPickupTimeoutTicks, L);
     if (destroyed() || !in_registry()) return OrderStep::Gone;
     return finish_order();
@@ -2636,7 +2644,9 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
     // with it): the order goes only if it is still the head.
     const u32 order_id = cmd.command_id;
     const std::vector<u32> ids = cmd.unload_ids;
-    if (!unload_step(dt, ctx, ids)) return OrderStep::Hold;
+    if (!unload_step(ctx, ids)) {
+        return OrderStep::Hold;
+    }
     if (destroyed() || !in_registry()) return OrderStep::Gone;
     set_unit_state("TransportUnloading", false);
     if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
@@ -2673,9 +2683,9 @@ OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
     return OrderStep::Next;
 }
 
-bool Unit::unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids) {
+bool Unit::unload_step(SimContext& ctx, const std::vector<u32>& ids) {
     if (is_air_unit() && vert_event_ != "Hover") {
-        hover_low(dt, ctx);
+        set_course({.kind = AirCourse::Kind::HoverLow});
         return false;
     }
     // Those whose footprint fits the ground where they hang; the rest stay
@@ -3095,7 +3105,9 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         navigator_.abort_move();
         ferry_leg_set_ = false;
-        if (!unload_step(dt, ctx, {})) return OrderStep::Hold;
+        if (!unload_step(ctx, {})) {
+            return OrderStep::Hold;
+        }
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         ferry_phase_ = FerryPhase::Back;
         ferry_index_ = route - 1;

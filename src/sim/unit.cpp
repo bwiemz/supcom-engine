@@ -636,6 +636,7 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
 
 bool Unit::nav_update(f64, const map::Terrain*, f32 speed_cap) {
     nav_requested_ = true;
+    course_ = {};
     nav_speed_ = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
     if (!is_air_unit() && nav_speed_ <= 0 && navigator_.is_moving() && !navigator_.moho_active()) {
         return false;
@@ -643,19 +644,16 @@ bool Unit::nav_update(f64, const map::Terrain*, f32 speed_cap) {
     return navigator_.busy();
 }
 
-void Unit::nav_step(f64 dt, const map::Terrain* terrain) {
+bool Unit::nav_step(f64 dt, const map::Terrain* terrain) {
     navigator_.set_ended(false);
     if (!std::exchange(nav_requested_, false) || !navigator_.busy()) {
-        return;
+        return false;
     }
     if (is_air_unit()) {
-        if (!take_air_step()) {
-            return;
-        }
         update_speed_through();
         navigator_.update_air(*this, dt, terrain);
         navigator_.set_ended(!navigator_.busy());
-        return;
+        return true;
     }
     navigator_.update(*this, nav_speed_, dt, terrain);
     navigator_.set_ended(!navigator_.busy());
@@ -667,12 +665,52 @@ void Unit::nav_step(f64 dt, const map::Terrain* terrain) {
         p.y = terrain->water_elevation() + sub_elevation_;
         set_position(p);
     }
+    return true;
+}
+
+void Unit::set_course(const AirCourse& course) {
+    course_ = course;
+    nav_requested_ = false;
+}
+
+bool Unit::step_course(f64 dt, SimContext& ctx) {
+    const AirCourse course = std::exchange(course_, {});
+    if (course.kind == AirCourse::Kind::None) {
+        return nav_step(dt, ctx.terrain);
+    }
+    navigator_.set_ended(false);
+    if (transport_id_ != 0 || !ctx.sim) {
+        return false;
+    }
+    const f32 fdt = static_cast<f32>(dt);
+    switch (course.kind) {
+    case AirCourse::Kind::Run:
+        if (course.target_id == 0) {
+            fly_attack_run(*this, course.at, *ctx.sim, ctx.terrain, fdt);
+        } else if (const Entity* target = ctx.registry.find(course.target_id);
+                   target && !target->destroyed()) {
+            fly_attack_run(*this, *target, *ctx.sim, ctx.terrain, fdt);
+        } else {
+            return false;
+        }
+        break;
+    case AirCourse::Kind::Circle:
+        fly_circling(*this, course.around, *ctx.sim, ctx.terrain, fdt);
+        break;
+    case AirCourse::Kind::Winged:
+        fly_winged_to(*this, course.at, *ctx.sim, ctx.terrain, fdt);
+        break;
+    case AirCourse::Kind::Hold: hold_altitude(dt, ctx.terrain, course.altitude); break;
+    case AirCourse::Kind::HoverLow: hover_low(dt, ctx); break;
+    case AirCourse::Kind::Settle: settle_step(course.at, course.heading, dt, ctx.terrain); break;
+    case AirCourse::Kind::None: break;
+    }
+    return true;
 }
 
 void Unit::update(f64 dt, SimContext& ctx) {
-    air_stepped_ = false;
-    air_held_ = false;
     nav_requested_ = false;
+    course_ = {};
     if (!tick_lifecycle(dt, ctx)) return;
     f32 econ_eff = 1.0f;
     const bool goes_on = tick_orders_and_motion(dt, ctx, econ_eff);
@@ -961,12 +999,19 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
-    // Moho's CUnitMotion::MotionTick: the layer from the committed transform, then CalcMove*.
+    // Moho's CUnitMotion::MotionTick: ProcessFuelLevels, the layer from the committed transform,
+    // then CalcMove*.
+    if (!tick_fuel(dt, ctx, nullptr)) {
+        return false;
+    }
     update_current_layer(ctx.terrain, L);
     if (destroyed() || !in_registry()) {
         return false;
     }
-    nav_step(dt, ctx.terrain);
+    bool flown = step_course(dt, ctx);
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
 
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
     face_weapons_work(dt, ctx.registry);
@@ -995,12 +1040,14 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (destroyed() || !in_registry()) return false;
 
     // A hovering aircraft circles its work (item 6).
-    tick_work_circling(dt, ctx);
+    flown = tick_work_circling(dt, ctx, flown) || flown;
 
     // An idle aircraft comes down (item 6).
-    tick_idle_landing(dt, ctx);
+    flown = tick_idle_landing(dt, ctx, flown) || flown;
     if (destroyed() || !in_registry()) return false;
-    fly_unflown_tick(dt, ctx);
+    if (!flown) {
+        fly_unflown_tick(dt, ctx);
+    }
 
     if (is_air_unit() && vert_event_ == "Hover" && current_altitude_ > transport_hover_height_) {
         set_unit_state("MovingUp", true);
@@ -1017,12 +1064,6 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
         auto* cargo = static_cast<Unit*>(e);
         if (cargo->transport_id() == entity_id()) cargo->hang_from(*this);
     }
-
-    // Fuel: flying burns it. Running dry doesn't bring an aircraft down: its
-    // script slows it (OnRunOutOfFuel) until refuelling restores it (OnGotFuel,
-    // landed, or docked at a staging platform: see tick_docked).
-    if (!tick_fuel(dt, ctx, nullptr)) return false;
-
     return true;
 }
 
@@ -3426,13 +3467,18 @@ bool Unit::circles_its_work() const {
     return circles(*this) && (is_building() || is_repairing() || is_reclaiming() || is_capturing());
 }
 
-void Unit::tick_work_circling(f64 dt, SimContext& ctx) {
-    if (!ctx.sim || !circles_its_work()) return;
+bool Unit::tick_work_circling(f64 dt, SimContext& ctx, bool flown) {
+    if (!ctx.sim || !circles_its_work()) {
+        return false;
+    }
     // An attack it circles is its order's to fly.
     if (!command_queue_.empty() && command_queue_.front().type == CommandType::Attack &&
         command_queue_.front().engaged)
-        return;
+        return false;
     navigator_.abort_move();
+    if (flown) {
+        return false;
+    }
     CircleAround around;
     around.center = air_combat_.flying ? air_combat_.circle_anchor : position();
     if (is_building() || is_repairing()) {
@@ -3442,6 +3488,7 @@ void Unit::tick_work_circling(f64 dt, SimContext& ctx) {
     }
     around.move_goal = air_combat_.flying ? air_combat_.circle_anchor : position();
     fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+    return true;
 }
 
 void Unit::fly_on_from_here(const map::Terrain* terrain) {
@@ -3454,11 +3501,11 @@ void Unit::fly_on_from_here(const map::Terrain* terrain) {
     }
 }
 
-void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
+bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
     // Not one under construction: it neither moves nor flies yet.
     if (!can_fly() || dying_ || is_being_built() || parent_entity_id() != 0 || !ctx.sim ||
         !ctx.terrain)
-        return;
+        return false;
     SimState& sim = *ctx.sim;
     lua_State* L = ctx.L;
     // Up at its height after a take-off: level flight.
@@ -3466,9 +3513,13 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         current_altitude_ >= elevation_target_ - 0.1f) {
         set_unit_state("MovingUp", false);
         set_vert_event("Top", L);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
     }
-    if (!is_air_unit()) return; // down
+    if (!is_air_unit()) {
+        return false;
+    }
     IdleLanding& land = idle_landing_;
     if (!command_queue_.empty() || navigator_.busy()) {
         // An order: no clock, no landing.
@@ -3478,17 +3529,17 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
             free_landing_reservation(sim);
             set_unit_state("MovingDown", false);
         }
-        return;
+        return false;
     }
     const u32 now = sim.tick_count();
     if (land.idle_since == 0) {
         land.idle_since = now + 1;
     }
+    if (flown) {
+        return false;
+    }
     const Vector3 pos = position();
     const auto hold = [&] {
-        if (flew_at(now)) {
-            return;
-        }
         if (!navigator_.air_hold()) {
             navigator_.set_air_hold(air_stop_point());
         }
@@ -3498,17 +3549,17 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         move.elevation = elevation_target_;
         move.top_speed = navigator_.speed_through_goal();
         fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
+        return true;
     };
     Vector3 aim = land.target;
     if (!land.descending) {
         const auto wait = static_cast<i32>(auto_land_time_ * 10.0f);
         if (wait <= 0 || now <= land.idle_since + static_cast<u32>(wait)) {
-            hold();
-            return;
+            return hold();
         }
         if (transport_hover_height_ > 0 && !cargo_ids_.empty()) {
             hover_low(dt, ctx);
-            return;
+            return true;
         }
         if (!navigator_.air_hold()) {
             navigator_.set_air_hold(air_stop_point());
@@ -3518,14 +3569,12 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         const f32 gx = target.x - pos.x;
         const f32 gz = target.z - pos.z;
         if (gx * gx + gz * gz > start_turn_distance_ * start_turn_distance_) {
-            hold();
-            return;
+            return hold();
         }
         if (!prepare_move(*this, *ctx.terrain, sim.occupancy(), sim.move_bounds(army()), target)) {
             land.idle_since = now; // and looks again later
             set_unit_state("CannotFindPlaceToLand", true);
-            hold();
-            return;
+            return hold();
         }
         set_unit_state("CannotFindPlaceToLand", false);
         // Its own footprint's rect there (COORDS_ToGridRect), reserved.
@@ -3544,17 +3593,19 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         set_unit_state("MovingDown", false);
         set_vert_event("Top", L);
         if (destroyed() || !in_registry()) {
-            return;
+            return false;
         }
         AirMove move;
         move.target = aim;
         move.elevation = elevation_target_;
         fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
-        return;
+        return true;
     }
     set_unit_state("MovingDown", true);
     set_vert_event("Down", L);
-    if (destroyed() || !in_registry()) return;
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
     const bool over = dx * dx + dz * dz < 0.25f;
     if (over && pos.y - air_floor(ctx.terrain, pos.x, pos.z) < 0.1f) {
         free_landing_reservation(sim);
@@ -3564,21 +3615,23 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         rest_air_body();
         set_unit_state("MovingDown", false);
         set_layer_with_callback(land.layer, L);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return true;
+        }
         set_vert_event("Bottom", L);
-        return;
+        return true;
     }
     AirMove move;
     move.target = aim;
     move.elevation = over ? 0.0f : elevation_target_ * 0.5f;
     move.landing = true;
     fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
+    return true;
 }
 
 void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
-    if (!ctx.sim || !is_air_unit() || !can_fly() || air_held_ || dying_ || crashing_ ||
-        is_being_built() || parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() ||
-        immobile_) {
+    if (!ctx.sim || !is_air_unit() || !can_fly() || dying_ || crashing_ || is_being_built() ||
+        parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() || immobile_) {
         return;
     }
     const u32 now = ctx.sim->tick_count();
@@ -3601,7 +3654,6 @@ void Unit::rest_air_body() {
     air_dv_ = {};
     air_spin_ = {};
     lift_velocity_ = 0.0f;
-    air_held_ = true;
 }
 
 void Unit::set_vert_event(const char* event, lua_State* L) {
