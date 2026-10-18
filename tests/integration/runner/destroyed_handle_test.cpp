@@ -115,22 +115,31 @@ void test_destroyed_handle(TestContext& ctx) {
     // The retail case: a factory and a power generator beside it, the
     // generator made and destroyed at once. The factory's adjacency thread
     // reads the generator's blueprint (a nil one is a thread error, which
-    // fails the run); the thread ran if its beams bag holds the generator.
+    // fails the run); the thread ran if its beams bag holds the generator
+    // when a thread forked after it looks. The generator's OnDestroy, at the
+    // end of that tick, takes the beams away (OnNotAdjacentTo).
     const f32 fx = sx + 30;
-    lua(fmt::format("__osc_dh_fac = CreateUnitHPR('ueb0101', 'ARMY_1', {0}, {1}, {2}, 0, 0, 0)\n"
+    lua(fmt::format("function __osc_dh_count()\n"
+                    "    local n = 0\n"
+                    "    for _, v in __osc_dh_fac.AdjacencyBeamsBag or {{}} do\n"
+                    "        if v.Unit and v.Unit.EntityId == __osc_dh_pgen_id then n = n + 1 end\n"
+                    "    end\n"
+                    "    return tostring(n)\n"
+                    "end\n"
+                    "__osc_dh_fac = CreateUnitHPR('ueb0101', 'ARMY_1', {0}, {1}, {2}, 0, 0, 0)\n"
                     "local pgen = CreateUnitHPR('ueb1101', 'ARMY_1', {3}, {4}, {2}, 0, 0, 0)\n"
                     "__osc_dh_pgen_id = pgen:GetEntityId()\n"
-                    "pgen:Destroy()\n",
+                    "pgen:Destroy()\n"
+                    "ForkThread(function() __osc_dh_beams = __osc_dh_count() end)\n",
                     fx, y(fx, sz), sz, fx + 5, y(fx + 5, sz)));
     for (int i = 0; i < 3; ++i) ctx.sim.tick();
-    lua("local n = 0\n"
-        "for _, v in __osc_dh_fac.AdjacencyBeamsBag or {} do\n"
-        "    if v.Unit and v.Unit.EntityId == __osc_dh_pgen_id then n = n + 1 end\n"
-        "end\n"
-        "__osc_dh_beams = tostring(n)\n");
+    lua("__osc_dh_beams_after = __osc_dh_count()\n");
     const std::string beams = global_string(ctx, "__osc_dh_beams");
-    t.check(beams == "1",
-            "the factory's adjacency thread ran against the wrecked generator (" + beams + ")");
+    const std::string beams_after = global_string(ctx, "__osc_dh_beams_after");
+    t.check(beams == "1" && beams_after == "0",
+            "the factory's adjacency thread ran against the destroyed generator, whose OnDestroy "
+            "took its beams (" +
+                beams + ", then " + beams_after + ")");
 
     spdlog::info("=== DESTROYED HANDLE TEST: {} passed, {} failed ===", t.pass, t.fail);
 }

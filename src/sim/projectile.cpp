@@ -54,19 +54,10 @@ void Projectile::set_lifetime(f32 seconds, u32 now) {
 
 void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const map::Terrain* terrain,
                         u32 tick) {
-    if (destroyed()) {
-        return;
-    }
-
     if (impacted) {
         // Lingering for its ImpactTimeout, it just goes.
         if (tick >= lifetime_end) {
-            mark_destroyed();
-            // The unregister hook nulls the Lua table's _c_object and releases
-            // its ref; releasing the ref here first left scripts holding a
-            // dangling pointer (UEF build-effect projectiles are destroyed from
-            // Lua after they expire).
-            registry.unregister_entity(entity_id());
+            registry.destroy(*this);
         }
         return;
     }
@@ -418,14 +409,11 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
                 passed.push_back(id);
                 continue;
             }
-            // The checks ran scripts: both may be gone.
-            if (!registry.find(entity_id()) || destroyed()) return true;
             e = registry.find(id);
             if (!e || e->destroyed()) continue;
             record_impact(lerp(start, end, t), t * kSweepLength, e, nullptr, terrain);
             return true;
         }
-        if (!registry.find(entity_id()) || destroyed()) return true;
     }
 
     if (surface_t > 1.0f) {
@@ -620,15 +608,13 @@ bool Projectile::call_script(lua_State* L, EntityRegistry& registry, const char*
         }
     }
     lua_settop(L, top);
-    const Entity* self = registry.find(id);
-    return self && !self->destroyed();
+    return registry.find(id) != nullptr;
 }
 
 void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registry,
                            const map::Terrain* terrain, const char* type_override) {
     if (!L) {
-        mark_destroyed();
-        registry.unregister_entity(entity_id());
+        registry.destroy(*this);
         return;
     }
     impacted = true;
@@ -664,7 +650,9 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
 
     if (scripted) {
         Entity* self = registry.find(id);
-        if (!self || self->destroyed()) return;
+        if (!self) {
+            return;
+        }
         const int top = lua_gettop(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, self->lua_table_ref());
         lua_pushstring(L, "OnImpact");
@@ -688,9 +676,8 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     }
 
     // No script to finish it (or it broke): it goes now.
-    if (Entity* self = registry.find(id); self && !self->destroyed()) {
-        self->mark_destroyed();
-        registry.unregister_entity(id);
+    if (Entity* self = registry.find(id)) {
+        registry.destroy(*self);
     }
 }
 

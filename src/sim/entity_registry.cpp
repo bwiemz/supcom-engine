@@ -69,6 +69,29 @@ void EntityRegistry::unregister_entity(u32 id) {
     live_.erase(&ref);
 }
 
+void EntityRegistry::destroy(Entity& entity) {
+    if (entity.destroyed() || find(entity.entity_id()) != &entity) {
+        return;
+    }
+    entity.mark_destroyed();
+    deletion_queue_.push_back(entity.entity_id());
+}
+
+u32 EntityRegistry::take_destroyed() {
+    if (deletion_queue_.empty()) {
+        return 0;
+    }
+    const u32 id = deletion_queue_.front();
+    deletion_queue_.pop_front();
+    return id;
+}
+
+void EntityRegistry::purge_destroyed() {
+    while (const u32 id = take_destroyed()) {
+        unregister_entity(id);
+    }
+}
+
 Entity* EntityRegistry::find(u32 id) const {
     return id < entities_.size() ? entities_[id].get() : nullptr;
 }

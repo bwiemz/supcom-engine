@@ -62,9 +62,9 @@ void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 
     if (!((v.x * v.x + v.y * v.y + v.z * v.z) * 0.01f > 1e-6f)) {
         return;
     }
-    if (unit.destroyed() || unit.is_dying() || unit.is_being_built() || unit.can_fly() ||
-        unit.transport_id() != 0 || unit.parent_entity_id() != 0 || unit.layer() == "Air" ||
-        unit.layer() == "Sub" || unit.has_category("NAVAL")) {
+    if (unit.is_dying() || unit.is_being_built() || unit.can_fly() || unit.transport_id() != 0 ||
+        unit.parent_entity_id() != 0 || unit.layer() == "Air" || unit.layer() == "Sub" ||
+        unit.has_category("NAVAL")) {
         return;
     }
     const OrientedBox box =
@@ -92,9 +92,6 @@ void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 
             continue;
         }
         call_on_collision(L, static_cast<Prop&>(*e), unit, *contact);
-        if (unit.destroyed()) {
-            return;
-        }
     }
 }
 

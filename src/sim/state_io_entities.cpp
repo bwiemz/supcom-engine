@@ -1465,6 +1465,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.blueprint_elevation_);
     w.f32v(u.blueprint_elevation_target_);
     w.b(u.dying_);
+    w.b(u.needs_kill_cleanup_);
     w.b(u.transferred_);
     w.size(u.on_unit_built_callbacks_.size());
     for (const Unit::UnitBuiltCallback& cb : u.on_unit_built_callbacks_) {
@@ -1873,6 +1874,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.blueprint_elevation_ = r.f32v();
     u.blueprint_elevation_target_ = r.f32v();
     u.dying_ = r.b();
+    u.needs_kill_cleanup_ = r.b();
     u.transferred_ = r.b();
     u.on_unit_built_callbacks_.resize(r.size(8));
     for (Unit::UnitBuiltCallback& cb : u.on_unit_built_callbacks_) {

@@ -5,6 +5,7 @@
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <set>
@@ -29,10 +30,19 @@ public:
     /// Register an entity and assign it a unique ID. Returns the ID.
     u32 register_entity(std::unique_ptr<Entity> entity);
 
-    /// Remove an entity by ID. Every removal path (Lua Destroy, reclaim,
-    /// sacrifice, projectile impact, ...) goes through here, so the
-    /// unregister hook sees each entity exactly once, while still valid.
+    /// Remove an entity by ID: Moho's EntityDB::Purge. The deletion queue
+    /// (destroy, purge_destroyed) comes here, so the unregister hook sees each
+    /// entity exactly once, while still valid.
     void unregister_entity(u32 id);
+
+    /// Moho's Entity::Destroy: the entity is marked (BeenDestroyed) and queued, once, and stays
+    /// registered, found and in the grids until the queue is run at the end of the tick.
+    void destroy(Entity& entity);
+    /// The next entity of the deletion queue, first in first out; 0 when it is empty.
+    u32 take_destroyed();
+    const std::deque<u32>& deletion_queue() const { return deletion_queue_; }
+    /// Unregister everything the deletion queue holds, in its order (a sim runs OnDestroy first).
+    void purge_destroyed();
 
     /// Called for each entity just before it is removed. SimState uses it to
     /// release what the entity owns outside the registry (its Lua table's
@@ -195,6 +205,7 @@ private:
     };
     void compact();
     std::vector<std::unique_ptr<Entity>> graveyard_; ///< see collect_garbage()
+    std::deque<u32> deletion_queue_;
     UnregisterHook unregister_hook_;
     u32 next_id_ = 1;
 

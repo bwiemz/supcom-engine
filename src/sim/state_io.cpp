@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 68; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 69; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -94,7 +94,8 @@ constexpr u32 kVersion = 68; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 65: every attack order engages in reach;
                              // 66: armies' resource banks; units' held storage;
                              // 67: projectiles' waiting impact and lifetime end tick;
-                             // 68: entities' pending and last transforms; no units' tick position
+                             // 68: entities' pending and last transforms; no units' tick position;
+                             // 69: the deletion queue; units' kill cleanup due
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -167,6 +168,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
         }
     }
     w.u32v(reg.next_id_);
+    save_ids(w, std::vector<u32>(reg.deletion_queue_.begin(), reg.deletion_queue_.end()));
     // cells_: each entity's link order (its CellLink), and the count of
     // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
     // last_index_ are the map's; units_ and props_ follow from the entities
@@ -190,6 +192,7 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.unit_order_.clear();
     reg.removed_slots_ = 0;
     reg.graveyard_.clear();
+    reg.deletion_queue_.clear();
     reg.large_colliders_.clear();
     for (auto& cell : reg.grid_cells_) cell.clear();
     for (auto& cell : reg.unit_cells_) cell.clear();
@@ -269,6 +272,8 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     }
     reg.next_id_ = r.u32v();
     if (r.ok() && reg.next_id_ <= last_id) r.fail("an entity id past the next one");
+    const std::vector<u32> queued = load_ids(r);
+    reg.deletion_queue_.assign(queued.begin(), queued.end());
     const u64 links = r.u64v();
     if (!r.ok()) return;
     std::vector<Entity*> linked;

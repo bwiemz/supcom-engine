@@ -960,8 +960,8 @@ static int l_Warp(lua_State* L) {
 }
 
 /// IsDestroyed(obj): Moho's rule, true unless obj holds a live C object.
-/// That may be any script object's: an entity answers by its own flag
-/// (destroyed at once, as BeenDestroyed does), a weapon by its unit's, and
+/// That may be any script object's: an entity lives until the deletion queue
+/// purges it, a weapon until its unit does, and
 /// anything else (a manipulator, an emitter, ...) by its handle, cleared or
 /// marked _destroyed when it goes. Reading a weapon as an entity made FAF's
 /// SetWeaponEnabled skip every weapon it turned off.
@@ -981,12 +981,11 @@ static int l_IsDestroyed(lua_State* L) {
         if (!object) {
             destroyed = true;
         } else if (registry && registry->holds(object)) {
-            destroyed = static_cast<const sim::Entity*>(object)->destroyed();
+            destroyed = false;
         } else if (registry && registry->departed(object)) {
             destroyed = true;
         } else if (owner) {
-            destroyed = !registry || !registry->holds(owner) ||
-                        static_cast<const sim::Entity*>(owner)->destroyed();
+            destroyed = !registry || !registry->holds(owner);
         } else {
             lua_pushstring(L, "_destroyed");
             lua_rawget(L, 1);
