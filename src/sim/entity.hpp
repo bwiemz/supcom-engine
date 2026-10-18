@@ -347,16 +347,28 @@ public:
     bool unselectable() const { return unselectable_; }
     void set_unselectable(bool b) { unselectable_ = b; }
 
+    /// Its thread in Moho's stage A.
+    enum class Walk : u8 { Stepping, Parked, Done };
+    Walk walk() const { return walk_; }
+    void set_walk(Walk w) { walk_ = w; }
+    /// Moho's mLastTickProcessed.
+    u32 stepped_tick() const { return stepped_tick_; }
+    void set_stepped_tick(u32 tick) { stepped_tick_ = tick; }
+    /// Moho's TaskResume.
+    void wake();
+
     // Attachment — parent tracking
     u32 parent_entity_id() const { return parent_entity_id_; }
     i32 parent_bone() const { return parent_bone_; }
     i32 attached_bone() const { return attached_bone_; }
+    /// Moho's AttachTo, which wakes a parked entity.
     void set_parent(u32 pid, i32 pbone, i32 abone = -1) {
         parent_entity_id_ = pid; parent_bone_ = pbone; attached_bone_ = abone;
         followed_parent_snap_ = kNotFollowed; // attaching is a jump
+        wake();
     }
     /// The parent's snap serial when this entity last followed it: the
-    /// entity jumps with its parent (see SimState::follow_attachments).
+    /// entity jumps with its parent (see SimState::follow_parent).
     u32 followed_parent_snap() const { return followed_parent_snap_; }
     void set_followed_parent_snap(u32 s) { followed_parent_snap_ = s; }
     void clear_parent() { parent_entity_id_ = 0; parent_bone_ = -1; attached_bone_ = -1; }
@@ -444,6 +456,8 @@ private:
     Vector3 last_position_;
     Quaternion last_orientation_;
     bool placed_ = false;
+    Walk walk_ = Walk::Stepping;
+    u32 stepped_tick_ = 0;
     u32 snap_serial_ = 0;
     static constexpr u32 kNotFollowed = ~0u;
     u32 followed_parent_snap_ = kNotFollowed;

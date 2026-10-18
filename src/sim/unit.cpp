@@ -985,6 +985,10 @@ void Unit::bank_reclaim(ArmyBrain* army) const {
 }
 
 void Unit::take_step(f64 dt, SimContext& ctx) {
+    if (attached()) {
+        take_attached_step(dt, ctx);
+        return;
+    }
     if (dying_) {
         tick_dying(static_cast<f32>(dt), ctx.terrain);
         if (ctx.sim) {
@@ -997,13 +1001,6 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     }
     report_health_band(ctx.L);
     if (!in_registry()) {
-        return;
-    }
-    if (transport_id_ != 0) {
-        follow_transport(dt, ctx);
-        if (ctx.sim && in_registry()) {
-            ctx.sim->step_economy_events(*this);
-        }
         return;
     }
     // Moho's Unit::MotionTick: SiloTick, the stun countdown, then CUnitMotion::MotionTick.
@@ -1049,31 +1046,66 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     }
 }
 
-void Unit::follow_transport(f64 dt, SimContext& ctx) {
-    auto& registry = ctx.registry;
-    auto* transport_entity = registry.find(transport_id_);
-    if (transport_entity && !transport_entity->destroyed() && transport_entity->is_unit()) {
-        auto& transport = static_cast<Unit&>(*transport_entity);
-        hang_from(transport);
-        if (transport.is_staging_platform()) {
-            if (transport.is_dying()) {
-                transport.detach_cargo({entity_id()}, registry, ctx.L, ctx.terrain);
-            } else {
-                tick_fuel(dt, ctx, &transport);
-            }
-            if (!in_registry()) {
-                return;
-            }
+bool Unit::attached() const {
+    if (transport_id_ != 0) {
+        return true;
+    }
+    return parent_entity_id() != 0 && registry() && registry()->find(parent_entity_id());
+}
+
+void Unit::take_attached_step(f64 dt, SimContext& ctx) {
+    // Moho's Unit::MotionTick on CUnitMotion's Attached state: no move of its own.
+    if (!dying_) {
+        report_health_band(ctx.L);
+        if (!in_registry()) {
+            return;
         }
-    } else {
-        if (transport_entity && transport_entity->is_unit()) {
-            static_cast<Unit*>(transport_entity)->remove_cargo(entity_id());
+        tick_silo(dt, ctx);
+        if (!in_registry()) {
+            return;
         }
-        transport_id_ = 0;
-        set_unit_state("Attached", false);
+        if (stun_ticks_ > 0) {
+            --stun_ticks_;
+        }
+        if (transport_id_ != 0) {
+            stay_aboard(dt, ctx);
+        } else if (!tick_fuel(dt, ctx, nullptr)) {
+            return;
+        }
+        if (!in_registry()) {
+            return;
+        }
     }
     ground_speed_ = 0;
     rest_air_body();
+    if (ctx.sim) {
+        ctx.sim->step_economy_events(*this);
+        if (!in_registry()) {
+            return;
+        }
+    }
+    tick_manipulators(static_cast<f32>(dt), ctx.L);
+    if (!dying_ && in_registry()) {
+        tick_upkeep(dt, ctx);
+    }
+}
+
+void Unit::stay_aboard(f64 dt, SimContext& ctx) {
+    Entity* carrier = ctx.registry.find(transport_id_);
+    if (!carrier || !carrier->is_unit()) {
+        transport_id_ = 0;
+        set_unit_state("Attached", false);
+        return;
+    }
+    auto& transport = static_cast<Unit&>(*carrier);
+    if (!transport.is_staging_platform()) {
+        return;
+    }
+    if (transport.is_dying()) {
+        transport.detach_cargo({entity_id()}, ctx.registry, ctx.L, ctx.terrain);
+    } else {
+        tick_fuel(dt, ctx, &transport);
+    }
 }
 
 void Unit::tend_unfinished(SimContext& ctx) {
@@ -1110,7 +1142,6 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (!in_registry()) {
         return false;
     }
-    auto& registry = ctx.registry;
     auto* L = ctx.L;
 
     // Moho's CUnitMotion::MotionTick: ProcessFuelLevels, the layer from the committed transform,
@@ -1183,16 +1214,6 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
         if (!in_registry()) {
             return false;
         }
-    }
-
-    // Carried units hang where the transport now is (M206l), however their
-    // own ticks fall around ours: Moho moves attached entities with their
-    // parent, so none trails it by a tick.
-    for (const u32 id : cargo_ids_) {
-        auto* e = registry.find(id);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
-        auto* cargo = static_cast<Unit*>(e);
-        if (cargo->transport_id() == entity_id()) cargo->hang_from(*this);
     }
     return true;
 }

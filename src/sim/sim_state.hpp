@@ -155,10 +155,6 @@ public:
 
     blueprints::BlueprintStore* blueprint_store() { return blueprint_store_; }
     blueprints::BlueprintStore* blueprint_store() const { return blueprint_store_; }
-    /// Collision beams, in the order they were made (their ids'): the beam
-    /// pass poses and checks them each tick (M206c).
-    void track_collision_beam(u32 id) { collision_beams_.push_back(id); }
-    std::vector<u32>& collision_beams() { return collision_beams_; }
     /// Ferry beacons made for ferry routes (M206f); one no route holds any
     /// more is destroyed at the end of the tick.
     void track_ferry_beacon(u32 id) { ferry_beacons_.push_back(id); }
@@ -775,11 +771,6 @@ public:
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.
-    /// One tick's step: attached entities (AttachTo, AttachBoneTo) take
-    /// their parent's pose (its origin: bone offsets need the sim's bone
-    /// world transforms). Each reads its parent's pose from before the step,
-    /// so the result is the same in any iteration order (lockstep).
-    void follow_attachments();
     /// Destroy the stored units of carriers that went this tick (M206q).
     void destroy_orphaned_stored_units();
     /// Moho's KillCleanup for the units killed this tick, army by army.
@@ -989,7 +980,21 @@ private:
     void navigate_units(const std::vector<u32>& ids);
     /// Moho's stage B: each unit's orders, in creation order.
     void tick_unit_orders();
+    /// Moho's stage A (CTaskStage::UserFrame over Entity::TaskTick): each entity in the walk's
+    /// order steps; an attached one waits for its parent and follows it.
     void update_entities();
+    Entity* attach_parent(const Entity& e) const;
+    void follow_parent(Entity& e, const Entity& parent);
+    Entity::Walk step_entity(Entity& e, bool attached, SimContext& ctx);
+    /// What follows a unit separation or no-rush moved after the walk follows it again.
+    void refollow_attached();
+    struct Followed {
+        u32 id;
+        u32 parent;
+        Vector3 at;
+        Quaternion facing;
+    };
+    std::vector<Followed> followed_;
     /// Ground units that overlap are pushed apart (M203b): an idle unit
     /// makes way for a moving one, otherwise the smaller gives more, and a
     /// held one (SetImmobile) doesn't move. Submerged units meet only each
@@ -1077,7 +1082,6 @@ private:
     blueprints::BlueprintStore* blueprint_store_;
     std::unordered_map<std::string, std::shared_ptr<const ProjectileBlueprintInfo>>
         projectile_info_;
-    std::vector<u32> collision_beams_;
     std::vector<u32> ferry_beacons_;
     bool checksum_trace_header_ = false;
     mutable ChecksumParts tick_checksum_;

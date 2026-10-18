@@ -38,6 +38,12 @@ void Entity::advance_coords() {
     }
 }
 
+void Entity::wake() {
+    if (registry_ && walk_ == Walk::Parked) {
+        registry_->wake(*this);
+    }
+}
+
 void Entity::set_collision_shape(const CollisionShape& s) {
     collision_shape_ = s;
     shape_reach_ = collision_reach(s);

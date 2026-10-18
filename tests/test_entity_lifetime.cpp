@@ -73,11 +73,6 @@ Unit* spawn_structure(SimState& sim, osc::f32 x, osc::f32 z) {
     return raw;
 }
 
-void follow(SimState& sim) {
-    sim.follow_attachments();
-    sim.entity_registry().advance_coords();
-}
-
 } // namespace
 
 TEST_CASE("obstacle cells stay blocked while any footprint covers them",
@@ -250,7 +245,7 @@ TEST_CASE("an unregistered entity stays allocated until the tick's garbage colle
     CHECK(registry.count() == 0);
 }
 
-TEST_CASE("attached entities take their parent's pose, in any order", "[sim][attach]") {
+TEST_CASE("A chain of attached entities follows its root in the tick it moves", "[sim][attach]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     auto spawn = [&](osc::f32 x) {
@@ -266,26 +261,25 @@ TEST_CASE("attached entities take their parent's pose, in any order", "[sim][att
     Unit* a = spawn(10.0f);
     b->set_parent(c->entity_id(), -1);
     a->set_parent(b->entity_id(), -1);
-    follow(sim);
+    sim.tick();
     CHECK(b->position().x == 100.0f);
-    CHECK(a->position().x == 50.0f); // b's pose before the step: one tick per link
-    follow(sim);
     CHECK(a->position().x == 100.0f);
 
     // A parent that only turns: its children turn with it.
     const osc::sim::Quaternion turned{0.0f, 0.7071f, 0.0f, 0.7071f};
     c->set_orientation(turned);
-    follow(sim);
+    sim.tick();
     CHECK(b->orientation().y == turned.y);
+    CHECK(a->orientation().y == turned.y);
 
-    // A cycle swaps poses rather than depending on which goes first.
+    // A cycle, which Moho's AttachTo refuses, doesn't hold the walk up.
     Unit* d = spawn(1.0f);
     Unit* e = spawn(2.0f);
     d->set_parent(e->entity_id(), -1);
     e->set_parent(d->entity_id(), -1);
-    follow(sim);
+    sim.tick();
     CHECK(d->position().x == 2.0f);
-    CHECK(e->position().x == 1.0f);
+    CHECK(e->position().x == 2.0f);
 }
 
 TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)", "[sim][attach]") {
@@ -308,7 +302,7 @@ TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)",
     // Bone -1: the centre (0, 2, 0) up, then (1, -1, 0) turned to (0, -1, -1)
     shield->set_parent(unit->entity_id(), -1);
     shield->set_parent_offset({1.0f, -1.0f, 0.0f});
-    follow(sim);
+    sim.tick();
     CHECK(shield->position().x == Catch::Approx(10.0f).margin(1e-4));
     CHECK(shield->position().y == Catch::Approx(1.0f).margin(1e-4));
     CHECK(shield->position().z == Catch::Approx(19.0f).margin(1e-4));
@@ -325,7 +319,7 @@ TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)",
     unit->set_bone_data(&bones);
     shield->set_parent(unit->entity_id(), 0);
     shield->set_parent_offset({1.0f, 0.0f, 0.0f});
-    follow(sim);
+    sim.tick();
     // (0, 6, 2) turned: (2, 6, 0); the offset turned twice: (-1, 0, 0)
     CHECK(shield->position().x == Catch::Approx(11.0f).margin(1e-4));
     CHECK(shield->position().y == Catch::Approx(6.0f).margin(1e-4));
@@ -341,7 +335,7 @@ TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)",
     sim.entity_registry().register_entity(std::move(script_owned));
     script->set_parent(shield->entity_id(), -1);
     script->set_parent_offset({0.0f, 0.0f, 2.0f});
-    follow(sim);
+    sim.tick();
     CHECK(script->position().x == Catch::Approx(11.0f).margin(1e-4));
     CHECK(script->position().y == Catch::Approx(6.0f).margin(1e-4));
     CHECK(script->position().z == Catch::Approx(18.0f).margin(1e-4));

@@ -1259,3 +1259,156 @@ TEST_CASE("A killed unit's weapons hear OnDestroy at the end of its death tick a
                 " 'DeathThread ' .. k .. ', weapon OnDestroy ' .. k, table.concat(log, ', '))"));
     CHECK(w.run("assert(table.concat(counts, ', ') == '1, 0', table.concat(counts, ', '))"));
 }
+
+namespace {
+
+void script_entity(Phases& w, const char* global) {
+    REQUIRE(w.run(std::string(global) + " = setmetatable({}, {__index = EM}) _c_CreateEntity(" +
+                  global + ", {})"));
+}
+
+f32 lua_x(Phases& w, const char* global) {
+    REQUIRE(w.run(std::string("at_x = EM.GetPosition(") + global + ")[1]"));
+    return w.number("at_x");
+}
+
+} // namespace
+
+TEST_CASE("A chain of attached entities follows its root the tick the root moves, whichever was "
+          "made first",
+          "[tick-phases][walk]") {
+    const bool leaf_first = GENERATE(false, true);
+    Phases w;
+    if (leaf_first) {
+        script_entity(w, "leaf");
+        w.make("mid", "tank", 1, 100.0f, 100.0f);
+        w.make("root", "fac", 1, 100.0f, 100.0f);
+    } else {
+        w.make("root", "fac", 1, 100.0f, 100.0f);
+        w.make("mid", "tank", 1, 100.0f, 100.0f);
+        script_entity(w, "leaf");
+    }
+    REQUIRE(w.run("EM.AttachTo(mid, root, -1) EM.AttachTo(leaf, mid, -1)"));
+    w.sim.tick();
+    REQUIRE(w.run("EM.SetPosition(root, {104, 10, 100})"));
+    w.sim.tick();
+    INFO("leaf_first " << leaf_first);
+    CHECK(lua_x(w, "mid") == Catch::Approx(104.0f));
+    CHECK(lua_x(w, "leaf") == Catch::Approx(104.0f));
+}
+
+TEST_CASE("A factory's frame, and an entity on it, follow the factory the tick it moves",
+          "[tick-phases][walk]") {
+    Phases w;
+    Unit& fac = w.make("fac", "fac", 1, 60.0f, 60.0f);
+    REQUIRE(w.run("framed = 0"
+                  " function fac:OnStartBuild(u, order)"
+                  "   frame = u framed = GetGameTick()"
+                  "   EM.AttachBoneTo(u, -2, self, -1)"
+                  "   fx = setmetatable({}, {__index = EM}) _c_CreateEntity(fx, {})"
+                  "   EM.AttachTo(fx, u, -1)"
+                  " end"));
+    UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "t1";
+    fac.push_command(build, false);
+    for (int t = 0; t < 10 && w.number("framed") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("framed") > 0);
+    w.sim.tick();
+    REQUIRE(w.run("EM.SetPosition(fac, {64, 10, 60})"));
+    w.sim.tick();
+    CHECK(lua_x(w, "frame") == Catch::Approx(64.0f));
+    CHECK(lua_x(w, "fx") == Catch::Approx(64.0f));
+}
+
+TEST_CASE("Cargo and a carrier's stored unit take their own step as they ride: their stun runs "
+          "down and they regenerate",
+          "[tick-phases][walk]") {
+    const bool stored = GENERATE(false, true);
+    Phases w;
+    Unit& rider = w.make("rider", "healer", 1, 100.0f, 100.0f);
+    Unit& carrier = w.make("carrier", "tank", 1, 100.0f, 100.0f);
+    if (stored) {
+        carrier.add_to_storage(rider, w.sim.entity_registry(), w.state.raw());
+    } else {
+        rider.attach_to_transport(&carrier, w.sim.entity_registry(), w.state.raw());
+    }
+    w.sim.tick();
+    rider.set_health(50.0f);
+    rider.set_stunned(0.5);
+    REQUIRE(w.run("EM.SetPosition(carrier, {104, 10, 100})"));
+    w.sim.tick();
+    INFO("stored " << stored);
+    CHECK(rider.position().x == Catch::Approx(104.0f));
+    CHECK(rider.health() == Catch::Approx(51.0f));
+    CHECK(rider.stun_ticks() == 4);
+}
+
+TEST_CASE("A beam deals its damage at its place in the entity walk, after its unit's step",
+          "[tick-phases][walk]") {
+    const bool beam_first = GENERATE(false, true);
+    Phases w;
+    Unit& launcher = w.make("launcher", "tank", 1, 100.0f, 100.0f);
+    Weapon& gun = w.arm(launcher, nullptr);
+    w.make("shooter", "tank", 1, 90.0f, 110.0f);
+    give_box(w.make("target", "tank", 1, 100.0f, 110.0f));
+    lua_State* L = w.state.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &gun);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "unit");
+    lua_getglobal(L, "launcher");
+    lua_rawset(L, -3);
+    lua_setglobal(L, "gun");
+    w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
+                                 "   shell = GetGameTick() after_beam = beamed == shell"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    const auto beam = [&] {
+        REQUIRE(w.run("beamed = 0 beam = setmetatable({OnImpact = function(self, kind, other)"
+                      "   beamed = GetGameTick()"
+                      " end}, {__index = moho.CollisionBeamEntity})"
+                      " moho.CollisionBeamEntity.__init(beam, {Weapon = gun,"
+                      "   CollisionCheckInterval = 0})"
+                      " moho.CollisionBeamEntity.Enable(beam)"));
+    };
+    const auto shoot = [&] {
+        REQUIRE(w.run("shell = 0 after_beam = false"
+                      " shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
+                      " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, 35, 0, 0)"));
+    };
+    if (beam_first) {
+        beam();
+        shoot();
+    } else {
+        shoot();
+        beam();
+    }
+    for (int t = 0; t < 20 && w.number("shell") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("shell") > 0);
+    REQUIRE(w.number("beamed") == w.number("shell"));
+    INFO("beam_first " << beam_first);
+    CHECK(w.run(std::string("assert(after_beam == ") + (beam_first ? "true" : "false") + ")"));
+}
+
+TEST_CASE("An entity attached to a unit pushed out of another's way follows the push",
+          "[tick-phases][walk]") {
+    Phases w;
+    Unit& still = w.make("still", "tank", 1, 100.0f, 100.0f);
+    Unit& pushed = w.make("pushed", "tank", 1, 100.5f, 100.0f);
+    for (Unit* u : {&still, &pushed}) {
+        u->set_max_speed(5.0f);
+        give_box(*u);
+    }
+    script_entity(w, "rider");
+    REQUIRE(w.run("EM.AttachTo(rider, pushed, -1)"));
+    w.sim.tick();
+    w.sim.tick();
+    REQUIRE(pushed.position().x != Catch::Approx(100.5f));
+    CHECK(lua_x(w, "rider") == Catch::Approx(pushed.position().x));
+}

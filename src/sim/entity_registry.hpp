@@ -44,6 +44,11 @@ public:
     /// Unregister everything the deletion queue holds, in its order (a sim runs OnDestroy first).
     void purge_destroyed();
 
+    /// Moho's stage A list (CTaskStage): the order the entities step in, kept from walk to walk.
+    std::vector<u32>& walk() { return walk_; }
+    const std::vector<u32>& walk() const { return walk_; }
+    void wake(Entity& entity);
+
     /// Called for each entity just before it is removed. SimState uses it to
     /// release what the entity owns outside the registry (its Lua table's
     /// pointer back to C++, a structure's pathfinding footprint).
@@ -206,6 +211,7 @@ private:
     void compact();
     std::vector<std::unique_ptr<Entity>> graveyard_; ///< see collect_garbage()
     std::deque<u32> deletion_queue_;
+    std::vector<u32> walk_;
     UnregisterHook unregister_hook_;
     u32 next_id_ = 1;
 
