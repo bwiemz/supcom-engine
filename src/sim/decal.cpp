@@ -1,5 +1,7 @@
 #include "sim/decal.hpp"
 
+#include "core/dmath.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -35,7 +37,7 @@ bool source_of(const DecalSpec& spec, const DecalArmies& armies, size_t& source)
 } // namespace
 
 Quaternion heading_quaternion(f32 heading) {
-    return {0.0f, std::sin(heading * 0.5f), 0.0f, std::cos(heading * 0.5f)};
+    return {0.0f, dmath::sin(heading * 0.5f), 0.0f, dmath::cos(heading * 0.5f)};
 }
 
 DecalSpec make_decal_spec(const Vector3& centre, const Quaternion& orientation, f32 size_x,
@@ -47,7 +49,7 @@ DecalSpec make_decal_spec(const Vector3& centre, const Quaternion& orientation, 
                      centre.z - right.z * size_x * 0.5f - forward.z * size_z * 0.5f};
     const Quaternion& q = orientation;
     spec.rotation_y =
-        -std::atan2(2.0f * (q.x * q.z + q.w * q.y), 1.0f - 2.0f * (q.z * q.z + q.y * q.y));
+        -dmath::atan2(2.0f * (q.x * q.z + q.w * q.y), 1.0f - 2.0f * (q.z * q.z + q.y * q.y));
     spec.size_x = size_x;
     spec.size_z = size_z;
     if (duration > 0.0f) spec.remove_tick = tick + static_cast<u32>(std::floor(duration * 10.0f));
@@ -55,8 +57,8 @@ DecalSpec make_decal_spec(const Vector3& centre, const Quaternion& orientation, 
 }
 
 DecalBounds decal_bounds(const DecalSpec& spec) {
-    const f32 c = std::cos(spec.rotation_y);
-    const f32 s = std::sin(spec.rotation_y);
+    const f32 c = dmath::cos(spec.rotation_y);
+    const f32 s = dmath::sin(spec.rotation_y);
     const f32 xx = spec.size_x * c;
     const f32 xz = spec.size_x * s;
     const f32 zx = -spec.size_z * s;
