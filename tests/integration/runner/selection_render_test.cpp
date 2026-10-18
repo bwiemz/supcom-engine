@@ -300,6 +300,60 @@ void test_selection_render(TestContext& ctx) {
                         "where the ground under it is ({})",
                         boxed_air, boxed_ground));
 
+    // Test 13: brackets are tested against the scene's depth
+    const u32 walls = spawn_unit(ctx, "__osc_sel_pg", "ueb1301", "ARMY_1", {sx + 30, sz + 40});
+    const auto* we = ctx.sim.entity_registry().find(walls);
+    const sim::Vector3 wp = we ? we->position() : sim::Vector3{sx + 30, 0, sz + 40};
+    const u32 inside = spawn_unit(ctx, "__osc_sel_in", "uel0105", "ARMY_1", {wp.x, wp.z});
+    const u32 outside = spawn_unit(ctx, "__osc_sel_out", "uel0105", "ARMY_1", {sx + 30, sz + 50});
+    ctx.sim.tick();
+    shots.recapture();
+    const auto bracket_pixels = [&](u32 id) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        const sim::Vector3 p = e ? e->position() : sim::Vector3{};
+        (void)shots.shoot_frame(*ctx.sim.terrain(), p.x, p.z, 25.0f);
+        const std::unordered_set<u32> one{id};
+        const ImageRGBA8 plain = shots.grab();
+        const ImageRGBA8 marked = shots.grab(&one);
+        const auto* b = bracket_of(r, id);
+        if (!b || plain.width == 0 || plain.pixels.size() != marked.pixels.size()) {
+            return -1;
+        }
+        const auto view = r.camera().view_proj(aspect);
+        const f32 w = static_cast<f32>(plain.width);
+        const f32 h = static_cast<f32>(plain.height);
+        std::array<f32, 4> area = {w, h, 0, 0};
+        for (const auto& tile : renderer::bracket_quads(b->box, b->corner)) {
+            for (const auto& v : tile) {
+                if (const auto s = renderer::screen_point(view, v, w, h)) {
+                    area = {std::min(area[0], (*s)[0]), std::min(area[1], (*s)[1]),
+                            std::max(area[2], (*s)[0]), std::max(area[3], (*s)[1])};
+                }
+            }
+        }
+        const int width = static_cast<int>(plain.width);
+        const int x0 = std::max(0, static_cast<int>(area[0]));
+        const int y0 = std::max(0, static_cast<int>(area[1]));
+        const int x1 = std::min(width - 1, static_cast<int>(area[2]));
+        const int y1 = std::min(static_cast<int>(plain.height) - 1, static_cast<int>(area[3]));
+        int n = 0;
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                const size_t i = static_cast<size_t>(y * width + x) * 4;
+                if (marked.pixels[i + 2] > plain.pixels[i + 2] + 25) {
+                    ++n;
+                }
+            }
+        }
+        return n;
+    };
+    const int open = bracket_pixels(outside);
+    const int walled = bracket_pixels(inside);
+    t.check(walls != 0 && open > 20 && walled == 0,
+            fmt::format("Test 13: brackets behind a mesh are hidden: {} pixels of an engineer's "
+                        "in the open, {} of one's inside a power generator",
+                        open, walled));
+
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

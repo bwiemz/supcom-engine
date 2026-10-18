@@ -11,8 +11,8 @@
 namespace osc::renderer {
 
 void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
-                          VkDescriptorSetLayout texture_ds_layout, u32 max_quads,
-                          const char* name) {
+                          VkDescriptorSetLayout texture_ds_layout, u32 max_quads, const char* name,
+                          bool depth_test) {
     max_quads_ = max_quads;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo buf_ci{};
@@ -89,10 +89,12 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
     VkPipelineMultisampleStateCreateInfo ms{};
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    // Depth_TCommand: no depth test, so no ground or unit hides a quad
+    // Depth_TCommand: no depth test, so no ground or unit hides a quad;
+    // with one, gal's LessEqual (faf-re PipelineStateD3D9::BeginTechnique)
     VkPipelineDepthStencilStateCreateInfo depth{};
     depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth.depthTestEnable = VK_FALSE;
+    depth.depthTestEnable = depth_test ? VK_TRUE : VK_FALSE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     depth.depthWriteEnable = VK_FALSE;
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
