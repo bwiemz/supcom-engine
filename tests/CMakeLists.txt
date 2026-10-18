@@ -189,6 +189,7 @@ add_executable(osc_tests
     test_command_sources.cpp
     test_sim_rand.cpp
     test_video_decoder.cpp
+    test_vulkan_layer.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
