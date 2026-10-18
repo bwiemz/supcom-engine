@@ -367,12 +367,16 @@ static int unit_GetGuardedUnit(lua_State* L) {
     return 1;
 }
 
-// GetFocusUnit(): return the unit this unit is actively building/assisting/capturing
+// GetFocusUnit(): return the unit this unit is actively building/assisting/
+// capturing/repairing (Moho's focus entity: a repair task's is its target).
+// FAF's UpdateConsumptionValues prices a repair by it, and a repair asking
+// nothing is switched off and mends nothing.
 static int unit_GetFocusUnit(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushnil(L); return 1; }
 
     const u32 focus_id = u->focus_id();
+
     if (focus_id == 0) { lua_pushnil(L); return 1; }
 
     auto* sim = get_sim(L);

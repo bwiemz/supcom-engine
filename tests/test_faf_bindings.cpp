@@ -263,6 +263,48 @@ TEST_CASE("A sim unit's queue gives each order's place, target and build", "[faf
     CHECK(error.empty());
 }
 
+TEST_CASE("A repairer's focus unit is what it repairs", "[faf][repair]") {
+    // Moho's repair task focuses its target: FAF's UpdateConsumptionValues
+    // prices the repair by it, and without it switches the repair's
+    // consumption off, so it mends nothing
+    World w;
+    auto damaged = std::make_unique<osc::sim::Unit>();
+    damaged->set_army(0);
+    damaged->set_unit_id("ueb1101");
+    damaged->set_position({8, 0, 5});
+    damaged->set_max_health(600.0f);
+    damaged->set_health(120.0f);
+    const osc::u32 damaged_id = w.sim.entity_registry().register_entity(std::move(damaged));
+    lua_State* S = w.sim_lua.raw();
+    for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"damaged", damaged_id}}) {
+        lua_newtable(S);
+        lua_pushstring(S, "_c_object");
+        lua_pushlightuserdata(S, w.sim.entity_registry().find(id));
+        lua_rawset(S, -3);
+        lua_pushvalue(S, -1);
+        w.sim.entity_registry().find(id)->set_lua_table_ref(luaL_ref(S, LUA_REGISTRYINDEX));
+        lua_setglobal(S, name);
+    }
+    REQUIRE(run(w.sim_lua, R"(
+        __blueprints = {ueb1101 = {Economy = {BuildTime = 125, BuildCostMass = 75, BuildCostEnergy = 750}}}
+    )")
+                .empty());
+    CHECK(run(w.sim_lua, R"(
+        if moho.unit_methods.GetFocusUnit(unit) ~= nil then error('a focus before the repair') end
+    )")
+              .empty());
+    w.unit().set_build_rate(10.0f);
+    osc::sim::UnitCommand repair;
+    repair.type = CommandType::Repair;
+    repair.target_id = damaged_id;
+    REQUIRE(w.unit().start_repair(repair, w.sim.entity_registry(), S));
+    const std::string error = run(w.sim_lua, R"(
+        if moho.unit_methods.GetFocusUnit(unit) ~= damaged then error('the repair has no focus') end
+    )");
+    INFO(error);
+    CHECK(error.empty());
+}
+
 TEST_CASE("GetDepositsAroundPoint lists the map's deposits about a point", "[faf][deposits]") {
     World w;
     const std::string in_sim = run(w.sim_lua, kDepositChecks);
