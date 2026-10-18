@@ -1855,7 +1855,7 @@ void test_capture(TestContext& ctx) {
             built:SetHealth(nil, __osc_pgen_hp)
             __osc_enemy_pgen = ChangeUnitArmy(built, 2)
             if not __osc_enemy_pgen or __osc_enemy_pgen:GetArmy() ~= 2 then error('not given') end
-            if not IsDestroyed(built) then error('the given one is still there') end
+            if not built:BeenDestroyed() then error('the given one is still there') end
             if math.abs(__osc_enemy_pgen:GetHealth() - __osc_pgen_hp) > 0.01 then
                 error('health ' .. __osc_enemy_pgen:GetHealth())
             end
@@ -4950,6 +4950,7 @@ void test_adjacency(TestContext& ctx) {
             "pg1:Destroy()\n");
         if (!r) { fail++; osc::test_status::fail("[FAIL] Test 3 setup: {}", r.error().message); }
         else {
+            ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
                 "local count = rawget(_G, '__not_adj_count') or 0\n"
                 "if count > 0 then\n"
@@ -8129,11 +8130,13 @@ void test_impact(TestContext& ctx) {
     const bool lit = lit_there();
     (void)ctx.lua_state.do_string("__osc_marker:Destroy()");
     ctx.sim.tick();
+    const bool lit_until_purged = lit_there();
+    ctx.sim.tick();
     const bool dark_after = !lit_there();
-    check(dark_before && lit && dark_after,
-          fmt::format("Test 5: a VizMarker reveals its area while it lives "
-                      "(before {}, with {}, after {})",
-                      !dark_before, lit, !dark_after));
+    check(dark_before && lit && lit_until_purged && dark_after,
+          fmt::format("Test 5: a VizMarker reveals its area while it lives, to the end of the tick "
+                      "it is destroyed in (before {}, with {}, that tick {}, after {})",
+                      !dark_before, lit, lit_until_purged, !dark_after));
 
     // A projectile's life: air bursts, the water's surface, a lost target.
     lua_check("setup: shells in flight", R"(
@@ -13911,7 +13914,7 @@ void test_change_army(TestContext& ctx) {
               R"(
         if not IsDestroyed(__osc_old_tank) then error('the old unit is still there') end
         if __osc_new_tank.OldOwnerMark then error('the old script state came along') end
-        if __osc_ticks ~= __osc_ticks_at then error('the old thread still runs') end
+        if __osc_ticks ~= __osc_ticks_at + 1 then error('the old thread ran on') end
         local lost = GetArmyBrain('ARMY_1'):GetArmyStat('Units_Killed', 0).Value
         if lost ~= __osc_lost_before then error('counted as lost: ' .. lost) end
     )");
@@ -14097,7 +14100,7 @@ void test_change_army(TestContext& ctx) {
     ctx.sim.set_share_condition("Defectors");
     ctx.sim.defeat_army(1);
     lua_check("Test 10: a defeated army's units go over to an enemy as new units", R"(
-        if not IsDestroyed(__osc_defector) then error('the defector is still there') end
+        if not __osc_defector:BeenDestroyed() then error('the defector is still there') end
         local found = __osc_test_find_unit('uel0201', 1)
         if not found or VDist3(found:GetPosition(), __osc_defector_pos) > 0.01 then
             error('ARMY_1 has no tank where it stood')
@@ -16254,6 +16257,7 @@ void test_unitsound(TestContext& ctx) {
         }
     }
     lua("e:Destroy()");
+    ctx.sim.tick();
     sync();
     for (int i = 0; i < 40; ++i) ctx.sim.tick(); // releases and fades run out
     if (!sound->is_playing(move)) {

@@ -433,6 +433,9 @@ order (dead flag → adjacency → cargo → queue → `OnKilled` → stats → 
   tick.
 - Acceptance: P2 — no shot after `OnKilled` when killed between shots, one when killed on a shot's tick; the
   weapon's `OnDestroy` in the death tick, `GetWeaponCount()` 0 from the next.
+  *Done (2026-10-18) — tick/s7-death-deletion: P2 on retail's and FAF's Lua — no shot after `OnKilled` killed between
+  shots, one killed on a shot's tick (was 13 and 13), the weapon's `OnDestroy` in the death tick after `DeathThread`
+  starts, `GetWeaponCount()` 0 from the next tick; the rest of P2 on retail's Lua, P1 and P3 unchanged.*
 
 **Step 9. Entities in the walk.** Attached entities wait for their parent and follow it the same tick;
 shields, beams and script entities step after their owner; a prop parks without a motor and is woken to

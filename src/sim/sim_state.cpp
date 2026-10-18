@@ -144,9 +144,205 @@ void SimState::notify_script_destroy(Entity& entity) {
     lua_settop(L_, top);
 }
 
+namespace {
+
+void call_with(lua_State* L, Entity& self, const char* method, const Entity& other) {
+    if (!L || self.lua_table_ref() < 0 || other.lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self.lua_table_ref());
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, top + 1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, other.lua_table_ref());
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            spdlog::warn("{} error: {}", method, lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+}
+
+bool script_says(lua_State* L, Entity& self, const char* method) {
+    if (!L || self.lua_table_ref() < 0) {
+        return false;
+    }
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self.lua_table_ref());
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    bool yes = false;
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, top + 1);
+        lua_pushvalue(L, top + 1);
+        if (lua_pcall(L, 2, 1, 0) == 0) {
+            yes = lua_toboolean(L, -1) != 0;
+        } else {
+            spdlog::warn("{} error: {}", method, lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+    return yes;
+}
+
+} // namespace
+
+void SimState::on_destroy(Entity& entity) {
+    if (entity.is_unit()) {
+        auto& unit = static_cast<Unit&>(entity);
+        unit.release_weapon_scripts(L_);
+        if (!unit.is_dying()) {
+            drop_adjacency(unit);
+            detach_all_units(unit, false);
+        }
+        const bool handed_over = unit.transferred();
+        if (!handed_over && !unit.is_dying()) {
+            record_unit_death(unit);
+        }
+        if (!handed_over) {
+            const Vector3 pos = unit.position();
+            const f32 scale = unit.footprint_size_x() > 0 ? unit.footprint_size_x() * 0.5f : 1.0f;
+            add_death_event(pos.x, pos.y, pos.z, scale, unit.army());
+        }
+        if (unit.is_capturing()) {
+            unit.stop_capturing(L_, entity_registry_, true);
+        }
+    }
+    notify_script_destroy(entity);
+}
+
+void SimState::drop_adjacency(Unit& unit) {
+    const std::vector<u32> neighbours(unit.adjacent_unit_ids().begin(),
+                                      unit.adjacent_unit_ids().end());
+    unit.clear_adjacents();
+    for (const u32 id : neighbours) {
+        Entity* e = entity_registry_.find(id);
+        if (!e || !e->is_unit()) {
+            continue;
+        }
+        static_cast<Unit*>(e)->remove_adjacent(unit.entity_id());
+        call_with(L_, unit, "OnNotAdjacentTo", *e);
+        call_with(L_, *e, "OnNotAdjacentTo", unit);
+    }
+}
+
+void SimState::detach_all_units(Unit& transport, bool destroy_some) {
+    std::vector<u32> cargo;
+    for (const u32 id : transport.cargo_ids()) {
+        Entity* e = entity_registry_.find(id);
+        if (e && !e->destroyed() && e->is_unit() && !static_cast<Unit*>(e)->is_dying()) {
+            cargo.push_back(id);
+        }
+    }
+    std::vector<u32> set_down;
+    for (const u32 id : cargo) {
+        auto& unit = static_cast<Unit&>(*entity_registry_.find(id));
+        if (destroy_some && sim_random_.range(0.0f, 1.0f) < 0.99f) {
+            if (script_says(L_, unit, "CheckCanBeKilled")) {
+                transport.remove_cargo(id);
+                unit.set_transport_id(0);
+                if (L_ && unit.lua_table_ref() >= 0) {
+                    const int top = lua_gettop(L_);
+                    lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
+                    lua_pushstring(L_, "Kill");
+                    lua_gettable(L_, -2);
+                    if (lua_isfunction(L_, -1)) {
+                        lua_pushvalue(L_, top + 1);
+                        if (transport.lua_table_ref() >= 0) {
+                            lua_rawgeti(L_, LUA_REGISTRYINDEX, transport.lua_table_ref());
+                        } else {
+                            lua_pushnil(L_);
+                        }
+                        lua_pushstring(L_, "Damage");
+                        lua_pushnumber(L_, 0);
+                        if (lua_pcall(L_, 4, 0, 0) != 0) {
+                            spdlog::warn("Kill error: {}", lua_tostring(L_, -1));
+                        }
+                    }
+                    lua_settop(L_, top);
+                } else {
+                    entity_registry_.destroy(unit);
+                }
+                continue;
+            }
+            static const CategoryName kCommand{"COMMAND"};
+            if (unit.has_category(kCommand) && script_says(L_, unit, "CheckCanTakeDamage")) {
+                if (L_ && unit.lua_table_ref() >= 0) {
+                    const int top = lua_gettop(L_);
+                    lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
+                    lua_pushstring(L_, "OnDamage");
+                    lua_gettable(L_, -2);
+                    if (lua_isfunction(L_, -1)) {
+                        lua_pushvalue(L_, top + 1);
+                        if (transport.lua_table_ref() >= 0) {
+                            lua_rawgeti(L_, LUA_REGISTRYINDEX, transport.lua_table_ref());
+                        } else {
+                            lua_pushnil(L_);
+                        }
+                        lua_pushnumber(L_, 10000);
+                        lua_pushboolean(L_, 0);
+                        lua_pushstring(L_, "Damage");
+                        if (lua_pcall(L_, 5, 0, 0) != 0) {
+                            spdlog::warn("OnDamage error: {}", lua_tostring(L_, -1));
+                        }
+                    }
+                    lua_settop(L_, top);
+                }
+                continue;
+            }
+        }
+        set_down.push_back(id);
+    }
+    transport.detach_cargo(set_down, entity_registry_, L_, terrain_.get());
+    const std::vector<u32> stored = transport.stored_ids();
+    for (const u32 id : stored) {
+        Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
+        }
+        auto& unit = static_cast<Unit&>(*e);
+        transport.forget_stored(id);
+        unit.set_transport_id(0);
+        unit.call_lua_method(L_, "DestroyedOnTransport");
+        if (!unit.destroyed()) {
+            unit.call_lua_method(L_, "Destroy");
+        }
+        if (!unit.destroyed()) {
+            entity_registry_.destroy(unit);
+        }
+    }
+}
+
+void SimState::record_unit_death(Unit& unit) {
+    if (auto* brain = get_army(unit.army())) {
+        brain->record_unit_lost(unit.blueprint_id(), unit.build_cost_mass(),
+                                unit.build_cost_energy());
+    }
+    if (!unit.damage_contributions().empty()) {
+        i32 killer_army = -1;
+        f32 max_dmg = 0;
+        for (const auto& [attacker_id, dmg] : unit.damage_contributions()) {
+            if (dmg > max_dmg) {
+                const Entity* attacker = entity_registry_.find(attacker_id);
+                if (attacker && !attacker->destroyed()) {
+                    max_dmg = dmg;
+                    killer_army = attacker->army();
+                }
+            }
+        }
+        if (killer_army >= 0 && killer_army != unit.army()) {
+            if (auto* killer = get_army(killer_army)) {
+                killer->record_enemy_killed(unit.blueprint_id(), unit.build_cost_mass(),
+                                            unit.build_cost_energy(), unit.has_category("COMMAND"));
+            }
+        }
+    }
+    unit.clear_damage_contributions();
+}
+
 void SimState::on_entity_unregistered(Entity& entity) {
-    // Removed by the engine (impact, reclaim, crash...) rather than by a
-    // script's Destroy(): the script's OnDestroy still runs, first.
+    // Unregistered outside the deletion queue: its script's OnDestroy still runs, first.
     notify_script_destroy(entity);
     // Its ambient loops end with it: the audio side stops what no entity wants.
     entity.clear_ambient_sounds();
@@ -180,12 +376,6 @@ void SimState::on_entity_unregistered(Entity& entity) {
                 static_cast<Unit*>(c)->forget_stored(unit.entity_id());
         for (const u32 id : unit.stored_ids()) stored_to_destroy_.push_back(id);
     }
-
-    // Its Lua table keeps its _c_object until the end of the tick
-    // (release_script_handle), as Moho keeps a destroyed entity until its
-    // deletion queue is drained at the end of the beat: the script that
-    // destroyed it, and threads that run later in the tick, still read it
-    // (a structure's adjacency beams read a wrecked neighbour's blueprint).
 }
 
 void SimState::release_script_handle(Entity& entity) {
@@ -213,6 +403,38 @@ void SimState::release_script_handle(Entity& entity) {
     entity.set_lua_table_ref(LUA_NOREF);
 }
 
+void SimState::kill_cleanup() {
+    std::vector<std::pair<size_t, u32>> due;
+    entity_registry_.for_each_unit([&](Entity& e) {
+        if (!static_cast<const Unit&>(e).needs_kill_cleanup()) {
+            return;
+        }
+        const i32 army = e.army();
+        const bool listed = army >= 0 && static_cast<size_t>(army) < armies_.size();
+        due.emplace_back(listed ? static_cast<size_t>(army) : armies_.size(), e.entity_id());
+    });
+    std::stable_sort(due.begin(), due.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [army, id] : due) {
+        if (Entity* e = entity_registry_.find(id); e && e->is_unit()) {
+            static_cast<Unit*>(e)->kill_cleanup(L_);
+        }
+    }
+}
+
+void SimState::run_deletion_queue() {
+    std::vector<u32> purged;
+    while (const u32 id = entity_registry_.take_destroyed()) {
+        if (Entity* e = entity_registry_.find(id)) {
+            on_destroy(*e);
+            purged.push_back(id);
+        }
+    }
+    for (const u32 id : purged) {
+        entity_registry_.unregister_entity(id);
+    }
+}
+
 void SimState::destroy_orphaned_stored_units() {
     while (!stored_to_destroy_.empty()) {
         const u32 id = stored_to_destroy_.back();
@@ -224,8 +446,7 @@ void SimState::destroy_orphaned_stored_units() {
         if (L_) unit->call_lua_method(L_, "Destroy");
         e = entity_registry_.find(id);
         if (e && !e->destroyed()) { // no script object (or no Destroy)
-            e->mark_destroyed();
-            entity_registry_.unregister_entity(id);
+            entity_registry_.destroy(*e);
         }
     }
 }
@@ -1578,8 +1799,7 @@ void SimState::tick() {
             Entity* e = entity_registry_.find(id);
             if (!e || e->destroyed()) continue;
             if (!L_ || e->lua_table_ref() < 0) {
-                e->mark_destroyed();
-                entity_registry_.unregister_entity(id);
+                entity_registry_.destroy(*e);
                 continue;
             }
             const Vector3 p = e->pending_position();
@@ -1630,8 +1850,7 @@ void SimState::tick() {
                 }
                 e = entity_registry_.find(id);
                 if (e && !e->destroyed()) {
-                    e->mark_destroyed();
-                    entity_registry_.unregister_entity(id);
+                    entity_registry_.destroy(*e);
                 }
             }
         }
@@ -1663,6 +1882,11 @@ void SimState::tick() {
 
     destroy_orphaned_stored_units();
 
+    kill_cleanup();
+    // Moho's AdvanceCoords, after KillCleanup: the tick's moves are committed at once.
+    entity_registry_.advance_coords();
+    run_deletion_queue();
+
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
     {
         PROFILE_ZONE("Sim::vfx_gc");
@@ -1685,9 +1909,6 @@ void SimState::tick() {
         PROFILE_ZONE("Sim::lua_gc");
         lua_setgcthreshold(L_, 0);
     }
-
-    // Moho's AdvanceCoords, after KillCleanup: the tick's moves are committed at once.
-    entity_registry_.advance_coords();
 
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe,
@@ -1963,7 +2184,7 @@ void SimState::step_economy_events(const Unit& unit) {
             }
         }
         lua_settop(L_, top);
-        if (unit.destroyed() || !unit.in_registry()) {
+        if (!unit.in_registry()) {
             return;
         }
     }
@@ -2116,19 +2337,14 @@ void SimState::update_entities() {
 
     const auto step = [&](u32 id) {
         auto* e = entity_registry_.find(id);
-        if (!e || e->destroyed()) {
+        if (!e) {
             return;
         }
         e->tick_scroller();
         if (e->is_unit()) {
             collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
-            if (e->destroyed()) {
-                return;
-            }
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
-            if (auto* moved = entity_registry_.find(id); moved && !moved->destroyed()) {
-                static_cast<Unit*>(moved)->note_queue_head();
-            }
+            static_cast<Unit*>(e)->note_queue_head();
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK, entity_registry_, L_,
                                                 terrain_.get(), tick_count());
@@ -2532,14 +2748,16 @@ void SimState::sync_intel() {
         return wanted;
     };
     entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed() || !e.is_unit()) return;
+        if (!e.is_unit()) {
+            return;
+        }
         const auto& unit = static_cast<const Unit&>(e);
         track(e.entity_id(), e.army(), e.position(), wanted_of(unit.intel_states()));
     });
     // Script entities' intel (VizMarkers), forgotten once the entity is gone.
     for (auto it = entity_intel_.begin(); it != entity_intel_.end();) {
         const Entity* e = entity_registry_.find(it->first);
-        if (!e || e->destroyed()) {
+        if (!e) {
             it = entity_intel_.erase(it);
             continue;
         }
@@ -3189,7 +3407,6 @@ void SimState::defeat_army(i32 army) {
 
 void SimState::kill_unit(Unit& unit, const char* damage_type) {
     if (unit.destroyed() || unit.is_dying()) return;
-    const u32 id = unit.entity_id();
     if (L_ && unit.lua_table_ref() >= 0) {
         const int top = lua_gettop(L_);
         lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
@@ -3213,8 +3430,8 @@ void SimState::kill_unit(Unit& unit, const char* damage_type) {
         }
         lua_settop(L_, top);
     }
-    unit.mark_destroyed();
-    entity_registry_.unregister_entity(id);
+    unit.begin_dying();
+    entity_registry_.destroy(unit);
 }
 
 bool SimState::give_unit(Unit& unit, i32 army) {

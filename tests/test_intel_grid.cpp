@@ -273,7 +273,9 @@ TEST_CASE("A moving source repaints as Moho's handles do", "[intel]") {
     radar->enable_intel("Radar");
     w.sim.tick();
     CHECK(g.visible(45, 64));
-    radar->mark_destroyed();
+    w.sim.entity_registry().destroy(*radar);
+    w.sim.tick();
+    CHECK(g.visible(45, 64));
     w.sim.tick();
     CHECK_FALSE(g.visible(45, 64));
 }

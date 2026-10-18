@@ -38,6 +38,10 @@ std::optional<Vector3> pose(EntityRegistry& registry, Entity& beam) {
     Entity* e = registry.find(beam.beam_launcher_id());
     if (!e || e->destroyed() || !e->is_unit()) return std::nullopt;
     const auto& launcher = static_cast<const Unit&>(*e);
+    if (const i32 weapon = beam.beam_setup().weapon;
+        weapon >= 0 && static_cast<size_t>(weapon) >= launcher.weapons().size()) {
+        return std::nullopt;
+    }
     const i32 bone = beam.beam_setup().muzzle_bone;
     Vector3 dir = launcher.bone_world_forward(bone);
     const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);

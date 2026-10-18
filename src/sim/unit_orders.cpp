@@ -937,12 +937,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             command_queue_.front().command_id != order_id)
             return OrderStep::Next;
         if (Entity* wreck = wreck_id != 0 ? registry.find(wreck_id) : nullptr;
-            wreck && !wreck->destroyed() && ctx.sim) {
-            ctx.sim->notify_script_destroy(*wreck);
-            if (!wreck->destroyed()) {
-                wreck->mark_destroyed();
-                registry.unregister_entity(wreck_id);
-            }
+            wreck && !wreck->destroyed()) {
+            registry.destroy(*wreck);
         }
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
@@ -2879,8 +2875,7 @@ void Unit::destroy_through_script(EntityRegistry& registry, lua_State* L) {
     call_lua_method(L, "Destroy");
     Entity* self = registry.find(id);
     if (self && !self->destroyed()) {
-        mark_destroyed();
-        registry.unregister_entity(id);
+        registry.destroy(*this);
     }
 }
 

@@ -31,7 +31,7 @@ TEST_CASE("Unit: a dead unit stays dead until destroyed", "[death]") {
     CHECK_FALSE(u.is_wreckage());
 }
 
-TEST_CASE("Unit: dying clears orders and the economy", "[death]") {
+TEST_CASE("Unit: dying clears the economy, and its kill cleanup the orders", "[death]") {
     Unit u;
     UnitCommand cmd;
     cmd.type = CommandType::Move;
@@ -42,7 +42,10 @@ TEST_CASE("Unit: dying clears orders and the economy", "[death]") {
 
     u.begin_dying();
 
-    CHECK(u.command_queue().empty());
     CHECK(u.economy().production_energy == 0);
     CHECK_FALSE(u.economy().production_active);
+    CHECK(u.needs_kill_cleanup());
+    u.kill_cleanup(nullptr);
+    CHECK(u.command_queue().empty());
+    CHECK_FALSE(u.needs_kill_cleanup());
 }

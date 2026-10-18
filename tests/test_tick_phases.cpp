@@ -80,6 +80,9 @@ struct Phases {
                  " ProductionPerSecondEnergy = 5}, Defense = {MaxHealth = 10}}",
                  "{BlueprintId = 'healer', Categories = {'LAND', 'MOBILE'},"
                  " Defense = {MaxHealth = 100, RegenRate = 10}}",
+                 "{BlueprintId = 'block', CategoriesHash = {STRUCTURE = true},"
+                 " Footprint = {SizeX = 2, SizeZ = 2}, Physics = {MotionType = 'RULEUMT_None'},"
+                 " Defense = {MaxHealth = 100}}",
              }) {
             REQUIRE(state.do_string(std::string("return ") + bp).ok());
             store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
@@ -92,7 +95,7 @@ struct Phases {
                     " EM = moho.entity_methods PM = moho.projectile_methods"));
         lua_pushstring(L, "__osc_unit_script_classes");
         lua_newtable(L);
-        for (const char* id : {"tank", "fac", "t1", "ship", "gen", "healer"}) {
+        for (const char* id : {"tank", "fac", "t1", "ship", "gen", "healer", "block"}) {
             lua_pushstring(L, id);
             lua_getglobal(L, "Plain");
             lua_rawset(L, -3);
@@ -1091,4 +1094,168 @@ TEST_CASE("A unit's velocity is its move between the last two commits, or its ow
     CHECK(w.number("moved2") == Catch::Approx(0.0f));
     CHECK(rider.position().x == Catch::Approx(101.0f));
     CHECK(rider.velocity().x == 0.0f);
+}
+
+namespace {
+
+int fits_tank(lua_State* L) {
+    const auto* sim =
+        static_cast<const osc::sim::SimState*>(lua_touserdata(L, lua_upvalueindex(1)));
+    const auto* fp =
+        static_cast<const osc::blueprints::Footprint*>(lua_touserdata(L, lua_upvalueindex(2)));
+    const auto x = static_cast<f32>(lua_tonumber(L, 1));
+    const auto z = static_cast<f32>(lua_tonumber(L, 2));
+    lua_pushboolean(L, sim->footprint_fits_at(*fp, x, z) != 0 ? 1 : 0);
+    return 1;
+}
+
+} // namespace
+
+TEST_CASE("A unit a thread destroys is found and takes its step, then hears OnDestroy as the tick "
+          "ends",
+          "[tick-phases][death]") {
+    Phases w;
+    Unit& victim = w.make("victim", "tank", 1, 100.0f, 100.0f);
+    Unit& later = w.make("later", "tank", 1, 100.0f, 120.0f);
+    Phases::drive_east(victim);
+    Phases::drive_east(later);
+    const osc::u32 victim_id = victim.entity_id();
+    REQUIRE(w.run("log = {} victim.tag = 'victim' later.tag = 'later'"
+                  " Plain.OnMotionHorzEventChange = function(self)"
+                  "   if GetEntityById(" +
+                  std::to_string(victim_id) +
+                  ") == victim then"
+                  "     table.insert(log, self.tag)"
+                  "   end"
+                  " end"
+                  " Plain.OnDestroy = function(self)"
+                  "   table.insert(log, 'OnDestroy ' .. self.tag)"
+                  " end"
+                  " ForkThread(function()"
+                  "   EM.Destroy(victim)"
+                  "   been = EM.BeenDestroyed(victim) gone = IsDestroyed(victim)"
+                  "   table.insert(log, 'Destroy')"
+                  " end)"));
+    w.sim.tick();
+    CHECK(w.run("assert(been and not gone)"));
+    CHECK(w.run("assert(table.concat(log, ', ') == 'Destroy, victim, later, OnDestroy victim',"
+                " table.concat(log, ', '))"));
+    CHECK(w.sim.entity_registry().find(victim_id) == nullptr);
+}
+
+TEST_CASE("A salvo with a muzzle delay stops at the end of its unit's death tick",
+          "[tick-phases][death]") {
+    const bool on_a_shot = GENERATE(false, true);
+    CAPTURE(on_a_shot);
+    Phases w;
+    Unit& shooter = w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    w.make("rival", "tank", 2, 115.0f, 100.0f);
+    REQUIRE(w.run("shots = {} killed = 0"
+                  " Plain.OnKilled = function(self) killed = GetGameTick() end"
+                  " gun = {OnFire = function(self)"
+                  "   if self.salvo then return end"
+                  "   self.salvo = ForkThread(function()"
+                  "     for i = 1, 10 do table.insert(shots, GetGameTick()) WaitTicks(3) end"
+                  "   end)"
+                  " end,"
+                  " OnDestroy = function(self) KillThread(self.salvo) end}"));
+    w.arm(shooter, "gun");
+    REQUIRE(w.run(std::string("ForkThread(function()"
+                              "   while table.getn(shots) < 2 do WaitTicks(1) end") +
+                  (on_a_shot ? "   WaitTicks(1)" : "") +
+                  "   shooter:Kill()"
+                  " end)"));
+    for (int t = 0; t < 60; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("killed") > 0);
+    REQUIRE(w.run("after = 0 for _, t in shots do if t >= killed then after = after + 1 end end"
+                  " fired = table.concat(shots, ' ')"));
+    CAPTURE(w.number("killed"), w.text("fired"));
+    CHECK(w.number("after") == (on_a_shot ? 1.0f : 0.0f));
+}
+
+TEST_CASE("Ground a destroyed structure stood on is free from the next tick",
+          "[tick-phases][death]") {
+    Phases w;
+    const Unit& tank = w.make("tank", "tank", 1, 60.0f, 60.0f);
+    const osc::blueprints::Footprint footprint = tank.footprint();
+    w.make("block", "block", 1, 101.0f, 101.0f);
+    lua_State* L = w.state.raw();
+    lua_pushlightuserdata(L, &w.sim);
+    lua_pushlightuserdata(L, const_cast<osc::blueprints::Footprint*>(&footprint));
+    lua_pushcclosure(L, fits_tank, 2);
+    lua_setglobal(L, "fits");
+    w.sim.tick();
+    REQUIRE_FALSE(w.run("assert(fits(101, 101))"));
+    REQUIRE(w.run("same = 0 next = 0"
+                  " ForkThread(function() EM.Destroy(block) end)"
+                  " ForkThread(function()"
+                  "   same = fits(101, 101) and 1 or 0"
+                  "   WaitTicks(1)"
+                  "   next = fits(101, 101) and 1 or 0"
+                  " end)"));
+    w.sim.tick();
+    w.sim.tick();
+    CHECK(w.number("same") == 0.0f);
+    CHECK(w.number("next") == 1.0f);
+}
+
+TEST_CASE("Kill takes a unit's adjacency and cargo away before its OnKilled, and counts it after",
+          "[tick-phases][death]") {
+    Phases w;
+    w.brain("brain", 0);
+    Unit& a = w.make("a", "block", 1, 101.0f, 101.0f);
+    Unit& b = w.make("b", "block", 1, 103.0f, 101.0f);
+    a.add_adjacent(b.entity_id());
+    b.add_adjacent(a.entity_id());
+    Unit& carrier = w.make("t", "tank", 1, 120.0f, 100.0f);
+    Unit& cargo = w.make("c", "tank", 1, 120.0f, 100.0f);
+    carrier.add_cargo(cargo.entity_id());
+    cargo.set_transport_id(carrier.entity_id());
+    cargo.set_unit_state("Attached", true);
+    REQUIRE(w.run("log = {} a.tag = 'a' b.tag = 'b' t.tag = 't' c.tag = 'c'"
+                  " Plain.CheckCanBeKilled = function(self) return true end"
+                  " Plain.OnNotAdjacentTo = function(self, other)"
+                  "   table.insert(log, self.tag .. ' not ' .. other.tag)"
+                  " end"
+                  " Plain.OnKilled = function(self)"
+                  "   table.insert(log, 'killed ' .. self.tag .. ' '"
+                  "     .. brain:GetArmyStat('Units_Killed', 0).Value)"
+                  " end"
+                  " ForkThread(function() a:Kill() t:Kill() end)"));
+    w.sim.tick();
+    CHECK(w.run("assert(table.concat(log, ', ') =="
+                " 'a not b, b not a, killed a 0, killed c 1, killed t 2',"
+                " table.concat(log, ', '))"));
+}
+
+TEST_CASE("A killed unit's weapons hear OnDestroy at the end of its death tick and are gone from "
+          "the next",
+          "[tick-phases][death]") {
+    Phases w;
+    Unit& shooter = w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    REQUIRE(w.run("log = {} counts = {}"
+                  " Plain.OnKilled = function(self)"
+                  "   ForkThread(function() table.insert(log, 'DeathThread ' .. GetGameTick()) end)"
+                  " end"
+                  " gun = {OnDestroy = function(self)"
+                  "   table.insert(log, 'weapon OnDestroy ' .. GetGameTick())"
+                  " end}"));
+    w.arm(shooter, "gun");
+    REQUIRE(w.run("killed = 0 ForkThread(function()"
+                  "   WaitTicks(2)"
+                  "   shooter:Kill()"
+                  "   killed = GetGameTick()"
+                  "   table.insert(counts, moho.unit_methods.GetWeaponCount(shooter))"
+                  "   WaitTicks(1)"
+                  "   table.insert(counts, moho.unit_methods.GetWeaponCount(shooter))"
+                  " end)"));
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("killed") > 0);
+    CHECK(w.run("local k = killed assert(table.concat(log, ', ') =="
+                " 'DeathThread ' .. k .. ', weapon OnDestroy ' .. k, table.concat(log, ', '))"));
+    CHECK(w.run("assert(table.concat(counts, ', ') == '1, 0', table.concat(counts, ', '))"));
 }

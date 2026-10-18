@@ -1114,6 +1114,9 @@ public:
     bool is_dying() const { return dying_; }
     void begin_dying();
     void tick_dying(f32 dt, const map::Terrain* terrain);
+    bool needs_kill_cleanup() const { return needs_kill_cleanup_; }
+    /// Moho's Unit::KillCleanup (faf-re unit/core/Unit.cpp:16252), at the end of the death tick.
+    void kill_cleanup(lua_State* L);
 
     // Damage/kill flags
     bool can_take_damage() const { return can_take_damage_; }
@@ -2094,6 +2097,7 @@ private:
     f32 blueprint_elevation_ = 0;
     f32 blueprint_elevation_target_ = 18.0f;
     bool dying_ = false;             ///< killed; see begin_dying
+    bool needs_kill_cleanup_ = false;
     bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)
     std::vector<UnitBuiltCallback> on_unit_built_callbacks_;

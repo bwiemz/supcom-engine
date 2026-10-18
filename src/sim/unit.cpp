@@ -323,8 +323,7 @@ void destroy_unfinished(EntityRegistry& registry, lua_State* L, u32 target_id) {
     if (target->is_unit()) static_cast<Unit*>(target)->call_lua_method(L, "Destroy");
     target = registry.find(target_id);
     if (target && !target->destroyed()) { // no script object (or no Destroy)
-        target->mark_destroyed();
-        registry.unregister_entity(target_id);
+        registry.destroy(*target);
     }
 }
 
@@ -384,7 +383,7 @@ void tell_build_failed(const Unit& builder, lua_State* L, int frame_ref, const c
 
 int lua_ref_of(const EntityRegistry& registry, u32 id) {
     const Entity* e = registry.find(id);
-    return e ? e->lua_table_ref() : -1;
+    return e && !e->destroyed() ? e->lua_table_ref() : -1;
 }
 
 } // namespace
@@ -524,7 +523,7 @@ void Unit::fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L) {
 void Unit::begin_dying() {
     if (dying_) return;
     dying_ = true;
-    clear_commands();
+    needs_kill_cleanup_ = true;
     set_do_not_target(true);
     economy_.consumption_mass = 0;
     economy_.consumption_energy = 0;
@@ -547,6 +546,15 @@ void Unit::begin_dying() {
         crash_velocity_y_ = 0;
         crash_spin_rate_ = (static_cast<f32>(entity_id() % 100) / 100.0f - 0.5f) * 4.0f;
     }
+}
+
+void Unit::kill_cleanup(lua_State* L) {
+    needs_kill_cleanup_ = false;
+    release_weapon_scripts(L);
+    weapons_.clear();
+    auto_attack_target_ = 0;
+    clear_commands();
+    navigator_.abort_move();
 }
 
 bool Unit::take_crash_impact() {
@@ -955,11 +963,8 @@ void Unit::advance_coords() {
 }
 
 void Unit::update(f64 dt, SimContext& ctx) {
-    if (destroyed()) {
-        return;
-    }
     take_step(dt, ctx);
-    if (!destroyed() && in_registry()) {
+    if (in_registry()) {
         manage_resources(ctx.sim ? ctx.sim->get_army(army()) : nullptr);
     }
 }
@@ -985,25 +990,25 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         if (ctx.sim) {
             ctx.sim->step_economy_events(*this);
         }
-        if (!destroyed() && in_registry()) {
+        if (in_registry()) {
             tick_manipulators(static_cast<f32>(dt), ctx.L);
         }
         return;
     }
     report_health_band(ctx.L);
-    if (destroyed() || !in_registry()) {
+    if (!in_registry()) {
         return;
     }
     if (transport_id_ != 0) {
         follow_transport(dt, ctx);
-        if (ctx.sim && !destroyed() && in_registry()) {
+        if (ctx.sim && in_registry()) {
             ctx.sim->step_economy_events(*this);
         }
         return;
     }
     // Moho's Unit::MotionTick: SiloTick, the stun countdown, then CUnitMotion::MotionTick.
     tick_silo(dt, ctx);
-    if (destroyed() || !in_registry() || dying_) {
+    if (!in_registry() || dying_) {
         return;
     }
     if (stun_ticks_ > 0) {
@@ -1013,7 +1018,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     const Vector3 from = pending_position();
     const u32 snaps = snap_serial();
     const bool goes_on = motion_tick(dt, ctx);
-    if (destroyed() || !in_registry()) {
+    if (!in_registry()) {
         return;
     }
     if (goes_on && ctx.sim) {
@@ -1027,19 +1032,19 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     if (goes_on && !is_being_built()) {
         update_motion_horz(ctx.L);
         update_motion_turn(ctx.L);
-        if (destroyed() || !in_registry()) {
+        if (!in_registry()) {
             return;
         }
     }
     if (ctx.sim) {
         ctx.sim->step_economy_events(*this);
-        if (destroyed() || !in_registry()) {
+        if (!in_registry()) {
             return;
         }
     }
     // Moho's Unit::MotionTick builds the pose on the transform its motion wrote.
     tick_manipulators(static_cast<f32>(dt), ctx.L);
-    if (goes_on && !destroyed() && in_registry()) {
+    if (goes_on && in_registry()) {
         tick_upkeep(dt, ctx);
     }
 }
@@ -1056,7 +1061,7 @@ void Unit::follow_transport(f64 dt, SimContext& ctx) {
             } else {
                 tick_fuel(dt, ctx, &transport);
             }
-            if (destroyed() || !in_registry()) {
+            if (!in_registry()) {
                 return;
             }
         }
@@ -1102,7 +1107,9 @@ void Unit::decay(lua_State* L) {
 }
 
 bool Unit::motion_tick(f64 dt, SimContext& ctx) {
-    if (destroyed() || !in_registry()) return false;
+    if (!in_registry()) {
+        return false;
+    }
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
@@ -1112,7 +1119,7 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
         return false;
     }
     update_current_layer(ctx.terrain, L);
-    if (destroyed() || !in_registry()) {
+    if (!in_registry()) {
         return false;
     }
     // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
@@ -1126,7 +1133,7 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
         }
     }
     bool flown = step_course(dt, ctx);
-    if (destroyed() || !in_registry()) {
+    if (!in_registry()) {
         return false;
     }
 
@@ -1154,14 +1161,18 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
 
     // A sub dives or surfaces, moving or not (M206o).
     tick_dive(ctx.terrain, L);
-    if (destroyed() || !in_registry()) return false;
+    if (!in_registry()) {
+        return false;
+    }
 
     // A hovering aircraft circles its work (item 6).
     flown = tick_work_circling(dt, ctx, flown) || flown;
 
     // An idle aircraft comes down (item 6).
     flown = tick_idle_landing(dt, ctx, flown) || flown;
-    if (destroyed() || !in_registry()) return false;
+    if (!in_registry()) {
+        return false;
+    }
     if (!flown) {
         fly_unflown_tick(dt, ctx);
     }
@@ -1169,7 +1180,9 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (is_air_unit() && vert_event_ == "Hover" && current_altitude_ > transport_hover_height_) {
         set_unit_state("MovingUp", true);
         set_vert_event("Up", L);
-        if (destroyed() || !in_registry()) return false;
+        if (!in_registry()) {
+            return false;
+        }
     }
 
     // Carried units hang where the transport now is (M206l), however their
@@ -1700,8 +1713,7 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
     // Re-validate after pcall (Lua callback may have destroyed the entity)
     target = registry.find(target_id);
     if (target && !target->destroyed()) {
-        target->mark_destroyed();
-        registry.unregister_entity(target_id);
+        registry.destroy(*target);
     }
 }
 
@@ -1806,8 +1818,7 @@ u32 Unit::reclaim_into_wreck(u32 target_id, EntityRegistry& registry, lua_State*
 
     target = registry.find(target_id);
     if (target && !target->destroyed()) {
-        target->mark_destroyed();
-        registry.unregister_entity(target_id);
+        registry.destroy(*target);
     }
     return wreck_id;
 }
@@ -3594,7 +3605,7 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
         current_altitude_ >= elevation_target_ - 0.1f) {
         set_unit_state("MovingUp", false);
         set_vert_event("Top", L);
-        if (destroyed() || !in_registry()) {
+        if (!in_registry()) {
             return false;
         }
     }
@@ -3673,7 +3684,7 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
     if (dx * dx + dz * dz > start_turn_distance_ * start_turn_distance_) {
         set_unit_state("MovingDown", false);
         set_vert_event("Top", L);
-        if (destroyed() || !in_registry()) {
+        if (!in_registry()) {
             return false;
         }
         AirMove move;
@@ -3684,7 +3695,7 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
     }
     set_unit_state("MovingDown", true);
     set_vert_event("Down", L);
-    if (destroyed() || !in_registry()) {
+    if (!in_registry()) {
         return false;
     }
     const bool over = dx * dx + dz * dz < 0.25f;
@@ -3696,7 +3707,7 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
         rest_air_body();
         set_unit_state("MovingDown", false);
         set_layer_with_callback(land.layer, L);
-        if (destroyed() || !in_registry()) {
+        if (!in_registry()) {
             return true;
         }
         set_vert_event("Bottom", L);
@@ -3801,9 +3812,13 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
                     vert_motion_ = VertMotion::None;
                     set_unit_state("MovingUp", false);
                     set_layer_with_callback("Water", L);
-                    if (destroyed() || !in_registry()) return;
+                    if (!in_registry()) {
+                        return;
+                    }
                     set_vert_event("Top", L);
-                    if (destroyed() || !in_registry()) return;
+                    if (!in_registry()) {
+                        return;
+                    }
                 }
             } else if (sub_elevation_ - speed > limit) {
                 sub_elevation_ -= speed;
@@ -3812,9 +3827,13 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
                 vert_motion_ = VertMotion::None;
                 set_unit_state("MovingDown", false);
                 set_layer_with_callback("Sub", L);
-                if (destroyed() || !in_registry()) return;
+                if (!in_registry()) {
+                    return;
+                }
                 set_vert_event("Bottom", L);
-                if (destroyed() || !in_registry()) return;
+                if (!in_registry()) {
+                    return;
+                }
             }
         }
     }
@@ -4561,7 +4580,9 @@ void Unit::update_silo(f64 dt, f32 efficiency, lua_State* L) {
         silo_build_.progress = silo_blocks_progress(std::exchange(silo_blocks_, 0));
         set_unit_state("SiloBuildingAmmo", true);
         call_with_weapon(L, *this, "OnSiloBuildStart", *weapon);
-        if (destroyed() || !silo_building()) return;
+        if (!silo_building()) {
+            return;
+        }
         // Its first block goes down next tick, once the economy has its
         // request.
     } else {

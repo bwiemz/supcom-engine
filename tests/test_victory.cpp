@@ -557,7 +557,9 @@ TEST_CASE("A peer dropping mid-match is defeated", "[victory][drop]") {
     sim.defeat_army(1);
 
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
-    // Its units are killed (with no script, they go at once).
+    const osc::sim::Entity* acu = sim.entity_registry().find(dropped_acu);
+    CHECK((acu && acu->destroyed()));
+    sim.tick();
     CHECK(sim.entity_registry().find(dropped_acu) == nullptr);
 }
 

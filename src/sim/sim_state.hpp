@@ -228,6 +228,14 @@ public:
     /// Entity::script_destroy_notified). Both removal paths call it before
     /// the Lua table is detached, so the script still sees a live object.
     void notify_script_destroy(Entity& entity);
+    /// Moho's Unit::OnDestroy and Entity::OnDestroy, as the deletion queue reaches the entity.
+    void on_destroy(Entity& entity);
+    /// OnNotAdjacentTo both ways with each neighbour, which forgets the unit.
+    void drop_adjacency(Unit& unit);
+    /// Moho's CAiTransportImpl::TransportDetachAllUnits (ai/CAiTransportImpl.cpp:1533).
+    void detach_all_units(Unit& transport, bool destroy_some);
+    /// A unit's loss for its army and the kill for the army that did the most damage to it.
+    void record_unit_death(Unit& unit);
 
     /// Whether this entity currently blocks the grid (tests / diagnostics).
     bool occupies_footprint(u32 entity_id) const {
@@ -774,6 +782,10 @@ public:
     void follow_attachments();
     /// Destroy the stored units of carriers that went this tick (M206q).
     void destroy_orphaned_stored_units();
+    /// Moho's KillCleanup for the units killed this tick, army by army.
+    void kill_cleanup();
+    /// Moho's deletion queue at the end of the beat, then its EntityDB::Purge.
+    void run_deletion_queue();
 
     static u32 sim_generation() { return s_sim_generation_; }
     static void increment_sim_generation() { ++s_sim_generation_; }

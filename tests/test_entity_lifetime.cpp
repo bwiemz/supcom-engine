@@ -224,9 +224,10 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
 
     raw->update(0.1, sim.entity_registry(), L, nullptr); // lifetime runs out
     raw->update(0.1, sim.entity_registry(), L, nullptr);
-    REQUIRE(sim.entity_registry().find(id) == nullptr);
+    REQUIRE(raw->destroyed());
 
     sim.tick(); // freed at the tick's end, its handle cut first
+    CHECK(sim.entity_registry().find(id) == nullptr);
     CHECK(table_object(L, "proj_table") == nullptr);
 }
 
