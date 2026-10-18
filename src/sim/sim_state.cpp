@@ -624,7 +624,7 @@ Entity::Walk SimState::step_entity(Entity& e, bool attached, SimContext& ctx) {
     if (attached) {
         return Entity::Walk::Stepping;
     }
-    if (!e.is_prop()) {
+    if (!e.is_prop() || !static_cast<const Prop&>(e).has_motor()) {
         return Entity::Walk::Parked;
     }
     auto& prop = static_cast<Prop&>(e);

@@ -1185,9 +1185,7 @@ static int prop_CreatePropAtBone(lua_State* L) {
 static int prop_SinkAway(lua_State* L) {
     auto* e = check_entity(L);
     if (e && e->is_prop()) {
-        auto* prop = static_cast<sim::Prop*>(e);
-        prop->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
-        prop->fall_motor = false;
+        static_cast<sim::Prop*>(e)->sink_away(static_cast<f32>(lua_tonumber(L, 2)));
     }
     return 0;
 }

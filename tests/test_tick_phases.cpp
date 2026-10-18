@@ -14,6 +14,7 @@
 #include "map/terrain.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/sca_parser.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -27,6 +28,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <string>
 #include <utility>
@@ -1272,6 +1274,17 @@ f32 lua_x(Phases& w, const char* global) {
     return w.number("at_x");
 }
 
+void lua_handle(Phases& w, const char* global, osc::sim::Entity& e) {
+    lua_State* L = w.state.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &e);
+    lua_rawset(L, -3);
+    lua_pushvalue(L, -1);
+    e.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    lua_setglobal(L, global);
+}
+
 } // namespace
 
 TEST_CASE("A chain of attached entities follows its root the tick the root moves, whichever was "
@@ -1344,6 +1357,38 @@ TEST_CASE("Cargo and a carrier's stored unit take their own step as they ride: t
     CHECK(rider.position().x == Catch::Approx(104.0f));
     CHECK(rider.health() == Catch::Approx(51.0f));
     CHECK(rider.stun_ticks() == 4);
+}
+
+TEST_CASE("A tree a projectile hits leans in the tick of the hit", "[tick-phases][walk]") {
+    Phases w;
+    auto owned = std::make_unique<osc::sim::Prop>();
+    osc::sim::Prop& tree = *owned;
+    tree.set_position({110.0f, 10.0f, 100.0f});
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.cy = 1.0f;
+    box.sx = 1.0f;
+    box.sy = 1.0f;
+    box.sz = 1.0f;
+    tree.set_collision_shape(box);
+    w.sim.entity_registry().register_entity(std::move(owned));
+    lua_handle(w, "tree", tree);
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
+                                 "   hit = GetGameTick() hit_kind = kind"
+                                 "   moho.prop_methods.FallDown(other):Whack(1, 0, 0, 0.25, true)"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    REQUIRE(w.run("hit = 0 hit_kind = ''"
+                  " shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
+                  " PM.SetBallisticAcceleration(shot, 0) PM.SetVelocity(shot, 35, 0, 0)"));
+    for (int t = 0; t < 20 && w.number("hit") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("hit") > 0);
+    REQUIRE(w.text("hit_kind") == "Prop");
+    const osc::sim::Vector3 up = osc::sim::quat_rotate(tree.orientation(), {0.0f, 1.0f, 0.0f});
+    CHECK(up.x == Catch::Approx(std::sin(0.25f)));
 }
 
 TEST_CASE("A beam deals its damage at its place in the entity walk, after its unit's step",
