@@ -1122,11 +1122,12 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
     // leaves depth unwritten (M211g). The layouts match.
     // The order marks (CommandFeedback) blend colour with no depth test;
-    // the map border's second pass writes its glow alone.
-    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback, GlowOnly };
+    // the map border's second pass writes its glow alone. OuterCloud is the
+    // cube's state but tests strictly less (Depth_Enable_Less_Write_None).
+    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback, GlowOnly, OuterCloud };
     const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
-        const bool colour_only =
-            blend == Blend::Fade || blend == Blend::FadeNoDepthWrite || blend == Blend::Feedback;
+        const bool no_depth_write = blend == Blend::FadeNoDepthWrite || blend == Blend::OuterCloud;
+        const bool colour_only = blend == Blend::Fade || no_depth_write || blend == Blend::Feedback;
         constexpr VkColorComponentFlags kGlowOnly = VK_COLOR_COMPONENT_A_BIT;
         const VkColorComponentFlags written = blend == Blend::GlowOnly ? kGlowOnly
                                               : colour_only            ? kColorOnly
@@ -1135,8 +1136,9 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
             .set_shaders(mv, mf)
             .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                               static_cast<u32>(attrs.size()))
-            .set_depth_test(blend != Blend::Feedback,
-                            blend != Blend::FadeNoDepthWrite && blend != Blend::Feedback)
+            .set_depth_test(blend != Blend::Feedback, !no_depth_write && blend != Blend::Feedback)
+            .set_depth_compare(blend == Blend::OuterCloud ? VK_COMPARE_OP_LESS
+                                                          : VK_COMPARE_OP_LESS_OR_EQUAL)
             .set_blend(blend != Blend::Opaque && blend != Blend::GlowOnly)
             .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
             .set_color_write_mask(written)
@@ -1160,6 +1162,7 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
     mesh_glow_pipeline_ = build_mesh(Blend::GlowOnly, &mesh_glow_layout_);
+    mesh_outer_cloud_pipeline_ = build_mesh(Blend::OuterCloud, &mesh_outer_cloud_layout_);
 
     // The shields' (M211k): their own shaders, the mesh's input, push
     // block and sets, and mesh.fx's states. Each depth-tests; only the
@@ -2575,9 +2578,10 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         else if (technique == MeshTechnique::AeonBuild && fidelity() > 0)
             passes[1] = mesh_fade_pipeline_;
         // The build effects' (M211g): AlphaFade blends colour and alpha,
-        // UEF's cube colour only and writes no depth.
+        // UEF's cube colour only and writes no depth, as OuterCloud does.
         else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
         else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
+        else if (technique == MeshTechnique::OuterCloud) passes[0] = mesh_outer_cloud_pipeline_;
         else if (is_feedback_technique(technique)) passes[0] = mesh_feedback_pipeline_;
         // The shields' (M211k), by mesh.fx's states; Cybran's draws twice,
         // the second time pushed out along its normal.
@@ -4688,6 +4692,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_feedback_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_glow_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_glow_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_outer_cloud_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_outer_cloud_layout_, nullptr);
     for (u32 i = 0; i < kShieldStates; ++i) {
         vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
         vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);

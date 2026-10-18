@@ -855,6 +855,9 @@ private:
     /// alpha alone, unblended, depth tested and written.
     VkPipeline mesh_glow_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_glow_layout_ = VK_NULL_HANDLE;
+    /// OuterCloud: the cube's state, but depth tested strictly less.
+    VkPipeline mesh_outer_cloud_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_outer_cloud_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -867,7 +870,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, 32> mesh_draws_{};
+    std::array<u32, 36> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and

@@ -196,6 +196,9 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
              : fmt::format("CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)", bp, x, z);
     // A naval factory slides its build point (BuildAttachBone) aside; the
     // plate's mesh has no such bone, so the slide would take the whole plate.
+    // FAF's StructureUnit.OnCreate tilts a structure to the sim's terrain
+    // under its footprint (and turns a weapon toward the enemy); the plates
+    // stand level on the test's flat ground, as retail's scripts leave them.
     // A mesh blueprint as retail's are, with IconFadeInZoom (130, as most of
     // retail's): without one, Moho shows its unit's strategic icon at any
     // zoom (M215c), over what the test measures.
@@ -217,6 +220,7 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
         "if __osc_last_plate.BuildPointSlider then\n"
         "  __osc_last_plate.BuildPointSlider:Destroy()\n"
         "end\n"
+        "__osc_last_plate:SetOrientation({{0, 0, 0, 1}}, true)\n"
         "__osc_last_plate:SetPosition(Vector({7}, {8}, {9}), true)\n",
         key, plate.shader, plate.albedo, plate.normals, file(plate.lookup), bp, create, x,
         ground_y + 0.5f + lift, z, plate.specteam, plate.mesh, root, file(plate.secondary));

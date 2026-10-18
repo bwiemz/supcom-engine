@@ -244,6 +244,10 @@ MeshTechnique mesh_technique(const std::string& shader) {
         return MeshTechnique::RallyPoint;
     }
     if (shader_name == "MapImager") return MeshTechnique::MapImager;
+    if (shader_name == "Effect") return MeshTechnique::Effect;
+    if (shader_name == "Cloud") return MeshTechnique::Cloud;
+    if (shader_name == "OuterCloud") return MeshTechnique::OuterCloud;
+    if (shader_name == "NukeUEF") return MeshTechnique::NukeUEF;
     return MeshTechnique::Unit;
 }
 

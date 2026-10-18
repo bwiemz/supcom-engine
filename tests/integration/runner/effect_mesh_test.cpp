@@ -1,8 +1,10 @@
 // --effect-mesh-test (M211g): the build effects' meshes, Moho's shader
-// names, and burnt trees.
+// names, burnt trees, and the explosions' effect techniques.
 //
 // Retail's build effects are projectiles with meshes of their own: UEF's
 // cube (UEFBuildCube) and slices (AlphaFade), Aeon's pool (AeonBuildPuddle).
+// So are the UEF nuke's dome (NukeUEF), the EMP warhead's cloud
+// (OuterCloud), the teleport's shockwave (Effect) and a plume (Cloud).
 // Moho resolves legacy ShaderNames (TMeshGlow is NormalMappedGlow) and gives
 // every mesh but a unit's a white instance colour. Test 1 builds real units;
 // the rest stand plates of the test's own off its ground, over the sky's
@@ -33,6 +35,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <sstream>
@@ -101,6 +104,9 @@ void test_effect_meshes(TestContext& ctx) {
     write_dds(dir / "albedo_white.dds", 1, flat(255, 255, 255, 255));
     write_dds(dir / "albedo_cube.dds", 1, flat(100, 150, 200, 128));
     write_dds(dir / "albedo_slice.dds", 1, flat(200, 100, 50, 255));
+    write_dds(dir / "albedo_faint.dds", 1, flat(200, 100, 50, 64));
+    write_dds(dir / "albedo_green.dds", 1, flat(40, 200, 60, 255));
+    write_dds(dir / "nuke_noise.dds", 1, flat(51, 204, 102, 255));
     // White on the texture's left half, black on its right.
     write_dds(
         dir / "albedo_stripes.dds", 1,
@@ -130,9 +136,11 @@ void test_effect_meshes(TestContext& ctx) {
         const char* shader = "Unit";
         const char* albedo = "albedo_white.dds";
         const char* secondary = "sec_black.dds";
+        const char* normals = "plate_normals.dds";
     };
-    // A plate at (x, z), `f` built: a unit's, or a prop's.
-    const auto stand = [&](const Look& look, f32 f, f32 x, f32 z, bool prop = false) {
+    // A plate at (x, z), `f` built, `lift` higher: a unit's, or a prop's.
+    const auto stand = [&](const Look& look, f32 f, f32 x, f32 z, bool prop = false,
+                           f32 lift = 0.0f) {
         if (next_bp >= kPlateBlueprints.size()) {
             spdlog::warn("out of plate blueprints");
             return;
@@ -142,6 +150,7 @@ void test_effect_meshes(TestContext& ctx) {
         p.albedo = look.albedo;
         p.specteam = "spec_none.dds";
         p.secondary = look.secondary;
+        p.normals = look.normals;
         if (prop) {
             if (next_prop >= prop_bps.size()) {
                 spdlog::warn("out of prop blueprints");
@@ -149,7 +158,7 @@ void test_effect_meshes(TestContext& ctx) {
             }
             stand_plate(ctx, kRoot, prop_bps[next_prop++], p, x, z, ground_y, true);
         } else {
-            stand_plate(ctx, kRoot, kPlateBlueprints[next_bp++], p, x, z, ground_y);
+            stand_plate(ctx, kRoot, kPlateBlueprints[next_bp++], p, x, z, ground_y, false, lift);
         }
         const auto set =
             ctx.lua_state.do_string(fmt::format("__osc_last_plate:SetFractionComplete({})\n", f));
@@ -158,13 +167,14 @@ void test_effect_meshes(TestContext& ctx) {
     };
 
     auto* army = ctx.sim.get_army(0);
-    const auto frame = [&](f32 x, f32 z, const map::ScmapLighting& lighting = white_fill()) {
+    const auto frame = [&](f32 x, f32 z, const map::ScmapLighting& lighting = white_fill(),
+                           f32 distance = 30.0f) {
         map::ScmapEnvironment env;
         env.terrain_shader = "TTerrain";
         env.cubemaps.emplace_back("<default>", "/textures/environment/no_such_cube.dds");
         ground.set_lighting(lighting, std::move(env));
         shots.recapture();
-        return shots.shoot_frame(ground, x, z, 30.0f);
+        return shots.shoot_frame(ground, x, z, distance);
     };
     const auto at = [&](f32 x, f32 z) { return middle(frame(x, z)); };
 
@@ -438,6 +448,197 @@ void test_effect_meshes(TestContext& ctx) {
                             "{} at 0% a pulse apart ({})",
                             show(built), show(expected_built), show(early), show(later),
                             show(expected)));
+    }
+
+    // Tests 8-11 light the plates by a sun (0.5) 37 degrees from overhead,
+    // an ambience of 0.25 and a fill of 0.2: Unit lights a plate 0.72, the
+    // ambience alone 0.4 (0.25 + 0.75 * 0.2), and the unlit show their albedo.
+    map::ScmapLighting lit = white_fill();
+    lit.multiplier = 1.0f;
+    lit.sun_direction[0] = 0.0f;
+    lit.sun_direction[1] = 0.8f;
+    lit.sun_direction[2] = 0.6f;
+    for (int i = 0; i < 3; ++i) {
+        lit.sun_color[i] = 0.5f;
+        lit.sun_ambience[i] = 0.25f;
+        lit.shadow_fill[i] = 0.2f;
+    }
+    const auto at_lit = [&](f32 x, f32 z) { return middle(frame(x, z, lit)); };
+    const Rgb sky_lit = at_lit(400.0f, 400.0f);
+    const auto rgb = [](u8 r_, u8 g_, u8 b_) { return Rgb{r_ / 255.0f, g_ / 255.0f, b_ / 255.0f}; };
+    const Rgb slice = rgb(200, 100, 50);
+    const Rgb green = rgb(40, 200, 60);
+    const Rgb cube = rgb(100, 150, 200);
+    const f32 cube_a = 128.0f / 255.0f;
+    Look effect;
+    effect.shader = "Effect";
+    effect.albedo = "albedo_green.dds";
+
+    // Test 8: NukeUEF, the UEF nuke's dome: NukeHeadPS(1, 0.018, 50, 0.015)
+    // blended (colour only), its depth written, tested over 0x0F. With flat
+    // textures its four reads are the noise (the normals) N and the albedo A:
+    // rgb ((((N.g + N.b) / 2 + N.b) / 2 + N.r / 2) lerped halfway to A, plus
+    // 0.3 N.b) * N.g + N.b; alpha A.a * N.g until 50 ticks old. From 20
+    // ticks old it's 0 where N.a * N.b * N.g (0.32) >= A.a; from 50 its
+    // alpha fades by 0.015 a tick. Each dome stands 2 over an Effect plate
+    // (opaque, drawn after it): a dome that writes depth hides it, one tested
+    // away doesn't.
+    {
+        Look dome;
+        dome.shader = "NukeUEF";
+        dome.normals = "nuke_noise.dds";
+        dome.albedo = "albedo_slice.dds";
+        stand(effect, 1.0f, 100.0f, 220.0f);
+        stand(dome, 1.0f, 100.0f, 220.0f, false, 2.0f);
+        Look faint = dome;
+        faint.albedo = "albedo_faint.dds";
+        stand(effect, 1.0f, 130.0f, 220.0f);
+        stand(faint, 1.0f, 130.0f, 220.0f, false, 2.0f);
+        const Rgb noise = rgb(51, 204, 102);
+        const f32 grey = ((noise[1] + noise[2]) * 0.5f + noise[2]) * 0.5f + noise[0] * 0.5f;
+        Rgb head{};
+        for (int c = 0; c < 3; ++c)
+            head[c] = std::clamp(((grey + slice[c]) * 0.5f + noise[2] * 0.3f) * noise[1] + noise[2],
+                                 0.0f, 1.0f);
+        const Rgb solid = over(sky_lit, head, noise[1]);
+        const Rgb thin = over(sky_lit, head, 64.0f / 255.0f * noise[1]);
+        const Rgb dome_fresh = at_lit(100.0f, 220.0f);
+        const Rgb faint_fresh = at_lit(130.0f, 220.0f);
+        for (int i = 0; i < 25; ++i) ctx.sim.tick();
+        const Rgb dome_later = at_lit(100.0f, 220.0f);
+        const Rgb faint_later = at_lit(130.0f, 220.0f);
+        for (int i = 0; i < 44; ++i) ctx.sim.tick();
+        const Rgb dome_fading = at_lit(100.0f, 220.0f); // 70 ticks old: at 0.7
+        const Rgb fading = over(sky_lit, head, 0.7f * noise[1]);
+        t.check(near(dome_fresh, solid) && near(faint_fresh, thin) && near(dome_later, solid) &&
+                    near(faint_later, green) && near(dome_fading, fading),
+                fmt::format("Test 8: NukeUEF domes show {} ({} expected) and {} faint ({}) "
+                            "just made; 25 ticks on {} ({}) and {} (dissolved: the Effect "
+                            "plate below, {}); 70 ticks old, {} ({})",
+                            show(dome_fresh), show(solid), show(faint_fresh), show(thin),
+                            show(dome_later), show(solid), show(faint_later), show(green),
+                            show(dome_fading), show(fading)));
+        // Across the clock's wrap: the times are kept mod 36000, so a dome
+        // made 50 ticks before it is 70 ticks old 20 ticks after it.
+        while (ctx.sim.tick_count() < 35949) ctx.sim.tick();
+        stand(dome, 1.0f, 340.0f, 220.0f);
+        const u32 born = ctx.sim.tick_count();
+        (void)at_lit(340.0f, 220.0f);
+        for (int i = 0; i < 69; ++i) ctx.sim.tick();
+        const Rgb wrapped = at_lit(340.0f, 220.0f);
+        t.check(near(wrapped, fading),
+                fmt::format("Test 8: a NukeUEF dome made at tick {} shows {} 70 ticks old, past "
+                            "the clock's wrap at 36000 ({})",
+                            born, show(wrapped), show(fading)));
+    }
+
+    // Test 9: OuterCloud: AlphaFadeTexShiftScalePS(1, -0.008, 180, 0.025),
+    // unlit: the albedo (scrolling up), at alpha albedo.a times the normals'
+    // green (128), fading from 180 ticks old, blended (colour only) with no
+    // depth written: an Effect plate drawn after it, below, covers it. It
+    // tests strictly less: level with a Unit plate (drawn before), it's hidden.
+    {
+        Look cloud;
+        cloud.shader = "OuterCloud";
+        cloud.albedo = "albedo_slice.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(cloud, 1.0f, 160.0f, 220.0f);
+        stand(effect, 1.0f, 190.0f, 220.0f);
+        stand(cloud, 1.0f, 190.0f, 220.0f, false, 2.0f);
+        stand(unit, 1.0f, 310.0f, 220.0f);
+        stand(cloud, 1.0f, 310.0f, 220.0f);
+        const Rgb alone = at_lit(160.0f, 220.0f);
+        const Rgb above = at_lit(190.0f, 220.0f);
+        const Rgb level = at_lit(310.0f, 220.0f);
+        const Rgb lit_unit = scaled(green, 0.72f);
+        for (int i = 0; i < 199; ++i) ctx.sim.tick();
+        const Rgb faded = at_lit(160.0f, 220.0f); // 200 ticks old: half faded
+        const f32 a = 128.0f / 255.0f;
+        const Rgb expected = over(sky_lit, slice, a);
+        t.check(near(alone, expected) && near(above, green) && near(level, lit_unit) &&
+                    near(faded, over(sky_lit, slice, 0.5f * a)),
+                fmt::format("Test 9: an OuterCloud plate shows {} ({} expected); over an Effect "
+                            "plate, {} (the Effect plate, {}); level with a Unit plate, {} (the "
+                            "Unit plate, {}); 200 ticks old, {} ({})",
+                            show(alone), show(expected), show(above), show(green), show(level),
+                            show(lit_unit), show(faded), show(over(sky_lit, slice, 0.5f * a))));
+    }
+
+    // Test 10: Cloud: EffectFadePS(180, 0.025): EffectVS leaves the normal 0,
+    // so the albedo is lit by the ambience alone (0.4), at alpha albedo.a
+    // times material.y (the fraction complete) and fading from 180 ticks
+    // old, blended (colour only).
+    {
+        Look cloud;
+        cloud.shader = "Cloud";
+        cloud.albedo = "albedo_cube.dds";
+        stand(cloud, 1.0f, 220.0f, 220.0f);
+        stand(cloud, 0.5f, 250.0f, 220.0f);
+        const Rgb ambient = scaled(cube, 0.4f);
+        const Rgb whole = at_lit(220.0f, 220.0f);
+        const Rgb half = at_lit(250.0f, 220.0f);
+        for (int i = 0; i < 200; ++i) ctx.sim.tick();
+        const Rgb faded = at_lit(250.0f, 220.0f); // 200 ticks old: half faded
+        t.check(near(whole, over(sky_lit, ambient, cube_a)) &&
+                    near(half, over(sky_lit, ambient, 0.5f * cube_a)) &&
+                    near(faded, over(sky_lit, ambient, 0.25f * cube_a)),
+                fmt::format("Test 10: Cloud plates show {} ({} expected), {} half built ({}); "
+                            "200 ticks on, {} ({})",
+                            show(whole), show(over(sky_lit, ambient, cube_a)), show(half),
+                            show(over(sky_lit, ambient, 0.5f * cube_a)), show(faded),
+                            show(over(sky_lit, ambient, 0.25f * cube_a))));
+    }
+
+    // Test 11: Effect (TMeshAdd): EffectPS sets no blend or depth state, so
+    // it's opaque: its albedo unlit, whatever its alpha (which is its glow).
+    {
+        Look shock = effect;
+        shock.albedo = "albedo_cube.dds";
+        stand(shock, 1.0f, 280.0f, 220.0f);
+        const Rgb shown = at_lit(280.0f, 220.0f);
+        t.check(near(shown, cube), fmt::format("Test 11: an Effect plate shows {} (its albedo, {})",
+                                               show(shown), show(cube)));
+    }
+
+    // Test 12: the UEF nuke in context. A UEF commander dies on the test's
+    // ground; its DeathWeapon's controller makes the dome (UEFNukeEffect01).
+    // OSC_EFFECT_MESH_TEST_PNG=<prefix>: the frames, to see.
+    {
+        const auto killed = ctx.lua_state.do_string(
+            "__osc_nuke_acu = CreateUnitHPR('uel0001', 'ARMY_1', 32, 0, 40, 0, 0, 0)\n");
+        if (!killed) spdlog::warn("the commander: {}", killed.error().message);
+        for (int i = 0; i < 10; ++i) ctx.sim.tick();
+        const auto dead =
+            ctx.lua_state.do_string("Damage(nil, __osc_nuke_acu, 99999, nil, 'Normal')\n");
+        if (!dead) spdlog::warn("its death: {}", dead.error().message);
+        const char* dump = std::getenv("OSC_EFFECT_MESH_TEST_PNG");
+        std::string dome_bp;
+        u32 dome_draws = 0;
+        f32 dome_x = 32.0f;
+        f32 dome_z = 40.0f;
+        for (int i = 1; i <= 60; ++i) {
+            ctx.sim.tick();
+            ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
+                if (e.destroyed() || !e.is_projectile() ||
+                    lower(e.blueprint_id()).find("uefnukeeffect01") == std::string::npos)
+                    return;
+                dome_bp = e.blueprint_id();
+                dome_x = e.position().x;
+                dome_z = e.position().z;
+            });
+            if (i != 15 && i != 50) continue;
+            const ImageRGBA8 image = frame(dome_x, dome_z, map::ScmapLighting{}, 160.0f);
+            dome_draws += r.mesh_draws(MeshTechnique::NukeUEF);
+            if (dump) write_png(fmt::format("{}_nuke_t{}.png", dump, i), image);
+        }
+        const MeshTechnique seen =
+            dome_bp.empty() ? MeshTechnique::Unit : r.mesh_technique(dome_bp, ctx.L);
+        t.check(seen == MeshTechnique::NukeUEF && dome_draws > 0,
+                fmt::format("Test 12: the UEF commander's death makes its nuke's dome ({}), "
+                            "drawn by technique {} ({} NukeUEF draws in the frames)",
+                            dome_bp.empty() ? "never made" : dome_bp, static_cast<u32>(seen),
+                            dome_draws));
     }
 
     spdlog::info("Effect mesh test: {}/{} passed", t.pass, t.pass + t.fail);

@@ -1431,7 +1431,8 @@ layout(push_constant) uniform PushConstants {
     // 5 UEFBuild, 6 AeonBuild, 7 CybranBuild, 8 SeraphimBuild (M211f);
     // 9 NormalMappedAlpha, 10 NormalMappedGlow, 11 AlphaFade, 12 UEFBuildCube,
     // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g); 15 VertexNormal,
-    // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i)
+    // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i); ...;
+    // 32 Effect, 33 Cloud, 34 OuterCloud, 35 NukeUEF
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -1751,10 +1752,65 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
                          specular.r * environment) +
            pow(phongAmount, 8.0) * specular.g;
 }
+
+float fadeAfter(float age, float start, float rate) {
+    return clamp(1.0 - (age - start) * rate, 0.0, 1.0);
+}
+
+// The explosions' techniques (mesh.fx, by EffectVS, which leaves the
+// normal 0), `age` ticks after the mesh instance was made. Cloud's three
+// fidelity lanes light it alike. The blended ones are clamped as FA's 8-bit
+// target clamps them.
+vec4 explosionColor() {
+    float age = pc.time - fragShaderTime;
+    if (age < 0.0) age += 36000.0; // the times wrap at 36000
+    if (pc.technique == 32u) {
+        // EffectPS: the albedo scrolled and tiled thrice down; its alpha,
+        // the glow, one less the albedo's, fading from 180 ticks old.
+        vec4 albedo = texture(texAlbedo, vec2(fragUV.x, (fragUV.y + age * 0.0008) * 3.0));
+        float glow = (1.0 - texture(texAlbedo, fragUV).a) * fadeAfter(age, 180.0, 0.025);
+        return vec4(albedo.rgb, glow);
+    }
+    if (pc.technique == 33u) {
+        // EffectFadePS(180, 0.025): with the normal 0, the ambience alone
+        // lights it; material.y (the fraction complete) scales its alpha.
+        vec4 albedo = texture(texAlbedo, fragUV);
+        vec3 lit = albedo.rgb * computeLight(0.0, 1.0, 1.0, 1.0);
+        return vec4(clamp(lit, 0.0, 1.0),
+                    albedo.a * fragParameter * fadeAfter(age, 180.0, 0.025));
+    }
+    if (pc.technique == 34u) {
+        // AlphaFadeTexShiftScalePS(1, -0.008, 180, 0.025): the albedo
+        // scrolling up, masked by the normals' green.
+        vec4 albedo = texture(texAlbedo, fragUV + vec2(0.0, age * -0.008));
+        float mask = texture(texNormal, fragUV).g;
+        return vec4(albedo.rgb, albedo.a * mask * fadeAfter(age, 180.0, 0.025));
+    }
+    // NukeHeadPS(1, 0.018, 50, 0.015): the normals are noise, read thrice
+    // at three scales scrolling up; a grey from them, halfway to the albedo,
+    // brightened by the noise. From 20 ticks old it dissolves where the
+    // noise outweighs the albedo's alpha. Alpha-tested over 0x0F.
+    float shift = age * 0.018;
+    vec4 albedo = texture(texAlbedo, fragUV);
+    vec4 n2 = texture(texNormal, fragUV * 6.0 + vec2(0.0, shift * 1.25));
+    vec4 n3 = texture(texNormal, fragUV * 4.0 + vec2(0.0, shift * 1.25));
+    vec4 n4 = texture(texNormal, fragUV * 0.25 + vec2(0.0, shift * 0.1));
+    float grey = ((n3.g + n2.b) * 0.5 + n4.b) * 0.5 + n4.r * 0.5;
+    vec3 head = (mix(vec3(grey), albedo.rgb, 0.5) + n2.b * 0.3) * n3.g + n2.b;
+    float alpha = albedo.a * fadeAfter(age, 50.0, 0.015);
+    if (age >= 20.0 && n2.a * n3.b * n2.g >= albedo.a) alpha = 0.0;
+    alpha *= n2.g;
+    if (alpha <= 15.0 / 255.0) discard;
+    return vec4(clamp(head, 0.0, 1.0), alpha);
+}
 )glsl" // split again: MSVC caps one literal at 16380 bytes (C2026)
                         R"glsl(
 
 void main() {
+    if (pc.technique >= 32u) {
+        outColor = explosionColor();
+        return;
+    }
     if (pc.technique == 28u || pc.technique == 29u || pc.technique == 30u) {
         // CommandFeedbackPS0(fade): the albedo, its alpha fading over the
         // lifetime (not RallyPoint's), tested over 0x23.
