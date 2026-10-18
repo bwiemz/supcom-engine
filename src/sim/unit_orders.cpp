@@ -455,8 +455,8 @@ OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         return OrderStep::Next;
     }
-    if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
-        navigator_.goal().z != cmd.target_pos.z) {
+    if ((!navigator_.is_moving() && !navigator_.ended()) ||
+        navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
         set_path_goal(cmd.target_pos, ctx);
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
@@ -1136,8 +1136,8 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             return break_off(std::move(order));
         }
     }
-    if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
-        navigator_.goal().z != cmd.target_pos.z) {
+    if ((!navigator_.is_moving() && !navigator_.ended()) ||
+        navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
         set_path_goal(cmd.target_pos, ctx);
     }
     if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
@@ -2370,7 +2370,8 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
     }
     if (pickup_phase_ == PickupPhase::Flying) {
         const Vector3 goal = navigator_.goal();
-        if (!navigator_.is_moving() || std::abs(goal.x - pickup_center_.x) > 1.0f ||
+        if ((!navigator_.is_moving() && !navigator_.ended()) ||
+            std::abs(goal.x - pickup_center_.x) > 1.0f ||
             std::abs(goal.z - pickup_center_.z) > 1.0f) {
             set_path_goal(pickup_center_, ctx);
         }
@@ -3161,7 +3162,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         set_unit_state("WaitForFerry", true);
         return OrderStep::Hold;
     }
-    if (!navigator_.is_moving()) {
+    if (!navigator_.is_moving() && !navigator_.ended()) {
         set_path_goal(beacon->position(), ctx);
     }
     if (!nav_update(dt, ctx.terrain) && effective_speed() > 0 &&

@@ -627,13 +627,20 @@ TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_
     reference.push_command(next, false);
     bool handed_over = false;
     for (int tick = 0; tick < 400 && !handed_over; ++tick) {
+        const auto before = plane.position();
         queued.sim.tick();
         plain.sim.tick();
         handed_over = plane.command_queue().front().type == osc::sim::CommandType::Guard;
         INFO("tick " << tick);
-        CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
-        CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
-        CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+        if (handed_over) {
+            const f32 dx = plane.position().x - before.x;
+            const f32 dz = plane.position().z - before.z;
+            CHECK(std::sqrt(dx * dx + dz * dz) <= 10.0f * 0.1f + 1e-3f);
+        } else {
+            CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
+            CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
+            CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+        }
     }
     REQUIRE(handed_over);
 }

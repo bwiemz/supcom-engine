@@ -563,9 +563,9 @@ public:
     }
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
-    /// orders (tick_orders), coasting, layer changes and fuel
-    /// (tick_after_orders), the manipulators, then the silo, regeneration
-    /// and weapons (tick_upkeep).
+    /// orders (tick_orders), the layer, the step, coasting and fuel
+    /// (motion_tick), the manipulators, then the silo, regeneration and
+    /// weapons (tick_upkeep).
     void update(f64 dt, SimContext& ctx);
 
     /// Lua callback helpers: call self:method() or self:method(entity)
@@ -1490,9 +1490,11 @@ public:
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
     void run_on_reclaimed(Entity& target, lua_State* L);
-    /// Move along the navigator's path, no faster than `speed_cap` if set (a
-    /// formation keeping its slowest unit's pace).
+    /// Ask for this tick's step along the navigator's path, no faster than
+    /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
+    /// while the move goes on, as the last motion step left it.
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    void nav_step(f64 dt, const map::Terrain* terrain);
     /// Moho's CAiNavigatorAir::AbortMove for an aircraft.
     void stop_air();
     /// Moho's Unit::UpdateSpeedThroughStatus.
@@ -1529,8 +1531,8 @@ private:
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// Coasting, amphibious layer changes, fuel.
-    bool tick_after_orders(f64 dt, SimContext& ctx);
+    /// The layer, the step its orders asked for, coasting, fuel.
+    bool motion_tick(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons.
     /// Runs while paused too.
     void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff);
@@ -2022,6 +2024,8 @@ private:
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
     bool air_stepped_ = false;
     bool air_held_ = false;
+    bool nav_requested_ = false;
+    f32 nav_speed_ = 0;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)

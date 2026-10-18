@@ -118,9 +118,10 @@ bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, Sim
         const f32 turning = current_airspeed_ / std::max(turn_rate_rad_ * turn_mult_, 0.1f);
         if (gap() > std::max(10.0f, turning)) {
             const Vector3 goal = navigator_.goal();
-            if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
-                std::abs(goal.z - at.z) > 1.0f)
+            if ((!navigator_.is_moving() && !navigator_.ended()) ||
+                std::abs(goal.x - at.x) > 1.0f || std::abs(goal.z - at.z) > 1.0f) {
                 navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
+            }
             if (nav_update(dt, ctx.terrain)) return false;
         }
         navigator_.abort_move();

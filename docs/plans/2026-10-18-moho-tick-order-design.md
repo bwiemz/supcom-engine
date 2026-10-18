@@ -336,6 +336,8 @@ order that set it, as Moho's does.
   `SetStunned(1)` from Lua — the first moving tick is Moho's.
 - Split into PRs: 2a land and water, 2b air (`fly_attack_run`, `fly_circling` run from the motion step, as
   `CalcMoveAir` runs the combat tactics), 2c transports, landing, ferries, staging.
+  *2a done (2026-10-18) — tick/s2a-motion-step: orders only ask for the navigator's step; `motion_tick` takes
+  it once after them, the layer first from where the unit stood, and an order hears the arrival a tick later.*
 
 **Step 3. `AdvanceBeat`'s phases.** Three PRs.
 - **3a. Weapons in the army phase.** Armies in index order → each army's units in creation order → for each

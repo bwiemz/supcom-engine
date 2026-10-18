@@ -634,16 +634,31 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
     }
 }
 
-bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
+bool Unit::nav_update(f64, const map::Terrain*, f32 speed_cap) {
+    nav_requested_ = true;
+    nav_speed_ = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
+    if (!is_air_unit() && nav_speed_ <= 0 && navigator_.is_moving() && !navigator_.moho_active()) {
+        return false;
+    }
+    return navigator_.busy();
+}
+
+void Unit::nav_step(f64 dt, const map::Terrain* terrain) {
+    navigator_.set_ended(false);
+    if (!std::exchange(nav_requested_, false) || !navigator_.busy()) {
+        return;
+    }
     if (is_air_unit()) {
         if (!take_air_step()) {
-            return navigator_.is_moving();
+            return;
         }
         update_speed_through();
-        return navigator_.update_air(*this, dt, terrain);
+        navigator_.update_air(*this, dt, terrain);
+        navigator_.set_ended(!navigator_.busy());
+        return;
     }
-    const f32 speed = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
-    bool result = navigator_.update(*this, speed, dt, terrain);
+    navigator_.update(*this, nav_speed_, dt, terrain);
+    navigator_.set_ended(!navigator_.busy());
 
     // A sub under the surface, or on its way, keeps its depth as it moves
     // (the ground navigator put it on the surface; see tick_dive).
@@ -652,13 +667,12 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
         p.y = terrain->water_elevation() + sub_elevation_;
         set_position(p);
     }
-
-    return result;
 }
 
 void Unit::update(f64 dt, SimContext& ctx) {
     air_stepped_ = false;
     air_held_ = false;
+    nav_requested_ = false;
     if (!tick_lifecycle(dt, ctx)) return;
     f32 econ_eff = 1.0f;
     const bool goes_on = tick_orders_and_motion(dt, ctx, econ_eff);
@@ -827,7 +841,7 @@ bool Unit::tick_orders_and_motion(f64 dt, SimContext& ctx, f32& econ_eff) {
     if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
         return false;
     }
-    if (!tick_after_orders(dt, ctx)) {
+    if (!motion_tick(dt, ctx)) {
         return false;
     }
     tend_unfinished(ctx);
@@ -942,10 +956,17 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
     return true;
 }
 
-bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
+bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (destroyed() || !in_registry()) return false;
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+
+    // Moho's CUnitMotion::MotionTick: the layer from the committed transform, then CalcMove*.
+    update_current_layer(ctx.terrain, L);
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
+    nav_step(dt, ctx.terrain);
 
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
     face_weapons_work(dt, ctx.registry);
@@ -986,10 +1007,6 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
         set_vert_event("Up", L);
         if (destroyed() || !in_registry()) return false;
     }
-
-    // Over water, the layer it is on (Moho's UpdateCurrentLayer).
-    update_current_layer(ctx.terrain, L);
-    if (destroyed() || !in_registry()) return false;
 
     // Carried units hang where the transport now is (M206l), however their
     // own ticks fall around ours: Moho moves attached entities with their
