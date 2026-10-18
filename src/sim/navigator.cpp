@@ -21,7 +21,7 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
                           const std::string& layer,
                           f32 draft, bool amphibious) {
     ended_ = false;
-    // Moho pathing: the goal is taken up at the unit's next update, where its
+    // Moho pathing: the goal is taken up by navigate() in the next army phase, where its
     // footprint is to hand (Moho's SetGoal only sets it thinking). Asked again
     // for the goal it already has, it carries on.
     if (sim_ && sim_->moho_pathing() && sim_->path_tables() && layer != "Air") {
@@ -174,7 +174,9 @@ void Navigator::hold(int ticks, u32 for_id) {
 
 bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
     if (unit.is_air_unit()) return slide(unit, max_speed, dt, terrain);
-    if (moho_pending_ || moho_active_) return update_moho(unit, max_speed, dt, terrain);
+    if (moho_pending_ || moho_active_) {
+        return drive_moho(unit, max_speed, dt, terrain);
+    }
     return drive(unit, max_speed, dt, terrain);
 }
 
@@ -211,7 +213,10 @@ i32 default_pathcap(u32 extent) {
 
 } // namespace
 
-bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
+void Navigator::navigate(Unit& unit) {
+    if (!moho_pending_ && !moho_active_) {
+        return;
+    }
     using State = path::PathNavigator::State;
     PathTables* tables = sim_ ? sim_->path_tables() : nullptr;
     ArmyBrain* army = sim_ ? sim_->get_army(unit.army()) : nullptr;
@@ -225,7 +230,8 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
             reset_moho();
             set_goal_grid(goal_, sim_ ? sim_->pathfinder() : nullptr, pos, moho_layer_, moho_draft_,
                           moho_amphibious_);
-            return drive(unit, max_speed, dt, terrain);
+            ended_ = !busy();
+            return;
         }
         // Moho's move goal: the cell the footprint would stand on there, the
         // destination first moved to a place it fits (Unit::PrepareMove).
@@ -236,8 +242,8 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
         const path::NavGoal goal{{at.x0, at.z0, at.x0 + 1, at.z0 + 1}, {}};
         // The move it is on, asked again (an order re-asserts its goal while
         // it waits for a path): it carries on, whatever its path navigator
-        // says. One its army's queue failed as the tick began is heard below
-        // and ends, as Moho's move task ends on the navigator's Failed; taken
+        // says. One its army's queue failed is heard below and ends, as
+        // Moho's move task ends on the navigator's Failed; taken
         // for a new goal, it would search again, round and round. A move
         // that ended has cleared moho_active_.
         const bool same =
@@ -246,8 +252,6 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
             moho_.set_unit(fp, cls, unit.layer() == "Water");
             moho_.set_goal(goal, pos.x, pos.z);
             reset_steering();
-            waypoints_.clear();
-            waypoint_index_ = 0;
             best_dist_ = 1e30f;
             stalled_ = 0;
             moho_waypoint_cell_ = {-32768, -32768};
@@ -258,7 +262,8 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
     if (!tables || !army || !map) {
         reset_moho();
         arrive();
-        return false;
+        ended_ = true;
+        return;
     }
     // CAiNavigatorLand::Execute: the path navigator first.
     const bool moved = pos.x != last_pos_.x || pos.y != last_pos_.y || pos.z != last_pos_.z;
@@ -294,24 +299,36 @@ bool Navigator::update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrai
         // coasts to a stop at its brake (Unit::coast), not dead in a tick.
         reset_moho();
         arrive();
-        return false;
+        ended_ = true;
+        return;
     }
     // Then the steering, at the target: a new target replaces its waypoint
     // (and any sidestep); one outside the goal it drives through.
     const path::Cell target = moho_.target();
     if (target != moho_waypoint_cell_ || waypoints_.empty()) {
-        waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
-        waypoint_index_ = 0;
-        sidestep_ = false;
         moho_waypoint_cell_ = target;
-        through_target_ = !moho_.cell_in_goal(target);
+        // CAiSteeringImpl::DriveToNextWaypoint: a waypoint the unit is at (Unit::IsAtPosition)
+        // sets no motion target.
+        if (target != moho_.current()) {
+            waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
+            waypoint_index_ = 0;
+            sidestep_ = false;
+            through_target_ = !moho_.cell_in_goal(target);
+        }
     }
-    // While it waits for a path its target is its own cell: it settles
-    // there, as Moho's steering does.
+    status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
+}
+
+bool Navigator::drive_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
+    if (!moho_active_ || waypoints_.empty()) {
+        return true;
+    }
+    const Status was = status_;
     status_ = Status::Moving;
     drive(unit, max_speed, dt, terrain);
-    if (status_ != Status::Idle)
-        status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
+    if (status_ != Status::Idle) {
+        status_ = was;
+    }
     return true;
 }
 

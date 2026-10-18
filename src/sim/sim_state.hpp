@@ -970,9 +970,11 @@ private:
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
     SimContext sim_context();
-    /// Moho's CArmyImpl::OnTick, each army in turn: its economy, then its
-    /// units' weapons.
+    /// Moho's CArmyImpl::OnTick, each army in turn: its economy, with Moho
+    /// pathing its navigators and steering, its units' weapons, its path
+    /// searches.
     void tick_armies();
+    void navigate_units(const std::vector<u32>& ids);
     /// Moho's stage B: each unit's orders, in creation order.
     void tick_unit_orders();
     void update_entities();

@@ -413,6 +413,11 @@ path budget; arrival and failure events before the order phase; `SetGoal` leaves
   ends the order two ticks after it is set; an `IssueMove` from Lua at tick T first steps along the path at T+3.
 - Acceptance: P3 as retail — the first step at T+3; a chain's queue 2 → 1 read at N+1 and the first step to the
   next point at N+3; clear and move while moving turns at T2+3; a factory's unit first moves at S+4.
+  *Done (2026-10-18) — tick/s6-army-navigation: with `--moho-pathing` P3 on retail's and FAF's Lua — the first step
+  at T+3 (on a cell centre, off it, a unit just created), the own cell T+2 and the goal T+3, a chain's queue 2 → 1 at
+  N+1 and the next point's first step at N+3 after two slowing ticks, clear and move turning at T2+3, a factory's unit
+  turning at S+3 (moving at S+3, retail S+4: it turns before it moves); the scout's `OnGotTarget`/`OnFire` 86/90 as
+  retail; the default path unchanged.*
 
 **Step 7. Death and deletion.** A deletion queue: `OnDestroy` after the commit, first in first out; until
 then the entity is found by `GetEntityById`, `BeenDestroyed()` is true and `IsDestroyed()` false, and it

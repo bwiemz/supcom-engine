@@ -388,13 +388,8 @@ bool outranks(const Unit& a, const Unit& b) {
     return a.entity_id() < b.entity_id();
 }
 
-void steer_ground_units(SimState& sim) {
+void steer_units(SimState& sim, const std::vector<u32>& ids) {
     const i32 now = static_cast<i32>(sim.tick_count());
-    std::vector<u32> ids;
-    sim.entity_registry().for_each_unit([&](Entity& e) {
-        if (auto& u = static_cast<Unit&>(e); steers(u) && moving(u)) ids.push_back(u.entity_id());
-    });
-    std::sort(ids.begin(), ids.end());
     PathCache cache;
     for (const u32 id : ids) {
         Entity* e = sim.entity_registry().find(id);
@@ -405,6 +400,17 @@ void steer_ground_units(SimState& sim) {
         if (nav.has_collision() && now >= nav.collision().tick) resolve(sim, u, now, cache);
         else if (now >= nav.next_check()) check(sim, u, now, cache);
     }
+}
+
+void steer_ground_units(SimState& sim) {
+    std::vector<u32> ids;
+    sim.entity_registry().for_each_unit([&](Entity& e) {
+        if (auto& u = static_cast<Unit&>(e); steers(u) && moving(u)) {
+            ids.push_back(u.entity_id());
+        }
+    });
+    std::sort(ids.begin(), ids.end());
+    steer_units(sim, ids);
 }
 
 } // namespace osc::sim

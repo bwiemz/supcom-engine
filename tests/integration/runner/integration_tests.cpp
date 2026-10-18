@@ -7322,9 +7322,6 @@ void test_weapon(TestContext& ctx) {
     lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
         local seen = table.concat(__osc_motion, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- With Moho's pathing, first a start and a stop at its own cell's
-        -- centre while the path is searched (drive-test, Test 5).
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if seen ~= want then error('events: ' .. seen) end
     )");
     lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
@@ -8991,10 +8988,6 @@ void test_drive(TestContext& ctx) {
     lua_check("Test 5: its motion events come in order", R"(
         local got = table.concat(__osc_striker.events, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- While Moho's path search runs, CAiNavigatorLand::Execute steers
-        -- at GetTargetPos, the unit's own cell's centre: a start and a
-        -- stop before the drive.
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if got ~= want then error(got) end
     )");
 
@@ -9223,7 +9216,7 @@ void test_steer(TestContext& ctx) {
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
         __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
         __osc_move(__osc_slow, 0, -12)
-        __osc_move(__osc_fast, 0, -2)
+        ForkThread(function() WaitTicks(5) __osc_move(__osc_fast, 0, -2) end)
     )"
              : R"(
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)

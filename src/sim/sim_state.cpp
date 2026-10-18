@@ -1546,11 +1546,6 @@ void SimState::tick() {
     if (path_tables_) {
         PROFILE_ZONE("Sim::path_clusters");
         path_tables_->update_background(path::kBackgroundBudget);
-        // Then each army's searches (CArmyImpl::OnTick), in army order.
-        for (const auto& army : armies_) {
-            i32 budget = path::kArmyPathBudget;
-            army->path_queue().work(*path_tables_, budget);
-        }
     }
     // Each army's tick begins by destroying its spent platoons, before any
     // script runs (Moho's CArmyImpl::OnTick).
@@ -2024,24 +2019,46 @@ void SimState::tick_armies() {
     PROFILE_ZONE("Sim::armies");
     std::vector<std::vector<u32>> by_army(armies_.size() + 1);
     entity_registry_.for_each_unit([&](Entity& e) {
-        if (static_cast<const Unit&>(e).weapons().empty()) {
-            return;
-        }
         const i32 army = e.army();
         const bool listed = army >= 0 && static_cast<size_t>(army) < armies_.size();
         by_army[listed ? static_cast<size_t>(army) : armies_.size()].push_back(e.entity_id());
     });
     for (size_t index = 0; index < by_army.size(); ++index) {
+        const std::vector<u32>& units = by_army[index];
         if (index < armies_.size()) {
             tick_army_economy(index);
         }
+        if (moho_pathing_) {
+            navigate_units(units);
+            steer_units(*this, units);
+        }
         SimContext ctx = sim_context();
-        for (const u32 id : by_army[index]) {
+        for (const u32 id : units) {
             Entity* e = entity_registry_.find(id);
-            if (e && !e->destroyed() && e->is_unit()) {
+            if (e && !e->destroyed() && e->is_unit() &&
+                !static_cast<const Unit*>(e)->weapons().empty()) {
                 static_cast<Unit*>(e)->tick_weapons(ctx);
             }
         }
+        if (path_tables_ && index < armies_.size()) {
+            i32 budget = path::kArmyPathBudget;
+            armies_[index]->path_queue().work(*path_tables_, budget);
+        }
+    }
+}
+
+void SimState::navigate_units(const std::vector<u32>& ids) {
+    for (const u32 id : ids) {
+        Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
+        }
+        auto& unit = *static_cast<Unit*>(e);
+        if (unit.is_dying() || unit.is_being_built() || unit.is_air_unit() ||
+            unit.transport_id() != 0) {
+            continue;
+        }
+        unit.navigator().navigate(unit);
     }
 }
 
@@ -2099,7 +2116,9 @@ void SimState::update_entities() {
                      [](const auto& a, const auto& b) { return a.first < b.first; });
 
     // Units on paths look ahead for others they would meet (M203c).
-    steer_ground_units(*this);
+    if (!moho_pathing_) {
+        steer_ground_units(*this);
+    }
 
     const auto step = [&](u32 id) {
         auto* e = entity_registry_.find(id);
