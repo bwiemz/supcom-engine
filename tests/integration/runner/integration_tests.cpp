@@ -9741,6 +9741,7 @@ void test_missile(TestContext& ctx) {
         }
     };
 
+    run(1);
     lua_check("setup", R"(
         -- A unit starts in its blueprint's InitialAutoMode (the launchers'
         -- is on); this test orders its builds, so auto mode starts off.
@@ -10829,6 +10830,7 @@ void test_charge(TestContext& ctx) {
         for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
+    run(1);
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)

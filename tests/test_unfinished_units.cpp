@@ -74,6 +74,12 @@ Unit* unfinished(SimState& sim, lua_State* L, osc::f32 health) {
     return u;
 }
 
+void economy_tick(osc::sim::ArmyBrain& brain, osc::sim::EntityRegistry& registry, double dt) {
+    registry.for_each_unit(
+        [&](osc::sim::Entity& e) { static_cast<Unit&>(e).manage_resources(&brain); });
+    brain.update_economy(registry, dt);
+}
+
 int decayed(lua_State* L) {
     lua_getglobal(L, "decayed");
     const int n = static_cast<int>(lua_tonumber(L, -1));
@@ -104,12 +110,12 @@ TEST_CASE("A unit being built produces nothing and stores nothing until it is fi
     Unit* p = pgen.get();
     registry.register_entity(std::move(pgen));
 
-    brain.update_economy(registry, 0.1);
+    economy_tick(brain, registry, 0.1);
     CHECK(brain.economy().energy.income == 0.0);
     CHECK(brain.economy().energy.max_storage == 0.0);
 
     p->set_is_being_built(false);
-    brain.update_economy(registry, 0.1);
+    economy_tick(brain, registry, 0.1);
     CHECK(brain.economy().energy.income == 20.0);
     CHECK(brain.economy().energy.max_storage == 1000.0);
 }
