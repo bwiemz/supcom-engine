@@ -3,9 +3,12 @@
 #include "sim/blueprint_categories.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
+#include <utility>
 
 extern "C" {
 #include <lua.h>
@@ -269,6 +272,7 @@ RangeUnit range_unit(const sim::WorldSnapshot& snap, const sim::EntityRecord& e,
     u.z = z;
     u.weapons = snap.weapon_ranges_of(e);
     u.script_bits = e.script_bits;
+    u.id = e.id;
     for (const auto& intel : snap.intel_of(e)) {
         if (intel.type == "Radar") u.radar = intel.radius;
         else if (intel.type == "Sonar") u.sonar = intel.radius;
@@ -278,6 +282,10 @@ RangeUnit range_unit(const sim::WorldSnapshot& snap, const sim::EntityRecord& e,
             u.counter_intel = std::max(u.counter_intel, intel.radius);
     }
     return u;
+}
+
+bool has_intel(const RangeUnit& unit) {
+    return unit.radar > 0.0f || unit.sonar > 0.0f || unit.omni > 0.0f;
 }
 
 std::optional<RangeRing> extract_range(RangeExtractor kind, const RangeUnit& unit) {
@@ -398,6 +406,38 @@ std::vector<RangeBatch> range_batches(const RangeOverlays& overlays, const Range
                 if (in_profile(profile, *unit.blueprint))
                     if (auto ring = extract_range(*kind, unit)) rings.push_back(*ring);
             add_batch(out, profile, profile.selected, std::move(rings));
+        }
+        // 3b. A selected sensor shows its army's coverage: each intel kind a
+        // selected unit has lights that ring on every other unit in view, in
+        // the profile's normal colour (retail: pick one radar, see all radars).
+        // An active filter of the same name drew them already in pass 2.
+        const auto filter_on = [&](const std::string& name) {
+            const auto& f = overlays.filters();
+            return std::find(f.begin(), f.end(), name) != f.end();
+        };
+        std::unordered_set<u32> picked;
+        for (const auto& unit : scene.selected) picked.insert(unit.id);
+        constexpr std::array<std::pair<const char*, f32 RangeUnit::*>, 3> kIntel = {
+            {{"Radar", &RangeUnit::radar},
+             {"Sonar", &RangeUnit::sonar},
+             {"Omni", &RangeUnit::omni}}};
+        for (const auto& [name, radius] : kIntel) {
+            const auto kind = range_extractor(name);
+            if (!kind) continue;
+            const bool any =
+                std::any_of(scene.selected.begin(), scene.selected.end(), [&](const RangeUnit& u) {
+                    return u.*radius > 0.0f && extract_range(*kind, u);
+                });
+            if (!any || filter_on(name)) continue;
+            const auto it = overlays.profiles().find(name);
+            if (it == overlays.profiles().end()) continue;
+            const RangeProfile& profile = it->second;
+            std::vector<RangeRing> rings;
+            for (const auto& unit : scene.in_view)
+                if (unit.*radius > 0.0f && picked.count(unit.id) == 0 &&
+                    in_profile(profile, *unit.blueprint))
+                    if (auto ring = extract_range(*kind, unit)) rings.push_back(*ring);
+            add_batch(out, profile, profile.normal, std::move(rings));
         }
     }
     // 4. The unit under the cursor (RenderHighlightedUnitRange)

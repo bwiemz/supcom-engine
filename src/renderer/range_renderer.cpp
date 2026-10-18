@@ -45,9 +45,17 @@ RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameVi
         const sim::Vector3 at = view.position(e);
         return range_unit(*snap, e, *bp, at.x, at.z);
     };
-    // CameraImpl's units in view, for the active filters: the focus army's
-    // whose bounds the view holds (here a sphere round the footprint)
-    if (!overlays.filters().empty()) {
+    if (selected && settings.render_selected) {
+        for (const sim::EntityRecord& e : view.entities())
+            if (selected->count(e.id) != 0)
+                if (auto unit = own(e)) scene.selected.push_back(*unit);
+    }
+    // CameraImpl's units in view, for the active filters and for a selected
+    // sensor's coverage: the focus army's whose bounds the view holds (here
+    // a sphere round the footprint)
+    const bool sensor_selected =
+        std::any_of(scene.selected.begin(), scene.selected.end(), has_intel);
+    if (!overlays.filters().empty() || sensor_selected) {
         for (const sim::EntityRecord& e : view.entities()) {
             if (e.is_being_built) continue;
             auto unit = own(e);
@@ -56,11 +64,6 @@ RangeScene collect_range_scene(const RangeOverlays& overlays, const sim::FrameVi
             const f32 reach = std::max({e.footprint_size_x, e.footprint_size_z, 1.0f});
             if (frustum.is_sphere_visible(at.x, at.y, at.z, reach)) scene.in_view.push_back(*unit);
         }
-    }
-    if (selected && settings.render_selected) {
-        for (const sim::EntityRecord& e : view.entities())
-            if (selected->count(e.id) != 0)
-                if (auto unit = own(e)) scene.selected.push_back(*unit);
     }
     if (hovered != 0 && settings.render_highlighted)
         if (const sim::EntityRecord* e = view.find(hovered)) scene.hovered = own(*e);

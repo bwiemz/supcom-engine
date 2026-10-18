@@ -129,7 +129,12 @@ struct RangeUnit {
     f32 radar = 0, sonar = 0, omni = 0; ///< its intel radii, on or off
     f32 counter_intel = 0;              ///< its largest stealth or cloak field or spoof
     u16 script_bits = 0;
+    u32 id = 0; ///< its entity, to tell the selected from the rest
 };
+
+/// Whether `unit` carries radar, sonar or omni: selecting it shows that
+/// intel's ring on every unit of the army in view.
+bool has_intel(const RangeUnit& unit);
 
 /// `e` of `snap`, at (x, z), with its blueprint's `bp`.
 RangeUnit range_unit(const sim::WorldSnapshot& snap, const sim::EntityRecord& e,
@@ -195,7 +200,9 @@ struct RangeScene {
 };
 
 /// The batches Moho's RangeRenderer::Render draws, in its order: placement,
-/// the active filters, the selection, the hovered unit, the no-rush zone.
+/// the active filters, the selection (a selected sensor lighting the same
+/// intel's ring on the army's other units in view, as retail does when one
+/// radar is picked), the hovered unit, the no-rush zone.
 std::vector<RangeBatch> range_batches(const RangeOverlays& overlays, const RangeScene& scene);
 
 /// A line's thickness at a zoom (`zoom_ratio`: the target zoom over the
