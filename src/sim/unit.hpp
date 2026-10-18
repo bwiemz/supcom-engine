@@ -174,6 +174,30 @@ struct AirCombatState {
     Vector3 circle_anchor{};
 };
 
+/// What a circling aircraft circles.
+struct CircleAround {
+    Vector3 center;
+    /// Its target weapon's MaxRadius. 0: none, and the circle is
+    /// StartTurnDistance's.
+    f32 weapon_radius = 0.0f;
+    bool target_in_air = false; ///< CirclingRadiusVsAirMult applies
+    /// Where its move order would take it (Moho's mTargetPosition), which
+    /// the airframe's damping reads.
+    Vector3 move_goal;
+};
+
+/// The flight an aircraft's orders leave for its motion step: Moho's
+/// CalcMoveAir flies what the tasks set.
+struct AirCourse {
+    enum class Kind : u8 { None, Run, Circle, Winged, Hold, HoverLow, Settle };
+    Kind kind = Kind::None;
+    u32 target_id = 0;
+    Vector3 at{};
+    f32 altitude = 0.0f;
+    f32 heading = 0.0f;
+    CircleAround around{};
+};
+
 /// A blueprint's Economy.BuildTime, BuildCostMass and BuildCostEnergy (0
 /// where missing): what building it, or repairing it, costs.
 struct BuildEconomy {
@@ -562,10 +586,11 @@ public:
         return out;
     }
 
-    /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
-    /// orders (tick_orders), coasting, layer changes and fuel
-    /// (tick_after_orders), then the silo, regeneration, weapons and
-    /// manipulators (tick_upkeep).
+    /// Moho's attacker stage, in its army's step of CArmyImpl::OnTick.
+    void tick_weapons(SimContext& ctx);
+    /// Moho's stage B: its IAiCommandDispatchImpl and the order's task.
+    void tick_commands(f64 dt, SimContext& ctx);
+    /// Moho's stage A: Unit::MotionTick.
     void update(f64 dt, SimContext& ctx);
 
     /// Lua callback helpers: call self:method() or self:method(entity)
@@ -840,7 +865,6 @@ public:
     void set_bank_angle(f32 b) { bank_angle_ = b; }
     f32 current_airspeed() const { return current_airspeed_; }
     void set_current_airspeed(f32 s) { current_airspeed_ = s; }
-    bool take_air_step() { return !std::exchange(air_stepped_, true); }
     f32 current_altitude() const { return current_altitude_; }
     void set_current_altitude(f32 a) { current_altitude_ = a; }
     void fly_on_from_here(const map::Terrain* terrain);
@@ -1490,9 +1514,14 @@ public:
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
     void run_on_reclaimed(Entity& target, lua_State* L);
-    /// Move along the navigator's path, no faster than `speed_cap` if set (a
-    /// formation keeping its slowest unit's pace).
+    /// Ask for this tick's step along the navigator's path, no faster than
+    /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
+    /// while the move goes on, as the last motion step left it.
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    bool nav_step(f64 dt, const map::Terrain* terrain);
+    void set_course(const AirCourse& course);
+    /// Moho's one CalcMove* a tick: the course its orders set, else its navigator's step.
+    bool step_course(f64 dt, SimContext& ctx);
     /// Moho's CAiNavigatorAir::AbortMove for an aircraft.
     void stop_air();
     /// Moho's Unit::UpdateSpeedThroughStatus.
@@ -1514,10 +1543,7 @@ private:
         if (navigator_.busy()) navigator_.abort_move();
     }
 
-    // update's phases. Each but the last says whether the tick goes on.
-    /// Dying (the death animation), or carried (following the transport):
-    /// nothing else this tick.
-    bool tick_lifecycle(f64 dt, SimContext& ctx);
+    void follow_transport(f64 dt, SimContext& ctx);
     /// Run orders from the head of the queue until one holds (unit_orders.cpp).
     bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
     /// An order's first run (on a patrol, each leg's): what Moho's task
@@ -1528,11 +1554,9 @@ private:
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// Coasting, amphibious layer changes, fuel.
-    bool tick_after_orders(f64 dt, SimContext& ctx);
-    /// A silo assist ended, regeneration, the silo, motion events, weapons,
-    /// manipulators. Runs while paused too.
-    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff);
+    /// The layer, the step its orders asked for, coasting, fuel.
+    bool motion_tick(f64 dt, SimContext& ctx);
+    void tick_upkeep(f64 dt, SimContext& ctx);
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
@@ -1649,8 +1673,9 @@ private:
     void tick_dive(const map::Terrain* terrain, lua_State* L);
     /// An idle aircraft's landing (Moho's CUnitMotion landing phase):
     /// AutoLandTime after its orders ran out, near where it is, it finds a
-    /// place (PrepareMove), reserves it and comes down onto it.
-    void tick_idle_landing(f64 dt, SimContext& ctx);
+    /// place (PrepareMove), reserves it and comes down onto it. True if it
+    /// moved the aircraft.
+    bool tick_idle_landing(f64 dt, SimContext& ctx, bool flown);
     /// faf-re CUnitMotion::MotionTick: CalcMoveAir every tick; CAiNavigatorAir::AbortMove target.
     void fly_unflown_tick(f64 dt, SimContext& ctx);
     void rest_air_body();
@@ -1658,8 +1683,8 @@ private:
     /// focus while Building, Repairing, Reclaiming or Capturing).
     bool circles_its_work() const;
     /// Its circling this tick: round what it builds or repairs, or round
-    /// where it stopped to reclaim or capture.
-    void tick_work_circling(f64 dt, SimContext& ctx);
+    /// where it stopped to reclaim or capture. True if it flew.
+    bool tick_work_circling(f64 dt, SimContext& ctx, bool flown);
     /// A landed aircraft given an order goes back to the air.
     void take_off(SimContext& ctx);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -1685,7 +1710,7 @@ private:
     /// down to its hover height, then sets down the cargo (`ids`, or all of
     /// it) whose footprint fits the ground under it; the rest stays aboard.
     /// True once it has set them down.
-    bool unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids);
+    bool unload_step(SimContext& ctx, const std::vector<u32>& ids);
     /// A beam up cut short: back down on the ground, level, and the script
     /// told it has stopped.
     void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
@@ -1699,8 +1724,6 @@ private:
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
     OrderStep order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx);
-    /// A tick of a unit attached to a staging platform: its refuel order, if
-    /// that is still its head, and its fuel and repair.
     void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
     /// A patrolling aircraft that needs fuel or repair (Moho's
     /// Unit::FindPlatform): the first of its army's idle staging platforms
@@ -1726,8 +1749,10 @@ private:
     void abandon_landing(EntityRegistry& registry);
     /// Fly to `at` until it is within the unit's turning circle, then glide
     /// over it, coming down to `y` turned to `heading` (M206r's approach).
-    /// True once settled there.
-    bool settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx);
+    /// True once its last step settled it there, facing within `facing_cos`.
+    bool settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx,
+                     std::optional<f32> facing_cos = std::nullopt);
+    void settle_step(const Vector3& at, f32 heading, f64 dt, const map::Terrain* terrain);
     /// A staging platform's unload (M206r): its aircraft go from where they
     /// sit to the drop point.
     OrderStep order_staging_release(UnitCommand& cmd, SimContext& ctx);
@@ -2019,8 +2044,9 @@ private:
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)
     f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
-    bool air_stepped_ = false;
-    bool air_held_ = false;
+    bool nav_requested_ = false;
+    AirCourse course_;
+    f32 nav_speed_ = 0;
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)

@@ -474,6 +474,7 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     // sim_: set by the unit's load
     w.vec3(n.goal_);
     enum8(w, n.status_);
+    w.b(n.ended_);
     w.b(n.speed_through_goal_);
     w.vec3(n.air_hold_);
     w.b(n.air_hold_set_);
@@ -510,6 +511,7 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
 void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.goal_ = r.vec3();
     n.status_ = enum8<Navigator::Status>(r);
+    n.ended_ = r.b();
     n.speed_through_goal_ = r.b();
     n.air_hold_ = r.vec3();
     n.air_hold_set_ = r.b();
@@ -1224,7 +1226,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.factory_assist_build_);
     // auto_attack_target_ isn't saved: a weapon sets it and the unit uses it
     // in the same update.
-    // air_stepped_ and air_held_ aren't saved: each update clears them before they are read.
+    // nav_requested_, nav_speed_ and course_ aren't saved: each update clears or sets them before
+    // they are read.
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
     w.b(u.build_repairs_);

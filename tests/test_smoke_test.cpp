@@ -798,6 +798,7 @@ TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack or
     osc::sim::UnitCommand attack{};
     attack.type = osc::sim::CommandType::Attack;
     attack.target_id = wall_id;
+    attack.engaged = true;
     owner_ptr->push_command(attack, true);
     weapon_ptr->update(*owner_ptr, registry, nullptr);
     CHECK(weapon_ptr->target_entity_id == wall_id);

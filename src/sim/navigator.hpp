@@ -46,6 +46,10 @@ public:
     /// True while a move is in progress or pending a path -- i.e. the goal
     /// has not been reached. Use this, not is_moving(), to detect arrival.
     bool busy() const { return status_ != Status::Idle; }
+    /// Its unit's last motion step ended the move, there or given up: Moho's
+    /// AINAVEVENT_Succeeded or Failed, which its order hears on the next tick.
+    bool ended() const { return ended_; }
+    void set_ended(bool e) { ended_ = e; }
 
     /// Move the unit toward its goal at up to `max_speed`. Returns true until
     /// the goal is reached (including while waiting for a throttled path,
@@ -159,6 +163,7 @@ private:
     SimState* sim_ = nullptr;
     Vector3 goal_;
     Status status_ = Status::Idle;
+    bool ended_ = false;
     bool speed_through_goal_ = false;
     Vector3 air_hold_{};
     bool air_hold_set_ = false;

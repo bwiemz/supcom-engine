@@ -634,16 +634,29 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
     }
 }
 
-bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
-    if (is_air_unit()) {
-        if (!take_air_step()) {
-            return navigator_.is_moving();
-        }
-        update_speed_through();
-        return navigator_.update_air(*this, dt, terrain);
+bool Unit::nav_update(f64, const map::Terrain*, f32 speed_cap) {
+    nav_requested_ = true;
+    course_ = {};
+    nav_speed_ = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
+    if (!is_air_unit() && nav_speed_ <= 0 && navigator_.is_moving() && !navigator_.moho_active()) {
+        return false;
     }
-    const f32 speed = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
-    bool result = navigator_.update(*this, speed, dt, terrain);
+    return navigator_.busy();
+}
+
+bool Unit::nav_step(f64 dt, const map::Terrain* terrain) {
+    navigator_.set_ended(false);
+    if (!std::exchange(nav_requested_, false) || !navigator_.busy()) {
+        return false;
+    }
+    if (is_air_unit()) {
+        update_speed_through();
+        navigator_.update_air(*this, dt, terrain);
+        navigator_.set_ended(!navigator_.busy());
+        return true;
+    }
+    navigator_.update(*this, nav_speed_, dt, terrain);
+    navigator_.set_ended(!navigator_.busy());
 
     // A sub under the surface, or on its way, keeps its depth as it moves
     // (the ground navigator put it on the surface; see tick_dive).
@@ -652,33 +665,122 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
         p.y = terrain->water_elevation() + sub_elevation_;
         set_position(p);
     }
-
-    return result;
+    return true;
 }
 
-void Unit::update(f64 dt, SimContext& ctx) {
-    air_stepped_ = false;
-    air_held_ = false;
-    if (!tick_lifecycle(dt, ctx)) return;
+void Unit::set_course(const AirCourse& course) {
+    course_ = course;
+    nav_requested_ = false;
+}
 
-    // Manipulators (rotators, animators, sliders, aim controllers) move
-    // before the unit's orders run, as Moho's Unit::MotionTick updates them
-    // ahead of the task stage: an order sees this tick's aim (a build arm
-    // come on target), and what an order sets plays from the next tick.
-    tick_manipulators(static_cast<f32>(dt), ctx.L);
-    if (destroyed() || !in_registry()) return;
+bool Unit::step_course(f64 dt, SimContext& ctx) {
+    const AirCourse course = std::exchange(course_, {});
+    if (course.kind == AirCourse::Kind::None) {
+        return nav_step(dt, ctx.terrain);
+    }
+    navigator_.set_ended(false);
+    if (transport_id_ != 0 || !ctx.sim) {
+        return false;
+    }
+    const f32 fdt = static_cast<f32>(dt);
+    switch (course.kind) {
+    case AirCourse::Kind::Run:
+        if (course.target_id == 0) {
+            fly_attack_run(*this, course.at, *ctx.sim, ctx.terrain, fdt);
+        } else if (const Entity* target = ctx.registry.find(course.target_id);
+                   target && !target->destroyed()) {
+            fly_attack_run(*this, *target, *ctx.sim, ctx.terrain, fdt);
+        } else {
+            return false;
+        }
+        break;
+    case AirCourse::Kind::Circle:
+        fly_circling(*this, course.around, *ctx.sim, ctx.terrain, fdt);
+        break;
+    case AirCourse::Kind::Winged:
+        fly_winged_to(*this, course.at, *ctx.sim, ctx.terrain, fdt);
+        break;
+    case AirCourse::Kind::Hold: hold_altitude(dt, ctx.terrain, course.altitude); break;
+    case AirCourse::Kind::HoverLow: hover_low(dt, ctx); break;
+    case AirCourse::Kind::Settle: settle_step(course.at, course.heading, dt, ctx.terrain); break;
+    case AirCourse::Kind::None: break;
+    }
+    return true;
+}
 
-    // A surface unit on a layer its motion type can't be on (a land tank on
-    // the seabed) loses 1% of its health a tick, moving or not, and dies at
-    // none: Moho's CUnitMotion::CalcMoveCommon, which each motion tick runs
-    // for a unit not being built, carried, falling or flying.
-    if (is_mobile() && !can_fly() && !is_being_built() && !crashing_ && parent_entity_id() == 0 &&
-        !on_valid_layer()) {
-        set_health(health() - max_health() * 0.0099999998f);
-        if (health() <= 0.0f && ctx.sim) {
-            ctx.sim->kill_unit(*this, "");
+void Unit::tick_weapons(SimContext& ctx) {
+    if (destroyed() || !in_registry() || dying_ || is_being_built() || transport_id_ != 0) {
+        return;
+    }
+    auto& registry = ctx.registry;
+    for (auto& weapon : weapons_) {
+        if (destroyed() || dying_) {
+            break;
+        }
+        weapon->update(*this, registry, ctx.L, ctx.sim);
+    }
+    // Moho's CAcquireTargetTask issues its pick's attack order to this unit alone.
+    if (const u32 target_id = auto_attack_target_; target_id != 0) {
+        auto_attack_target_ = 0;
+        const Entity* target = registry.find(target_id);
+        if (ctx.sim && target && !target->destroyed() && !destroyed() && !dying_) {
+            UnitCommand attack;
+            attack.type = CommandType::Attack;
+            attack.target_id = target_id;
+            attack.target_pos = target->position();
+            ctx.sim->route_command({entity_id()}, attack, true);
+        }
+    }
+}
+
+void Unit::tick_commands(f64 dt, SimContext& ctx) {
+    nav_requested_ = false;
+    course_ = {};
+    if (destroyed()) {
+        return;
+    }
+    if (dying_) {
+        end_script_task(ctx.L);
+        return;
+    }
+    auto& registry = ctx.registry;
+
+    const bool loading_head =
+        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
+    if (pickup_phase_ != PickupPhase::None &&
+        !(loading_head && command_queue_.front().target_id == entity_id())) {
+        finish_pickup(false, ctx.L);
+        if (destroyed() || !in_registry()) {
             return;
         }
+    }
+    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
+        abandon_beam_up(ctx.terrain, ctx.L);
+        if (destroyed() || !in_registry()) {
+            return;
+        }
+    }
+
+    if (transport_slots_ && !transport_slots_->slots().empty()) {
+        release_stale_slots(registry);
+    }
+    if (!storage_reserved_.empty()) {
+        std::erase_if(storage_reserved_, [&](u32 id) {
+            const Entity* e = registry.find(id);
+            const auto* u =
+                e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+            return !u || u->is_dying() || !u->lands_on(entity_id());
+        });
+    }
+
+    if (transport_id_ != 0) {
+        Entity* platform = registry.find(transport_id_);
+        if (platform && !platform->destroyed() && platform->is_unit() &&
+            static_cast<Unit*>(platform)->is_staging_platform() &&
+            !static_cast<Unit*>(platform)->is_dying()) {
+            tick_docked(dt, ctx, *static_cast<Unit*>(platform));
+        }
+        return;
     }
 
     // A landed aircraft given an order goes back to the air before it
@@ -687,7 +789,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
     if (can_fly() && !is_being_built() && (!command_queue_.empty() || lifts_off_) &&
         parent_entity_id() == 0 && (layer_ == "Land" || layer_ == "Water")) {
         take_off(ctx);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return;
+        }
     }
 
     // Its work goes at what its consumption request was granted last tick
@@ -710,7 +814,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
     // A teleport or an OverCharge whose order was taken away unfinished.
     if (teleporting_ || overcharge_armed_) {
         settle_interrupted_orders(ctx.L);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return;
+        }
     }
     // A ferry, or a unit waiting for one, whose order is gone from the head
     // of its queue stops being one.
@@ -736,7 +842,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (has_script_task() && !(head && head->type == CommandType::Script &&
                                    head->task_serial == script_task_serial())) {
             end_script_task(ctx.L);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // A carrier's retrieve, or a landing on one (M206s), whose order is
@@ -744,7 +852,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (retrieve_phase_ != RetrievePhase::None &&
             !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
             end_retrieve(false, ctx);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (landing_.phase != LandPhase::None &&
@@ -763,7 +873,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
             !(head && head->type == CommandType::Guard)) {
             end_guard_build(ctx.registry, ctx.L);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // A mobile build, or a repair's or guard's help, whose order is gone
@@ -774,7 +886,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (build_target_id_ != 0 && build_released_with_order_ &&
             !(head && head->command_id == build_command_id_)) {
             release_build(ctx.L, ctx.registry);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (is_reclaiming() &&
@@ -794,24 +908,96 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (is_repairing() &&
             !(head && (head->type == CommandType::Repair || head->type == CommandType::Guard))) {
             stop_repairing(ctx.L, ctx.registry);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (is_capturing() && !(head && head->type == CommandType::Capture)) {
             stop_capturing(ctx.L, ctx.registry, true);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return;
+            }
         }
     }
 
-    if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
+    if (!is_being_built()) {
+        if (!tick_orders(dt, ctx, econ_eff)) {
+            return;
+        }
+        for (auto& weapon : weapons_) {
+            if (destroyed() || !in_registry() || dying_) {
+                return;
+            }
+            weapon->fire_at_order(*this, registry, ctx.L, ctx.sim);
+        }
+        if (destroyed() || !in_registry()) {
+            return;
+        }
+    }
+    tend_unfinished(ctx);
+    if (silo_assist_id_ != 0 && !silo_assist_renewed_) {
+        end_silo_assist(ctx.L, registry);
+    }
+}
+
+void Unit::update(f64 dt, SimContext& ctx) {
+    if (destroyed()) {
         return;
     }
-    if (!tick_after_orders(dt, ctx)) return;
-    tend_unfinished(ctx);
-    if (ctx.sim) {
+    if (dying_) {
+        tick_dying(static_cast<f32>(dt), ctx.terrain);
+        tick_manipulators(static_cast<f32>(dt), ctx.L);
+        return;
+    }
+    report_health_band(ctx.L);
+    if (destroyed() || !in_registry()) {
+        return;
+    }
+    if (transport_id_ != 0) {
+        follow_transport(dt, ctx);
+        return;
+    }
+    drove_ = false;
+    const bool goes_on = motion_tick(dt, ctx);
+    if (destroyed() || !in_registry()) {
+        return;
+    }
+    if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
     }
-    tick_upkeep(dt, ctx, econ_eff);
+    // Moho's Unit::MotionTick builds the pose on the transform its motion wrote.
+    tick_manipulators(static_cast<f32>(dt), ctx.L);
+    if (goes_on && !destroyed() && in_registry()) {
+        tick_upkeep(dt, ctx);
+    }
+}
+
+void Unit::follow_transport(f64 dt, SimContext& ctx) {
+    auto& registry = ctx.registry;
+    auto* transport_entity = registry.find(transport_id_);
+    if (transport_entity && !transport_entity->destroyed() && transport_entity->is_unit()) {
+        auto& transport = static_cast<Unit&>(*transport_entity);
+        hang_from(transport);
+        if (transport.is_staging_platform()) {
+            if (transport.is_dying()) {
+                transport.detach_cargo({entity_id()}, registry, ctx.L, ctx.terrain);
+            } else {
+                tick_fuel(dt, ctx, &transport);
+            }
+            if (destroyed() || !in_registry()) {
+                return;
+            }
+        }
+    } else {
+        if (transport_entity && transport_entity->is_unit()) {
+            static_cast<Unit*>(transport_entity)->remove_cargo(entity_id());
+        }
+        transport_id_ = 0;
+        set_unit_state("Attached", false);
+    }
+    ground_speed_ = 0;
+    rest_air_body();
 }
 
 void Unit::tend_unfinished(SimContext& ctx) {
@@ -844,85 +1030,35 @@ void Unit::decay(lua_State* L) {
     }
 }
 
-bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
-    if (destroyed()) return false;
-
-    // Dying units only tick manipulators (for death animation) — skip everything else
-    if (dying_) {
-        end_script_task(ctx.L); // its order went with the others (M206w)
-        if (destroyed()) return false;
-        tick_dying(static_cast<f32>(dt), ctx.terrain);
-        tick_manipulators(static_cast<f32>(dt), ctx.L);
-        return false;
-    }
-    report_health_band(ctx.L);
-    if (destroyed() || !in_registry()) {
-        return false;
-    }
-    auto& registry = ctx.registry;
-
-    // A pickup whose load order is no longer the transport's head is over,
-    // aborted; a unit whose load order went mid-beam comes back down (M206m).
-    const bool loading_head =
-        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
-    if (pickup_phase_ != PickupPhase::None &&
-        !(loading_head && command_queue_.front().target_id == entity_id())) {
-        finish_pickup(false, ctx.L);
-        if (destroyed() || !in_registry()) return false;
-    }
-    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
-        abandon_beam_up(ctx.terrain, ctx.L);
-        if (destroyed() || !in_registry()) return false;
-    }
-
-    // A transport gives up the slots of units no longer aboard (M206l), and
-    // a carrier the places of units no longer landing on it (M206s).
-    if (transport_slots_ && !transport_slots_->slots().empty()) release_stale_slots(registry);
-    if (!storage_reserved_.empty())
-        std::erase_if(storage_reserved_, [&](u32 id) {
-            const Entity* e = registry.find(id);
-            const auto* u =
-                e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
-            return !u || u->is_dying() || !u->lands_on(entity_id());
-        });
-
-    // Cargo position following: if loaded on a transport, skip all processing
-    if (transport_id_ != 0) {
-        auto* transport_entity = registry.find(transport_id_);
-        if (transport_entity && !transport_entity->destroyed() && transport_entity->is_unit()) {
-            auto& transport = static_cast<Unit&>(*transport_entity);
-            hang_from(transport);
-            // Docked at a staging platform (M206r): it refuels and repairs,
-            // and its refuel order lets it go when done. A platform that dies
-            // lets its aircraft go (Moho detaches them all).
-            if (transport.is_staging_platform()) {
-                if (transport.is_dying()) {
-                    transport.detach_cargo({entity_id()}, registry, ctx.L, ctx.terrain);
-                } else {
-                    tick_docked(dt, ctx, transport);
-                }
-                if (destroyed() || !in_registry()) return false;
-            }
-        } else {
-            // Transport gone — auto-detach and clean up stale cargo entry
-            if (transport_entity && transport_entity->is_unit()) {
-                static_cast<Unit*>(transport_entity)->remove_cargo(entity_id());
-            }
-            transport_id_ = 0;
-            set_unit_state("Attached", false);
-        }
-        ground_speed_ = 0; // carried, not driving
-        rest_air_body();
-        return false;      // Skip commands and weapons while loaded
-    }
-    drove_ = false;
-    return true;
-}
-
-bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
+bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (destroyed() || !in_registry()) return false;
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+
+    // Moho's CUnitMotion::CalcMoveCommon: a unit on a layer its motion type can't be on loses 1%
+    // of its health a tick, moving or not, unless being built, carried, falling or flying.
+    if (is_mobile() && !can_fly() && !is_being_built() && !crashing_ && parent_entity_id() == 0 &&
+        !on_valid_layer()) {
+        set_health(health() - max_health() * 0.0099999998f);
+        if (health() <= 0.0f && ctx.sim) {
+            ctx.sim->kill_unit(*this, "");
+            return false;
+        }
+    }
+
+    // Moho's CUnitMotion::MotionTick: ProcessFuelLevels, the layer from the committed transform,
+    // then CalcMove*.
+    if (!tick_fuel(dt, ctx, nullptr)) {
+        return false;
+    }
+    update_current_layer(ctx.terrain, L);
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
+    bool flown = step_course(dt, ctx);
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
 
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
     face_weapons_work(dt, ctx.registry);
@@ -951,22 +1087,20 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     if (destroyed() || !in_registry()) return false;
 
     // A hovering aircraft circles its work (item 6).
-    tick_work_circling(dt, ctx);
+    flown = tick_work_circling(dt, ctx, flown) || flown;
 
     // An idle aircraft comes down (item 6).
-    tick_idle_landing(dt, ctx);
+    flown = tick_idle_landing(dt, ctx, flown) || flown;
     if (destroyed() || !in_registry()) return false;
-    fly_unflown_tick(dt, ctx);
+    if (!flown) {
+        fly_unflown_tick(dt, ctx);
+    }
 
     if (is_air_unit() && vert_event_ == "Hover" && current_altitude_ > transport_hover_height_) {
         set_unit_state("MovingUp", true);
         set_vert_event("Up", L);
         if (destroyed() || !in_registry()) return false;
     }
-
-    // Over water, the layer it is on (Moho's UpdateCurrentLayer).
-    update_current_layer(ctx.terrain, L);
-    if (destroyed() || !in_registry()) return false;
 
     // Carried units hang where the transport now is (M206l), however their
     // own ticks fall around ours: Moho moves attached entities with their
@@ -977,27 +1111,13 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
         auto* cargo = static_cast<Unit*>(e);
         if (cargo->transport_id() == entity_id()) cargo->hang_from(*this);
     }
-
-    // Fuel: flying burns it. Running dry doesn't bring an aircraft down: its
-    // script slows it (OnRunOutOfFuel) until refuelling restores it (OnGotFuel,
-    // landed, or docked at a staging platform: see tick_docked).
-    if (!tick_fuel(dt, ctx, nullptr)) return false;
-
     return true;
 }
 
-void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff) {
-    auto& registry = ctx.registry;
+void Unit::tick_upkeep(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
 
     if (stun_ticks_ > 0) --stun_ticks_; // a stun wears off a tick at a time
-
-    if (silo_assist_id_ != 0 && !silo_assist_renewed_) {
-        end_silo_assist(L, registry);
-        if (destroyed() || !in_registry()) {
-            return;
-        }
-    }
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
     if (!is_being_built() && regen_rate() > 0 && health() > 0 && health() < max_health()) {
@@ -1011,9 +1131,6 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff) {
         }
     }
 
-    // Weapons hear about the motion change (through the unit script) before
-    // they fire this tick. A unit under construction neither moves nor
-    // fights. A weapon's script may kill its own unit (KamikazeWeapon).
     if (!is_being_built()) {
         // Its silo builds beside everything else (paused, it waits).
         if (!dying_ && (silo_building() || !silo_orders_.empty() || auto_mode_)) {
@@ -1029,24 +1146,6 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff) {
         }
         update_motion_horz(L);
         update_motion_turn(L);
-        for (auto& weapon : weapons_) {
-            if (destroyed() || dying_) break;
-            weapon->update(*this, registry, L, ctx.sim);
-        }
-        // A weapon's own pick for an idle aircraft: its attack order,
-        // clearing the queue, issued as the sim's own (Moho's
-        // CAcquireTargetTask issues it to the unit alone).
-        if (const u32 target_id = auto_attack_target_; target_id != 0) {
-            auto_attack_target_ = 0;
-            const Entity* target = registry.find(target_id);
-            if (ctx.sim && target && !target->destroyed() && !destroyed() && !dying_) {
-                UnitCommand attack;
-                attack.type = CommandType::Attack;
-                attack.target_id = target_id;
-                attack.target_pos = target->position();
-                ctx.sim->route_command({entity_id()}, attack, true);
-            }
-        }
     }
 }
 
@@ -3386,13 +3485,18 @@ bool Unit::circles_its_work() const {
     return circles(*this) && (is_building() || is_repairing() || is_reclaiming() || is_capturing());
 }
 
-void Unit::tick_work_circling(f64 dt, SimContext& ctx) {
-    if (!ctx.sim || !circles_its_work()) return;
+bool Unit::tick_work_circling(f64 dt, SimContext& ctx, bool flown) {
+    if (!ctx.sim || !circles_its_work()) {
+        return false;
+    }
     // An attack it circles is its order's to fly.
     if (!command_queue_.empty() && command_queue_.front().type == CommandType::Attack &&
         command_queue_.front().engaged)
-        return;
+        return false;
     navigator_.abort_move();
+    if (flown) {
+        return false;
+    }
     CircleAround around;
     around.center = air_combat_.flying ? air_combat_.circle_anchor : position();
     if (is_building() || is_repairing()) {
@@ -3402,6 +3506,7 @@ void Unit::tick_work_circling(f64 dt, SimContext& ctx) {
     }
     around.move_goal = air_combat_.flying ? air_combat_.circle_anchor : position();
     fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
+    return true;
 }
 
 void Unit::fly_on_from_here(const map::Terrain* terrain) {
@@ -3414,11 +3519,11 @@ void Unit::fly_on_from_here(const map::Terrain* terrain) {
     }
 }
 
-void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
+bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
     // Not one under construction: it neither moves nor flies yet.
     if (!can_fly() || dying_ || is_being_built() || parent_entity_id() != 0 || !ctx.sim ||
         !ctx.terrain)
-        return;
+        return false;
     SimState& sim = *ctx.sim;
     lua_State* L = ctx.L;
     // Up at its height after a take-off: level flight.
@@ -3426,9 +3531,13 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         current_altitude_ >= elevation_target_ - 0.1f) {
         set_unit_state("MovingUp", false);
         set_vert_event("Top", L);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
     }
-    if (!is_air_unit()) return; // down
+    if (!is_air_unit()) {
+        return false;
+    }
     IdleLanding& land = idle_landing_;
     if (!command_queue_.empty() || navigator_.busy()) {
         // An order: no clock, no landing.
@@ -3438,17 +3547,17 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
             free_landing_reservation(sim);
             set_unit_state("MovingDown", false);
         }
-        return;
+        return false;
     }
     const u32 now = sim.tick_count();
     if (land.idle_since == 0) {
         land.idle_since = now + 1;
     }
+    if (flown) {
+        return false;
+    }
     const Vector3 pos = position();
     const auto hold = [&] {
-        if (flew_at(now)) {
-            return;
-        }
         if (!navigator_.air_hold()) {
             navigator_.set_air_hold(air_stop_point());
         }
@@ -3458,17 +3567,17 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         move.elevation = elevation_target_;
         move.top_speed = navigator_.speed_through_goal();
         fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
+        return true;
     };
     Vector3 aim = land.target;
     if (!land.descending) {
         const auto wait = static_cast<i32>(auto_land_time_ * 10.0f);
         if (wait <= 0 || now <= land.idle_since + static_cast<u32>(wait)) {
-            hold();
-            return;
+            return hold();
         }
         if (transport_hover_height_ > 0 && !cargo_ids_.empty()) {
             hover_low(dt, ctx);
-            return;
+            return true;
         }
         if (!navigator_.air_hold()) {
             navigator_.set_air_hold(air_stop_point());
@@ -3478,14 +3587,12 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         const f32 gx = target.x - pos.x;
         const f32 gz = target.z - pos.z;
         if (gx * gx + gz * gz > start_turn_distance_ * start_turn_distance_) {
-            hold();
-            return;
+            return hold();
         }
         if (!prepare_move(*this, *ctx.terrain, sim.occupancy(), sim.move_bounds(army()), target)) {
             land.idle_since = now; // and looks again later
             set_unit_state("CannotFindPlaceToLand", true);
-            hold();
-            return;
+            return hold();
         }
         set_unit_state("CannotFindPlaceToLand", false);
         // Its own footprint's rect there (COORDS_ToGridRect), reserved.
@@ -3504,17 +3611,19 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         set_unit_state("MovingDown", false);
         set_vert_event("Top", L);
         if (destroyed() || !in_registry()) {
-            return;
+            return false;
         }
         AirMove move;
         move.target = aim;
         move.elevation = elevation_target_;
         fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
-        return;
+        return true;
     }
     set_unit_state("MovingDown", true);
     set_vert_event("Down", L);
-    if (destroyed() || !in_registry()) return;
+    if (destroyed() || !in_registry()) {
+        return false;
+    }
     const bool over = dx * dx + dz * dz < 0.25f;
     if (over && pos.y - air_floor(ctx.terrain, pos.x, pos.z) < 0.1f) {
         free_landing_reservation(sim);
@@ -3524,21 +3633,23 @@ void Unit::tick_idle_landing(f64 dt, SimContext& ctx) {
         rest_air_body();
         set_unit_state("MovingDown", false);
         set_layer_with_callback(land.layer, L);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return true;
+        }
         set_vert_event("Bottom", L);
-        return;
+        return true;
     }
     AirMove move;
     move.target = aim;
     move.elevation = over ? 0.0f : elevation_target_ * 0.5f;
     move.landing = true;
     fly_air_move(*this, move, &sim, ctx.terrain, static_cast<f32>(dt));
+    return true;
 }
 
 void Unit::fly_unflown_tick(f64 dt, SimContext& ctx) {
-    if (!ctx.sim || !is_air_unit() || !can_fly() || air_held_ || dying_ || crashing_ ||
-        is_being_built() || parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() ||
-        immobile_) {
+    if (!ctx.sim || !is_air_unit() || !can_fly() || dying_ || crashing_ || is_being_built() ||
+        parent_entity_id() != 0 || transport_id_ != 0 || is_stunned() || immobile_) {
         return;
     }
     const u32 now = ctx.sim->tick_count();
@@ -3561,7 +3672,6 @@ void Unit::rest_air_body() {
     air_dv_ = {};
     air_spin_ = {};
     lift_velocity_ = 0.0f;
-    air_held_ = true;
 }
 
 void Unit::set_vert_event(const char* event, lua_State* L) {
@@ -3946,9 +4056,8 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     if (!tick_position_set_) {
         return 0.0f;
     }
-    // The last tick's move and turn: the manipulators run ahead of this
-    // tick's motion, as Moho's CAnimationManipulator reads the unit's
-    // velocity and its last two transforms before CUnitMotion moves it.
+    // The last tick's move and turn: Moho's CAnimationManipulator reads the
+    // committed transforms, which this tick's motion has not advanced yet.
     const Vector3& d = last_tick_motion_;
     const f32 scale = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) / dt / max_speed_;
     if (turned_last_tick_ && scale <= 0.25f) {

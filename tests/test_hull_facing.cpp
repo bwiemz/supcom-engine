@@ -10,7 +10,9 @@
 #include "core/dmath.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/projectile.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -22,10 +24,12 @@ extern "C" {
 
 #include <cmath>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 using osc::f32;
+using osc::u32;
 using osc::sim::CommandType;
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -397,4 +401,67 @@ TEST_CASE("A unit that stops to fire brakes straight on while its hull turns", "
                                           foe->position().z - u->position().z) /
                         kDeg;
     CHECK(std::abs(wrap_deg(heading_deg(*u) - bearing)) < 1.0f);
+}
+
+TEST_CASE("A turret on a turning hull fires along its aim", "[hull-facing][weapons]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    Unit* u = hull(sim, 64.0f, 40.0f);
+    osc::sim::BoneData bones;
+    osc::sim::BoneInfo root;
+    root.name = "root";
+    bones.bones.push_back(root);
+    osc::sim::BoneInfo turret;
+    turret.name = "turret";
+    turret.parent_index = 0;
+    turret.local_position = {0, 0.5f, 0};
+    turret.world_position = {0, 0.5f, 0};
+    turret.inverse_bind_pose = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -0.5f, 0, 1};
+    bones.bones.push_back(turret);
+    bones.name_to_index["root"] = 0;
+    bones.name_to_index["turret"] = 1;
+    u->set_bone_data(&bones);
+    u->init_animated_bones();
+    auto* aim = static_cast<osc::sim::AimManipulator*>(
+        u->add_manipulator(std::make_unique<osc::sim::AimManipulator>()));
+    aim->set_weapon(0, "Gun");
+    aim->set_yaw_bone(1);
+    aim->set_firing_arc(-180.0f, 180.0f, 3600.0f, 0.0f, 0.0f, 0.0f);
+    Weapon& w = gun(*u);
+    w.label = "Gun";
+    w.slaved_to_body = true;
+    w.damage = 1.0f;
+    w.rate_of_fire = 10.0f;
+    w.muzzle_velocity = 30.0f;
+    w.muzzle_bone_name = "turret";
+    w.firing_tolerance = 2.0f;
+    Unit* foe = dummy(sim, 0, 0);
+    foe->set_position(at_bearing(*u, 90.0f, 20.0f));
+    w.set_target_entity(foe->entity_id());
+
+    std::set<u32> seen;
+    int shots_while_turning = 0;
+    for (int t = 0; t < 10; ++t) {
+        const f32 before = heading_deg(*u);
+        sim.tick();
+        const f32 turned = std::abs(wrap_deg(heading_deg(*u) - before));
+        sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (!e.is_projectile() || !seen.insert(e.entity_id()).second) {
+                return;
+            }
+            const auto& shot = static_cast<const osc::sim::Projectile&>(e);
+            const f32 flight = osc::dmath::atan2(shot.velocity.x, shot.velocity.z) / kDeg;
+            const f32 bearing = osc::dmath::atan2(foe->position().x - shot.position().x,
+                                                  foe->position().z - shot.position().z) /
+                                kDeg;
+            INFO("tick " << t << ": the hull turned " << turned << ", the shot flies " << flight
+                         << ", the target lies at " << bearing);
+            CHECK(std::abs(wrap_deg(flight - bearing)) < 1.0f);
+            if (turned > 8.0f) {
+                ++shots_while_turning;
+            }
+        });
+    }
+    CHECK(shots_while_turning >= 5);
 }

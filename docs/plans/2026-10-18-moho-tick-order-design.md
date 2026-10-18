@@ -317,9 +317,11 @@ weapons, for every unit.
   arm on target is unchanged.
 - Test: a turret on a hull turning at a constant rate fires along its aim; without the change the error is
   the hull's turn in a tick.
-- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every shot
-  at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a salvo
-  and 48% within 2 (retail 763, 47%).
+- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every tank
+  shot at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a
+  salvo and 48% within 2 (retail 763, 47%). *Done (2026-10-18) — tick/s1-manipulators-after-motion: P1's a
+  and b under 0.05, the tank hits 100%, the Corsair 756 a salvo and 48%. The Harbinger's misses left (49% hit,
+  retail 100%) land along the line of fire, not aside.*
 
 **Step 2. Motion as the unit's own step.** Orders only set intent: the navigator's goal; an aircraft's mode
 (move, attack run, circling, hover, hold height); a facing request; stop. `Unit::motion_tick()` runs one
@@ -334,6 +336,11 @@ order that set it, as Moho's does.
   `SetStunned(1)` from Lua — the first moving tick is Moho's.
 - Split into PRs: 2a land and water, 2b air (`fly_attack_run`, `fly_circling` run from the motion step, as
   `CalcMoveAir` runs the combat tactics), 2c transports, landing, ferries, staging.
+  *2a done (2026-10-18) — tick/s2a-motion-step: orders only ask for the navigator's step; `motion_tick` takes
+  it once after them, the layer first from where the unit stood, and an order hears the arrival a tick later.*
+  *2b done (2026-10-18) — tick/s2b-air-motion-step, with 2c: an aircraft's orders leave a course (attack run,
+  circling, winged guard, a transport's hover, a hold, settling onto a platform) that `motion_tick` flies once
+  after the fuel; the air-step latch is gone; the beam up and teleports stay in the order, as Moho's.*
 
 **Step 3. `AdvanceBeat`'s phases.** Three PRs.
 - **3a. Weapons in the army phase.** Armies in index order → each army's units in creation order → for each
@@ -358,6 +365,11 @@ order that set it, as Moho's does.
   - Fixes D7 and the economy items of §3.2.
   - Tests: a trigger true from the start fires at tick 11; consumption raised by a Lua thread works at
     N+2; a unit finished in N shows in `GetEconomyIncome` at N+1.
+
+*3a and 3b done (2026-10-18) — tick/s3ab-weapons-orders-lua: P2 `OnGotTarget` 3, `OnFire` 13 and every projectile in its
+`OnFire` tick (46/46, retail 3/13, 51/51); P3 `OnStartBuild` at T+1, a factory's unit `DetachFrom` at S and `Moving` at
+S+1, as retail; the Corsair's first rocket in its `OnFire` tick, 756 a salvo and 49% within 2; the scout's
+`OnGotTarget`/`OnFire` 87/91 (retail 86/90: the scout's own move starts two ticks early, D10).*
 
 **Step 4. Projectiles as Moho's.** The entity walk includes entities made during it (a projectile always
 moves on its creation tick); the impact runs at the start of the next step, with the pending position at the

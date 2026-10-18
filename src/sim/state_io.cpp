@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 63; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 65; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -89,7 +89,9 @@ constexpr u32 kVersion = 63; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 60: no CommonArmy economy pool
                              // 61: attack orders' target points;
                              // 62: slaved bones' turn toward their master and max rate;
-                             // 63: the silo a unit's Guard helps
+                             // 63: the silo a unit's Guard helps;
+                             // 64: navigators' move ended in the last motion step;
+                             // 65: every attack order engages in reach
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a

@@ -100,6 +100,7 @@ struct AssistSim {
         auto arm = std::make_unique<AimManipulator>();
         arm->set_builder_arm(true);
         u->add_manipulator(std::move(arm));
+        u->set_builder_on_target(false);
         Unit* raw = u.get();
         sim.entity_registry().register_entity(std::move(u));
         bind(*raw, name);
@@ -149,7 +150,7 @@ TEST_CASE("A repair of a unit under construction aims the arm and builds it as a
     Unit* eng = w.engineer("eng", 16.0f);
     eng->push_command(order(CommandType::Repair, *w.site, 1), true);
     // The order aims the arm; the arm turns before the next tick's order,
-    // which starts the repair (Moho's MotionTick runs ahead of its tasks).
+    // which starts the repair (Moho's MotionTick runs after its tasks).
     w.sim.tick();
     CHECK_FALSE(eng->is_building());
     CHECK(w.log() == "eng arm");
@@ -261,9 +262,11 @@ TEST_CASE("A repair of a unit under construction starts once the builder's arm i
     CHECK(w.log().empty());
     CHECK(w.site->fraction_complete() <= 0.1f);
 
-    // Enabled, the arm turns at the start of the next tick, and the order
-    // then finds it on target
+    // Enabled, the arm turns after the next tick's order, and the order
+    // after that finds it on target
     arm.set_enabled(true);
+    w.sim.tick();
+    CHECK_FALSE(eng->is_building());
     w.sim.tick();
     CHECK(eng->is_building());
     CHECK(w.log() == "eng start Repair");

@@ -1560,6 +1560,8 @@ void SimState::tick() {
         pathfinder_->reset_request_count();
     }
 
+    tick_army_weapons();
+    tick_unit_orders();
     {
         PROFILE_ZONE("Sim::threads");
         thread_manager_.resume_all(tick_count_);
@@ -1980,6 +1982,63 @@ void SimState::tick_economy_events() {
     economy_events_.gc();
 }
 
+SimContext SimState::sim_context() {
+    SimContext ctx{
+        entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this, {}};
+    for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
+        ctx.army_grants[i] = armies_[i]->grant_ratios();
+    }
+    return ctx;
+}
+
+void SimState::tick_army_weapons() {
+    PROFILE_ZONE("Sim::weapons");
+    std::vector<std::vector<u32>> by_army(armies_.size() + 1);
+    entity_registry_.for_each_unit([&](Entity& e) {
+        if (static_cast<const Unit&>(e).weapons().empty()) {
+            return;
+        }
+        const i32 army = e.army();
+        const bool listed = army >= 0 && static_cast<size_t>(army) < armies_.size();
+        by_army[listed ? static_cast<size_t>(army) : armies_.size()].push_back(e.entity_id());
+    });
+    SimContext ctx = sim_context();
+    for (const std::vector<u32>& ids : by_army) {
+        for (const u32 id : ids) {
+            Entity* e = entity_registry_.find(id);
+            if (e && !e->destroyed() && e->is_unit()) {
+                static_cast<Unit*>(e)->tick_weapons(ctx);
+            }
+        }
+    }
+}
+
+void SimState::tick_unit_orders() {
+    PROFILE_ZONE("Sim::orders");
+    SimContext ctx = sim_context();
+    std::vector<u32> ids;
+    u32 done = 0;
+    // CTaskStage::UserFrame runs its list to the end: a unit made during the stage runs in it too.
+    while (true) {
+        ids.clear();
+        entity_registry_.for_each_unit([&](Entity& e) {
+            if (e.entity_id() > done) {
+                ids.push_back(e.entity_id());
+            }
+        });
+        if (ids.empty()) {
+            break;
+        }
+        done = ids.back();
+        for (const u32 id : ids) {
+            Entity* e = entity_registry_.find(id);
+            if (e && !e->destroyed() && e->is_unit()) {
+                static_cast<Unit*>(e)->tick_commands(SECONDS_PER_TICK, ctx);
+            }
+        }
+    }
+}
+
 void SimState::update_entities() {
     PROFILE_ZONE("Sim::entities");
     // Snapshot IDs to avoid iterator invalidation if update() triggers removal
@@ -1989,11 +2048,7 @@ void SimState::update_entities() {
         ids.push_back(e.entity_id());
     });
 
-    SimContext ctx{
-        entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this, {}};
-    for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
-        ctx.army_grants[i] = armies_[i]->grant_ratios();
-    }
+    SimContext ctx = sim_context();
 
     // Units on paths look ahead for others they would meet (M203c).
     steer_ground_units(*this);

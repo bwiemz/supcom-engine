@@ -20,6 +20,7 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
                           const Vector3& current_pos,
                           const std::string& layer,
                           f32 draft, bool amphibious) {
+    ended_ = false;
     // Moho pathing: the goal is taken up at the unit's next update, where its
     // footprint is to hand (Moho's SetGoal only sets it thinking). Asked again
     // for the goal it already has, it carries on.
@@ -98,6 +99,7 @@ void Navigator::set_goal_grid(const Vector3& pos, const map::Pathfinder* pathfin
 }
 
 void Navigator::set_goal(const Vector3& pos) {
+    ended_ = false;
     reset_moho();
     goal_ = pos;
     reset_steering();
@@ -110,6 +112,7 @@ void Navigator::set_goal(const Vector3& pos) {
 }
 
 void Navigator::abort_move() {
+    ended_ = false;
     air_hold_set_ = false;
     reset_moho();
     status_ = Status::Idle;

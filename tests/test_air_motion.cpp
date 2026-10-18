@@ -11,6 +11,7 @@
 #include "lua/sim_bindings.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/flight_math.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -546,7 +547,34 @@ TEST_CASE("An aircraft's weapon takes its ordered target only once the attack en
     }
     REQUIRE(a.command_queue().front().engaged);
     CHECK_FALSE(early);
+    CHECK(weapon.target_entity_id == 0);
+    a.weapons().front()->fire_clock = 1000000;
+    w.sim.tick();
     CHECK(weapon.target_entity_id == tank.entity_id());
+}
+
+TEST_CASE("An idle aircraft whose weapon picks a target flies its attack run that tick",
+          "[air_motion]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 25.0f;
+    gun->damage = 10.0f;
+    gun->target_check_period = 1;
+    gun->auto_initiate_attack_command = true;
+    a.add_weapon(std::move(gun));
+    for (int t = 0; t < 5; ++t) {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    }
+    REQUIRE(a.command_queue().empty());
+    REQUIRE_FALSE(a.air_combat().flying);
+    w.make("tank", 45.0f, 128.0f, 2);
+    a.weapons().front()->fire_clock = 1000000;
+    w.sim.tick();
+    REQUIRE_FALSE(a.command_queue().empty());
+    CHECK(a.command_queue().front().type == osc::sim::CommandType::Attack);
+    CHECK(a.air_combat().flying);
 }
 
 TEST_CASE("An attack that engages makes the weapons drop their target, then take the order's",
@@ -583,6 +611,120 @@ TEST_CASE("An attack that engages makes the weapons drop their target, then take
         w.sim.tick();
     }
     REQUIRE(a.command_queue().front().engaged);
+    REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'lost')").ok());
+    a.weapons().front()->fire_clock = 1000000;
+    w.sim.tick();
     REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'lost got')").ok());
     CHECK(weapon.target_entity_id == tank.entity_id());
+}
+
+TEST_CASE("An aircraft whose move hands over to its next order as it runs dry flies that tick "
+          "one step, the order's, slowed",
+          "[air_motion]") {
+    const char* id = "uea0102";
+    f32 top = 15.0f;
+    osc::sim::UnitCommand next;
+    next.type = osc::sim::CommandType::Attack;
+    SECTION("a winged aircraft's attack run") {}
+    SECTION("a gunship circling its attack's target") {
+        id = "gunship";
+        top = 12.0f;
+    }
+    SECTION("a gunship flying its guard winged") {
+        id = "gunship";
+        top = 12.0f;
+        next.type = osc::sim::CommandType::Guard;
+        next.target_pos = {140.0f, 10.0f, 200.0f};
+    }
+    const auto start = [&](World& w) -> Unit& {
+        Unit& a = w.make(id, 30.0f, 128.0f);
+        auto gun = std::make_unique<osc::sim::Weapon>();
+        gun->max_range = 25.0f;
+        gun->damage = 10.0f;
+        a.add_weapon(std::move(gun));
+        World::move(a, 100.0f, 128.0f);
+        osc::sim::UnitCommand order = next;
+        if (order.type == osc::sim::CommandType::Attack) {
+            order.target_id = w.make("tank", 105.0f, 128.0f, 2).entity_id();
+        }
+        a.push_command(order, false);
+        return a;
+    };
+    World handed(true);
+    World alone(true);
+    REQUIRE(
+        handed.state.do_string("Plain.OnRunOutOfFuel = function(self) self:SetSpeedMult(0.25) end")
+            .ok());
+    Unit& plane = start(handed);
+    Unit& reference = start(alone);
+    int ticks = 0;
+    for (; ticks < 300 && plane.command_queue().size() == 2; ++ticks) {
+        plane.weapons().front()->fire_clock = 1000000;
+        reference.weapons().front()->fire_clock = 1000000;
+        if (plane.navigator().ended()) {
+            for (Unit* u : {&plane, &reference}) {
+                u->set_fuel_use_time(1.0f);
+                u->set_fuel_ratio(0.05f);
+            }
+            reference.set_speed_mult(0.25f);
+            const osc::sim::UnitCommand order = reference.command_queue().back();
+            reference.push_command(order, true);
+        }
+        const auto before = plane.position();
+        handed.sim.tick();
+        alone.sim.tick();
+        if (plane.command_queue().size() == 1) {
+            REQUIRE(plane.speed_mult() == 0.25f);
+            CHECK(plane.air_combat().flying);
+            CHECK(World::flat_speed(before, plane.position()) <= top + 1e-3f);
+        }
+        CHECK(plane.position().x == reference.position().x);
+        CHECK(plane.position().y == reference.position().y);
+        CHECK(plane.position().z == reference.position().z);
+    }
+    CHECK(ticks < 300);
+}
+
+TEST_CASE("An aircraft docking at a staging platform is taken aboard on the tick after the step "
+          "that settles it over its slot",
+          "[air_motion]") {
+    osc::sim::BoneData skeleton;
+    skeleton.bones.push_back({"root", {}, {}, -1, {}, {}});
+    osc::sim::BoneInfo point;
+    point.name = "Attachpoint01";
+    point.parent_index = 0;
+    point.world_position = {0.0f, 1.0f, 0.0f};
+    skeleton.bones.push_back(point);
+    World w;
+    Unit& pad = w.make("pad", 80.0f, 128.0f);
+    pad.set_bone_data(&skeleton);
+    Unit& plane = w.make("gunship", 30.0f, 128.0f);
+    plane.set_air_class(true);
+    osc::sim::UnitCommand dock;
+    dock.type = osc::sim::CommandType::Dock;
+    dock.target_id = pad.entity_id();
+    dock.target_pos = pad.position();
+    plane.push_command(dock, true);
+    int settled = -1;
+    int aboard = -1;
+    for (int t = 0; t < 400; ++t) {
+        w.sim.tick();
+        if (plane.transport_id() == pad.entity_id()) {
+            aboard = t;
+            break;
+        }
+        const osc::sim::TransportSlots* slots = pad.built_transport_slots();
+        const auto* slot = slots ? slots->slot_of(plane.entity_id()) : nullptr;
+        if (settled < 0 && slot) {
+            const auto at = pad.bone_world_position(slot->bone);
+            const auto& p = plane.position();
+            const f32 floor = plane.air_floor(w.sim.terrain(), p.x, p.z);
+            if (std::hypot(at.x - p.x, at.z - p.z) <= 0.5f &&
+                plane.current_altitude() == at.y - floor && std::cos(plane.heading()) > 0.95f) {
+                settled = t;
+            }
+        }
+    }
+    REQUIRE(aboard >= 0);
+    CHECK(aboard == settled + 1);
 }

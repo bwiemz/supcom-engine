@@ -282,9 +282,8 @@ TEST_CASE("A motion-scaled animation plays at its unit's speed over its MaxSpeed
     anim.set_motion_scaled(true);
     anim.play_anim("/slide.sca", true, &cache);
 
-    // The speed is the last tick's: the manipulators run as a tick begins,
-    // ahead of its motion (Moho's MotionTick reads the unit's velocity and
-    // its last two transforms).
+    // The speed is the last tick's (Moho's animator reads the committed
+    // transforms).
     unit.note_tick_position();
     unit.set_position({0.1f, 0, 0}); // a quarter of MaxSpeed
     unit.note_tick_position();
