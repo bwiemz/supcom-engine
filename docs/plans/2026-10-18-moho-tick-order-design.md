@@ -184,16 +184,16 @@ the pose of N−1); `update_entities` moves it; the tick of the collision deals 
 
 | | Difference | Visible effect | Evidence |
 |---|---|---|---|
-| D1 | Pose built before the motion, launch after it | the launch is off by the body's turn in a tick: aircraft on attack runs, turrets while the hull turns, ships | measured (§4) |
-| D2 | Lua runs before weapons | `Main` forked by `OnFire` runs a tick later: every scripted shot leaves a tick late | [probe]: retail `OnFire` at tick 11 → first rocket at 11; engine 6 → 7 |
+| D1 | Pose built before the motion, launch after it | the launch is off by the unit's own motion in a tick (the hull's turn, less the change of bearing to the target as it drives): aircraft on attack runs, turrets while the hull turns, ships | [probe] P1, Corsair (§4) |
+| D2 | Lua runs before weapons | `Main` forked by `OnFire` runs a tick later: every scripted shot leaves a tick late | [probe] P1, P2, Corsair: retail creates every projectile in its `OnFire` tick, the engine on the next |
 | D3 | A unit's orders and weapons in one update | a target handed over by an order is taken the same tick, a tick earlier than Moho | [probe]: retail `OnGotTarget` 86, engine 85 |
-| D4 | Projectile damage at the collision | Moho finds the collision in tick N and damages in N+1; here damage, `OnImpact`, shield hits, veterancy are a tick earlier | [probe], not isolated: launched at tick 90, retail's first impact 106, the engine's 105 |
-| D5 | A projectile made during the entity walk moves next tick | fragments, death-weapon shots, engine-fired shots a tick late; #701 compensates the lifetime by half a tick | code |
+| D4 | Projectile damage at the collision | Moho finds the collision in tick N and damages in N+1; here damage, `OnImpact`, shield hits, veterancy are a tick earlier | [probe] P2: retail `OnCollisionCheck` in N, `OnImpact` and damage in N+1; the engine all in N |
+| D5 | A projectile made during the entity walk moves next tick | fragments, death-weapon shots, engine-fired shots a tick late; #701 compensates the lifetime by half a tick | [probe] P2: retail fragments move on their creation tick (20 of 20), the engine's on the next |
 | D6 | No committed transforms | what an entity reads depends on id order: projectiles against targets that have or haven't moved this tick, formation and steering neighbours, area damage | code |
 | D7 | Economy after Lua | Lua reads the economy a step older; Lua-requested consumption is granted a tick earlier | code |
-| D8 | Orders from Lua run the same tick | AI and script orders start a tick early | code |
+| D8 | Orders from Lua run the same tick | AI and script orders start a tick early | [probe] P3: an order's callbacks one tick later in retail |
 | D9 | Threads forked by order and weapon callbacks start next tick | build effects, bone attachment, roll-off, a finished generator's shield a tick late | code |
-| D10 | The navigator runs inside the order | at each point of a move chain Moho pauses two ticks, the engine none (one with `--moho-pathing`); there are no double steps | code |
+| D10 | The navigator runs inside the order | an `IssueMove` from Lua at tick T first steps at T+3 in Moho, at T here; at each point of a move chain Moho slows for two ticks, the engine not at all (one with `--moho-pathing`); there are no double steps | [probe] P3 |
 | D11 | Destruction is immediate | `OnDestroy`, freed cells and gone-from-queries a tick early; no `KillCleanup` at the end of the death tick | code |
 | D12 | A weapon acquires and fires in one call | a new target can be shot the tick it is picked, along the old target's line | code |
 | D13 | Attached entities follow at the end of the tick | k links of attachment lag k ticks; shields and cargo trail their carrier during the tick | code |
@@ -205,6 +205,8 @@ the pose of N−1); `update_entities` moves it; the tick of the collision deals 
   stops, with `OnStopBuild`), the deletion queue, `Sync` and GC run; the tick of the pause request is not
   run. The engine stops everything and runs that tick.
 - **Command tick number.** `GetGameTick()` in code run by a command: Moho N−1, the engine N.
+- **Clearing a moving unit's queue** stops its navigator at once in Moho (P3): the unit brakes from that
+  tick, and a new move given in the same call turns it three ticks later, as any new move.
 - **Cancelling a task.** Clearing or removing the head of a queue destroys its task at once in Moho, and the
   task's destructor runs `OnStopReclaim`, `OnStopRepair`, `OnStopCapture`, the script task's `OnDestroy`
   (FR unit/CUnitCommandQueue.cpp:533-551). The engine runs those in the unit's next update, after Lua.
@@ -229,7 +231,10 @@ the pose of N−1); `update_entities` moves it; the tick of the collision deals 
 
 ## 4. Evidence
 
-The Corsair probe (retail and engine running the same Lua hooks; SCMP_009, seed 1): a Corsair attacks a
+Retail and the engine run the same Lua hooks, on SCMP_009 with seed 1. The engine's numbers are d98ad203 and
+d98ad203 with #720-#731 merged (identical in P1-P3, whose shooters don't depend on those PRs).
+
+**The Corsair probe.** (retail and engine running the same Lua hooks; SCMP_009, seed 1): a Corsair attacks a
 power generator on its own for 3000 ticks, and a moving scout for 1200.
 
 | | structure: damage a salvo (salvos) | rockets within 2 of the target | scout: damage a salvo | scout: `OnGotTarget` / `OnFire` tick |
@@ -242,6 +247,58 @@ power generator on its own for 3000 ticks, and a moving scout for 1200.
 The mean difference between the rack bone's and the aim bone's pitch at launch: retail 0.50°, the engine with
 #722 and #723 0.57°, the same with the pose moved 0.57° (structure); the pose's frame, not the aim, is what
 moves the hits.
+
+**P1, a turret on a moving hull.** A tank (uel0201) or a Harbinger (ual0303) drives a loop of 4 or 16 points
+round a stationary structure and fires (3000 ticks). The error is the angle between the launch and the bearing
+from the muzzle to the target, in the horizontal plane; τ is the hull's turn in the tick before the launch, ω
+the change of bearing to the target in that tick.
+
+| | mean error, straight / turning | error ≈ a·τ + b·ω | hits | damage a shot |
+|---|---|---|---|---|
+| retail, tank, 4 points | 0.12° / 0.07° | a 0.00, b +0.10 | 100% (297/297) | 23.8 |
+| engine, tank, 4 points | 1.76° / 9.05° | a +1.05, b −1.09 | 84%, none while turning (0/46) | 20.1 |
+| retail, tank, 16 points | 0.11° / 0.08° | a 0.00, b +0.06 | 100% | 23.8 |
+| engine, tank, 16 points | 1.31° / 9.22° | a +1.06, b −1.06 | 83%, 0/42 while turning | 20.0 |
+| retail, Harbinger | 0.07° / 0.04° | a 0.00, b +0.06 | 100% (371/371) | 297.6 |
+| engine, Harbinger | 1.23° / 12.09° | a +1.04, b −1.10 | 41%, 0/34 while turning | 122.4 |
+
+The engine's launch trails by exactly the unit's own motion in one tick, its turn and its travel; retail's
+does not depend on either. On FAF's Lua the engine shows the same a and b.
+
+**P2, a projectile's ticks.** A stationary T1 point defense fires at a structure 20 off; a T1 mobile artillery's
+fragmenting shell; a Mongoose (a 15-shot gatling salvo, a shot every 2 ticks) killed by `Kill()` mid-salvo; a
+salvo against a shield.
+
+| | retail | engine |
+|---|---|---|
+| `OnFire` → projectile created | same tick (51/51) | next tick (46/46) |
+| created → first move | same tick | same tick, or next for projectiles made during the entity walk |
+| `OnCollisionCheck` (the step that finds the hit) → `OnImpact` | next tick (49/49) | same tick |
+| `OnImpact` → damage | same tick | same tick |
+| `GetPosition()` from Lua in the impact tick | the impact point | the projectile is already gone |
+| fragments made in `OnImpact` → first move | same tick (20/20) | next tick (20/20) |
+| shots after `OnKilled`, killed between shots / on a shot's tick | 0 / 1 | 13 / 13 |
+| the weapon's `OnDestroy`; `GetWeaponCount()` | the death tick, after `DeathThread` starts; 0 from the next tick | when the unit is destroyed (35 ticks later); 2 |
+| a shield: the step that hits it → `OnImpact`; break / `RemoveShield` | next tick; 19 / 20 | same tick; 19 / 20 |
+
+The engine's `OnFire` and `OnGotTarget` also come a tick before retail's (12 and 2 against 13 and 3), so for now
+its projectiles are created on the same tick as retail's. The shield breaks on the same tick for another reason:
+retail found the bubble a tenth of a step beyond the end of the step, where the engine's sweep stops at the end.
+
+**P3, orders and movement.** A uel0201 standing at a cell's centre on flat ground; T = 40.
+
+| | retail | engine | engine, `--moho-pathing` |
+|---|---|---|---|
+| `IssueMove` from Lua at T: `Moving` read by Lua | T+1 | T+1 | T+2 |
+| the navigator's target: own cell centre / the goal | T+2 / T+3 | — / T+1 | T+1 / T+2 |
+| first step | **T+3** | T | T (T+1 off a cell centre) |
+| the same for a unit created by `CreateUnitHPR` in the same thread | T+3 | T | T |
+| two queued moves: queue 2 → 1 read by Lua (N: the step into the first point's cell) | N+1 | N+7 | N+2 |
+| two queued moves: the slowdown at the first point | 2 ticks, no stop | slows to a halt, turns on the spot | 1 tick |
+| `IssueClearCommands` then `IssueMove` while moving: braking / turning toward the new goal | T2 / T2+3 | T2 / T2 | T2+1 / T2+1 |
+| a factory's unit (S: `OnStopBeingBuilt`): `DetachFrom` / first turn / first move | S / S+3 / S+4 | S+1 / S+1 / S+1 | S+1 / S+1 / S+1 |
+
+From its first step on, the engine's path is retail's to within 0.001, three ticks earlier.
 
 ---
 
@@ -260,8 +317,9 @@ weapons, for every unit.
   arm on target is unchanged.
 - Test: a turret on a hull turning at a constant rate fires along its aim; without the change the error is
   the hull's turn in a tick.
-- Acceptance: the Corsair probe on top of #722 and #723 — about 756 damage a salvo and 48% within 2
-  (retail 763, 47%).
+- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every shot
+  at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a salvo
+  and 48% within 2 (retail 763, 47%).
 
 **Step 2. Motion as the unit's own step.** Orders only set intent: the navigator's goal; an aircraft's mode
 (move, attack run, circling, hover, hold height); a facing request; stop. `Unit::motion_tick()` runs one
@@ -285,13 +343,15 @@ order that set it, as Moho's does.
     picked; army 0's `OnFire` before army 1's.
   - Tests: an attack order → `OnGotTarget` on the next tick; no shot at a target in the tick it is picked;
     auto-attack moves the aircraft the same tick.
-  - Acceptance: the scout probe — `OnGotTarget` 86, `OnFire` 90.
+  - Acceptance: the scout probe — `OnGotTarget` 86, `OnFire` 90; P2 — `OnGotTarget` 3, `OnFire` 13.
+  - Lands together with 3b: alone, it would make projectiles a tick later than retail (P2).
 - **3b. Orders → Lua → entities.** All units' orders (creation order), then `resume_all`, then the entity
   walk.
   - Fixes D2, D8, D9; Lua sees an order begun, a build site created and its progress the same tick.
   - Tests: the projectile from `Main` forked by `OnFire` exists in the `OnFire` tick; an `IssueMove` from a
     Lua thread runs next tick; a thread forked by `OnStartBuild` runs the same tick.
-  - Acceptance: the Corsair probe — first rocket in the `OnFire` tick (retail 11 → 11, 90 → 90).
+  - Acceptance: the Corsair probe — first rocket in the `OnFire` tick (retail 11 → 11, 90 → 90); P2 — every
+    projectile in its `OnFire` tick; P3 — an order's callbacks on T+1.
 - **3c. Economy in the army phase.** Each army's economy, stat triggers (past tick 10) and unit-cap stats in
   the army phase; production, `ResourceConsumed`, unit storage and economy events in the unit's step;
   reclaim banked in the order phase; overflow sharing inside each army's economy.
@@ -302,11 +362,14 @@ order that set it, as Moho's does.
 **Step 4. Projectiles as Moho's.** The entity walk includes entities made during it (a projectile always
 moves on its creation tick); the impact runs at the start of the next step, with the pending position at the
 impact point; the lifetime is an absolute tick (#701's half-tick compensation goes); the display reaches the
-impact point.
+impact point. The sweep reaches a tenth of a step past each end, which P2 shows retail's does.
 - Fixes D4, D5, the projectile display, a shield's last tick after it breaks.
 - Tests: damage on the tick after the collision, at the impact point; a fragment made in `OnImpact` moves
   that tick; `SetLifetime(0.5)` from `OnLostTarget` gives 6 steps; the snapshot of the collision tick holds
   the projectile at the impact point.
+- Acceptance: P2 — `OnImpact` and damage a tick after the hit is found, `GetPosition()` in that tick the impact
+  point, fragments moving on their creation tick, the shield broken on 19 and removed on 20, the first damage to
+  the generator on 26.
 
 **Step 5. Committed transforms.** `position()`/`orientation()` return the committed transform; the motion
 step writes the pending one; the end of the tick commits (`AdvanceCoords`): collision cells, intel, the
@@ -323,9 +386,10 @@ spatial query reads the committed transform; a unit's own bones come from its po
 path budget; arrival and failure events before the order phase; `SetGoal` leaves the steering waypoint;
 `steer_ground_units` becomes the army phase's steering. For `--moho-pathing`.
 - Fixes D10.
-- Tests: a two-point move chain pauses two ticks at the first point; a path not found ends the order two
-  ticks after it is set; an `IssueMove` from Lua at tick T first steps along the path at T+3 (to be pinned by
-  probe P3 first).
+- Tests: a two-point move chain slows for two ticks at the first point without stopping; a path not found
+  ends the order two ticks after it is set; an `IssueMove` from Lua at tick T first steps along the path at T+3.
+- Acceptance: P3 as retail — the first step at T+3; a chain's queue 2 → 1 read at N+1 and the first step to the
+  next point at N+3; clear and move while moving turns at T2+3; a factory's unit first moves at S+4.
 
 **Step 7. Death and deletion.** A deletion queue: `OnDestroy` after the commit, first in first out; until
 then the entity is found by `GetEntityById`, `BeenDestroyed()` is true and `IsDestroyed()` false, and it
@@ -336,6 +400,8 @@ order (dead flag → adjacency → cargo → queue → `OnKilled` → stats → 
 - Tests: an entity destroyed by a thread is found until the end of the tick and gets `OnDestroy` after every
   step; a salvo with a muzzle delay stops at the end of the death tick; a freed cell is free from the next
   tick.
+- Acceptance: P2 — no shot after `OnKilled` when killed between shots, one when killed on a shot's tick; the
+  weapon's `OnDestroy` in the death tick, `GetWeaponCount()` 0 from the next.
 
 **Step 9. Entities in the walk.** Attached entities wait for their parent and follow it the same tick;
 shields, beams and script entities step after their owner; a prop parks without a motor and is woken to
@@ -366,7 +432,9 @@ comments about order go.
 
 Each runs the retail game with Lua hooks that log per tick, and the engine with the same hooks.
 
-- **P1 turret-turn** (step 1). A tank drives a patrol round a stationary target and fires; per shot the muzzle
+P1-P3 are measured (§4); P4-P8 are to run.
+
+- **P1 turret-turn** (step 1). A tank drives a loop of moves round a stationary target and fires; per shot the muzzle
   and aim bone directions, the projectile's velocity, the hull heading this tick and last. Expected: the
   angle between the muzzle and the target does not grow with the hull's turn rate.
 - **P2 shell-timing** (steps 3b, 4, 7). A stationary turret fires at a stationary target: the ticks of
