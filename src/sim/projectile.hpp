@@ -109,6 +109,9 @@ public:
     u32 impact_entity_id = 0;
     std::string impact_kind;
     bool impact_waiting() const { return impact_interpolation >= 0.0f; }
+    Vector3 launch_position;
+    Quaternion launch_orientation;
+    u32 launch_tick = 0;
     /// Below the water's surface: crossing it raises OnEnterWater/OnExitWater.
     bool in_water = false;
     /// Risen above its DetonateBelowHeight: it bursts on coming back down.

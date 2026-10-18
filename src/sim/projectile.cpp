@@ -81,6 +81,11 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
         on_impact(L, hit && !hit->destroyed() ? hit : nullptr, registry, terrain, type.c_str());
         return;
     }
+    if (launch_tick == 0) {
+        launch_tick = tick;
+        launch_position = position();
+        launch_orientation = orientation();
+    }
 
     // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
     // faces. One that doesn't track falls (Moho runs the ballistic step only

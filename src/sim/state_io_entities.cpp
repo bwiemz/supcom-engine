@@ -1933,7 +1933,8 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.in_water);
     w.b(p.burst_armed);
     save_ids(w, p.passed);
-    // info_: the sim's blueprint info, by blueprint (load_sim_state)
+    // info_: the sim's blueprint info, by blueprint (load_sim_state); launch_position,
+    // launch_orientation, launch_tick: the display's, for the frame of its first step
 }
 
 void StateIO::load(StateReader& r, Projectile& p) {
