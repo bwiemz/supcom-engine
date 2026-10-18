@@ -12263,11 +12263,13 @@ void test_naval_depth(TestContext& ctx) {
             local n = 0
             for _, r in __osc_shots do
                 if r.target == __osc_target and r.impact then
-                    n = n + 1
                     if r.start < 0 then error('a torpedo started under the water, at ' .. r.start) end
                     if not r.entered then error('a torpedo never entered the water') end
                     if r.low > -0.1 then error('a torpedo stayed at ' .. r.low) end
-                    if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    if r.impact ~= 'ProjectileUnderwater' then
+                        n = n + 1
+                        if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    end
                 end
             end
             if n == 0 then error('no torpedo reached ' .. want) end

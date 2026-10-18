@@ -166,7 +166,10 @@ static int proj_SetVelocity(lua_State* L) {
 
 static int proj_SetLifetime(lua_State* L) {
     auto* p = check_projectile(L);
-    if (p) p->lifetime = static_cast<f32>(luaL_checknumber(L, 2));
+    if (p) {
+        const auto* sim = get_sim(L);
+        p->set_lifetime(static_cast<f32>(luaL_checknumber(L, 2)), sim ? sim->tick_count() : 0);
+    }
     lua_pushvalue(L, 1);
     return 1;
 }

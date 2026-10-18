@@ -45,7 +45,7 @@ Projectile* add_shot(EntityRegistry& reg, const Vector3& at, const Vector3& velo
     p->set_orientation(osc::sim::coords_orient(velocity));
     p->collide_surface = false;
     p->collide_entity = false;
-    p->lifetime = 100;
+    p->set_lifetime(100.0f, 0);
     return static_cast<Projectile*>(reg.find(reg.register_entity(std::move(p))));
 }
 
@@ -107,9 +107,9 @@ TEST_CASE("A shot lives to the tick nearest its lifetime, moves on it, and burst
         INFO(lifetime);
         EntityRegistry reg;
         Projectile* shot = add_shot(reg, {0, 10, 0}, {0, 0, 10});
-        shot->lifetime = lifetime;
-        for (int i = 0; i < 10 && !shot->destroyed(); ++i) {
-            shot->update(0.1, reg, nullptr);
+        shot->set_lifetime(lifetime, 1);
+        for (u32 tick = 1; tick <= 10 && !shot->destroyed(); ++tick) {
+            shot->update(0.1, reg, nullptr, nullptr, tick);
         }
         REQUIRE(shot->destroyed());
         CHECK(shot->position().z == Approx(moves));

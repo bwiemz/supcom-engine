@@ -167,6 +167,10 @@ public:
     void set_sim_random(SimRandom* r) { sim_random_ = r ? r : &default_random_; }
     SimRandom& sim_random() { return *sim_random_; }
 
+    void set_tick_source(const u32* tick) { tick_ = tick; }
+    u32 tick() const { return tick_ ? *tick_ : 0; }
+    u32 next_id() const { return next_id_; }
+
 private:
     /// Every live entity at its id (ids start at 1 and only grow), so a
     /// lookup is an index, not a hash; a removed entity leaves null.
@@ -199,6 +203,7 @@ private:
 
     SimRandom default_random_;
     SimRandom* sim_random_ = &default_random_;
+    const u32* tick_ = nullptr;
 
     // Spatial hash grid
     bool grid_initialized_ = false;

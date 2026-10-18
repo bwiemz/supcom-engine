@@ -48,15 +48,19 @@ static void push_vec3(lua_State* L, const Vector3& v) {
     lua_settable(L, -3);
 }
 
+void Projectile::set_lifetime(f32 seconds, u32 now) {
+    lifetime_end = now + static_cast<u32>(std::llrintf(seconds * 10.0f));
+}
+
 void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const map::Terrain* terrain,
                         u32 tick) {
-    if (destroyed()) return;
+    if (destroyed()) {
+        return;
+    }
 
-    // Tick lifetime
-    lifetime -= static_cast<f32>(dt);
     if (impacted) {
         // Lingering for its ImpactTimeout, it just goes.
-        if (lifetime <= 0) {
+        if (tick >= lifetime_end) {
             mark_destroyed();
             // The unregister hook nulls the Lua table's _c_object and releases
             // its ref; releasing the ref here first left scripts holding a
@@ -64,6 +68,17 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
             // Lua after they expire).
             registry.unregister_entity(entity_id());
         }
+        return;
+    }
+
+    // Moho's MotionTick: a hit its last step found impacts now, in place of a step.
+    if (impact_waiting()) {
+        Entity* hit = impact_entity_id != 0 ? registry.find(impact_entity_id) : nullptr;
+        const std::string type = impact_kind;
+        impact_interpolation = -1.0f;
+        impact_entity_id = 0;
+        impact_kind.clear();
+        on_impact(L, hit && !hit->destroyed() ? hit : nullptr, registry, terrain, type.c_str());
         return;
     }
 
@@ -168,18 +183,17 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
         if (detonate_below_height > 0 && height > detonate_below_height) burst_armed = true;
         if ((detonate_above_height > 0 && height >= detonate_above_height) ||
             (burst_armed && height <= detonate_below_height)) {
-            on_impact(L, nullptr, registry, terrain, "Air");
+            record_impact(pos, 1.0f, nullptr, "Air", terrain);
             return;
         }
     }
 
     // Its time up, it bursts where this tick's move took it, an 'Air' (or
     // 'Underwater') impact: Moho's MotionTick tests the lifetime after
-    // CheckCollision. Moho ends it on the tick nearest its lifetime, having
-    // moved on the tick it was made; here that is half a tick past it.
-    if (lifetime < -0.5f * step) {
+    // CheckCollision.
+    if (tick >= lifetime_end) {
         const bool under = terrain && terrain->has_water() && pos.y < terrain->water_elevation();
-        on_impact(L, nullptr, registry, terrain, under ? "Underwater" : "Air");
+        record_impact(pos, 1.0f, nullptr, under ? "Underwater" : "Air", terrain);
     }
 }
 
@@ -361,10 +375,18 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
         }
     }
 
-    // What it meets on the way, nearest first.
+    // What it meets on the way, nearest first. Retail's CheckCollision sweeps a tenth of the step
+    // past each end (0.1 at 0x00E4F714) and measures the hit from the swept line's start.
     if (collide_entity) {
+        constexpr f32 kSweepBeyond = 0.1f;
+        constexpr f32 kSweepLength = 1.0f + 2.0f * kSweepBeyond;
+        const Vector3 d{to.x - from.x, to.y - from.y, to.z - from.z};
+        const Vector3 start{from.x - d.x * kSweepBeyond, from.y - d.y * kSweepBeyond,
+                            from.z - d.z * kSweepBeyond};
+        const Vector3 end{to.x + d.x * kSweepBeyond, to.y + d.y * kSweepBeyond,
+                          to.z + d.z * kSweepBeyond};
         std::vector<u32> candidates;
-        registry.collect_colliders(from.x, from.z, to.x, to.z, candidates);
+        registry.collect_colliders(start.x, start.z, end.x, end.z, candidates);
         std::vector<std::pair<f32, u32>> hits;
         for (const u32 id : candidates) {
             if (id == entity_id() || id == launcher_id) continue;
@@ -378,8 +400,10 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
             }
             // A shield stops what comes in, not what goes out.
             const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(),
-                                          from, to, !e->is_shield());
-            if (t && *t < surface_t) hits.emplace_back(*t, id);
+                                          start, end, !e->is_shield());
+            if (t && *t * kSweepLength < surface_t) {
+                hits.emplace_back(*t, id);
+            }
         }
         std::sort(hits.begin(), hits.end());
         for (const auto& [t, id] : hits) {
@@ -393,19 +417,29 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
             if (!registry.find(entity_id()) || destroyed()) return true;
             e = registry.find(id);
             if (!e || e->destroyed()) continue;
-            set_position(lerp(from, to, t));
-            on_impact(L, e, registry, terrain);
+            record_impact(lerp(start, end, t), t * kSweepLength, e, nullptr, terrain);
             return true;
         }
         if (!registry.find(entity_id()) || destroyed()) return true;
     }
 
-    if (surface_t > 1.0f) return false;
+    if (surface_t > 1.0f) {
+        return false;
+    }
     Vector3 at = lerp(from, to, surface_t);
-    if (surface_type && terrain) at.y = terrain->water_elevation(); // on the surface
-    set_position(at);
-    on_impact(L, nullptr, registry, terrain, surface_type);
+    if (surface_type && terrain) {
+        at.y = terrain->water_elevation();
+    }
+    record_impact(at, surface_t, nullptr, surface_type, terrain);
     return true;
+}
+
+void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
+                               const char* type, const map::Terrain* terrain) {
+    set_position(at);
+    impact_interpolation = interpolation;
+    impact_entity_id = hit ? hit->entity_id() : 0;
+    impact_kind = type ? type : impact_type(hit, terrain);
 }
 
 bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other) {

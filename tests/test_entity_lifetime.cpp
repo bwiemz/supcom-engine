@@ -206,7 +206,7 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     SimState sim(L, nullptr);
 
     auto p = std::make_unique<osc::sim::Projectile>();
-    p->lifetime = 0.04f;
+    p->set_lifetime(0.04f, 0);
     auto* raw = p.get();
     const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
     lua_newtable(L);
@@ -218,6 +218,7 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     raw->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
 
     raw->update(0.1, sim.entity_registry(), L, nullptr); // lifetime runs out
+    raw->update(0.1, sim.entity_registry(), L, nullptr);
     REQUIRE(sim.entity_registry().find(id) == nullptr);
 
     sim.tick(); // freed at the tick's end, its handle cut first

@@ -204,6 +204,9 @@ TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
     Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 60}, shooter);
     shot->update(0.1, reg, nullptr);
     // It met the nearer box's face at z = 103.
+    CHECK_FALSE(shot->destroyed());
+    CHECK(shot->position().z == Approx(103.0f));
+    shot->update(0.1, reg, nullptr);
     CHECK(shot->destroyed());
     CHECK(shot->position().z == Approx(103.0f));
 }
@@ -232,6 +235,7 @@ TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
     CHECK_FALSE(out->destroyed());
 
     Projectile* in = add_shot(reg, {100, 1, 115}, {0, 0, -80});
+    in->update(0.1, reg, nullptr);
     in->update(0.1, reg, nullptr);
     CHECK(in->destroyed());
     CHECK(in->position().z == Approx(100.0f + std::sqrt(100.0f - 1.0f)).margin(1e-3));
@@ -500,34 +504,34 @@ TEST_CASE("a shot whose projectile gives no Lifetime lives Moho's 15 seconds", "
     const auto lifetime = [&](osc::sim::Weapon& w) {
         const Projectile* p = w.launch(owner, {0, 20, 0}, nullptr, reg, lua.raw(), false);
         REQUIRE(p);
-        return p->lifetime;
+        return p->lifetime_end;
     };
     osc::sim::Weapon gun;
     gun.muzzle_velocity = 20;
     gun.max_range = 40;
     gun.projectile_bp_id = "bare";
-    CHECK(lifetime(gun) == 15.0f);
+    CHECK(lifetime(gun) == 150);
     osc::sim::Weapon bomb;
     bomb.need_compute_bomb_drop = true;
     bomb.projectile_bp_id = "bare";
-    CHECK(lifetime(bomb) == 15.0f);
+    CHECK(lifetime(bomb) == 150);
     osc::sim::Weapon silo;
     silo.counted_projectile = true;
     silo.projectile_bp_id = "bare";
-    CHECK(lifetime(silo) == 15.0f);
+    CHECK(lifetime(silo) == 150);
 
     gun.projectile_bp_id = "spread";
-    f32 low = 1e9f;
-    f32 high = -1e9f;
+    u32 low = 1000;
+    u32 high = 0;
     for (int i = 0; i < 200; ++i) {
-        const f32 t = lifetime(gun);
+        const u32 t = lifetime(gun);
         low = std::min(low, t);
         high = std::max(high, t);
     }
-    CHECK(low >= 13.0f);
-    CHECK(low < 13.5f);
-    CHECK(high > 16.5f);
-    CHECK(high <= 17.0f);
+    CHECK(low >= 130);
+    CHECK(low < 135);
+    CHECK(high > 165);
+    CHECK(high <= 170);
 }
 
 TEST_CASE("a projectile blueprint's LifeTime is not its Lifetime", "[collision]") {
@@ -542,7 +546,7 @@ TEST_CASE("a projectile blueprint's LifeTime is not its Lifetime", "[collision]"
     w.projectile_bp_id = "typo";
     const Projectile* p = w.launch(owner, {0, 0, 0}, nullptr, reg, lua.raw(), false);
     REQUIRE(p);
-    CHECK(p->lifetime == 15.0f);
+    CHECK(p->lifetime_end == 150);
 }
 
 TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision]") {
@@ -554,17 +558,17 @@ TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision
     w.max_range = 40;
     const Projectile* plain = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
     REQUIRE(plain);
-    CHECK(plain->lifetime == 15.0f);
+    CHECK(plain->lifetime_end == 150);
     // ProjectileLifetime sets it.
     w.projectile_lifetime = 7;
     const Projectile* timed = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
     REQUIRE(timed);
-    CHECK(timed->lifetime == Approx(7.0f));
+    CHECK(timed->lifetime_end == 70);
     // The multiplier wins: 1.15 x 40 / 20.
     w.projectile_lifetime_multiplier = 1.15f;
     const Projectile* scaled = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
     REQUIRE(scaled);
-    CHECK(scaled->lifetime == Approx(1.15f * 40.0f / 20.0f));
+    CHECK(scaled->lifetime_end == 23);
 }
 
 TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {

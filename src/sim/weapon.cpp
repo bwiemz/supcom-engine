@@ -1049,7 +1049,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics =
         proj->apply_blueprint_physics(L, &registry.sim_random());
-    proj->lifetime = physics.lifetime;
+    proj->set_lifetime(physics.lifetime, registry.tick());
     if (physics.realistic_ordinance) {
         // A bomb (RealisticOrdinance) leaves with its launcher's speed,
         // aimed flat from the launcher at its target -- or where a moving
@@ -1072,9 +1072,12 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     }
     // The weapon's own lifetime for its shots wins (an anti-torpedo's
     // blueprint says half a second, its weapon four).
-    if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0)
-        proj->lifetime = projectile_lifetime_multiplier * max_range / muzzle_velocity;
-    else if (projectile_lifetime > 0) proj->lifetime = projectile_lifetime;
+    if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0) {
+        proj->set_lifetime(projectile_lifetime_multiplier * max_range / muzzle_velocity,
+                           registry.tick());
+    } else if (projectile_lifetime > 0) {
+        proj->set_lifetime(projectile_lifetime, registry.tick());
+    }
     if (counted_projectile) {
         // Facing along its muzzle, even at rest: it accelerates that way.
         const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);

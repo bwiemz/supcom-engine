@@ -1903,7 +1903,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.f32v(p.damage_amount);
     w.f32v(p.damage_radius);
     w.str(p.damage_type);
-    w.f32v(p.lifetime);
+    w.u32v(p.lifetime_end);
     w.f32v(p.max_speed);
     w.f32v(p.acceleration);
     w.f32v(p.ballistic_accel);
@@ -1927,6 +1927,9 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.collide_entity);
     w.b(p.stay_underwater);
     w.b(p.impacted);
+    w.f32v(p.impact_interpolation);
+    w.u32v(p.impact_entity_id);
+    w.str(p.impact_kind);
     w.b(p.in_water);
     w.b(p.burst_armed);
     save_ids(w, p.passed);
@@ -1950,7 +1953,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.damage_amount = r.f32v();
     p.damage_radius = r.f32v();
     p.damage_type = r.str();
-    p.lifetime = r.f32v();
+    p.lifetime_end = r.u32v();
     p.max_speed = r.f32v();
     p.acceleration = r.f32v();
     p.ballistic_accel = r.f32v();
@@ -1974,6 +1977,9 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.collide_entity = r.b();
     p.stay_underwater = r.b();
     p.impacted = r.b();
+    p.impact_interpolation = r.f32v();
+    p.impact_entity_id = r.u32v();
+    p.impact_kind = r.str();
     p.in_water = r.b();
     p.burst_armed = r.b();
     p.passed = load_ids(r);

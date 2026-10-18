@@ -65,7 +65,9 @@ public:
     f32 damage_amount = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
-    f32 lifetime = DEFAULT_LIFETIME;
+    /// Moho's mLifetimeEnd: it fuzes after its step on this tick.
+    u32 lifetime_end = static_cast<u32>(DEFAULT_LIFETIME * 10.0f);
+    void set_lifetime(f32 seconds, u32 now);
 
     // Physics (set by Lua via SetMaxSpeed/SetAcceleration/etc.)
     f32 max_speed = 0;           // 0 = unlimited
@@ -102,6 +104,11 @@ public:
     /// It hit something: it no longer moves or collides, and its script plays
     /// the rest out (a projectile with an ImpactTimeout lingers for it).
     bool impacted = false;
+    /// Moho's mImpactInterpolation (negative: none), mCollidedEntity and mImpactType.
+    f32 impact_interpolation = -1.0f;
+    u32 impact_entity_id = 0;
+    std::string impact_kind;
+    bool impact_waiting() const { return impact_interpolation >= 0.0f; }
     /// Below the water's surface: crossing it raises OnEnterWater/OnExitWater.
     bool in_water = false;
     /// Risen above its DetonateBelowHeight: it bursts on coming back down.
@@ -156,9 +163,11 @@ private:
     /// (the engine-fired silo and OverCharge shots).
     void deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry);
     /// This tick's path, `from` to where it is now, against what it can hit:
-    /// true if it impacted (it may be gone).
+    /// true if it hit something (it may be gone).
     bool collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
                  const map::Terrain* terrain);
+    void record_impact(const Vector3& at, f32 interpolation, const Entity* hit, const char* type,
+                       const map::Terrain* terrain);
     /// Whether its script and `other`'s both let them meet
     /// (OnCollisionCheck, each given the other).
     bool collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other);
