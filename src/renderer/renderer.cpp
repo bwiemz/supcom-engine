@@ -2368,11 +2368,11 @@ void Renderer::record_cartographic_main(u32 fi, const std::array<f32, 16>& vp) {
     // suppressTLight 1), which draws the light particles alone (no beams,
     // no trails)
     particle_renderer_.render(cmd_, view_area_, vp.data(), false, fi, true);
-    // RenUI and the world view's own drawing: the order lines, selection,
+    // RenUI's selection, then the world view's own drawing: the order lines,
     // the resource, strategic (on at every zoom) and projectile icons, FAF's
     // world drawing
-    command_graph_renderer_.render(cmd_, view_area_, vp.data(), fi);
     selection_renderer_.render(cmd_, view_area_, vp.data(), fi);
+    command_graph_renderer_.render(cmd_, view_area_, vp.data(), fi);
     record_view_drawing(cmd_, fi, vp);
 }
 
@@ -3682,6 +3682,8 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
     // The playable area's boundary (RenderPlayableBoundary), after the water
     // and before the meshes Moho draws after it
     boundary_renderer_.render(cmd_, view_area_, vp.data());
+    // And RenUI's selection after it
+    selection_renderer_.render(cmd_, view_area_, vp.data(), fi);
     // The meshes Moho draws after the water (M213b), which writes no depth:
     // over it, unrefracted (on a dry map, in the same place)
     draw_meshes(cmd_, fi, vp, MeshPass::AfterWater);
@@ -3700,7 +3702,6 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
     vision_renderer_.render(cmd_, view_area_, vp.data(), fi);
     // The order lines and waypoints, over the world (TCommand)
     command_graph_renderer_.render(cmd_, view_area_, vp.data(), fi);
-    selection_renderer_.render(cmd_, view_area_, vp.data(), fi);
 
     // 5c. FA's refracting particles (M214d), as WRenViewport's
     // RenderRefractingEffects draws them: last, over a copy of the finished

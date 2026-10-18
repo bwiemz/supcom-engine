@@ -12,7 +12,7 @@ namespace osc::renderer {
 
 void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
                           VkDescriptorSetLayout texture_ds_layout, u32 max_quads, const char* name,
-                          bool depth_test) {
+                          bool depth) {
     max_quads_ = max_quads;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo buf_ci{};
@@ -42,7 +42,9 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
 
     // primbatcher.fx's CommandPS is the beam's: texture × colour
     VkShaderModule vert = compile_glsl(device, shaders::beam_vert, "world_quad_vert", true);
-    VkShaderModule frag = compile_glsl(device, shaders::beam_frag, "world_quad_frag", false);
+    VkShaderModule frag =
+        compile_glsl(device, depth ? shaders::prim_alpha_test_frag : shaders::beam_frag,
+                     "world_quad_frag", false);
     if (!vert || !frag) {
         spdlog::error("{}: shader compilation failed", name);
         if (vert) {
@@ -90,12 +92,12 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     // Depth_TCommand: no depth test, so no ground or unit hides a quad;
-    // with one, gal's LessEqual (faf-re PipelineStateD3D9::BeginTechnique)
-    VkPipelineDepthStencilStateCreateInfo depth{};
-    depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth.depthTestEnable = depth_test ? VK_TRUE : VK_FALSE;
-    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    depth.depthWriteEnable = VK_FALSE;
+    // with depth, gal's LessEqual and writes (faf-re PipelineStateD3D9::BeginTechnique)
+    VkPipelineDepthStencilStateCreateInfo depth_state{};
+    depth_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_state.depthTestEnable = depth ? VK_TRUE : VK_FALSE;
+    depth_state.depthWriteEnable = depth ? VK_TRUE : VK_FALSE;
+    depth_state.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -130,7 +132,7 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
     ci.pViewportState = &vp;
     ci.pRasterizationState = &raster;
     ci.pMultisampleState = &ms;
-    ci.pDepthStencilState = &depth;
+    ci.pDepthStencilState = &depth_state;
     ci.pColorBlendState = &blend;
     ci.pDynamicState = &dyn;
     ci.layout = layout_;

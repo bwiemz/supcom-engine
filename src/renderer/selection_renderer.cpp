@@ -91,7 +91,7 @@ std::array<std::array<Vector3, 4>, 4> bracket_quads(const SelectionBox& box, f32
 void SelectionRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
                              VkDescriptorSetLayout texture_ds_layout) {
     batch_.init(device, allocator, render_pass, texture_ds_layout, MAX_QUADS, "SelectionRenderer",
-                /*depth_test=*/true);
+                /*depth=*/true);
     drag_batch_.init(device, allocator, render_pass, texture_ds_layout, 1, "SelectionDragBox");
 }
 
