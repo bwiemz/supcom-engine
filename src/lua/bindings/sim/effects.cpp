@@ -292,7 +292,6 @@ static int collision_beam_init(lua_State* L) {
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, ent);
     lua_rawset(L, 1);
-    sim->track_collision_beam(id);
 
     spdlog::debug("CollisionBeamEntity.__init: entity #{} army={} launcher={}",
                   id, army, launcher_id);
@@ -388,8 +387,10 @@ static int collision_beam_SetBeamFx(lua_State* L) {
     // arg3 = checkCollision: a continuous beam checks at once, and the next
     // check comes its interval + 1 ticks later.
     if (lua_toboolean(L, 3) && ent->beam_enabled()) {
-        if (auto* sim = get_sim(L))
-            sim::check_collision_beam(*sim, L, ent->entity_id(), /*before_pass=*/true);
+        if (auto* sim = get_sim(L)) {
+            sim::check_collision_beam(*sim, L, ent->entity_id(),
+                                      ent->stepped_tick() != sim->tick_count());
+        }
     }
     return 0;
 }

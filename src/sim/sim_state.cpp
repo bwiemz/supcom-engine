@@ -551,54 +551,157 @@ void SimState::clean_up_platoons() {
     }
 }
 
-void SimState::follow_attachments() {
-    // The parent's pose is read during the walk and applied after it: a
-    // chain (A on B on C) then lags one tick per link whatever the
-    // registry's iteration order, as lockstep needs.
-    //
-    // A child jumps (Entity::note_snap) on its first follow -- attaching is
-    // a jump onto the parent -- and whenever its parent has jumped since, so
-    // the renderer pops attachments along with a teleport, link by link.
-    struct Move {
-        Entity* child;
-        Vector3 pos;
-        Quaternion orient;
-        u32 parent_snap;
-        bool snap;
-    };
-    std::vector<Move> moves;
-    entity_registry_.for_each([&](const Entity& e) {
-        if (e.parent_entity_id() == 0 || e.destroyed()) return;
-        const Entity* parent = entity_registry_.find(e.parent_entity_id());
-        if (!parent || parent->destroyed()) return;
-        // Moho's CalculateAttachedTransform (M211k): the parent bone's world
-        // transform (a unit's bone -1 is its centre; another entity's, its
-        // own), then the child's parent offset in that bone's frame. The
-        // child's own bone is taken as its origin, which is exact for the
-        // shields and script entities that have no blueprint.
-        const BonePose bone =
-            parent->is_unit()
-                ? static_cast<const Unit*>(parent)->bone_world_transform(e.parent_bone())
-                : BonePose{parent->position(), parent->orientation()};
-        const BonePose at = pose_compose(bone, {e.parent_offset(), Quaternion{}});
-        const Vector3& p = at.position;
-        const Quaternion& q = at.rotation;
-        const Vector3& c = e.pending_position();
-        const Quaternion& o = e.pending_orientation();
-        const bool snap = e.followed_parent_snap() != parent->snap_serial();
-        if (snap || c.x != p.x || c.y != p.y || c.z != p.z || o.x != q.x || o.y != q.y ||
-            o.z != q.z || o.w != q.w)
-            moves.push_back({const_cast<Entity*>(&e), p, q, parent->snap_serial(), snap});
-    });
-    // Applied after the walk: set_position updates the spatial grid.
-    for (const auto& m : moves) {
-        m.child->set_position(m.pos);
-        m.child->set_orientation(m.orient);
-        if (m.snap) {
-            m.child->note_snap();
-            m.child->set_followed_parent_snap(m.parent_snap);
+Entity* SimState::attach_parent(const Entity& e) const {
+    u32 id = e.parent_entity_id();
+    if (e.is_collision_beam()) {
+        id = e.beam_launcher_id();
+    } else if (e.is_unit() && static_cast<const Unit&>(e).transport_id() != 0) {
+        id = static_cast<const Unit&>(e).transport_id();
+    }
+    return id != 0 ? entity_registry_.find(id) : nullptr;
+}
+
+void SimState::follow_parent(Entity& e, const Entity& parent) {
+    if (e.is_unit() && static_cast<const Unit&>(e).transport_id() != 0) {
+        if (parent.is_unit()) {
+            static_cast<Unit&>(e).hang_from(static_cast<const Unit&>(parent));
+        }
+        return;
+    }
+    // Moho's CalculateAttachedTransform (M211k), the child's own bone taken as its origin; another
+    // entity's bone is on its committed transform (Entity::GetBoneWorldTransform).
+    const BonePose bone =
+        parent.is_unit() ? static_cast<const Unit&>(parent).bone_world_transform(e.parent_bone())
+                         : BonePose{parent.position(), parent.orientation()};
+    const BonePose at = pose_compose(bone, {e.parent_offset(), Quaternion{}});
+    e.set_position(at.position);
+    e.set_orientation(at.rotation);
+    // Attaching is a jump, and so is following a parent that jumped since: the renderer pops it.
+    if (e.followed_parent_snap() != parent.snap_serial()) {
+        e.note_snap();
+        e.set_followed_parent_snap(parent.snap_serial());
+    }
+}
+
+void SimState::refollow_attached() {
+    for (const Followed& f : followed_) {
+        Entity* e = entity_registry_.find(f.id);
+        const Entity* parent = entity_registry_.find(f.parent);
+        if (!e || !parent || attach_parent(*e) != parent) {
+            continue;
+        }
+        const Vector3& p = parent->pending_position();
+        const Quaternion& q = parent->pending_orientation();
+        if (p.x == f.at.x && p.y == f.at.y && p.z == f.at.z && q.x == f.facing.x &&
+            q.y == f.facing.y && q.z == f.facing.z && q.w == f.facing.w) {
+            continue;
+        }
+        if (e->is_collision_beam()) {
+            repose_collision_beam(entity_registry_, *e);
+        } else {
+            follow_parent(*e, *parent);
         }
     }
+}
+
+void SimState::crash_impact(Unit& unit) {
+    if (unit.destroyed()) {
+        return;
+    }
+    const u32 id = unit.entity_id();
+    if (!L_ || unit.lua_table_ref() < 0) {
+        entity_registry_.destroy(unit);
+        return;
+    }
+    const Vector3 p = unit.pending_position();
+    const bool water = terrain_ && terrain_->has_water() &&
+                       terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
+    // On the ground it is a land unit now: its wreck follows the
+    // blueprint's WreckageLayers.Land.
+    if (!water) {
+        unit.set_layer_with_callback("Land", L_);
+    }
+    Entity* e = entity_registry_.find(id);
+    if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L_);
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+    lua_pushstring(L_, "OnImpact");
+    lua_gettable(L_, -2);
+    bool handled = false;
+    if (lua_isfunction(L_, -1)) {
+        lua_pushvalue(L_, top + 1);
+        lua_pushstring(L_, water ? "Water" : "Terrain");
+        lua_pushnil(L_);
+        if (lua_pcall(L_, 3, 0, 0) == 0) {
+            handled = true;
+        } else {
+            const char* err = lua_tostring(L_, -1);
+            const std::string message = std::string("OnImpact error: ") + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) {
+                test_status::record_failure(message);
+            }
+        }
+    }
+    lua_settop(L_, top);
+    // Nothing will play this death out (no OnImpact, or it broke):
+    // finish it, as Kill does when OnKilled fails, rather than leave
+    // a dead unit lying there forever.
+    e = entity_registry_.find(id);
+    if (handled || !e || e->destroyed()) {
+        return;
+    }
+    if (e->lua_table_ref() >= 0) {
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_pushstring(L_, "Destroy");
+        lua_gettable(L_, -2);
+        if (lua_isfunction(L_, -1)) {
+            lua_pushvalue(L_, top + 1);
+            if (lua_pcall(L_, 1, 0, 0) != 0) {
+                spdlog::warn("Destroy error: {}", lua_tostring(L_, -1));
+            }
+        }
+        lua_settop(L_, top);
+    }
+    e = entity_registry_.find(id);
+    if (e && !e->destroyed()) {
+        entity_registry_.destroy(*e);
+    }
+}
+
+Entity::Walk SimState::step_entity(Entity& e, bool attached, SimContext& ctx) {
+    if (e.is_unit()) {
+        auto& unit = static_cast<Unit&>(e);
+        collide_with_props(unit, entity_registry_, L_, tick_count());
+        unit.update(SECONDS_PER_TICK, ctx);
+        unit.note_queue_head();
+        return Entity::Walk::Stepping;
+    }
+    if (e.is_projectile()) {
+        static_cast<Projectile&>(e).update(SECONDS_PER_TICK, entity_registry_, L_, terrain_.get(),
+                                           tick_count());
+        return Entity::Walk::Stepping;
+    }
+    if (e.is_collision_beam()) {
+        return step_collision_beam(*this, L_, e) ? Entity::Walk::Stepping : Entity::Walk::Done;
+    }
+    // Moho's Entity::MotionTick.
+    if (attached) {
+        return Entity::Walk::Stepping;
+    }
+    if (!e.is_prop() || !static_cast<const Prop&>(e).has_motor()) {
+        return Entity::Walk::Parked;
+    }
+    auto& prop = static_cast<Prop&>(e);
+    prop.step_fall(terrain_.get());
+    if (prop.sink_rate != 0) {
+        Vector3 p = prop.pending_position();
+        p.y += prop.sink_rate * static_cast<f32>(SECONDS_PER_TICK);
+        prop.set_position(p);
+    }
+    return Entity::Walk::Stepping;
 }
 
 VictoryMode parse_victory_mode(const std::string& value) {
@@ -1782,82 +1885,11 @@ void SimState::tick() {
 
     update_entities();
     count_held_storage();
-    // Beams reach from where their muzzles have moved to (M206c).
-    update_collision_beams(*this, L_);
     sweep_ferry_beacons();
-
-    // Aircraft killed in flight that landed this tick: Moho tells their
-    // script, whose OnImpact deals the DeathImpact weapon's damage and plays
-    // the death out (or sinks it, in water). One without a script just goes.
-    {
-        std::vector<u32> landed;
-        entity_registry_.for_each_unit([&](Entity& e) {
-            if (!e.destroyed() && static_cast<Unit&>(e).take_crash_impact())
-                landed.push_back(e.entity_id());
-        });
-        for (const u32 id : landed) {
-            Entity* e = entity_registry_.find(id);
-            if (!e || e->destroyed()) continue;
-            if (!L_ || e->lua_table_ref() < 0) {
-                entity_registry_.destroy(*e);
-                continue;
-            }
-            const Vector3 p = e->pending_position();
-            const bool water = terrain_ && terrain_->has_water() &&
-                               terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
-            // On the ground it is a land unit now: its wreck follows the
-            // blueprint's WreckageLayers.Land.
-            if (!water) {
-                static_cast<Unit*>(e)->set_layer_with_callback("Land", L_);
-                e = entity_registry_.find(id);
-                if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-            }
-            const int top = lua_gettop(L_);
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
-            lua_pushstring(L_, "OnImpact");
-            lua_gettable(L_, -2);
-            bool handled = false;
-            if (lua_isfunction(L_, -1)) {
-                lua_pushvalue(L_, top + 1);
-                lua_pushstring(L_, water ? "Water" : "Terrain");
-                lua_pushnil(L_);
-                if (lua_pcall(L_, 3, 0, 0) == 0) {
-                    handled = true;
-                } else {
-                    const char* err = lua_tostring(L_, -1);
-                    const std::string message =
-                        std::string("OnImpact error: ") + (err ? err : "(unknown)");
-                    spdlog::warn("{}", message);
-                    if (test_status::count_lua_failures()) test_status::record_failure(message);
-                }
-            }
-            lua_settop(L_, top);
-            // Nothing will play this death out (no OnImpact, or it broke):
-            // finish it, as Kill does when OnKilled fails, rather than leave
-            // a dead unit lying there forever.
-            e = entity_registry_.find(id);
-            if (!handled && e && !e->destroyed()) {
-                if (e->lua_table_ref() >= 0) {
-                    lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
-                    lua_pushstring(L_, "Destroy");
-                    lua_gettable(L_, -2);
-                    if (lua_isfunction(L_, -1)) {
-                        lua_pushvalue(L_, top + 1);
-                        if (lua_pcall(L_, 1, 0, 0) != 0)
-                            spdlog::warn("Destroy error: {}", lua_tostring(L_, -1));
-                    }
-                    lua_settop(L_, top);
-                }
-                e = entity_registry_.find(id);
-                if (e && !e->destroyed()) {
-                    entity_registry_.destroy(*e);
-                }
-            }
-        }
-    }
 
     // "No Rush": pin units that strayed beyond their confinement radius.
     enforce_no_rush();
+    refollow_attached();
 
     update_visibility();
     update_decal_sight();
@@ -1865,8 +1897,6 @@ void SimState::tick() {
 
     // --- Victory-condition enforcement (mode + team aware) ---
     update_victory();
-
-    follow_attachments();
 
     // A headless run has no frames, so the sim tick is its sound clock.
     if (sound_manager_ && sound_manager_->sim_clocked()) {
@@ -2309,13 +2339,6 @@ void SimState::tick_unit_orders() {
 
 void SimState::update_entities() {
     PROFILE_ZONE("Sim::entities");
-    std::vector<u32> ids;
-    ids.reserve(entity_registry_.count());
-    entity_registry_.for_each([&](Entity& e) {
-        ids.push_back(e.entity_id());
-    });
-    const u32 made_during = entity_registry_.next_id();
-
     SimContext ctx = sim_context();
 
     stepping_events_.clear();
@@ -2335,37 +2358,52 @@ void SimState::update_entities() {
         steer_ground_units(*this);
     }
 
-    const auto step = [&](u32 id) {
-        auto* e = entity_registry_.find(id);
-        if (!e) {
-            return;
+    followed_.clear();
+    std::vector<u32>& walk = entity_registry_.walk();
+    std::vector<u32> walked;
+    walked.reserve(walk.size());
+    std::unordered_map<u32, size_t> put_back;
+    size_t last_step = 0;
+    for (size_t i = 0; i < walk.size(); ++i) {
+        const u32 id = walk[i];
+        Entity* e = entity_registry_.find(id);
+        if (!e || e->walk() != Entity::Walk::Stepping) {
+            continue;
         }
         e->tick_scroller();
-        if (e->is_unit()) {
-            collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
-            static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
-            static_cast<Unit*>(e)->note_queue_head();
-        } else if (e->is_projectile()) {
-            static_cast<Projectile*>(e)->update(SECONDS_PER_TICK, entity_registry_, L_,
-                                                terrain_.get(), tick_count());
-        } else if (e->is_prop()) {
-            // A fallen tree sinking away (SinkAway) before its script destroys it.
-            auto* prop = static_cast<Prop*>(e);
-            prop->step_fall(terrain_.get());
-            if (prop->sink_rate != 0) {
-                Vector3 p = prop->pending_position();
-                p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
-                prop->set_position(p);
+        Entity* parent = attach_parent(*e);
+        // Moho's Entity::TaskTick returns -4 and CTaskStage::UserFrame runs it again at the end of
+        // the frame; a wait no step has ended since the last (a cycle) is let go.
+        if (parent && parent->walk() == Entity::Walk::Stepping &&
+            parent->stepped_tick() != tick_count_ && parent->stepped_tick() == e->stepped_tick()) {
+            const auto again = put_back.find(id);
+            if (again == put_back.end() || again->second < last_step) {
+                put_back[id] = i;
+                walk.push_back(id);
+                continue;
             }
         }
-    };
-    for (const u32 id : ids) {
-        step(id);
+        last_step = i;
+        if (parent) {
+            followed_.push_back({id, parent->entity_id(), parent->pending_position(),
+                                 parent->pending_orientation()});
+            if (!e->is_collision_beam()) {
+                follow_parent(*e, *parent);
+            }
+        }
+        e->set_stepped_tick(tick_count_);
+        const Entity::Walk next = step_entity(*e, parent != nullptr, ctx);
+        e = entity_registry_.find(id);
+        if (!e) {
+            continue;
+        }
+        if (next == Entity::Walk::Stepping) {
+            walked.push_back(id);
+        } else {
+            e->set_walk(next);
+        }
     }
-    // CTaskStage::UserFrame runs its list to the end: an entity made during stage A steps in it.
-    for (u32 id = made_during; id < entity_registry_.next_id(); ++id) {
-        step(id);
-    }
+    walk = std::move(walked);
     stepping_events_.clear();
     separate_ground_units();
 }

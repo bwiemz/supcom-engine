@@ -26,6 +26,8 @@ public:
 
     /// SinkAway: how fast the prop sinks into the ground (units/s, <= 0).
     f32 sink_rate = 0;
+    /// Moho's SinkAway.
+    void sink_away(f32 rate);
 
     /// FallDown's motor, Moho's MotorFallDown.
     bool fall_motor = false;
@@ -34,7 +36,9 @@ public:
     f32 fall_angle = 0;
     f32 fall_speed = 0;
     f32 fall_size_x = 0;
+    /// Moho's FallDown.
     void fall_down(f32 size_x);
+    bool has_motor() const { return fall_motor || sink_rate != 0; }
     void whack(f32 nx, f32 nz, f32 force, bool breaks);
     void step_fall(const map::Terrain* terrain);
 

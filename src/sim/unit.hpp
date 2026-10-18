@@ -1266,6 +1266,10 @@ public:
     bool calls_transport(u32 transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
+    /// Hang from the transport's bone that holds our slot (or sit at its
+    /// origin without one): our AttachPoint bone, or centre, on it, facing
+    /// as it does.
+    void hang_from(const Unit& transport);
 
     // Carrier storage (M206q; Moho's CAiTransportImpl storage): units a
     // carrier keeps inside -- the aircraft it builds -- beside its cargo
@@ -1534,7 +1538,9 @@ private:
         if (navigator_.busy()) navigator_.abort_move();
     }
 
-    void follow_transport(f64 dt, SimContext& ctx);
+    bool attached() const;
+    void take_attached_step(f64 dt, SimContext& ctx);
+    void stay_aboard(f64 dt, SimContext& ctx);
     /// Run orders from the head of the queue until one holds (unit_orders.cpp).
     bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
     /// An order's first run (on a patrol, each leg's): what Moho's task
@@ -1939,10 +1945,6 @@ private:
     // a transport picks up its largest units first.
     f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
     f32 average_density_ = 0.49f;
-    /// Hang from the transport's bone that holds our slot (or sit at its
-    /// origin without one): our AttachPoint bone, or centre, on it, facing
-    /// as it does.
-    void hang_from(const Unit& transport);
     /// Give up slots whose unit is no longer aboard (it died, was taken off
     /// the cargo list, or left), as Moho's TransportUnreserveUnattachedSpots.
     void release_stale_slots(const EntityRegistry& registry);

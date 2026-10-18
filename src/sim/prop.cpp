@@ -58,6 +58,13 @@ void Prop::fall_down(f32 size_x) {
     fall_angle = 0;
     fall_speed = 0;
     fall_size_x = size_x;
+    wake();
+}
+
+void Prop::sink_away(f32 rate) {
+    sink_rate = rate;
+    fall_motor = false;
+    wake();
 }
 
 void Prop::whack(f32 nx, f32 nz, f32 force, bool breaks) {

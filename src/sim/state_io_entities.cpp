@@ -175,6 +175,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.vec3(e.last_position_);
     w.quat(e.last_orientation_);
     // placed_: every registered entity's
+    enum8(w, e.walk_);
+    w.u32v(e.stepped_tick_);
     w.u32v(e.snap_serial_);
     w.u32v(e.followed_parent_snap_);
     w.f32v(e.health_);
@@ -274,6 +276,8 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.last_position_ = r.vec3();
     e.last_orientation_ = r.quat();
     e.placed_ = true;
+    e.walk_ = enum8<Entity::Walk>(r);
+    e.stepped_tick_ = r.u32v();
     e.snap_serial_ = r.u32v();
     e.followed_parent_snap_ = r.u32v();
     e.health_ = r.f32v();

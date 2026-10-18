@@ -358,16 +358,14 @@ TEST_CASE("FrameView jumps an attachment with its teleported parent", "[interp][
 
     entity(sim, parent).set_position({500, 0, 500});
     entity(sim, parent).note_snap();
-    sim.follow_attachments();
+    sim.tick();
     end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
     CHECK(view.position(entity(sim, child)).x == Approx(500.0f));
 }
 
-TEST_CASE("A chain of attachments jumps link by link as each one follows", "[interp][view]") {
-    // follow_attachments moves one link per tick (a lockstep-safe order), so
-    // a grandchild reaches the teleported grandparent a tick after the child.
+TEST_CASE("A chain of attachments jumps with its teleported root", "[interp][view]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
@@ -376,14 +374,12 @@ TEST_CASE("A chain of attachments jumps link by link as each one follows", "[int
     const osc::u32 leaf = spawn_at(sim, {0, 0, 0});
     entity(sim, mid).set_parent(root, -1, -1);
     entity(sim, leaf).set_parent(mid, -1, -1);
-    sim.follow_attachments();
+    sim.tick();
     end_tick(sim, history);
 
     entity(sim, root).set_position({500, 0, 500});
     entity(sim, root).note_snap();
-    sim.follow_attachments(); // mid jumps
-    end_tick(sim, history);
-    sim.follow_attachments(); // leaf jumps
+    sim.tick();
     end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
@@ -400,7 +396,7 @@ TEST_CASE("Attaching an entity jumps it onto its parent", "[interp][view]") {
     end_tick(sim, history);
 
     entity(sim, child).set_parent(parent, -1, -1); // AttachTo / AttachBoneTo
-    sim.follow_attachments();
+    sim.tick();
     end_tick(sim, history);
 
     const FrameView view(&history.prev(), &history.cur(), 0.5f);
@@ -408,7 +404,7 @@ TEST_CASE("Attaching an entity jumps it onto its parent", "[interp][view]") {
 
     // Riding along afterwards interpolates as usual.
     entity(sim, parent).set_position({110, 0, 100});
-    sim.follow_attachments();
+    sim.tick();
     end_tick(sim, history);
     const FrameView riding(&history.prev(), &history.cur(), 0.5f);
     CHECK(riding.position(entity(sim, child)).x == Approx(105.0f));
