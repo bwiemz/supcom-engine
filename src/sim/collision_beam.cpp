@@ -112,7 +112,7 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
 
     const u32 launcher_id = beam->beam_launcher_id();
     const f32 length = setup.length > 0 ? setup.length : 1.0f;
-    const Vector3 from = beam->position();
+    const Vector3 from = beam->pending_position();
     const Vector3 to{from.x + facing->x * length, from.y + facing->y * length,
                      from.z + facing->z * length};
 
@@ -237,7 +237,7 @@ void update_collision_beams(SimState& sim, lua_State* L) {
         auto& setup = beam->beam_setup();
         if (setup.check_clock > 0) {
             --setup.check_clock;
-            const Vector3 from = beam->position();
+            const Vector3 from = beam->pending_position();
             beam->set_beam_endpoint({from.x + facing->x * setup.reached,
                                      from.y + facing->y * setup.reached,
                                      from.z + facing->z * setup.reached});

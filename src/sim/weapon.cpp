@@ -86,7 +86,7 @@ i32 find_muzzle_bone(const Unit& owner, const std::string& name) {
 }
 
 Vector3 owner_facing(const Unit& owner) {
-    return quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+    return quat_rotate(owner.pending_orientation(), Vector3{0.0f, 0.0f, 1.0f});
 }
 
 bool has_omni_detection(const Unit& owner, const Entity& target, const SimState* sim) {
@@ -220,7 +220,7 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry,
     // not by its unit's layer (Moho's UnitWeapon fire check), so a walker
     // standing on the seabed fires while its guns are above the water.
     if (above_water_fire_only) {
-        Vector3 muzzle = owner.position();
+        Vector3 muzzle = owner.pending_position();
         if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0)
             muzzle = owner.bone_world_position(bone);
         if (muzzle.y <= water_surface(sim)) return false;
@@ -792,7 +792,8 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
         const bool was_tracking = aim->has_target();
         if (aiming) {
             const i32 bone = find_muzzle_bone(owner, muzzle_bone_name);
-            const Vector3 from = bone >= 0 ? owner.bone_world_position(bone) : owner.position();
+            const Vector3 from =
+                bone >= 0 ? owner.bone_world_position(bone) : owner.pending_position();
             const Vector3 at =
                 target ? aim_point(*target, owner, from,
                                    bone >= 0 ? owner.bone_world_forward(bone) : owner_facing(owner))
@@ -841,7 +842,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
 
     // Resolve muzzle bone position for projectile spawn
     // From the muzzle as the turret is posed now.
-    Vector3 spawn_pos = owner.position();
+    Vector3 spawn_pos = owner.pending_position();
     std::optional<Vector3> muzzle_dir;
     if (const i32 bone = find_muzzle_bone(owner, muzzle_bone_name); bone >= 0) {
         spawn_pos = owner.bone_world_position(bone);

@@ -202,6 +202,7 @@ TEST_CASE("A projectile stays upright if its blueprint says StayUpright", "[blue
             registry.find(registry.register_entity(std::move(made))));
         for (int tick = 0; tick < 5; ++tick) {
             p->update(0.1, registry, nullptr);
+            registry.advance_coords();
         }
         return p->orientation();
     };

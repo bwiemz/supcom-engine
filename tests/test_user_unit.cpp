@@ -534,6 +534,7 @@ TEST_CASE("The cursor's unit is one its view takes in, but a close OOB-tested on
     UiWorld w;
     w.unit().set_motion_type("RULEUMT_Land");
     w.unit().set_position({128.0f, 10.0f, 128.0f});
+    w.unit().place_now();
     const osc::map::Heightmap ground{256, 256, 1.0f / 128.0f,
                                      std::vector<osc::u16>(257 * 257, 10 * 128)};
     osc::renderer::Camera camera;
@@ -578,6 +579,7 @@ TEST_CASE("A unit is picked by its mesh's bounds, scaled by the model and its bl
           "[selection]") {
     UiWorld w;
     w.unit().set_position({128.0f, 10.0f, 128.0f});
+    w.unit().place_now();
     osc::sim::BoneData model;
     model.mesh_bounds = osc::sim::MeshBounds{{-2.5f, 0.0f, -2.5f}, {2.5f, 5.6f, 2.5f}};
     w.unit().set_bone_data(&model);
@@ -625,6 +627,7 @@ TEST_CASE("A drag box takes a unit whose mesh box it meets, scaled by its bluepr
           "[selection]") {
     UiWorld w;
     w.unit().set_position({128.0f, 10.0f, 128.0f});
+    w.unit().place_now();
     osc::sim::BoneData model;
     model.mesh_bounds = osc::sim::MeshBounds{{-6.0f, 0.0f, -0.5f}, {6.0f, 2.0f, 0.5f}};
     w.unit().set_bone_data(&model);
@@ -662,12 +665,14 @@ TEST_CASE("A drag box takes a unit whose mesh box it meets, scaled by its bluepr
     CHECK(boxed({133.0f, 11.0f, 128.0f}, false));
 
     w.unit().set_orientation(osc::sim::quat_axis_angle('y', 1.5707964f));
+    w.unit().place_now();
     bp = {};
     CHECK(boxed({128.0f, 11.0f, 133.0f}, false));
     bp.mesh_scale_x = 0.3f;
     CHECK_FALSE(boxed({128.0f, 11.0f, 133.0f}, false));
 
     w.unit().set_orientation(osc::sim::quat_axis_angle('z', 1.5707964f));
+    w.unit().place_now();
     model.mesh_bounds = osc::sim::MeshBounds{{-0.5f, -6.0f, -0.5f}, {0.5f, 6.0f, 0.5f}};
     bp = {};
     CHECK(boxed({133.0f, 10.0f, 128.0f}, false));
@@ -680,6 +685,7 @@ TEST_CASE("A drag box skips an upgrade's frame without Shift and deselects with 
           "[selection]") {
     UiWorld w;
     w.unit().set_position({128.0f, 10.0f, 128.0f});
+    w.unit().place_now();
     osc::sim::BoneData model;
     model.mesh_bounds = osc::sim::MeshBounds{{-1.0f, 0.0f, -1.0f}, {1.0f, 2.0f, 1.0f}};
     w.unit().set_bone_data(&model);
@@ -1004,6 +1010,7 @@ TEST_CASE("A Ctrl click selects every unit of its blueprint the player has", "[s
         unit->set_is_being_built(being_built);
         const osc::u32 id = sim.entity_registry().register_entity(std::move(unit));
         sim.entity_registry().find(id)->set_position({x, 0.0f, 10.0f});
+        sim.entity_registry().find(id)->place_now();
         return id;
     };
     const osc::u32 tank = add("uel0201", 0, 10.0f);

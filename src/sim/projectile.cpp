@@ -83,8 +83,8 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
     }
     if (launch_tick == 0) {
         launch_tick = tick;
-        launch_position = position();
-        launch_orientation = orientation();
+        launch_position = pending_position();
+        launch_orientation = pending_orientation();
     }
 
     // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
@@ -97,8 +97,8 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
     // angle was solved for).
     const auto step = static_cast<f32>(dt);
     const Vector3 start_velocity = velocity;
-    const Vector3 from = position();
-    Quaternion facing = orientation();
+    const Vector3 from = pending_position();
+    Quaternion facing = pending_orientation();
     const auto thrust = [&] {
         const Vector3 ahead = forward_of(facing);
         velocity.x += ahead.x * acceleration * step;
@@ -232,7 +232,7 @@ bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* 
         }
         if (!keep_last_aim) return true;
     }
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     Vector3 aim = target_position;
 
     // LeadTarget: where its target will be by the time it gets there at its
@@ -342,7 +342,7 @@ Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
 bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
                          const map::Terrain* terrain) {
     if (!collision_enabled) return false;
-    const Vector3 to = position();
+    const Vector3 to = pending_position();
 
     // The surface: the ground, or for a shell that ends there, the water.
     f32 surface_t = 2.0f;
@@ -582,7 +582,7 @@ const std::unordered_set<std::string>& Projectile::categories() const {
 }
 
 const char* Projectile::impact_type(const Entity* target, const map::Terrain* terrain) const {
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     const bool wet = terrain && terrain->has_water();
     const bool under = wet && (stay_underwater || pos.y < terrain->water_elevation() - 0.5f);
     if (target) {
@@ -695,7 +695,7 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
 }
 
 void Projectile::deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry) {
-    auto pos = position();
+    auto pos = pending_position();
 
     // Resolve launcher's Lua ref once (avoids stale pointer if launcher is
     // destroyed during DamageArea/Damage pcall in a future code path)

@@ -15932,18 +15932,29 @@ void test_spatial(TestContext& ctx) {
         if (ok3) { pass++; spdlog::info("[PASS] Test 3: collect_in_radius excludes distant entity"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 3: collect_in_radius included distant entity"); }
 
-        // Test 4: Moving entity updates grid automatically
+        // Test 4: A move updates the grid as it is committed
         auto* e = reg.find(uid);
         e->set_position({50.0f, 0.0f, 50.0f});
+        auto pending_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
+        bool ok4p = std::find(pending_move.begin(), pending_move.end(), uid) == pending_move.end();
+        reg.advance_coords();
         auto after_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
         bool ok4a = std::find(after_move.begin(), after_move.end(), uid) != after_move.end();
         auto old_pos = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok4b = std::find(old_pos.begin(), old_pos.end(), uid) == old_pos.end();
-        if (ok4a && ok4b) { pass++; spdlog::info("[PASS] Test 4: set_position auto-updates grid"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 4: grid not updated after set_position (found_new={}, gone_old={})", ok4a, ok4b); }
+        if (ok4p && ok4a && ok4b) {
+            pass++;
+            spdlog::info("[PASS] Test 4: a committed move updates the grid");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: grid not updated as a move is committed "
+                                   "(not_before={}, found_new={}, gone_old={})",
+                                   ok4p, ok4a, ok4b);
+        }
 
         // Test 5: collect_in_rect returns correct results
         e->set_position({100.0f, 0.0f, 100.0f});
+        reg.advance_coords();
         auto rect = reg.collect_in_rect(90.0f, 90.0f, 110.0f, 110.0f);
         bool ok5 = std::find(rect.begin(), rect.end(), uid) != rect.end();
         if (ok5) { pass++; spdlog::info("[PASS] Test 5: collect_in_rect finds entity"); }

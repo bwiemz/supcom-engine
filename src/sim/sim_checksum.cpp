@@ -65,18 +65,39 @@ void mix_army(Fnv& armies, const ArmyBrain& a) {
     }
 }
 
-/// What every entity has: its id, army, place, facing, health and
-/// completion.
+void mix_quat(Fnv& f, const Quaternion& q) {
+    f.mix_f32(q.x);
+    f.mix_f32(q.y);
+    f.mix_f32(q.z);
+    f.mix_f32(q.w);
+}
+
+bool same_place(const Vector3& p, const Quaternion& q, const Vector3& p2, const Quaternion& q2) {
+    return p.x == p2.x && p.y == p2.y && p.z == p2.z && q.x == q2.x && q.y == q2.y && q.z == q2.z &&
+           q.w == q2.w;
+}
+
+/// What every entity has: its id, army, committed place and facing, the pending and last ones
+/// where they differ from it, health and completion.
 void mix_entity(Fnv& entities, const Entity& e) {
     entities.mix(e.entity_id());
     entities.mix(static_cast<u64>(static_cast<u32>(e.army())));
     entities.mix(e.destroyed() ? 1u : 0u);
     mix_vec(entities, e.position());
-    const auto& q = e.orientation();
-    entities.mix_f32(q.x);
-    entities.mix_f32(q.y);
-    entities.mix_f32(q.z);
-    entities.mix_f32(q.w);
+    mix_quat(entities, e.orientation());
+    const bool pending =
+        !same_place(e.pending_position(), e.pending_orientation(), e.position(), e.orientation());
+    const bool moved =
+        !same_place(e.last_position(), e.last_orientation(), e.position(), e.orientation());
+    entities.mix((pending ? 2u : 0u) | (moved ? 1u : 0u));
+    if (pending) {
+        mix_vec(entities, e.pending_position());
+        mix_quat(entities, e.pending_orientation());
+    }
+    if (moved) {
+        mix_vec(entities, e.last_position());
+        mix_quat(entities, e.last_orientation());
+    }
     entities.mix_f32(e.health());
     entities.mix_f32(e.fraction_complete());
 }
@@ -466,12 +487,9 @@ void mix_navigation(Fnv& navigation, const Unit& u, bool moho_pathing) {
     mix_vec(navigation, u.velocity());
     navigation.mix_f32(u.heading());
     navigation.mix_f32(u.elevation_target());
-    // Moho pathing's (--moho-pathing), only with it on: its navigator
-    // and finder, and whether it moved over the last tick (which units
-    // a search walks through) and where from.
+    // Moho pathing's (--moho-pathing), only with it on: its navigator and finder.
     if (moho_pathing) {
-        navigation.mix(0x4d4f484f00000000ull | (u.moved_last_tick() ? 1u : 0u)); // "MOHO"
-        mix_vec(navigation, u.tick_position());
+        navigation.mix(0x4d4f484f00000000ull); // "MOHO"
         u.navigator().fingerprint_moho(navigation);
     }
 }

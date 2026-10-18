@@ -164,6 +164,7 @@ TEST_CASE("The scroller bindings drive an entity's scroll", "[scroller]") {
     REQUIRE(run("tank:AddThreadScroller(1.0, 0.2)").empty());
     sim.tick();
     tank->set_position({tank->position().x, tank->position().y, tank->position().z + 0.5f});
+    tank->place_now();
     sim.tick();
     CHECK(tank->scroll_end().u == Approx(0.25f + 0.1f));
     CHECK(tank->scroll_end().v == Approx(0.5f + 0.1f));

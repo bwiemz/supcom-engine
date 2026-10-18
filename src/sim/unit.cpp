@@ -561,7 +561,7 @@ void Unit::stop_air() {
 }
 
 Vector3 Unit::air_stop_point() const {
-    Vector3 at = position();
+    Vector3 at = pending_position();
     f32 vx = (air_velocity_.x - air_dv_.x * 0.5f) * 0.1f;
     f32 vz = (air_velocity_.z - air_dv_.z * 0.5f) * 0.1f;
     const f32 turn = air_turn_rate() * 0.1f;
@@ -613,7 +613,7 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
         set_orientation(euler_to_quat(heading_, pitch_, bank_angle_));
 
         // Move forward (decaying) and down
-        auto p = position();
+        auto p = pending_position();
         f32 fwd = current_airspeed_ * 0.5f;
         p.x += osc::dmath::sin(heading_) * fwd * dt;
         p.z += osc::dmath::cos(heading_) * fwd * dt;
@@ -661,7 +661,7 @@ bool Unit::nav_step(f64 dt, const map::Terrain* terrain) {
     // A sub under the surface, or on its way, keeps its depth as it moves
     // (the ground navigator put it on the surface; see tick_dive).
     if (terrain && (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None)) {
-        auto p = position();
+        auto p = pending_position();
         p.y = terrain->water_elevation() + sub_elevation_;
         set_position(p);
     }
@@ -941,6 +941,19 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
     }
 }
 
+void Unit::advance_coords() {
+    Entity::advance_coords();
+    // Moho's Unit::GetVelocity: off the air layer, a unit with a motor gives its motor's velocity.
+    const Vector3& p = position();
+    const Vector3& was = last_position();
+    const Vector3 moved = is_mobile() && layer_ != "Air"
+                              ? motion_step_
+                              : Vector3{p.x - was.x, p.y - was.y, p.z - was.z};
+    motion_step_ = {};
+    const auto per_second = static_cast<f32>(1.0 / SimState::SECONDS_PER_TICK);
+    velocity_ = {moved.x * per_second, moved.y * per_second, moved.z * per_second};
+}
+
 void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) {
         return;
@@ -997,12 +1010,18 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         --stun_ticks_;
     }
     drove_ = false;
+    const Vector3 from = pending_position();
+    const u32 snaps = snap_serial();
     const bool goes_on = motion_tick(dt, ctx);
     if (destroyed() || !in_registry()) {
         return;
     }
     if (goes_on && ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
+    }
+    if (snap_serial() == snaps) {
+        const Vector3& to = pending_position();
+        motion_step_ = {to.x - from.x, to.y - from.y, to.z - from.z};
     }
     // Moho raises the motion events at the end of CalcMove*, before UpdateManipulators.
     if (goes_on && !is_being_built()) {
@@ -1114,16 +1133,16 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     // Stopped, its hull turns to its weapons' work (Moho's CalcMoveCommon).
     face_weapons_work(dt, ctx.registry);
     if (turned_in_place_ && ctx.terrain && snaps_to_ground()) {
-        stand_on_ground(ctx.terrain, position(), orientation());
+        stand_on_ground(ctx.terrain, pending_position(), pending_orientation());
     }
     if (!drove_ && !is_air_unit()) {
-        const Vector3 was = position();
-        const Quaternion facing = orientation();
+        const Vector3 was = pending_position();
+        const Quaternion facing = pending_orientation();
         coast(dt, ctx.terrain);
         // With Moho's pathing, a unit stopping is braked by its motion
         // (CUnitMotion::Stop, then CalcMoveCommon), which puts a step onto
         // ground it won't fit back, as the drive does: it stops there.
-        const Vector3& now = position();
+        const Vector3& now = pending_position();
         if (ctx.sim && ctx.sim->moho_pathing() &&
             ctx.sim->footprint_fits_at(footprint(), now.x, now.z) == 0 &&
             ctx.sim->footprint_fits_at(footprint(), was.x, was.z) != 0) {
@@ -2787,6 +2806,7 @@ void Unit::warp(const map::Terrain* terrain, const Vector3& at) {
     }
     set_position(p);
     note_snap(); // a jump, not drawn sliding there
+    place_now();
     reset_lift_ground();
     // CUnitMotion::Warp's target is where it now is, and the navigator's
     // move is aborted: AINAVEVENT_Aborted reaches the task listening, the
@@ -2808,7 +2828,7 @@ f32 Unit::track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 
     if (!terrain) {
         return 1.0f;
     }
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     if (!lift_ground_set_) {
         lift_ground_ = terrain->get_surface_height(pos.x, pos.z);
         lift_ground_set_ = true;
@@ -2829,11 +2849,11 @@ f32 Unit::track_lift_ground(const map::Terrain* terrain, f32 look_distance, u32 
 
 f32 Unit::lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain* terrain,
                       const EntityRegistry* registry, f32 dt) {
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     const AirCombatRules& r = air_combat_rules_;
     f32 steer = want;
     if (winged) {
-        const Quaternion q = orientation();
+        const Quaternion q = pending_orientation();
         const f32 up_y = 1.0f - 2.0f * (q.x * q.x + q.z * q.z);
         steer = winged_lift(want, up_y, r.lift_factor, elevation_target_ * 0.5f,
                             pos.y - air_floor(terrain, pos.x, pos.z));
@@ -2852,13 +2872,13 @@ f32 Unit::lift_toward(f32 want, bool winged, f32 floor_after, const map::Terrain
 }
 
 f32 Unit::air_turn_rate() const {
-    const Quaternion q = orientation();
+    const Quaternion q = pending_orientation();
     return quat_rotate(q, body_spin(q, air_spin_, box_inertia(size_x_, size_y_, size_z_))).y;
 }
 
 void Unit::set_air_turn_rate(f32 rate) {
-    air_spin_ =
-        momentum_of(orientation(), {0.0f, rate, 0.0f}, box_inertia(size_x_, size_y_, size_z_));
+    air_spin_ = momentum_of(pending_orientation(), {0.0f, rate, 0.0f},
+                            box_inertia(size_x_, size_y_, size_z_));
 }
 
 f32 Unit::transport_load_factor(const EntityRegistry& registry) const {
@@ -2880,12 +2900,12 @@ void Unit::hang_from(const Unit& transport) {
     const TransportSlots* slots = transport.built_transport_slots();
     const TransportSlots::Slot* slot = slots ? slots->slot_of(entity_id()) : nullptr;
     if (!slot) {
-        set_position(transport.position());
+        set_position(transport.pending_position());
         return;
     }
     const Vector3 at = transport.bone_world_position(slot->bone);
     const Quaternion facing =
-        quat_multiply(transport.orientation(), transport.bone_pose(slot->bone).rotation);
+        quat_multiply(transport.pending_orientation(), transport.bone_pose(slot->bone).rotation);
     // Our AttachPoint bone, or our centre (Moho's bone -1: half our height up).
     Vector3 anchor{0.0f, size_y_ * 0.5f, 0.0f};
     if (bone_data() && bone_data()->is_valid(slot->unit_bone)) {
@@ -3027,15 +3047,16 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
             bone_name = bone_data()->bones[static_cast<size_t>(slot->bone)].name;
             transport_slots_->release(cargo_id);
         } else {
-            cargo->set_position(position());
+            cargo->set_position(pending_position());
         }
-        cargo->set_orientation(euler_to_quat(quat_yaw(cargo->orientation()), 0.0f, 0.0f));
+        cargo->set_orientation(euler_to_quat(quat_yaw(cargo->pending_orientation()), 0.0f, 0.0f));
         if (staging && cargo->is_air_unit()) {
             // An aircraft leaving a staging platform stays where it sat, and
             // flies from there (M206r; Moho resets only its height hold).
             cargo->fly_on_from_here(terrain);
         } else if (terrain) {
-            cargo->stand_on_ground(terrain, cargo->position(), cargo->orientation());
+            cargo->stand_on_ground(terrain, cargo->pending_position(),
+                                   cargo->pending_orientation());
         }
         cargo->note_snap();
 
@@ -3204,19 +3225,19 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     // Along the way it was going (last tick's velocity), as Moho brakes the
     // velocity vector: its hull may turn under it now, to its weapons' work
     // (face_weapons_work), and braking along the hull curved the stop.
-    Vector3 p = position();
+    Vector3 p = pending_position();
     const f32 travel = std::sqrt(velocity_.x * velocity_.x + velocity_.z * velocity_.z);
     if (travel > 1e-4f) {
         const f32 along = std::abs(ground_speed_) * step / travel;
         p.x += velocity_.x * along;
         p.z += velocity_.z * along;
     } else {
-        const f32 heading = quat_yaw(orientation());
+        const f32 heading = quat_yaw(pending_orientation());
         p.x += osc::dmath::sin(heading) * ground_speed_ * step;
         p.z += osc::dmath::cos(heading) * ground_speed_ * step;
     }
     if (terrain) {
-        stand_on_ground(terrain, p, orientation());
+        stand_on_ground(terrain, p, pending_orientation());
     } else {
         set_position(p);
     }
@@ -3287,7 +3308,7 @@ Quaternion tilt_to(const Quaternion& q, const Vector3& normal) {
 Unit::GroundStance Unit::ground_stance(const map::Terrain* terrain, f32 x, f32 z,
                                        const Quaternion& facing) const {
     if (!terrain) {
-        return {position().y, facing};
+        return {pending_position().y, facing};
     }
     const Unit* platform = raised_platform();
     const bool hover = is_hover();
@@ -3356,11 +3377,9 @@ void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random) 
         parent_entity_id() != 0) {
         return;
     }
-    const Vector3& at = position();
-    const Vector3 step =
-        tick_position_set_
-            ? Vector3{at.x - tick_position_.x, at.y - tick_position_.y, at.z - tick_position_.z}
-            : Vector3{};
+    const Vector3& at = pending_position();
+    const Vector3& was = position();
+    const Vector3 step{at.x - was.x, at.y - was.y, at.z - was.z};
     const Vector3 accel =
         drove_ ? Vector3{step.x - hover_step_.x, step.y - hover_step_.y, step.z - hover_step_.z}
                : Vector3{};
@@ -3388,7 +3407,7 @@ void Unit::tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random) 
     wobble_offset_.z = wobble_offset_.z * 0.98f + wobble_velocity_.z;
 
     if (terrain && !teleporting_) {
-        stand_on_ground(terrain, position(), orientation());
+        stand_on_ground(terrain, pending_position(), pending_orientation());
     }
 }
 
@@ -3407,9 +3426,9 @@ const Unit* Unit::raised_platform() const {
         layer_ == "Sub") {
         return nullptr;
     }
-    const Vector3 at = position();
-    const Vector3 ax = quat_rotate(orientation(), {size_x_ * 0.5f, 0, 0});
-    const Vector3 az = quat_rotate(orientation(), {0, 0, size_z_ * 0.5f});
+    const Vector3 at = pending_position();
+    const Vector3 ax = quat_rotate(pending_orientation(), {size_x_ * 0.5f, 0, 0});
+    const Vector3 az = quat_rotate(pending_orientation(), {0, 0, size_z_ * 0.5f});
     const f32 hx = std::abs(ax.x) + std::abs(az.x);
     const f32 hz = std::abs(ax.z) + std::abs(az.z);
     const Unit* nearest = nullptr;
@@ -3541,24 +3560,25 @@ bool Unit::tick_work_circling(f64 dt, SimContext& ctx, bool flown) {
         return false;
     }
     CircleAround around;
-    around.center = air_combat_.flying ? air_combat_.circle_anchor : position();
+    around.center = air_combat_.flying ? air_combat_.circle_anchor : pending_position();
     if (is_building() || is_repairing()) {
         const Entity* focus =
             ctx.registry.find(is_building() ? build_target_id_ : repair_target_id_);
         if (focus && !focus->destroyed()) around.center = focus->position();
     }
-    around.move_goal = air_combat_.flying ? air_combat_.circle_anchor : position();
+    around.move_goal = air_combat_.flying ? air_combat_.circle_anchor : pending_position();
     fly_circling(*this, around, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
     return true;
 }
 
 void Unit::fly_on_from_here(const map::Terrain* terrain) {
-    heading_ = quat_yaw(orientation());
+    heading_ = quat_yaw(pending_orientation());
     pitch_ = 0.0f;
     bank_angle_ = 0.0f;
     current_airspeed_ = 0.0f;
     if (terrain) {
-        current_altitude_ = position().y - air_floor(terrain, position().x, position().z);
+        const Vector3& at = pending_position();
+        current_altitude_ = at.y - air_floor(terrain, at.x, at.z);
     }
 }
 
@@ -3599,7 +3619,7 @@ bool Unit::tick_idle_landing(f64 dt, SimContext& ctx, bool flown) {
     if (flown) {
         return false;
     }
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     const auto hold = [&] {
         if (!navigator_.air_hold()) {
             navigator_.set_air_hold(air_stop_point());
@@ -3767,8 +3787,9 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
             set_unit_state("MovingDown", false);
             set_unit_state("MovingUp", false);
         } else {
-            const f32 floor = std::min(
-                0.0f, terrain->get_terrain_height(position().x, position().z) + 0.25f - water);
+            const Vector3& at = pending_position();
+            const f32 floor =
+                std::min(0.0f, terrain->get_terrain_height(at.x, at.z) + 0.25f - water);
             limit = std::max(limit, floor);
             f32 phase = std::abs(sub_elevation_ / limit);
             if (phase > 0.5f) phase = 1.0f - phase;
@@ -3799,7 +3820,7 @@ void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
     }
     // Under the surface, or on its way: at its depth.
     if (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None) {
-        Vector3 at = position();
+        Vector3 at = pending_position();
         at.y = water + sub_elevation_;
         set_position(at);
     }
@@ -4096,14 +4117,16 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     if (max_speed_ <= 0 || dt <= 0) {
         return 1.0f;
     }
-    if (!tick_position_set_) {
-        return 0.0f;
-    }
-    // The last tick's move and turn: Moho's CAnimationManipulator reads the
-    // committed transforms, which this tick's motion has not advanced yet.
-    const Vector3& d = last_tick_motion_;
+    // Moho's CAnimationManipulator reads the committed transforms, which this tick's motion has
+    // not advanced yet.
+    const Vector3& p = position();
+    const Vector3& was = last_position();
+    const Vector3 d{p.x - was.x, p.y - was.y, p.z - was.z};
     const f32 scale = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) / dt / max_speed_;
-    if (turned_last_tick_ && scale <= 0.25f) {
+    const Quaternion& q = orientation();
+    const Quaternion& turned = last_orientation();
+    if ((q.x != turned.x || q.y != turned.y || q.z != turned.z || q.w != turned.w) &&
+        scale <= 0.25f) {
         return 0.25f;
     }
     return scale;
@@ -4186,9 +4209,9 @@ void Unit::check_collision_detectors(lua_State* L) {
                 // The bone in the unit's own frame (Moho rotates its offset
                 // by the unit's inverse turn): its x tells the scripts the
                 // side, left of the unit when positive.
-                const Vector3 local =
-                    quat_rotate(quat_conjugate(orientation()),
-                                {at.x - position().x, at.y - position().y, at.z - position().z});
+                const Vector3& p = pending_position();
+                const Vector3 local = quat_rotate(quat_conjugate(pending_orientation()),
+                                                  {at.x - p.x, at.y - p.y, at.z - p.z});
                 if (local.y >= CollisionDetectorManipulator::kFootHeight) {
                     watch.below_foot_height = false;
                 } else if (!watch.below_foot_height) {
@@ -4314,32 +4337,40 @@ BonePose Unit::bone_pose(i32 bone) const {
 
 Vector3 Unit::bone_world_position(i32 bone) const {
     const BoneData* bd = bone_data();
-    if (!bd || !bd->is_valid(bone)) return position();
+    const Vector3& at = pending_position();
+    if (!bd || !bd->is_valid(bone)) {
+        return at;
+    }
     const Vector3 model = bone_pose(bone).position;
     const f32 s = bd->model_scale;
     const Vector3 offset =
-        quat_rotate(orientation(), Vector3{model.x * s, model.y * s, model.z * s});
-    return {position().x + offset.x, position().y + offset.y, position().z + offset.z};
+        quat_rotate(pending_orientation(), Vector3{model.x * s, model.y * s, model.z * s});
+    return {at.x + offset.x, at.y + offset.y, at.z + offset.z};
 }
 
 Vector3 Unit::bone_world_forward(i32 bone) const {
     constexpr Vector3 kAhead{0.0f, 0.0f, 1.0f};
     const BoneData* bd = bone_data();
-    if (!bd || !bd->is_valid(bone)) return quat_rotate(orientation(), kAhead);
-    return quat_rotate(orientation(), quat_rotate(bone_pose(bone).rotation, kAhead));
+    if (!bd || !bd->is_valid(bone)) {
+        return quat_rotate(pending_orientation(), kAhead);
+    }
+    return quat_rotate(pending_orientation(), quat_rotate(bone_pose(bone).rotation, kAhead));
 }
 
 Quaternion Unit::bone_world_rotation(i32 bone) const {
     const BoneData* bd = bone_data();
-    if (!bd || !bd->is_valid(bone)) return orientation();
-    return quat_multiply(orientation(), bone_pose(bone).rotation);
+    if (!bd || !bd->is_valid(bone)) {
+        return pending_orientation();
+    }
+    return quat_multiply(pending_orientation(), bone_pose(bone).rotation);
 }
 
 BonePose Unit::bone_world_transform(i32 bone) const {
     const BoneData* bd = bone_data();
     if (bd && bd->is_valid(bone)) return {bone_world_position(bone), bone_world_rotation(bone)};
-    const Vector3 up = quat_rotate(orientation(), Vector3{0.0f, size_y_ * 0.5f, 0.0f});
-    return {{position().x + up.x, position().y + up.y, position().z + up.z}, orientation()};
+    const Vector3& at = pending_position();
+    const Vector3 up = quat_rotate(pending_orientation(), Vector3{0.0f, size_y_ * 0.5f, 0.0f});
+    return {{at.x + up.x, at.y + up.y, at.z + up.z}, pending_orientation()};
 }
 
 i32 Unit::target_point_count() const {
@@ -4391,8 +4422,9 @@ Vector3 Unit::bone_world_point(i32 bone, const Vector3& local) const {
         model = {pose.position.x * s + turned.x, pose.position.y * s + turned.y,
                  pose.position.z * s + turned.z};
     }
-    const Vector3 offset = quat_rotate(orientation(), model);
-    return {position().x + offset.x, position().y + offset.y, position().z + offset.z};
+    const Vector3 offset = quat_rotate(pending_orientation(), model);
+    const Vector3& at = pending_position();
+    return {at.x + offset.x, at.y + offset.y, at.z + offset.z};
 }
 
 // ---------------------------------------------------------------------------

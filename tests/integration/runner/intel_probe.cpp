@@ -164,6 +164,7 @@ u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char*
         sim::Vector3 p = e->position();
         p.y = ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift;
         e->set_position(p);
+        e->place_now();
     }
     return id;
 }

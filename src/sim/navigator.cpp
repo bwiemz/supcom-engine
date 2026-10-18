@@ -365,9 +365,9 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     Unit::Drive d = unit.drive();
     if (d.max_accel <= 0) d.max_accel = max_speed;
     if (d.turn_rate <= 0) d.turn_rate = kPi * 0.5f;
-    Vector3 pos = unit.position();
+    Vector3 pos = unit.pending_position();
     const Vector3 from = pos;
-    f32 heading = quat_yaw(unit.orientation());
+    f32 heading = quat_yaw(unit.pending_orientation());
     f32 speed = unit.ground_speed();
     // Moho's CUnitMotion refuses a move onto ground the unit won't fit (it
     // did where it was).
@@ -410,7 +410,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         if (speed == 0 && --hold_ticks_ == 0) next_check_ = 0; // looks again as it goes on
         pos.x += osc::dmath::sin(heading) * speed * step;
         pos.z += osc::dmath::cos(heading) * speed * step;
-        Quaternion facing = unit.orientation();
+        Quaternion facing = unit.pending_orientation();
         if (terrain) {
             const Unit::GroundStance stance = unit.ground_stance(terrain, pos.x, pos.z, facing);
             pos.y = stance.y;
@@ -583,7 +583,7 @@ bool Navigator::slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain*
         return false;
     }
 
-    auto pos = entity.position();
+    auto pos = entity.pending_position();
     f32 step = max_speed * static_cast<f32>(dt);
 
     // Process waypoints — may advance through multiple in one tick if fast enough
@@ -686,7 +686,7 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     move.elevation = unit.elevation_target();
     move.top_speed = speed_through_goal_ || !is_final;
     if (!air_hold_set_ || air_hold_.x != wp.x || air_hold_.z != wp.z) {
-        const auto at = unit.position();
+        const auto at = unit.pending_position();
         const f32 fx = wp.x - at.x;
         const f32 fz = wp.z - at.z;
         const f32 far = std::sqrt(fx * fx + fz * fz);
@@ -699,7 +699,7 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     fly_air_move(unit, move, sim_, terrain, static_cast<f32>(dt));
 
     // CUnitMotion::AtTarget, as CAiNavigatorAir::Execute asks it.
-    const auto pos = unit.position();
+    const auto pos = unit.pending_position();
     const f32 dist2 = (wp.x - pos.x) * (wp.x - pos.x) + (wp.z - pos.z) * (wp.z - pos.z);
     f32 tolerance = 0.25f;
     if (!is_final) {

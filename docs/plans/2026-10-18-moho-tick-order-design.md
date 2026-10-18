@@ -404,6 +404,9 @@ spatial query reads the committed transform; a unit's own bones come from its po
 - Tests: two units reading each other — same result whichever has the lower id; a projectile collides with
   its target where the target stood at the start of the tick; Warp, then `GetUnitsInRect` in the same thread
   finds the new place.
+  *Done (2026-10-18) — tick/s5-committed-transforms: every read but an entity's own step sees the committed
+  transform, committed at the end of the tick; P2's `OnCollisionCheck` reads 768.07 as retail (was 771.57), a34's
+  scout with `--moho-pathing` takes 244 a salvo and 16% within 2 (retail 244, 17%); P3 unchanged.*
 
 **Step 6. Navigators and steering in the army phase.** Path following → steering → (weapons) → the army's
 path budget; arrival and failure events before the order phase; `SetGoal` leaves the steering waypoint;

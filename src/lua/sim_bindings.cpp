@@ -404,6 +404,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
         unit_ptr->set_heading(0);
         unit_ptr->set_orientation(sim::euler_to_quat(0, 0, 0));
         unit_ptr->set_air_facing({0.0f, 0.0f, 1.0f});
+        unit_ptr->place_now();
     }
 
     spdlog::debug("Created unit {} (entity #{}) at ({}, {}, {})",
@@ -516,6 +517,7 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
             made->set_heading(place_of->heading());
             made->set_current_altitude(place_of->current_altitude());
         }
+        made->place_now();
     }
 
     // Lua table is now on top of stack
@@ -934,22 +936,25 @@ static int l_Warp(lua_State* L) {
         lua_rawgeti(L, 2, 3);
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
+        sim::Quaternion facing = entity->orientation();
+        if (lua_istable(L, 3)) {
+            f32 q[4];
+            for (int i = 0; i < 4; ++i) {
+                lua_rawgeti(L, 3, i + 1);
+                q[i] = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+            }
+            facing = {q[0], q[1], q[2], q[3]};
+        }
+        entity->set_orientation(facing);
         if (entity->is_unit()) {
             static_cast<sim::Unit*>(entity)->warp(sim->terrain(), v);
         } else {
             entity->set_position(v);
             entity->note_snap();
+            entity->place_now();
         }
-    }
-    // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
-    if (lua_istable(L, 3)) {
-        f32 q[4];
-        for (int i = 0; i < 4; ++i) {
-            lua_rawgeti(L, 3, i + 1);
-            q[i] = static_cast<f32>(lua_tonumber(L, -1));
-            lua_pop(L, 1);
-        }
-        entity->set_orientation({q[0], q[1], q[2], q[3]});
     }
     return 0;
 }

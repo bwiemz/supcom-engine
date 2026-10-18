@@ -236,19 +236,23 @@ TEST_CASE("UnitIsBlocked sees a box as far as it reaches turned, and stretched b
     // next cell along x.
     const f32 half = std::sqrt(0.5f);
     parked.set_orientation({0.0f, std::sin(0.3926991f), 0.0f, std::cos(0.3926991f)});
+    parked.place_now();
     CHECK(w.blockers().unit_blocked(id, Cell{31, 30}, 2));
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{32, 30}, 2));
     // A script's quaternion of length 2 stretches the box sevenfold along x
     // and z (the rotation formula assumes unit length): 6.3 out, far past
     // the shape's own reach, as far as the grid's COLLIDER_REACH looks.
     parked.set_orientation({0.0f, 2.0f, 0.0f, 0.0f});
+    parked.place_now();
     CHECK(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{37, 30}, 2));
     parked.set_orientation({0.0f, half, 0.0f, half});
+    parked.place_now();
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
     // A NaN (a script's normalized zero vector) fails every comparison, so
     // its box passes every overlap test: it blocks all the grid looks at.
     parked.set_orientation({std::nanf(""), 0.0f, 0.0f, 1.0f});
+    parked.place_now();
     CHECK(w.blockers().unit_blocked(id, Cell{35, 30}, 2));
     CHECK_FALSE(w.blockers().unit_blocked(id, Cell{40, 30}, 2)); // past COLLIDER_REACH
 }
