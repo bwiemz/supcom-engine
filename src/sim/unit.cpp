@@ -763,6 +763,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
             !(head && head->type == CommandType::Guard)) {
             end_guard_build(ctx.registry, ctx.L);
+            if (destroyed() || !in_registry()) return;
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // A mobile build, or a repair's or guard's help, whose order is gone
         // (replaced or stopped): the builder lets it go and stops paying; the
