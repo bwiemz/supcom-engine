@@ -444,6 +444,11 @@ stun, regeneration).
 - Fixes D13, D14, the tree and factory items of §3.2.
 - Tests: a chain of two attached entities follows the same tick; a tree hit by a projectile leans the same
   tick; beam damage comes before the tick's projectile hits.
+  *Done (2026-10-19) — tick/s9-entities-in-walk: the walk is Moho's stage A list, its order kept from tick to
+  tick; an attached entity waits for its parent and follows it there (a chain through units no longer lags), a
+  beam checks in its own step after its unit, cargo and stored units take theirs, a prop parks until FallDown or
+  SinkAway wakes it, a downed aircraft's OnImpact runs in its step; the duplicated cargo following of step 8 is
+  gone; P1, P2, P3 and a34 unchanged.*
 
 **Step 10. Recon by army.** A full `ReconTick` for army `tick % N`, `ReconRefresh` for the rest; blips,
 flags, callbacks and jammer blips only on `ReconTick`; `RefreshBlips` every tick; recon reads committed

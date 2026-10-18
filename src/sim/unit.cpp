@@ -991,7 +991,10 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
     }
     if (dying_) {
         tick_dying(static_cast<f32>(dt), ctx.terrain);
-        if (ctx.sim) {
+        if (take_crash_impact() && ctx.sim) {
+            ctx.sim->crash_impact(*this);
+        }
+        if (ctx.sim && in_registry()) {
             ctx.sim->step_economy_events(*this);
         }
         if (in_registry()) {

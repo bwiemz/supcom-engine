@@ -1441,6 +1441,32 @@ TEST_CASE("A beam deals its damage at its place in the entity walk, after its un
     CHECK(w.run(std::string("assert(after_beam == ") + (beam_first ? "true" : "false") + ")"));
 }
 
+TEST_CASE("A downed aircraft's OnImpact runs in its own step: a shot it makes moves that tick",
+          "[tick-phases][walk]") {
+    Phases w;
+    Unit& plane = w.make("plane", "tank", 1, 100.0f, 100.0f);
+    REQUIRE(w.run("made = 0 made_y = 0"
+                  " function plane:OnImpact(kind)"
+                  "   made = GetGameTick()"
+                  "   shot = EM.CreateProjectile(self, '/shell', 0, 5, 0)"
+                  "   PM.SetBallisticAcceleration(shot, 0)"
+                  "   PM.SetCollideSurface(shot, false)"
+                  "   PM.SetVelocity(shot, 0, 20, 0)"
+                  "   made_y = EM.GetPosition(shot)[2]"
+                  " end"));
+    w.projectile_class("/shell", "");
+    plane.set_layer("Air");
+    plane.set_position({100.0f, 11.0f, 100.0f});
+    plane.place_now();
+    plane.begin_dying();
+    for (int t = 0; t < 20 && w.number("made") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("made") > 0);
+    REQUIRE(w.run("shot_y = EM.GetPosition(shot)[2]"));
+    CHECK(w.number("shot_y") == Catch::Approx(w.number("made_y") + 2.0f));
+}
+
 TEST_CASE("An entity attached to a unit pushed out of another's way follows the push",
           "[tick-phases][walk]") {
     Phases w;

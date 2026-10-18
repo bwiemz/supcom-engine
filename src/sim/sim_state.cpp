@@ -604,6 +604,73 @@ void SimState::refollow_attached() {
     }
 }
 
+void SimState::crash_impact(Unit& unit) {
+    if (unit.destroyed()) {
+        return;
+    }
+    const u32 id = unit.entity_id();
+    if (!L_ || unit.lua_table_ref() < 0) {
+        entity_registry_.destroy(unit);
+        return;
+    }
+    const Vector3 p = unit.pending_position();
+    const bool water = terrain_ && terrain_->has_water() &&
+                       terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
+    // On the ground it is a land unit now: its wreck follows the
+    // blueprint's WreckageLayers.Land.
+    if (!water) {
+        unit.set_layer_with_callback("Land", L_);
+    }
+    Entity* e = entity_registry_.find(id);
+    if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+        return;
+    }
+    const int top = lua_gettop(L_);
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+    lua_pushstring(L_, "OnImpact");
+    lua_gettable(L_, -2);
+    bool handled = false;
+    if (lua_isfunction(L_, -1)) {
+        lua_pushvalue(L_, top + 1);
+        lua_pushstring(L_, water ? "Water" : "Terrain");
+        lua_pushnil(L_);
+        if (lua_pcall(L_, 3, 0, 0) == 0) {
+            handled = true;
+        } else {
+            const char* err = lua_tostring(L_, -1);
+            const std::string message = std::string("OnImpact error: ") + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) {
+                test_status::record_failure(message);
+            }
+        }
+    }
+    lua_settop(L_, top);
+    // Nothing will play this death out (no OnImpact, or it broke):
+    // finish it, as Kill does when OnKilled fails, rather than leave
+    // a dead unit lying there forever.
+    e = entity_registry_.find(id);
+    if (handled || !e || e->destroyed()) {
+        return;
+    }
+    if (e->lua_table_ref() >= 0) {
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_pushstring(L_, "Destroy");
+        lua_gettable(L_, -2);
+        if (lua_isfunction(L_, -1)) {
+            lua_pushvalue(L_, top + 1);
+            if (lua_pcall(L_, 1, 0, 0) != 0) {
+                spdlog::warn("Destroy error: {}", lua_tostring(L_, -1));
+            }
+        }
+        lua_settop(L_, top);
+    }
+    e = entity_registry_.find(id);
+    if (e && !e->destroyed()) {
+        entity_registry_.destroy(*e);
+    }
+}
+
 Entity::Walk SimState::step_entity(Entity& e, bool attached, SimContext& ctx) {
     if (e.is_unit()) {
         auto& unit = static_cast<Unit&>(e);
@@ -1819,76 +1886,6 @@ void SimState::tick() {
     update_entities();
     count_held_storage();
     sweep_ferry_beacons();
-
-    // Aircraft killed in flight that landed this tick: Moho tells their
-    // script, whose OnImpact deals the DeathImpact weapon's damage and plays
-    // the death out (or sinks it, in water). One without a script just goes.
-    {
-        std::vector<u32> landed;
-        entity_registry_.for_each_unit([&](Entity& e) {
-            if (!e.destroyed() && static_cast<Unit&>(e).take_crash_impact())
-                landed.push_back(e.entity_id());
-        });
-        for (const u32 id : landed) {
-            Entity* e = entity_registry_.find(id);
-            if (!e || e->destroyed()) continue;
-            if (!L_ || e->lua_table_ref() < 0) {
-                entity_registry_.destroy(*e);
-                continue;
-            }
-            const Vector3 p = e->pending_position();
-            const bool water = terrain_ && terrain_->has_water() &&
-                               terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
-            // On the ground it is a land unit now: its wreck follows the
-            // blueprint's WreckageLayers.Land.
-            if (!water) {
-                static_cast<Unit*>(e)->set_layer_with_callback("Land", L_);
-                e = entity_registry_.find(id);
-                if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-            }
-            const int top = lua_gettop(L_);
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
-            lua_pushstring(L_, "OnImpact");
-            lua_gettable(L_, -2);
-            bool handled = false;
-            if (lua_isfunction(L_, -1)) {
-                lua_pushvalue(L_, top + 1);
-                lua_pushstring(L_, water ? "Water" : "Terrain");
-                lua_pushnil(L_);
-                if (lua_pcall(L_, 3, 0, 0) == 0) {
-                    handled = true;
-                } else {
-                    const char* err = lua_tostring(L_, -1);
-                    const std::string message =
-                        std::string("OnImpact error: ") + (err ? err : "(unknown)");
-                    spdlog::warn("{}", message);
-                    if (test_status::count_lua_failures()) test_status::record_failure(message);
-                }
-            }
-            lua_settop(L_, top);
-            // Nothing will play this death out (no OnImpact, or it broke):
-            // finish it, as Kill does when OnKilled fails, rather than leave
-            // a dead unit lying there forever.
-            e = entity_registry_.find(id);
-            if (!handled && e && !e->destroyed()) {
-                if (e->lua_table_ref() >= 0) {
-                    lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
-                    lua_pushstring(L_, "Destroy");
-                    lua_gettable(L_, -2);
-                    if (lua_isfunction(L_, -1)) {
-                        lua_pushvalue(L_, top + 1);
-                        if (lua_pcall(L_, 1, 0, 0) != 0)
-                            spdlog::warn("Destroy error: {}", lua_tostring(L_, -1));
-                    }
-                    lua_settop(L_, top);
-                }
-                e = entity_registry_.find(id);
-                if (e && !e->destroyed()) {
-                    entity_registry_.destroy(*e);
-                }
-            }
-        }
-    }
 
     // "No Rush": pin units that strayed beyond their confinement radius.
     enforce_no_rush();
