@@ -317,9 +317,11 @@ weapons, for every unit.
   arm on target is unchanged.
 - Test: a turret on a hull turning at a constant rate fires along its aim; without the change the error is
   the hull's turn in a tick.
-- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every shot
-  at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a salvo
-  and 48% within 2 (retail 763, 47%).
+- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every tank
+  shot at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a
+  salvo and 48% within 2 (retail 763, 47%). *Done (2026-10-18) — tick/s1-manipulators-after-motion: P1's a
+  and b under 0.05, the tank hits 100%, the Corsair 756 a salvo and 48%. The Harbinger's misses left (49% hit,
+  retail 100%) land along the line of fire, not aside.*
 
 **Step 2. Motion as the unit's own step.** Orders only set intent: the navigator's goal; an aircraft's mode
 (move, attack run, circling, hover, hold height); a facing request; stop. `Unit::motion_tick()` runs one

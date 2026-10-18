@@ -564,8 +564,8 @@ public:
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
     /// orders (tick_orders), coasting, layer changes and fuel
-    /// (tick_after_orders), then the silo, regeneration, weapons and
-    /// manipulators (tick_upkeep).
+    /// (tick_after_orders), the manipulators, then the silo, regeneration
+    /// and weapons (tick_upkeep).
     void update(f64 dt, SimContext& ctx);
 
     /// Lua callback helpers: call self:method() or self:method(entity)
@@ -1518,6 +1518,7 @@ private:
     /// Dying (the death animation), or carried (following the transport):
     /// nothing else this tick.
     bool tick_lifecycle(f64 dt, SimContext& ctx);
+    bool tick_orders_and_motion(f64 dt, SimContext& ctx, f32& econ_eff);
     /// Run orders from the head of the queue until one holds (unit_orders.cpp).
     bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
     /// An order's first run (on a patrol, each leg's): what Moho's task
@@ -1530,8 +1531,8 @@ private:
     bool engage(UnitCommand& cmd, lua_State* L);
     /// Coasting, amphibious layer changes, fuel.
     bool tick_after_orders(f64 dt, SimContext& ctx);
-    /// A silo assist ended, regeneration, the silo, motion events, weapons,
-    /// manipulators. Runs while paused too.
+    /// A silo assist ended, regeneration, the silo, motion events, weapons.
+    /// Runs while paused too.
     void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff);
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);

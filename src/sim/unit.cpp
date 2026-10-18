@@ -660,14 +660,19 @@ void Unit::update(f64 dt, SimContext& ctx) {
     air_stepped_ = false;
     air_held_ = false;
     if (!tick_lifecycle(dt, ctx)) return;
-
-    // Manipulators (rotators, animators, sliders, aim controllers) move
-    // before the unit's orders run, as Moho's Unit::MotionTick updates them
-    // ahead of the task stage: an order sees this tick's aim (a build arm
-    // come on target), and what an order sets plays from the next tick.
+    f32 econ_eff = 1.0f;
+    const bool goes_on = tick_orders_and_motion(dt, ctx, econ_eff);
+    if (destroyed() || !in_registry()) {
+        return;
+    }
+    // Moho's Unit::MotionTick builds the pose on the transform its motion wrote.
     tick_manipulators(static_cast<f32>(dt), ctx.L);
-    if (destroyed() || !in_registry()) return;
+    if (goes_on && !destroyed() && in_registry()) {
+        tick_upkeep(dt, ctx, econ_eff);
+    }
+}
 
+bool Unit::tick_orders_and_motion(f64 dt, SimContext& ctx, f32& econ_eff) {
     // A surface unit on a layer its motion type can't be on (a land tank on
     // the seabed) loses 1% of its health a tick, moving or not, and dies at
     // none: Moho's CUnitMotion::CalcMoveCommon, which each motion tick runs
@@ -677,7 +682,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
         set_health(health() - max_health() * 0.0099999998f);
         if (health() <= 0.0f && ctx.sim) {
             ctx.sim->kill_unit(*this, "");
-            return;
+            return false;
         }
     }
 
@@ -687,13 +692,15 @@ void Unit::update(f64 dt, SimContext& ctx) {
     if (can_fly() && !is_being_built() && (!command_queue_.empty() || lifts_off_) &&
         parent_entity_id() == 0 && (layer_ == "Land" || layer_ == "Water")) {
         take_off(ctx);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
     }
 
     // Its work goes at what its consumption request was granted last tick
     // (Moho's ResourceConsumed); a capture asks through a request of its own,
     // granted this tick
-    f32 econ_eff = static_cast<f32>(economy_.resource_consumed);
+    econ_eff = static_cast<f32>(economy_.resource_consumed);
     // (A unit of no army has no economy to ask: it works in full.)
     if (!ctx.sim || !ctx.sim->get_army(army())) econ_eff = 1.0f;
     if (economy_.capture_energy > 0.0) {
@@ -710,7 +717,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
     // A teleport or an OverCharge whose order was taken away unfinished.
     if (teleporting_ || overcharge_armed_) {
         settle_interrupted_orders(ctx.L);
-        if (destroyed() || !in_registry()) return;
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
     }
     // A ferry, or a unit waiting for one, whose order is gone from the head
     // of its queue stops being one.
@@ -731,12 +740,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
                                        head->command_id == sacrifice_order_)) {
             sacrifice_order_ = 0;
             destroy_through_script(ctx.registry, ctx.L);
-            return;
+            return false;
         }
         if (has_script_task() && !(head && head->type == CommandType::Script &&
                                    head->task_serial == script_task_serial())) {
             end_script_task(ctx.L);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return false;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // A carrier's retrieve, or a landing on one (M206s), whose order is
@@ -744,7 +755,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (retrieve_phase_ != RetrievePhase::None &&
             !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
             end_retrieve(false, ctx);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return false;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (landing_.phase != LandPhase::None &&
@@ -763,7 +776,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
             !(head && head->type == CommandType::Guard)) {
             end_guard_build(ctx.registry, ctx.L);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return false;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // A mobile build, or a repair's or guard's help, whose order is gone
@@ -774,7 +789,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (build_target_id_ != 0 && build_released_with_order_ &&
             !(head && head->command_id == build_command_id_)) {
             release_build(ctx.L, ctx.registry);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return false;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (is_reclaiming() &&
@@ -784,7 +801,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                (head->type == CommandType::BuildMobile && head->clearing_prop_id != 0)))) {
             stop_reclaiming(ctx.L, &ctx.registry);
             if (destroyed() || !in_registry()) {
-                return;
+                return false;
             }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
@@ -794,24 +811,30 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if (is_repairing() &&
             !(head && (head->type == CommandType::Repair || head->type == CommandType::Guard))) {
             stop_repairing(ctx.L, ctx.registry);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return false;
+            }
             head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         if (is_capturing() && !(head && head->type == CommandType::Capture)) {
             stop_capturing(ctx.L, ctx.registry, true);
-            if (destroyed() || !in_registry()) return;
+            if (destroyed() || !in_registry()) {
+                return false;
+            }
         }
     }
 
     if (!is_being_built() && !tick_orders(dt, ctx, econ_eff)) {
-        return;
+        return false;
     }
-    if (!tick_after_orders(dt, ctx)) return;
+    if (!tick_after_orders(dt, ctx)) {
+        return false;
+    }
     tend_unfinished(ctx);
     if (ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
     }
-    tick_upkeep(dt, ctx, econ_eff);
+    return true;
 }
 
 void Unit::tend_unfinished(SimContext& ctx) {
@@ -3946,9 +3969,8 @@ f32 Unit::anim_motion_scale(f32 dt) const {
     if (!tick_position_set_) {
         return 0.0f;
     }
-    // The last tick's move and turn: the manipulators run ahead of this
-    // tick's motion, as Moho's CAnimationManipulator reads the unit's
-    // velocity and its last two transforms before CUnitMotion moves it.
+    // The last tick's move and turn: Moho's CAnimationManipulator reads the
+    // committed transforms, which this tick's motion has not advanced yet.
     const Vector3& d = last_tick_motion_;
     const f32 scale = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) / dt / max_speed_;
     if (turned_last_tick_ && scale <= 0.25f) {
