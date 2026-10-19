@@ -9,15 +9,20 @@ tools/shader_names_baseline.txt lists those, after the engine's remaps, with no
 technique yet. The check fails on one missing from the baseline, and on a
 baseline entry that has a technique now or that retail no longer sets.
 
-Usage: check_shader_names.py <repo root>        (exit 1 on a problem)
-       check_shader_names.py --extract <FA dir> (writes the list to stdout)
+Usage: check_shader_names.py <repo root>          (exit 1 on a problem)
+       check_shader_names.py --extract <FA dir> > tools/shader_names.txt
+       check_shader_names.py --installed <repo root>
+           (the same check on the installed game's .bp files, found as the engine
+           finds them through OSC_FA_PATH; exit 77, a skip, when there are none)
        check_shader_names.py --self-test
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -34,7 +39,8 @@ def shader_names(text: str) -> set[str]:
 
 def engine_shaders(source: str) -> tuple[dict[str, str], set[str]]:
     """The remaps resolve_shader_name applies, and the names mesh_technique knows."""
-    remaps_part, _, technique_part = source.partition("MeshTechnique mesh_technique(")
+    remaps_part, _, rest = source.partition("MeshTechnique mesh_technique(")
+    technique_part = rest.partition("\n}\n")[0]
     remaps = dict(REMAP.findall(remaps_part.partition("kRemaps")[2]))
     return remaps, set(TECHNIQUE.findall(technique_part)) | OWN_PATH
 
@@ -44,13 +50,22 @@ def without_technique(names: list[str], remaps: dict[str, str], known: set[str])
     return resolved - known
 
 
-def extract(fa: Path) -> int:
+def names_in(fa: Path) -> set[str]:
     names: set[str] = set()
     for scd in sorted((fa / "gamedata").glob("*.scd")):
         with zipfile.ZipFile(scd) as z:
             for name in z.namelist():
                 if name.lower().endswith(".bp"):
                     names |= shader_names(z.read(name).decode("latin-1"))
+    return names
+
+
+def extract(fa: Path) -> int:
+    names = names_in(fa)
+    if not names:
+        print(f"{fa}: no ShaderName in any gamedata/*.scd blueprint; is it a game install?",
+              file=sys.stderr)
+        return 1
     print("# Retail ShaderName values: tools/check_shader_names.py --extract")
     for n in sorted(names):
         print(n)
@@ -78,12 +93,30 @@ def problems_of(missing: set[str], baseline: list[str]) -> list[str]:
     return out
 
 
-def check(root: Path) -> tuple[list[str], int]:
+def check(root: Path, names: list[str] | None = None) -> tuple[list[str], int]:
     tools = root / "tools"
-    names = read_names(tools / "shader_names.txt")
+    names = read_names(tools / "shader_names.txt") if names is None else names
     remaps, known = engine_shaders((root / "src/renderer/mesh_cache.cpp").read_text())
     missing = without_technique(names, remaps, known)
     return problems_of(missing, read_names(tools / "shader_names_baseline.txt")), len(missing)
+
+
+def check_installed(root: Path) -> int:
+    fa = os.environ.get("OSC_FA_PATH")
+    names = names_in(Path(fa)) if fa and (Path(fa) / "gamedata").is_dir() else set()
+    if not names:
+        print("no installed game found through OSC_FA_PATH; skipping")
+        return 77
+    return report(*check(root, sorted(names)), "installed")
+
+
+def report(problems: list[str], n: int, what: str) -> int:
+    for p in problems:
+        print(p)
+    if problems:
+        return 1
+    print(f"shader names: {n} {what} ShaderName values without a technique, all in the baseline")
+    return 0
 
 
 def self_test() -> int:
@@ -95,7 +128,8 @@ def self_test() -> int:
     source = ('kRemaps[] = {\n {"TMeshNoLighting", "Flat"},\n};\n'
               'MeshTechnique mesh_technique(x) {\n if (shader_name == "Aeon") return 1;\n'
               ' return Unit;\n}')
-    remaps, known = engine_shaders(source)
+    later = source + '\nvoid other() {\n if (shader_name == "Helper") return;\n}\n'
+    remaps, known = engine_shaders(later)
     if remaps != {"TMeshNoLighting": "Flat"} or known != {"Aeon", "Unit", "Wreckage"}:
         print(f"self-test: engine_shaders gave {remaps}, {sorted(known)}")
         return 1
@@ -108,6 +142,10 @@ def self_test() -> int:
         if len(problems_of(missing, baseline)) != n:
             print(f"self-test: baseline {baseline}: want {n} problem(s)")
             return 1
+    with tempfile.TemporaryDirectory() as empty:
+        if extract(Path(empty)) != 1:
+            print("self-test: --extract on a directory without game data must fail")
+            return 1
     print("self-test: ok")
     return 0
 
@@ -117,16 +155,12 @@ def main(argv: list[str]) -> int:
         return self_test()
     if len(argv) == 2 and argv[0] == "--extract":
         return extract(Path(argv[1]))
+    if len(argv) == 2 and argv[0] == "--installed":
+        return check_installed(Path(argv[1]))
     if len(argv) != 1:
         print(__doc__)
         return 2
-    problems, n = check(Path(argv[0]))
-    for p in problems:
-        print(p)
-    if problems:
-        return 1
-    print(f"shader names: {n} retail ShaderName values without a technique, all in the baseline")
-    return 0
+    return report(*check(Path(argv[0])), "retail")
 
 
 if __name__ == "__main__":
