@@ -202,14 +202,13 @@ jobs:
           "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
 
       - name: Configure
-        # No GPU on CI runners: skip building the Vulkan validation layer.
-        run: cmake --preset macos-release -DVCPKG_MANIFEST_FEATURES= -DOSC_WERROR=ON
+        run: cmake --preset macos-debug -DOSC_WERROR=ON
 
       - name: Build
-        run: cmake --build --preset macos-release
+        run: cmake --build --preset macos-debug
 
       - name: Test (data-free)
-        run: ctest --preset macos-release -LE "data|lint" --output-on-failure
+        run: ctest --preset macos-debug -LE "data|lint" --output-on-failure
 
   cross-os:
     # Windows and Linux in one game (M219): the data-free lockstep pairs
