@@ -42,6 +42,7 @@ extern "C" {
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <ostream>
 #include <unordered_map>
@@ -261,6 +262,40 @@ bool Renderer::create_window(u32 width, u32 height, const std::string& title, bo
     return true;
 }
 
+#ifdef __APPLE__
+// The Vulkan driver manifest to add on macOS. KosmicKrisp (Mesa's driver on
+// Metal 4, in the LunarG SDK; Khronos recommends it over MoltenVK on Apple
+// silicon) first, on the macOS 26 it needs; then MoltenVK from Homebrew, from
+// /usr/local, or from the SDK. Newest SDK first; the SDK installs each
+// version in its own directory. Empty when nothing is installed.
+static std::string macos_driver_manifest() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<fs::path> sdks;
+    if (const char* home = std::getenv("HOME")) {
+        for (const auto& e : fs::directory_iterator(fs::path(home) / "VulkanSDK", ec))
+            sdks.push_back(e.path());
+    }
+    std::sort(sdks.rbegin(), sdks.rend());
+    const auto sdk_icd = [&](const char* name) -> std::string {
+        for (const auto& sdk : sdks) {
+            const fs::path icd = sdk / "macOS/share/vulkan/icd.d" / name;
+            if (fs::exists(icd, ec)) return icd.string();
+        }
+        return {};
+    };
+    if (__builtin_available(macOS 26.0, *)) {
+        if (std::string icd = sdk_icd("libkosmickrisp_icd.json"); !icd.empty()) return icd;
+    }
+    for (const char* icd : {"/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json",
+                            "/usr/local/etc/vulkan/icd.d/MoltenVK_icd.json",
+                            "/usr/local/share/vulkan/icd.d/MoltenVK_icd.json"}) {
+        if (fs::exists(icd, ec)) return icd;
+    }
+    return sdk_icd("MoltenVK_icd.json");
+}
+#endif
+
 bool Renderer::create_instance(bool offscreen, vkb::Instance& vkb_inst) {
     // Vulkan instance (vk-bootstrap). Validation: on in debug builds, off in
     // release; OSC_VK_VALIDATION=0/1 overrides either way.
@@ -271,6 +306,18 @@ bool Renderer::create_instance(bool offscreen, vkb::Instance& vkb_inst) {
         true;
 #endif
     if (const char* v = std::getenv("OSC_VK_VALIDATION")) validation = v[0] == '1';
+#ifdef __APPLE__
+    // macOS has no system Vulkan driver, and the vcpkg-built loader searches
+    // only its own install prefix for ICD manifests. Add the one the user
+    // has installed unless they already chose drivers.
+    if (!std::getenv("VK_DRIVER_FILES") && !std::getenv("VK_ICD_FILENAMES")) {
+        const std::string icd = macos_driver_manifest();
+        if (!icd.empty()) {
+            spdlog::info("Vulkan driver manifest: {}", icd);
+            platform::set_env_default("VK_ADD_DRIVER_FILES", icd);
+        }
+    }
+#endif
 #ifdef OSC_VULKAN_LAYER_PATH
     if (validation) platform::set_env_default("VK_ADD_LAYER_PATH", OSC_VULKAN_LAYER_PATH);
 #endif
