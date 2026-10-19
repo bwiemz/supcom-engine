@@ -42,6 +42,7 @@ as FA's does:
 | Wrecks | `glowMinimum` | the same |
 | Props (`NormalMappedAlpha`) | not written (`Write_RGB`) | 0 (the terrain beneath is at most 0.01 + its specular: under the copy's 0.02 for XP maps) |
 | Decals, water, particles | not written (`Write_RGB`, mostly) | not written: colour write mask RGB |
+| Light particles (`TLight_ADD`) | `Write_RGBA` by `SrcAlpha, One`: `a = a_src^2 + a_dst` | the same |
 | Meshes without a mesh (cubes) | — | not written |
 
 A unit under construction (the engine's fade, until the build shaders) is
@@ -56,7 +57,8 @@ the fade and writes colour only; they don't glow.
 - Terrain and mesh shaders write FA's alpha; the mesh pipeline stops
   blending, and a fade pipeline takes the fading instances (their own draw
   groups).
-- Decals, water, cubes and particles write colour only.
+- Decals, water, cubes and particles write colour only, but light particles
+  add to the glow: the UEF nuke's flash blooms.
 - The bloom's bright pass becomes the glow copy (push: `GlowCopyAdd`), the
   blur FA's kernel with its scale, run twice, and the composite a plain
   sum.
@@ -98,7 +100,8 @@ standing off it:
   SpecTeam red; the fade pipeline writing alpha; the colour interpolated.
 
 The masks on decals, water and particles aren't exercised: the test's
-scene has none.
+scene has none. Test 7 checks a light particle's glow, and that one at
+half alpha adds its alpha squared to the frame's (0.263 over 0.01).
 
 ## Left for later
 
