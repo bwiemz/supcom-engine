@@ -20,7 +20,7 @@ The full statement of what may enter the repository, where knowledge of the game
    - the milestone row in `docs/ROADMAP.md`;
    - `docs/current-state.md` when a capability or a known gap changes;
    - a design note in `docs/plans/` for anything architectural.
-5. Open a PR. CI builds on GCC, Clang, ASan+UBSan and MSVC, and runs the data-free tests and the static checks.
+5. Open a PR. CI builds on GCC, Clang, ASan+UBSan, MSVC and macOS (Apple Silicon), and runs the data-free tests and the static checks.
 
 ## Style and static checks
 
