@@ -46,6 +46,7 @@ add_executable(osc_integration
     runner/counter_intel_test.cpp
     runner/binding_tail_test.cpp
     runner/pod_rebuild_test.cpp
+    runner/mesh_texture_test.cpp
     runner/destroyed_handle_test.cpp
     runner/jammer_blip_test.cpp
     runner/intel_field_test.cpp

@@ -287,9 +287,6 @@ public:
 
 private:
     std::string resolve_mesh_path(const std::string& bp_id, lua_State* L);
-    std::string resolve_albedo_path(const std::string& bp_id, lua_State* L);
-    std::string resolve_specteam_path(const std::string& bp_id, lua_State* L);
-    std::string resolve_normal_path(const std::string& bp_id, lua_State* L);
     f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
     /// The mesh blueprint a blueprint draws with: a unit's or prop's
     /// Display.MeshBlueprint, or the id itself when it names a mesh
