@@ -265,9 +265,9 @@ void remove_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!command) {
         return;
     }
-    for_each_unit(sim, cb, [&](Unit& u) {
-        u.remove_command(static_cast<u32>(*command), sim.entity_registry(), L);
-    });
+    SimContext ctx = sim.sim_context();
+    ctx.L = L;
+    for_each_unit(sim, cb, [&](Unit& u) { u.remove_command(static_cast<u32>(*command), ctx); });
 }
 
 void set_command_type(SimState& sim, const SimCallbackEntry& cb) {

@@ -17,6 +17,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -289,24 +290,86 @@ void on_user_pause(lua_State* L, bool pause) {
 
 } // namespace
 
-bool session_request_pause(lua_State* L) {
-    if (!session_is_multiplayer()) return false;
-    if (auto* session = mp_net_state().session.get()) session->request_pause();
-    on_user_pause(L, true);
+namespace {
+
+/// A single-player game's sim, which takes its pause as a command; a replay
+/// pauses the client instead.
+sim::SimState* commanded_sim(lua_State* L) {
+    sim::SimState* sim = sim_of(L);
+    return sim && !sim->playback() ? sim : nullptr;
+}
+
+u32 submit_engine_callback(sim::SimState& sim, const char* name) {
+    sim::SimCallbackEntry callback;
+    callback.func_name = name;
+    return sim.schedule_callback(0, std::move(callback));
+}
+
+/// Moho's CWldSession::mRequestingPause: SessionIsPaused answers this
+/// player's last pause or resume until the beat its command runs in.
+struct PauseRequest {
+    u32 game = 0;
+    u32 beat = 0;
+    bool paused = false;
+};
+
+PauseRequest& pause_request() {
+    static PauseRequest request;
+    return request;
+}
+
+std::optional<u32> send_pause_command(lua_State* L, const char* name,
+                                      u32 (sim::LockstepSession::*send)()) {
+    if (session_is_multiplayer()) {
+        auto* session = mp_net_state().session.get();
+        return session ? (session->*send)() : 0;
+    }
+    if (sim::SimState* sim = commanded_sim(L)) {
+        return submit_engine_callback(*sim, name);
+    }
+    return std::nullopt;
+}
+
+bool ask_pause(lua_State* L, bool pause) {
+    const auto beat =
+        pause ? send_pause_command(L, sim::kRequestPauseCallback,
+                                   &sim::LockstepSession::request_pause)
+              : send_pause_command(L, sim::kResumeCallback, &sim::LockstepSession::request_resume);
+    if (!beat) {
+        return false;
+    }
+    pause_request() = {sim::SimState::sim_generation(), *beat, pause};
+    on_user_pause(L, pause);
     return true;
+}
+
+} // namespace
+
+bool session_request_pause(lua_State* L) {
+    return ask_pause(L, true);
 }
 
 bool session_resume(lua_State* L) {
-    if (!session_is_multiplayer()) return false;
-    if (auto* session = mp_net_state().session.get()) session->request_resume();
-    on_user_pause(L, false);
-    return true;
+    return ask_pause(L, false);
+}
+
+bool session_single_step(lua_State* L) {
+    return send_pause_command(L, sim::kSingleStepCallback,
+                              &sim::LockstepSession::request_single_step)
+        .has_value();
 }
 
 bool session_is_paused(lua_State* L, bool& paused) {
-    if (!session_is_multiplayer()) return false;
-    const sim::SimState* sim = sim_of(L);
-    paused = sim && sim->network_paused();
+    const sim::SimState* sim = session_is_multiplayer() ? sim_of(L) : commanded_sim(L);
+    if (!session_is_multiplayer() && !sim) {
+        return false;
+    }
+    const PauseRequest& asked = pause_request();
+    if (sim && asked.game == sim::SimState::sim_generation() && sim->beat_count() < asked.beat) {
+        paused = asked.paused;
+    } else {
+        paused = sim && sim->paused();
+    }
     return true;
 }
 
@@ -336,8 +399,8 @@ void pump_speed_changes(lua_State* L) {
     }
 }
 
-void show_desyncs(lua_State* L, u32 tick, const std::vector<u32>& sources) {
-    lua_pushnumber(L, static_cast<double>(tick));
+void show_desyncs(lua_State* L, u32 beat, const std::vector<u32>& sources) {
+    lua_pushnumber(L, static_cast<double>(beat));
     lua_newtable(L);
     for (size_t i = 0; i < sources.size(); ++i) {
         lua_pushnumber(L, static_cast<double>(i + 1));
@@ -360,7 +423,7 @@ void pump_desyncs(lua_State* L) {
         return;
     }
     const sim::SimState* sim = sim_of(L);
-    show_desyncs(L, sim ? sim->tick_count() : 0, sources);
+    show_desyncs(L, sim ? sim->beat_count() : 0, sources);
 }
 
 void pump_pause_state(lua_State* L) {
@@ -370,14 +433,16 @@ void pump_pause_state(lua_State* L) {
     static u32 game = 0;
     static bool shown = false;
     static u32 shown_serial = 0;
-    const sim::SimState* sim = sim_of(L);
-    if (!session_is_multiplayer() || !sim) return;
+    const sim::SimState* sim = session_is_multiplayer() ? sim_of(L) : commanded_sim(L);
+    if (!sim) {
+        return;
+    }
     if (game != sim::SimState::sim_generation()) {
         game = sim::SimState::sim_generation();
         shown = false;
         shown_serial = 0;
     }
-    const bool paused = sim->network_paused();
+    const bool paused = sim->paused();
     // Resumed, or resumed and paused again since the last frame
     if (shown && (!paused || sim->pause_serial() != shown_serial)) {
         shown = false;

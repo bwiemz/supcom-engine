@@ -81,7 +81,7 @@ TEST_CASE("A single-player player's order applies in the next tick, and is recor
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
     CHECK(unit_of(sim, id)->command_queue().front().command_id != 0); // numbered in-tick
     REQUIRE(sim.recorded_replay().commands.size() == 1);
-    CHECK(sim.recorded_replay().commands[0].exec_tick == 1);
+    CHECK(sim.recorded_replay().commands[0].exec_beat == 1);
 }
 
 TEST_CASE("route_command sends local human orders to the sink in multiplayer",

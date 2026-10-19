@@ -519,7 +519,7 @@ public:
     void prune_upgrade_chain(lua_State* L);
     /// Sim::RemoveCommandFromUnitQueue: order `id` off the queue, or the rally
     /// orders; the work of a head order stops as Stop stops it.
-    void remove_command(u32 id, EntityRegistry& registry, lua_State* L);
+    void remove_command(u32 id, SimContext& ctx);
     /// IncreaseBuildCountInQueue: `count` more of the index-th group of its
     /// factory queue (1-based, as factory_queue() groups it), after the
     /// group's last order. An index past the queue changes nothing.
@@ -572,8 +572,10 @@ public:
     /// Moho's CUnitCommandQueue::NeedsUIRefresh: a head order of these types
     /// taken off the queue sets the unit's UI refresh flag.
     void note_queue_head();
-    /// Moho's ClearCommandQueue: the head order's build, upgrade or enhancement ends with it.
-    void clear_commands(EntityRegistry& registry, lua_State* L);
+    /// Moho's ClearCommandQueue: the head order's task ends with it, its callbacks now.
+    void clear_commands(SimContext& ctx);
+    /// The tasks of orders no longer at the head end (Moho's task destructors).
+    void end_gone_orders(SimContext& ctx);
     std::vector<UnitCommand*> commands_with_id(u32 id) {
         std::vector<UnitCommand*> out;
         for (UnitCommand& c : command_queue_) {
@@ -2001,6 +2003,8 @@ private:
     /// A teleport or an OverCharge whose order went unfinished: the script
     /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
     void settle_interrupted_orders(lua_State* L);
+    bool end_gone_loading(SimContext& ctx);
+    bool end_gone_tasks(SimContext& ctx);
     /// Take the missile under way off the silo: its request, the unit
     /// state. The script hears nothing: it was not finished (the Yolona
     /// Oss's tells a cancel by the state going without OnSiloBuildEnd).

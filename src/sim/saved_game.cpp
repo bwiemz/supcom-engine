@@ -40,7 +40,7 @@ std::vector<u8> SavedGame::serialize() const {
     w.u32v(kVersion); // the layout written below, whatever version was read
     w.str(build);
     w.str(name);
-    w.u32v(tick);
+    w.u32v(beat);
     // The snapshot, deflated (zlib, fastest: the late game's 60 MB is mostly
     // repeated structure)
     std::vector<u8> packed;
@@ -74,7 +74,7 @@ SaveLoadError SavedGame::deserialize(const std::vector<u8>& bytes, SavedGame& ou
     SavedGame save;
     save.build = r.str();
     save.name = r.str();
-    save.tick = r.u32v();
+    save.beat = r.u32v();
     if (!r.ok()) return SaveLoadError::InvalidFormat;
     // The build first: another build's recording may not even parse.
     if (save.build != build_id()) return SaveLoadError::WrongVersion;
@@ -101,7 +101,7 @@ SaveLoadError SavedGame::deserialize(const std::vector<u8>& bytes, SavedGame& ou
     const std::vector<u8> recording(
         binary_at + static_cast<std::ptrdiff_t>(save.snapshot_binary.size()), bytes.end());
     if (!Replay::deserialize(recording, save.game) || !save.game.has_setup ||
-        save.game.final_tick != save.tick)
+        save.game.final_beat != save.beat)
         return SaveLoadError::InvalidFormat;
     out = std::move(save);
     return SaveLoadError::None;
@@ -133,13 +133,13 @@ SavedGame save_game(SimState& sim, std::string name, bool snapshot) {
     SavedGame save;
     save.build = build_id();
     save.name = std::move(name);
-    save.tick = sim.tick_count();
+    save.beat = sim.beat_count();
     if (snapshot) {
         const auto start = std::chrono::steady_clock::now();
         if (std::string err = save_snapshot(sim, save.snapshot); err.empty()) {
             spdlog::info(
                 "Saved game '{}': snapshot of tick {} taken in {:.0f} ms ({:.1f} MB)", save.name,
-                save.tick,
+                sim.tick_count(),
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
                     .count(),
                 static_cast<double>(save.snapshot.size()) / 1e6);
@@ -150,7 +150,7 @@ SavedGame save_game(SimState& sim, std::string name, bool snapshot) {
         }
     }
     save.game = sim.recorded_replay();
-    save.game.final_tick = save.tick;
+    save.game.final_beat = save.beat;
     // Orders given and not yet run: a click just before saving, or while
     // paused. The engine's own (a dropped peer's defeat) aren't the
     // player's, and only a multiplayer game issues them.

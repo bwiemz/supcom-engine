@@ -157,7 +157,9 @@ std::optional<int> App::boot_game() {
 
         attach_sound(*sim_lua_state, *sim_state, &sound);
         // Only a drawn world needs its ticks captured.
-        if (!opt.headless) world_interp.attach(*sim_state);
+        if (!opt.headless) {
+            world_interp.attach(*sim_state, &ui_lua_state);
+        }
 
         // Bone cache (lazy-loaded per-blueprint SCM bone data)
         auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
@@ -759,16 +761,16 @@ std::optional<int> App::start() {
             const Restore result = opt.load_by_replay ? Restore::Skipped : restore_save(save, why);
             if (result == Restore::Failed) {
                 spdlog::error("Saved game '{}': not restored: {}", save.name, why);
-                std::printf("LOAD failed tick=%u\n", save.tick);
+                std::printf("LOAD failed tick=%u\n", save.beat);
                 return 1;
             }
             restore = result == Restore::Done;
             if (restore) {
-                std::printf("LOAD resumed tick=%u\n", save.tick);
+                std::printf("LOAD resumed tick=%u\n", sim_state->tick_count());
             } else {
                 catch_up.emplace(save.game);
                 catch_up->resume(*sim_state);
-                spdlog::info("Saved game '{}': catching up to tick {} ({})", save.name, save.tick,
+                spdlog::info("Saved game '{}': catching up to beat {} ({})", save.name, save.beat,
                              why);
             }
         }

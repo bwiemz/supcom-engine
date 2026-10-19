@@ -3968,6 +3968,7 @@ void register_console_commands(ui::Console& console) {
     console.add("WLD_ResetSimRate", [](lua_State* L, const Args&) {
         if (game_speed(L) != 0) set_game_speed(L, 0);
     });
+    console.add("WLD_SingleStep", [](lua_State* L, const Args&) { session_single_step(L); });
 }
 
 void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map) {

@@ -150,7 +150,7 @@ def loaded(proc: subprocess.CompletedProcess[str], name: str, tick: int, by_repl
         print(f"{name} never took over the game at tick {tick}")
         return False
     # By the way asked for: restored at once, or caught up
-    how = f"catching up to tick {tick}" if by_replay else f"restored at tick {tick}"
+    how = f"catching up to beat {tick}" if by_replay else f"restored at tick {tick}"
     if how not in proc.stdout:
         print(f"{name} wasn't {how.split(' at ')[0].split(' to ')[0]}")
         return False

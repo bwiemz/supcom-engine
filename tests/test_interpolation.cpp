@@ -159,7 +159,7 @@ TEST_CASE("WorldHistory keeps the last two ticks and follows the sim's ticks",
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
 
     sim.tick();
     sim.tick();
@@ -259,7 +259,7 @@ TEST_CASE("FrameView draws a projectile reaching its impact point at the share o
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
     const osc::u32 target = spawn_at(sim, {110, 10, 100});
     osc::sim::CollisionShape box;
     box.type = osc::sim::CollisionShapeType::BOX;
@@ -662,7 +662,7 @@ TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][s
     LuaGuard g;
     SimState sim(g.L, nullptr);
     WorldHistory history;
-    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
 
     // Raised between ticks (a SimCallback): shown with the next tick.
     sim.add_death_event(1, 2, 3, 4, 0);

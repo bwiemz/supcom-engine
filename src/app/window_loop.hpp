@@ -76,7 +76,7 @@ private:
     /// lockstep game's rounds, or the local clock's.
     void advance_sim(double dt);
     /// The sim's beat to the user side, once a tick (paused too).
-    void run_beats(double dt, u32 beat_tick0);
+    void run_beats();
     /// The scripted flows' frame: replay, LAN, GPGNet, mods, load.
     void run_flows();
     void drive_scripted_mouse();
@@ -194,7 +194,6 @@ private:
     /// The entities whose loops the frame's sound plays (update_world_sounds).
     EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched
-    double paused_beat_accumulator = 0.0;
     /// FA's command mode drives world clicks (read once per frame).
     osc::renderer::CommandMode current_command_mode;
     bool ghost_from_mode = false;

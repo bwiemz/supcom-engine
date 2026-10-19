@@ -62,15 +62,16 @@ EjectByUid eject_session_uid(u32 uid);
 /// clients (uimain.UpdateDisconnectDialog, as Moho's session calls it).
 void pump_disconnect_dialog(lua_State* L);
 
-/// SessionRequestPause / SessionResume in a network game (M218f): through
-/// the lockstep (SimState::request_pause), and gamemain.OnUserPause(bool)
-/// at once for this player, as Moho's. False in single-player (the caller
-/// pauses the game locally).
+/// SessionRequestPause / SessionResume (M218f): a command to the sim
+/// (SimState::request_pause), through the lockstep in a network game, and
+/// gamemain.OnUserPause(bool) at once for this player, as Moho's. False for a
+/// replay or no game (the caller pauses the client).
 bool session_request_pause(lua_State* L);
 bool session_resume(lua_State* L);
+/// WLD_SingleStep: paused, one beat runs its tick.
+bool session_single_step(lua_State* L);
 
-/// SessionIsPaused in a network game: whether the lockstep's pause holds.
-/// False (`paused` untouched) in single-player.
+/// SessionIsPaused. False (`paused` untouched) for a replay or no game.
 bool session_is_paused(lua_State* L, bool& paused);
 
 /// SetGameSpeed, WLD_GameSpeed and the WLD_*SimRate commands in a network
@@ -86,10 +87,10 @@ bool session_speed(i32& rate);
 /// for each change the lockstep applied, as Moho's client manager calls it.
 void pump_speed_changes(lua_State* L);
 
-void show_desyncs(lua_State* L, osc::u32 tick, const std::vector<osc::u32>& sources);
+void show_desyncs(lua_State* L, osc::u32 beat, const std::vector<osc::u32>& sources);
 void pump_desyncs(lua_State* L);
 
-/// Each frame of a network game: gamemain.OnPause(pausedBy,
+/// Each frame of a game: gamemain.OnPause(pausedBy,
 /// timeoutsRemaining) as a pause starts, OnResume() as it ends (Moho's
 /// Sync.PausedBy).
 void pump_pause_state(lua_State* L);

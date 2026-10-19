@@ -102,6 +102,45 @@ void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
     lua_pop(sim_L, 1);
 }
 
+constexpr const char* kSyncPacketsKey = "__osc_sync_packets";
+
+/// The sim state's queue of beats' Sync tables, [first..last].
+int push_packets(lua_State* sim_L) {
+    lua_pushstring(sim_L, kSyncPacketsKey);
+    lua_rawget(sim_L, LUA_REGISTRYINDEX);
+    if (!lua_istable(sim_L, -1)) {
+        lua_pop(sim_L, 1);
+        lua_newtable(sim_L);
+        lua_pushstring(sim_L, kSyncPacketsKey);
+        lua_pushvalue(sim_L, -2);
+        lua_rawset(sim_L, LUA_REGISTRYINDEX);
+    }
+    return lua_gettop(sim_L);
+}
+
+int packet_index(lua_State* sim_L, int packets, const char* end, int fallback) {
+    lua_pushstring(sim_L, end);
+    lua_rawget(sim_L, packets);
+    const int v = lua_isnumber(sim_L, -1) ? static_cast<int>(lua_tonumber(sim_L, -1)) : fallback;
+    lua_pop(sim_L, 1);
+    return v;
+}
+
+void set_packet_index(lua_State* sim_L, int packets, const char* end, int v) {
+    lua_pushstring(sim_L, end);
+    lua_pushnumber(sim_L, v);
+    lua_rawset(sim_L, packets);
+}
+
+void push_sim_sync(lua_State* sim_L) {
+    lua_pushstring(sim_L, "Sync");
+    lua_rawget(sim_L, LUA_GLOBALSINDEX);
+    if (!lua_istable(sim_L, -1)) {
+        lua_pop(sim_L, 1);
+        lua_newtable(sim_L);
+    }
+}
+
 } // namespace
 
 int focus_army(lua_State* ui_L) {
@@ -113,27 +152,56 @@ void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army) {
     if (ui_L) set_registry_int(ui_L, "__osc_focus_army", army);
 }
 
+void queue_sync(lua_State* sim_L, lua_State* ui_L) {
+    if (!sim_L || !ui_L) {
+        return;
+    }
+    apply_focus_request(sim_L, ui_L);
+    const int packets = push_packets(sim_L);
+    const int last = packet_index(sim_L, packets, "last", 0) + 1;
+    push_sim_sync(sim_L);
+    lua_rawseti(sim_L, packets, last);
+    set_packet_index(sim_L, packets, "last", last);
+    lua_pop(sim_L, 1);
+    call_global(sim_L, "ResetSyncTable", 0);
+}
+
+bool sync_pending(lua_State* sim_L) {
+    const int packets = push_packets(sim_L);
+    const bool pending =
+        packet_index(sim_L, packets, "first", 1) <= packet_index(sim_L, packets, "last", 0);
+    lua_pop(sim_L, 1);
+    return pending;
+}
+
 void sync_beat(lua_State* sim_L, lua_State* ui_L) {
     if (!sim_L || !ui_L) return;
-    apply_focus_request(sim_L, ui_L);
+    const int packets = push_packets(sim_L);
+    const int first = packet_index(sim_L, packets, "first", 1);
+    const bool queued = first <= packet_index(sim_L, packets, "last", 0);
+    if (queued) {
+        lua_rawgeti(sim_L, packets, first);
+        lua_pushnil(sim_L);
+        lua_rawseti(sim_L, packets, first);
+        set_packet_index(sim_L, packets, "first", first + 1);
+    } else {
+        apply_focus_request(sim_L, ui_L);
+        push_sim_sync(sim_L);
+    }
 
-    // PreviousSync = Sync; Sync = copy of the sim's Sync
+    // PreviousSync = Sync; Sync = copy of the beat's
     lua_pushstring(ui_L, "PreviousSync");
     lua_pushstring(ui_L, "Sync");
     lua_rawget(ui_L, LUA_GLOBALSINDEX);
     lua_rawset(ui_L, LUA_GLOBALSINDEX);
-
-    lua_pushstring(sim_L, "Sync");
-    lua_rawget(sim_L, LUA_GLOBALSINDEX);
     lua_pushstring(ui_L, "Sync");
-    if (lua_istable(sim_L, -1))
-        copy_lua_value(sim_L, -1, ui_L);
-    else
-        lua_newtable(ui_L);
+    copy_lua_value(sim_L, -1, ui_L);
     lua_rawset(ui_L, LUA_GLOBALSINDEX);
-    lua_pop(sim_L, 1);
+    lua_pop(sim_L, 2);
 
-    call_global(sim_L, "ResetSyncTable", 0);
+    if (!queued) {
+        call_global(sim_L, "ResetSyncTable", 0);
+    }
     call_global(ui_L, "OnSync", 0);
 }
 

@@ -121,22 +121,23 @@ void Unit::note_queue_head() {
     }
 }
 
-void Unit::clear_commands(EntityRegistry& registry, lua_State* L) {
+void Unit::clear_commands(SimContext& ctx) {
     const bool factory_build = building_factory_order();
     const bool upgrade = upgrading();
     clear_commands();
     if (factory_build) {
-        cancel_factory_build(registry, L);
+        cancel_factory_build(ctx.registry, ctx.L);
     }
     if (upgrade) {
-        cancel_upgrade(registry, L);
+        cancel_upgrade(ctx.registry, ctx.L);
     }
     if (!destroyed() && is_enhancing()) {
-        cancel_enhance(L);
+        cancel_enhance(ctx.L);
     }
     if (!destroyed() && build_target_id_ != 0 && build_released_with_order_) {
-        release_build(L, registry);
+        release_build(ctx.L, ctx.registry);
     }
+    end_gone_orders(ctx);
 }
 
 namespace {
@@ -261,7 +262,9 @@ void Unit::prune_upgrade_chain(lua_State* L) {
     }
 }
 
-void Unit::remove_command(u32 id, EntityRegistry& registry, lua_State* L) {
+void Unit::remove_command(u32 id, SimContext& ctx) {
+    EntityRegistry& registry = ctx.registry;
+    lua_State* L = ctx.L;
     const auto it = std::find_if(command_queue_.begin(), command_queue_.end(),
                                  [&](const UnitCommand& c) { return c.command_id == id; });
     if (it == command_queue_.end()) {
@@ -289,6 +292,7 @@ void Unit::remove_command(u32 id, EntityRegistry& registry, lua_State* L) {
     if (enhancing && !destroyed()) {
         cancel_enhance(L);
     }
+    end_gone_orders(ctx);
 }
 
 void Unit::increase_build_count(int index, int count) {
@@ -741,6 +745,149 @@ void Unit::tick_weapons(SimContext& ctx) {
     }
 }
 
+bool Unit::end_gone_loading(SimContext& ctx) {
+    const bool loading_head =
+        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
+    if (pickup_phase_ != PickupPhase::None &&
+        !(loading_head && command_queue_.front().target_id == entity_id())) {
+        finish_pickup(false, ctx.L);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+    }
+    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
+        abandon_beam_up(ctx.terrain, ctx.L);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Unit::end_gone_tasks(SimContext& ctx) {
+    // A teleport or an OverCharge whose order was taken away unfinished.
+    if (teleporting_ || overcharge_armed_) {
+        settle_interrupted_orders(ctx.L);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+    }
+    // A ferry, or a unit waiting for one, whose order is gone from the head
+    // of its queue stops being one.
+    const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
+    if (has_unit_state("Ferrying") && !(head && head->type == CommandType::Ferry)) {
+        set_unit_state("Ferrying", false);
+        ferry_phase_ = FerryPhase::Load;
+        ferry_index_ = 0;
+        ferry_leg_set_ = false;
+        ferry_for_ = 0;
+    }
+    if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry)) {
+        set_unit_state("WaitForFerry", false);
+    }
+    // A Script order's task whose order is gone -- cleared, replaced --
+    // ends (M206w): its OnDestroy runs.
+    if (sacrifice_order_ != 0 &&
+        !(head && head->type == CommandType::Sacrifice && head->command_id == sacrifice_order_)) {
+        sacrifice_order_ = 0;
+        destroy_through_script(ctx.registry, ctx.L);
+        return false;
+    }
+    if (has_script_task() &&
+        !(head && head->type == CommandType::Script && head->task_serial == script_task_serial())) {
+        end_script_task(ctx.L);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+    }
+    // A carrier's retrieve, or a landing on one (M206s), whose order is
+    // gone.
+    if (retrieve_phase_ != RetrievePhase::None &&
+        !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
+        end_retrieve(false, ctx);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+    }
+    if (landing_.phase != LandPhase::None &&
+        !(head && (head->type == CommandType::TransportLoad || head->type == CommandType::Dock) &&
+          head->target_id == landing_.carrier)) {
+        abandon_landing(ctx.registry);
+    }
+    // A refuel (M206r) whose order is gone.
+    if (has_unit_state("Refueling") &&
+        !(head && (head->type == CommandType::Dock || head->type == CommandType::TransportLoad))) {
+        set_unit_state("Refueling", false);
+        navigator_.set_speed_through_goal(false);
+    }
+    // A factory whose guard order went while it built for the guarded
+    // factory drops that unit (M206h).
+    if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
+        !(head && head->type == CommandType::Guard)) {
+        end_guard_build(ctx.registry, ctx.L);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+    }
+    // A mobile build, or a repair's or guard's help, whose order is gone
+    // (replaced or stopped): the builder lets it go and stops paying; the
+    // unfinished unit stays (Moho's build task ends with its command). It
+    // had built on from afar, and the next build order had gone on with
+    // the old one.
+    if (build_target_id_ != 0 && build_released_with_order_ &&
+        !(head && head->command_id == build_command_id_)) {
+        release_build(ctx.L, ctx.registry);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+    }
+    if (is_reclaiming() &&
+        !(head && (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
+                   head->type == CommandType::Patrol || head->type == CommandType::AggressiveMove ||
+                   (head->type == CommandType::BuildMobile && head->clearing_prop_id != 0)))) {
+        stop_reclaiming(ctx.L, &ctx.registry);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+    }
+    // So does a repair (its order's, or a guard's help) and a capture:
+    // stopped or replaced, the unit had gone on Repairing or Capturing,
+    // never idle, its consumption paid each tick for no work.
+    if (is_repairing() &&
+        !(head && (head->type == CommandType::Repair || head->type == CommandType::Guard))) {
+        stop_repairing(ctx.L, ctx.registry);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+        head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+    }
+    if (is_capturing() && !(head && head->type == CommandType::Capture)) {
+        stop_capturing(ctx.L, ctx.registry, true);
+        if (destroyed() || !in_registry()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void Unit::end_gone_orders(SimContext& ctx) {
+    if (destroyed() || !in_registry()) {
+        return;
+    }
+    if (dying_) {
+        end_script_task(ctx.L);
+        return;
+    }
+    if (end_gone_loading(ctx) && transport_id_ == 0) {
+        end_gone_tasks(ctx);
+    }
+}
+
 void Unit::tick_commands(f64 dt, SimContext& ctx) {
     nav_requested_ = false;
     course_ = {};
@@ -753,20 +900,8 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
     }
     auto& registry = ctx.registry;
 
-    const bool loading_head =
-        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
-    if (pickup_phase_ != PickupPhase::None &&
-        !(loading_head && command_queue_.front().target_id == entity_id())) {
-        finish_pickup(false, ctx.L);
-        if (destroyed() || !in_registry()) {
-            return;
-        }
-    }
-    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
-        abandon_beam_up(ctx.terrain, ctx.L);
-        if (destroyed() || !in_registry()) {
-            return;
-        }
+    if (!end_gone_loading(ctx)) {
+        return;
     }
 
     if (transport_slots_ && !transport_slots_->slots().empty()) {
@@ -819,114 +954,8 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
     // below.
     silo_assist_renewed_ = false;
 
-    // A teleport or an OverCharge whose order was taken away unfinished.
-    if (teleporting_ || overcharge_armed_) {
-        settle_interrupted_orders(ctx.L);
-        if (destroyed() || !in_registry()) {
-            return;
-        }
-    }
-    // A ferry, or a unit waiting for one, whose order is gone from the head
-    // of its queue stops being one.
-    {
-        const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
-        if (has_unit_state("Ferrying") && !(head && head->type == CommandType::Ferry)) {
-            set_unit_state("Ferrying", false);
-            ferry_phase_ = FerryPhase::Load;
-            ferry_index_ = 0;
-            ferry_leg_set_ = false;
-            ferry_for_ = 0;
-        }
-        if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
-            set_unit_state("WaitForFerry", false);
-        // A Script order's task whose order is gone -- cleared, replaced --
-        // ends (M206w): its OnDestroy runs.
-        if (sacrifice_order_ != 0 && !(head && head->type == CommandType::Sacrifice &&
-                                       head->command_id == sacrifice_order_)) {
-            sacrifice_order_ = 0;
-            destroy_through_script(ctx.registry, ctx.L);
-            return;
-        }
-        if (has_script_task() && !(head && head->type == CommandType::Script &&
-                                   head->task_serial == script_task_serial())) {
-            end_script_task(ctx.L);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
-        }
-        // A carrier's retrieve, or a landing on one (M206s), whose order is
-        // gone.
-        if (retrieve_phase_ != RetrievePhase::None &&
-            !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
-            end_retrieve(false, ctx);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
-        }
-        if (landing_.phase != LandPhase::None &&
-            !(head &&
-              (head->type == CommandType::TransportLoad || head->type == CommandType::Dock) &&
-              head->target_id == landing_.carrier))
-            abandon_landing(ctx.registry);
-        // A refuel (M206r) whose order is gone.
-        if (has_unit_state("Refueling") && !(head && (head->type == CommandType::Dock ||
-                                                      head->type == CommandType::TransportLoad))) {
-            set_unit_state("Refueling", false);
-            navigator_.set_speed_through_goal(false);
-        }
-        // A factory whose guard order went while it built for the guarded
-        // factory drops that unit (M206h).
-        if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
-            !(head && head->type == CommandType::Guard)) {
-            end_guard_build(ctx.registry, ctx.L);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
-        }
-        // A mobile build, or a repair's or guard's help, whose order is gone
-        // (replaced or stopped): the builder lets it go and stops paying; the
-        // unfinished unit stays (Moho's build task ends with its command). It
-        // had built on from afar, and the next build order had gone on with
-        // the old one.
-        if (build_target_id_ != 0 && build_released_with_order_ &&
-            !(head && head->command_id == build_command_id_)) {
-            release_build(ctx.L, ctx.registry);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
-        }
-        if (is_reclaiming() &&
-            !(head &&
-              (head->type == CommandType::Reclaim || head->type == CommandType::Guard ||
-               head->type == CommandType::Patrol || head->type == CommandType::AggressiveMove ||
-               (head->type == CommandType::BuildMobile && head->clearing_prop_id != 0)))) {
-            stop_reclaiming(ctx.L, &ctx.registry);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
-        }
-        // So does a repair (its order's, or a guard's help) and a capture:
-        // stopped or replaced, the unit had gone on Repairing or Capturing,
-        // never idle, its consumption paid each tick for no work.
-        if (is_repairing() &&
-            !(head && (head->type == CommandType::Repair || head->type == CommandType::Guard))) {
-            stop_repairing(ctx.L, ctx.registry);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
-        }
-        if (is_capturing() && !(head && head->type == CommandType::Capture)) {
-            stop_capturing(ctx.L, ctx.registry, true);
-            if (destroyed() || !in_registry()) {
-                return;
-            }
-        }
+    if (!end_gone_tasks(ctx)) {
+        return;
     }
 
     if (!is_being_built()) {

@@ -8,12 +8,15 @@
 #include <catch2/generators/catch_generators_range.hpp>
 
 #include "blueprints/blueprint_store.hpp"
+#include "core/profiler.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/anim_cache.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
 #include "sim/sca_parser.hpp"
@@ -1743,4 +1746,306 @@ TEST_CASE("A unit destroyed in a tick lights its army's recon tick until it goes
     CHECK(w.ticks("reads") == expected);
     CHECK(w.ticks("gone") == std::vector<int>{forgotten});
     CHECK(w.number("lost") == static_cast<f32>(doomed + armies));
+}
+
+namespace {
+
+void callbacks_module(Phases& w) {
+    REQUIRE(
+        w.run("modules = modules or {}"
+              " modules['/lua/SimCallbacks.lua'] = {DoCallback = function(name, data, units)"
+              "   _G[name](data, units)"
+              " end}"
+              " function import(path) return modules[path] or error('no module ' .. path) end"));
+}
+
+osc::sim::SimCallbackEntry callback(const char* name) {
+    osc::sim::SimCallbackEntry cb;
+    cb.func_name = name;
+    return cb;
+}
+
+UnitCommand order(CommandType type, osc::u32 target_id) {
+    UnitCommand c;
+    c.type = type;
+    c.target_id = target_id;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("A SimCallback runs before its beat's tick: GetGameTick is the last tick's",
+          "[tick-phases][commands]") {
+    Phases w;
+    callbacks_module(w);
+    REQUIRE(w.run("seen = 0 forked = 0"
+                  " function Note()"
+                  "   seen = GetGameTick()"
+                  "   ForkThread(function() forked = GetGameTick() end)"
+                  " end"));
+    w.sim.tick();
+    w.sim.tick();
+    w.sim.submit_callback(callback("Note"));
+    w.sim.tick();
+    CHECK(w.number("seen") == 2.0f);
+    CHECK(w.number("forked") == 3.0f);
+    CHECK(w.sim.tick_count() == 3);
+}
+
+TEST_CASE("A Lua thread's IssueClearCommands ends a unit's task inside the call",
+          "[tick-phases][commands]") {
+    const std::string task = GENERATE("reclaim", "repair", "capture", "script");
+    CAPTURE(task);
+    Phases w;
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.set_build_rate(10.0f);
+    eng.set_max_build_distance(10.0f);
+    REQUIRE(
+        w.run("stopped = 0"
+              " function Plain:OnStopReclaim() stopped = GetGameTick() end"
+              " function Plain:OnStopBuild() stopped = GetGameTick() end"
+              " function Plain:OnFailedCapture() stopped = GetGameTick() end"
+              " function Plain:GetReclaimCosts() return 100, 0, 30 end"
+              " Wait = {TaskTick = function() return 1 end,"
+              "   OnDestroy = function() stopped = GetGameTick() end}"
+              " Wait.__index = Wait"
+              " modules = {['/lua/sim/tasks/Wait.lua'] = {Wait = Wait}}"
+              " function import(path) return modules[path] or error('no module ' .. path) end"));
+    if (task == "reclaim") {
+        eng.add_category("RECLAIM");
+        auto wreck = std::make_unique<osc::sim::Prop>();
+        wreck->set_position({102.0f, 10.0f, 100.0f});
+        wreck->reclaim_mass_max = 30.0f;
+        wreck->reclaimable_category = true;
+        const osc::u32 id = w.sim.entity_registry().register_entity(std::move(wreck));
+        eng.push_command(order(CommandType::Reclaim, id), false);
+    } else if (task == "repair" || task == "capture") {
+        Unit& target = w.make("target", "t1", task == "repair" ? 1 : 2, 102.0f, 100.0f);
+        target.set_health(5.0f);
+        eng.push_command(order(task == "repair" ? CommandType::Repair : CommandType::Capture,
+                               target.entity_id()),
+                         false);
+    } else {
+        lua_State* L = w.state.raw();
+        REQUIRE(w.run("args = {TaskName = 'Wait'}"));
+        lua_getglobal(L, "args");
+        UnitCommand script;
+        script.type = CommandType::Script;
+        const auto bytes = osc::sim::lua_to_bytes(L, -1);
+        lua_pop(L, 1);
+        REQUIRE(bytes);
+        script.script_args = *bytes;
+        eng.push_command(script, false);
+    }
+    const auto working = [&] {
+        return eng.is_reclaiming() || eng.is_repairing() || eng.is_capturing() ||
+               eng.has_script_task();
+    };
+    for (int t = 0; t < 5 && !working(); ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(working());
+    REQUIRE(w.number("stopped") == 0.0f);
+    REQUIRE(w.run("cleared = 0 after = 0 ForkThread(function()"
+                  "   IssueClearCommands({eng})"
+                  "   cleared = GetGameTick()"
+                  "   after = stopped"
+                  " end)"));
+    w.sim.tick();
+    CHECK(w.number("cleared") > 0.0f);
+    CHECK(w.number("after") == w.number("cleared"));
+    CHECK_FALSE(working());
+}
+
+namespace {
+
+void command(Phases& w, const char* name) {
+    w.sim.set_pause_holds(true);
+    w.sim.schedule_callback(0, callback(name));
+}
+
+void player_stop(Phases& w, const Unit& unit) {
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    w.sim.set_human_input_active(true);
+    w.sim.route_command({unit.entity_id()}, stop, true);
+    w.sim.set_human_input_active(false);
+}
+
+} // namespace
+
+TEST_CASE("A pause requested by a command of a beat stops that beat's tick",
+          "[tick-phases][beats]") {
+    Phases w;
+    REQUIRE(w.run("ran = {} ForkThread(function()"
+                  "   while true do table.insert(ran, GetGameTick()) WaitTicks(1) end"
+                  " end)"));
+    w.sim.tick();
+    w.sim.tick();
+    command(w, osc::sim::kRequestPauseCallback);
+    for (int b = 0; b < 3; ++b) {
+        w.sim.tick();
+    }
+    CHECK(w.sim.paused());
+    CHECK(w.sim.tick_count() == 2);
+    CHECK(w.sim.beat_count() == 5);
+    CHECK(w.run("assert(table.getn(ran) == 2 and ran[2] == 2)"));
+}
+
+TEST_CASE("A Stop given to a building engineer while paused ends its build before the game resumes",
+          "[tick-phases][beats]") {
+    Phases w;
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.add_category("ENGINEER");
+    eng.set_build_rate(10.0f);
+    eng.set_max_build_distance(10.0f);
+    REQUIRE(w.run("started = 0 stopped = 0"
+                  " function Plain:OnStartBuild() started = GetGameTick() end"
+                  " function Plain:OnStopBuild() stopped = GetGameTick() end"));
+    UnitCommand build;
+    build.type = CommandType::BuildMobile;
+    build.blueprint_id = "fac";
+    build.target_pos = {104.0f, 10.0f, 100.0f};
+    eng.push_command(build, false);
+    for (int t = 0; t < 10 && w.number("started") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("started") > 0);
+    REQUIRE(eng.build_target_id() != 0);
+    command(w, osc::sim::kRequestPauseCallback);
+    w.sim.tick();
+    REQUIRE(w.sim.paused());
+    const osc::u32 held = w.sim.tick_count();
+    player_stop(w, eng);
+    w.sim.tick();
+    CHECK(w.sim.paused());
+    CHECK(w.sim.tick_count() == held);
+    CHECK(w.number("stopped") == static_cast<f32>(held));
+    CHECK(eng.build_target_id() == 0);
+    CHECK(eng.command_queue().empty());
+    command(w, osc::sim::kResumeCallback);
+    w.sim.tick();
+    CHECK_FALSE(w.sim.paused());
+    CHECK(w.sim.tick_count() == held + 1);
+}
+
+TEST_CASE("A unit a command destroys while paused hears OnDestroy in that beat",
+          "[tick-phases][beats]") {
+    Phases w;
+    callbacks_module(w);
+    const osc::u32 id = w.make("victim", "tank", 1, 100.0f, 100.0f).entity_id();
+    REQUIRE(w.run("gone = -1 function Plain:OnDestroy() gone = GetGameTick() end"
+                  " function Doom() EM.Destroy(victim) end"));
+    w.sim.tick();
+    command(w, osc::sim::kRequestPauseCallback);
+    w.sim.tick();
+    REQUIRE(w.sim.paused());
+    const osc::u32 held = w.sim.tick_count();
+    w.sim.submit_callback(callback("Doom"));
+    w.sim.tick();
+    CHECK(w.sim.paused());
+    CHECK(w.sim.tick_count() == held);
+    CHECK(w.number("gone") == static_cast<f32>(held));
+    CHECK(w.sim.entity_registry().find(id) == nullptr);
+}
+
+TEST_CASE("A single step runs the tick of its beat, and the game stays paused",
+          "[tick-phases][beats]") {
+    Phases w;
+    w.sim.tick();
+    command(w, osc::sim::kRequestPauseCallback);
+    w.sim.tick();
+    REQUIRE(w.sim.paused());
+    const osc::u32 held = w.sim.tick_count();
+    command(w, osc::sim::kSingleStepCallback);
+    w.sim.tick();
+    CHECK(w.sim.tick_count() == held + 1);
+    w.sim.tick();
+    w.sim.tick();
+    CHECK(w.sim.paused());
+    CHECK(w.sim.tick_count() == held + 1);
+}
+
+TEST_CASE("After the game ends its beats apply commands and destroy without a tick",
+          "[tick-phases][beats]") {
+    Phases w;
+    callbacks_module(w);
+    w.make("victim", "tank", 1, 100.0f, 100.0f);
+    REQUIRE(w.run("gone = -1 called = -1 function Plain:OnDestroy() gone = GetGameTick() end"
+                  " function Doom() called = GetGameTick() EM.Destroy(victim) end"));
+    w.sim.tick();
+    w.sim.set_game_ended(true);
+    w.sim.tick();
+    REQUIRE(w.sim.game_over());
+    const osc::u32 over = w.sim.tick_count();
+    w.sim.submit_callback(callback("Doom"));
+    w.sim.tick();
+    w.sim.tick();
+    CHECK(w.sim.tick_count() == over);
+    CHECK(w.number("called") == static_cast<f32>(over));
+    CHECK(w.number("gone") == static_cast<f32>(over));
+}
+
+TEST_CASE("Paused on a collection tick, each beat collects the Lua state", "[tick-phases][beats]") {
+    Phases w;
+    callbacks_module(w);
+    REQUIRE(w.run("weak = setmetatable({}, {__mode = 'v'})"
+                  " function Litter() weak[1] = {} end"));
+    while (w.sim.tick_count() < 70) {
+        w.sim.tick();
+    }
+    command(w, osc::sim::kRequestPauseCallback);
+    w.sim.tick();
+    REQUIRE(w.sim.paused());
+    REQUIRE(w.sim.tick_count() == 70);
+    w.sim.submit_callback(callback("Litter"));
+    w.sim.tick();
+    CHECK(w.run("assert(weak[1] == nil)"));
+}
+
+TEST_CASE("A source that leaves takes its pause with it", "[tick-phases][beats]") {
+    Phases w;
+    w.sim.begin_command_sources();
+    w.sim.set_command_source(0, 0, true);
+    w.sim.set_command_source(1, 1, true);
+    w.sim.set_pause_holds(true);
+    w.sim.request_pause(1);
+    REQUIRE(w.sim.paused());
+    w.sim.terminate_command_source(1);
+    CHECK_FALSE(w.sim.paused());
+}
+
+TEST_CASE("The sim's beat is profiled as Sim::tick", "[tick-phases][beats]") {
+    Phases w;
+    auto& profiler = osc::Profiler::instance();
+    profiler.set_enabled(true);
+    profiler.begin_frame();
+    w.sim.tick();
+    const double us = profiler.frame_zone_us("Sim::tick");
+    profiler.end_frame();
+    profiler.set_enabled(false);
+    CHECK(us > 0.0);
+}
+
+TEST_CASE("Two beats in a frame give the user two Sync tables", "[tick-phases][beats]") {
+    Phases w;
+    osc::lua::LuaState ui;
+    REQUIRE(w.run("function ResetSyncTable() Sync = {} end ResetSyncTable()"
+                  " ForkThread(function()"
+                  "   while true do Sync.Tick = GetGameTick() WaitTicks(1) end"
+                  " end)"));
+    REQUIRE(ui.do_string("seen = ''"
+                         " function OnSync() seen = seen .. tostring(Sync.Tick) .. ',' end")
+                .ok());
+    w.sim.set_beat_observer(
+        [&](const osc::sim::SimState& s) { osc::lua::queue_sync(s.lua_state(), ui.raw()); });
+    w.sim.tick();
+    w.sim.tick();
+    for (int b = 0; b < 2; ++b) {
+        osc::lua::sync_beat(w.state.raw(), ui.raw());
+    }
+    lua_State* U = ui.raw();
+    lua_getglobal(U, "seen");
+    CHECK(std::string(lua_tostring(U, -1)) == "1,2,");
+    lua_pop(U, 1);
 }

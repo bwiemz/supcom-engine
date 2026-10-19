@@ -148,6 +148,7 @@ public:
 
     EntityRegistry& entity_registry() { return entity_registry_; }
     const EntityRegistry& entity_registry() const { return entity_registry_; }
+    SimContext sim_context();
 
     BoundedProps& bounded_props() { return bounded_props_; }
 
@@ -344,15 +345,18 @@ public:
     // Lua state access (for weapon/projectile updates)
     lua_State* lua_state() const { return L_; }
 
-    // Tick loop
+    /// One beat, Moho's Sim::AdvanceBeat: its commands, its tick unless the game is paused or
+    /// over, then the deletion queue, the effects, the Lua collection and the checksum.
     void tick();
 
-    /// Called at the end of every tick, whoever runs it (the game loop, the
+    /// Called at the end of every beat, whoever runs it (the game loop, the
     /// lockstep session, a test harness): the renderer's snapshots hang here.
-    void set_tick_observer(std::function<void(const SimState&)> fn) {
-        tick_observer_ = std::move(fn);
+    void set_beat_observer(std::function<void(const SimState&)> fn) {
+        beat_observer_ = std::move(fn);
     }
     u32 tick_count() const { return tick_count_; }
+    /// The beats begun (Moho's mCurBeat): the commands' clock.
+    u32 beat_count() const { return beat_count_; }
     /// How many post-loads (kPostLoadCallback) this sim has run: a loaded
     /// game builds its interface once its own has (the window's wait).
     u32 post_loads_run() const { return post_loads_run_; }
@@ -361,18 +365,18 @@ public:
 
     // --- Command scheduling (deterministic / lockstep-ready) ---
     // All player/AI/network orders can be routed through the scheduler so they
-    // apply on a fixed future tick, in a canonical order, identically on every
-    // client. tick() dispatches the commands due for the current tick.
+    // apply in a fixed future beat, in a canonical order, identically on every
+    // client. tick() dispatches the commands due for its beat.
     CommandScheduler& command_scheduler() { return command_scheduler_; }
     const CommandScheduler& command_scheduler() const { return command_scheduler_; }
 
-    /// Ticks of delay between submitting an order and it executing (0 = next
-    /// tick). Multiplayer raises this to cover network round-trip.
+    /// Beats of delay between submitting an order and it executing (0 = next
+    /// beat). Multiplayer raises this to cover network round-trip.
     void set_command_delay(u32 ticks) { command_delay_ = ticks; }
     u32 command_delay() const { return command_delay_; }
 
     /// Submit an order for `unit_ids` from `source`, to execute after the
-    /// command delay. Returns the tick it will run on.
+    /// command delay. Returns the beat it will run in.
     u32 schedule_command(u32 source, const std::vector<u32>& unit_ids,
                          const UnitCommand& command, bool clear_existing);
 
@@ -416,18 +420,18 @@ public:
     /// Whether cheats are on, unlogged (the user session's copy of it).
     bool cheats_option() const { return cheats_enabled_; }
 
-    // --- A network game's pause (M218f), as Moho's sim takes it ---
-    /// `source` asks to pause, at a tick every peer shares: taken unless
+    // --- The game's pause (M218f), as Moho's sim takes it ---
+    /// `source` asks to pause, in a beat every peer shares: taken unless
     /// the game is paused already or the source's timeouts are spent; a
-    /// taken pause spends one. The sim finishes the tick and holds until the
-    /// pause is resumed -- at once outside a lockstep game (pause_holds).
+    /// taken pause spends one. From that beat on, beats run no tick until a
+    /// source resumes it.
     void request_pause(u32 source);
-    /// Pause `serial` resumed: now, or (this peer not there yet) the moment
-    /// it pauses.
-    void resume_pause(u32 serial);
+    void resume(u32 source);
+    /// Paused, the beat that applies it runs its tick.
+    void single_step(u32 source);
     /// Paused: the source that paused (-1: not paused).
     i32 paused_by() const { return paused_by_; }
-    bool network_paused() const { return paused_by_ >= 0; }
+    bool paused() const { return paused_by_ >= 0; }
     /// The pauses taken so far: the current one's serial, while paused.
     u32 pause_serial() const { return pause_serial_; }
     /// A source's pause timeouts (-1: unlimited, the default).
@@ -436,8 +440,8 @@ public:
         const auto it = pause_timeouts_.find(source);
         return it == pause_timeouts_.end() ? -1 : it->second;
     }
-    /// Whether a pause holds until resumed (a lockstep game) or resumes at
-    /// once (a replay playing one back).
+    /// Whether a pause holds until resumed, or (a replay recorded before
+    /// resumes were commands) resumes at once.
     void set_pause_holds(bool holds) { pause_holds_ = holds; }
     /// The army `source` plays (-1: none, an observer's); unmapped, the
     /// army numbered as it.
@@ -446,11 +450,9 @@ public:
         return it == source_armies_.end() ? static_cast<i32>(source) : it->second;
     }
 
-    /// Whether the next tick may run yet (always true in single-player; in
+    /// Whether the next beat may run yet (always true in single-player; in
     /// lockstep, false until every peer has confirmed its command frame).
-    bool ready_to_run_next_tick() const {
-        return command_scheduler_.ready_to_run(tick_count_ + 1);
-    }
+    bool ready_to_run_next_beat() const { return command_scheduler_.ready_to_run(beat_count_ + 1); }
 
     // --- Multiplayer local-command routing ---
     // In single-player, player/AI orders apply to their units directly. In
@@ -559,8 +561,8 @@ public:
     // With recording on, every scheduled command is captured into a Replay that
     // (thanks to lockstep determinism) reproduces the match when re-fed into a
     // fresh sim.
-    /// Record from now on: every command the sim applies, on the tick it
-    /// applies it, and the checksum after every tick, with the game's seed
+    /// Record from now on: every command the sim applies, in the beat it
+    /// applies it, and the checksum after every beat, with the game's seed
     /// and setup. A replay replays the game from its start.
     void set_recording(bool on);
     bool recording() const { return recording_; }
@@ -573,29 +575,29 @@ public:
     bool playback() const { return playback_; }
 
     /// Re-submit a recorded command stream into this sim's scheduler. Commands
-    /// carry their original exec ticks, so ticking the sim replays them in
+    /// carry their original beats, so running the sim replays them in
     /// order. Also restores the recorded command delay / victory condition.
     void queue_replay(const Replay& replay);
     /// Load a saved game (M208): its recording plays as a replay's does,
-    /// player input dropped, up to the tick it was saved on (its
-    /// final_tick); from the end of that tick the game is the player's
-    /// again. Orders it holds for later ticks (given before the save, not
+    /// player input dropped, up to the beat it was saved on (its
+    /// final_beat); from the end of that beat the game is the player's
+    /// again. Orders it holds for later beats (given before the save, not
     /// yet run) run when they fall due.
     void start_resume(const Replay& saved);
     /// A loaded game restored from its snapshot (M208c): the save's history
-    /// up to its tick is this game's recording, as if it had been played
-    /// here. Its orders for later ticks are the restored scheduler's: they
+    /// up to its beat is this game's recording, as if it had been played
+    /// here. Its orders for later beats are the restored scheduler's: they
     /// join the recording as they run.
     void adopt_history(const Replay& saved);
     /// Catching up a loaded game. It is not a replay: SessionIsReplay()
     /// stays false.
-    bool resuming() const { return resume_tick_ != 0; }
+    bool resuming() const { return resume_beat_ != 0; }
 
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
-    /// Moho's mGameOver: game_ended() latched as a tick ends. From then on
-    /// tick() runs no more (faf-re Sim::AdvanceBeat).
+    /// Moho's mGameOver: game_ended() latched as a beat ends. From then on
+    /// beats run no tick (faf-re Sim::AdvanceBeat).
     bool game_over() const { return game_over_; }
 
     /// Whether the scenario's scripts decide the game (retail and FAF fork
@@ -691,10 +693,10 @@ public:
             "weapons", "projectiles", "shields",  "economy_events", "threads", "terrain"};
     };
     ChecksumParts checksum_parts() const;
-    /// The checksum of the tick just run: computed once however many ask
+    /// The checksum of the beat just run: computed once however many ask
     /// (the trace, the recording, the lockstep session), as it walks every
     /// unit's weapons and orders.
-    const ChecksumParts& tick_checksum() const;
+    const ChecksumParts& beat_checksum() const;
 
     /// Deterministic checksum of the authoritative sim state (the parts
     /// above, and the tick). Two sims fed identical inputs on the same
@@ -703,7 +705,7 @@ public:
     /// out-of-sync clients, and validates single-player determinism.
     u32 compute_sync_checksum() const;
 
-    /// Write each tick's checksum and its parts as a line of text
+    /// Write each beat's checksum and its parts as a line of text
     /// ("tick total" and each domain of ChecksumParts, hex, after a "#"
     /// header naming them) -- a trace two runs can be compared by
     /// (tools/checksum_diff.py names the first domain that differs). Null
@@ -986,7 +988,6 @@ private:
     void count_held_storage();
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
-    SimContext sim_context();
     /// Moho's CArmyImpl::OnTick, each army in turn: its economy, with Moho
     /// pathing its navigators and steering, its units' weapons, its path
     /// searches.
@@ -1030,6 +1031,9 @@ private:
     /// at the start of the tick as Moho's army OnTick does.
     void update_influence_maps();
     void dispatch_due_commands();
+    /// The beat's tick, Moho's AdvanceBeat from ++mCurTick to AdvanceCoords.
+    void advance_tick();
+    void end_beat(bool ticked);
     /// A Stop order given with clearing: the unit drops its orders, and the
     /// one under way (a factory's build, an enhancement), then stops.
     void stop_unit(Unit& unit);
@@ -1101,9 +1105,9 @@ private:
         projectile_info_;
     std::vector<u32> ferry_beacons_;
     bool checksum_trace_header_ = false;
-    mutable ChecksumParts tick_checksum_;
-    mutable u32 tick_checksum_tick_ = 0;
-    mutable bool tick_checksum_valid_ = false;
+    mutable ChecksumParts beat_checksum_;
+    mutable u32 beat_checksum_beat_ = 0;
+    mutable bool beat_checksum_valid_ = false;
     std::map<u32, i32> source_armies_; // see set_source_army
     bool command_sources_known_ = false;         // see begin_command_sources
     std::map<i32, std::set<u32>> army_sources_;  // army -> its command sources
@@ -1111,9 +1115,9 @@ private:
     bool cheats_enabled_ = false;
     i32 paused_by_ = -1;               // see request_pause
     u32 pause_serial_ = 0;
-    u32 resumed_serial_ = 0; // the latest pause resumed
+    bool single_step_ = false;
     std::map<u32, i32> pause_timeouts_;
-    bool pause_holds_ = false;
+    bool pause_holds_ = true;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;
@@ -1144,7 +1148,7 @@ private:
     std::map<u32, PaintedIntel> painted_intel_; ///< by entity id
     u32 intel_pass_ = 0;
     audio::SoundManager* sound_manager_ = nullptr;
-    std::function<void(const SimState&)> tick_observer_;
+    std::function<void(const SimState&)> beat_observer_;
     std::ostream* checksum_trace_ = nullptr;
     std::ostream* entity_trace_ = nullptr;
     std::ostream* rng_trace_ = nullptr;
@@ -1163,6 +1167,7 @@ private:
     std::vector<std::pair<u32, EconomyEvent*>> stepping_events_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
+    u32 beat_count_ = 0;
     u32 post_loads_run_ = 0; ///< the host's count (post_loads_run), not game state
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
@@ -1173,7 +1178,7 @@ private:
     Replay recorded_replay_;
     bool recording_ = false;
     bool playback_ = false;
-    u32 resume_tick_ = 0; // a loaded game's saved tick, until it is reached
+    u32 resume_beat_ = 0; // a loaded game's saved beat, until it is reached
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {

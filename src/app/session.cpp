@@ -210,23 +210,23 @@ void issue_order_before_save(osc::sim::SimState& sim) {
 }
 
 /// --replay: play the recorded game to its end, checking the checksum after
-/// every tick against the recording's. 0 when they match throughout.
+/// every beat against the recording's. 0 when they match throughout.
 int play_replay(osc::sim::SimState& sim, const osc::sim::Replay& replay) {
     osc::sim::ReplayPlayback playback(replay);
     playback.start(sim);
-    spdlog::info("Replay: {} commands over {} ticks", replay.commands.size(), replay.final_tick);
+    spdlog::info("Replay: {} commands over {} beats", replay.commands.size(), replay.final_beat);
     while (!playback.finished(sim)) {
         sim.tick();
         if (!playback.check(sim)) {
-            const osc::u32 tick = playback.diverged_at();
-            spdlog::error("Replay diverged at tick {}: checksum {:08x}, recorded {:08x}", tick,
+            const osc::u32 beat = playback.diverged_at();
+            spdlog::error("Replay diverged at beat {}: checksum {:08x}, recorded {:08x}", beat,
                           sim.compute_sync_checksum(),
-                          replay.checksums[tick - replay.checksum_from]);
-            std::printf("REPLAY diverged tick=%u\n", tick);
+                          replay.checksums[beat - replay.checksum_from]);
+            std::printf("REPLAY diverged beat=%u\n", beat);
             return 1;
         }
     }
-    spdlog::info("Replay: matched the recording at every tick");
+    spdlog::info("Replay: matched the recording at every beat");
     std::printf("REPLAY ok ticks=%u checksum=%08x\n", sim.tick_count(),
                 sim.compute_sync_checksum());
     return 0;

@@ -165,13 +165,14 @@ App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
     sim_state->adopt_history(save.game);
     const auto& sums = save.game.checksums;
     const u64 at =
-        save.tick >= save.game.checksum_from ? save.tick - save.game.checksum_from : sums.size();
+        save.beat >= save.game.checksum_from ? save.beat - save.game.checksum_from : sums.size();
     if (at >= sums.size() || sim_state->compute_sync_checksum() != sums[at]) {
-        why = "it isn't the saved game (its checksum at tick " + std::to_string(save.tick) + ")";
+        why = "it isn't the saved game (its checksum at beat " + std::to_string(save.beat) + ")";
         return Restore::Failed;
     }
-    restored_at = save.tick;
-    spdlog::info("Saved game '{}': restored at tick {} in {:.0f} ms", save.name, save.tick,
+    restored_at = sim_state->tick_count();
+    spdlog::info("Saved game '{}': restored at tick {} in {:.0f} ms", save.name,
+                 sim_state->tick_count(),
                  std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
                      .count());
     post_load();
@@ -189,9 +190,9 @@ void App::post_load() {
 bool App::check_catch_up() {
     if (!catch_up) return true;
     if (!catch_up->check(*sim_state)) {
-        const u32 tick = catch_up->diverged_at();
-        spdlog::error("Saved game: diverged from the save at tick {} as it caught up", tick);
-        std::printf("LOAD diverged tick=%u\n", tick);
+        const u32 beat = catch_up->diverged_at();
+        spdlog::error("Saved game: diverged from the save at beat {} as it caught up", beat);
+        std::printf("LOAD diverged beat=%u\n", beat);
         catch_up.reset();
         return false;
     }
@@ -208,7 +209,9 @@ bool App::check_catch_up() {
 void App::save_last_game() {
     if (!opt.interactive || !sim_state || !sim_state->recording() || sim_state->playback()) return;
     const auto& replay = sim_state->recorded_replay();
-    if (!replay.has_setup || replay.final_tick == 0) return;
+    if (!replay.has_setup || replay.final_beat == 0) {
+        return;
+    }
     const std::string profile = prefs.get_string(prefs.current_profile_path() + ".Name", "Player");
     const auto* type = osc::lua::SpecialFiles::find_type("Replay");
     const auto path = special_files->path(*type, profile, "LastGame");

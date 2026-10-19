@@ -22,14 +22,20 @@ void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army);
 /// Plain-data deep copy between states (see core/lua_copy.hpp).
 using core::copy_lua_value;
 
-/// One Moho sim beat on the sim -> user channel:
+/// The sim's half of a Moho beat on the sim -> user channel (Sim::Sync), after each beat:
 ///  1. apply a pending focus-army request: both states' focus army change,
 ///     the sim's NoteFocusArmyChanged(new, old) runs and Sync.FocusArmyChanged
 ///     is set (1-based armies, -1 = observer);
-///  2. the sim's Sync table is copied into the user state's Sync, the
-///     previous one kept as PreviousSync;
-///  3. the sim's ResetSyncTable() starts the next beat's table;
-///  4. the user state's OnSync() reacts (/lua/UserSync.lua plus hooks).
+///  2. the sim's Sync table joins the queue of beats' tables;
+///  3. the sim's ResetSyncTable() starts the next beat's table.
+void queue_sync(lua_State* sim_L, lua_State* ui_L);
+/// Whether a beat's Sync waits for sync_beat.
+bool sync_pending(lua_State* sim_L);
+
+/// The user's half (CWldSession::DoBeat): the oldest queued beat's Sync
+/// becomes the user state's Sync, the previous one kept as PreviousSync, and
+/// the user state's OnSync() reacts (/lua/UserSync.lua plus hooks). With none
+/// queued, queue_sync's steps run first on the sim's Sync now.
 /// Script errors are logged and count as failures in test modes.
 void sync_beat(lua_State* sim_L, lua_State* ui_L);
 

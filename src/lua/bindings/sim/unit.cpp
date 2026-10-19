@@ -1347,7 +1347,9 @@ static int unit_Stop(lua_State* L) {
     auto* u = check_unit(L);
     auto* sim = get_sim(L);
     if (u && sim) {
-        u->clear_commands(sim->entity_registry(), L);
+        sim::SimContext ctx = sim->sim_context();
+        ctx.L = L;
+        u->clear_commands(ctx);
     }
     return 0;
 }

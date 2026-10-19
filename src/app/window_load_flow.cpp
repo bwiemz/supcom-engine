@@ -133,13 +133,13 @@ void App::Window::save_again_in_load_flow() {
     const std::string again = lua_type(uL, -1) == LUA_TSTRING ? lua_tostring(uL, -1) : "";
     lua_pop(uL, 1);
     osc::sim::SavedGame save;
-    const osc::u32 tick = sim_state->tick_count();
+    const osc::u32 beat = sim_state->beat_count();
     if (osc::lua::read_saved_game(again, save) != osc::sim::SaveLoadError::None) {
         osc::test_status::fail("[FAIL] load-flow: the new save {} does not load", again);
-    } else if (save.tick != tick || save.game.checksums.size() != tick) {
-        osc::test_status::fail("[FAIL] load-flow: the new save holds tick {} and {} "
+    } else if (save.beat != beat || save.game.checksums.size() != beat) {
+        osc::test_status::fail("[FAIL] load-flow: the new save holds beat {} and {} "
                                "checksums, not the game's {}",
-                               save.tick, save.game.checksums.size(), tick);
+                               save.beat, save.game.checksums.size(), beat);
     }
     if (osc::fs::exists(special_files->root() / "outside.oscsave"))
         osc::test_status::fail("[FAIL] load-flow: a save was written outside its folder");
