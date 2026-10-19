@@ -29,11 +29,12 @@ public:
     /// Returns pointer to single-root fallback if mesh not found.
     const BoneData* get(const std::string& blueprint_id, lua_State* L);
 
+    /// The blueprint's Display.UniformScale (1 without one).
+    f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
+
 private:
     /// Resolve blueprint ID → .scm VFS path by navigating Lua tables:
     /// unitBP.Display.MeshBlueprint → __blueprints[meshId].LODs[1].MeshName
-    /// The blueprint's Display.UniformScale (1 without one).
-    f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
     /// The blueprint's AI.TargetBones, resolved against `bones`.
     std::vector<i32> resolve_target_bones(const std::string& bp_id, lua_State* L,
                                           const BoneData& bones);

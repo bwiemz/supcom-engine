@@ -22,6 +22,7 @@
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
+#include "renderer/unit_renderer.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
@@ -29,6 +30,7 @@
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
 
+#include <lua.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -601,6 +603,37 @@ void test_effect_meshes(TestContext& ctx) {
                                                show(shown), show(cube)));
     }
 
+    // What the last frame drew at (x, z) by `technique`: its draw scale (its
+    // model's first column), its mesh's width, and its width in the world.
+    struct Drawn {
+        f32 scale = 0.0f;
+        f32 mesh_width = 0.0f;
+        f32 width = 0.0f;
+    };
+    const auto drawn_at = [&](f32 x, f32 z, MeshTechnique technique) {
+        Drawn d;
+        const renderer::MeshInstance* all = r.unit_renderer().mesh_instances();
+        for (const auto& g : r.unit_renderer().mesh_groups())
+            for (u32 k = 0; all && g.mesh && g.mesh->technique == technique && k < g.instance_count;
+                 ++k) {
+                const f32* m = all[g.instance_offset + k].model;
+                if (std::abs(m[12] - x) > 0.05f || std::abs(m[14] - z) > 0.05f) continue;
+                d.scale = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+                d.mesh_width = g.mesh->bounds_max.x - g.mesh->bounds_min.x;
+                d.width = d.mesh_width * d.scale;
+            }
+        return d;
+    };
+    const auto lua_number = [&](const std::string& expr) {
+        const auto got = ctx.lua_state.do_string(fmt::format("__osc_number = {}\n", expr));
+        if (!got) spdlog::warn("{}: {}", expr, got.error().message);
+        lua_pushstring(ctx.L, "__osc_number");
+        lua_rawget(ctx.L, LUA_GLOBALSINDEX);
+        const auto n = static_cast<f32>(lua_tonumber(ctx.L, -1));
+        lua_pop(ctx.L, 1);
+        return n;
+    };
+
     // Test 12: the UEF nuke in context. A UEF commander dies on the test's
     // ground; its DeathWeapon's controller makes the dome (UEFNukeEffect01).
     // OSC_EFFECT_MESH_TEST_PNG=<prefix>: the frames, to see.
@@ -617,6 +650,11 @@ void test_effect_meshes(TestContext& ctx) {
         u32 dome_draws = 0;
         f32 dome_x = 32.0f;
         f32 dome_z = 40.0f;
+        // Its script grows it by 0.3 UniformScale a second for 4 seconds:
+        // the width it's drawn at when made and 2 seconds on.
+        int dome_born = 0;
+        Drawn dome_made;
+        Drawn dome_2s;
         for (int i = 1; i <= 60; ++i) {
             ctx.sim.tick();
             ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
@@ -626,7 +664,13 @@ void test_effect_meshes(TestContext& ctx) {
                 dome_bp = e.blueprint_id();
                 dome_x = e.position().x;
                 dome_z = e.position().z;
+                if (dome_born == 0) dome_born = i;
             });
+            if (dome_born > 0 && (i == dome_born || i == dome_born + 20)) {
+                (void)frame(dome_x, dome_z, map::ScmapLighting{}, 160.0f);
+                (i == dome_born ? dome_made : dome_2s) =
+                    drawn_at(dome_x, dome_z, MeshTechnique::NukeUEF);
+            }
             if (i != 15 && i != 50) continue;
             const ImageRGBA8 image = frame(dome_x, dome_z, map::ScmapLighting{}, 160.0f);
             dome_draws += r.mesh_draws(MeshTechnique::NukeUEF);
@@ -639,6 +683,16 @@ void test_effect_meshes(TestContext& ctx) {
                             "drawn by technique {} ({} NukeUEF draws in the frames)",
                             dome_bp.empty() ? "never made" : dome_bp, static_cast<u32>(seen),
                             dome_draws));
+        const f32 dome_scale =
+            dome_bp.empty()
+                ? 0.0f
+                : lua_number(fmt::format("__blueprints['{}'].Display.UniformScale", dome_bp));
+        const f32 growth = (dome_2s.width - dome_made.width) / 2.0f;
+        const f32 expected_growth = 0.3f * dome_scale * dome_made.mesh_width;
+        t.check(std::abs(growth - expected_growth) < 0.01f * expected_growth,
+                fmt::format("Test 12: the dome's drawn width grows {:.2f} units a second ({:.2f} "
+                            "expected: its mesh, {:.3f} across, by 0.3 of its UniformScale, {})",
+                            growth, expected_growth, dome_made.mesh_width, dome_scale));
     }
 
     spdlog::info("Effect mesh test: {}/{} passed", t.pass, t.pass + t.fail);

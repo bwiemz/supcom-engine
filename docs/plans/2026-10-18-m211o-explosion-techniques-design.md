@@ -99,11 +99,12 @@ What they do not prove:
 - **`Effect`'s glow** and the blended techniques' unwritten alpha: the tests
   read colour only, and offscreen frames have no bloom.
 - **The exact `0x0F` cutoff**, the culling (the plates are wound both ways),
-  and that the real dome looks as the original's: no capture of the
-  original's nuke exists.
+  and that the dome's texture looks as the original's: the capture of the
+  original's nuke checks the dome's extent at one camera, not its texture.
 
 ## Left
 
 `Explosion`, `NukeEMP`, `NukeQuantum`, `GlassAlpha`, `PhalanxEffect`,
 `UEFQuantumGate` and `Flat` still draw as `Unit`; a check that lists the
-ShaderNames with no technique; a comparison with the original's nuke.
+ShaderNames with no technique; a comparison with the original's nuke
+for the dome's texture and motion.

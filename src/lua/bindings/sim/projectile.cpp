@@ -16,6 +16,7 @@
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/bone_cache.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
@@ -365,13 +366,18 @@ static int proj_SetVelocityAlign(lua_State* L) {
 }
 
 // SetScaleVelocity(sv) or (svx, svy, svz): how fast its draw scale grows
-// (or shrinks) each second. Movement is untouched.
+// (or shrinks) each second. Movement is untouched. Moho's draw scale starts
+// at Display.UniformScale and the velocity adds to it; the entity's scale
+// here multiplies UniformScale, so the velocity is divided by it.
 static int proj_SetScaleVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) {
+        auto* sim = get_sim(L);
+        auto* bones = sim ? sim->bone_cache() : nullptr;
+        const f32 per = bones ? 1.0f / bones->resolve_uniform_scale(p->blueprint_id(), L) : 1.0f;
         const auto sx = static_cast<f32>(luaL_checknumber(L, 2));
-        p->scale_velocity = {sx, static_cast<f32>(luaL_optnumber(L, 3, sx)),
-                             static_cast<f32>(luaL_optnumber(L, 4, sx))};
+        p->scale_velocity = {sx * per, static_cast<f32>(luaL_optnumber(L, 3, sx)) * per,
+                             static_cast<f32>(luaL_optnumber(L, 4, sx)) * per};
     }
     lua_pushvalue(L, 1); // return self for chaining
     return 1;
