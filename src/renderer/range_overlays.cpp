@@ -1,9 +1,9 @@
 #include "renderer/range_overlays.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <limits>
 
@@ -246,18 +246,10 @@ const RangeBlueprint* RangeBlueprints::find(const std::string& id, lua_State* L)
         return it->second ? &*it->second : nullptr;
     std::optional<RangeBlueprint>& out = cache_[id];
     if (!L) return nullptr;
-    std::string key = id;
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, key.c_str());
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) out = read_range_blueprint(L, lua_gettop(L));
+    if (blueprints::push_blueprint(L, id)) {
+        out = read_range_blueprint(L, lua_gettop(L));
+        lua_pop(L, 1);
     }
-    lua_settop(L, top);
     return out ? &*out : nullptr;
 }
 

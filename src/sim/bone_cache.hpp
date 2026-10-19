@@ -34,7 +34,7 @@ public:
 
 private:
     /// Resolve blueprint ID → .scm VFS path by navigating Lua tables:
-    /// unitBP.Display.MeshBlueprint → __blueprints[meshId].LODs[1].MeshName
+    /// unitBP.Display.MeshBlueprint → its mesh blueprint's LODs[1].MeshName
     /// The blueprint's AI.TargetBones, resolved against `bones`.
     std::vector<i32> resolve_target_bones(const std::string& bp_id, lua_State* L,
                                           const BoneData& bones);

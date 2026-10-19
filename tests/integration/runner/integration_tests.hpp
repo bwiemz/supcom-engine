@@ -129,6 +129,8 @@ void test_resource_icon_render(TestContext& ctx);
 void test_counter_intel(TestContext& ctx);
 /// --binding-tail-test (M184's tail), in binding_tail_test.cpp.
 void test_binding_tail(TestContext& ctx);
+/// --pod-rebuild-test, in pod_rebuild_test.cpp.
+void test_pod_rebuild(TestContext& ctx);
 /// --jammer-blip-test (M215e), in jammer_blip_test.cpp.
 void test_jammer_blips(TestContext& ctx);
 /// --intel-field-test (M215g), in intel_field_test.cpp.

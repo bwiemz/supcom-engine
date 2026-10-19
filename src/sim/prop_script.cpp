@@ -1,5 +1,6 @@
 #include "sim/prop_script.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/test_status.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/bone_cache.hpp"
@@ -101,37 +102,29 @@ void read_prop_blueprint(lua_State* L, Prop& prop) {
     if (!L) {
         return;
     }
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, lowercase(prop.blueprint_id()).c_str());
+    if (blueprints::push_blueprint(L, prop.blueprint_id())) {
+        std::unordered_set<std::string> categories;
+        collect_blueprint_categories(L, lua_gettop(L), categories);
+        prop.untargetable = categories.count("UNTARGETABLE") > 0;
+        prop.reclaimable_category = categories.count("RECLAIMABLE") > 0;
+        prop.obstructs_building = categories.count("OBSTRUCTSBUILDING") > 0;
+        lua_pushstring(L, "Economy");
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            std::unordered_set<std::string> categories;
-            collect_blueprint_categories(L, lua_gettop(L), categories);
-            prop.untargetable = categories.count("UNTARGETABLE") > 0;
-            prop.reclaimable_category = categories.count("RECLAIMABLE") > 0;
-            prop.obstructs_building = categories.count("OBSTRUCTSBUILDING") > 0;
-            lua_pushstring(L, "Economy");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                const auto number = [&](const char* key) {
-                    lua_pushstring(L, key);
-                    lua_rawget(L, -2);
-                    const f32 v = lua_type(L, -1) == LUA_TNUMBER
-                                      ? static_cast<f32>(lua_tonumber(L, -1))
-                                      : 0.0f;
-                    lua_pop(L, 1);
-                    return v;
-                };
-                prop.reclaim_mass_max = number("ReclaimMassMax");
-                prop.reclaim_energy_max = number("ReclaimEnergyMax");
-            }
-            lua_pop(L, 1);
+            const auto number = [&](const char* key) {
+                lua_pushstring(L, key);
+                lua_rawget(L, -2);
+                const f32 v =
+                    lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            prop.reclaim_mass_max = number("ReclaimMassMax");
+            prop.reclaim_energy_max = number("ReclaimEnergyMax");
         }
         lua_pop(L, 1);
+        lua_pop(L, 1); // the blueprint
     }
-    lua_pop(L, 1);
 }
 
 void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
@@ -162,47 +155,40 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
     lua_rawset(L, obj);
     // self.Blueprint, as FAF's scripts read it (retail calls GetBlueprint);
     // and the collision box it gives, until a script sets another.
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id.c_str());
+    if (blueprints::push_blueprint(L, bp_id)) {
+        lua_pushstring(L, "Blueprint");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, obj);
+        prop.set_default_collision_shape(blueprint_collision_shape(L, lua_gettop(L)));
+        const auto [sx, sz] = blueprint_footprint(L, lua_gettop(L));
+        prop.set_footprint_size(sx, sz);
+        // One worth reclaiming stands on its footprint's ground, with
+        // its blueprint's Footprint.OccupancyCaps (Moho's Prop: 88 of
+        // retail's, buses, ruins and the like, have LAND|SEABED; trees and
+        // rocks none).
+        lua_pushstring(L, "Footprint");
         lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Blueprint");
-            lua_pushvalue(L, -2);
-            lua_rawset(L, obj);
-            prop.set_default_collision_shape(blueprint_collision_shape(L, lua_gettop(L)));
-            const auto [sx, sz] = blueprint_footprint(L, lua_gettop(L));
-            prop.set_footprint_size(sx, sz);
-            // One worth reclaiming stands on its footprint's ground, with
-            // its blueprint's Footprint.OccupancyCaps (Moho's Prop: 88 of
-            // retail's, buses, ruins and the like, have LAND|SEABED; trees and
-            // rocks none).
-            lua_pushstring(L, "Footprint");
+        const u8 caps = lua_istable(L, -1) ? [&] {
+            lua_pushstring(L, "OccupancyCaps");
             lua_rawget(L, -2);
-            const u8 caps = lua_istable(L, -1) ? [&] {
-                lua_pushstring(L, "OccupancyCaps");
-                lua_rawget(L, -2);
-                const auto c = static_cast<u8>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-                return c;
-            }()
-                                               : u8{0};
+            const auto c = static_cast<u8>(lua_tonumber(L, -1));
             lua_pop(L, 1);
-            if (caps != 0 && (prop.reclaim_mass_max > 0 || prop.reclaim_energy_max > 0)) {
-                blueprints::Footprint fp;
-                fp.size_x = static_cast<u8>(std::clamp(std::lround(sx), 0L, 255L));
-                fp.size_z = static_cast<u8>(std::clamp(std::lround(sz), 0L, 255L));
-                fp.caps = caps;
-                GroundOccupant ground;
-                ground.caps = caps;
-                ground.rects.push_back(footprint_rect(fp, prop.position().x, prop.position().z));
-                sim.occupy_ground(prop.entity_id(), std::move(ground));
-            }
-        }
+            return c;
+        }()
+                                           : u8{0};
         lua_pop(L, 1);
+        if (caps != 0 && (prop.reclaim_mass_max > 0 || prop.reclaim_energy_max > 0)) {
+            blueprints::Footprint fp;
+            fp.size_x = static_cast<u8>(std::clamp(std::lround(sx), 0L, 255L));
+            fp.size_z = static_cast<u8>(std::clamp(std::lround(sz), 0L, 255L));
+            fp.caps = caps;
+            GroundOccupant ground;
+            ground.caps = caps;
+            ground.rects.push_back(footprint_rect(fp, prop.position().x, prop.position().z));
+            sim.occupy_ground(prop.entity_id(), std::move(ground));
+        }
+        lua_pop(L, 1); // the blueprint
     }
-    lua_pop(L, 1);
     lua_pushvalue(L, obj);
     prop.set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
 
