@@ -15,6 +15,12 @@ add_library(osc_core STATIC
 )
 add_library(osc::core ALIAS osc_core)
 
+if(OSC_PYROSCOPE)
+    target_sources(osc_core PRIVATE pyroscope.cpp)
+    # PUBLIC: core/profiler.hpp's hook exists only in this build
+    target_compile_definitions(osc_core PUBLIC OSC_PYROSCOPE=1)
+endif()
+
 target_include_directories(osc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_core
     PUBLIC spdlog::spdlog fmt::fmt lua50 nlohmann_json::nlohmann_json

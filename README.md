@@ -348,6 +348,31 @@ Adding `--ticks N` runs the simulation headlessly for N ticks with no window:
 ./build/linux-debug/osc_integration --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 1200 --ai-test
 ```
 
+### Profiling with Pyroscope
+
+A build configured with `-DOSC_PYROSCOPE=ON` (Linux and macOS) can post
+profiles to a [Pyroscope](https://grafana.com/oss/pyroscope/) server while it
+runs: wall-clock samples of the main thread (sim and render) as the service
+`opensupcom`, and the profiler's zones with their self time as
+`opensupcom-zones`, every 10 seconds. Other builds have none of this code.
+
+```bash
+# A local server with Grafana (http://localhost:3000, no login)
+docker compose -f tools/pyroscope/docker-compose.yml up -d
+./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 3000 \
+    --pyroscope http://localhost:4040 --pyroscope-labels run=baseline
+```
+
+`--pyroscope-app <name>` (default `opensupcom`), `--pyroscope-labels k=v,...`
+and `--pyroscope-hz <n>` (default 100) shape what is posted; the game adds
+`mode`, `map`, `device` and `driver` labels itself. The URL is plain HTTP: for
+Grafana Cloud, run `tools/pyroscope/cloud-login.sh` once in a terminal (it keeps the
+URL, user and access-policy token in `~/.config/opensupcom/pyroscope-cloud.env`,
+mode 600, outside the repository), start the relay with `docker compose --profile
+cloud up -d`, and point the game at `http://localhost:4041`. A headless game has
+no renderer and so no `driver` label; the relay (`tools/pyroscope/alloy.config.alloy`)
+sets `driver=headless` on those profiles so dashboards filtered by driver still show them.
+
 ## Testing
 
 | Suite | Command | Needs game data |

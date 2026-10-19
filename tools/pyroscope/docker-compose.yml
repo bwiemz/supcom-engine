@@ -1,0 +1,48 @@
+# Local Pyroscope for profiling the game (OSC_PYROSCOPE builds).
+#
+#   docker compose up -d                 # Pyroscope on :4040, Grafana on :3000
+#   docker compose --profile cloud up -d # + Alloy on :4041 relaying to Grafana Cloud (cloud-login.sh first)
+#
+# Point the game at it: opensupcom --pyroscope http://localhost:4040 ...
+# (or :4041 for the cloud relay). Grafana opens on the Pyroscope data
+# source without a login. Data lives in the pyroscope-data volume.
+services:
+  pyroscope:
+    image: grafana/pyroscope:latest
+    ports:
+      - "4040:4040"
+    volumes:
+      - pyroscope-data:/data
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana-datasource.yml:/etc/grafana/provisioning/datasources/pyroscope.yml:ro
+    depends_on:
+      - pyroscope
+
+  # Grafana Cloud relay: the game posts to Alloy over plain HTTP on
+  # localhost; Alloy adds TLS and the credentials, which live outside the
+  # repository in ~/.config/opensupcom/pyroscope-cloud.env (cloud-login.sh
+  # writes it, mode 600; env.example shows the keys). The game never holds
+  # the key, and nothing under the repository does either.
+  alloy:
+    image: grafana/alloy:latest
+    profiles: ["cloud"]
+    ports:
+      - "4041:4041"
+    command: ["run", "/etc/alloy/config.alloy", "--server.http.listen-addr=0.0.0.0:12345"]
+    volumes:
+      - ./alloy.config.alloy:/etc/alloy/config.alloy:ro
+    env_file:
+      - path: ${HOME}/.config/opensupcom/pyroscope-cloud.env
+        required: true
+
+volumes:
+  pyroscope-data:

@@ -4,6 +4,9 @@
 #include "app/app_internal.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
+#if OSC_PYROSCOPE
+#include "core/pyroscope.hpp"
+#endif
 #include "core/test_status.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
@@ -204,6 +207,9 @@ int App::run_headless() {
     const bool checked = opt.any_test || opt.save_to_load || !opt.save_path.empty();
     const int exit_code = checked ? finish_test_run("integration tests") : 0;
     recording_writer.write();
+#if OSC_PYROSCOPE
+    osc::pyroscope::stop(); // its last window, while the log can still say so
+#endif
     osc::log::shutdown();
     return exit_code;
 }

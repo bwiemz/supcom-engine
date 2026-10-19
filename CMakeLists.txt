@@ -19,6 +19,15 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 include(cmake/OscCompileOptions.cmake)
 
+# Profiling to Pyroscope (opt-in): --pyroscope <url> posts main-thread samples
+# and the profiler's zones to a server (tools/pyroscope runs one). POSIX
+# signals and sockets, so Linux and macOS; a build without it carries none
+# of the code (core/pyroscope.cpp and the profiler's hook).
+option(OSC_PYROSCOPE "Build --pyroscope: post profiles to a Pyroscope server" OFF)
+if(OSC_PYROSCOPE AND WIN32)
+    message(FATAL_ERROR "OSC_PYROSCOPE needs POSIX signals and sockets (Linux, macOS)")
+endif()
+
 # Vendored Lua 5.0
 add_subdirectory(third_party/fdlibm)
 add_subdirectory(third_party/lua-5.0)

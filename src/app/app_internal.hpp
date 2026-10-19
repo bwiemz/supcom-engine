@@ -111,6 +111,12 @@ struct Options {
     bool legacy_hud = false;
     bool no_decals = false;
     bool profile_enabled = false;
+#if OSC_PYROSCOPE
+    std::string pyroscope_url;    ///< --pyroscope <url>: post profiles there
+    std::string pyroscope_app;    ///< --pyroscope-app <name> (opensupcom)
+    std::string pyroscope_labels; ///< --pyroscope-labels k=v,...
+    unsigned pyroscope_hz = 100;  ///< --pyroscope-hz <n>
+#endif
     bool ai_skirmish = false;
     bool instrument = false;
     bool builder_debug = false;

@@ -1,0 +1,42 @@
+// Receives the game's /ingest posts on :4041 and forwards them to Grafana
+// Cloud Profiles with the credentials from the environment (.env).
+pyroscope.receive_http "game" {
+	http {
+		listen_address = "0.0.0.0"
+		listen_port    = 4041
+	}
+	forward_to = [pyroscope.relabel.default_driver.receiver]
+}
+
+// The game labels its profiles with the Vulkan driver once the renderer is
+// up, so a headless game (no renderer) posts none. Fill it in here so a
+// dashboard filtered by driver keeps showing headless runs, and name the
+// rest "unknown" (profiles from other tools that were pushed without one).
+pyroscope.relabel "default_driver" {
+	forward_to = [pyroscope.write.cloud.receiver]
+
+	rule {
+		source_labels = ["mode", "driver"]
+		regex         = "headless;"
+		target_label  = "driver"
+		replacement   = "headless"
+	}
+
+	rule {
+		source_labels = ["driver"]
+		regex         = ""
+		target_label  = "driver"
+		replacement   = "unknown"
+	}
+}
+
+pyroscope.write "cloud" {
+	endpoint {
+		url = sys.env("PYROSCOPE_URL")
+
+		basic_auth {
+			username = sys.env("PYROSCOPE_USER")
+			password = sys.env("PYROSCOPE_API_KEY")
+		}
+	}
+}

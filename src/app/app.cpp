@@ -1,3 +1,7 @@
+#if OSC_PYROSCOPE
+#include "core/profiler.hpp"
+#include "core/pyroscope.hpp"
+#endif
 #include "app/app_internal.hpp"
 #include "app/log_bundle.hpp"
 #include "core/log.hpp"
@@ -12,7 +16,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
+#include <string_view>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
@@ -54,6 +60,37 @@ int run(int argc, char* argv[], TestModes* tests) {
     auto opt = parse_options(argc, argv, request);
     if (!opt) return 1;
     open_run_log(*opt);
+#if OSC_PYROSCOPE
+    // Profiles to a Pyroscope server for as long as the run lasts
+    struct StopPyroscope {
+        ~StopPyroscope() { osc::pyroscope::stop(); }
+    } stop_pyroscope;
+    if (!opt->pyroscope_url.empty()) {
+        osc::pyroscope::Config profiling;
+        profiling.url = opt->pyroscope_url;
+        profiling.app = opt->pyroscope_app;
+        profiling.sample_hz = opt->pyroscope_hz;
+        profiling.labels["mode"] = opt->headless ? "headless" : "window";
+        if (!opt->map_path.empty())
+            profiling.labels["map"] =
+                std::filesystem::path(opt->map_path).parent_path().filename().string();
+        std::string_view rest = opt->pyroscope_labels;
+        while (!rest.empty()) {
+            const auto comma = rest.find(',');
+            const std::string_view pair = rest.substr(0, comma);
+            rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+            const auto eq = pair.find('=');
+            if (eq == std::string_view::npos || eq == 0) {
+                spdlog::error("--pyroscope-labels '{}': give key=value pairs separated by commas",
+                              opt->pyroscope_labels);
+                return 1;
+            }
+            profiling.labels[std::string(pair.substr(0, eq))] = std::string(pair.substr(eq + 1));
+        }
+        if (!osc::pyroscope::start(profiling)) return 1;
+        osc::Profiler::instance().set_enabled(true); // its zones are the second profile
+    }
+#endif
     if (parse_flag(argc, argv, "--simulate-crash")) {
         spdlog::warn("--simulate-crash: crashing on purpose");
         osc::platform::crash_for_test();

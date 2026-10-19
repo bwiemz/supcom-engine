@@ -2,6 +2,9 @@
 // UI's frames (M192 step 2b, moved from run()); its frame's phases are
 // App::Window's (step 2c, window_frame.cpp and window_session.cpp).
 
+#if OSC_PYROSCOPE
+#include "core/pyroscope.hpp"
+#endif
 #include "core/profiler.hpp"
 #include "app/window_loop.hpp"
 #include "lua/sim_bindings.hpp"
@@ -15,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 namespace osc::app {
@@ -39,6 +43,26 @@ std::optional<int> App::Window::run() {
         renderer.set_offscreen_scale(s > 0.0f ? s : 1.0f);
     }
     if (renderer.init(bench ? 1920 : 1600, bench ? 1080 : 900, "OpenSupCom", offscreen_capture)) {
+#if OSC_PYROSCOPE
+        if (osc::pyroscope::active()) {
+            osc::pyroscope::set_label("device", renderer.device_name());
+            // The Vulkan driver, from the ICD the loader was pointed at
+            for (const char* var : {"VK_DRIVER_FILES", "VK_ADD_DRIVER_FILES", "VK_ICD_FILENAMES"}) {
+                const char* icd = std::getenv(var);
+                if (!icd || !*icd) continue;
+                std::string file = std::filesystem::path(icd).filename().string();
+                for (char& c : file)
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                osc::pyroscope::set_label("driver",
+                                          file.find("kosmic") != std::string::npos   ? "kosmickrisp"
+                                          : file.find("molten") != std::string::npos ? "moltenvk"
+                                                                                     : file);
+                break;
+            }
+            // The zones are what is posted; their overlay only when asked for
+            if (!opt.profile_enabled) renderer.set_profile_overlay_hidden(true);
+        }
+#endif
         if (auto code = set_up()) return code;
         while (running()) {
             if (!frame()) break;

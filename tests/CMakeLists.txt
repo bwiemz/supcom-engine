@@ -175,6 +175,7 @@ add_executable(osc_tests
     test_saved_game.cpp
     test_checksum_coverage.cpp
     test_sha256.cpp
+    test_pyroscope_folded.cpp
     test_platform_secrets.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp
