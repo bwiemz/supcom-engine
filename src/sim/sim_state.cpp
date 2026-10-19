@@ -1997,12 +1997,12 @@ void SimState::end_beat(bool ticked) {
             if (!checksum_trace_header_) {
                 std::string header = "# tick total";
                 for (const char* name : ChecksumParts::kNames) header += fmt::format(" {}", name);
-                *checksum_trace_ << header << '\n';
+                *checksum_trace_ << header << " threads\n";
                 checksum_trace_header_ = true;
             }
             std::string line = fmt::format("{} {:08x}", tick_count_, parts.total());
             for (const u64 part : parts.values()) line += fmt::format(" {:016x}", part);
-            *checksum_trace_ << line << '\n';
+            *checksum_trace_ << line << fmt::format(" {:016x}\n", parts.threads);
         }
         if (recording_) {
             recorded_replay_.final_beat = beat_count_;

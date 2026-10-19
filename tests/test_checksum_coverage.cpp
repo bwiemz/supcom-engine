@@ -16,6 +16,7 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -254,6 +255,23 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
                          d->watched().front().below_foot_height = true;
              }},
         });
+}
+
+TEST_CASE("A script thread shows in the trace's threads, not in the compared checksum",
+          "[sync][checksum]") {
+    // Retail's sim scripts fork threads by the focus army (aibrain.lua's
+    // voice-overs), which each client sets for itself.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    setup(sim);
+    const SimState::ChecksumParts before = sim.checksum_parts();
+    REQUIRE(luaL_loadbuffer(g.L, "coroutine.yield()", 17, "=voice") == 0);
+    sim.thread_manager().fork_thread(g.L);
+    lua_settop(g.L, 0);
+    const SimState::ChecksumParts after = sim.checksum_parts();
+    CHECK(after.threads != before.threads);
+    CHECK(after.values() == before.values());
+    CHECK(after.total() == before.total());
 }
 
 TEST_CASE("A game saved with that state, restored and played on, matches", "[sync][checksum]") {

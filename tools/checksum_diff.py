@@ -7,8 +7,11 @@ whose parts differ is where two runs -- two processes, two platforms, a replay
 and its recording -- stopped playing the same game, and the domains that
 differ say where to look: `rng` (one side rolled more or fewer numbers),
 `armies` (economy or army state), `entities` (a position, health or
-existence), `orders`, `weapons`, `threads`, and so on (see
-SimState::ChecksumParts). A trace without a header is the old four-column
+existence), `orders`, `weapons`, and so on (see SimState::ChecksumParts).
+The last column, `threads` (live script threads), isn't in the total: it
+can differ where the games agree, as each client's focus army forks its own
+script threads, but the first tick it differs is where to look when the
+total does. A trace without a header is the old four-column
 one ("tick total rng armies entities").
 
     tools/checksum_diff.py a.txt b.txt    # exit 0 if identical, 1 if not
