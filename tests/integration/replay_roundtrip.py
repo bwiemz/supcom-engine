@@ -50,17 +50,17 @@ def main(argv: list[str]) -> int:
         if record.returncode != 0:
             print(f"recording run failed: exit {record.returncode}")
             return 1
-        written = re.search(r"Replay: (\d+) commands over (\d+) ticks", record.stdout)
+        written = re.search(r"Replay: (\d+) commands over (\d+) beats", record.stdout)
         if not written:
             print("the recording run wrote no replay")
             return 1
-        commands, ticks = int(written.group(1)), int(written.group(2))
+        commands, beats = int(written.group(1)), int(written.group(2))
         if commands == 0:
             print("the replay holds no commands: the game had no player input")
             return 1
 
         play = run([str(exe), "--replay", str(replay), "--checksum-trace", str(trace_b)])
-        print(f"recorded {commands} commands over {ticks} ticks")
+        print(f"recorded {commands} commands over {beats} beats")
         for line in play.stdout.splitlines():
             if line.startswith("REPLAY"):
                 print(line)

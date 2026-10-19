@@ -169,7 +169,9 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         lua_pop(uiL, 1);
         attach_sound(*sim_lua_state, *sim_state, sound);
     }
-    if (world_interp) world_interp->attach(*sim_state);
+    if (world_interp) {
+        world_interp->attach(*sim_state, &ui_lua_state);
+    }
     sim_state->set_bone_cache(
         std::make_unique<osc::sim::BoneCache>(&vfs, &store));
     sim_state->set_anim_cache(

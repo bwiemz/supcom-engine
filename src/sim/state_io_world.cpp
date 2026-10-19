@@ -261,6 +261,10 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.f64v(a.handicap_);
     w.f64v(a.extra_storage_mass_);
     w.f64v(a.extra_storage_energy_);
+    w.f64v(a.bank_mass_);
+    w.f64v(a.bank_energy_);
+    w.f64v(a.shared_mass_);
+    w.f64v(a.shared_energy_);
     {
         std::vector<std::pair<i32, Alliance>> sorted(a.alliances_.begin(), a.alliances_.end());
         std::sort(sorted.begin(), sorted.end(),
@@ -345,6 +349,10 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.handicap_ = r.f64v();
     a.extra_storage_mass_ = r.f64v();
     a.extra_storage_energy_ = r.f64v();
+    a.bank_mass_ = r.f64v();
+    a.bank_energy_ = r.f64v();
+    a.shared_mass_ = r.f64v();
+    a.shared_energy_ = r.f64v();
     a.alliances_.clear();
     const size_t alliances = r.size(8);
     for (size_t i = 0; i < alliances; ++i) {
@@ -663,7 +671,7 @@ void StateIO::load(StateReader& r, SimCallbackEntry& c) {
 }
 
 void StateIO::save(StateWriter& w, const ScheduledCommand& c) {
-    w.u32v(c.exec_tick);
+    w.u32v(c.exec_beat);
     w.u32v(c.source);
     w.u64v(c.sequence);
     save(w, c.command);
@@ -674,7 +682,7 @@ void StateIO::save(StateWriter& w, const ScheduledCommand& c) {
 }
 
 void StateIO::load(StateReader& r, ScheduledCommand& c) {
-    c.exec_tick = r.u32v();
+    c.exec_beat = r.u32v();
     c.source = r.u32v();
     c.sequence = r.u64v();
     load(r, c.command);
@@ -689,9 +697,9 @@ void StateIO::load(StateReader& r, ScheduledCommand& c) {
 
 void StateIO::save(StateWriter& w, const CommandScheduler& s) {
     w.tag("SCHD");
-    w.size(s.by_tick_.size());
-    for (const auto& [tick, commands] : s.by_tick_) {
-        w.u32v(tick);
+    w.size(s.by_beat_.size());
+    for (const auto& [beat, commands] : s.by_beat_) {
+        w.u32v(beat);
         w.size(commands.size());
         for (const ScheduledCommand& c : commands) save(w, c);
     }
@@ -702,11 +710,11 @@ void StateIO::save(StateWriter& w, const CommandScheduler& s) {
 
 void StateIO::load(StateReader& r, CommandScheduler& s) {
     r.tag("SCHD");
-    s.by_tick_.clear();
-    const size_t ticks = r.size(8);
-    for (size_t i = 0; i < ticks && r.ok(); ++i) {
-        const u32 tick = r.u32v();
-        auto& commands = s.by_tick_[tick];
+    s.by_beat_.clear();
+    const size_t beats = r.size(8);
+    for (size_t i = 0; i < beats && r.ok(); ++i) {
+        const u32 beat = r.u32v();
+        auto& commands = s.by_beat_[beat];
         commands.resize(r.size(16));
         for (ScheduledCommand& c : commands) load(r, c);
     }

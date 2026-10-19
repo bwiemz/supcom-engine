@@ -317,9 +317,11 @@ weapons, for every unit.
   arm on target is unchanged.
 - Test: a turret on a hull turning at a constant rate fires along its aim; without the change the error is
   the hull's turn in a tick.
-- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every shot
-  at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a salvo
-  and 48% within 2 (retail 763, 47%).
+- Acceptance: P1 — the error no longer depends on the turn or the travel (a and b under 0.1), every tank
+  shot at the structure hits (retail 100%); the Corsair probe on top of #722 and #723 — about 756 damage a
+  salvo and 48% within 2 (retail 763, 47%). *Done (2026-10-18) — tick/s1-manipulators-after-motion: P1's a
+  and b under 0.05, the tank hits 100%, the Corsair 756 a salvo and 48%. The Harbinger's misses left (49% hit,
+  retail 100%) land along the line of fire, not aside.*
 
 **Step 2. Motion as the unit's own step.** Orders only set intent: the navigator's goal; an aircraft's mode
 (move, attack run, circling, hover, hold height); a facing request; stop. `Unit::motion_tick()` runs one
@@ -334,6 +336,14 @@ order that set it, as Moho's does.
   `SetStunned(1)` from Lua — the first moving tick is Moho's.
 - Split into PRs: 2a land and water, 2b air (`fly_attack_run`, `fly_circling` run from the motion step, as
   `CalcMoveAir` runs the combat tactics), 2c transports, landing, ferries, staging.
+  *2a done (2026-10-18) — tick/s2a-motion-step: orders only ask for the navigator's step; `motion_tick` takes
+  it once after them, the layer first from where the unit stood, and an order hears the arrival a tick later.*
+  *2b done (2026-10-18) — tick/s2b-air-motion-step, with 2c: an aircraft's orders leave a course (attack run,
+  circling, winged guard, a transport's hover, a hold, settling onto a platform) that `motion_tick` flies once
+  after the fuel; the air-step latch is gone; the beam up and teleports stay in the order, as Moho's.*
+  *2d done (2026-10-18) — tick/s2d-unit-step-order: a unit's step runs its silo, counts its stun down, moves
+  (wrong-layer damage after the layer update) and raises its motion events before the pose; a stun of n ticks
+  set from Lua at T keeps the layer still until T+n−1. What stun stops stays in §7.*
 
 **Step 3. `AdvanceBeat`'s phases.** Three PRs.
 - **3a. Weapons in the army phase.** Armies in index order → each army's units in creation order → for each
@@ -359,6 +369,17 @@ order that set it, as Moho's does.
   - Tests: a trigger true from the start fires at tick 11; consumption raised by a Lua thread works at
     N+2; a unit finished in N shows in `GetEconomyIncome` at N+1.
 
+*3a and 3b done (2026-10-18) — tick/s3ab-weapons-orders-lua: P2 `OnGotTarget` 3, `OnFire` 13 and every projectile in its
+`OnFire` tick (46/46, retail 3/13, 51/51); P3 `OnStartBuild` at T+1, a factory's unit `DetachFrom` at S and `Moving` at
+S+1, as retail; the Corsair's first rocket in its `OnFire` tick, 756 a salvo and 49% within 2; the scout's
+`OnGotTarget`/`OnFire` 87/91 (retail 86/90: the scout's own move starts two ticks early, D10).*
+
+*3c done (2026-10-18) — tick/s3c-economy-army-phase: each army's economy, stats triggers (from tick 11) and unit-cap
+stats run in its army phase; a unit's step banks its production and sets its `ResourceConsumed`, storage and economy
+events, reclaim is banked in the order phase, overflow shared within each economy; on retail's economy probe the events
+step and finish on retail's ticks; `GiveResource` is banked, so the commander's starting gift is income at tick 6 and
+fills the stores then, as retail's (the engine's own gift goes); a34 and P3 unchanged.*
+
 **Step 4. Projectiles as Moho's.** The entity walk includes entities made during it (a projectile always
 moves on its creation tick); the impact runs at the start of the next step, with the pending position at the
 impact point; the lifetime is an absolute tick (#701's half-tick compensation goes); the display reaches the
@@ -369,7 +390,9 @@ impact point. The sweep reaches a tenth of a step past each end, which P2 shows 
   the projectile at the impact point.
 - Acceptance: P2 — `OnImpact` and damage a tick after the hit is found, `GetPosition()` in that tick the impact
   point, fragments moving on their creation tick, the shield broken on 19 and removed on 20, the first damage to
-  the generator on 26.
+  the generator on 26. *Done (2026-10-18) — tick/s4-projectiles: P2 `OnImpact` and damage a tick after the step
+  that finds the hit (44/44), `GetPosition()` in that tick the impact point, fragments moving on their creation
+  tick (20/20), the shield found on 9/12/15/18, broken on 19, removed on 20, the generator first damaged on 26.*
 
 **Step 5. Committed transforms.** `position()`/`orientation()` return the committed transform; the motion
 step writes the pending one; the end of the tick commits (`AdvanceCoords`): collision cells, intel, the
@@ -381,6 +404,9 @@ spatial query reads the committed transform; a unit's own bones come from its po
 - Tests: two units reading each other — same result whichever has the lower id; a projectile collides with
   its target where the target stood at the start of the tick; Warp, then `GetUnitsInRect` in the same thread
   finds the new place.
+  *Done (2026-10-18) — tick/s5-committed-transforms: every read but an entity's own step sees the committed
+  transform, committed at the end of the tick; P2's `OnCollisionCheck` reads 768.07 as retail (was 771.57), a34's
+  scout with `--moho-pathing` takes 244 a salvo and 16% within 2 (retail 244, 17%); P3 unchanged.*
 
 **Step 6. Navigators and steering in the army phase.** Path following → steering → (weapons) → the army's
 path budget; arrival and failure events before the order phase; `SetGoal` leaves the steering waypoint;
@@ -390,6 +416,11 @@ path budget; arrival and failure events before the order phase; `SetGoal` leaves
   ends the order two ticks after it is set; an `IssueMove` from Lua at tick T first steps along the path at T+3.
 - Acceptance: P3 as retail — the first step at T+3; a chain's queue 2 → 1 read at N+1 and the first step to the
   next point at N+3; clear and move while moving turns at T2+3; a factory's unit first moves at S+4.
+  *Done (2026-10-18) — tick/s6-army-navigation: with `--moho-pathing` P3 on retail's and FAF's Lua — the first step
+  at T+3 (on a cell centre, off it, a unit just created), the own cell T+2 and the goal T+3, a chain's queue 2 → 1 at
+  N+1 and the next point's first step at N+3 after two slowing ticks, clear and move turning at T2+3, a factory's unit
+  turning at S+3 (moving at S+3, retail S+4: it turns before it moves); the scout's `OnGotTarget`/`OnFire` 86/90 as
+  retail; the default path unchanged.*
 
 **Step 7. Death and deletion.** A deletion queue: `OnDestroy` after the commit, first in first out; until
 then the entity is found by `GetEntityById`, `BeenDestroyed()` is true and `IsDestroyed()` false, and it
@@ -402,6 +433,9 @@ order (dead flag → adjacency → cargo → queue → `OnKilled` → stats → 
   tick.
 - Acceptance: P2 — no shot after `OnKilled` when killed between shots, one when killed on a shot's tick; the
   weapon's `OnDestroy` in the death tick, `GetWeaponCount()` 0 from the next.
+  *Done (2026-10-18) — tick/s7-death-deletion: P2 on retail's and FAF's Lua — no shot after `OnKilled` killed between
+  shots, one killed on a shot's tick (was 13 and 13), the weapon's `OnDestroy` in the death tick after `DeathThread`
+  starts, `GetWeaponCount()` 0 from the next tick; the rest of P2 on retail's Lua, P1 and P3 unchanged.*
 
 **Step 9. Entities in the walk.** Attached entities wait for their parent and follow it the same tick;
 shields, beams and script entities step after their owner; a prop parks without a motor and is woken to
@@ -410,11 +444,20 @@ stun, regeneration).
 - Fixes D13, D14, the tree and factory items of §3.2.
 - Tests: a chain of two attached entities follows the same tick; a tree hit by a projectile leans the same
   tick; beam damage comes before the tick's projectile hits.
+  *Done (2026-10-19) — tick/s9-entities-in-walk: the walk is Moho's stage A list, its order kept from tick to
+  tick; an attached entity waits for its parent and follows it there (a chain through units no longer lags), a
+  beam checks in its own step after its unit, cargo and stored units take theirs, a prop parks until FallDown or
+  SinkAway wakes it, a downed aircraft's OnImpact runs in its step; the duplicated cargo following of step 8 is
+  gone; P1, P2, P3 and a34 unchanged.*
 
 **Step 10. Recon by army.** A full `ReconTick` for army `tick % N`, `ReconRefresh` for the rest; blips,
 flags, callbacks and jammer blips only on `ReconTick`; `RefreshBlips` every tick; recon reads committed
 positions.
 - Tests: army i's `OnIntelChange` only on ticks ≡ i (mod N); `IsSeenNow` reports the last `ReconTick`.
+  *Done (2026-10-19) — tick/s10-recon-by-army: army tick % N runs its recon (flags, blips, `OnIntelChange` then
+  `OnDetectedBy`, a jammer's fakes the cycle after its blip, a gone unit's blip), every blip follows its unit each
+  tick; Lua's blip readers, `GetBlip`, patrol, the omni check and the UI's units and fakes read the last recon; P1,
+  P2, P3 and a34 unchanged.*
 
 **Step 11. Commands and beats.** Commands before `++tick`; a cancelled task's callbacks when the command is
 applied; pause as beats without a tick (commands, `OnDestroy`, `Sync`, GC run); the tick of a pause request
@@ -422,9 +465,17 @@ not run; single step; beats and commands after the game ends; a `Sync` table per
 several.
 - Tests: `GetGameTick()` in a `SimCallback` equals the previous tick's; Stop given to a building engineer
   while paused gives `OnStopBuild` before the game resumes; two ticks in a frame give two `Sync` tables.
+  *Done (2026-10-19) — tick/s11-commands-beats: a beat's commands run before its tick, a cleared order's task
+  ends in the call; pause, resume and single step are commands, paused or over a beat runs no tick but its
+  commands, `OnDestroy`, collection and checksum; commands, replays (v17) and saves count beats; one `Sync` a
+  beat; retail's pause-beats probe agrees (callback reads N−1, the pause's beat no tick, `OnStopBuild` and
+  `OnDestroy` while paused); P3 unchanged.*
 
 **Step 8. Cleanup.** The air-step latch, `note_tick_position`, the duplicated cargo following and the stale
 comments about order go.
+  *Done (2026-10-19) — tick/s8-cleanup: those three went in steps 2b, 5 and 9; the downed aircraft's landing latch,
+  the time and terrain the orders no longer use and the accessors left without callers go too, and the comments and
+  docs that told the old order tell Moho's; P2, P3 and the AI skirmish's checksum trace unchanged.*
 
 ---
 

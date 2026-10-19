@@ -189,7 +189,7 @@ int uu_GetCustomName(lua_State* L) {
 }
 
 /// A name the player gives: it reaches the sim as a ProcessInfo pair, so
-/// every peer and a replay name the unit at the same tick (M191).
+/// every peer and a replay name the unit in the same beat (M191).
 int uu_SetCustomName(lua_State* L) {
     if (lua_type(L, 2) == LUA_TSTRING)
         queue_process_info(L, user_unit_id(L), "CustomName", lua_tostring(L, 2));

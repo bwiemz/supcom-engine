@@ -1855,7 +1855,7 @@ void test_capture(TestContext& ctx) {
             built:SetHealth(nil, __osc_pgen_hp)
             __osc_enemy_pgen = ChangeUnitArmy(built, 2)
             if not __osc_enemy_pgen or __osc_enemy_pgen:GetArmy() ~= 2 then error('not given') end
-            if not IsDestroyed(built) then error('the given one is still there') end
+            if not built:BeenDestroyed() then error('the given one is still there') end
             if math.abs(__osc_enemy_pgen:GetHealth() - __osc_pgen_hp) > 0.01 then
                 error('health ' .. __osc_enemy_pgen:GetHealth())
             end
@@ -2899,6 +2899,7 @@ void test_fow(TestContext& ctx) {
             end
             local pos = acu:GetPosition()
             local myArmy = acu:GetArmy() -- 1-based
+            local cycle = table.getn(ListArmies()) + 1
 
             -- Create an enemy unit within ACU vision range (~26 units)
             local enemy = CreateUnit('uel0201', 2,
@@ -2919,8 +2920,7 @@ void test_fow(TestContext& ctx) {
             end
             LOG('FOW TEST: far enemy #' .. farEnemy:GetEntityId())
 
-            -- Wait a few ticks for visibility to update
-            WaitTicks(5)
+            WaitTicks(cycle)
 
             -- Test 1: GetBlip for nearby enemy (should exist)
             local blip1 = enemy:GetBlip(myArmy)
@@ -3011,7 +3011,7 @@ void test_fow(TestContext& ctx) {
             -- Test 9: Move enemy far away, GetBlip returns nil
             -- (entity left our vision; no dead-reckoning yet)
             enemy:SetPosition({pos[1] + 500, pos[2], pos[3] + 500}, true)
-            WaitTicks(5)
+            WaitTicks(cycle)
             local blip3 = enemy:GetBlip(myArmy)
             if blip3 then
                 -- With dead-reckoning (M34), blip persists at last known position
@@ -3053,7 +3053,7 @@ void test_fow(TestContext& ctx) {
             local scout = CreateUnit('uel0101', 2, pos[1] - 15, pos[2], pos[3], 0, 0, 0)
             local detectedBy = {}
             scout:AddDetectedByHook(function(unit, army) table.insert(detectedBy, army) end)
-            WaitTicks(3)
+            WaitTicks(cycle)
             local sb = scout:GetBlip(myArmy)
             local sawMe = false
             for _, a in detectedBy do
@@ -3071,7 +3071,7 @@ void test_fow(TestContext& ctx) {
                 sb:AddDestroyHook(function(b) destroyedWith = b end)
             end
             scout:Destroy()
-            WaitTicks(2)
+            WaitTicks(cycle)
             if sb and destroyedWith == sb and sb:BeenDestroyed() then
                 LOG('FOW TEST 12b PASSED: the unit gone, its blip OnDestroy ran its hooks')
             else
@@ -3120,7 +3120,7 @@ void test_los(TestContext& ctx) {
             -- Test 1: Nearby enemy on same elevation should be visible
             local nearEnemy = CreateUnit('uel0201', 2,
                 pos[1] + 20, pos[2], pos[3], 0, 0, 0)
-            WaitTicks(5)
+            WaitTicks(table.getn(ListArmies()) + 1)
             local blip1 = nearEnemy:GetBlip(myArmy)
             if blip1 then
                 LOG('LOS TEST 1 PASSED: same-elevation nearby enemy visible')
@@ -3415,9 +3415,9 @@ void test_jammer(TestContext& ctx) {
             local enemyId = enemy:GetEntityId()
             LOG('JAMMER TEST: enemy unit #' .. enemyId ..
                 ' at dist=20 from ACU')
+            local cycle = table.getn(ListArmies()) + 1
 
-            -- Wait for visibility to paint
-            WaitTicks(5)
+            WaitTicks(cycle)
 
             -- Test 1: GetBlip for nearby enemy visible (blip exists, position matches)
             local blip1 = enemy:GetBlip(myArmy)
@@ -3451,23 +3451,23 @@ void test_jammer(TestContext& ctx) {
             enemy:SetPosition({farX, pos[2], farZ})
             LOG('JAMMER TEST: moved enemy to (' .. farX .. ', ' .. farZ .. ')')
 
-            -- Wait for visibility update
-            WaitTicks(5)
+            WaitTicks(cycle)
 
-            -- Test 3: Dead-reckoning position freeze
+            -- Test 3: Dead-reckoning position freeze. Moho's RefreshBlips keeps a
+            -- blip on its unit until its army's recon tick drops it (ReconBlip::Refresh).
             local blip2 = enemy:GetBlip(myArmy)
             if blip2 then
+                enemy:SetPosition({farX + 50, pos[2], farZ})
+                WaitTicks(cycle)
                 local bp2 = blip2:GetPosition()
                 local rp = enemy:GetPosition()
-                -- Blip position should be the LAST KNOWN position (near ACU),
-                -- NOT the current position (far away)
                 local dx_real = math.abs(bp2[1] - rp[1])
-                local dx_old = math.abs(bp2[1] - (pos[1] + 20))
-                if dx_old < 5 and dx_real > 100 then
-                    LOG('JAMMER TEST 3 PASSED: dead-reckoning position frozen at last known')
+                local dx_left = math.abs(bp2[1] - farX)
+                if dx_left < 5 and dx_real > 40 then
+                    LOG('JAMMER TEST 3 PASSED: dead-reckoning frozen where the recon lost it')
                 else
                     LOG('JAMMER TEST 3 FAILED: blip pos x=' .. bp2[1] ..
-                        ' real x=' .. rp[1] .. ' old x=' .. (pos[1] + 20))
+                        ' real x=' .. rp[1] .. ' lost at x=' .. farX)
                 end
             else
                 LOG('JAMMER TEST 3 FAILED: GetBlip returned nil after move')
@@ -3485,7 +3485,7 @@ void test_jammer(TestContext& ctx) {
 
             -- Test 5: Destroy enemy, check BeenDestroyed on blip
             enemy:Destroy()
-            WaitTicks(3)
+            WaitTicks(cycle)
             -- We need to call GetBlip on a destroyed entity.
             -- The entity Lua table still exists but _c_object is nil.
             -- Since entity is destroyed, we use EntityId from the table.
@@ -3525,7 +3525,7 @@ void test_jammer(TestContext& ctx) {
             if jammerUnit then
                 jammerUnit:InitIntel(2, 'Jammer', 30)
                 jammerUnit:EnableIntel('Jammer')
-                WaitTicks(3)
+                WaitTicks(cycle)
 
                 local jblip = jammerUnit:GetBlip(myArmy)
                 if jblip then
@@ -3577,7 +3577,7 @@ void test_jammer(TestContext& ctx) {
                 acu:EnableIntel('Radar')
                 -- Move stealthy unit far away but within radar range
                 stealthUnit:SetPosition({pos[1] + 100, pos[2], pos[3]})
-                WaitTicks(5)
+                WaitTicks(cycle)
 
                 local sblip = stealthUnit:GetBlip(myArmy)
                 if sblip then
@@ -4950,6 +4950,7 @@ void test_adjacency(TestContext& ctx) {
             "pg1:Destroy()\n");
         if (!r) { fail++; osc::test_status::fail("[FAIL] Test 3 setup: {}", r.error().message); }
         else {
+            ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
                 "local count = rawget(_G, '__not_adj_count') or 0\n"
                 "if count > 0 then\n"
@@ -6478,7 +6479,7 @@ void test_prop(TestContext& ctx) {
         Warp(__osc_cell_units[1], {__osc_cell_home[1] + 60, __osc_cell_home[2], __osc_cell_home[3]})
     )");
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
-    lua_check("Test 10d: one warped away leaves its cell as the tick ends", R"(
+    lua_check("Test 10d: one warped away leaves its cell", R"(
         if __osc_cell_order() ~= '3 2' then error('away: ' .. __osc_cell_order()) end
         Warp(__osc_cell_units[1], __osc_cell_home)
     )");
@@ -7322,9 +7323,6 @@ void test_weapon(TestContext& ctx) {
     lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
         local seen = table.concat(__osc_motion, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- With Moho's pathing, first a start and a stop at its own cell's
-        -- centre while the path is searched (drive-test, Test 5).
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if seen ~= want then error('events: ' .. seen) end
     )");
     lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
@@ -8132,11 +8130,13 @@ void test_impact(TestContext& ctx) {
     const bool lit = lit_there();
     (void)ctx.lua_state.do_string("__osc_marker:Destroy()");
     ctx.sim.tick();
+    const bool lit_until_purged = lit_there();
+    ctx.sim.tick();
     const bool dark_after = !lit_there();
-    check(dark_before && lit && dark_after,
-          fmt::format("Test 5: a VizMarker reveals its area while it lives "
-                      "(before {}, with {}, after {})",
-                      !dark_before, lit, !dark_after));
+    check(dark_before && lit && lit_until_purged && dark_after,
+          fmt::format("Test 5: a VizMarker reveals its area while it lives, to the end of the tick "
+                      "it is destroyed in (before {}, with {}, that tick {}, after {})",
+                      !dark_before, lit, lit_until_purged, !dark_after));
 
     // A projectile's life: air bursts, the water's surface, a lost target.
     lua_check("setup: shells in flight", R"(
@@ -8991,10 +8991,6 @@ void test_drive(TestContext& ctx) {
     lua_check("Test 5: its motion events come in order", R"(
         local got = table.concat(__osc_striker.events, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- While Moho's path search runs, CAiNavigatorLand::Execute steers
-        -- at GetTargetPos, the unit's own cell's centre: a start and a
-        -- stop before the drive.
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if got ~= want then error(got) end
     )");
 
@@ -9223,7 +9219,7 @@ void test_steer(TestContext& ctx) {
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
         __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
         __osc_move(__osc_slow, 0, -12)
-        __osc_move(__osc_fast, 0, -2)
+        ForkThread(function() WaitTicks(5) __osc_move(__osc_fast, 0, -2) end)
     )"
              : R"(
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
@@ -9741,6 +9737,7 @@ void test_missile(TestContext& ctx) {
         }
     };
 
+    run(1);
     lua_check("setup", R"(
         -- A unit starts in its blueprint's InitialAutoMode (the launchers'
         -- is on); this test orders its builds, so auto mode starts off.
@@ -10829,6 +10826,7 @@ void test_charge(TestContext& ctx) {
         for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
+    run(1);
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
@@ -12261,11 +12259,13 @@ void test_naval_depth(TestContext& ctx) {
             local n = 0
             for _, r in __osc_shots do
                 if r.target == __osc_target and r.impact then
-                    n = n + 1
                     if r.start < 0 then error('a torpedo started under the water, at ' .. r.start) end
                     if not r.entered then error('a torpedo never entered the water') end
                     if r.low > -0.1 then error('a torpedo stayed at ' .. r.low) end
-                    if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    if r.impact ~= 'ProjectileUnderwater' then
+                        n = n + 1
+                        if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    end
                 end
             end
             if n == 0 then error('no torpedo reached ' .. want) end
@@ -12468,7 +12468,7 @@ void test_transport_slots(TestContext& ctx) {
 
     // A UEF T2 transport (14 small, 6 medium and 3 large attach points) on
     // the flat ground east of the map's centre; 15 T1 tanks (class 1) and 4
-    // T3 bots (class 3) beside it, made first, so they tick before it does.
+    // T3 bots (class 3) beside it, made first, so they come before it in the walk.
     // The transport's script notes each bone it is told of.
     if (!lua(R"(
         local function spawn(bp, x, z)
@@ -12565,8 +12565,8 @@ void test_transport_slots(TestContext& ctx) {
     }
 
     // Unloaded, they are set down where they hung, not on top of each other,
-    // and the slots are free again. In flight, they stay on their bones: the
-    // tanks tick before the transport, and it moves them with it.
+    // and the slots are free again. In flight, they stay on their bones: each
+    // waits for the transport in the walk and follows it.
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     {
         const osc::sim::Vector3 from = transport ? transport->position() : osc::sim::Vector3{};
@@ -13914,7 +13914,7 @@ void test_change_army(TestContext& ctx) {
               R"(
         if not IsDestroyed(__osc_old_tank) then error('the old unit is still there') end
         if __osc_new_tank.OldOwnerMark then error('the old script state came along') end
-        if __osc_ticks ~= __osc_ticks_at then error('the old thread still runs') end
+        if __osc_ticks ~= __osc_ticks_at + 1 then error('the old thread ran on') end
         local lost = GetArmyBrain('ARMY_1'):GetArmyStat('Units_Killed', 0).Value
         if lost ~= __osc_lost_before then error('counted as lost: ' .. lost) end
     )");
@@ -14100,7 +14100,7 @@ void test_change_army(TestContext& ctx) {
     ctx.sim.set_share_condition("Defectors");
     ctx.sim.defeat_army(1);
     lua_check("Test 10: a defeated army's units go over to an enemy as new units", R"(
-        if not IsDestroyed(__osc_defector) then error('the defector is still there') end
+        if not __osc_defector:BeenDestroyed() then error('the defector is still there') end
         local found = __osc_test_find_unit('uel0201', 1)
         if not found or VDist3(found:GetPosition(), __osc_defector_pos) > 0.01 then
             error('ARMY_1 has no tank where it stood')
@@ -14154,6 +14154,20 @@ void test_air_turn(TestContext& ctx) {
         IssueMove({__osc_f}, {400, GetTerrainHeight(400, 790), 790})
         __osc_a_id = __osc_a:GetEntityId()
         __osc_f_id = __osc_f:GetEntityId()
+        __osc_a_moved, __osc_a_closed, __osc_a_x, __osc_a_z = -1, -1, 0, 0
+        ForkThread(function()
+            local start = __osc_a:GetPosition()
+            for t = 1, 260 do
+                local p = __osc_a:GetPosition()
+                if __osc_a_moved < 0 and (p[1] ~= start[1] or p[3] ~= start[3]) then
+                    __osc_a_moved = t
+                end
+                if __osc_a_closed < 0 and table.getn(__osc_a:GetCommandQueue()) == 0 then
+                    __osc_a_closed, __osc_a_x, __osc_a_z = t, p[1], p[3]
+                end
+                WaitTicks(1)
+            end
+        end)
     )");
     if (!r) {
         check(false, "probe script: " + r.error().message);
@@ -14202,14 +14216,19 @@ void test_air_turn(TestContext& ctx) {
     const auto off = [](const osc::sim::Vector3& p, float x, float z) {
         return std::hypot(p.x - x, p.z - z);
     };
-    // Retail: 86 ticks into its flight, 0.167 off at (320.36, 720.59), its order done.
-    check(a.closed > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
+    // Retail, as its probe's thread saw it: 86 ticks into its flight, 0.167 off at
+    // (320.36, 720.59), its order done.
+    a.closed = static_cast<int>(number("__osc_a_closed"));
+    a.at_close = {static_cast<float>(number("__osc_a_x")), 0.0f,
+                  static_cast<float>(number("__osc_a_z"))};
+    const int a_moved = static_cast<int>(number("__osc_a_moved"));
+    check(a.closed > 0 && a_moved > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
               off(a.at_close, 320.36f, 720.59f) < 0.05f &&
-              std::abs(a.closed - a.moved + 1 - 86) <= 1,
+              std::abs(a.closed - a_moved + 1 - 86) <= 1,
           fmt::format("the interceptor passes its goal {:.3f} off at ({:.2f}, {:.2f}), {} ticks "
                       "into its flight, and its order is done there",
                       off(a.at_close, 320.5f, 720.5f), a.at_close.x, a.at_close.z,
-                      a.closed - a.moved + 1));
+                      a.closed - a_moved + 1));
     // Retail: it lands 96 ticks later at (329.32, 721.20).
     const auto a_end = a.unit->position();
     check(a.landed > 0 && off(a_end, 329.32f, 721.2f) < 0.1f &&
@@ -14466,10 +14485,12 @@ void test_air_staging(TestContext& ctx) {
 
     // Docked: fuel rises by FuelRechargeRate / FuelUseTime / 10 times the
     // pad's multiplier a tick (5 / 300 / 10 x 50), and it heard
-    // OnStartRefueling once. Its repair is asked for at once, and heals from
-    // the next tick: 500 / 10 a tick.
+    // OnStartRefueling once. Its repair is asked for in the tick it docks
+    // (Moho's ProcessFuelLevels runs after the refuel task docks it), and heals
+    // from the next tick: 500 / 10 a tick.
     const float f0 = a->fuel_ratio();
     const float h0 = a->health();
+    const double asked_docking = a->economy().dock_repair_energy;
     step();
     const float f1 = a->fuel_ratio();
     const float h1 = a->health();
@@ -14487,10 +14508,12 @@ void test_air_staging(TestContext& ctx) {
           fmt::format("docked, the tank rises {:.5f} a tick", f1 - f0));
     check(number("__osc_started") == 1,
           fmt::format("OnStartRefueling heard {} time(s)", number("__osc_started")));
-    check(h1 == h0 && std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f &&
-              ask_e == 50.0 && ask_m == 5.0,
-          fmt::format("repair: asks 50E 5M a second ({}, {}), heals from the next tick ({} {} {})",
-                      ask_e, ask_m, h0, h1, h2));
+    check(asked_docking == 50.0 && std::abs(h1 - std::min(a->max_health(), h0 + 50.0f)) < 0.01f &&
+              std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f && ask_e == 50.0 &&
+              ask_m == 5.0,
+          fmt::format("repair: asks 50E 5M a second ({}, {}) from the tick it docks ({}), heals "
+                      "from the next tick ({} {} {})",
+                      ask_e, ask_m, asked_docking, h0, h1, h2));
 
     // Full and repaired, it is let go at the pad's next look (every 9 ticks
     // from the tick after it docked), where it sat, and climbs away.
@@ -15912,18 +15935,29 @@ void test_spatial(TestContext& ctx) {
         if (ok3) { pass++; spdlog::info("[PASS] Test 3: collect_in_radius excludes distant entity"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 3: collect_in_radius included distant entity"); }
 
-        // Test 4: Moving entity updates grid automatically
+        // Test 4: A move updates the grid as it is committed
         auto* e = reg.find(uid);
         e->set_position({50.0f, 0.0f, 50.0f});
+        auto pending_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
+        bool ok4p = std::find(pending_move.begin(), pending_move.end(), uid) == pending_move.end();
+        reg.advance_coords();
         auto after_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
         bool ok4a = std::find(after_move.begin(), after_move.end(), uid) != after_move.end();
         auto old_pos = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok4b = std::find(old_pos.begin(), old_pos.end(), uid) == old_pos.end();
-        if (ok4a && ok4b) { pass++; spdlog::info("[PASS] Test 4: set_position auto-updates grid"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 4: grid not updated after set_position (found_new={}, gone_old={})", ok4a, ok4b); }
+        if (ok4p && ok4a && ok4b) {
+            pass++;
+            spdlog::info("[PASS] Test 4: a committed move updates the grid");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: grid not updated as a move is committed "
+                                   "(not_before={}, found_new={}, gone_old={})",
+                                   ok4p, ok4a, ok4b);
+        }
 
         // Test 5: collect_in_rect returns correct results
         e->set_position({100.0f, 0.0f, 100.0f});
+        reg.advance_coords();
         auto rect = reg.collect_in_rect(90.0f, 90.0f, 110.0f, 110.0f);
         bool ok5 = std::find(rect.begin(), rect.end(), uid) != rect.end();
         if (ok5) { pass++; spdlog::info("[PASS] Test 5: collect_in_rect finds entity"); }
@@ -16223,6 +16257,7 @@ void test_unitsound(TestContext& ctx) {
         }
     }
     lua("e:Destroy()");
+    ctx.sim.tick();
     sync();
     for (int i = 0; i < 40; ++i) ctx.sim.tick(); // releases and fades run out
     if (!sound->is_playing(move)) {
@@ -18511,12 +18546,12 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
 
     // 4b. OnFirstUpdate's rename (UserUnit:SetCustomName) is, as in Moho, a
-    //     command to the sim: queued, not applied, since no tick has run it.
+    //     command to the sim: queued, not applied, since no beat has run it.
     if (acu == 0) osc::test_status::fail("[FAIL] Test 4b: army 1 has no commander");
     else if (acu_name() != kMarkerName)
-        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a tick",
+        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a beat",
                                acu_name());
-    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a tick");
+    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a beat");
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
     //    HideGameUI('off') after ~4 s of UI time.
@@ -19266,7 +19301,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10k: unpause", "GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'false')");
     play(1);
     // The orders panel's own settings: retail's pause toggle, fire state and
-    // script toggles are requests the sim applies in its next tick.
+    // script toggles are requests the sim applies in its next beat.
     lua_ok("Test 10l: the orders panel pauses the selection", R"(
         import('/lua/ui/game/orders.lua').TogglePauseState()
         if GetIsPaused(GetSelectedUnits()) then error('paused before the sim ran') end
@@ -19303,7 +19338,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     // The construction panel's orders reach the sim as commands: a factory's
     // builds (IssueBlueprintCommand), the queue display read from its
     // orders, Decrease- and IncreaseBuildCountInQueue and the Stop button, each applied in
-    // the sim's next tick. (They were SimCallbacks retail's scripts have no
+    // the sim's next beat. (They were SimCallbacks retail's scripts have no
     // handler for.)
     sim_lua(R"(
         local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
@@ -19834,7 +19869,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else
             osc::test_status::fail("[FAIL] Test 11b: build click issued nothing");
     }
-    play(1); // the order applies in the sim's next tick
+    play(1); // the order applies in the sim's next beat
     lua_ok("Test 11c: the commander builds it; the mode ended", R"(
         local q = GetSelectedUnits()[1]:GetCommandQueue()
         if not q[1] or q[1].commandType ~= 8 then

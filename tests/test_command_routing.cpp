@@ -63,7 +63,7 @@ TEST_CASE("route_command applies an AI or script order directly in single-player
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
 }
 
-TEST_CASE("A single-player player's order applies in the next tick, and is recorded",
+TEST_CASE("A single-player player's order applies in the next beat, and is recorded",
           "[routing][replay]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
@@ -74,14 +74,14 @@ TEST_CASE("A single-player player's order applies in the next tick, and is recor
     sim.route_command({id}, move_to(100.0f, 0.0f), true);
     sim.set_human_input_active(false);
 
-    // Not between ticks: Moho applies orders in the sim, as commands.
+    // Not at once: Moho applies orders in the sim, as commands.
     CHECK(unit_of(sim, id)->command_queue().empty());
     sim.tick();
     REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
-    CHECK(unit_of(sim, id)->command_queue().front().command_id != 0); // numbered in-tick
+    CHECK(unit_of(sim, id)->command_queue().front().command_id != 0); // numbered in its beat
     REQUIRE(sim.recorded_replay().commands.size() == 1);
-    CHECK(sim.recorded_replay().commands[0].exec_tick == 1);
+    CHECK(sim.recorded_replay().commands[0].exec_beat == 1);
 }
 
 TEST_CASE("route_command sends local human orders to the sink in multiplayer",

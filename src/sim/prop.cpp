@@ -58,6 +58,13 @@ void Prop::fall_down(f32 size_x) {
     fall_angle = 0;
     fall_speed = 0;
     fall_size_x = size_x;
+    wake();
+}
+
+void Prop::sink_away(f32 rate) {
+    sink_rate = rate;
+    fall_motor = false;
+    wake();
 }
 
 void Prop::whack(f32 nx, f32 nz, f32 force, bool breaks) {
@@ -101,18 +108,18 @@ void Prop::step_fall(const map::Terrain* terrain) {
     const f32 level = dmath::cos(elevation);
     const Vector3 target{dmath::sin(fall_direction) * level, -dmath::sin(elevation),
                          dmath::cos(fall_direction) * level};
-    const Quaternion delta = arc_between(quat_rotate(orientation(), {0, 1, 0}), target);
+    const Quaternion delta = arc_between(quat_rotate(pending_orientation(), {0, 1, 0}), target);
     if (std::fabs(std::fabs(delta.w) - 1.0f) <= 0.0001f) {
         return;
     }
 
     if (fall_breaks && fall_angle > kQuarterPi && terrain) {
-        Vector3 p = position();
+        Vector3 p = pending_position();
         const f32 rooted = terrain->get_terrain_height(p.x, p.z) + fall_size_x * kUprootFactor;
         p.y += (rooted - p.y) * (fall_angle - kQuarterPi) * (4 / kPi);
         set_position(p);
     }
-    Quaternion q = quat_multiply(delta, orientation());
+    Quaternion q = quat_multiply(delta, pending_orientation());
     const f32 n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     set_orientation({q.x / n, q.y / n, q.z / n, q.w / n});
 }

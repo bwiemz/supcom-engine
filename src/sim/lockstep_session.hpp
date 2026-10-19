@@ -21,12 +21,12 @@ class ByteReader;
 /// Drives a SimState in deterministic lockstep with remote peers over an
 /// INetTransport.
 ///
-/// Strict-lockstep model: each "frame" corresponds to one sim tick, and the sim
-/// advances tick T only once every participant has confirmed frame T. A round is
+/// Strict-lockstep model: each "frame" corresponds to one sim beat, and the sim
+/// runs beat B only once every participant has confirmed frame B. A round is
 /// two phases so peers exchange symmetrically:
 ///   1. send_frame()          — broadcast this peer's commands + confirmation
-///   2. receive_and_advance() — ingest peers' frames, then tick as far as allowed
-/// Each frame message also carries the sender's last executed-tick checksum, so
+///   2. receive_and_advance() — ingest peers' frames, then beat as far as allowed
+/// Each frame message also carries the sender's last beat's checksum, so
 /// a divergence between clients is detected (desynced()).
 class LockstepSession {
 public:
@@ -39,26 +39,26 @@ public:
     void submit_local(const std::vector<u32>& unit_ids, const UnitCommand& cmd,
                       bool clear_existing);
 
-    /// Queue a local SimCallback the same way: every peer runs it on the
-    /// frame's tick.
-    void submit_local_callback(SimCallbackEntry callback);
+    /// Queue a local SimCallback the same way: every peer runs it in the
+    /// frame's beat, which it returns.
+    u32 submit_local_callback(SimCallbackEntry callback);
 
     /// Phase 1: broadcast this peer's frame (queued commands + confirmation +
     /// last checksum) and confirm the frame locally.
     void send_frame();
 
     /// Phase 2: ingest peers' frames (commands + confirmations + checksums),
-    /// then advance the sim while every peer has confirmed the next tick.
+    /// then advance the sim while every peer has confirmed the next beat.
     void receive_and_advance();
 
     u32 local_source() const { return local_source_; }
     u32 current_frame() const { return next_frame_; }
     bool desynced() const { return desynced_; }
-    /// The first desync seen: its tick, and the checksum domains that
+    /// The first desync seen: its beat, and the checksum domains that
     /// differed (SimState::ChecksumParts::kNames), which say where to look.
-    u32 desync_tick() const { return desync_tick_; }
+    u32 desync_beat() const { return desync_beat_; }
     const std::vector<std::string>& desync_domains() const { return desync_domains_; }
-    /// The first desync's tick checksums, each domain's folded into one:
+    /// The first desync's beat checksums, each domain's folded into one:
     /// this peer's, then the peer's that differed (reported to a matchmaking
     /// client, as Moho's GPGNET_ReportDesync).
     std::pair<u64, u64> desync_hashes() const { return desync_hashes_; }
@@ -81,7 +81,7 @@ public:
     // survivor draws its own. Once every survivor has reported, all take the
     // furthest frame reported as the peer's last, apply any of its frames they
     // missed (relayed in the reports), release it from the gate, and defeat
-    // its army on the tick after -- the same tick on every survivor.
+    // its army in the beat after -- the same beat on every survivor.
     void set_drop_timeout(u32 rounds) { drop_timeout_rounds_ = rounds; }
     /// Sources newly declared dropped since the last call (drained on return).
     std::vector<u32> take_dropped();
@@ -100,15 +100,12 @@ public:
     bool ejected() const { return ejected_; }
 
     // --- Pause (M218f) ---
-    // A pause is a command, run by every peer on the same tick (the sim
-    // takes or refuses it: SimState::request_pause); then no peer sends
-    // frames or ticks until it is resumed. Resuming is a message with the
-    // pause's serial, since no tick runs to carry a command; every peer is
-    // held on the same tick, so each resumes at the same place.
-    /// This peer asks to pause (nothing while paused already).
-    void request_pause();
-    /// This peer resumes the pause (any peer may); false if not paused.
-    bool request_resume();
+    // A pause, its resume and a single step are commands every peer runs in
+    // the same beat (SimState::request_pause); paused, frames and beats go
+    // on without ticks, as Moho's.
+    u32 request_pause();
+    u32 request_resume();
+    u32 request_single_step();
 
     // --- Game speed (M218i) ---
     // Moho's: the lobby's GameSpeed fixes it ('normal' +0, 'fast' +4) or
@@ -132,7 +129,7 @@ public:
     std::vector<SpeedChange> take_speed_changes();
 
     struct Desync {
-        u32 tick;
+        u32 beat;
         u32 source;
     };
     /// Moho's SSyncData::mDesyncs, drained.
@@ -141,7 +138,6 @@ public:
 private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
-    static constexpr u8 kResumeMessage = 2;
     /// A peer held at kMaxLead sends no frame: this says it is still there.
     static constexpr u8 kAliveMessage = 3;
     static constexpr u8 kSpeedMessage = 4;
@@ -164,15 +160,15 @@ private:
     u32 next_frame_ = 1;                       // frame currently accepting input
     std::vector<ScheduledCommand> pending_;      // local commands for next_frame_
     using Parts = std::array<u64, SimState::ChecksumParts::kCount>;
-    std::unordered_map<u32, Parts> my_checksums_;   // tick -> local checksum, by domain
-    std::unordered_map<u32, std::map<u32, Parts>> peer_checksums_; // tick -> source -> checksum
-    u32 desync_tick_ = 0;
+    std::unordered_map<u32, Parts> my_checksums_; // beat -> local checksum, by domain
+    std::unordered_map<u32, std::map<u32, Parts>> peer_checksums_; // beat -> source -> checksum
+    u32 desync_beat_ = 0;
     std::vector<std::string> desync_domains_;
     std::pair<u64, u64> desync_hashes_{};
     bool desynced_ = false;
     std::vector<Desync> desyncs_;
     u32 drop_timeout_rounds_ = 30;
-    u32 round_ = 0;                                 // send_frame calls, while not paused
+    u32 round_ = 0;                                 // send_frame calls
     std::unordered_map<u32, u32> peer_confirmed_;   // source -> last confirmed frame
     std::unordered_map<u32, u32> peer_heard_round_; // source -> round last heard from
     std::vector<u32> dropped_;                    // sources already declared dropped
@@ -185,6 +181,7 @@ private:
     u32 speed_requester_ = 0; // and who asked for it
     std::vector<SpeedChange> speed_changes_;
 
+    u32 submit_local_command(const char* name);
     /// Apply a change if it is the newest (a tie: the lower source's).
     void apply_speed(u32 clock, u32 source, i32 rate);
     /// kMaxLead and the drop timeout, in rounds at the game's speed.
@@ -202,10 +199,10 @@ private:
     void finalize_drops();
     void finalize_drop(u32 source, const DropVote& vote);
 
-    void note_peer_checksum(u32 source, u32 tick, const Parts& parts);
-    void record_local_checksum(u32 tick, const Parts& parts);
-    /// Compare a tick's checksums; on the first desync, note its domains.
-    void compare_checksums(u32 tick, u32 source, const Parts& mine, const Parts& theirs);
+    void note_peer_checksum(u32 source, u32 beat, const Parts& parts);
+    void record_local_checksum(u32 beat, const Parts& parts);
+    /// Compare a beat's checksums; on the first desync, note its domains.
+    void compare_checksums(u32 beat, u32 source, const Parts& mine, const Parts& theirs);
 };
 
 } // namespace osc::sim

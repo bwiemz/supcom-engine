@@ -437,8 +437,8 @@ bool write_replay_file(const sim::Replay& replay, const fs::path& path) {
         spdlog::error("Replay: cannot write {}", path.string());
         return false;
     }
-    spdlog::info("Replay: {} commands over {} ticks written to {}", replay.commands.size(),
-                 replay.final_tick, path.string());
+    spdlog::info("Replay: {} commands over {} beats written to {}", replay.commands.size(),
+                 replay.final_beat, path.string());
     return true;
 }
 
@@ -486,7 +486,7 @@ bool write_saved_game(const sim::SavedGame& save, const fs::path& path) {
         spdlog::error("Saved game: cannot write {}", path.string());
         return false;
     }
-    spdlog::info("Saved game '{}' at tick {}: {} commands, written to {}", save.name, save.tick,
+    spdlog::info("Saved game '{}' at tick {}: {} commands, written to {}", save.name, save.beat,
                  save.game.commands.size(), path.string());
     return true;
 }

@@ -48,23 +48,34 @@ static void push_vec3(lua_State* L, const Vector3& v) {
     lua_settable(L, -3);
 }
 
+void Projectile::set_lifetime(f32 seconds, u32 now) {
+    lifetime_end = now + static_cast<u32>(std::llrintf(seconds * 10.0f));
+}
+
 void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const map::Terrain* terrain,
                         u32 tick) {
-    if (destroyed()) return;
-
-    // Tick lifetime
-    lifetime -= static_cast<f32>(dt);
     if (impacted) {
         // Lingering for its ImpactTimeout, it just goes.
-        if (lifetime <= 0) {
-            mark_destroyed();
-            // The unregister hook nulls the Lua table's _c_object and releases
-            // its ref; releasing the ref here first left scripts holding a
-            // dangling pointer (UEF build-effect projectiles are destroyed from
-            // Lua after they expire).
-            registry.unregister_entity(entity_id());
+        if (tick >= lifetime_end) {
+            registry.destroy(*this);
         }
         return;
+    }
+
+    // Moho's MotionTick: a hit its last step found impacts now, in place of a step.
+    if (impact_waiting()) {
+        Entity* hit = impact_entity_id != 0 ? registry.find(impact_entity_id) : nullptr;
+        const std::string type = impact_kind;
+        impact_interpolation = -1.0f;
+        impact_entity_id = 0;
+        impact_kind.clear();
+        on_impact(L, hit && !hit->destroyed() ? hit : nullptr, registry, terrain, type.c_str());
+        return;
+    }
+    if (launch_tick == 0) {
+        launch_tick = tick;
+        launch_position = pending_position();
+        launch_orientation = pending_orientation();
     }
 
     // Moho's MotionTick (faf-re Projectile.cpp): a shot thrusts the way it
@@ -77,8 +88,8 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
     // angle was solved for).
     const auto step = static_cast<f32>(dt);
     const Vector3 start_velocity = velocity;
-    const Vector3 from = position();
-    Quaternion facing = orientation();
+    const Vector3 from = pending_position();
+    Quaternion facing = pending_orientation();
     const auto thrust = [&] {
         const Vector3 ahead = forward_of(facing);
         velocity.x += ahead.x * acceleration * step;
@@ -168,18 +179,17 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L, const ma
         if (detonate_below_height > 0 && height > detonate_below_height) burst_armed = true;
         if ((detonate_above_height > 0 && height >= detonate_above_height) ||
             (burst_armed && height <= detonate_below_height)) {
-            on_impact(L, nullptr, registry, terrain, "Air");
+            record_impact(pos, 1.0f, nullptr, "Air", terrain);
             return;
         }
     }
 
     // Its time up, it bursts where this tick's move took it, an 'Air' (or
     // 'Underwater') impact: Moho's MotionTick tests the lifetime after
-    // CheckCollision. Moho ends it on the tick nearest its lifetime, having
-    // moved on the tick it was made; here that is half a tick past it.
-    if (lifetime < -0.5f * step) {
+    // CheckCollision.
+    if (tick >= lifetime_end) {
         const bool under = terrain && terrain->has_water() && pos.y < terrain->water_elevation();
-        on_impact(L, nullptr, registry, terrain, under ? "Underwater" : "Air");
+        record_impact(pos, 1.0f, nullptr, under ? "Underwater" : "Air", terrain);
     }
 }
 
@@ -213,7 +223,7 @@ bool Projectile::steer(Quaternion& facing, EntityRegistry& registry, lua_State* 
         }
         if (!keep_last_aim) return true;
     }
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     Vector3 aim = target_position;
 
     // LeadTarget: where its target will be by the time it gets there at its
@@ -323,7 +333,7 @@ Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
 bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
                          const map::Terrain* terrain) {
     if (!collision_enabled) return false;
-    const Vector3 to = position();
+    const Vector3 to = pending_position();
 
     // The surface: the ground, or for a shell that ends there, the water.
     f32 surface_t = 2.0f;
@@ -361,10 +371,18 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
         }
     }
 
-    // What it meets on the way, nearest first.
+    // What it meets on the way, nearest first. Retail's CheckCollision sweeps a tenth of the step
+    // past each end (0.1 at 0x00E4F714) and measures the hit from the swept line's start.
     if (collide_entity) {
+        constexpr f32 kSweepBeyond = 0.1f;
+        constexpr f32 kSweepLength = 1.0f + 2.0f * kSweepBeyond;
+        const Vector3 d{to.x - from.x, to.y - from.y, to.z - from.z};
+        const Vector3 start{from.x - d.x * kSweepBeyond, from.y - d.y * kSweepBeyond,
+                            from.z - d.z * kSweepBeyond};
+        const Vector3 end{to.x + d.x * kSweepBeyond, to.y + d.y * kSweepBeyond,
+                          to.z + d.z * kSweepBeyond};
         std::vector<u32> candidates;
-        registry.collect_colliders(from.x, from.z, to.x, to.z, candidates);
+        registry.collect_colliders(start.x, start.z, end.x, end.z, candidates);
         std::vector<std::pair<f32, u32>> hits;
         for (const u32 id : candidates) {
             if (id == entity_id() || id == launcher_id) continue;
@@ -378,8 +396,10 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
             }
             // A shield stops what comes in, not what goes out.
             const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(),
-                                          from, to, !e->is_shield());
-            if (t && *t < surface_t) hits.emplace_back(*t, id);
+                                          start, end, !e->is_shield());
+            if (t && *t * kSweepLength < surface_t) {
+                hits.emplace_back(*t, id);
+            }
         }
         std::sort(hits.begin(), hits.end());
         for (const auto& [t, id] : hits) {
@@ -389,23 +409,30 @@ bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_Stat
                 passed.push_back(id);
                 continue;
             }
-            // The checks ran scripts: both may be gone.
-            if (!registry.find(entity_id()) || destroyed()) return true;
             e = registry.find(id);
             if (!e || e->destroyed()) continue;
-            set_position(lerp(from, to, t));
-            on_impact(L, e, registry, terrain);
+            record_impact(lerp(start, end, t), t * kSweepLength, e, nullptr, terrain);
             return true;
         }
-        if (!registry.find(entity_id()) || destroyed()) return true;
     }
 
-    if (surface_t > 1.0f) return false;
+    if (surface_t > 1.0f) {
+        return false;
+    }
     Vector3 at = lerp(from, to, surface_t);
-    if (surface_type && terrain) at.y = terrain->water_elevation(); // on the surface
-    set_position(at);
-    on_impact(L, nullptr, registry, terrain, surface_type);
+    if (surface_type && terrain) {
+        at.y = terrain->water_elevation();
+    }
+    record_impact(at, surface_t, nullptr, surface_type, terrain);
     return true;
+}
+
+void Projectile::record_impact(const Vector3& at, f32 interpolation, const Entity* hit,
+                               const char* type, const map::Terrain* terrain) {
+    set_position(at);
+    impact_interpolation = interpolation;
+    impact_entity_id = hit ? hit->entity_id() : 0;
+    impact_kind = type ? type : impact_type(hit, terrain);
 }
 
 bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other) {
@@ -543,7 +570,7 @@ const std::unordered_set<std::string>& Projectile::categories() const {
 }
 
 const char* Projectile::impact_type(const Entity* target, const map::Terrain* terrain) const {
-    const Vector3 pos = position();
+    const Vector3 pos = pending_position();
     const bool wet = terrain && terrain->has_water();
     const bool under = wet && (stay_underwater || pos.y < terrain->water_elevation() - 0.5f);
     if (target) {
@@ -581,15 +608,13 @@ bool Projectile::call_script(lua_State* L, EntityRegistry& registry, const char*
         }
     }
     lua_settop(L, top);
-    const Entity* self = registry.find(id);
-    return self && !self->destroyed();
+    return registry.find(id) != nullptr;
 }
 
 void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registry,
                            const map::Terrain* terrain, const char* type_override) {
     if (!L) {
-        mark_destroyed();
-        registry.unregister_entity(entity_id());
+        registry.destroy(*this);
         return;
     }
     impacted = true;
@@ -625,7 +650,9 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
 
     if (scripted) {
         Entity* self = registry.find(id);
-        if (!self || self->destroyed()) return;
+        if (!self) {
+            return;
+        }
         const int top = lua_gettop(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, self->lua_table_ref());
         lua_pushstring(L, "OnImpact");
@@ -649,14 +676,13 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     }
 
     // No script to finish it (or it broke): it goes now.
-    if (Entity* self = registry.find(id); self && !self->destroyed()) {
-        self->mark_destroyed();
-        registry.unregister_entity(id);
+    if (Entity* self = registry.find(id)) {
+        registry.destroy(*self);
     }
 }
 
 void Projectile::deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry) {
-    auto pos = position();
+    auto pos = pending_position();
 
     // Resolve launcher's Lua ref once (avoids stale pointer if launcher is
     // destroyed during DamageArea/Damage pcall in a future code path)

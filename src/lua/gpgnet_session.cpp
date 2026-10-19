@@ -278,7 +278,7 @@ int l_GpgNetSend(lua_State* L) {
 sim::GpgNetCommand gpgnet_desync_report(const sim::LockstepSession& session, i32 army) {
     const auto [mine, theirs] = session.desync_hashes();
     return {"Desync",
-            {GpgNetArg::number(static_cast<i32>(session.desync_tick())), GpgNetArg::number(army),
+            {GpgNetArg::number(static_cast<i32>(session.desync_beat())), GpgNetArg::number(army),
              GpgNetArg::string(fmt::format("{:016x}", mine)),
              GpgNetArg::string(fmt::format("{:016x}", theirs))}};
 }

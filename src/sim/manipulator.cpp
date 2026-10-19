@@ -370,9 +370,10 @@ BonePose rest_frame_world(const Unit& unit, i32 bone) {
     const f32 s = unit.bone_data()->model_scale;
     const Vector3 model_pos{(parent.position.x + offset.x) * s, (parent.position.y + offset.y) * s,
                             (parent.position.z + offset.z) * s};
-    const Vector3 world = quat_rotate(unit.orientation(), model_pos);
-    return {{unit.position().x + world.x, unit.position().y + world.y, unit.position().z + world.z},
-            quat_multiply(unit.orientation(), model_rot)};
+    const Vector3 world = quat_rotate(unit.pending_orientation(), model_pos);
+    const Vector3& at = unit.pending_position();
+    return {{at.x + world.x, at.y + world.y, at.z + world.z},
+            quat_multiply(unit.pending_orientation(), model_rot)};
 }
 
 bool descends_from(const BoneData& bd, i32 bone, i32 ancestor) {
@@ -525,7 +526,7 @@ void ThrustManipulator::apply_pose(PoseLocals& pose) {
         return;
     }
     const Quaternion world =
-        quat_multiply(owner_->orientation(), bone_model_rotation(pose, *bd, bone_index_));
+        quat_multiply(owner_->pending_orientation(), bone_model_rotation(pose, *bd, bone_index_));
     pose.rotate(bone_index_, turn_toward(quat_rotate(quat_conjugate(world), force_)));
 }
 
@@ -711,7 +712,8 @@ void BoneEntityManipulator::apply_pose(PoseLocals& pose) {
     const BonePose world =
         target->is_unit() ? static_cast<const Unit*>(target)->bone_world_transform(target_bone_)
                           : BonePose{target->position(), target->orientation()};
-    const BonePose model = pose_relative({owner_->position(), owner_->orientation()}, world);
+    const BonePose model =
+        pose_relative({owner_->pending_position(), owner_->pending_orientation()}, world);
     const BoneData* bd = owner_->bone_data();
     const f32 s = bd && bd->model_scale > 0.0f ? bd->model_scale : 1.0f;
     pose.set_model(bone_index_, {{model.position.x / s, model.position.y / s, model.position.z / s},

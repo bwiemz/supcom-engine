@@ -168,10 +168,11 @@ TEST_CASE("A hover unit leans into its acceleration by BankingSlope", "[ground_s
     hover->set_hover_physics({0.5f, 5.0f, 0.0f, 0.0f});
     osc::sim::SimRandom random;
     hover->set_position({20.0f, kBase, 64.0f});
-    hover->note_tick_position();
+    hover->advance_coords();
     hover->set_position({20.1f, kBase, 64.0f});
     hover->note_drive(1.0f, 1.0f, 1.0f, Unit::MotionTurn::Straight);
     hover->tick_hover(&terrain, 1, random);
+    hover->advance_coords();
     CHECK(hover->hover_tilt().x == Approx(0.02f));
     CHECK(hover->hover_tilt().z == Approx(0.0f).margin(1e-6));
     CHECK(hover->position().y == Approx(kBase));
@@ -179,7 +180,6 @@ TEST_CASE("A hover unit leans into its acceleration by BankingSlope", "[ground_s
     const f32 len = std::sqrt(0.02f * 0.02f + normal_y * normal_y);
     check_vec(up(*hover), 0.02f / len, normal_y / len, 0.0f);
 
-    hover->note_tick_position();
     hover->set_position({20.2f, kBase, 64.0f});
     hover->note_drive(1.0f, 1.0f, 1.0f, Unit::MotionTurn::Straight);
     hover->tick_hover(&terrain, 2, random);
@@ -188,9 +188,10 @@ TEST_CASE("A hover unit leans into its acceleration by BankingSlope", "[ground_s
     const auto still = unit("RULEUMT_Hover", 0.0f);
     still->set_hover_physics({0.5f, 5.0f, 0.0f, 0.0f});
     still->set_position({20.0f, kBase, 64.0f});
-    still->note_tick_position();
+    still->advance_coords();
     still->set_position({20.1f, kBase, 64.0f});
     still->tick_hover(&terrain, 1, random);
+    still->advance_coords();
     CHECK(still->hover_tilt().x == 0.0f);
     check_vec(up(*still), 0.0f, 1.0f, 0.0f);
 }

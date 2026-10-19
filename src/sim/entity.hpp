@@ -128,7 +128,6 @@ struct CellLink {
     u16 x = 0, z = 0; ///< the first cell across and down
     u16 w = 0, h = 0; ///< the cells across and down from it: none if either is 0
     u64 seq = 0;      ///< the link's order (later links are higher), 0 if unlinked
-    u64 moved = 0;    ///< the stamp of its last move since the cells advanced, 0 if none
     u64 mark = 0;     ///< the last gather that took it (one takes each entity once)
 };
 
@@ -185,11 +184,26 @@ public:
     i32 army() const { return army_; }
     void set_army(i32 a) { army_ = a; }
 
+    /// The committed transform (Moho's GetPosition, GetTransform).
     const Vector3& position() const { return position_; }
-    void set_position(const Vector3& p); // implemented in entity.cpp (auto-notifies spatial grid)
-
     const Quaternion& orientation() const { return orientation_; }
-    void set_orientation(const Quaternion& o); // entity.cpp (tells the registry's cells)
+    /// Where its own step has put it this tick (Moho's mPendingTransform).
+    const Vector3& pending_position() const { return pending_position_; }
+    const Quaternion& pending_orientation() const { return pending_orientation_; }
+    /// The transform committed before the current one (Moho's mLastTransform).
+    const Vector3& last_position() const { return last_position_; }
+    const Quaternion& last_orientation() const { return last_orientation_; }
+
+    /// Set the pending transform; one never committed (being made) is placed at once.
+    void set_position(const Vector3& p);
+    void set_orientation(const Quaternion& o);
+    /// Moho's AdvanceCoords: the pending transform becomes the committed one.
+    virtual void advance_coords();
+    /// Moho's Warp: committed at once, with no move between the last and the current.
+    void place_now() {
+        advance_coords();
+        advance_coords();
+    }
 
     /// The entity teleported (Warp, or SetPosition with `immediate`): the
     /// renderer jumps it to its new pose instead of sliding it there.
@@ -333,16 +347,28 @@ public:
     bool unselectable() const { return unselectable_; }
     void set_unselectable(bool b) { unselectable_ = b; }
 
+    /// Its thread in Moho's stage A.
+    enum class Walk : u8 { Stepping, Parked, Done };
+    Walk walk() const { return walk_; }
+    void set_walk(Walk w) { walk_ = w; }
+    /// Moho's mLastTickProcessed.
+    u32 stepped_tick() const { return stepped_tick_; }
+    void set_stepped_tick(u32 tick) { stepped_tick_ = tick; }
+    /// Moho's TaskResume.
+    void wake();
+
     // Attachment — parent tracking
     u32 parent_entity_id() const { return parent_entity_id_; }
     i32 parent_bone() const { return parent_bone_; }
     i32 attached_bone() const { return attached_bone_; }
+    /// Moho's AttachTo, which wakes a parked entity.
     void set_parent(u32 pid, i32 pbone, i32 abone = -1) {
         parent_entity_id_ = pid; parent_bone_ = pbone; attached_bone_ = abone;
         followed_parent_snap_ = kNotFollowed; // attaching is a jump
+        wake();
     }
     /// The parent's snap serial when this entity last followed it: the
-    /// entity jumps with its parent (see SimState::follow_attachments).
+    /// entity jumps with its parent (see SimState::follow_parent).
     u32 followed_parent_snap() const { return followed_parent_snap_; }
     void set_followed_parent_snap(u32 s) { followed_parent_snap_ = s; }
     void clear_parent() { parent_entity_id_ = 0; parent_bone_ = -1; attached_bone_ = -1; }
@@ -372,7 +398,7 @@ public:
     CellLink& cell_link() { return cell_link_; }
     const CellLink& cell_link() const { return cell_link_; }
     void set_registry(EntityRegistry* r) { registry_ = r; }
-    /// False once unregistered (the object may outlive that until the tick ends).
+    /// False once unregistered (the object may outlive that until the beat ends).
     bool in_registry() const { return registry_ != nullptr; }
     const EntityRegistry* registry() const { return registry_; }
 
@@ -425,6 +451,13 @@ private:
     i32 army_ = -1;
     Vector3 position_;
     Quaternion orientation_;
+    Vector3 pending_position_;
+    Quaternion pending_orientation_;
+    Vector3 last_position_;
+    Quaternion last_orientation_;
+    bool placed_ = false;
+    Walk walk_ = Walk::Stepping;
+    u32 stepped_tick_ = 0;
     u32 snap_serial_ = 0;
     static constexpr u32 kNotFollowed = ~0u;
     u32 followed_parent_snap_ = kNotFollowed;

@@ -5,6 +5,7 @@
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <set>
@@ -29,10 +30,23 @@ public:
     /// Register an entity and assign it a unique ID. Returns the ID.
     u32 register_entity(std::unique_ptr<Entity> entity);
 
-    /// Remove an entity by ID. Every removal path (Lua Destroy, reclaim,
-    /// sacrifice, projectile impact, ...) goes through here, so the
-    /// unregister hook sees each entity exactly once, while still valid.
+    /// Remove an entity by ID: Moho's EntityDB::Purge. The deletion queue
+    /// (destroy, purge_destroyed) comes here, so the unregister hook sees each
+    /// entity exactly once, while still valid.
     void unregister_entity(u32 id);
+
+    /// Moho's Entity::Destroy: the entity is marked (BeenDestroyed) and queued, once, and stays
+    /// registered, found and in the grids until the queue is run at the end of the beat.
+    void destroy(Entity& entity);
+    /// The next entity of the deletion queue, first in first out; 0 when it is empty.
+    u32 take_destroyed();
+    /// Unregister everything the deletion queue holds, in its order (a sim runs OnDestroy first).
+    void purge_destroyed();
+
+    /// Moho's stage A list (CTaskStage): the order the entities step in, kept from walk to walk.
+    std::vector<u32>& walk() { return walk_; }
+    const std::vector<u32>& walk() const { return walk_; }
+    void wake(Entity& entity);
 
     /// Called for each entity just before it is removed. SimState uses it to
     /// release what the entity owns outside the registry (its Lua table's
@@ -47,7 +61,7 @@ public:
     /// handle's pointer may be a platoon's, a brain's, or a freed entity's.
     bool holds(const void* e) const { return live_.count(e) != 0; }
     /// Whether `e` is an entity unregistered since the last collect_garbage
-    /// (its memory, and a script's handle to it, live to the tick's end).
+    /// (its memory, and a script's handle to it, live to the beat's end).
     bool departed(const void* e) const {
         for (const auto& dead : graveyard_)
             if (dead.get() == e) return true;
@@ -72,17 +86,14 @@ public:
     /// If not called, collect_in_radius/collect_in_rect fall back to O(N) scan.
     void init_spatial_grid(u32 map_width, u32 map_height);
 
-    /// Notify the registry that an entity's position has changed.
-    void notify_position_changed(Entity& entity);
-    /// Called by Entity::set_orientation when it turns.
-    void notify_orientation_changed(Entity& entity);
+    /// Called by Entity::advance_coords when its committed transform changes.
+    void notify_moved(Entity& entity, bool moved);
 
     /// Moho's collision cells, for its rect queries (GetUnitsInRect,
     /// GetReclaimablesInRect). init_spatial_grid sizes them.
     CollisionCells& collision_cells() { return cells_; }
-    /// Relink what moved this tick (Moho's AdvanceCoords, at the end of the
-    /// beat): SimState::tick, before collect_garbage.
-    void advance_collision_cells() { cells_.advance(); }
+    /// Commit every entity's move, in id order (Moho's AdvanceCoords over its coordinate list).
+    void advance_coords();
 
     /// Collect entity IDs within radius of a point (2D distance, ignoring Y),
     /// in ascending id order.
@@ -91,7 +102,7 @@ public:
     /// The live units within radius of a point (2D, ignoring Y), in ascending
     /// id order: collect_in_radius's units, from a grid of units alone (a
     /// map's props aren't walked), as the units themselves. The pointers
-    /// stay valid until collect_garbage() (the end of the tick), which frees
+    /// stay valid until collect_garbage() (the end of the beat), which frees
     /// what was unregistered meanwhile.
     std::vector<Entity*> units_in_radius(f32 x, f32 z, f32 radius) const;
 
@@ -137,7 +148,7 @@ public:
 
     /// Iterate all entities in id order: the same order on every platform,
     /// as lockstep needs (a hash map's order is the standard library's).
-    /// Entities created during the walk are visited by the next walk;
+    /// Entities created during one are visited by the next;
     /// entities removed during it are skipped.
     template <typename F>
     void for_each(F&& fn) const {
@@ -167,6 +178,9 @@ public:
     void set_sim_random(SimRandom* r) { sim_random_ = r ? r : &default_random_; }
     SimRandom& sim_random() { return *sim_random_; }
 
+    void set_tick_source(const u32* tick) { tick_ = tick; }
+    u32 tick() const { return tick_ ? *tick_ : 0; }
+
 private:
     /// Every live entity at its id (ids start at 1 and only grow), so a
     /// lookup is an index, not a hash; a removed entity leaves null.
@@ -194,11 +208,14 @@ private:
     };
     void compact();
     std::vector<std::unique_ptr<Entity>> graveyard_; ///< see collect_garbage()
+    std::deque<u32> deletion_queue_;
+    std::vector<u32> walk_;
     UnregisterHook unregister_hook_;
     u32 next_id_ = 1;
 
     SimRandom default_random_;
     SimRandom* sim_random_ = &default_random_;
+    const u32* tick_ = nullptr;
 
     // Spatial hash grid
     bool grid_initialized_ = false;

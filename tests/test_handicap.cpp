@@ -58,6 +58,7 @@ TEST_CASE("No handicap leaves income unchanged", "[handicap]") {
     spawn_producer(sim, 0, 100.0, 200.0);
 
     sim.tick();
+    sim.tick();
     CHECK_THAT(sim.get_army(0)->get_economy_income("MASS"), WithinAbs(100.0, 1e-6));
     CHECK_THAT(sim.get_army(0)->get_economy_income("ENERGY"), WithinAbs(200.0, 1e-6));
 }
@@ -70,6 +71,7 @@ TEST_CASE("Handicap scales an army's income down", "[handicap]") {
     sim.get_army(0)->set_handicap(0.25); // 25% weaker
     spawn_producer(sim, 0, 100.0, 200.0);
 
+    sim.tick();
     sim.tick();
     CHECK_THAT(sim.get_army(0)->get_economy_income("MASS"), WithinAbs(75.0, 1e-6));
     CHECK_THAT(sim.get_army(0)->get_economy_income("ENERGY"), WithinAbs(150.0, 1e-6));
@@ -85,6 +87,7 @@ TEST_CASE("Handicap only affects the handicapped army", "[handicap]") {
     spawn_producer(sim, 0, 100.0, 0.0);
     spawn_producer(sim, 1, 100.0, 0.0);
 
+    sim.tick();
     sim.tick();
     CHECK_THAT(sim.get_army(0)->get_economy_income("MASS"), WithinAbs(50.0, 1e-6));
     CHECK_THAT(sim.get_army(1)->get_economy_income("MASS"), WithinAbs(100.0, 1e-6));

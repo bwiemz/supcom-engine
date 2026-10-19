@@ -72,14 +72,14 @@ SavedGame sample_save() {
     SavedGame save;
     save.build = osc::sim::build_id();
     save.name = "Before the push";
-    save.tick = 12;
+    save.beat = 12;
     save.game.has_setup = true;
     save.game.setup.scenario = "/maps/SCMP_009/SCMP_009_scenario.lua";
-    save.game.final_tick = 12;
+    save.game.final_beat = 12;
     save.game.checksum_from = 1;
     save.game.checksums.assign(12, 0xabcdef01u);
     osc::sim::ScheduledCommand c;
-    c.exec_tick = 13; // given before the save, not run yet
+    c.exec_beat = 13; // given before the save, not run yet
     c.unit_ids = {7};
     c.command = move_to(5.0f, 6.0f);
     save.game.commands.push_back(c);
@@ -95,11 +95,11 @@ TEST_CASE("A saved game round-trips", "[savegame]") {
     CHECK(out.version == SavedGame::kVersion);
     CHECK(out.build == save.build);
     CHECK(out.name == "Before the push");
-    CHECK(out.tick == 12);
+    CHECK(out.beat == 12);
     CHECK(out.game.setup.scenario == save.game.setup.scenario);
     CHECK(out.game.checksums == save.game.checksums);
     REQUIRE(out.game.commands.size() == 1);
-    CHECK(out.game.commands[0].exec_tick == 13);
+    CHECK(out.game.commands[0].exec_beat == 13);
     CHECK(out.game.commands[0].command.target_pos.x == 5.0f);
 }
 
@@ -134,7 +134,7 @@ TEST_CASE("A save that can't load says why, as retail's dialog words it", "[save
     save.game.has_setup = false;
     CHECK(refused(save.serialize()) == SaveLoadError::InvalidFormat);
     save = sample_save();
-    save.tick = 11;
+    save.beat = 11;
     CHECK(refused(save.serialize()) == SaveLoadError::InvalidFormat);
 
     CHECK(std::string(osc::sim::save_load_error_name(SaveLoadError::WrongVersion)) ==
@@ -151,10 +151,10 @@ TEST_CASE("A loaded game plays on as the saved one did", "[savegame][sync]") {
     a.set_recording(true);
     a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
     for (int i = 0; i < 10; ++i) a.tick();
-    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs at tick 11
+    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs in beat 11
     SavedGame loaded;
     const SavedGame save = osc::sim::save_game(a, "mid-game");
-    CHECK(save.tick == 10);
+    CHECK(save.beat == 10);
     REQUIRE(SavedGame::deserialize(save.serialize(), loaded) == SaveLoadError::None);
 
     // The saved game plays on, the player giving one more order.
@@ -200,7 +200,7 @@ TEST_CASE("A game saved before its first tick is the player's at once", "[savega
     a.set_recording(true);
     player_order(a, ids[0], move_to(50.0f, 0.0f));
     const SavedGame save = osc::sim::save_game(a, "start");
-    CHECK(save.tick == 0);
+    CHECK(save.beat == 0);
     REQUIRE(save.game.commands.size() == 1);
 
     LuaGuard gb;
@@ -223,7 +223,7 @@ TEST_CASE("A game restored from its snapshot plays on as the saved one did", "[s
     a.set_recording(true);
     a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
     for (int i = 0; i < 10; ++i) a.tick();
-    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs at tick 11
+    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs in beat 11
     const SavedGame save = osc::sim::save_game(a, "mid-game");
     REQUIRE_FALSE(save.snapshot.empty());
     SavedGame loaded;

@@ -1,6 +1,6 @@
 // SimCallbacks in the command stream (M198): a UI script's request runs
-// inside a tick, on every lockstep peer at the same tick, and is recorded in
-// replays -- never applied locally between ticks.
+// in a beat, on every lockstep peer in the same beat, and is recorded in
+// replays -- never applied locally between beats.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -176,7 +176,8 @@ SimCallbackEntry setting(const char* name, osc::sim::SimCallbackArg value, osc::
 
 } // namespace
 
-TEST_CASE("A SimCallback runs inside the next tick, not when submitted", "[simcallback]") {
+TEST_CASE("A SimCallback runs in the next beat, before its tick, not when submitted",
+          "[simcallback]") {
     CallbackSim w;
     const osc::u32 unit = w.spawn();
     w.sim.tick();                       // tick 1
@@ -187,7 +188,7 @@ TEST_CASE("A SimCallback runs inside the next tick, not when submitted", "[simca
 
     w.sim.tick(); // tick 2
     REQUIRE(w.call_count() == 1);
-    CHECK(w.field(1, "c.tick") == "2");
+    CHECK(w.field(1, "c.tick") == "1");
     CHECK(w.field(1, "c.name") == "ToggleThing");
     CHECK(w.field(1, "c.args.Mode") == "fast");
     CHECK(w.field(1, "c.args.Level") == "3");
@@ -206,9 +207,9 @@ TEST_CASE("A recorded SimCallback replays on the same tick", "[simcallback][repl
         const osc::u32 unit = rec.spawn();
         rec.sim.set_recording(true);
         for (int i = 0; i < 4; ++i) rec.sim.tick();
-        rec.sim.submit_callback(toggle(unit)); // runs at tick 5
+        rec.sim.submit_callback(toggle(unit)); // runs before tick 5
         for (int i = 0; i < 3; ++i) rec.sim.tick();
-        REQUIRE(rec.field(1, "c.tick") == "5");
+        REQUIRE(rec.field(1, "c.tick") == "4");
         REQUIRE(Replay::deserialize(rec.sim.recorded_replay().serialize(), replay));
     }
     REQUIRE(replay.commands.size() == 1);
@@ -219,13 +220,13 @@ TEST_CASE("A recorded SimCallback replays on the same tick", "[simcallback][repl
     play.sim.queue_replay(replay);
     for (int i = 0; i < 8; ++i) play.sim.tick();
     REQUIRE(play.call_count() == 1);
-    CHECK(play.field(1, "c.tick") == "5");
+    CHECK(play.field(1, "c.tick") == "4");
     CHECK(play.field(1, "c.args.Mode") == "fast");
 }
 
 TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused", "[simcallback]") {
     ScheduledCommand c;
-    c.exec_tick = 9;
+    c.exec_beat = 9;
     c.source = 2;
     c.callback = toggle(41);
     std::vector<osc::u8> bytes;
@@ -236,7 +237,7 @@ TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused",
     ScheduledCommand back;
     REQUIRE(osc::sim::read_command(r, back));
     REQUIRE(back.callback);
-    CHECK(back.exec_tick == 9);
+    CHECK(back.exec_beat == 9);
     CHECK(back.callback->func_name == "ToggleThing");
     CHECK(std::get<std::string>(back.callback->args.at("Mode")) == "fast");
     CHECK(std::get<double>(back.callback->args.at("Level")) == 3.0);
@@ -450,7 +451,7 @@ TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lo
     CHECK(a.sim.compute_sync_checksum() == b.sim.compute_sync_checksum());
 }
 
-TEST_CASE("The UI's unit settings apply inside a tick, with their script hooks", "[simcallback]") {
+TEST_CASE("The UI's unit settings apply in a beat, with their script hooks", "[simcallback]") {
     CallbackSim w;
     const osc::u32 id = w.spawn();
     w.unit(id).economy().consumption_active = true;
@@ -841,7 +842,7 @@ TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simca
     CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
-TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallback][drop]") {
+TEST_CASE("A dropped player's defeat is a command in the next beat", "[simcallback][drop]") {
     CallbackSim w;
     w.sim.add_army("ARMY_1", "ARMY_1");
     w.sim.add_army("ARMY_2", "ARMY_2");

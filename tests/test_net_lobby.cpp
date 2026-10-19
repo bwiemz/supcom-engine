@@ -536,6 +536,31 @@ TEST_CASE("A single-player game has one client, and chat comes back (M218d)", "[
     REQUIRE(w.run("assert(table.getn(got) == 2, 'chat from the game before came')"));
 }
 
+TEST_CASE("A player's pause and resume answer SessionIsPaused at once, and both reach the sim",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    w.sim.set_victory_condition("sandbox");
+    w.sim.tick();
+    REQUIRE(w.run("before = SessionIsPaused()"
+                  " SessionRequestPause() asked = SessionIsPaused()"
+                  " SessionResume() resumed = SessionIsPaused()"));
+    CHECK(w.run("assert(before == false and asked == true and resumed == false)"));
+    w.sim.tick();
+    CHECK_FALSE(w.sim.paused());
+    CHECK(w.sim.tick_count() == 2);
+    REQUIRE(w.run("SessionRequestPause()"));
+    w.sim.tick();
+    CHECK(w.sim.paused());
+    CHECK(w.sim.tick_count() == 2);
+    CHECK(w.run("assert(SessionIsPaused())"));
+    const osc::u32 serial = w.sim.pause_serial();
+    REQUIRE(w.run("SessionResume() SessionRequestPause()"));
+    w.sim.tick();
+    CHECK(w.sim.paused());
+    CHECK(w.sim.pause_serial() == serial + 1);
+}
+
 TEST_CASE("A lobby's game has its clients, and chat crosses to them (M218d)", "[lobby][lua]") {
     MpGuard guard;
     World w;

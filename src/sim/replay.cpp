@@ -11,7 +11,7 @@ std::vector<u8> Replay::serialize() const {
     ByteWriter w(b);
     for (char c : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<u8>(c));
     w.u32v(kVersion); // the layout written below, whatever version was read
-    w.u32v(final_tick);
+    w.u32v(final_beat);
     w.u32v(command_delay);
     w.u64v(seed);
     w.str(victory_condition);
@@ -37,7 +37,7 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
         out = Replay{};
         return false;
     }
-    out.final_tick = r.u32v();
+    out.final_beat = r.u32v();
     out.command_delay = r.u32v();
     if (out.version >= 2) out.seed = r.u64v();
     out.victory_condition = r.str();
@@ -78,17 +78,19 @@ void ReplayPlayback::resume(SimState& sim) const {
 
 bool ReplayPlayback::check(const SimState& sim) {
     if (diverged_at_ != 0) return false;
-    const u32 tick = sim.tick_count();
-    if (tick < replay_.checksum_from) return true;
-    const u64 i = tick - replay_.checksum_from;
+    const u32 beat = sim.beat_count();
+    if (beat < replay_.checksum_from) {
+        return true;
+    }
+    const u64 i = beat - replay_.checksum_from;
     if (i >= replay_.checksums.size()) return true; // past the recording
     if (sim.compute_sync_checksum() == replay_.checksums[i]) return true;
-    diverged_at_ = tick;
+    diverged_at_ = beat;
     return false;
 }
 
 bool ReplayPlayback::finished(const SimState& sim) const {
-    return sim.game_over() || sim.tick_count() >= replay_.final_tick;
+    return sim.beat_count() >= replay_.final_beat || (replay_.version < 17 && sim.game_over());
 }
 
 } // namespace osc::sim

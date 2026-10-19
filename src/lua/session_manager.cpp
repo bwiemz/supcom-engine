@@ -525,12 +525,6 @@ Result<void> SessionManager::start_session(LuaState& state,
                              lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown");
                 lua_pop(L, 1);
             } else {
-                // Give initial resources (650 mass storage, 4000 energy storage)
-                auto& econ = brain->economy();
-                econ.mass.stored = std::min(econ.mass.stored + 650.0,
-                                            econ.mass.max_storage);
-                econ.energy.stored = std::min(econ.energy.stored + 4000.0,
-                                              econ.energy.max_storage);
                 lua_pop(L, 1); // pop unit table
             }
         } else {

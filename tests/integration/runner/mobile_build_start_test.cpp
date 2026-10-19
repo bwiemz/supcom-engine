@@ -10,7 +10,7 @@
 // 2. aims a tick after the order (its task's Preparing tick), so
 //    OnPrepareArmToBuild runs on tick 1 and the engineer is Building from 2;
 // 3. opens its arm (uel0105_aopen at rate 5) from the next tick, so the
-//    arm is enabled on tick 6 (the manipulators move ahead of the tasks);
+//    arm is enabled on tick 6;
 // 4. turns the arm 36 degrees a tick (SetAimingArc's 360 a second), from
 //    the root bone's line to the site, and makes the frame on tick 9, the
 //    arm 11 degrees off (inside 15); the arm settles on tick 10.
@@ -62,7 +62,7 @@ constexpr std::array<Row, 13> kOriginal = {{
 }};
 
 /// The tick the original ran each callback on, as the row the probe logged
-/// just before it (the tick's scripts and tasks run after its row).
+/// just before it.
 struct Event {
     const char* name;
     int row;
@@ -107,10 +107,13 @@ void test_mobile_build_start(TestContext& ctx) {
     for (int i = 0; i < 5; ++i) {
         ctx.sim.tick();
     }
-    // Each callback, noted with the row it falls before
+    // Each callback, noted with the row it falls after; the rows, logged by a thread as the
+    // original's probe logged them
+    (void)ctx.lua_state.do_string(fmt::format("__osc_mb_last = {}\n", kOriginal.size() - 1));
     if (!run("the engineer's build callbacks watched, and the order given",
-             "__osc_mb_row = 0\n"
+             "__osc_mb_row = -1\n"
              "__osc_mb_events = {}\n"
+             "__osc_mb_rows = {}\n"
              "local eng = __osc_mb_eng\n"
              "for _, name in {'OnPrepareArmToBuild', 'WaitForBuildAnimation', 'OnStartBuild',\n"
              "                'OnStopBuilderTracking'} do\n"
@@ -122,21 +125,30 @@ void test_mobile_build_start(TestContext& ctx) {
              "        return r\n"
              "    end\n"
              "end\n"
-             "IssueBuildMobile({eng}, {262, GetTerrainHeight(262, 784), 784}, 'ueb1101', {})\n")) {
+             "ForkThread(function()\n"
+             "    IssueBuildMobile({eng}, {262, GetTerrainHeight(262, 784), 784}, 'ueb1101', {})\n"
+             "    for row = 0, __osc_mb_last do\n"
+             "        __osc_mb_row = row\n"
+             "        local tx, _, tz = eng:GetBoneDirection('Turret')\n"
+             "        __osc_mb_rows[row + 1] = {eng:IsUnitState('Building') and 1 or 0,\n"
+             "                                  eng:GetFocusUnit() and 1 or 0, tx, tz}\n"
+             "        WaitTicks(1)\n"
+             "    end\n"
+             "end)\n")) {
         return;
+    }
+    for (size_t i = 0; i < kOriginal.size() + 1; ++i) {
+        ctx.sim.tick();
     }
     int matched = 0;
     for (int row = 0; row < static_cast<int>(kOriginal.size()); ++row) {
-        // The row as the probe logged it, at the start of the tick
         const auto sampled = ctx.lua_state.do_string(
-            fmt::format("__osc_mb_row = {}\n"
-                        "local eng = __osc_mb_eng\n"
-                        "__osc_mb_building = eng:IsUnitState('Building') and 1 or 0\n"
-                        "__osc_mb_frame = eng:GetFocusUnit() and 1 or 0\n"
-                        "__osc_mb_tx, _, __osc_mb_tz = eng:GetBoneDirection('Turret')\n",
-                        row));
+            fmt::format("local r = __osc_mb_rows[{}] or {{-1, -1, 0, 0}}\n"
+                        "__osc_mb_building, __osc_mb_frame, __osc_mb_tx, __osc_mb_tz = "
+                        "r[1], r[2], r[3], r[4]\n",
+                        row + 1));
         if (!sampled) {
-            t.check(false, fmt::format("row {} sampled: {}", row, sampled.error().message));
+            t.check(false, fmt::format("row {} read: {}", row, sampled.error().message));
             return;
         }
         const Row& want = kOriginal[static_cast<size_t>(row)];
@@ -155,7 +167,6 @@ void test_mobile_build_start(TestContext& ctx) {
                          row, building, frame, tx, tz, want.building, want.frame, want.turret_x,
                          want.turret_z);
         }
-        ctx.sim.tick();
     }
     t.check(matched == static_cast<int>(kOriginal.size()),
             fmt::format("1-4: {} of {} ticks as the original's (Building, the frame, the build "

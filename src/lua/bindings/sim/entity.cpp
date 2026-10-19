@@ -192,10 +192,10 @@ int entity_GetBoneDirection(lua_State* L) {
     // The bone's forward (+Z) in the world: a unit's as posed (turrets,
     // rotators), anything else's in bind pose.
     i32 idx = resolve_bone_index(e, L, 2);
-    const sim::Quaternion model_rot =
-        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(idx).rotation
-                     : bd->bones[static_cast<size_t>(idx)].world_rotation;
-    auto bone_world_rot = sim::quat_multiply(e->orientation(), model_rot);
+    const sim::Quaternion bone_world_rot =
+        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_world_rotation(idx)
+                     : sim::quat_multiply(e->orientation(),
+                                          bd->bones[static_cast<size_t>(idx)].world_rotation);
     auto dir = sim::quat_rotate(bone_world_rot, {0, 0, 1});
     push_direction(L, dir);
     return 3;
@@ -263,10 +263,14 @@ static int entity_SetPosition(lua_State* L) {
         v.y = static_cast<f32>(lua_tonumber(L, -2));
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 3);
+        // Moho's SetPosition: the committed transform moved to `pos`, pending; an immediate one
+        // is committed at once and shown as a jump.
+        e->set_orientation(e->orientation());
         e->set_position(v);
-        // SetPosition(pos, immediate): an immediate move is a teleport, which
-        // the renderer shows as a jump, not a slide.
-        if (lua_toboolean(L, 3)) e->note_snap();
+        if (lua_toboolean(L, 3)) {
+            e->note_snap();
+            e->place_now();
+        }
     }
     return 0;
 }
@@ -313,7 +317,11 @@ static int entity_SetOrientation(lua_State* L) {
         lua_rawgeti(L, 2, 4);
         q.w = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        e->set_position(e->position());
         e->set_orientation(q);
+        if (lua_toboolean(L, 3)) {
+            e->place_now();
+        }
     }
     return 0;
 }
@@ -388,177 +396,20 @@ static int entity_GetFractionComplete(lua_State* L) {
     return 1;
 }
 
-// A unit's death, counted once: the loss for its army (Moho's Units_Killed)
-// and the kill for the army that did the most damage. Kill counts it when the
-// unit dies; Destroy, for a unit removed without being killed.
-static void record_unit_death(lua_State* L, sim::Unit* dying_unit) {
-    auto* sim_ptr = get_sim(L);
-
-    // A loss for its army (Moho's Units_Killed)
-    if (sim_ptr) {
-        auto* victim_brain = sim_ptr->get_army(dying_unit->army());
-        if (victim_brain) {
-            victim_brain->record_unit_lost(dying_unit->blueprint_id(),
-                                           dying_unit->build_cost_mass(),
-                                           dying_unit->build_cost_energy());
-        }
-    }
-
-    // Credit kill to army that dealt the most damage
-    if (sim_ptr && !dying_unit->damage_contributions().empty()) {
-        i32 victim_army = dying_unit->army();
-        i32 killer_army = -1;
-        f32 max_dmg = 0;
-        for (const auto& [attacker_id, dmg] : dying_unit->damage_contributions()) {
-            if (dmg > max_dmg) {
-                auto* attacker = sim_ptr->entity_registry().find(attacker_id);
-                if (attacker && !attacker->destroyed()) {
-                    max_dmg = dmg;
-                    killer_army = attacker->army();
-                }
-            }
-        }
-        if (killer_army >= 0 && killer_army != victim_army) {
-            auto* killer_brain = sim_ptr->get_army(killer_army);
-            if (killer_brain) {
-                killer_brain->record_enemy_killed(
-                    dying_unit->blueprint_id(), dying_unit->build_cost_mass(),
-                    dying_unit->build_cost_energy(), dying_unit->has_category("COMMAND"));
-            }
-        }
-    }
-
-    dying_unit->clear_damage_contributions();
-}
-
+// Moho's Entity::Destroy queues it: SimState::run_deletion_queue runs its OnDestroy as the tick
+// ends. A handle without a ref could not be found then, so it is cut now.
 int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
-    if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
-    if (e) {
-        // Its ambient loops end with it.
-        e->clear_ambient_sounds();
-
-        // Fire OnNotAdjacentTo for adjacent structures before destruction
-        if (e->is_unit()) {
-            auto* unit = static_cast<sim::Unit*>(e);
-            if (!unit->adjacent_unit_ids().empty()) {
-                auto* sim = get_sim(L);
-                std::vector<u32> adj_snap(unit->adjacent_unit_ids().begin(),
-                                          unit->adjacent_unit_ids().end());
-                for (u32 adj_id : adj_snap) {
-                    auto* adj_e = sim ? sim->entity_registry().find(adj_id) : nullptr;
-                    if (!adj_e || adj_e->destroyed() || !adj_e->is_unit()) continue;
-                    auto* adj_u = static_cast<sim::Unit*>(adj_e);
-                    adj_u->remove_adjacent(e->entity_id());
-
-                    // Fire OnNotAdjacentTo(self, neighbor) on dying unit
-                    if (e->lua_table_ref() >= 0 && adj_e->lua_table_ref() >= 0) {
-                        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
-                        int self_tbl = lua_gettop(L);
-                        lua_pushstring(L, "OnNotAdjacentTo");
-                        lua_gettable(L, self_tbl);
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushvalue(L, self_tbl);
-                            lua_rawgeti(L, LUA_REGISTRYINDEX, adj_e->lua_table_ref());
-                            if (lua_pcall(L, 2, 0, 0) != 0) {
-                                spdlog::warn("OnNotAdjacentTo(self) error: {}",
-                                             lua_tostring(L, -1));
-                                lua_pop(L, 1);
-                            }
-                        } else {
-                            lua_pop(L, 1);
-                        }
-                        lua_pop(L, 1);
-                    }
-
-                    // Re-validate dying entity after pcall (could be recursively destroyed)
-                    if (e->destroyed()) break;
-
-                    // Re-validate neighbor after pcall
-                    adj_e = sim ? sim->entity_registry().find(adj_id) : nullptr;
-                    if (!adj_e || adj_e->destroyed()) continue;
-
-                    // Fire OnNotAdjacentTo(neighbor, self) on neighbor
-                    if (adj_e->lua_table_ref() >= 0 && e->lua_table_ref() >= 0) {
-                        lua_rawgeti(L, LUA_REGISTRYINDEX, adj_e->lua_table_ref());
-                        int nb_tbl = lua_gettop(L);
-                        lua_pushstring(L, "OnNotAdjacentTo");
-                        lua_gettable(L, nb_tbl);
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushvalue(L, nb_tbl);
-                            lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
-                            if (lua_pcall(L, 2, 0, 0) != 0) {
-                                spdlog::warn("OnNotAdjacentTo(neighbor) error: {}",
-                                             lua_tostring(L, -1));
-                                lua_pop(L, 1);
-                            }
-                        } else {
-                            lua_pop(L, 1);
-                        }
-                        lua_pop(L, 1);
-                    }
-                }
-                unit->clear_adjacents();
-            }
-        }
-
-        // Guard against recursive destruction from OnNotAdjacentTo callbacks
-        if (e->destroyed()) return 0;
-
-        // A unit destroyed without being killed is lost all the same (a
-        // killed one was counted when it died). One whose replacement took
-        // its place (ChangeUnitArmy) is handed over, not lost.
-        const bool handed_over = e->is_unit() && static_cast<sim::Unit*>(e)->transferred();
-        if (e->is_unit() && !handed_over && !static_cast<sim::Unit*>(e)->is_dying())
-            record_unit_death(L, static_cast<sim::Unit*>(e));
-
-        u32 id = e->entity_id();
-        int lua_ref = e->lua_table_ref();
-
-        // Fire death event for renderer explosion VFX (units only)
-        if (e->is_unit() && !handed_over) {
-            auto pos = e->position();
-            f32 scale = 1.0f;
-            if (e->footprint_size_x() > 0) scale = e->footprint_size_x() * 0.5f;
-            auto* sim = get_sim(L);
-            if (sim)
-                sim->add_death_event(pos.x, pos.y, pos.z, scale, e->army());
-        }
-
-        // If dying unit was capturing, clear being_captured on its target
-        if (e->is_unit()) {
-            auto* dying_unit = static_cast<sim::Unit*>(e);
-            if (dying_unit->is_capturing()) {
-                auto* sim = get_sim(L);
-                if (sim)
-                    dying_unit->stop_capturing(L, sim->entity_registry(), true);
-            }
-        }
-
-        // Moho calls the script's OnDestroy while the object is still live.
-        if (auto* sim = get_sim(L)) {
-            sim->notify_script_destroy(*e);
-            if (e->destroyed()) return 0; // its OnDestroy finished the job
-        }
-
-        e->mark_destroyed();
-
-        // If this is a unit, detach its weapons' Lua tables before freeing
-        if (e->is_unit()) static_cast<sim::Unit*>(e)->release_weapon_scripts(L);
-
-        // The handle stays bound until the end of the tick, as Moho frees a
-        // destroyed entity when its deletion queue is drained (SimState::
-        // release_script_handle cuts it by the registry ref). One without a
-        // ref could not be found then, so it is cut now.
-        if (lua_ref < 0) {
-            lua_pushstring(L, "_c_object");
-            lua_pushlightuserdata(L, nullptr);
-            lua_rawset(L, 1);
-        }
-
-        auto* sim = get_sim(L);
-        if (sim) sim->entity_registry().unregister_entity(id);
+    auto* sim = get_sim(L);
+    if (!e || !sim || e->destroyed()) {
+        return 0;
     }
+    if (e->lua_table_ref() < 0) {
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, nullptr);
+        lua_rawset(L, 1);
+    }
+    sim->entity_registry().destroy(*e);
     return 0;
 }
 
@@ -588,8 +439,8 @@ static void credit_kill(lua_State* L, u32 instigator_id) {
 // death to the script's OnKilled, which plays the death sequence (death
 // weapon, animation, wreckage) and calls Destroy() when it ends. A unit is
 // dead from here on (IsDead; no orders, weapons or economy; one in flight
-// falls) and its death is counted now. Without an OnKilled the entity is
-// destroyed at once. SetCanBeKilled(false) blocks it.
+// falls) and its death is counted after OnKilled. Without an OnKilled the
+// entity is destroyed. SetCanBeKilled(false) blocks it.
 int entity_Kill(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed() || e->script_owns_death()) return 0;
@@ -615,36 +466,46 @@ int entity_Kill(lua_State* L) {
         lua_replace(L, 4);
     }
     const u32 credit = e->is_unit() ? kill_credit_for(L, static_cast<sim::Unit*>(e)) : 0;
+    auto* sim = get_sim(L);
+    auto* unit = e->is_unit() ? static_cast<sim::Unit*>(e) : nullptr;
+    // Moho's Unit::Kill (faf-re unit/core/Unit.cpp:16072).
+    if (unit) {
+        unit->begin_dying();
+        if (sim) {
+            sim->drop_adjacency(*unit);
+            sim->detach_all_units(*unit, true);
+        }
+        unit->clear_commands();
+    }
     lua_pushstring(L, "OnKilled");
     lua_gettable(L, 1);
     if (!lua_isfunction(L, -1)) {
         lua_settop(L, 1);
         entity_Destroy(L);
-        credit_kill(L, credit);
-        return 0;
-    }
-    e->set_script_owns_death();
-    if (e->is_unit()) {
-        auto* u = static_cast<sim::Unit*>(e);
-        record_unit_death(L, u);
-        u->begin_dying();
-    }
-    // Stack: self, instigator, type, ratio, OnKilled -> call OnKilled(self, ...)
-    lua_insert(L, 1);
-    lua_pushvalue(L, 2);
-    lua_insert(L, 1); // self (kept), OnKilled, self, instigator, type, ratio
-    if (lua_pcall(L, 4, 0, 0) != 0) {
-        // The death sequence broke before it could Destroy() the unit (e.g.
-        // a failing death weapon); finish the job rather than leave it
-        // half-dead forever.
-        const char* err = lua_tostring(L, -1);
-        const std::string message = std::string("OnKilled error: ") + (err ? err : "(unknown)");
-        spdlog::warn("{}", message);
-        if (test_status::count_lua_failures()) test_status::record_failure(message);
-        lua_settop(L, 1);
-        if (auto* still = check_entity(L); still && !still->destroyed()) {
-            entity_Destroy(L);
+    } else {
+        e->set_script_owns_death();
+        // Stack: self, instigator, type, ratio, OnKilled -> call OnKilled(self, ...)
+        lua_insert(L, 1);
+        lua_pushvalue(L, 2);
+        lua_insert(L, 1); // self (kept), OnKilled, self, instigator, type, ratio
+        if (lua_pcall(L, 4, 0, 0) != 0) {
+            // The death sequence broke before it could Destroy() the unit (e.g.
+            // a failing death weapon); finish the job rather than leave it
+            // half-dead forever.
+            const char* err = lua_tostring(L, -1);
+            const std::string message = std::string("OnKilled error: ") + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) {
+                test_status::record_failure(message);
+            }
+            lua_settop(L, 1);
+            if (auto* still = check_entity(L); still && !still->destroyed()) {
+                entity_Destroy(L);
+            }
         }
+    }
+    if (unit && sim) {
+        sim->record_unit_death(*unit);
     }
     credit_kill(L, credit);
     return 0;
@@ -748,12 +609,13 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     proj->launcher_id = launcher_of(*e);
     apply_script_projectile_physics(L, *proj);
     const auto* bd = e->bone_data();
-    const sim::Quaternion model_rot =
-        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(bone_idx).rotation
-        : bd && bd->is_valid(bone_idx) ? bd->bones[static_cast<size_t>(bone_idx)].world_rotation
-                                       : sim::Quaternion{};
-    aim_projectile(L, sim, *proj,
-                   sim::quat_rotate(sim::quat_multiply(e->orientation(), model_rot), {0, 0, 1}));
+    const sim::Quaternion bone_world_rot =
+        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_world_rotation(bone_idx)
+        : bd && bd->is_valid(bone_idx)
+            ? sim::quat_multiply(e->orientation(),
+                                 bd->bones[static_cast<size_t>(bone_idx)].world_rotation)
+            : e->orientation();
+    aim_projectile(L, sim, *proj, sim::quat_rotate(bone_world_rot, {0, 0, 1}));
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(
@@ -1324,9 +1186,7 @@ static int prop_CreatePropAtBone(lua_State* L) {
 static int prop_SinkAway(lua_State* L) {
     auto* e = check_entity(L);
     if (e && e->is_prop()) {
-        auto* prop = static_cast<sim::Prop*>(e);
-        prop->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
-        prop->fall_motor = false;
+        static_cast<sim::Prop*>(e)->sink_away(static_cast<f32>(lua_tonumber(L, 2)));
     }
     return 0;
 }
@@ -1440,17 +1300,7 @@ static int prop_AddBoundedProp(lua_State* L) {
         if (evicted->destroyed()) {
             continue;
         }
-        if (evicted->lua_table_ref() >= 0) {
-            lua_pushcfunction(L, entity_Destroy);
-            lua_rawgeti(L, LUA_REGISTRYINDEX, evicted->lua_table_ref());
-            if (lua_pcall(L, 1, 0, 0) != 0) {
-                spdlog::warn("Destroy error: {}", lua_tostring(L, -1));
-                lua_pop(L, 1);
-            }
-        } else {
-            evicted->mark_destroyed();
-            sim->entity_registry().unregister_entity(evicted->entity_id());
-        }
+        sim->entity_registry().destroy(*evicted);
     }
     prop->bounded_handle = bounded.insert(prop->bounded_priority, prop->bounded_tick, prop);
     return 0;

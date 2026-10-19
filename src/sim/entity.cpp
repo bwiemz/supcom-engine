@@ -7,16 +7,41 @@
 namespace osc::sim {
 
 void Entity::set_position(const Vector3& p) {
-    position_ = p;
-    if (registry_) registry_->notify_position_changed(*this);
+    pending_position_ = p;
+    if (!placed_) {
+        position_ = p;
+        last_position_ = p;
+    }
 }
 
 void Entity::set_orientation(const Quaternion& o) {
-    if (o.x == orientation_.x && o.y == orientation_.y && o.z == orientation_.z &&
-        o.w == orientation_.w)
-        return;
-    orientation_ = o;
-    if (registry_) registry_->notify_orientation_changed(*this);
+    pending_orientation_ = o;
+    if (!placed_) {
+        orientation_ = o;
+        last_orientation_ = o;
+    }
+}
+
+void Entity::advance_coords() {
+    placed_ = true;
+    last_position_ = position_;
+    last_orientation_ = orientation_;
+    const bool moved = position_.x != pending_position_.x || position_.y != pending_position_.y ||
+                       position_.z != pending_position_.z;
+    const bool turned =
+        orientation_.x != pending_orientation_.x || orientation_.y != pending_orientation_.y ||
+        orientation_.z != pending_orientation_.z || orientation_.w != pending_orientation_.w;
+    position_ = pending_position_;
+    orientation_ = pending_orientation_;
+    if (registry_ && (moved || turned)) {
+        registry_->notify_moved(*this, moved);
+    }
+}
+
+void Entity::wake() {
+    if (registry_ && walk_ == Walk::Parked) {
+        registry_->wake(*this);
+    }
 }
 
 void Entity::set_collision_shape(const CollisionShape& s) {

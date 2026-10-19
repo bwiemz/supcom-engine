@@ -127,7 +127,7 @@ TEST_CASE("FlattenMapRect sets a land unit about the rect on the new ground", "[
     int tanks = 0;
     w.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
         ++tanks;
-        CHECK(e.position().y == 12.0f);
+        CHECK(e.pending_position().y == 12.0f);
     });
     CHECK(tanks == 1);
 }

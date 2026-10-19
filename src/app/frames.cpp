@@ -22,8 +22,8 @@
 namespace osc::app {
 
 /// Hand the UI's queued SimCallbacks to the sim. Moho runs them as
-/// commands, inside a tick: in multiplayer they are broadcast and every peer
-/// runs them on the same tick; in single-player they run at the next tick.
+/// commands, in a beat: in multiplayer they are broadcast and every peer
+/// runs them in the same beat; in single-player they run in the next beat.
 void submit_sim_callbacks(osc::sim::SimCallbackQueue& queue, osc::sim::SimState& sim) {
     for (auto& cb : queue.drain()) sim.submit_callback(std::move(cb));
 }

@@ -199,6 +199,11 @@ TEST_CASE("IsDestroyed reads each kind of script object, as Moho's", "[scriptobj
         other._destroyed = true
         assert(IsDestroyed(other), 'an object marked destroyed')
         ;(moho.unit_methods.Destroy or moho.entity_methods.Destroy)(u)
+        assert(not IsDestroyed(u), 'a unit its deletion queue holds')
+        assert(not IsDestroyed(weapon), 'the weapon of a unit its deletion queue holds')
+    )"));
+    w.sim.tick();
+    CHECK(w.check(R"(
         assert(IsDestroyed(u), 'a destroyed unit')
         assert(IsDestroyed(weapon), 'a destroyed unit\'s weapon')
     )"));

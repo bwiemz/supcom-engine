@@ -65,6 +65,7 @@ void test_notify_upgrade(TestContext& ctx) {
         return v;
     };
 
+    ctx.sim.tick();
     if (!check("setup", R"(
         local brain = GetArmyBrain('ARMY_1')
         brain:GiveStorage('MASS', 50000)

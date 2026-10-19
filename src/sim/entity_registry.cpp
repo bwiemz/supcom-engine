@@ -14,11 +14,13 @@ EntityRegistry::~EntityRegistry() = default;
 u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     u32 id = next_id_++;
     entity->set_entity_id(id);
+    entity->place_now();
     entity->set_registry(this);
     order_.push_back({id, entity.get()});
     if (entity->is_unit()) unit_order_.push_back({id, entity.get()});
     if (entities_.size() <= id) entities_.resize(id + 1);
     live_.insert(entity.get());
+    walk_.push_back(id);
     entities_[id] = std::move(entity);
     ++live_count_;
 
@@ -66,6 +68,37 @@ void EntityRegistry::unregister_entity(u32 id) {
     // Held until its OnDestroy (in the hook) has run, as a script's own
     // Destroy() runs it: a handle to it still resolves there (per review).
     live_.erase(&ref);
+}
+
+void EntityRegistry::destroy(Entity& entity) {
+    if (entity.destroyed() || find(entity.entity_id()) != &entity) {
+        return;
+    }
+    entity.mark_destroyed();
+    deletion_queue_.push_back(entity.entity_id());
+}
+
+void EntityRegistry::wake(Entity& entity) {
+    if (entity.walk() != Entity::Walk::Parked || find(entity.entity_id()) != &entity) {
+        return;
+    }
+    entity.set_walk(Entity::Walk::Stepping);
+    walk_.push_back(entity.entity_id());
+}
+
+u32 EntityRegistry::take_destroyed() {
+    if (deletion_queue_.empty()) {
+        return 0;
+    }
+    const u32 id = deletion_queue_.front();
+    deletion_queue_.pop_front();
+    return id;
+}
+
+void EntityRegistry::purge_destroyed() {
+    while (const u32 id = take_destroyed()) {
+        unregister_entity(id);
+    }
 }
 
 Entity* EntityRegistry::find(u32 id) const {
@@ -167,9 +200,18 @@ void EntityRegistry::grid_remove(const Entity& entity, i32 cx, i32 cz) {
     }
 }
 
-void EntityRegistry::notify_position_changed(Entity& entity) {
-    if (!grid_initialized_) return;
-    cells_.moved(entity);
+void EntityRegistry::advance_coords() {
+    for_each([](Entity& e) { e.advance_coords(); });
+}
+
+void EntityRegistry::notify_moved(Entity& entity, bool moved) {
+    if (!grid_initialized_) {
+        return;
+    }
+    cells_.link(entity);
+    if (!moved) {
+        return;
+    }
     if (entity.is_prop()) {
         prop_cell_update(entity);
     }
@@ -399,10 +441,6 @@ void EntityRegistry::props_touching(f32 x0, f32 z0, f32 x1, f32 z1,
     std::sort(out.begin(), out.end(),
               [](const Entity* a, const Entity* b) { return a->entity_id() < b->entity_id(); });
     out.erase(std::unique(out.begin(), out.end()), out.end());
-}
-
-void EntityRegistry::notify_orientation_changed(Entity& entity) {
-    if (grid_initialized_) cells_.moved(entity);
 }
 
 void EntityRegistry::notify_collision_shape_changed(Entity& entity) {

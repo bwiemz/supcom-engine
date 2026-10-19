@@ -535,53 +535,10 @@ static int unit_CalculateWorldPositionFromRelative(lua_State* L) {
 static int unit_TransportDetachAllUnits(lua_State* L) {
     auto* u = check_unit(L);
     auto* sim = get_sim(L);
-    if (!u || !sim) return 0;
-    bool destroy = lua_toboolean(L, 2) != 0;
-    if (destroy) {
-        // Kill all cargo via Lua Kill pipeline (same as FA's KillCargo)
-        std::vector<u32> snapshot = u->cargo_ids();
-        u->clear_cargo();
-        for (u32 id : snapshot) {
-            auto* cargo = sim->entity_registry().find(id);
-            if (!cargo || cargo->destroyed()) continue;
-            if (cargo->is_unit())
-                static_cast<sim::Unit*>(cargo)->set_transport_id(0);
-            // Use Lua Kill for proper death pipeline (OnKilled → DeathThread)
-            if (cargo->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, cargo->lua_table_ref());
-                lua_pushstring(L, "Kill");
-                lua_gettable(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    lua_pushvalue(L, -2); // self
-                    if (lua_pcall(L, 1, 0, 0) != 0) {
-                        spdlog::warn("TransportDetachAllUnits Kill error: {}",
-                                     lua_tostring(L, -1));
-                        lua_pop(L, 1);
-                    }
-                } else {
-                    lua_pop(L, 1); // non-function
-                }
-                lua_pop(L, 1); // cargo table
-            } else {
-                cargo->mark_destroyed(); // fallback if no Lua table
-            }
-        }
-    } else {
-        u->detach_all_cargo(sim->entity_registry(), L);
+    if (!u || !sim) {
+        return 0;
     }
-    // What it keeps in storage is destroyed with it (Moho's
-    // TransportDetachAllUnits): its script hears DestroyedOnTransport first.
-    const std::vector<u32> stored = u->stored_ids();
-    for (const u32 id : stored) {
-        auto* e = sim->entity_registry().find(id);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
-        auto* unit = static_cast<sim::Unit*>(e);
-        u->forget_stored(id);
-        unit->set_transport_id(0);
-        unit->call_lua_method(L, "DestroyedOnTransport");
-        e = sim->entity_registry().find(id);
-        if (e && !e->destroyed()) static_cast<sim::Unit*>(e)->call_lua_method(L, "Destroy");
-    }
+    sim->detach_all_units(*u, lua_toboolean(L, 2) != 0);
     return 0;
 }
 
@@ -1390,7 +1347,9 @@ static int unit_Stop(lua_State* L) {
     auto* u = check_unit(L);
     auto* sim = get_sim(L);
     if (u && sim) {
-        u->clear_commands(sim->entity_registry(), L);
+        sim::SimContext ctx = sim->sim_context();
+        ctx.L = L;
+        u->clear_commands(ctx);
     }
     return 0;
 }

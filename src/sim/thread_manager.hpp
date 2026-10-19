@@ -17,7 +17,7 @@ struct ThreadEntry {
     // Moho's task keeps its Lua object: scripts hold threads in trash bags,
     // which are weak tables, and one collected there was never killed.
     int wrapper_ref = -2;
-    i32 wait_until_tick = 0; // Tick at which to resume (0 = resume next tick)
+    i32 wait_until_tick = 0; // Tick at which to resume (0: the next Lua stage)
     bool dead = false;
     /// SuspendCurrentThread: asleep until ResumeThread wakes it.
     bool suspended = false;

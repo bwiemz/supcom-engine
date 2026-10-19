@@ -170,6 +170,13 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.i32v(e.army_);
     w.vec3(e.position_);
     w.quat(e.orientation_);
+    w.vec3(e.pending_position_);
+    w.quat(e.pending_orientation_);
+    w.vec3(e.last_position_);
+    w.quat(e.last_orientation_);
+    // placed_: every registered entity's
+    enum8(w, e.walk_);
+    w.u32v(e.stepped_tick_);
     w.u32v(e.snap_serial_);
     w.u32v(e.followed_parent_snap_);
     w.f32v(e.health_);
@@ -202,9 +209,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     enum8(w, e.viz_neutrals_);
     save_shape(w, e.collision_shape_);
     save_shape(w, e.default_collision_shape_);
-    // cell_link_: its order alone (seq); its cells follow from where it is
-    // (between ticks the cells have advanced, so no move is pending, and
-    // moved is 0), and mark is a gather's own
+    // cell_link_: its order alone (seq); its cells follow from its committed transform, and mark
+    // is a gather's own
     w.u64v(e.cell_link_.seq);
     w.str(e.mesh_override_); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
     w.b(e.unselectable_);
@@ -265,6 +271,13 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.army_ = r.i32v();
     e.position_ = r.vec3();
     e.orientation_ = r.quat();
+    e.pending_position_ = r.vec3();
+    e.pending_orientation_ = r.quat();
+    e.last_position_ = r.vec3();
+    e.last_orientation_ = r.quat();
+    e.placed_ = true;
+    e.walk_ = enum8<Entity::Walk>(r);
+    e.stepped_tick_ = r.u32v();
     e.snap_serial_ = r.u32v();
     e.followed_parent_snap_ = r.u32v();
     e.health_ = r.f32v();
@@ -474,6 +487,7 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     // sim_: set by the unit's load
     w.vec3(n.goal_);
     enum8(w, n.status_);
+    w.b(n.ended_);
     w.b(n.speed_through_goal_);
     w.vec3(n.air_hold_);
     w.b(n.air_hold_set_);
@@ -510,6 +524,7 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
 void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.goal_ = r.vec3();
     n.status_ = enum8<Navigator::Status>(r);
+    n.ended_ = r.b();
     n.speed_through_goal_ = r.b();
     n.air_hold_ = r.vec3();
     n.air_hold_set_ = r.b();
@@ -1224,7 +1239,8 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.factory_assist_build_);
     // auto_attack_target_ isn't saved: a weapon sets it and the unit uses it
     // in the same update.
-    // air_stepped_ and air_held_ aren't saved: each update clears them before they are read.
+    // nav_requested_, nav_speed_ and course_ aren't saved: each update clears or sets them before
+    // they are read.
     w.u32v(u.build_command_id_);
     w.b(u.build_released_with_order_);
     w.b(u.build_repairs_);
@@ -1363,6 +1379,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.fuel_recharge_rate_);
     w.b(u.refuel_started_);
     w.b(u.dock_repair_asked_);
+    w.b(u.holds_storage_);
     w.b(u.air_class_);
     w.i32v(u.docking_slots_);
     const StagingRules& st = u.staging_rules_;
@@ -1424,19 +1441,13 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.dive_surface_speed_);
     w.str(u.vert_event_);
     w.b(u.crashing_);
-    w.b(u.crash_impacted_);
     w.vec3(u.velocity_);
+    // motion_step_: taken by the tick's commit, zero between ticks
     w.f32v(u.crash_velocity_y_);
     w.f32v(u.crash_spin_rate_);
     w.u32v(u.creator_id_);
-    w.vec3(u.tick_position_);
-    w.quat(u.tick_orientation_);
-    w.b(u.tick_position_set_);
-    w.b(u.moved_last_tick_);
     w.b(u.lifts_off_);
     w.u32v(u.warp_aborted_command_);
-    w.vec3(u.last_tick_motion_);
-    w.b(u.turned_last_tick_);
     w.b(u.auto_overcharge_);
     w.b(u.overcharge_paused_);
     w.b(u.cloaked_);
@@ -1457,6 +1468,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.blueprint_elevation_);
     w.f32v(u.blueprint_elevation_target_);
     w.b(u.dying_);
+    w.b(u.needs_kill_cleanup_);
     w.b(u.transferred_);
     w.size(u.on_unit_built_callbacks_.size());
     for (const Unit::UnitBuiltCallback& cb : u.on_unit_built_callbacks_) {
@@ -1776,6 +1788,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.fuel_recharge_rate_ = r.f32v();
     u.refuel_started_ = r.b();
     u.dock_repair_asked_ = r.b();
+    u.holds_storage_ = r.b();
     u.air_class_ = r.b();
     u.docking_slots_ = r.i32v();
     StagingRules& st = u.staging_rules_;
@@ -1837,19 +1850,12 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.dive_surface_speed_ = r.f32v();
     u.vert_event_ = r.str();
     u.crashing_ = r.b();
-    u.crash_impacted_ = r.b();
     u.velocity_ = r.vec3();
     u.crash_velocity_y_ = r.f32v();
     u.crash_spin_rate_ = r.f32v();
     u.creator_id_ = r.u32v();
-    u.tick_position_ = r.vec3();
-    u.tick_orientation_ = r.quat();
-    u.tick_position_set_ = r.b();
-    u.moved_last_tick_ = r.b();
     u.lifts_off_ = r.b();
     u.warp_aborted_command_ = r.u32v();
-    u.last_tick_motion_ = r.vec3();
-    u.turned_last_tick_ = r.b();
     u.auto_overcharge_ = r.b();
     u.overcharge_paused_ = r.b();
     u.cloaked_ = r.b();
@@ -1870,6 +1876,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.blueprint_elevation_ = r.f32v();
     u.blueprint_elevation_target_ = r.f32v();
     u.dying_ = r.b();
+    u.needs_kill_cleanup_ = r.b();
     u.transferred_ = r.b();
     u.on_unit_built_callbacks_.resize(r.size(8));
     for (Unit::UnitBuiltCallback& cb : u.on_unit_built_callbacks_) {
@@ -1898,7 +1905,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.f32v(p.damage_amount);
     w.f32v(p.damage_radius);
     w.str(p.damage_type);
-    w.f32v(p.lifetime);
+    w.u32v(p.lifetime_end);
     w.f32v(p.max_speed);
     w.f32v(p.acceleration);
     w.f32v(p.ballistic_accel);
@@ -1922,10 +1929,14 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.b(p.collide_entity);
     w.b(p.stay_underwater);
     w.b(p.impacted);
+    w.f32v(p.impact_interpolation);
+    w.u32v(p.impact_entity_id);
+    w.str(p.impact_kind);
     w.b(p.in_water);
     w.b(p.burst_armed);
     save_ids(w, p.passed);
-    // info_: the sim's blueprint info, by blueprint (load_sim_state)
+    // info_: the sim's blueprint info, by blueprint (load_sim_state); launch_position,
+    // launch_orientation, launch_tick: the display's, for the frame of its first step
 }
 
 void StateIO::load(StateReader& r, Projectile& p) {
@@ -1945,7 +1956,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.damage_amount = r.f32v();
     p.damage_radius = r.f32v();
     p.damage_type = r.str();
-    p.lifetime = r.f32v();
+    p.lifetime_end = r.u32v();
     p.max_speed = r.f32v();
     p.acceleration = r.f32v();
     p.ballistic_accel = r.f32v();
@@ -1969,6 +1980,9 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.collide_entity = r.b();
     p.stay_underwater = r.b();
     p.impacted = r.b();
+    p.impact_interpolation = r.f32v();
+    p.impact_entity_id = r.u32v();
+    p.impact_kind = r.str();
     p.in_water = r.b();
     p.burst_armed = r.b();
     p.passed = load_ids(r);

@@ -15,10 +15,12 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -170,4 +172,40 @@ TEST_CASE("Where a unit stands: the bed for those that walk it, else the surface
     CHECK(ship->ground_y(terrain, 30.0f, 30.0f) == kWater);
     // On land, all the same.
     CHECK(amph->ground_y(terrain, 100.0f, 30.0f) == hover->ground_y(terrain, 100.0f, 30.0f));
+}
+
+TEST_CASE("A unit's layer changes on the tick after the step that takes it over the shore",
+          "[seabed]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    lake(sim);
+    const char* code = "changes = 0 "
+                       "return { OnLayerChange = function() changes = changes + 1 end }";
+    REQUIRE(luaL_loadbuffer(g.L, code, std::strlen(code), "mover") == 0);
+    REQUIRE(lua_pcall(g.L, 0, 1, 0) == 0);
+    Unit* u = mover(sim, "RULEUMT_Amphibious", 70.0f, 64.0f);
+    u->set_lua_table_ref(luaL_ref(g.L, LUA_REGISTRYINDEX));
+    const auto changes = [&] {
+        lua_getglobal(g.L, "changes");
+        const int n = static_cast<int>(lua_tonumber(g.L, -1));
+        lua_pop(g.L, 1);
+        return n;
+    };
+    const auto under = [&](const Vector3& at) {
+        const f32 surface = kWater + u->layer_change_offset();
+        return sim.terrain()->get_terrain_height(at.x, at.z) < surface;
+    };
+    u->push_command(move_to({30.0f, 0.0f, 64.0f}), true);
+    bool crossed = false;
+    for (int t = 0; t < 120 && !crossed; ++t) {
+        const bool was_under = under(u->position());
+        sim.tick();
+        crossed = !was_under && under(u->position());
+    }
+    REQUIRE(crossed);
+    CHECK(u->layer() == "Land");
+    CHECK(changes() == 0);
+    sim.tick();
+    CHECK(u->layer() == "Seabed");
+    CHECK(changes() == 1);
 }

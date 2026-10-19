@@ -96,13 +96,15 @@ void test_keymap(TestContext& ctx, ui::UIControlRegistry& registry, GameStateMan
                         up, down, game.sim_rate()));
 
     // Pause: tabs.lua's TogglePause, through the pause button.
-    const bool was_paused = game.paused();
+    const auto session_paused = [&] { return num("SessionIsPaused() and 1 or 0") == 1; };
+    const bool was_paused = session_paused();
     press(GLFW_KEY_PAUSE);
-    const bool paused = game.paused();
+    const bool paused = session_paused();
     press(GLFW_KEY_PAUSE);
-    t.check(!was_paused && paused && !game.paused(),
+    const bool still_paused = session_paused();
+    t.check(!was_paused && paused && !still_paused,
             fmt::format("Test 5: Pause pauses the game, and again resumes it ({} then {})", paused,
-                        game.paused()));
+                        still_paused));
 
     // An unbound Enter opens the chat (UI_ActivateChat), with its modifiers.
     run(R"(

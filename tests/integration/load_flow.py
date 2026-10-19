@@ -120,7 +120,7 @@ def damage_snapshot(save: bytes, key: bytes) -> bytes:
     pos = 7 + 4  # magic, version
     for _ in range(2):  # build, name
         pos += 4 + int.from_bytes(save[pos : pos + 4], "little")
-    pos += 4  # tick
+    pos += 4  # beat
     raw_size = int.from_bytes(save[pos : pos + 8], "little")
     packed_size = int.from_bytes(save[pos + 8 : pos + 16], "little")
     pos += 16

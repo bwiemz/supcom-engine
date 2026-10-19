@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 63; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 73; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -89,7 +89,18 @@ constexpr u32 kVersion = 63; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 60: no CommonArmy economy pool
                              // 61: attack orders' target points;
                              // 62: slaved bones' turn toward their master and max rate;
-                             // 63: the silo a unit's Guard helps
+                             // 63: the silo a unit's Guard helps;
+                             // 64: navigators' move ended in the last motion step;
+                             // 65: every attack order engages in reach;
+                             // 66: armies' resource banks; units' held storage;
+                             // 67: projectiles' waiting impact and lifetime end tick;
+                             // 68: entities' pending and last transforms; no units' tick position;
+                             // 69: the deletion queue; units' kill cleanup due;
+                             // 70: the entity walk's order, entities' parked state and last step;
+                             //     no collision beam list
+                             // 71: which of each army's fakes it sensed at its last recon tick
+                             // 72: the beat count and a single step due; no resumed pause serial
+                             // 73: no units' crash landing latch
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -162,13 +173,20 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
         }
     }
     w.u32v(reg.next_id_);
+    save_ids(w, std::vector<u32>(reg.deletion_queue_.begin(), reg.deletion_queue_.end()));
+    std::vector<u32> walk;
+    for (const u32 id : reg.walk_) {
+        if (const Entity* e = reg.find(id); e && e->walk() == Entity::Walk::Stepping) {
+            walk.push_back(id);
+        }
+    }
+    save_ids(w, walk);
     // cells_: each entity's link order (its CellLink), and the count of
     // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
     // last_index_ are the map's; units_ and props_ follow from the entities
-    // and their order; moves_ is empty between ticks, and move_stamp_ and
-    // gather_ only tell one tick's moves and one gather's finds apart
+    // and their order; gather_ only tells one gather's finds apart
     w.u64v(reg.cells_.link_count());
-    // default_random_, sim_random_: the sim's generator (SimState's);
+    // default_random_, sim_random_: the sim's generator (SimState's); tick_: its tick count;
     // walking_: no walk is under way between ticks; unregister_hook_: the
     // sim's; grid_initialized_, grid_width_, grid_height_, prop_grid_width_,
     // prop_grid_height_: the map's
@@ -185,6 +203,8 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     reg.unit_order_.clear();
     reg.removed_slots_ = 0;
     reg.graveyard_.clear();
+    reg.deletion_queue_.clear();
+    reg.walk_.clear();
     reg.large_colliders_.clear();
     for (auto& cell : reg.grid_cells_) cell.clear();
     for (auto& cell : reg.unit_cells_) cell.clear();
@@ -264,6 +284,9 @@ void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
     }
     reg.next_id_ = r.u32v();
     if (r.ok() && reg.next_id_ <= last_id) r.fail("an entity id past the next one");
+    const std::vector<u32> queued = load_ids(r);
+    reg.deletion_queue_.assign(queued.begin(), queued.end());
+    reg.walk_ = load_ids(r);
     const u64 links = r.u64v();
     if (!r.ok()) return;
     std::vector<Entity*> linked;
@@ -282,11 +305,10 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     save(w, sim.entity_registry_);
     // bounded_props_: made again from the props, in id order, as Moho's load
     save(w, sim.thread_manager_);
-    // blueprint_store_: the host's; projectile_info_: a cache
-    save_ids(w, sim.collision_beams_);
+    // blueprint_store_: the host's; projectile_info_: a cache; followed_: the entity walk's own
     save_ids(w, sim.ferry_beacons_);
-    // checksum_trace_header_: the host's; tick_checksum_, tick_checksum_tick_,
-    // tick_checksum_valid_: a memo
+    // checksum_trace_header_: the host's; beat_checksum_, beat_checksum_beat_,
+    // beat_checksum_valid_: a memo
     w.size(sim.source_armies_.size());
     for (const auto& [source, army] : sim.source_armies_) {
         w.u32v(source);
@@ -303,7 +325,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.b(sim.cheats_enabled_);
     w.i32v(sim.paused_by_);
     w.u32v(sim.pause_serial_);
-    w.u32v(sim.resumed_serial_);
+    w.b(sim.single_step_);
     w.size(sim.pause_timeouts_.size());
     for (const auto& [client, left] : sim.pause_timeouts_) {
         w.u32v(client);
@@ -354,7 +376,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(p.pass);
     });
     w.u32v(sim.intel_pass_);
-    // sound_manager_, tick_observer_, checksum_trace_, entity_trace_,
+    // sound_manager_, beat_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
     // entity_trace_from_, entity_trace_to_, faf_exe_: the host's; bone_cache_,
     // anim_cache_: caches
@@ -381,12 +403,14 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.size(sim.armies_.size());
     for (const auto& a : sim.armies_) save(w, *a, sim);
     w.u32v(sim.tick_count_);
+    w.u32v(sim.beat_count_);
     // game_time_: tick_count_'s
     // post_loads_run_: the host's count of post-loads, not game state
+    // stepping_events_: the economy events the entity walk steps, within it
     save(w, sim.command_scheduler_);
     w.u32v(sim.command_delay_);
     // local_command_sink_, local_callback_sink_, human_input_active_: the
-    // host's; recorded_replay_, recording_, playback_, resume_tick_: the
+    // host's; recorded_replay_, recording_, playback_, resume_beat_: the
     // host's too (a load adopts the saved game's history: adopt_history)
     w.size(sim.temp_visions_.size());
     for (const auto& v : sim.temp_visions_) {
@@ -454,6 +478,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         for (const Vector3& o : offsets) w.vec3(o);
         const auto known = sim.jam_known_.find(key);
         w.u64v(known == sim.jam_known_.end() ? 0 : known->second);
+        const auto sensed = sim.jam_sensed_.find(key);
+        w.u64v(sensed == sim.jam_sensed_.end() ? 0 : sensed->second);
     }
     save_by_id(w, sim.blip_cache_, [&](const auto& snaps) {
         for (const BlipSnapshot& s : snaps) {
@@ -492,9 +518,8 @@ void StateIO::load(StateReader& r, SimState& sim) {
         }
     });
     load(r, sim.thread_manager_);
-    sim.collision_beams_ = load_ids(r);
     sim.ferry_beacons_ = load_ids(r);
-    sim.tick_checksum_valid_ = false;
+    sim.beat_checksum_valid_ = false;
     sim.source_armies_.clear();
     const size_t sources = r.size(8);
     for (size_t i = 0; i < sources; ++i) {
@@ -512,7 +537,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.cheats_enabled_ = r.b();
     sim.paused_by_ = r.i32v();
     sim.pause_serial_ = r.u32v();
-    sim.resumed_serial_ = r.u32v();
+    sim.single_step_ = r.b();
     sim.pause_timeouts_.clear();
     const size_t timeouts = r.size(8);
     for (size_t i = 0; i < timeouts; ++i) {
@@ -624,6 +649,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     if (r.size(64) != sim.armies_.size()) return r.fail("another count of armies");
     for (auto& a : sim.armies_) load(r, *a, sim);
     sim.tick_count_ = r.u32v();
+    sim.beat_count_ = r.u32v();
     sim.game_time_ = sim.tick_count_ * SimState::SECONDS_PER_TICK;
     load(r, sim.command_scheduler_);
     sim.command_delay_ = r.u32v();
@@ -699,13 +725,17 @@ void StateIO::load(StateReader& r, SimState& sim) {
     }
     sim.jam_offsets_.clear();
     sim.jam_known_.clear();
-    const size_t jammed = r.size(20);
+    sim.jam_sensed_.clear();
+    const size_t jammed = r.size(28);
     for (size_t i = 0; i < jammed && r.ok(); ++i) {
         const u64 key = r.u64v();
         auto& offsets = sim.jam_offsets_[key];
         offsets.resize(r.size(12));
         for (Vector3& o : offsets) o = r.vec3();
         if (const u64 known = r.u64v(); known != 0) sim.jam_known_[key] = known;
+        if (const u64 sensed = r.u64v(); sensed != 0) {
+            sim.jam_sensed_[key] = sensed;
+        }
     }
     sim.blip_cache_.clear();
     const size_t blips = r.size(4 + 21 * SimState::MAX_VIS_ARMIES);

@@ -383,7 +383,7 @@ TEST_CASE("ShareUntilDeath destroys a defeated army's remaining units",
     tick_n(sim, 2);
 
     // The leftover unit is killed; with no script to play its death out,
-    // it goes at once.
+    // it is destroyed at once.
     CHECK(sim.entity_registry().find(enemy_tank) == nullptr);
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
 }
@@ -466,7 +466,7 @@ TEST_CASE("PartialShare transfers structures/engineers to an ally, kills the res
     REQUIRE(f != nullptr);
     CHECK(f->army() == 1);        // structure handed to the ally
     CHECK_FALSE(f->is_dying());
-    // The tank is killed, not transferred (with no script, it goes at once).
+    // The tank is killed, not transferred (with no script, it is destroyed at once).
     CHECK(sim.entity_registry().find(tank) == nullptr);
 }
 
@@ -557,7 +557,9 @@ TEST_CASE("A peer dropping mid-match is defeated", "[victory][drop]") {
     sim.defeat_army(1);
 
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
-    // Its units are killed (with no script, they go at once).
+    const osc::sim::Entity* acu = sim.entity_registry().find(dropped_acu);
+    CHECK((acu && acu->destroyed()));
+    sim.tick();
     CHECK(sim.entity_registry().find(dropped_acu) == nullptr);
 }
 
@@ -677,7 +679,7 @@ TEST_CASE("After the tick that called EndGame the sim ticks no more and the UI h
     SimState sim(lua.raw(), nullptr);
     osc::lua::register_moho_bindings(lua, sim);
     osc::lua::register_sim_bindings(lua, sim);
-    sim.set_tick_observer([&](const SimState& s) {
+    sim.set_beat_observer([&](const SimState& s) {
         if (s.tick_count() == 5) {
             REQUIRE(lua.do_string("EndGame()").ok());
         }

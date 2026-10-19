@@ -48,7 +48,10 @@ struct Wrecks {
         return id;
     }
 
-    bool alive(osc::u32 id) const { return sim.entity_registry().find(id) != nullptr; }
+    bool alive(osc::u32 id) const {
+        const osc::sim::Entity* e = sim.entity_registry().find(id);
+        return e && !e->destroyed();
+    }
 };
 
 } // namespace

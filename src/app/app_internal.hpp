@@ -20,6 +20,7 @@
 #include "lua/init_loader.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/scenario_loader.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/special_files.hpp"
 #include "lua/url_bindings.hpp"
 #include "renderer/range_overlays.hpp"
@@ -176,22 +177,26 @@ void issue_order_before_save(sim::SimState& sim);
 int play_replay(sim::SimState& sim, const sim::Replay& replay);
 u64 launch_seed(const std::string& seed_arg, bool reproducible);
 
-/// The world as it is drawn: the sim's last two ticks, and how far the frame
-/// is between them. Every tick lands here, whoever runs it (the loop, the
+/// The world as it is drawn: the sim's last two beats, and how far the frame
+/// is between them. Every beat lands here, whoever runs it (the loop, the
 /// lockstep session), so interpolation follows the ticks that really came.
 struct WorldInterp {
     osc::sim::WorldHistory history;
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
 
-    /// Follow a new sim's ticks from its first one. Must outlive `sim`.
-    void attach(osc::sim::SimState& sim) {
+    /// Follow a new sim's beats from its first one, each beat's Sync queued
+    /// for the user state when there is one. Must outlive `sim`.
+    void attach(osc::sim::SimState& sim, osc::lua::LuaState* ui = nullptr) {
         history.clear();
         clock.reset();
         one_tick_next = true;
-        sim.set_tick_observer([this](const osc::sim::SimState& s) {
+        sim.set_beat_observer([this, ui](const osc::sim::SimState& s) {
             history.capture(s);
             clock.on_tick();
+            if (ui) {
+                osc::lua::queue_sync(s.lua_state(), ui->raw());
+            }
         });
     }
 

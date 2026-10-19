@@ -798,6 +798,7 @@ TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack or
     osc::sim::UnitCommand attack{};
     attack.type = osc::sim::CommandType::Attack;
     attack.target_id = wall_id;
+    attack.engaged = true;
     owner_ptr->push_command(attack, true);
     weapon_ptr->update(*owner_ptr, registry, nullptr);
     CHECK(weapon_ptr->target_entity_id == wall_id);
@@ -863,17 +864,19 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     CHECK(unit.is_dying());
 
     // Simulate crash
+    bool landed = false;
     for (int i = 0; i < 100; i++) {
-        unit.tick_dying(0.1f, nullptr);
-        if (!unit.is_crashing()) break;
+        landed = unit.tick_dying(0.1f, nullptr);
+        if (!unit.is_crashing()) {
+            break;
+        }
     }
 
     // Should have fallen and impacted, and reports the landing once
     CHECK(unit.position().y <= 0.1f);
-    CHECK(unit.crash_impacted());
+    CHECK(landed);
     CHECK_FALSE(unit.is_crashing());
-    CHECK(unit.take_crash_impact());
-    CHECK_FALSE(unit.take_crash_impact());
+    CHECK_FALSE(unit.tick_dying(0.1f, nullptr));
 }
 
 TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
@@ -902,8 +905,7 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     // Run crash ticks
     bool hit_ground = false;
     for (int i = 0; i < 200; i++) {
-        unit.tick_dying(0.1f, nullptr);
-        if (unit.crash_impacted()) {
+        if (unit.tick_dying(0.1f, nullptr)) {
             hit_ground = true;
             break;
         }
@@ -1004,7 +1006,7 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     proj.turn_rate = 360.0f; // 36 degrees a tick
     proj.acceleration = 10.0f;
     proj.max_speed = 10.0f;
-    proj.lifetime = 5.0f;
+    proj.set_lifetime(5.0f, 0);
     proj.target_entity_id = tid;
 
     proj.update(0.1, registry, nullptr, nullptr);
@@ -1035,7 +1037,7 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     torpedo.tracking = true;
     torpedo.turn_rate = 165.0f;
     torpedo.max_speed = 15.0f;
-    torpedo.lifetime = 10.0f;
+    torpedo.set_lifetime(10.0f, 0);
     torpedo.ballistic_accel = -osc::sim::Projectile::GRAVITY;
     torpedo.target_entity_id = tid;
     osc::sim::Projectile shell = torpedo;
@@ -1517,8 +1519,9 @@ TEST_CASE("A stopped upgrade takes its unfinished unit with it", "[session][rule
         h.sim.route_command({h.factory->entity_id()}, stop, true);
     }
     SECTION("by taking its order off") {
-        h.factory->remove_command(h.factory->command_queue().front().command_id,
-                                  h.sim.entity_registry(), L);
+        osc::sim::SimContext ctx = h.sim.sim_context();
+        ctx.L = L;
+        h.factory->remove_command(h.factory->command_queue().front().command_id, ctx);
     }
     h.sim.tick();
 

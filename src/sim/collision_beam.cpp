@@ -38,6 +38,10 @@ std::optional<Vector3> pose(EntityRegistry& registry, Entity& beam) {
     Entity* e = registry.find(beam.beam_launcher_id());
     if (!e || e->destroyed() || !e->is_unit()) return std::nullopt;
     const auto& launcher = static_cast<const Unit&>(*e);
+    if (const i32 weapon = beam.beam_setup().weapon;
+        weapon >= 0 && static_cast<size_t>(weapon) >= launcher.weapons().size()) {
+        return std::nullopt;
+    }
     const i32 bone = beam.beam_setup().muzzle_bone;
     Vector3 dir = launcher.bone_world_forward(bone);
     const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
@@ -47,6 +51,13 @@ std::optional<Vector3> pose(EntityRegistry& registry, Entity& beam) {
     beam.set_orientation(
         euler_to_quat(osc::dmath::atan2(dir.x, dir.z), osc::dmath::atan2(-dir.y, across), 0.0f));
     return dir;
+}
+
+void reach_on(Entity& beam, const Vector3& facing) {
+    const Vector3 from = beam.pending_position();
+    const f32 reached = beam.beam_setup().reached;
+    beam.set_beam_endpoint(
+        {from.x + facing.x * reached, from.y + facing.y * reached, from.z + facing.z * reached});
 }
 
 /// What retail's OnImpact calls the thing a beam met.
@@ -101,18 +112,18 @@ int weapon_ref(const EntityRegistry& registry, const Entity& beam) {
 
 } // namespace
 
-void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_pass) {
+void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_step) {
     EntityRegistry& registry = sim.entity_registry();
     Entity* beam = registry.find(beam_id);
     if (!beam || beam->destroyed() || !beam->is_collision_beam()) return;
     const std::optional<Vector3> facing = pose(registry, *beam);
     if (!facing) return;
     auto& setup = beam->beam_setup();
-    setup.check_clock = setup.check_interval + (before_pass ? 1 : 0);
+    setup.check_clock = setup.check_interval + (before_step ? 1 : 0);
 
     const u32 launcher_id = beam->beam_launcher_id();
     const f32 length = setup.length > 0 ? setup.length : 1.0f;
-    const Vector3 from = beam->position();
+    const Vector3 from = beam->pending_position();
     const Vector3 to{from.x + facing->x * length, from.y + facing->y * length,
                      from.z + facing->z * length};
 
@@ -219,31 +230,31 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
     lua_settop(L, top);
 }
 
-void update_collision_beams(SimState& sim, lua_State* L) {
-    EntityRegistry& registry = sim.entity_registry();
-    auto& beams = sim.collision_beams();
-    beams.erase(std::remove_if(beams.begin(), beams.end(),
-                               [&](u32 id) {
-                                   const Entity* e = registry.find(id);
-                                   return !e || e->destroyed();
-                               }),
-                beams.end());
-    const std::vector<u32> ids = beams; // a check's scripts may make or end beams
-    for (const u32 id : ids) {
-        Entity* beam = registry.find(id);
-        if (!beam || beam->destroyed()) continue;
-        const std::optional<Vector3> facing = pose(registry, *beam);
-        if (!facing || !beam->beam_enabled()) continue;
-        auto& setup = beam->beam_setup();
-        if (setup.check_clock > 0) {
-            --setup.check_clock;
-            const Vector3 from = beam->position();
-            beam->set_beam_endpoint({from.x + facing->x * setup.reached,
-                                     from.y + facing->y * setup.reached,
-                                     from.z + facing->z * setup.reached});
-            continue;
-        }
-        check_collision_beam(sim, L, id, false);
+bool step_collision_beam(SimState& sim, lua_State* L, Entity& beam) {
+    if (beam.destroyed()) {
+        return true;
+    }
+    const std::optional<Vector3> facing = pose(sim.entity_registry(), beam);
+    if (!facing) {
+        return false;
+    }
+    if (!beam.beam_enabled()) {
+        return true;
+    }
+    auto& setup = beam.beam_setup();
+    if (setup.check_clock > 0) {
+        --setup.check_clock;
+        reach_on(beam, *facing);
+        return true;
+    }
+    check_collision_beam(sim, L, beam.entity_id(), false);
+    return true;
+}
+
+void repose_collision_beam(EntityRegistry& registry, Entity& beam) {
+    const std::optional<Vector3> facing = pose(registry, beam);
+    if (facing && beam.beam_enabled()) {
+        reach_on(beam, *facing);
     }
 }
 

@@ -1,6 +1,6 @@
 // SimCallbacks: a UI script's request for the sim to do something. Moho runs
-// them as commands, inside a tick; here too (SimState::dispatch_due_commands),
-// so in multiplayer every peer runs each one on the same tick.
+// them as commands, in a beat; here too (SimState::dispatch_due_commands),
+// so in multiplayer every peer runs each one in the same beat.
 
 #include "map/terrain.hpp"
 #include "sim/build_placement.hpp"
@@ -265,9 +265,9 @@ void remove_command(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!command) {
         return;
     }
-    for_each_unit(sim, cb, [&](Unit& u) {
-        u.remove_command(static_cast<u32>(*command), sim.entity_registry(), L);
-    });
+    SimContext ctx = sim.sim_context();
+    ctx.L = L;
+    for_each_unit(sim, cb, [&](Unit& u) { u.remove_command(static_cast<u32>(*command), ctx); });
 }
 
 void set_command_type(SimState& sim, const SimCallbackEntry& cb) {

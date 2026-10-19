@@ -54,10 +54,10 @@ bool refuels(const UnitCommand& cmd) {
 /// forward, flattened.
 f32 bone_heading(const Unit& platform, i32 bone) {
     const Quaternion facing =
-        quat_multiply(platform.orientation(), platform.bone_pose(bone).rotation);
+        quat_multiply(platform.pending_orientation(), platform.bone_pose(bone).rotation);
     const Vector3 forward = quat_rotate(facing, Vector3{0.0f, 0.0f, 1.0f});
     if (forward.x * forward.x + forward.z * forward.z < 1e-6f)
-        return quat_yaw(platform.orientation());
+        return quat_yaw(platform.pending_orientation());
     return dmath::atan2(forward.x, forward.z);
 }
 
@@ -104,45 +104,59 @@ bool Unit::docks_at(u32 platform_id) const {
     return refuels(head) && head.target_id == platform_id && head.dock_phase == DockPhase::Approach;
 }
 
-bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx) {
-    const f32 fdt = static_cast<f32>(dt);
-    const auto gap = [&] {
-        const f32 dx = at.x - position().x;
-        const f32 dz = at.z - position().z;
-        return std::sqrt(dx * dx + dz * dz);
-    };
+bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, SimContext& ctx,
+                       std::optional<f32> facing_cos) {
+    const f32 dx = at.x - position().x;
+    const f32 dz = at.z - position().z;
+    const f32 gap = std::sqrt(dx * dx + dz * dz);
     if (!glided) {
         // The flight there, until the point is within the unit's turning
         // circle: a fast flier would circle it for good, never coming near
         // enough for the navigator to call it there.
         const f32 turning = current_airspeed_ / std::max(turn_rate_rad_ * turn_mult_, 0.1f);
-        if (gap() > std::max(10.0f, turning)) {
+        if (gap > std::max(10.0f, turning)) {
             const Vector3 goal = navigator_.goal();
-            if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
-                std::abs(goal.z - at.z) > 1.0f)
+            if ((!navigator_.is_moving() && !navigator_.ended()) ||
+                std::abs(goal.x - at.x) > 1.0f || std::abs(goal.z - at.z) > 1.0f) {
                 navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
-            if (nav_update(dt, ctx.terrain)) return false;
+            }
+            if (nav_update()) {
+                return false;
+            }
         }
         navigator_.abort_move();
         glided = true;
     }
+    const f32 floor = air_floor(ctx.terrain, position().x, position().z);
+    const bool settled = gap <= kOverBone && current_altitude_ == at.y - floor &&
+                         (!facing_cos || dmath::cos(heading_ - heading) > *facing_cos);
+    if (!settled) {
+        set_course({.kind = AirCourse::Kind::Settle, .at = at, .heading = heading});
+    }
+    return settled;
+}
+
+void Unit::settle_step(const Vector3& at, f32 heading, f64 dt, const map::Terrain* terrain) {
+    const f32 fdt = static_cast<f32>(dt);
     rest_air_body();
     // Settling: straight over the point, slowing to a hover, down to it and
     // turned the way it faces (Moho's move onto the land layer, at the
     // point's height and facing).
-    const f32 dist = gap();
+    const f32 dx = at.x - pending_position().x;
+    const f32 dz = at.z - pending_position().z;
+    const f32 dist = std::sqrt(dx * dx + dz * dz);
     const f32 speed = dist > kOverBone
                           ? std::max(current_airspeed_ - accel_rate_ * accel_mult_ * fdt,
                                      std::max(climb_rate_, 1.0f))
                           : 0.0f;
     current_airspeed_ = speed;
-    Vector3 to = position();
+    Vector3 to = pending_position();
     if (dist > kOverBone) {
         const f32 step = std::min(dist, speed * fdt);
         to.x += (at.x - to.x) / dist * step;
         to.z += (at.z - to.z) / dist * step;
     }
-    const f32 ground = air_floor(ctx.terrain, to.x, to.z);
+    const f32 ground = air_floor(terrain, to.x, to.z);
     const f32 want_alt = at.y - ground;
     const f32 climb = climb_rate_ * fdt;
     current_altitude_ = current_altitude_ < want_alt
@@ -154,10 +168,9 @@ bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, Sim
     pitch_ = 0.0f;
     bank_angle_ = 0.0f;
     set_orientation(euler_to_quat(heading_, 0.0f, 0.0f));
-    return gap() <= kOverBone && current_altitude_ == want_alt;
 }
 
-OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_refuel(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     // Scripts run on the way (the attach, the detach) may clear the queue (and
     // cmd with it) or replace it: the order goes only if it is still the head.
@@ -184,7 +197,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             navigator_.set_speed_through_goal(true);
             navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
     };
 
     // The task ends with its platform: dead, busy with an order of its own,
@@ -221,7 +234,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             navigator_.set_speed_through_goal(false);
             navigator_.abort_move();
         }
-        const LandStep step = carrier_land_step(*pad, true, dt, ctx);
+        const LandStep step = carrier_land_step(*pad, true, ctx);
         if (gone()) return OrderStep::Gone;
         if (command_queue_.empty() || &command_queue_.front() != &cmd ||
             command_queue_.front().command_id != order_id)
@@ -278,9 +291,10 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         const TransportSlots::Slot* slot = slots ? slots->slot_of(entity_id()) : nullptr;
         if (!slot) return finish();
         const f32 facing = bone_heading(*pad, slot->bone);
-        const bool settled =
-            settle_over(pad->bone_world_position(slot->bone), facing, cmd.started, dt, ctx);
-        if (!settled || dmath::cos(heading_ - facing) <= kAttachAlignment) return OrderStep::Hold;
+        if (!settle_over(pad->bone_world_position(slot->bone), facing, cmd.started, ctx,
+                         kAttachAlignment)) {
+            return OrderStep::Hold;
+        }
         attach_to_transport(pad, registry, ctx.L);
         if (gone()) return OrderStep::Gone;
         if (command_queue_.empty() || &command_queue_.front() != &cmd ||
@@ -321,11 +335,11 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
             std::abs(goal.z - at.z) > 1.0f)
             navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
-        nav_update(dt, ctx.terrain);
+        nav_update();
         return OrderStep::Hold;
     }
     if (!carrier && current_altitude_ != elevation_target_) {
-        hold_altitude(dt, ctx.terrain, elevation_target_);
+        set_course({.kind = AirCourse::Kind::Hold, .altitude = elevation_target_});
         return OrderStep::Hold;
     }
     set_unit_state("Refueling", false);
@@ -348,7 +362,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     return finish();
 }
 
-Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimContext& ctx) {
+Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, SimContext& ctx) {
     const u32 me = entity_id();
     const auto fail = [&] {
         abandon_landing(ctx.registry);
@@ -387,8 +401,9 @@ Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimCo
     if (landing_.phase == LandPhase::Approach) {
         // In to the point it comes in from, down at the deck's height, facing
         // the way the place does.
-        if (!settle_over(landing_.approach, landing_.place.heading, landing_.glided, dt, ctx))
+        if (!settle_over(landing_.approach, landing_.place.heading, landing_.glided, ctx)) {
             return LandStep::Landing;
+        }
         landing_.phase = LandPhase::Hold;
     }
 
@@ -411,8 +426,9 @@ Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimCo
     }
 
     // Descend: onto the place; there the carrier stores it.
-    if (!settle_over(landing_.place.point, landing_.place.heading, landing_.glided, dt, ctx))
+    if (!settle_over(landing_.place.point, landing_.place.heading, landing_.glided, ctx)) {
         return LandStep::Landing;
+    }
     carrier.add_to_storage(*this, ctx.registry, ctx.L);
     if (destroyed() || !in_registry()) return LandStep::Failed;
     if (transport_id_ != carrier.entity_id()) return fail();
@@ -429,7 +445,7 @@ void Unit::abandon_landing(EntityRegistry& registry) {
     set_unit_state("TransportLoading", false);
 }
 
-OrderStep Unit::order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_carrier_landing(UnitCommand& cmd, SimContext& ctx) {
     // Ordered aboard a carrier (Moho's CUnitCarrierLand from a load order):
     // the carrier takes its own share of the order (its retrieve; each load
     // order its own, as each is its own Moho command), and the unit lands
@@ -457,7 +473,7 @@ OrderStep Unit::order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx)
         load.command_id = cmd.command_id;
         carrier->command_queue_.push_back(load);
     }
-    const LandStep step = carrier_land_step(*carrier, false, dt, ctx);
+    const LandStep step = carrier_land_step(*carrier, false, ctx);
     if (destroyed() || !in_registry()) return OrderStep::Gone;
     if (command_queue_.empty() || &command_queue_.front() != &cmd ||
         command_queue_.front().command_id != order_id)
@@ -505,19 +521,15 @@ Unit* Unit::find_platform(SimContext& ctx) {
     return found;
 }
 
-void Unit::tick_docked(f64 dt, SimContext& ctx, Unit& platform) {
+void Unit::tick_docked(SimContext& ctx, Unit& platform) {
     const u32 platform_id = platform.entity_id();
     if (!command_queue_.empty()) {
         UnitCommand& head = command_queue_.front();
         if (refuels(head) && head.target_id == platform_id &&
             head.dock_phase == DockPhase::Docked) {
-            order_refuel(head, dt, ctx);
-            if (destroyed() || !in_registry()) return;
+            order_refuel(head, ctx);
         }
     }
-    // Still aboard, it refuels; let go this tick, it flies.
-    Unit* pad = transport_id_ == platform_id ? live_unit(ctx.registry, platform_id) : nullptr;
-    tick_fuel(dt, ctx, pad);
 }
 
 bool Unit::tick_fuel(f64 dt, SimContext& ctx, Unit* platform) {

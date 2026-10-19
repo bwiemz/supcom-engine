@@ -24,6 +24,20 @@ extern "C" {
 #include <string_view>
 #include <vector>
 
+namespace {
+
+void economy_tick(osc::sim::ArmyBrain& brain, osc::sim::EntityRegistry& registry, double dt) {
+    registry.for_each_unit([&](osc::sim::Entity& e) {
+        auto& unit = static_cast<osc::sim::Unit&>(e);
+        unit.bank_reclaim(&brain);
+        unit.manage_resources(&brain);
+    });
+    brain.update_economy(registry, dt);
+    brain.update_unit_cap_stats(registry);
+}
+
+} // namespace
+
 TEST_CASE("ArmyBrain stat storage", "[army][stats]") {
     osc::sim::ArmyBrain brain;
     SECTION("default stat returns default value") {
@@ -87,7 +101,9 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     spender->economy().consumption_active = true;
     registry.register_entity(std::move(spender));
 
-    for (int i = 0; i < 10; ++i) brain.update_economy(registry, 0.1); // 1 s
+    for (int i = 0; i < 10; ++i) {
+        economy_tick(brain, registry, 0.1); // 1 s
+    }
     // The rates are a tick's worth, as Moho's: 10/s and 4/s, 0.1 s a tick.
     CHECK(std::abs(brain.get_stat("Economy_Income_Mass") - 1.0) < 1e-9);
     CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 10.0) < 1e-9);
@@ -97,7 +113,9 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     CHECK(brain.get_stat("UnitCap_MaxCap") == 500.0);
 
     // Full storage wastes the surplus: 6/s over the 200 base storage.
-    for (int i = 0; i < 400; ++i) brain.update_economy(registry, 0.1); // 40 s
+    for (int i = 0; i < 400; ++i) {
+        economy_tick(brain, registry, 0.1); // 40 s
+    }
     CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
 }
 
@@ -121,7 +139,7 @@ TEST_CASE("A paused unit keeps producing, and its army pays what the unit asks",
     registry.register_entity(std::move(shield));
 
     for (int i = 0; i < 10; ++i) {
-        brain.update_economy(registry, 0.1);
+        economy_tick(brain, registry, 0.1);
     }
     CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 2.0) < 1e-9);
     CHECK(brain.economy().mass.requested == 4.0);
@@ -129,7 +147,7 @@ TEST_CASE("A paused unit keeps producing, and its army pays what the unit asks",
 
     s->economy().consumption_active = false;
     for (int i = 0; i < 10; ++i) {
-        brain.update_economy(registry, 0.1);
+        economy_tick(brain, registry, 0.1);
     }
     CHECK(brain.economy().mass.requested == 0.0);
 }
@@ -148,7 +166,7 @@ TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",
     registry.register_entity(std::move(acu));
 
     for (int i = 0; i < 10; ++i) {
-        brain.update_economy(registry, 0.1);
+        economy_tick(brain, registry, 0.1);
     }
     CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 4.0) < 1e-9);
 
@@ -221,15 +239,15 @@ TEST_CASE("GiveStorage replaces the army's one extra pair, which outlives the re
 
     // An army has no storage of its own: its commander's, as the original's
     // starts with 4000 and 650
-    brain.update_economy(registry, 0.1);
+    economy_tick(brain, registry, 0.1);
     REQUIRE(brain.economy().energy.max_storage == 4000.0);
     REQUIRE(brain.economy().mass.max_storage == 650.0);
 
     brain.set_extra_storage(0.0, 10000.0);
     // Usable at once: storage can be filled before the next economy tick.
     REQUIRE(brain.economy().energy.max_storage == 14000.0);
-    brain.update_economy(registry, 0.1);
-    brain.update_economy(registry, 0.1);
+    economy_tick(brain, registry, 0.1);
+    economy_tick(brain, registry, 0.1);
     REQUIRE(brain.economy().energy.max_storage == 14000.0);
     REQUIRE(brain.economy().mass.max_storage == 650.0);
 
@@ -239,13 +257,13 @@ TEST_CASE("GiveStorage replaces the army's one extra pair, which outlives the re
     brain.set_extra_storage(500.0, 0.0);
     REQUIRE(brain.economy().energy.max_storage == 4000.0);
     REQUIRE(brain.economy().mass.max_storage == 1150.0);
-    brain.update_economy(registry, 0.1);
+    economy_tick(brain, registry, 0.1);
     REQUIRE(brain.economy().energy.max_storage == 4000.0);
     REQUIRE(brain.economy().mass.max_storage == 1150.0);
 
     // Never under nothing
     brain.set_extra_storage(-5000.0, 0.0);
-    brain.update_economy(registry, 0.1);
+    economy_tick(brain, registry, 0.1);
     REQUIRE(brain.economy().mass.max_storage == 0.0);
 }
 
@@ -516,7 +534,7 @@ TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][
     // UI scripts keep unit objects across beats (avatars, idle lists,
     // selections). They must resolve through the registry, never hold a
     // pointer: an unregistered entity waits in the graveyard and is freed at
-    // tick end, while the script's handle lives on.
+    // the beat's end, while the script's handle lives on.
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
     osc::ui::UIControlRegistry ui_registry;
@@ -1018,7 +1036,7 @@ struct Economy {
         store->economy().production_active = true;
         builder = make();
         upkeep = make();
-        brain.update_economy(registry, 0.1); // the storage counted
+        economy_tick(brain, registry, 0.1); // the storage counted
     }
 };
 
@@ -1038,7 +1056,7 @@ TEST_CASE("An energy stall grants a build as little mass as energy, as Moho's ec
     e.builder->economy().consumption_energy = 19.0;
     e.upkeep->economy().maintenance_active = true;
     e.upkeep->economy().energy_maintenance_override = 250.0;
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
 
     const osc::sim::GrantRatios& g = e.brain.grant_ratios();
     CHECK_FALSE(g.mass_limits);
@@ -1063,7 +1081,7 @@ TEST_CASE("A mass stall slows a build but not an energy upkeep", "[economy]") {
     e.upkeep->economy().energy_maintenance_override = 100.0;
     e.upkeep->add_intel("Radar", 50.0f);
     e.upkeep->enable_intel("Radar");
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
 
     const osc::sim::GrantRatios& g = e.brain.grant_ratios();
     CHECK(g.mass_limits);
@@ -1100,15 +1118,15 @@ TEST_CASE("A request is worked from two ticks after it is made, as Moho's Resour
     econ.consumption_active = true;
     econ.consumption_mass = 4.0;
     econ.consumption_energy = 19.0;
-    e.brain.update_economy(e.registry, 0.1); // the next tick: granted
+    economy_tick(e.brain, e.registry, 0.1); // the next tick: granted
     CHECK(econ.granted == 1.0);
     CHECK(econ.resource_consumed == 0.0);
-    e.brain.update_economy(e.registry, 0.1); // the one after: worked
+    economy_tick(e.brain, e.registry, 0.1); // the one after: worked
     CHECK(econ.resource_consumed == 1.0);
     // And when it stops asking, its work stops at once (the original: 0 the
     // tick after a factory's unit is done)
     econ.consumption_active = false;
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
     CHECK(econ.granted == 0.0);
     CHECK(econ.resource_consumed == 0.0);
 }
@@ -1123,11 +1141,11 @@ TEST_CASE("A request that stops before working its grant gives it back", "[econo
     econ.consumption_active = true;
     econ.consumption_mass = 4.0;
     econ.consumption_energy = 20.0;
-    e.brain.update_economy(e.registry, 0.1); // granted, taken from the stores
+    economy_tick(e.brain, e.registry, 0.1); // granted, taken from the stores
     CHECK(e.brain.economy().mass.stored == Catch::Approx(499.6));
     CHECK(e.brain.economy().energy.stored == Catch::Approx(1998.0));
     econ.consumption_active = false; // done before working it
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
     CHECK(e.brain.economy().mass.stored == Catch::Approx(500.0));
     CHECK(e.brain.economy().energy.stored == Catch::Approx(2000.0));
     CHECK(econ.granted_mass == 0.0);
@@ -1143,11 +1161,11 @@ TEST_CASE("An upkeep set through the engine's own fields reads granted too", "[e
     auto& econ = e.upkeep->economy();
     econ.maintenance_active = true;
     econ.energy_maintenance_override = 20.0;
-    e.brain.update_economy(e.registry, 0.1);
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
     CHECK(econ.resource_consumed == 1.0);
     econ.maintenance_active = false;
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
     CHECK(econ.resource_consumed == 0.0);
 }
 
@@ -1157,7 +1175,7 @@ TEST_CASE("An economy with enough grants every request in full", "[economy]") {
     e.builder->economy().consumption_active = true;
     e.builder->economy().consumption_mass = 4.0;
     e.builder->economy().consumption_energy = 19.0;
-    e.brain.update_economy(e.registry, 0.1);
+    economy_tick(e.brain, e.registry, 0.1);
     CHECK(e.brain.grant_ratios().dual == 1.0);
     CHECK(e.brain.grant_ratios().single == 1.0);
     CHECK(e.brain.mass_efficiency() == 1.0);

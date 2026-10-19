@@ -96,7 +96,7 @@ TEST_CASE("Lockstep peers hold on the tick that ended the game", "[lockstep]") {
     SimState a(ga.L, nullptr);
     SimState b(gb.L, nullptr);
     for (SimState* sim : {&a, &b}) {
-        sim->set_tick_observer([sim](const SimState&) {
+        sim->set_beat_observer([sim](const SimState&) {
             if (sim->tick_count() == 5) {
                 sim->set_game_ended(true);
             }
@@ -179,7 +179,7 @@ TEST_CASE("Exchanged checksums flag a desync", "[lockstep]") {
     const auto report = osc::lua::gpgnet_desync_report(seen, 1);
     CHECK(report.name == "Desync");
     REQUIRE(report.args.size() == 4);
-    CHECK(report.args[0].num == static_cast<osc::i32>(seen.desync_tick()));
+    CHECK(report.args[0].num == static_cast<osc::i32>(seen.desync_beat()));
     CHECK(report.args[0].num > 0);
     CHECK(report.args[1].num == 1);
     CHECK(report.args[2].str.size() == 16);
@@ -209,7 +209,7 @@ TEST_CASE("A desync names the domain that diverged", "[lockstep]") {
     }
     REQUIRE(sa.desynced());
     CHECK(sa.desync_domains() == std::vector<std::string>{"units"});
-    CHECK(sa.desync_tick() >= 1);
+    CHECK(sa.desync_beat() >= 1);
 }
 
 TEST_CASE("Each differing checksum is a desync naming its peer", "[lockstep]") {
@@ -242,7 +242,7 @@ TEST_CASE("Each differing checksum is a desync naming its peer", "[lockstep]") {
     for (const auto& desync : desyncs) {
         CHECK(desync.source == 2);
     }
-    CHECK(desyncs[1].tick > desyncs[0].tick);
+    CHECK(desyncs[1].beat > desyncs[0].beat);
     CHECK(sa.take_desyncs().empty());
 }
 
@@ -313,7 +313,7 @@ TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
         for (size_t i = 0; i < SimState::ChecksumParts::kCount; ++i) w.u64v(0);
         w.u32v(1); // one command
         osc::sim::ScheduledCommand c;
-        c.exec_tick = 1;
+        c.exec_beat = 1;
         c.source = claimed;
         c.command = move_to(100.0f, 0.0f);
         c.unit_ids = {id};
@@ -361,7 +361,7 @@ TEST_CASE("Only the game's sources are heard: not the engine's, nor one not play
         w.u32v(defeat ? 1 : 0);
         if (defeat) {
             osc::sim::ScheduledCommand c;
-            c.exec_tick = frame;
+            c.exec_beat = frame;
             c.source = from;
             c.callback = osc::sim::SimCallbackEntry{};
             c.callback->func_name = osc::sim::kDefeatArmyCallback;
@@ -635,16 +635,18 @@ TEST_CASE("A pause holds every peer on one tick; a resume releases them together
     for (int i = 0; i < 5; ++i) g.round();
     g.sa.request_pause();
     for (int i = 0; i < 3; ++i) g.round();
-    REQUIRE(g.a.network_paused());
-    REQUIRE(g.b.network_paused());
+    REQUIRE(g.a.paused());
+    REQUIRE(g.b.paused());
     CHECK(g.a.paused_by() == 0);
     CHECK(g.b.paused_by() == 0);
     const osc::u32 held = g.a.tick_count();
     CHECK(g.b.tick_count() == held);
-    // Held there, however long, and no one is dropped: no frames flow
+    // Held there, however long, its frames beating without ticks, and no one is dropped
     for (int i = 0; i < 40; ++i) g.round();
     CHECK(g.a.tick_count() == held);
     CHECK(g.b.tick_count() == held);
+    CHECK(g.a.beat_count() == g.b.beat_count());
+    CHECK(g.a.beat_count() > held + 40);
     CHECK_FALSE(g.sa.has_dropped(1));
     CHECK_FALSE(g.sb.has_dropped(0));
     // Asking again while paused does nothing
@@ -652,11 +654,12 @@ TEST_CASE("A pause holds every peer on one tick; a resume releases them together
     // The other player resumes (any may): both go on from there together,
     // a tick a round -- no burst of the rounds spent paused
     REQUIRE(g.sb.request_resume());
-    CHECK_FALSE(g.sb.request_resume()); // not paused any more
     g.round();
-    CHECK_FALSE(g.a.network_paused());
-    CHECK_FALSE(g.b.network_paused());
+    CHECK_FALSE(g.a.paused());
+    CHECK_FALSE(g.b.paused());
+    g.sb.request_resume();
     for (int i = 0; i < 5; ++i) g.round();
+    CHECK_FALSE(g.a.paused());
     CHECK(g.a.tick_count() <= held + 7);
     CHECK(g.a.tick_count() > held);
     CHECK(g.a.tick_count() == g.b.tick_count());
@@ -664,7 +667,7 @@ TEST_CASE("A pause holds every peer on one tick; a resume releases them together
     CHECK(g.a.pause_serial() == 1); // the second ask found it paused
 }
 
-TEST_CASE("A pause holds on its own tick, though later frames are in (M218f)",
+TEST_CASE("A pause stops the tick of its own beat, though later frames are in (M218f)",
           "[lockstep][pause]") {
     PausePair g;
     for (int i = 0; i < 3; ++i) g.round();
@@ -677,10 +680,10 @@ TEST_CASE("A pause holds on its own tick, though later frames are in (M218f)",
     }
     g.sa.receive_and_advance();
     g.sb.receive_and_advance();
-    REQUIRE(g.a.network_paused());
-    REQUIRE(g.b.network_paused());
-    CHECK(g.a.tick_count() == pause_tick);
-    CHECK(g.b.tick_count() == pause_tick);
+    REQUIRE(g.a.paused());
+    REQUIRE(g.b.paused());
+    CHECK(g.a.tick_count() == pause_tick - 1);
+    CHECK(g.b.tick_count() == pause_tick - 1);
 }
 
 TEST_CASE("A source's pause timeouts run out; others may still pause (M218f)",
@@ -690,7 +693,7 @@ TEST_CASE("A source's pause timeouts run out; others may still pause (M218f)",
     for (int i = 0; i < 3; ++i) g.round();
     g.sa.request_pause();
     for (int i = 0; i < 3; ++i) g.round();
-    REQUIRE(g.a.network_paused());
+    REQUIRE(g.a.paused());
     CHECK(g.a.pause_timeouts(0) == 0);
     CHECK(g.b.pause_timeouts(0) == 0); // spent on every peer
     g.sa.request_resume();
@@ -699,49 +702,97 @@ TEST_CASE("A source's pause timeouts run out; others may still pause (M218f)",
     const osc::u32 at = g.a.tick_count();
     g.sa.request_pause();
     for (int i = 0; i < 5; ++i) g.round();
-    CHECK_FALSE(g.a.network_paused());
+    CHECK_FALSE(g.a.paused());
     CHECK(g.a.tick_count() > at);
     // B's are unlimited
     g.sb.request_pause();
     for (int i = 0; i < 3; ++i) g.round();
-    CHECK(g.a.network_paused());
+    CHECK(g.a.paused());
     CHECK(g.a.paused_by() == 1);
     CHECK(g.b.pause_timeouts(1) == -1);
 }
 
-TEST_CASE("A resume that comes before a peer reaches the pause releases it there (M218f)",
+TEST_CASE("A peer behind the others meets a pause and its resume in their beats (M218f)",
           "[lockstep][pause]") {
     PausePair g;
     for (int i = 0; i < 3; ++i) g.round();
     // B falls behind: it sends its frames but reads nothing, while A pauses
     // and resumes
     g.sa.request_pause();
-    for (int i = 0; i < 4; ++i) {
+    const auto a_alone = [&g] {
         g.sa.send_frame();
         g.sb.send_frame();
         g.sa.receive_and_advance();
+    };
+    for (int i = 0; i < 4; ++i) {
+        a_alone();
     }
-    REQUIRE(g.a.network_paused());
-    const osc::u32 held = g.a.tick_count();
-    CHECK(g.b.tick_count() < held);
+    REQUIRE(g.a.paused());
     REQUIRE(g.sa.request_resume());
-    // B reads it all at once: it reaches the pause after its resume
+    for (int i = 0; i < 3; ++i) {
+        a_alone();
+    }
+    REQUIRE_FALSE(g.a.paused());
+    CHECK(g.b.beat_count() < g.a.beat_count());
+    // B reads it all at once: the pause, its paused beats and the resume
     g.sb.receive_and_advance();
-    CHECK_FALSE(g.b.network_paused());
+    CHECK_FALSE(g.b.paused());
     CHECK(g.b.pause_serial() == 1);
-    CHECK(g.b.tick_count() >= held);
+    CHECK(g.b.beat_count() == g.a.beat_count());
+    CHECK(g.b.tick_count() == g.a.tick_count());
     for (int i = 0; i < 5; ++i) g.round();
     CHECK(g.a.tick_count() == g.b.tick_count());
     CHECK(g.a.compute_sync_checksum() == g.b.compute_sync_checksum());
 }
 
-TEST_CASE("Outside a lockstep game a pause resumes at once (M218f)", "[lockstep][pause]") {
-    // A replay playing a network game back: no message would resume it
+TEST_CASE("An order given while paused runs in a paused beat on every peer (M218f)",
+          "[lockstep][pause]") {
+    PausePair g;
+    for (int i = 0; i < 3; ++i) {
+        g.round();
+    }
+    g.sa.request_pause();
+    for (int i = 0; i < 3; ++i) {
+        g.round();
+    }
+    REQUIRE(g.a.paused());
+    REQUIRE(g.b.paused());
+    const osc::u32 held = g.a.tick_count();
+    const osc::u32 mover = 1;
+    REQUIRE(g.a.entity_registry().find(mover));
+    g.sa.submit_local({mover}, move_to(90.0f, 90.0f), true);
+    for (int i = 0; i < 3; ++i) {
+        g.round();
+    }
+    for (SimState* s : {&g.a, &g.b}) {
+        CHECK(s->paused());
+        CHECK(s->tick_count() == held);
+        const auto* u = static_cast<const Unit*>(s->entity_registry().find(mover));
+        REQUIRE(u);
+        REQUIRE(u->command_queue().size() == 1);
+        CHECK(u->command_queue().front().target_pos.x == 90.0f);
+    }
+    CHECK(g.a.compute_sync_checksum() == g.b.compute_sync_checksum());
+}
+
+TEST_CASE("A replay recorded before resumes were commands doesn't hold its pauses (M218f)",
+          "[lockstep][pause]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     sim.set_pause_timeouts(0, 3);
-    sim.request_pause(0);
-    CHECK_FALSE(sim.network_paused());
+    osc::sim::Replay old;
+    old.version = 16;
+    osc::sim::ScheduledCommand pause;
+    pause.exec_beat = 2;
+    pause.callback = osc::sim::SimCallbackEntry{};
+    pause.callback->func_name = osc::sim::kRequestPauseCallback;
+    old.commands.push_back(pause);
+    sim.queue_replay(old);
+    for (int i = 0; i < 3; ++i) {
+        sim.tick();
+    }
+    CHECK_FALSE(sim.paused());
+    CHECK(sim.tick_count() == 3);
     CHECK(sim.pause_serial() == 1);
     CHECK(sim.pause_timeouts(0) == 2); // spent as in the game
 }

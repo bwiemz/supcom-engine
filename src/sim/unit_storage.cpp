@@ -51,12 +51,12 @@ std::optional<Unit::StoragePlace> Unit::reserve_storage(u32 unit_id) {
     const i32 bone = points[next_generic_ % points.size()];
     StoragePlace place;
     place.point = bone_world_position(bone);
-    const Quaternion facing = quat_multiply(orientation(), bone_pose(bone).rotation);
+    const Quaternion facing = quat_multiply(pending_orientation(), bone_pose(bone).rotation);
     const Vector3 forward = quat_rotate(facing, Vector3{0.0f, 0.0f, 1.0f});
     place.heading = forward.x * forward.x + forward.z * forward.z > 1e-6f
                         ? dmath::atan2(forward.x, forward.z)
-                        : quat_yaw(orientation());
-    place.height = place.point.y - position().y;
+                        : quat_yaw(pending_orientation());
+    place.height = place.point.y - pending_position().y;
     place.delay = generic_overflow_;
     next_generic_ = (next_generic_ + 1) % static_cast<u32>(points.size());
     if (next_generic_ == 0) generic_overflow_ = (generic_overflow_ + 3) % 50;
@@ -103,20 +103,21 @@ void Unit::remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* 
     unit.set_unit_state("Attached", false);
 
     // Out at the next launch bone, facing as it does (else at the carrier).
-    Vector3 at = position();
-    Quaternion facing = orientation();
+    Vector3 at = pending_position();
+    Quaternion facing = pending_orientation();
     if (const TransportSlots* slots = transport_slots()) {
         const std::vector<i32> bones = slots->launch_bones();
         if (!bones.empty()) {
             launch_index_ = (launch_index_ + 1) % static_cast<u32>(bones.size());
             const i32 bone = bones[launch_index_];
             at = bone_world_position(bone);
-            facing = quat_multiply(orientation(), bone_pose(bone).rotation);
+            facing = quat_multiply(pending_orientation(), bone_pose(bone).rotation);
         }
     }
     unit.set_position(at);
     unit.set_orientation(facing);
     unit.note_snap();
+    unit.place_now();
     // Moving off at once along its facing, at its top speed.
     const Vector3 forward = quat_rotate(facing, Vector3{0.0f, 0.0f, 1.0f});
     if (forward.x * forward.x + forward.z * forward.z > 1e-6f)

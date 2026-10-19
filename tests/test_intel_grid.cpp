@@ -240,11 +240,14 @@ TEST_CASE("A moving source repaints as Moho's handles do", "[intel]") {
 
     // Moving: painted where it was until it has gone a third of its radius
     radar->set_position({36, 6, 64});
+    radar->place_now();
     w.sim.tick();
     radar->set_position({38, 6, 64});
+    radar->place_now();
     w.sim.tick();
     CHECK(g.visible(6, 64));
     radar->set_position({41, 6, 64});
+    radar->place_now();
     w.sim.tick();
     // About cell 10: columns 4 to 16
     CHECK_FALSE(g.visible(6, 64));
@@ -252,6 +255,7 @@ TEST_CASE("A moving source repaints as Moho's handles do", "[intel]") {
 
     // Stopping, at once
     radar->set_position({45, 6, 64});
+    radar->place_now();
     w.sim.tick();
     CHECK(g.visible(18, 64));
     CHECK_FALSE(g.visible(70, 64));
@@ -269,7 +273,9 @@ TEST_CASE("A moving source repaints as Moho's handles do", "[intel]") {
     radar->enable_intel("Radar");
     w.sim.tick();
     CHECK(g.visible(45, 64));
-    radar->mark_destroyed();
+    w.sim.entity_registry().destroy(*radar);
+    w.sim.tick();
+    CHECK(g.visible(45, 64));
     w.sim.tick();
     CHECK_FALSE(g.visible(45, 64));
 }

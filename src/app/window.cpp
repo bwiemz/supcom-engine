@@ -468,8 +468,8 @@ std::optional<int> App::Window::finish() {
             spdlog::info("[gpgnet] the game reached tick {}{}", sim_state->tick_count(),
                          session ? ", in lockstep" : "");
             if (session && session->desynced())
-                osc::test_status::fail("[FAIL] gpgnet: the game desynced at tick {}",
-                                       session->desync_tick());
+                osc::test_status::fail("[FAIL] gpgnet: the game desynced at beat {}",
+                                       session->desync_beat());
         }
         return finish_test_run("gpgnet");
     }
@@ -489,10 +489,10 @@ std::optional<int> App::Window::finish() {
         if (!active_playback || !sim_state) {
             osc::test_status::fail("[FAIL] replay-flow: the replay never launched");
         } else if (!active_playback->finished(*sim_state)) {
-            osc::test_status::fail("[FAIL] replay-flow: stopped at tick {} of {}",
-                                   sim_state->tick_count(), active_playback->replay().final_tick);
+            osc::test_status::fail("[FAIL] replay-flow: stopped at beat {} of {}",
+                                   sim_state->beat_count(), active_playback->replay().final_beat);
         } else if (active_playback->diverged_at() != 0) {
-            osc::test_status::fail("[FAIL] replay-flow: diverged at tick {}",
+            osc::test_status::fail("[FAIL] replay-flow: diverged at beat {}",
                                    active_playback->diverged_at());
         } else if (!is_replay) {
             osc::test_status::fail("[FAIL] replay-flow: {}", is_replay.error().message);

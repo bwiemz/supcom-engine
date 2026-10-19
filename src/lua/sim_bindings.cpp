@@ -404,6 +404,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army, f32 x, f3
         unit_ptr->set_heading(0);
         unit_ptr->set_orientation(sim::euler_to_quat(0, 0, 0));
         unit_ptr->set_air_facing({0.0f, 0.0f, 1.0f});
+        unit_ptr->place_now();
     }
 
     spdlog::debug("Created unit {} (entity #{}) at ({}, {}, {})",
@@ -516,6 +517,7 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
             made->set_heading(place_of->heading());
             made->set_current_altitude(place_of->current_altitude());
         }
+        made->place_now();
     }
 
     // Lua table is now on top of stack
@@ -758,29 +760,6 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
         return 1;
     }
 
-    // Read storage from blueprint for initial resource gift
-    // (mirrors GiveInitialResources in ACUUnit.lua which errors before running)
-    f64 gift_mass = 0.0, gift_energy = 0.0;
-    auto* store = sim->blueprint_store();
-    auto* entry = store ? store->find(bp_id) : nullptr;
-    if (entry) {
-        store->push_lua_table(*entry, L);
-        lua_pushstring(L, "Economy");
-        lua_gettable(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "StorageMass");
-            lua_gettable(L, -2);
-            if (lua_isnumber(L, -1)) gift_mass = lua_tonumber(L, -1);
-            lua_pop(L, 1);
-
-            lua_pushstring(L, "StorageEnergy");
-            lua_gettable(L, -2);
-            if (lua_isnumber(L, -1)) gift_energy = lua_tonumber(L, -1);
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 2); // Economy + bp_table
-    }
-
     const auto& pos = brain->start_position();
     lua_settop(L, 0);
     lua_pushstring(L, bp_id.c_str());
@@ -789,20 +768,7 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
     lua_pushnumber(L, pos.y);
     lua_pushnumber(L, pos.z);
     // Not held to the unit cap (Moho makes it without Sim::CreateUnit's gate).
-    int result = create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
-
-    // Give initial resources (mirrors GiveInitialResources in ACUUnit.lua)
-    if (gift_mass > 0.0 || gift_energy > 0.0) {
-        auto& econ = brain->economy();
-        econ.mass.stored = std::min(econ.mass.stored + gift_mass,
-                                     econ.mass.max_storage);
-        econ.energy.stored = std::min(econ.energy.stored + gift_energy,
-                                       econ.energy.max_storage);
-        spdlog::debug("GiveInitialResources: army={} mass={:.0f} energy={:.0f}",
-                      army_idx, gift_mass, gift_energy);
-    }
-
-    return result;
+    return create_complete_unit(L, {}, "CreateInitialArmyUnit", CapGate::None);
 }
 
 // ====================================================================
@@ -970,29 +936,32 @@ static int l_Warp(lua_State* L) {
         lua_rawgeti(L, 2, 3);
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
+        sim::Quaternion facing = entity->orientation();
+        if (lua_istable(L, 3)) {
+            f32 q[4];
+            for (int i = 0; i < 4; ++i) {
+                lua_rawgeti(L, 3, i + 1);
+                q[i] = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+            }
+            facing = {q[0], q[1], q[2], q[3]};
+        }
+        entity->set_orientation(facing);
         if (entity->is_unit()) {
             static_cast<sim::Unit*>(entity)->warp(sim->terrain(), v);
         } else {
             entity->set_position(v);
             entity->note_snap();
+            entity->place_now();
         }
-    }
-    // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
-    if (lua_istable(L, 3)) {
-        f32 q[4];
-        for (int i = 0; i < 4; ++i) {
-            lua_rawgeti(L, 3, i + 1);
-            q[i] = static_cast<f32>(lua_tonumber(L, -1));
-            lua_pop(L, 1);
-        }
-        entity->set_orientation({q[0], q[1], q[2], q[3]});
     }
     return 0;
 }
 
 /// IsDestroyed(obj): Moho's rule, true unless obj holds a live C object.
-/// That may be any script object's: an entity answers by its own flag
-/// (destroyed at once, as BeenDestroyed does), a weapon by its unit's, and
+/// That may be any script object's: an entity lives until the deletion queue
+/// purges it, a weapon until its unit does, and
 /// anything else (a manipulator, an emitter, ...) by its handle, cleared or
 /// marked _destroyed when it goes. Reading a weapon as an entity made FAF's
 /// SetWeaponEnabled skip every weapon it turned off.
@@ -1012,12 +981,11 @@ static int l_IsDestroyed(lua_State* L) {
         if (!object) {
             destroyed = true;
         } else if (registry && registry->holds(object)) {
-            destroyed = static_cast<const sim::Entity*>(object)->destroyed();
+            destroyed = false;
         } else if (registry && registry->departed(object)) {
             destroyed = true;
         } else if (owner) {
-            destroyed = !registry || !registry->holds(owner) ||
-                        static_cast<const sim::Entity*>(owner)->destroyed();
+            destroyed = !registry || !registry->holds(owner);
         } else {
             lua_pushstring(L, "_destroyed");
             lua_rawget(L, 1);
@@ -3005,7 +2973,7 @@ static int l_CreateEconomyEvent(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
 
     auto* unit = extract_entity(L, 1);
-    u32 unit_id = (unit && !unit->destroyed()) ? unit->entity_id() : 0;
+    u32 unit_id = (unit && !unit->destroyed() && unit->is_unit()) ? unit->entity_id() : 0;
     f64 energy = luaL_optnumber(L, 2, 0.0);
     f64 mass = luaL_optnumber(L, 3, 0.0);
     f64 duration = luaL_optnumber(L, 4, 0.0);
@@ -3107,7 +3075,7 @@ static std::optional<bool> blueprint_matches(lua_State* L, const std::string& id
 /// unit by its categories' ids (no string hashed), a projectile by its names
 /// (M206b), any other (a prop) by its blueprint's. nullopt for a value that
 /// names no blueprint (a script's bare Entity, a number). An entity
-/// destroyed this tick still answers, as Moho's does until the tick's end.
+/// destroyed this beat still answers, as Moho's does until the beat's end.
 static std::optional<bool> category_test(lua_State* L, int idx,
                                          const osc::lua::CategoryMatcher& category) {
     if (lua_type(L, idx) == LUA_TSTRING)
@@ -3439,7 +3407,7 @@ static void read_rect(lua_State* L, int idx, f32& x0, f32& z0, f32& x1, f32& z1)
 /// take a Rect, or x0, z0, x1, z1, and give what the collision cells under it
 /// hold (CollisionCells): each unit, and with `props` each prop, whose
 /// collision box touches those cells, in their order. A destroyed one is
-/// still there until the tick ends, as in Moho. Nil if there is none.
+/// still there until the beat ends, as in Moho. Nil if there is none.
 static int push_rect_gather(lua_State* L, bool props) {
     auto* sim = get_sim(L);
     if (!sim) {
@@ -4508,10 +4476,12 @@ static int l_IssueClearCommands(lua_State* L) {
     if (!sim) {
         return 0;
     }
+    sim::SimContext ctx = sim->sim_context();
+    ctx.L = L;
     for (const u32 id : collect_unit_ids(L, 1)) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit()) {
-            static_cast<sim::Unit*>(e)->clear_commands(sim->entity_registry(), L);
+            static_cast<sim::Unit*>(e)->clear_commands(ctx);
         }
     }
     return 0;
@@ -4536,7 +4506,9 @@ static int l_IssueToUnitClearCommands(lua_State* L) {
     auto* u = extract_unit(L, 1);
     auto* sim = get_sim(L);
     if (u && sim) {
-        u->clear_commands(sim->entity_registry(), L);
+        sim::SimContext ctx = sim->sim_context();
+        ctx.L = L;
+        u->clear_commands(ctx);
     }
     return 0;
 }

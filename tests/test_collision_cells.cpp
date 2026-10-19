@@ -128,8 +128,7 @@ TEST_CASE("a gather goes cell by cell along each row, units then props, the last
           std::vector<u32>{wide, second, first, prop, along, next_row});
 }
 
-TEST_CASE("a move relinks at the end of the tick, and only if its cells changed",
-          "[collision_cells]") {
+TEST_CASE("a move relinks as it is committed, and only if its cells changed", "[collision_cells]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);
     const u32 a = add_unit(reg, {10, 0, 10}, box(0.5f, 0.5f));
@@ -139,30 +138,29 @@ TEST_CASE("a move relinks at the end of the tick, and only if its cells changed"
 
     // Within its cells: no relink, so b stays first.
     ea.set_position({10.5f, 0, 10.2f});
-    reg.advance_collision_cells();
+    reg.advance_coords();
     CHECK(gather(reg, 8, 8, 12, 12) == std::vector<u32>{b, a});
 
     // Away: the cells see it only once they advance.
     ea.set_position({100, 0, 100});
     CHECK(gather(reg, 8, 8, 12, 12) == std::vector<u32>{b, a});
     CHECK(gather(reg, 96, 96, 104, 104).empty());
-    reg.advance_collision_cells();
+    reg.advance_coords();
     CHECK(gather(reg, 8, 8, 12, 12) == std::vector<u32>{b});
     CHECK(gather(reg, 96, 96, 104, 104) == std::vector<u32>{a});
 
-    // Two moves in one tick relink in the order of their last moves, both
-    // into cell (25, 25): b moves last, so it links last and comes first.
-    eb.set_position({102, 0, 101.8f});
+    // Two moves in one tick relink as they are committed, in id order (Moho's coordinate
+    // list), both into cell (25, 25): b is committed last, so it comes first.
     ea.set_position({40, 0, 40});
+    eb.set_position({102, 0, 101.8f});
     ea.set_position({102, 0, 102});
-    eb.set_position({102.2f, 0, 102.2f});
-    reg.advance_collision_cells();
+    reg.advance_coords();
     CHECK(gather(reg, 96, 96, 104, 104) == std::vector<u32>{b, a});
 
     // Away and back within a tick: its cells never changed, so no relink.
     ea.set_position({300, 0, 300});
     ea.set_position({102, 0, 102});
-    reg.advance_collision_cells();
+    reg.advance_coords();
     CHECK(gather(reg, 96, 96, 104, 104) == std::vector<u32>{b, a});
 }
 
@@ -178,7 +176,7 @@ TEST_CASE("turning a long box moves its cells", "[collision_cells]") {
     const f32 h = std::sqrt(0.5f);
     reg.find(id)->set_orientation(Quaternion{0, h, 0, h});
     CHECK(gather(reg, 104, 100, 107, 103) == std::vector<u32>{id});
-    reg.advance_collision_cells();
+    reg.advance_coords();
     CHECK(gather(reg, 104, 100, 107, 103).empty());
     CHECK(gather(reg, 100, 104, 103, 107) == std::vector<u32>{id});
 }
@@ -206,7 +204,7 @@ TEST_CASE("a destroyed entity is found until it is freed", "[collision_cells]") 
     CHECK(gather(reg, 96, 96, 104, 104) == std::vector<u32>{id});
     reg.collect_garbage();
     CHECK(gather(reg, 96, 96, 104, 104).empty());
-    reg.advance_collision_cells();
+    reg.advance_coords();
     CHECK(gather(reg, 196, 196, 204, 204).empty());
 }
 
@@ -246,9 +244,9 @@ TEST_CASE("a snapshot's links come back in their order, and go on from its count
     const u32 c = add_unit(reg, {10, 0, 10}, box(0.5f, 0.5f));
     // a goes and comes back: relinked last, so first among the units.
     reg.find(a)->set_position({100, 0, 100});
-    reg.advance_collision_cells();
+    reg.advance_coords();
     reg.find(a)->set_position({10, 0, 10});
-    reg.advance_collision_cells();
+    reg.advance_coords();
     const auto before = gather(reg, 8, 8, 12, 12);
     CHECK(before == std::vector<u32>{a, c, b});
     const auto count = reg.collision_cells().link_count();

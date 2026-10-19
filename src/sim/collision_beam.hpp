@@ -6,6 +6,8 @@ struct lua_State;
 
 namespace osc::sim {
 
+class Entity;
+class EntityRegistry;
 class SimState;
 
 /// One collision check of the beam `beam_id` (M206c).
@@ -18,14 +20,12 @@ class SimState;
 ///   OnImpact(type, target), which deals the damage. With nothing in the
 ///   way the type is 'Air', or 'Underwater' below the surface.
 /// The next check comes CollisionCheckInterval + 1 ticks later.
-/// `before_pass` is for a check made earlier in the tick than the beam
-/// pass, which then counts down once more.
-void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_pass);
+/// `before_step` is for a check made earlier in the tick than the beam's
+/// step, which then counts down once more.
+void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_step);
 
-/// The beam pass, each tick after the entities have moved:
-/// - every beam is posed on its launcher's muzzle;
-/// - an enabled one is checked when its countdown runs out;
-/// - between checks its end follows the muzzle at the last check's reach.
-void update_collision_beams(SimState& sim, lua_State* L);
+/// Moho's CollisionBeamEntity::MotionTick: false once its launcher or its weapon is gone.
+bool step_collision_beam(SimState& sim, lua_State* L, Entity& beam);
+void repose_collision_beam(EntityRegistry& registry, Entity& beam);
 
 } // namespace osc::sim

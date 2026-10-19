@@ -51,10 +51,10 @@ UnitCommand move_to(osc::f32 x, osc::f32 z) {
 
 // ----- CommandScheduler in isolation -------------------------------------
 
-TEST_CASE("Scheduler dispatches commands only on their exec tick", "[cmd][sched]") {
+TEST_CASE("Scheduler dispatches commands only on their exec beat", "[cmd][sched]") {
     CommandScheduler s;
     ScheduledCommand c;
-    c.exec_tick = 5;
+    c.exec_beat = 5;
     c.source = 0;
     s.submit(c);
 
@@ -70,10 +70,10 @@ TEST_CASE("Scheduler dispatches commands only on their exec tick", "[cmd][sched]
 TEST_CASE("Scheduler dispatch order is canonical (source, then sequence)",
           "[cmd][sched]") {
     CommandScheduler s;
-    // Submit out of order and interleaved across sources, all for tick 3.
+    // Submit out of order and interleaved across sources, all for beat 3.
     auto mk = [](osc::u32 src, osc::u32 tag) {
         ScheduledCommand c;
-        c.exec_tick = 3;
+        c.exec_beat = 3;
         c.source = src;
         c.command.command_id = tag; // reuse as a visible marker
         return c;
@@ -107,7 +107,7 @@ TEST_CASE("Lockstep gate waits for every source to confirm", "[cmd][sched]") {
     CHECK_FALSE(s.ready_to_run(4)); // source 1 still pending
     s.confirm_frame(1, 4);
     CHECK(s.ready_to_run(4));
-    CHECK_FALSE(s.ready_to_run(5)); // next tick not yet confirmed
+    CHECK_FALSE(s.ready_to_run(5)); // next beat not yet confirmed
 }
 
 TEST_CASE("Non-lockstep scheduler never stalls", "[cmd][sched]") {
@@ -120,21 +120,20 @@ TEST_CASE("Non-lockstep scheduler never stalls", "[cmd][sched]") {
 
 // ----- SimState integration ----------------------------------------------
 
-TEST_CASE("Scheduled order lands in the unit queue on its exec tick",
-          "[cmd][sim]") {
+TEST_CASE("Scheduled order lands in the unit queue on its exec beat", "[cmd][sim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     // Positive speed + far goal so the unit stays en route (order persists).
     osc::u32 id = spawn_mover(sim, 0, 5.0f);
 
-    // Submitted before tick 1 → executes at tick_count+1 = 1.
+    // Submitted before beat 1 → executes at beat_count+1 = 1.
     osc::u32 exec = sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
     CHECK(exec == 1);
 
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
-    REQUIRE(u->command_queue().empty()); // not applied before its tick
+    REQUIRE(u->command_queue().empty()); // not applied before its beat
 
-    sim.tick(); // tick 1 — dispatch happens at the start
+    sim.tick(); // beat 1 — dispatch happens at its start
     REQUIRE(u->command_queue().size() == 1);
     CHECK(u->command_queue().front().type == CommandType::Move);
     CHECK(u->command_queue().front().target_pos.x == 500.0f);
@@ -147,7 +146,7 @@ TEST_CASE("command_delay defers execution", "[cmd][sim]") {
     osc::u32 id = spawn_mover(sim, 0, 5.0f);
 
     osc::u32 exec = sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
-    CHECK(exec == 4); // tick_count(0) + 1 + delay(3)
+    CHECK(exec == 4); // beat_count(0) + 1 + delay(3)
 
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     for (int i = 0; i < 3; ++i) {
@@ -221,19 +220,19 @@ TEST_CASE("A divergent command stream desyncs the checksum", "[cmd][sim][sync]")
     CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
 }
 
-TEST_CASE("ready_to_run_next_tick reflects the lockstep gate", "[cmd][sim]") {
+TEST_CASE("ready_to_run_next_beat reflects the lockstep gate", "[cmd][sim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    CHECK(sim.ready_to_run_next_tick()); // single-player: never stalls
+    CHECK(sim.ready_to_run_next_beat()); // single-player: never stalls
 
     sim.command_scheduler().set_lockstep(true);
     sim.command_scheduler().add_source(0);
     sim.command_scheduler().add_source(1);
-    CHECK_FALSE(sim.ready_to_run_next_tick()); // waiting on peers
+    CHECK_FALSE(sim.ready_to_run_next_beat()); // waiting on peers
 
     sim.command_scheduler().confirm_frame(0, sim.tick_count() + 1);
     sim.command_scheduler().confirm_frame(1, sim.tick_count() + 1);
-    CHECK(sim.ready_to_run_next_tick());
+    CHECK(sim.ready_to_run_next_beat());
 }
 
 TEST_CASE("remove_source stops ready_to_run waiting on a dropped peer", "[cmd]") {

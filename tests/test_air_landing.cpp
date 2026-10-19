@@ -619,21 +619,95 @@ TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_
         guard.target_id = queued.make("tank", 60.0f, 80.0f)->entity_id();
     }
     plane.push_command(guard, false);
-    // Both queues fly through the first goal; the reference's next Move
-    // already obeys the once-per-tick gate.
+    // Both queues fly through the first goal; the reference hands over to a
+    // plain Move.
     osc::sim::UnitCommand next = guard;
     next.type = osc::sim::CommandType::Move;
     next.target_id = 0;
     reference.push_command(next, false);
     bool handed_over = false;
     for (int tick = 0; tick < 400 && !handed_over; ++tick) {
+        const auto before = plane.position();
         queued.sim.tick();
         plain.sim.tick();
         handed_over = plane.command_queue().front().type == osc::sim::CommandType::Guard;
         INFO("tick " << tick);
-        CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
-        CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
-        CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+        if (handed_over) {
+            const f32 dx = plane.position().x - before.x;
+            const f32 dz = plane.position().z - before.z;
+            CHECK(std::sqrt(dx * dx + dz * dz) <= 10.0f * 0.1f + 1e-3f);
+        } else {
+            CHECK(std::abs(plane.position().x - reference.position().x) <= 1e-5f);
+            CHECK(std::abs(plane.position().y - reference.position().y) <= 1e-5f);
+            CHECK(std::abs(plane.position().z - reference.position().z) <= 1e-5f);
+        }
     }
     REQUIRE(handed_over);
+}
+
+TEST_CASE("An aircraft whose script slows it as its fuel runs out flies that tick slowed",
+          "[air_landing]") {
+    World by_script;
+    World beforehand;
+    World never;
+    REQUIRE(by_script.state
+                .do_string("Plain.OnRunOutOfFuel = function(self) self:SetSpeedMult(0.25) end")
+                .ok());
+    std::vector<Unit*> planes;
+    for (World* w : {&by_script, &beforehand, &never}) {
+        Unit& plane = *w->make("drone", 30.0f, 30.0f);
+        World::move(plane, 120.0f, 30.0f);
+        for (int i = 0; i < 20; ++i) {
+            w->sim.tick();
+        }
+        plane.set_fuel_use_time(1.0f);
+        plane.set_fuel_ratio(0.05f);
+        planes.push_back(&plane);
+    }
+    planes[1]->set_speed_mult(0.25f);
+    for (World* w : {&by_script, &beforehand, &never}) {
+        w->sim.tick();
+    }
+    REQUIRE(planes[0]->fuel_ratio() == 0.0f);
+    REQUIRE(planes[0]->speed_mult() == 0.25f);
+    CHECK(planes[0]->position().x == planes[1]->position().x);
+    CHECK(planes[0]->position().y == planes[1]->position().y);
+    CHECK(planes[0]->position().z == planes[1]->position().z);
+    CHECK(planes[1]->position().x != planes[2]->position().x);
+}
+
+TEST_CASE("A transport comes down over its pickup a step a tick, ready for its cargo on the tick "
+          "after the step that brings it to its hover height",
+          "[air_landing][transport]") {
+    World w;
+    Unit& ferry = *w.make("ferry", 40.0f, 40.0f);
+    Unit& tank = *w.make("tank", 70.0f, 40.0f);
+    osc::sim::UnitCommand load;
+    load.type = osc::sim::CommandType::TransportLoad;
+    load.target_id = ferry.entity_id();
+    load.target_pos = ferry.position();
+    tank.push_command(load, true);
+    int low = -1;
+    int ready = -1;
+    int descending = 0;
+    for (int t = 0; t < 400 && ready < 0; ++t) {
+        const auto before = ferry.position();
+        w.sim.tick();
+        INFO("tick " << t);
+        if (ferry.has_unit_state("MovingDown")) {
+            ++descending;
+            CHECK(ferry.position().x == before.x);
+            CHECK(ferry.position().z == before.z);
+            CHECK(before.y - ferry.position().y <= 0.5f + 1e-4f);
+        }
+        if (low < 0 && ferry.current_altitude() == 3.0f) {
+            low = t;
+        }
+        if (ferry.pickup_ready()) {
+            ready = t;
+        }
+    }
+    REQUIRE(low >= 0);
+    CHECK(descending > 5);
+    CHECK(ready == low + 1);
 }
