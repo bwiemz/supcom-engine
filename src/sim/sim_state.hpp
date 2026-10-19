@@ -794,6 +794,8 @@ public:
 
     // Economy event registry
     EconomyEventRegistry& economy_events() { return economy_events_; }
+    /// Moho's CEconomyEvent::ProcessTick, in its unit's stage-A step.
+    void step_economy_events(const Unit& unit);
 
     // Resource deposits
     void add_resource_deposit(const ResourceDeposit& d) { resource_deposits_.push_back(d); }
@@ -957,11 +959,24 @@ private:
         return clamped;
     }
 
-    void update_economies();
-    /// Pass allies' overflow on (Team Share Overflow). No-op unless enabled.
-    void share_team_economy();
+    /// Moho's CArmyImpl::OnTick up to its brain: the army's economy, its stats
+    /// triggers and its unit-cap stats.
+    void tick_army_economy(size_t index);
+    void fire_stat_triggers(ArmyBrain& army);
+    /// Moho's ProcessArmyEconomy offers what full storage would waste to the
+    /// allies, banked for their own economies (Team Share Overflow).
+    void share_overflow(size_t index);
+    void count_held_storage();
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
+    SimContext sim_context();
+    /// Moho's CArmyImpl::OnTick, each army in turn: its economy, with Moho
+    /// pathing its navigators and steering, its units' weapons, its path
+    /// searches.
+    void tick_armies();
+    void navigate_units(const std::vector<u32>& ids);
+    /// Moho's stage B: each unit's orders, in creation order.
+    void tick_unit_orders();
     void update_entities();
     /// Ground units that overlap are pushed apart (M203b): an idle unit
     /// makes way for a moving one, otherwise the smaller gives more, and a
@@ -1003,7 +1018,7 @@ private:
     i32 find_share_recipient(i32 defeated_army) const;
     /// Count alliance-connected components among the given (alive) army indices.
     i32 count_alliance_components(const std::vector<i32>& army_indices) const;
-    void request_economy_events();
+    void request_economy_events(size_t index);
     void sweep_ferry_beacons();
     void tick_economy_events();
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
@@ -1112,6 +1127,7 @@ private:
     ArmorDefinition armor_def_;
     IEffectRegistry effect_registry_;
     EconomyEventRegistry economy_events_;
+    std::vector<std::pair<u32, EconomyEvent*>> stepping_events_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     u32 post_loads_run_ = 0; ///< the host's count (post_loads_run), not game state

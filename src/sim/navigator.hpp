@@ -46,6 +46,13 @@ public:
     /// True while a move is in progress or pending a path -- i.e. the goal
     /// has not been reached. Use this, not is_moving(), to detect arrival.
     bool busy() const { return status_ != Status::Idle; }
+    /// The move ended, there or given up (Moho's AINAVEVENT_Succeeded or Failed): in its unit's
+    /// last motion step, or with Moho pathing in this tick's army phase.
+    bool ended() const { return ended_; }
+    void set_ended(bool e) { ended_ = e; }
+
+    /// Moho pathing's CAiNavigatorLand::Execute, run in its army's phase.
+    void navigate(Unit& unit);
 
     /// Move the unit toward its goal at up to `max_speed`. Returns true until
     /// the goal is reached (including while waiting for a throttled path,
@@ -145,9 +152,8 @@ private:
     void arrive();
     /// No meeting expected, nothing under way: a new path's steering.
     void reset_steering();
-    /// A ground unit's move as Moho's CAiNavigatorLand::Execute runs it: its
-    /// path navigator updated, then the drive at its target cell.
-    bool update_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
+    /// Moho pathing's motion step: the drive at its waypoint, if it has one.
+    bool drive_moho(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain);
     /// Drop the Moho path, if any.
     void reset_moho();
     /// The goal by the grid pathfinder (set_goal's own way, and Moho
@@ -159,6 +165,7 @@ private:
     SimState* sim_ = nullptr;
     Vector3 goal_;
     Status status_ = Status::Idle;
+    bool ended_ = false;
     bool speed_through_goal_ = false;
     Vector3 air_hold_{};
     bool air_hold_set_ = false;
@@ -180,7 +187,7 @@ private:
 
     // Moho pathing (roadmap item 4c-2c).
     path::PathNavigator moho_;
-    bool moho_pending_ = false; ///< a goal set, taken up at the next update
+    bool moho_pending_ = false; ///< a goal set, taken up by the next navigate()
     bool moho_active_ = false;  ///< following moho_
     /// Its target is outside the goal: driven through at speed, not stopped
     /// on (Moho's IAiSteering::UseTopSpeed).

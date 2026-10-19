@@ -192,10 +192,10 @@ int entity_GetBoneDirection(lua_State* L) {
     // The bone's forward (+Z) in the world: a unit's as posed (turrets,
     // rotators), anything else's in bind pose.
     i32 idx = resolve_bone_index(e, L, 2);
-    const sim::Quaternion model_rot =
-        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(idx).rotation
-                     : bd->bones[static_cast<size_t>(idx)].world_rotation;
-    auto bone_world_rot = sim::quat_multiply(e->orientation(), model_rot);
+    const sim::Quaternion bone_world_rot =
+        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_world_rotation(idx)
+                     : sim::quat_multiply(e->orientation(),
+                                          bd->bones[static_cast<size_t>(idx)].world_rotation);
     auto dir = sim::quat_rotate(bone_world_rot, {0, 0, 1});
     push_direction(L, dir);
     return 3;
@@ -263,10 +263,14 @@ static int entity_SetPosition(lua_State* L) {
         v.y = static_cast<f32>(lua_tonumber(L, -2));
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 3);
+        // Moho's SetPosition: the committed transform moved to `pos`, pending; an immediate one
+        // is committed at once and shown as a jump.
+        e->set_orientation(e->orientation());
         e->set_position(v);
-        // SetPosition(pos, immediate): an immediate move is a teleport, which
-        // the renderer shows as a jump, not a slide.
-        if (lua_toboolean(L, 3)) e->note_snap();
+        if (lua_toboolean(L, 3)) {
+            e->note_snap();
+            e->place_now();
+        }
     }
     return 0;
 }
@@ -313,7 +317,11 @@ static int entity_SetOrientation(lua_State* L) {
         lua_rawgeti(L, 2, 4);
         q.w = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+        e->set_position(e->position());
         e->set_orientation(q);
+        if (lua_toboolean(L, 3)) {
+            e->place_now();
+        }
     }
     return 0;
 }
@@ -748,12 +756,13 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     proj->launcher_id = launcher_of(*e);
     apply_script_projectile_physics(L, *proj);
     const auto* bd = e->bone_data();
-    const sim::Quaternion model_rot =
-        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(bone_idx).rotation
-        : bd && bd->is_valid(bone_idx) ? bd->bones[static_cast<size_t>(bone_idx)].world_rotation
-                                       : sim::Quaternion{};
-    aim_projectile(L, sim, *proj,
-                   sim::quat_rotate(sim::quat_multiply(e->orientation(), model_rot), {0, 0, 1}));
+    const sim::Quaternion bone_world_rot =
+        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_world_rotation(bone_idx)
+        : bd && bd->is_valid(bone_idx)
+            ? sim::quat_multiply(e->orientation(),
+                                 bd->bones[static_cast<size_t>(bone_idx)].world_rotation)
+            : e->orientation();
+    aim_projectile(L, sim, *proj, sim::quat_rotate(bone_world_rot, {0, 0, 1}));
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(

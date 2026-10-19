@@ -72,17 +72,14 @@ public:
     /// If not called, collect_in_radius/collect_in_rect fall back to O(N) scan.
     void init_spatial_grid(u32 map_width, u32 map_height);
 
-    /// Notify the registry that an entity's position has changed.
-    void notify_position_changed(Entity& entity);
-    /// Called by Entity::set_orientation when it turns.
-    void notify_orientation_changed(Entity& entity);
+    /// Called by Entity::advance_coords when its committed transform changes.
+    void notify_moved(Entity& entity, bool moved);
 
     /// Moho's collision cells, for its rect queries (GetUnitsInRect,
     /// GetReclaimablesInRect). init_spatial_grid sizes them.
     CollisionCells& collision_cells() { return cells_; }
-    /// Relink what moved this tick (Moho's AdvanceCoords, at the end of the
-    /// beat): SimState::tick, before collect_garbage.
-    void advance_collision_cells() { cells_.advance(); }
+    /// Commit every entity's move, in id order (Moho's AdvanceCoords over its coordinate list).
+    void advance_coords();
 
     /// Collect entity IDs within radius of a point (2D distance, ignoring Y),
     /// in ascending id order.
@@ -167,6 +164,10 @@ public:
     void set_sim_random(SimRandom* r) { sim_random_ = r ? r : &default_random_; }
     SimRandom& sim_random() { return *sim_random_; }
 
+    void set_tick_source(const u32* tick) { tick_ = tick; }
+    u32 tick() const { return tick_ ? *tick_ : 0; }
+    u32 next_id() const { return next_id_; }
+
 private:
     /// Every live entity at its id (ids start at 1 and only grow), so a
     /// lookup is an index, not a hash; a removed entity leaves null.
@@ -199,6 +200,7 @@ private:
 
     SimRandom default_random_;
     SimRandom* sim_random_ = &default_random_;
+    const u32* tick_ = nullptr;
 
     // Spatial hash grid
     bool grid_initialized_ = false;

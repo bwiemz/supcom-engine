@@ -279,9 +279,11 @@ public:
     /// weapon has none (it then fires without aiming).
     const AimManipulator* fire_control(const Unit& owner) const;
 
-    /// Per tick: advance the fire clock, pick targets, fire when ready.
+    /// Moho's attacker stage: CFireWeaponTask, then CAcquireTargetTask.
     void update(Unit& owner, EntityRegistry& registry, lua_State* L,
                 const SimState* sim = nullptr);
+    /// Moho's CUnitFireAtTask, in its unit's order step.
+    void fire_at_order(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
 
     /// Fire the weapon at current target. Returns true if fired.
     /// Fire one projectile from `spawn_pos` at `target` (when null: at its
@@ -312,8 +314,11 @@ private:
         }
     };
     TargetMark target_mark() const { return {target_entity_id, has_ground_target, ground_target}; }
-    void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
-                         const TargetMark& previous, const SimState* sim);
+    void fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
+    void acquire_step(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
+    bool report_target_change(const Unit& owner, lua_State* L, const TargetMark& previous);
+    void fire_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
+    void fire_direct(Unit& owner, EntityRegistry& registry, lua_State* L, const SimState* sim);
     /// A manual weapon's target: what its unit's launch order names, if the
     /// order is for this weapon; else none.
     void take_order_target(const Unit& owner, const EntityRegistry& registry);

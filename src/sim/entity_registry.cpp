@@ -14,6 +14,7 @@ EntityRegistry::~EntityRegistry() = default;
 u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     u32 id = next_id_++;
     entity->set_entity_id(id);
+    entity->place_now();
     entity->set_registry(this);
     order_.push_back({id, entity.get()});
     if (entity->is_unit()) unit_order_.push_back({id, entity.get()});
@@ -167,9 +168,18 @@ void EntityRegistry::grid_remove(const Entity& entity, i32 cx, i32 cz) {
     }
 }
 
-void EntityRegistry::notify_position_changed(Entity& entity) {
-    if (!grid_initialized_) return;
-    cells_.moved(entity);
+void EntityRegistry::advance_coords() {
+    for_each([](Entity& e) { e.advance_coords(); });
+}
+
+void EntityRegistry::notify_moved(Entity& entity, bool moved) {
+    if (!grid_initialized_) {
+        return;
+    }
+    cells_.link(entity);
+    if (!moved) {
+        return;
+    }
     if (entity.is_prop()) {
         prop_cell_update(entity);
     }
@@ -399,10 +409,6 @@ void EntityRegistry::props_touching(f32 x0, f32 z0, f32 x1, f32 z1,
     std::sort(out.begin(), out.end(),
               [](const Entity* a, const Entity* b) { return a->entity_id() < b->entity_id(); });
     out.erase(std::unique(out.begin(), out.end()), out.end());
-}
-
-void EntityRegistry::notify_orientation_changed(Entity& entity) {
-    if (grid_initialized_) cells_.moved(entity);
 }
 
 void EntityRegistry::notify_collision_shape_changed(Entity& entity) {

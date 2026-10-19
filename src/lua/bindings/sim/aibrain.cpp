@@ -279,14 +279,12 @@ static int brain_GiveResource(lua_State* L) {
     auto* brain = check_brain(L);
     if (!brain) return 0;
     const char* res = luaL_checkstring(L, 2);
-    f64 amount = luaL_checknumber(L, 3);
-    auto& econ = brain->economy();
+    // Moho's cfunc_CAiBrainGiveResourceL banks it: income at the next economy, then storage.
+    const f64 per_second = luaL_checknumber(L, 3) / sim::SimState::SECONDS_PER_TICK;
     if (std::strcmp(res, "ENERGY") == 0 || std::strcmp(res, "Energy") == 0) {
-        econ.energy.stored = std::min(econ.energy.stored + amount,
-                                       econ.energy.max_storage);
+        brain->bank(0.0, per_second);
     } else if (std::strcmp(res, "MASS") == 0 || std::strcmp(res, "Mass") == 0) {
-        econ.mass.stored = std::min(econ.mass.stored + amount,
-                                     econ.mass.max_storage);
+        brain->bank(per_second, 0.0);
     }
     return 0;
 }

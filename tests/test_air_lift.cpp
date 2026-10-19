@@ -100,6 +100,7 @@ struct World {
 
     std::vector<f32> rises_from(Unit& u, f32 height, int ticks) {
         u.set_position({u.position().x, 10.0f + height, u.position().z});
+        u.place_now();
         u.set_current_altitude(height);
         osc::sim::UnitCommand cmd;
         cmd.type = osc::sim::CommandType::Move;

@@ -798,6 +798,7 @@ TEST_CASE("Weapons do not auto-target BENIGN units but take them on an attack or
     osc::sim::UnitCommand attack{};
     attack.type = osc::sim::CommandType::Attack;
     attack.target_id = wall_id;
+    attack.engaged = true;
     owner_ptr->push_command(attack, true);
     weapon_ptr->update(*owner_ptr, registry, nullptr);
     CHECK(weapon_ptr->target_entity_id == wall_id);
@@ -1004,7 +1005,7 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     proj.turn_rate = 360.0f; // 36 degrees a tick
     proj.acceleration = 10.0f;
     proj.max_speed = 10.0f;
-    proj.lifetime = 5.0f;
+    proj.set_lifetime(5.0f, 0);
     proj.target_entity_id = tid;
 
     proj.update(0.1, registry, nullptr, nullptr);
@@ -1035,7 +1036,7 @@ TEST_CASE("A tracking projectile ignores its gravity; one that doesn't track fal
     torpedo.tracking = true;
     torpedo.turn_rate = 165.0f;
     torpedo.max_speed = 15.0f;
-    torpedo.lifetime = 10.0f;
+    torpedo.set_lifetime(10.0f, 0);
     torpedo.ballistic_accel = -osc::sim::Projectile::GRAVITY;
     torpedo.target_entity_id = tid;
     osc::sim::Projectile shell = torpedo;

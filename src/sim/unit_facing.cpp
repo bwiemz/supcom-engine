@@ -36,7 +36,7 @@ f32 attack_angle_heading(f32 bearing, f32 heading, f32 attack_angle) {
 }
 
 bool Unit::rotate_yaw_toward(f32 want, f32 max_step) {
-    const f32 yaw = quat_yaw(orientation());
+    const f32 yaw = quat_yaw(pending_orientation());
     const f32 err = wrap(want - yaw);
     // Already facing it: within about 0.81 degrees (a dot of 0.9999).
     if (osc::dmath::cos(err) >= 0.9999f || max_step <= 0.0f) return false;
@@ -77,8 +77,9 @@ void Unit::face_weapons_work(f64 dt, const EntityRegistry& registry) {
     if (!slaved) {
         slaved_turning_ = false;
     } else {
-        const f32 bearing = osc::dmath::atan2(at->x - position().x, at->z - position().z);
-        const f32 yaw = quat_yaw(orientation());
+        const Vector3& p = pending_position();
+        const f32 bearing = osc::dmath::atan2(at->x - p.x, at->z - p.z);
+        const f32 yaw = quat_yaw(pending_orientation());
         if (attack_angle_ > 0.0f) {
             want = attack_angle_heading(bearing, yaw, attack_angle_ * kDegToRad);
         } else if (slaved->slaved_arc_range < 180.0f) {

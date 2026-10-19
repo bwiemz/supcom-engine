@@ -153,18 +153,6 @@ struct CirclingSteer {
 /// velocity heads there, in three dimensions.
 CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrain);
 
-/// What a circling aircraft circles.
-struct CircleAround {
-    Vector3 center;
-    /// Its target weapon's MaxRadius. 0: none, and the circle is
-    /// StartTurnDistance's.
-    f32 weapon_radius = 0.0f;
-    bool target_in_air = false; ///< CirclingRadiusVsAirMult applies
-    /// Where its move order would take it (Moho's mTargetPosition), which
-    /// the airframe's damping reads.
-    Vector3 move_goal;
-};
-
 /// One tick of a hovering aircraft circling: the re-pick, the aim, and the
 /// air controller toward it, its nose to the centre (CalcHoverOrientation)
 /// under KTurn x CirclingTurnMult.

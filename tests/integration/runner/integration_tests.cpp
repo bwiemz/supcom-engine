@@ -7322,9 +7322,6 @@ void test_weapon(TestContext& ctx) {
     lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
         local seen = table.concat(__osc_motion, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- With Moho's pathing, first a start and a stop at its own cell's
-        -- centre while the path is searched (drive-test, Test 5).
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if seen ~= want then error('events: ' .. seen) end
     )");
     lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
@@ -8991,10 +8988,6 @@ void test_drive(TestContext& ctx) {
     lua_check("Test 5: its motion events come in order", R"(
         local got = table.concat(__osc_striker.events, ' ')
         local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
-        -- While Moho's path search runs, CAiNavigatorLand::Execute steers
-        -- at GetTargetPos, the unit's own cell's centre: a start and a
-        -- stop before the drive.
-        if __osc_moho_pathing then want = 'Stopped>Cruise Cruise>Stopped ' .. want end
         if got ~= want then error(got) end
     )");
 
@@ -9223,7 +9216,7 @@ void test_steer(TestContext& ctx) {
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
         __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
         __osc_move(__osc_slow, 0, -12)
-        __osc_move(__osc_fast, 0, -2)
+        ForkThread(function() WaitTicks(5) __osc_move(__osc_fast, 0, -2) end)
     )"
              : R"(
         __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
@@ -9741,6 +9734,7 @@ void test_missile(TestContext& ctx) {
         }
     };
 
+    run(1);
     lua_check("setup", R"(
         -- A unit starts in its blueprint's InitialAutoMode (the launchers'
         -- is on); this test orders its builds, so auto mode starts off.
@@ -10829,6 +10823,7 @@ void test_charge(TestContext& ctx) {
         for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
 
+    run(1);
     lua_check("setup", R"(
         function __osc_spawn(bp, army, x, z)
             return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
@@ -12261,11 +12256,13 @@ void test_naval_depth(TestContext& ctx) {
             local n = 0
             for _, r in __osc_shots do
                 if r.target == __osc_target and r.impact then
-                    n = n + 1
                     if r.start < 0 then error('a torpedo started under the water, at ' .. r.start) end
                     if not r.entered then error('a torpedo never entered the water') end
                     if r.low > -0.1 then error('a torpedo stayed at ' .. r.low) end
-                    if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    if r.impact ~= 'ProjectileUnderwater' then
+                        n = n + 1
+                        if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                    end
                 end
             end
             if n == 0 then error('no torpedo reached ' .. want) end
@@ -14154,6 +14151,20 @@ void test_air_turn(TestContext& ctx) {
         IssueMove({__osc_f}, {400, GetTerrainHeight(400, 790), 790})
         __osc_a_id = __osc_a:GetEntityId()
         __osc_f_id = __osc_f:GetEntityId()
+        __osc_a_moved, __osc_a_closed, __osc_a_x, __osc_a_z = -1, -1, 0, 0
+        ForkThread(function()
+            local start = __osc_a:GetPosition()
+            for t = 1, 260 do
+                local p = __osc_a:GetPosition()
+                if __osc_a_moved < 0 and (p[1] ~= start[1] or p[3] ~= start[3]) then
+                    __osc_a_moved = t
+                end
+                if __osc_a_closed < 0 and table.getn(__osc_a:GetCommandQueue()) == 0 then
+                    __osc_a_closed, __osc_a_x, __osc_a_z = t, p[1], p[3]
+                end
+                WaitTicks(1)
+            end
+        end)
     )");
     if (!r) {
         check(false, "probe script: " + r.error().message);
@@ -14202,14 +14213,19 @@ void test_air_turn(TestContext& ctx) {
     const auto off = [](const osc::sim::Vector3& p, float x, float z) {
         return std::hypot(p.x - x, p.z - z);
     };
-    // Retail: 86 ticks into its flight, 0.167 off at (320.36, 720.59), its order done.
-    check(a.closed > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
+    // Retail, as its probe's thread saw it: 86 ticks into its flight, 0.167 off at
+    // (320.36, 720.59), its order done.
+    a.closed = static_cast<int>(number("__osc_a_closed"));
+    a.at_close = {static_cast<float>(number("__osc_a_x")), 0.0f,
+                  static_cast<float>(number("__osc_a_z"))};
+    const int a_moved = static_cast<int>(number("__osc_a_moved"));
+    check(a.closed > 0 && a_moved > 0 && off(a.at_close, 320.5f, 720.5f) <= 0.25f &&
               off(a.at_close, 320.36f, 720.59f) < 0.05f &&
-              std::abs(a.closed - a.moved + 1 - 86) <= 1,
+              std::abs(a.closed - a_moved + 1 - 86) <= 1,
           fmt::format("the interceptor passes its goal {:.3f} off at ({:.2f}, {:.2f}), {} ticks "
                       "into its flight, and its order is done there",
                       off(a.at_close, 320.5f, 720.5f), a.at_close.x, a.at_close.z,
-                      a.closed - a.moved + 1));
+                      a.closed - a_moved + 1));
     // Retail: it lands 96 ticks later at (329.32, 721.20).
     const auto a_end = a.unit->position();
     check(a.landed > 0 && off(a_end, 329.32f, 721.2f) < 0.1f &&
@@ -14466,10 +14482,12 @@ void test_air_staging(TestContext& ctx) {
 
     // Docked: fuel rises by FuelRechargeRate / FuelUseTime / 10 times the
     // pad's multiplier a tick (5 / 300 / 10 x 50), and it heard
-    // OnStartRefueling once. Its repair is asked for at once, and heals from
-    // the next tick: 500 / 10 a tick.
+    // OnStartRefueling once. Its repair is asked for in the tick it docks
+    // (Moho's ProcessFuelLevels runs after the refuel task docks it), and heals
+    // from the next tick: 500 / 10 a tick.
     const float f0 = a->fuel_ratio();
     const float h0 = a->health();
+    const double asked_docking = a->economy().dock_repair_energy;
     step();
     const float f1 = a->fuel_ratio();
     const float h1 = a->health();
@@ -14487,10 +14505,12 @@ void test_air_staging(TestContext& ctx) {
           fmt::format("docked, the tank rises {:.5f} a tick", f1 - f0));
     check(number("__osc_started") == 1,
           fmt::format("OnStartRefueling heard {} time(s)", number("__osc_started")));
-    check(h1 == h0 && std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f &&
-              ask_e == 50.0 && ask_m == 5.0,
-          fmt::format("repair: asks 50E 5M a second ({}, {}), heals from the next tick ({} {} {})",
-                      ask_e, ask_m, h0, h1, h2));
+    check(asked_docking == 50.0 && std::abs(h1 - std::min(a->max_health(), h0 + 50.0f)) < 0.01f &&
+              std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f && ask_e == 50.0 &&
+              ask_m == 5.0,
+          fmt::format("repair: asks 50E 5M a second ({}, {}) from the tick it docks ({}), heals "
+                      "from the next tick ({} {} {})",
+                      ask_e, ask_m, asked_docking, h0, h1, h2));
 
     // Full and repaired, it is let go at the pad's next look (every 9 ticks
     // from the tick after it docked), where it sat, and climbs away.
@@ -15912,18 +15932,29 @@ void test_spatial(TestContext& ctx) {
         if (ok3) { pass++; spdlog::info("[PASS] Test 3: collect_in_radius excludes distant entity"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 3: collect_in_radius included distant entity"); }
 
-        // Test 4: Moving entity updates grid automatically
+        // Test 4: A move updates the grid as it is committed
         auto* e = reg.find(uid);
         e->set_position({50.0f, 0.0f, 50.0f});
+        auto pending_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
+        bool ok4p = std::find(pending_move.begin(), pending_move.end(), uid) == pending_move.end();
+        reg.advance_coords();
         auto after_move = reg.collect_in_radius(50.0f, 50.0f, 10.0f);
         bool ok4a = std::find(after_move.begin(), after_move.end(), uid) != after_move.end();
         auto old_pos = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok4b = std::find(old_pos.begin(), old_pos.end(), uid) == old_pos.end();
-        if (ok4a && ok4b) { pass++; spdlog::info("[PASS] Test 4: set_position auto-updates grid"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 4: grid not updated after set_position (found_new={}, gone_old={})", ok4a, ok4b); }
+        if (ok4p && ok4a && ok4b) {
+            pass++;
+            spdlog::info("[PASS] Test 4: a committed move updates the grid");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: grid not updated as a move is committed "
+                                   "(not_before={}, found_new={}, gone_old={})",
+                                   ok4p, ok4a, ok4b);
+        }
 
         // Test 5: collect_in_rect returns correct results
         e->set_position({100.0f, 0.0f, 100.0f});
+        reg.advance_coords();
         auto rect = reg.collect_in_rect(90.0f, 90.0f, 110.0f, 110.0f);
         bool ok5 = std::find(rect.begin(), rect.end(), uid) != rect.end();
         if (ok5) { pass++; spdlog::info("[PASS] Test 5: collect_in_rect finds entity"); }

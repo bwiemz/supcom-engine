@@ -50,6 +50,7 @@ add_executable(osc_tests
     test_air_circling.cpp
     test_unit_blocking.cpp
     test_hull_facing.cpp
+    test_tick_phases.cpp
     test_water_fire.cpp
     test_reclaim.cpp
     test_build_assist.cpp

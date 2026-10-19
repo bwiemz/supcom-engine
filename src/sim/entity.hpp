@@ -128,7 +128,6 @@ struct CellLink {
     u16 x = 0, z = 0; ///< the first cell across and down
     u16 w = 0, h = 0; ///< the cells across and down from it: none if either is 0
     u64 seq = 0;      ///< the link's order (later links are higher), 0 if unlinked
-    u64 moved = 0;    ///< the stamp of its last move since the cells advanced, 0 if none
     u64 mark = 0;     ///< the last gather that took it (one takes each entity once)
 };
 
@@ -185,11 +184,26 @@ public:
     i32 army() const { return army_; }
     void set_army(i32 a) { army_ = a; }
 
+    /// The committed transform (Moho's GetPosition, GetTransform).
     const Vector3& position() const { return position_; }
-    void set_position(const Vector3& p); // implemented in entity.cpp (auto-notifies spatial grid)
-
     const Quaternion& orientation() const { return orientation_; }
-    void set_orientation(const Quaternion& o); // entity.cpp (tells the registry's cells)
+    /// Where its own step has put it this tick (Moho's mPendingTransform).
+    const Vector3& pending_position() const { return pending_position_; }
+    const Quaternion& pending_orientation() const { return pending_orientation_; }
+    /// The transform committed before the current one (Moho's mLastTransform).
+    const Vector3& last_position() const { return last_position_; }
+    const Quaternion& last_orientation() const { return last_orientation_; }
+
+    /// Set the pending transform; one never committed (being made) is placed at once.
+    void set_position(const Vector3& p);
+    void set_orientation(const Quaternion& o);
+    /// Moho's AdvanceCoords: the pending transform becomes the committed one.
+    virtual void advance_coords();
+    /// Moho's Warp: committed at once, with no move between the last and the current.
+    void place_now() {
+        advance_coords();
+        advance_coords();
+    }
 
     /// The entity teleported (Warp, or SetPosition with `immediate`): the
     /// renderer jumps it to its new pose instead of sliding it there.
@@ -425,6 +439,11 @@ private:
     i32 army_ = -1;
     Vector3 position_;
     Quaternion orientation_;
+    Vector3 pending_position_;
+    Quaternion pending_orientation_;
+    Vector3 last_position_;
+    Quaternion last_orientation_;
+    bool placed_ = false;
     u32 snap_serial_ = 0;
     static constexpr u32 kNotFollowed = ~0u;
     u32 followed_parent_snap_ = kNotFollowed;

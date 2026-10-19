@@ -36,11 +36,11 @@ struct Scene {
         auto u = std::make_unique<Unit>();
         u->set_size_xz(size_x, size_z);
         u->set_size_y(0.5f);
-        u->set_velocity({2, 0, 0});
         lua_newtable(L);
         u->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
         unit = u.get();
         registry.register_entity(std::move(u));
+        unit->set_velocity({2, 0, 0});
 
         auto p = std::make_unique<Prop>();
         p->set_position({0.9f, 0, 0});
@@ -140,6 +140,9 @@ TEST_CASE("The prop grid finds a prop where it stands, after it moves, until it 
     CHECK(near.empty());
 
     prop->set_position({30.5f, 0, 30.5f});
+    registry.props_touching(30, 30, 31, 31, near);
+    CHECK(near.empty());
+    registry.advance_coords();
     registry.props_touching(30, 30, 31, 31, near);
     CHECK(near == std::vector<Entity*>{prop});
     registry.props_touching(10, 10, 11, 11, near);

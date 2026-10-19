@@ -353,6 +353,7 @@ void test_runtime_decal(TestContext& ctx) {
         if (e) {
             e->set_position({22, 0, 32});
             e->set_orientation(sim::heading_quaternion(kQuarter));
+            e->place_now();
         }
         lua(fmt::format("CreateSplatOnBone(GetEntityById({}), {{0, 0, 10}}, 0, {}, 8, 2, 1000, 0, "
                         "1)",

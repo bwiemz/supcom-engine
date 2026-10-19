@@ -60,6 +60,7 @@ SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
     // Sim code (e.g. weapons) draws randomness from this seeded stream via the
     // registry, so every lockstep client rolls identically.
     entity_registry_.set_sim_random(&sim_random_);
+    entity_registry_.set_tick_source(&tick_count_);
     entity_registry_.set_unregister_hook(
         [this](Entity& entity) { on_entity_unregistered(entity); });
 }
@@ -361,8 +362,8 @@ void SimState::follow_attachments() {
         const BonePose at = pose_compose(bone, {e.parent_offset(), Quaternion{}});
         const Vector3& p = at.position;
         const Quaternion& q = at.rotation;
-        const Vector3& c = e.position();
-        const Quaternion& o = e.orientation();
+        const Vector3& c = e.pending_position();
+        const Quaternion& o = e.pending_orientation();
         const bool snap = e.followed_parent_snap() != parent->snap_serial();
         if (snap || c.x != p.x || c.y != p.y || c.z != p.z || o.x != q.x || o.y != q.y ||
             o.z != q.z || o.w != q.w)
@@ -551,7 +552,7 @@ bool SimState::flatten_map_rect(i32 x, i32 z, i32 size_x, i32 size_z, f32 elevat
         if (unit.layer() != "Land" && unit.layer() != "Seabed") {
             return;
         }
-        Vector3 p = unit.position();
+        Vector3 p = unit.pending_position();
         if (std::abs(p.x - mid_x) > reach_x || std::abs(p.z - mid_z) > reach_z) {
             return;
         }
@@ -1484,7 +1485,7 @@ void SimState::enforce_no_rush() {
         const ArmyBrain* brain = army_at(static_cast<size_t>(unit->army()));
         if (!brain || brain->is_civilian()) return; // wildlife/props aren't confined
         const Vector3& c = brain->start_position();
-        const Vector3& p = unit->position();
+        const Vector3& p = unit->pending_position();
         f32 dx = p.x - c.x;
         f32 dz = p.z - c.z;
         f32 dist_sq = dx * dx + dz * dz;
@@ -1536,20 +1537,11 @@ void SimState::tick() {
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
-    // Where each unit stands as the tick begins, and whether it moved over
-    // the last one: Moho commits entities' moves at the end of each beat,
-    // and its path code asks whether a unit's committed position changed.
-    entity_registry_.for_each_unit([](Entity& e) { static_cast<Unit&>(e).note_tick_position(); });
     // Moho's UpdatePaths: the clusters' background rebuild, before the
     // armies tick (Sim::AdvanceBeat).
     if (path_tables_) {
         PROFILE_ZONE("Sim::path_clusters");
         path_tables_->update_background(path::kBackgroundBudget);
-        // Then each army's searches (CArmyImpl::OnTick), in army order.
-        for (const auto& army : armies_) {
-            i32 budget = path::kArmyPathBudget;
-            army->path_queue().work(*path_tables_, budget);
-        }
     }
     // Each army's tick begins by destroying its spent platoons, before any
     // script runs (Moho's CArmyImpl::OnTick).
@@ -1560,14 +1552,15 @@ void SimState::tick() {
         pathfinder_->reset_request_count();
     }
 
+    tick_armies();
+    tick_unit_orders();
     {
         PROFILE_ZONE("Sim::threads");
         thread_manager_.resume_all(tick_count_);
     }
 
-    request_economy_events();
-    update_economies();
     update_entities();
+    count_held_storage();
     // Beams reach from where their muzzles have moved to (M206c).
     update_collision_beams(*this, L_);
     sweep_ferry_beacons();
@@ -1589,7 +1582,7 @@ void SimState::tick() {
                 entity_registry_.unregister_entity(id);
                 continue;
             }
-            const Vector3 p = e->position();
+            const Vector3 p = e->pending_position();
             const bool water = terrain_ && terrain_->has_water() &&
                                terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
             // On the ground it is a land unit now: its wreck follows the
@@ -1693,10 +1686,8 @@ void SimState::tick() {
         lua_setgcthreshold(L_, 0);
     }
 
-    // What moved this tick relinks in the collision cells (Moho's
-    // AdvanceCoords, near the end of the beat): the rect queries see each
-    // tick's moves from the next one on.
-    entity_registry_.advance_collision_cells();
+    // Moho's AdvanceCoords, after KillCleanup: the tick's moves are committed at once.
+    entity_registry_.advance_coords();
 
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe,
@@ -1752,32 +1743,55 @@ void SimState::tick() {
     game_over_ = game_ended_;
 }
 
-void SimState::update_economies() {
+void SimState::tick_army_economy(size_t index) {
     PROFILE_ZONE("Sim::economy");
-    for (auto& army : armies_) {
-        army->update_economy(entity_registry_, SECONDS_PER_TICK);
+    ArmyBrain& army = *armies_[index];
+    request_economy_events(index);
+    army.update_economy(entity_registry_, SECONDS_PER_TICK);
+    share_overflow(index);
+    // CArmyImpl::OnTick checks the stats triggers only once mCurTick > 10.
+    if (tick_count_ > 10) {
+        fire_stat_triggers(army);
     }
-    share_team_economy();
-    for (auto& army : armies_) {
-        for (const auto& name : army->take_fired_triggers()) {
-            if (army->lua_table_ref() < 0) {
-                continue;
-            }
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, army->lua_table_ref());
-            lua_pushstring(L_, "OnStatsTrigger");
-            lua_gettable(L_, -2);
-            if (lua_isfunction(L_, -1)) {
-                lua_pushvalue(L_, -2);
-                lua_pushstring(L_, name.c_str());
-                if (lua_pcall(L_, 2, 0, 0) != 0) {
-                    spdlog::warn("OnStatsTrigger error: {}", lua_tostring(L_, -1));
-                    lua_pop(L_, 1);
-                }
-            } else {
+    army.update_unit_cap_stats(entity_registry_);
+}
+
+void SimState::fire_stat_triggers(ArmyBrain& army) {
+    for (const auto& name : army.take_fired_triggers()) {
+        if (army.lua_table_ref() < 0) {
+            continue;
+        }
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, army.lua_table_ref());
+        lua_pushstring(L_, "OnStatsTrigger");
+        lua_gettable(L_, -2);
+        if (lua_isfunction(L_, -1)) {
+            lua_pushvalue(L_, -2);
+            lua_pushstring(L_, name.c_str());
+            if (lua_pcall(L_, 2, 0, 0) != 0) {
+                spdlog::warn("OnStatsTrigger error: {}", lua_tostring(L_, -1));
                 lua_pop(L_, 1);
             }
+        } else {
             lua_pop(L_, 1);
         }
+        lua_pop(L_, 1);
+    }
+}
+
+void SimState::count_held_storage() {
+    std::vector<std::pair<f64, f64>> held(armies_.size());
+    entity_registry_.for_each_unit([&](const Entity& e) {
+        const auto& unit = static_cast<const Unit&>(e);
+        const i32 army = unit.army();
+        if (unit.destroyed() || !unit.holds_storage() || army < 0 ||
+            static_cast<size_t>(army) >= held.size()) {
+            return;
+        }
+        held[static_cast<size_t>(army)].first += unit.economy().storage_mass;
+        held[static_cast<size_t>(army)].second += unit.economy().storage_energy;
+    });
+    for (size_t i = 0; i < armies_.size(); ++i) {
+        armies_[i]->count_storage(held[i].first, held[i].second);
     }
 }
 
@@ -1812,50 +1826,44 @@ std::vector<std::vector<i32>> SimState::alliance_teams() const {
     return teams;
 }
 
-namespace {
-// Distribute a pooled amount of a resource across active members proportional
-// to each member's remaining storage room (capped by that room).
-void distribute_overflow(std::vector<ResourceState*>& res, f64 pool) {
-    if (pool <= 0.0) return;
-    f64 room_total = 0.0;
-    for (auto* r : res) room_total += std::max(0.0, r->max_storage - r->stored);
-    if (room_total <= 0.0) return;
-    f64 give = std::min(pool, room_total);
-    for (auto* r : res) {
-        f64 room = std::max(0.0, r->max_storage - r->stored);
-        r->stored = std::min(r->max_storage, r->stored + give * (room / room_total));
+void SimState::share_overflow(size_t index) {
+    ArmyBrain& giver = *armies_[index];
+    if (!team_share_overflow_ || giver.is_defeated()) {
+        return;
     }
-}
-} // namespace
-
-void SimState::share_team_economy() {
-    if (!team_share_overflow_) return;
-    PROFILE_ZONE("Sim::share_econ");
+    std::vector<ArmyBrain*> allies;
     for (const auto& team : alliance_teams()) {
-        if (team.size() < 2) continue;
-        // Active (non-defeated) members only, so a dead ally's reserves aren't
-        // resurrected and don't receive shares.
-        std::vector<ArmyBrain*> members;
-        for (i32 idx : team) {
-            auto* b = armies_[idx].get();
-            if (!b->is_defeated()) members.push_back(b);
+        if (std::find(team.begin(), team.end(), static_cast<i32>(index)) == team.end()) {
+            continue;
         }
-        if (members.size() < 2) continue;
-
-        // Resources members would waste at full storage flow to allies with
-        // room. Allies keep their own reserves otherwise: Moho has no pool
-        // (FAF's Union keeps each player's resources; its Common army is one
-        // army, merged by its scripts).
-        f64 mass_overflow = 0.0, energy_overflow = 0.0;
-        std::vector<ResourceState*> mass_res, energy_res;
-        for (auto* b : members) {
-            mass_overflow += b->economy().mass.overflow;
-            energy_overflow += b->economy().energy.overflow;
-            mass_res.push_back(&b->economy().mass);
-            energy_res.push_back(&b->economy().energy);
+        for (const i32 member : team) {
+            ArmyBrain* ally = armies_[static_cast<size_t>(member)].get();
+            if (static_cast<size_t>(member) != index && !ally->is_defeated()) {
+                allies.push_back(ally);
+            }
         }
-        distribute_overflow(mass_res, mass_overflow);
-        distribute_overflow(energy_res, energy_overflow);
+    }
+    const auto shares = [&](f64 pool, ResourceState EconomyState::* resource) {
+        std::vector<f64> cut(allies.size(), 0.0);
+        f64 room_total = 0.0;
+        for (const ArmyBrain* ally : allies) {
+            const ResourceState& r = ally->economy().*resource;
+            room_total += std::max(0.0, r.max_storage - r.stored);
+        }
+        if (pool <= 0.0 || room_total <= 0.0) {
+            return cut;
+        }
+        const f64 give = std::min(pool, room_total);
+        for (size_t i = 0; i < allies.size(); ++i) {
+            const ResourceState& r = allies[i]->economy().*resource;
+            cut[i] = give * (std::max(0.0, r.max_storage - r.stored) / room_total);
+        }
+        return cut;
+    };
+    const std::vector<f64> mass = shares(giver.economy().mass.overflow, &EconomyState::mass);
+    const std::vector<f64> energy = shares(giver.economy().energy.overflow, &EconomyState::energy);
+    for (size_t i = 0; i < allies.size(); ++i) {
+        allies[i]->bank_share(mass[i], energy[i]);
     }
 }
 
@@ -1903,58 +1911,70 @@ void SimState::sweep_ferry_beacons() {
     }
 }
 
-void SimState::request_economy_events() {
+void SimState::request_economy_events(size_t index) {
     // Each event asks its unit's army for its cost over its duration; one
     // whose unit is gone is cancelled.
     economy_events_.for_each([&](EconomyEvent& evt) {
-        evt.set_counted(false);
-        if (!evt.active() || evt.unit_id() == 0) return;
+        if (!evt.active() || evt.unit_id() == 0) {
+            return;
+        }
         const Entity* unit = entity_registry_.find(evt.unit_id());
         if (!unit || unit->destroyed()) {
             evt.cancel();
             return;
         }
-        if (ArmyBrain* brain = get_army(unit->army())) {
-            brain->add_event_request(evt.mass_per_second(), evt.energy_per_second());
-            evt.set_counted(true);
+        if (unit->army() != static_cast<i32>(index)) {
+            return;
         }
+        armies_[index]->add_event_request(evt.mass_per_second(), evt.energy_per_second());
+        evt.set_counted(true);
     });
 }
 
-void SimState::tick_economy_events() {
-    // Events counted in this tick's economy move on as it granted them (a
-    // stall slows them), and tell their script how far they are. One made
-    // since asks next tick. An event with no unit runs on time alone.
-    economy_events_.for_each([&](EconomyEvent& evt) {
-        if (!evt.active()) return;
-        f64 efficiency = 1.0;
-        u32 unit_id = evt.unit_id();
-        if (unit_id != 0) {
-            if (!evt.counted()) return;
-            const Entity* unit = entity_registry_.find(unit_id);
-            const ArmyBrain* brain = unit ? get_army(unit->army()) : nullptr;
-            if (brain)
-                efficiency =
-                    brain->grant_ratios().of(evt.mass_per_second(), evt.energy_per_second());
+void SimState::step_economy_events(const Unit& unit) {
+    const auto first = std::lower_bound(
+        stepping_events_.begin(), stepping_events_.end(), unit.entity_id(),
+        [](const std::pair<u32, EconomyEvent*>& p, u32 id) { return p.first < id; });
+    const ArmyBrain* brain = get_army(unit.army());
+    for (auto it = first; it != stepping_events_.end() && it->first == unit.entity_id(); ++it) {
+        EconomyEvent& evt = *it->second;
+        if (!evt.active()) {
+            continue;
         }
+        const f64 efficiency =
+            brain ? brain->grant_ratios().of(evt.mass_per_second(), evt.energy_per_second()) : 1.0;
         evt.advance(SECONDS_PER_TICK, efficiency);
-        if (evt.callback_ref() < 0 || unit_id == 0) return;
-        const Entity* unit = entity_registry_.find(unit_id);
-        if (!unit || unit->destroyed() || unit->lua_table_ref() < 0) return;
+        if (evt.callback_ref() < 0 || unit.lua_table_ref() < 0) {
+            continue;
+        }
         const int top = lua_gettop(L_);
         lua_rawgeti(L_, LUA_REGISTRYINDEX, evt.callback_ref());
         if (lua_isfunction(L_, -1)) {
-            lua_rawgeti(L_, LUA_REGISTRYINDEX, unit->lua_table_ref());
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
             lua_pushnumber(L_, evt.progress());
             if (lua_pcall(L_, 2, 0, 0) != 0) {
                 const char* err = lua_tostring(L_, -1);
                 const std::string message =
                     std::string("EconomyEvent callback error: ") + (err ? err : "(unknown)");
                 spdlog::warn("{}", message);
-                if (test_status::count_lua_failures()) test_status::record_failure(message);
+                if (test_status::count_lua_failures()) {
+                    test_status::record_failure(message);
+                }
             }
         }
         lua_settop(L_, top);
+        if (unit.destroyed() || !unit.in_registry()) {
+            return;
+        }
+    }
+}
+
+void SimState::tick_economy_events() {
+    // An event with no unit runs on time alone.
+    economy_events_.for_each([&](EconomyEvent& evt) {
+        if (evt.active() && evt.unit_id() == 0) {
+            evt.advance(SECONDS_PER_TICK, 1.0);
+        }
     });
     // Wake threads waiting on completed/cancelled events
     economy_events_.for_each([&](EconomyEvent& evt) {
@@ -1980,46 +2000,134 @@ void SimState::tick_economy_events() {
     economy_events_.gc();
 }
 
-void SimState::update_entities() {
-    PROFILE_ZONE("Sim::entities");
-    // Snapshot IDs to avoid iterator invalidation if update() triggers removal
-    std::vector<u32> ids;
-    ids.reserve(entity_registry_.count());
-    entity_registry_.for_each([&](Entity& e) {
-        ids.push_back(e.entity_id());
-    });
-
+SimContext SimState::sim_context() {
     SimContext ctx{
         entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this, {}};
     for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
         ctx.army_grants[i] = armies_[i]->grant_ratios();
     }
+    return ctx;
+}
+
+void SimState::tick_armies() {
+    PROFILE_ZONE("Sim::armies");
+    std::vector<std::vector<u32>> by_army(armies_.size() + 1);
+    entity_registry_.for_each_unit([&](Entity& e) {
+        const i32 army = e.army();
+        const bool listed = army >= 0 && static_cast<size_t>(army) < armies_.size();
+        by_army[listed ? static_cast<size_t>(army) : armies_.size()].push_back(e.entity_id());
+    });
+    for (size_t index = 0; index < by_army.size(); ++index) {
+        const std::vector<u32>& units = by_army[index];
+        if (index < armies_.size()) {
+            tick_army_economy(index);
+        }
+        if (moho_pathing_) {
+            navigate_units(units);
+            steer_units(*this, units);
+        }
+        SimContext ctx = sim_context();
+        for (const u32 id : units) {
+            Entity* e = entity_registry_.find(id);
+            if (e && !e->destroyed() && e->is_unit() &&
+                !static_cast<const Unit*>(e)->weapons().empty()) {
+                static_cast<Unit*>(e)->tick_weapons(ctx);
+            }
+        }
+        if (path_tables_ && index < armies_.size()) {
+            i32 budget = path::kArmyPathBudget;
+            armies_[index]->path_queue().work(*path_tables_, budget);
+        }
+    }
+}
+
+void SimState::navigate_units(const std::vector<u32>& ids) {
+    for (const u32 id : ids) {
+        Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) {
+            continue;
+        }
+        auto& unit = *static_cast<Unit*>(e);
+        if (unit.is_dying() || unit.is_being_built() || unit.is_air_unit() ||
+            unit.transport_id() != 0) {
+            continue;
+        }
+        unit.navigator().navigate(unit);
+    }
+}
+
+void SimState::tick_unit_orders() {
+    PROFILE_ZONE("Sim::orders");
+    SimContext ctx = sim_context();
+    std::vector<u32> ids;
+    u32 done = 0;
+    // CTaskStage::UserFrame runs its list to the end: a unit made during the stage runs in it too.
+    while (true) {
+        ids.clear();
+        entity_registry_.for_each_unit([&](Entity& e) {
+            if (e.entity_id() > done) {
+                ids.push_back(e.entity_id());
+            }
+        });
+        if (ids.empty()) {
+            break;
+        }
+        done = ids.back();
+        for (const u32 id : ids) {
+            Entity* e = entity_registry_.find(id);
+            if (e && !e->destroyed() && e->is_unit()) {
+                auto* unit = static_cast<Unit*>(e);
+                unit->tick_commands(SECONDS_PER_TICK, ctx);
+                if (!unit->destroyed()) {
+                    unit->bank_reclaim(get_army(unit->army()));
+                }
+            }
+        }
+    }
+}
+
+void SimState::update_entities() {
+    PROFILE_ZONE("Sim::entities");
+    std::vector<u32> ids;
+    ids.reserve(entity_registry_.count());
+    entity_registry_.for_each([&](Entity& e) {
+        ids.push_back(e.entity_id());
+    });
+    const u32 made_during = entity_registry_.next_id();
+
+    SimContext ctx = sim_context();
+
+    stepping_events_.clear();
+    economy_events_.for_each([&](EconomyEvent& evt) {
+        if (evt.counted()) {
+            evt.set_counted(false);
+            if (evt.active()) {
+                stepping_events_.emplace_back(evt.unit_id(), &evt);
+            }
+        }
+    });
+    std::stable_sort(stepping_events_.begin(), stepping_events_.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
 
     // Units on paths look ahead for others they would meet (M203c).
-    steer_ground_units(*this);
+    if (!moho_pathing_) {
+        steer_ground_units(*this);
+    }
 
-    for (u32 id : ids) {
+    const auto step = [&](u32 id) {
         auto* e = entity_registry_.find(id);
-        if (!e || e->destroyed()) continue;
+        if (!e || e->destroyed()) {
+            return;
+        }
         e->tick_scroller();
         if (e->is_unit()) {
             collide_with_props(*static_cast<Unit*>(e), entity_registry_, L_, tick_count());
             if (e->destroyed()) {
-                continue;
+                return;
             }
-            const Vector3 before = e->position();
-            const u32 snaps = e->snap_serial();
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
             if (auto* moved = entity_registry_.find(id); moved && !moved->destroyed()) {
                 static_cast<Unit*>(moved)->note_queue_head();
-                // A teleport or a boarding jumps: no speed to lead by.
-                const Vector3 after = moved->position();
-                const auto per_second = static_cast<f32>(1.0 / SECONDS_PER_TICK);
-                static_cast<Unit*>(moved)->set_velocity(
-                    moved->snap_serial() != snaps ? Vector3{}
-                                                  : Vector3{(after.x - before.x) * per_second,
-                                                            (after.y - before.y) * per_second,
-                                                            (after.z - before.z) * per_second});
             }
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK, entity_registry_, L_,
@@ -2029,12 +2137,20 @@ void SimState::update_entities() {
             auto* prop = static_cast<Prop*>(e);
             prop->step_fall(terrain_.get());
             if (prop->sink_rate != 0) {
-                Vector3 p = prop->position();
+                Vector3 p = prop->pending_position();
                 p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
                 prop->set_position(p);
             }
         }
+    };
+    for (const u32 id : ids) {
+        step(id);
     }
+    // CTaskStage::UserFrame runs its list to the end: an entity made during stage A steps in it.
+    for (u32 id = made_during; id < entity_registry_.next_id(); ++id) {
+        step(id);
+    }
+    stepping_events_.clear();
     separate_ground_units();
 }
 
@@ -2117,7 +2233,7 @@ void SimState::separate_ground_units() {
     for (u32 i = 0; i < bodies.size(); ++i) {
         if (push_x[i] == 0 && push_z[i] == 0) continue;
         Unit& u = *bodies[i].unit;
-        Vector3 p = u.position();
+        Vector3 p = u.pending_position();
         p.x += push_x[i];
         p.z += push_z[i];
         if (pathfinding_grid_) {
@@ -2130,12 +2246,13 @@ void SimState::separate_ground_units() {
         // With Moho pathing, as its drive does (Moho's CUnitMotion): no push
         // onto ground the unit won't fit, from ground it does.
         if (moho_pathing_ && footprint_fits_at(u.footprint(), p.x, p.z) == 0 &&
-            footprint_fits_at(u.footprint(), u.position().x, u.position().z) != 0)
+            footprint_fits_at(u.footprint(), u.pending_position().x, u.pending_position().z) != 0) {
             continue;
+        }
         // On the surface as it drives; a submarine keeps its depth.
         if (terrain_ && !bodies[i].sub) {
             const Unit::GroundStance stance =
-                u.ground_stance(terrain_.get(), p.x, p.z, u.orientation());
+                u.ground_stance(terrain_.get(), p.x, p.z, u.pending_orientation());
             p.y = stance.y;
             u.set_orientation(stance.orientation);
         }

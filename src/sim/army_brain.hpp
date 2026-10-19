@@ -6,6 +6,7 @@
 #include "sim/path_search.hpp"
 #include "sim/platoon.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <map>
 #include <set>
@@ -137,8 +138,24 @@ public:
     /// Income less what it spent (Moho's mIncome - mLastUseActual).
     f64 get_economy_trend(const std::string& resource_type) const;
 
-    /// Per-tick economy update: sum unit production/consumption, update stored.
+    /// Per-tick economy update: grant the units' requests, take in the bank, update stored.
     void update_economy(EntityRegistry& registry, f64 dt);
+    /// Moho's CEconomy::mResources, per second: what its units produced and
+    /// reclaimed since its last economy, which the next one takes in.
+    void bank(f64 mass, f64 energy) {
+        bank_mass_ += mass;
+        bank_energy_ += energy;
+    }
+    /// An ally's overflow, which Moho banks for this army's next economy.
+    void bank_share(f64 mass, f64 energy) {
+        shared_mass_ += mass;
+        shared_energy_ += energy;
+    }
+    void count_storage(f64 held_mass, f64 held_energy) {
+        economy_.mass.max_storage = std::max(0.0, extra_storage_mass_ + held_mass);
+        economy_.energy.max_storage = std::max(0.0, extra_storage_energy_ + held_energy);
+    }
+    void update_unit_cap_stats(const EntityRegistry& registry);
     /// A request beyond its units' own, per second, for the next
     /// update_economy only: its economy events' (M206d).
     void add_event_request(f64 mass, f64 energy) {
@@ -328,6 +345,10 @@ private:
     f64 handicap_ = 0.0;
     f64 extra_storage_mass_ = 0.0; // GiveStorage's pair
     f64 extra_storage_energy_ = 0.0;
+    f64 bank_mass_ = 0.0;
+    f64 bank_energy_ = 0.0;
+    f64 shared_mass_ = 0.0;
+    f64 shared_energy_ = 0.0;
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;

@@ -17,8 +17,8 @@ class Entity;
 /// stands in it, and give it in the cells' order.
 ///
 /// An entity links when it is made and when its collision shape changes.
-/// One that moved or turned relinks in advance(), at the end of the tick
-/// (Moho's AdvanceCoords), and only if its cells changed. One without a
+/// One that moved or turned relinks as its move is committed (Moho's
+/// AdvanceCoords), and only if its cells changed. One without a
 /// shape is in no cell. An entity leaves when it is freed: Moho deletes a
 /// destroyed one at the end of the beat, so until then a gather finds it.
 class CollisionCells {
@@ -49,11 +49,6 @@ public:
     void link(Entity& e);
     /// Take `e` out (Moho's CollisionShapeBase::Remove).
     void unlink(Entity& e);
-    /// Note that `e` moved or turned: advance() relinks it.
-    void moved(Entity& e);
-    /// Relink each entity that moved since the last call, in the order of
-    /// their last moves.
-    void advance();
 
     /// Each entity in the cells `r` covers, once, in Moho's order: cell by
     /// cell along each row, row after row, and in each cell its units (with
@@ -76,13 +71,7 @@ private:
     /// Each cell's units and props, the last linked at the back.
     std::vector<std::vector<Entity*>> units_;
     std::vector<std::vector<Entity*>> props_;
-    struct Move {
-        Entity* entity;
-        u64 stamp;
-    };
-    std::vector<Move> moves_; ///< since the last advance(), in order
     u64 seq_ = 0;
-    u64 move_stamp_ = 0;
     u64 gather_ = 0;
 
     /// The cells `e`'s collision box covers now, none without a shape.

@@ -71,6 +71,8 @@ void test_intel_fields(TestContext& ctx) {
     }
     const f32 sx = spot->x;
     const f32 sz = spot->z;
+    run(1);
+    lua("GetArmyBrain('ARMY_2'):GiveResource('ENERGY', 4000)\n");
     const u32 generator = spawn_unit(ctx, "__osc_if_gen", "ueb4203", "ARMY_2", {sx, sz});
     const u32 near = spawn_unit(ctx, "__osc_if_near", "uel0105", "ARMY_2", {sx + 10, sz});
     const u32 far = spawn_unit(ctx, "__osc_if_far", "uel0105", "ARMY_2", {sx + 50, sz});

@@ -20,7 +20,7 @@ constexpr f32 kTwoPi = 6.28318530f;
 void steer_attitude(Unit& unit, const Quaternion& wanted, const EntityRegistry* registry,
                     f32 turn_mult, f32 turn_add, f32 dt) {
     const AirCombatRules& r = unit.air_combat_rules();
-    const Quaternion body = unit.orientation();
+    const Quaternion body = unit.pending_orientation();
     const f32 load = registry ? unit.transport_load_factor(*registry) : 1.0f;
     const Vector3 err = attitude_error(body, wanted);
     const Vector3 inertia = box_inertia(unit.size_x(), unit.size_y(), unit.size_z());
@@ -51,7 +51,7 @@ void air_control(Unit& unit, const Vector3& force, f32 lift, f32 damping, const 
     const AirCombatRules& r = unit.air_combat_rules();
     const AirMoveStep step = air_move_step(unit.air_velocity(), force, r.k_move, damping, dt);
     unit.set_air_velocity(step.velocity);
-    Vector3 next = unit.position();
+    Vector3 next = unit.pending_position();
     next.x += step.move.x;
     next.z += step.move.z;
     const f32 floor_here = unit.air_floor(terrain, next.x, next.z);
@@ -68,7 +68,7 @@ void air_control(Unit& unit, const Vector3& force, f32 lift, f32 damping, const 
 }
 
 Vector3 flat_nose(const Unit& unit) {
-    Vector3 nose = forward_of(unit.orientation());
+    Vector3 nose = forward_of(unit.pending_orientation());
     nose.y = 0.0f;
     const f32 len = std::sqrt(nose.x * nose.x + nose.z * nose.z);
     if (len > 0.0f) {
@@ -203,13 +203,10 @@ namespace {
 /// (no target).
 void fly_run(Unit& unit, const Entity* target, const Vector3& at, SimState& sim,
              const map::Terrain* terrain, f32 dt) {
-    if (!unit.take_air_step()) {
-        return;
-    }
     using M = AirCombatMode;
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
-    const Vector3 pos = unit.position();
+    const Vector3 pos = unit.pending_position();
     const f32 to_x = at.x - pos.x;
     const f32 to_z = at.z - pos.z;
     unit.track_lift_ground(terrain, std::sqrt(to_x * to_x + to_z * to_z), sim.tick_count(), dt);
@@ -372,7 +369,6 @@ bool flies_winged_on_guard(const Unit& unit) {
 
 void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Terrain* terrain,
                    f32 dt) {
-    if (!unit.take_air_step()) return;
     unit.air_combat().flying = true;
     AirMove move;
     move.target = goal;
@@ -384,7 +380,7 @@ void fly_winged_to(Unit& unit, const Vector3& goal, SimState& sim, const map::Te
 void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Terrain* terrain,
                   f32 dt) {
     const AirCombatRules& r = unit.air_combat_rules();
-    Vector3 pos = unit.position();
+    Vector3 pos = unit.pending_position();
     const f32 top = unit.max_airspeed() * unit.speed_mult();
     const f32 dx = move.target.x - pos.x;
     const f32 dz = move.target.z - pos.z;
@@ -420,7 +416,7 @@ void fly_air_move(Unit& unit, const AirMove& move, SimState* sim, const map::Ter
         }
     }
 
-    const Quaternion body = unit.orientation();
+    const Quaternion body = unit.pending_orientation();
     const Vector3 nose = flat_nose(unit);
     const f32 nx = nose.x;
     const f32 nz = nose.z;
@@ -538,12 +534,9 @@ CirclingSteer circling_steer(const CirclingInput& in, const map::Terrain* terrai
 
 void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
                   const map::Terrain* terrain, f32 dt) {
-    if (!unit.take_air_step()) {
-        return;
-    }
     AirCombatState& st = unit.air_combat();
     const AirCombatRules& r = unit.air_combat_rules();
-    const Vector3 pos = unit.position();
+    const Vector3 pos = unit.pending_position();
     if (!st.flying) {
         // The circling takes over from where it is (Moho's motion target,
         // once stopped).
@@ -590,7 +583,7 @@ void fly_circling(Unit& unit, const CircleAround& around, SimState& sim,
     const f32 elevation = unit.elevation_target();
     const f32 height = pos.y - unit.air_floor(terrain, pos.x, pos.z);
     const AirAxes axes =
-        hover_axes(unit.orientation(), unit.air_dv(), r.bank_factor, r.bank_forward,
+        hover_axes(unit.pending_orientation(), unit.air_dv(), r.bank_factor, r.bank_forward,
                    elevation > 0.0f ? height / elevation : 1.0f, steer.toward);
     air_control(unit, steer.velocity, steer.velocity.y, damping, axes, false, r.circling_turn_mult,
                 0.0f, &sim, terrain, dt);

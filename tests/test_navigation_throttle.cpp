@@ -20,6 +20,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -436,6 +437,32 @@ TEST_CASE("a unit's velocity is its last tick's movement, and none across a tele
     CHECK(u->position().z == 100.0f);
     CHECK(u->velocity().x == 0.0f);
     CHECK(u->velocity().z == 0.0f);
+}
+
+TEST_CASE("A move that arrives ends on the next tick, whose one step goes to the next move",
+          "[nav]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    Unit* u = spawn_land_unit(sim, 20.0f, 64.0f);
+    u->push_command(order(CommandType::Move, 40.0f, 64.0f), true);
+    u->push_command(order(CommandType::Move, 40.0f, 80.0f), false);
+    bool stopped = false;
+    for (int t = 0; t < 200 && !stopped; ++t) {
+        sim.tick();
+        stopped = !u->navigator().busy();
+    }
+    REQUIRE(stopped);
+    CHECK(u->command_queue().size() == 2);
+    const osc::sim::Vector3 at = u->position();
+    sim.tick();
+    REQUIRE(u->command_queue().size() == 1);
+    CHECK(u->navigator().goal().z == 80.0f);
+    const osc::f32 dx = u->position().x - at.x;
+    const osc::f32 dz = u->position().z - at.z;
+    const osc::f32 step = std::sqrt(dx * dx + dz * dz);
+    CHECK(step > 0.0f);
+    CHECK(step <= 5.0f * 0.1f + 1e-4f);
 }
 
 TEST_CASE("A path across open ground expands about its length, not the plain", "[nav][m205]") {

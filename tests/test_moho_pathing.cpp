@@ -337,13 +337,14 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
         wall.rects = {{60, 0, 62, 70}, {60, 76, 62, static_cast<i32>(kMap)}};
         w.sim.occupy_ground(9999, wall);
         std::vector<Unit*> tanks;
-        tanks.reserve(12);
-        for (int i = 0; i < 12; ++i)
+        tanks.reserve(24);
+        for (int i = 0; i < 24; ++i) {
             tanks.push_back(w.make(i % 3 == 0 ? "bigtank" : "tank", start_of(i).x, start_of(i).z));
+        }
         for (size_t i = 0; i < tanks.size(); ++i)
             World::move(*tanks[i], 110.5f, 15.5f + static_cast<f32>(i) * 4.0f);
-        // Ticks until their searches wait (the queue works them as the
-        // next tick begins).
+        // Ticks until their searches wait (those its army's budget leaves
+        // as its army's phase ends).
         for (int t = 0; t < 10 && queue.pending().empty(); ++t) w.sim.tick();
         if (moho) REQUIRE(queue.pending().size() > 2);
         if (moho) {
@@ -373,7 +374,6 @@ TEST_CASE("With Moho pathing its state is in the sync checksum's navigation doma
         check("the next search's type",
               [&] { nav.finder().set_type(osc::sim::path::SearchType::Leader); });
         check("a repath asked", [&] { nav.request_repath(); });
-        check("whether it moved last tick", [&] { moving->note_tick_position(); });
         check("a new goal", [&] {
             nav.set_goal({{100, 100, 104, 104}, {}}, moving->position().x, moving->position().z);
         });
@@ -572,4 +572,101 @@ TEST_CASE("With Moho pathing a formation of nine goes through the gap to its slo
         CHECK(at.x0 == want.x0);
         CHECK(at.z0 == want.z0);
     }
+}
+
+namespace {
+
+void queue_move(Unit& u, f32 x, f32 z) {
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::Move;
+    cmd.target_pos = {x, 10.0f, z};
+    u.push_command(cmd, false);
+}
+
+f32 step_of(World& w, const Unit& u) {
+    const osc::sim::Vector3 was = u.position();
+    w.sim.tick();
+    const f32 dx = u.position().x - was.x;
+    const f32 dz = u.position().z - was.z;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+i32 cell_z(const Unit& u) {
+    return osc::sim::footprint_rect(u.footprint(), u.position().x, u.position().z).z0;
+}
+
+/// The thread runs in the next tick's Lua stage: that tick is T.
+void move_from_thread(World& w, Unit& u) {
+    u.add_command_cap("RULEUCC_Move");
+    REQUIRE(w.state.do_string("function go() IssueMove({made}, {20.5, 10, 60.5}) end").ok());
+    REQUIRE(w.state.do_string("ForkThread(go)").ok());
+}
+
+} // namespace
+
+TEST_CASE("With Moho pathing an IssueMove from a Lua thread at tick T first steps along its path "
+          "at T+3",
+          "[moho_pathing][tick-phases]") {
+    World w(true);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    move_from_thread(w, tank);
+    for (int t = 0; t < 3; ++t) {
+        INFO("T+" << t);
+        CHECK(step_of(w, tank) == 0.0f);
+    }
+    CHECK(step_of(w, tank) > 0.0f);
+    CHECK(tank.position().z > 20.5f);
+}
+
+TEST_CASE("With Moho pathing off, an IssueMove from a Lua thread at tick T first steps at T+1",
+          "[moho_pathing][tick-phases]") {
+    World w(false);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    move_from_thread(w, tank);
+    CHECK(step_of(w, tank) == 0.0f);
+    CHECK(step_of(w, tank) > 0.0f);
+    CHECK(tank.position().z > 20.5f);
+}
+
+TEST_CASE("With Moho pathing a two-point move chain slows for two ticks at the first point without "
+          "stopping",
+          "[moho_pathing][tick-phases]") {
+    World w(true);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    queue_move(tank, 20.5f, 40.5f);
+    queue_move(tank, 20.5f, 70.5f);
+    f32 into = 0.0f;
+    for (int t = 0; t < 300 && cell_z(tank) != 40; ++t) {
+        into = step_of(w, tank);
+    }
+    REQUIRE(cell_z(tank) == 40);
+    REQUIRE(tank.command_queue().size() == 2);
+    const f32 first = step_of(w, tank);
+    CHECK(tank.command_queue().size() == 1);
+    const f32 second = step_of(w, tank);
+    const f32 on = step_of(w, tank);
+    CHECK(first < into);
+    CHECK(second < first);
+    CHECK(second > 0.0f);
+    CHECK(on > second);
+}
+
+TEST_CASE("With Moho pathing a unit walled in where it stands gives its move up four ticks "
+          "after it is set, never moving",
+          "[moho_pathing][tick-phases]") {
+    World w(true);
+    osc::sim::GroundOccupant box;
+    box.caps = oc::kLand;
+    box.rects = {{19, 19, 22, 20}, {19, 21, 22, 22}, {19, 20, 20, 21}, {21, 20, 22, 21}};
+    w.sim.occupy_ground(9999, box);
+    Unit& tank = *w.make("tank", 20.5f, 20.5f);
+    World::move(tank, 60.5f, 60.5f);
+    for (int t = 1; t <= 4; ++t) {
+        INFO("tick " << t);
+        CHECK(step_of(w, tank) == 0.0f);
+        CHECK(tank.command_queue().size() == 1);
+    }
+    CHECK(tank.navigator().moho_path().state() == osc::sim::path::PathNavigator::State::Failed);
+    CHECK(step_of(w, tank) == 0.0f);
+    CHECK(tank.command_queue().empty());
 }
