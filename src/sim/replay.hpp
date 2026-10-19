@@ -24,11 +24,12 @@ struct Replay {
     // slot; 10: the game's mods; 11: a Script order's table; 12: a campaign
     // operation's flow; 13: a callback's Args as Lua data;
     // 14: the game's random stream; 15: a formation's Move or FormMove;
-    // 16: the game's pathing (--moho-pathing)
-    static constexpr u32 kVersion = 16;
+    // 16: the game's pathing (--moho-pathing); 17: beats, not ticks, and
+    // pauses held until a resume command
+    static constexpr u32 kVersion = 17;
 
     u32 version = kVersion;
-    u32 final_tick = 0;               // last tick the recording covers
+    u32 final_beat = 0;               // last beat the recording covers
     u32 command_delay = 0;            // scheduler delay in effect
     u64 seed = SimRandom::kDefaultSeed; // the game's random seed
     std::string victory_condition;    // game-mode context (informational)
@@ -37,7 +38,7 @@ struct Replay {
     /// version 4, or recorded by a bare SimState) can't start a game.
     bool has_setup = false;
     GameSetup setup;
-    /// The sync checksum after each tick from `checksum_from` on.
+    /// The sync checksum after each beat from `checksum_from` on.
     u32 checksum_from = 0;
     std::vector<u32> checksums;
     std::vector<ScheduledCommand> commands; // as the sim applied them
@@ -54,7 +55,7 @@ class SimState;
 
 /// Plays a replay into a sim started from its setup: queues its commands
 /// (the game's only input from then on), then checks the sim's checksum
-/// after each tick against the recording's.
+/// after each beat against the recording's.
 class ReplayPlayback {
 public:
     explicit ReplayPlayback(Replay replay) : replay_(std::move(replay)) {}
@@ -63,11 +64,12 @@ public:
     /// Start it as a saved game instead: the player takes over after its
     /// last tick (SimState::start_resume). check() works the same.
     void resume(SimState& sim) const;
-    /// After a tick: false from the first tick whose checksum differs.
+    /// After a beat: false from the first beat whose checksum differs.
     bool check(const SimState& sim);
-    /// Whether the sim has played every recorded tick, or its game is over.
+    /// Whether the sim has played every recorded beat (or, before version
+    /// 17, its game is over).
     bool finished(const SimState& sim) const;
-    /// The first tick whose checksum differed (0 = none yet).
+    /// The first beat whose checksum differed (0 = none yet).
     u32 diverged_at() const { return diverged_at_; }
     const Replay& replay() const { return replay_; }
 

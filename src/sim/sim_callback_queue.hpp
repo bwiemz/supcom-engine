@@ -38,9 +38,13 @@ inline constexpr const char* kDefeatArmyCallback = "__osc_DefeatArmy";
 /// terminate_command_source).
 inline constexpr const char* kCommandSourceTerminatedCallback = "__osc_CommandSourceTerminated";
 
-/// Func name of a network game's pause request (M218f): its command's
-/// source asks (Moho's CMDST_RequestPause).
+/// Func name of a pause request (M218f): its command's source asks (Moho's
+/// CMDST_RequestPause).
 inline constexpr const char* kRequestPauseCallback = "__osc_RequestPause";
+
+/// Moho's CMDST_Resume and CMDST_SingleStep, as kRequestPauseCallback.
+inline constexpr const char* kResumeCallback = "__osc_Resume";
+inline constexpr const char* kSingleStepCallback = "__osc_SingleStep";
 
 /// Func name of a loaded game's post-load: Moho's SimSync.SyncPlayableRect,
 /// then the global OnPostLoad(), which re-send to the new UI what only the

@@ -226,7 +226,7 @@ TEST_CASE("A recorded SimCallback replays on the same tick", "[simcallback][repl
 
 TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused", "[simcallback]") {
     ScheduledCommand c;
-    c.exec_tick = 9;
+    c.exec_beat = 9;
     c.source = 2;
     c.callback = toggle(41);
     std::vector<osc::u8> bytes;
@@ -237,7 +237,7 @@ TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused",
     ScheduledCommand back;
     REQUIRE(osc::sim::read_command(r, back));
     REQUIRE(back.callback);
-    CHECK(back.exec_tick == 9);
+    CHECK(back.exec_beat == 9);
     CHECK(back.callback->func_name == "ToggleThing");
     CHECK(std::get<std::string>(back.callback->args.at("Mode")) == "fast");
     CHECK(std::get<double>(back.callback->args.at("Level")) == 3.0);

@@ -148,8 +148,8 @@ void App::Window::handle_launch() {
                         catch_up.emplace(std::move(launch_save->game));
                         catch_up->resume(*sim_state);
                         sim_state->set_recording(true);
-                        spdlog::info("Saved game '{}': catching up to tick {} ({})",
-                                     launch_save->name, launch_save->tick, why);
+                        spdlog::info("Saved game '{}': catching up to beat {} ({})",
+                                     launch_save->name, launch_save->beat, why);
                     }
                 }
 

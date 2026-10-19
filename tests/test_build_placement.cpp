@@ -236,7 +236,7 @@ TEST_CASE("placement: an order not yet in a queue reserves its site", "[placemen
     make_coast_world(sim);
     auto* engineer = spawn(sim, 0, 10.0f, 10.0f);
     osc::sim::ScheduledCommand order;
-    order.exec_tick = sim.tick_count() + 1;
+    order.exec_beat = sim.tick_count() + 1;
     order.unit_ids = {engineer->entity_id()};
     order.command.type = osc::sim::CommandType::BuildMobile;
     order.command.target_pos = {30.0f, 0.0f, 30.0f};

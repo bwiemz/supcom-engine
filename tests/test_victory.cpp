@@ -679,7 +679,7 @@ TEST_CASE("After the tick that called EndGame the sim ticks no more and the UI h
     SimState sim(lua.raw(), nullptr);
     osc::lua::register_moho_bindings(lua, sim);
     osc::lua::register_sim_bindings(lua, sim);
-    sim.set_tick_observer([&](const SimState& s) {
+    sim.set_beat_observer([&](const SimState& s) {
         if (s.tick_count() == 5) {
             REQUIRE(lua.do_string("EndGame()").ok());
         }

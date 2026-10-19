@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 71; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 72; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -99,6 +99,7 @@ constexpr u32 kVersion = 71; // 2: entities' wanted loops (M216b); 3: emitter ov
                              // 70: the entity walk's order, entities' parked state and last step;
                              //     no collision beam list
                              // 71: which of each army's fakes it sensed at its last recon tick
+                             // 72: the beat count and a single step due; no resumed pause serial
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -306,8 +307,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     save(w, sim.thread_manager_);
     // blueprint_store_: the host's; projectile_info_: a cache; followed_: the entity walk's own
     save_ids(w, sim.ferry_beacons_);
-    // checksum_trace_header_: the host's; tick_checksum_, tick_checksum_tick_,
-    // tick_checksum_valid_: a memo
+    // checksum_trace_header_: the host's; beat_checksum_, beat_checksum_beat_,
+    // beat_checksum_valid_: a memo
     w.size(sim.source_armies_.size());
     for (const auto& [source, army] : sim.source_armies_) {
         w.u32v(source);
@@ -324,7 +325,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.b(sim.cheats_enabled_);
     w.i32v(sim.paused_by_);
     w.u32v(sim.pause_serial_);
-    w.u32v(sim.resumed_serial_);
+    w.b(sim.single_step_);
     w.size(sim.pause_timeouts_.size());
     for (const auto& [client, left] : sim.pause_timeouts_) {
         w.u32v(client);
@@ -375,7 +376,7 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
         w.u32v(p.pass);
     });
     w.u32v(sim.intel_pass_);
-    // sound_manager_, tick_observer_, checksum_trace_, entity_trace_,
+    // sound_manager_, beat_observer_, checksum_trace_, entity_trace_,
     // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
     // entity_trace_from_, entity_trace_to_, faf_exe_: the host's; bone_cache_,
     // anim_cache_: caches
@@ -402,13 +403,14 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.size(sim.armies_.size());
     for (const auto& a : sim.armies_) save(w, *a, sim);
     w.u32v(sim.tick_count_);
+    w.u32v(sim.beat_count_);
     // game_time_: tick_count_'s
     // post_loads_run_: the host's count of post-loads, not game state
     // stepping_events_: the economy events the entity walk steps, within it
     save(w, sim.command_scheduler_);
     w.u32v(sim.command_delay_);
     // local_command_sink_, local_callback_sink_, human_input_active_: the
-    // host's; recorded_replay_, recording_, playback_, resume_tick_: the
+    // host's; recorded_replay_, recording_, playback_, resume_beat_: the
     // host's too (a load adopts the saved game's history: adopt_history)
     w.size(sim.temp_visions_.size());
     for (const auto& v : sim.temp_visions_) {
@@ -517,7 +519,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     });
     load(r, sim.thread_manager_);
     sim.ferry_beacons_ = load_ids(r);
-    sim.tick_checksum_valid_ = false;
+    sim.beat_checksum_valid_ = false;
     sim.source_armies_.clear();
     const size_t sources = r.size(8);
     for (size_t i = 0; i < sources; ++i) {
@@ -535,7 +537,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.cheats_enabled_ = r.b();
     sim.paused_by_ = r.i32v();
     sim.pause_serial_ = r.u32v();
-    sim.resumed_serial_ = r.u32v();
+    sim.single_step_ = r.b();
     sim.pause_timeouts_.clear();
     const size_t timeouts = r.size(8);
     for (size_t i = 0; i < timeouts; ++i) {
@@ -647,6 +649,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     if (r.size(64) != sim.armies_.size()) return r.fail("another count of armies");
     for (auto& a : sim.armies_) load(r, *a, sim);
     sim.tick_count_ = r.u32v();
+    sim.beat_count_ = r.u32v();
     sim.game_time_ = sim.tick_count_ * SimState::SECONDS_PER_TICK;
     load(r, sim.command_scheduler_);
     sim.command_delay_ = r.u32v();

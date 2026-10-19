@@ -1056,25 +1056,25 @@ const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,
 
 u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
                                const UnitCommand& command, bool clear_existing) {
-    const u32 exec_tick = tick_count_ + 1 + command_delay_;
+    const u32 exec_beat = beat_count_ + 1 + command_delay_;
     ScheduledCommand sc;
-    sc.exec_tick = exec_tick;
+    sc.exec_beat = exec_beat;
     sc.source = source;
     sc.command = command;
     sc.unit_ids = unit_ids;
     sc.clear_existing = clear_existing;
     command_scheduler_.submit(std::move(sc));
-    return exec_tick;
+    return exec_beat;
 }
 
 u32 SimState::schedule_callback(u32 source, SimCallbackEntry callback) {
     ScheduledCommand sc;
-    sc.exec_tick = tick_count_ + 1 + command_delay_;
+    sc.exec_beat = beat_count_ + 1 + command_delay_;
     sc.source = source;
     sc.callback = std::move(callback);
-    const u32 exec_tick = sc.exec_tick;
+    const u32 exec_beat = sc.exec_beat;
     command_scheduler_.submit(std::move(sc));
-    return exec_tick;
+    return exec_beat;
 }
 
 void SimState::submit_callback(SimCallbackEntry callback) {
@@ -1500,8 +1500,8 @@ void SimState::set_recording(bool on) {
     recorded_replay_.build = build_id();
     recorded_replay_.command_delay = command_delay_;
     recorded_replay_.victory_condition = victory_condition_;
-    recorded_replay_.final_tick = tick_count_;
-    recorded_replay_.checksum_from = tick_count_ + 1;
+    recorded_replay_.final_beat = beat_count_;
+    recorded_replay_.checksum_from = beat_count_ + 1;
 }
 
 void SimState::set_game_setup(GameSetup setup) {
@@ -1511,6 +1511,7 @@ void SimState::set_game_setup(GameSetup setup) {
 
 void SimState::queue_replay(const Replay& replay) {
     command_delay_ = replay.command_delay;
+    pause_holds_ = replay.version >= 17;
     if (!replay.victory_condition.empty())
         set_victory_condition(replay.victory_condition);
     for (const auto& c : replay.commands) command_scheduler_.submit(c);
@@ -1523,17 +1524,17 @@ void SimState::adopt_history(const Replay& saved) {
     // this game must.
     recorded_replay_.setup.moho_pathing = moho_pathing_;
     std::erase_if(recorded_replay_.commands,
-                  [&](const ScheduledCommand& c) { return c.exec_tick > saved.final_tick; });
+                  [&](const ScheduledCommand& c) { return c.exec_beat > saved.final_beat; });
     recording_ = true;
     playback_ = false;
-    resume_tick_ = 0;
+    resume_beat_ = 0;
 }
 
 void SimState::start_resume(const Replay& saved) {
     queue_replay(saved);
-    const bool behind = saved.final_tick > tick_count_;
+    const bool behind = saved.final_beat > beat_count_;
     playback_ = behind;
-    resume_tick_ = behind ? saved.final_tick : 0;
+    resume_beat_ = behind ? saved.final_beat : 0;
 }
 
 std::shared_ptr<const ProjectileBlueprintInfo>
@@ -1586,26 +1587,36 @@ void SimState::stop_unit(Unit& unit) {
 }
 
 void SimState::request_pause(u32 source) {
-    if (paused_by_ >= 0) return; // paused already
+    if (paused_by_ >= 0 || source == kEngineSource) {
+        return;
+    }
     i32 left = pause_timeouts(source);
     if (left == 0) {
         spdlog::info("[pause] source {} has no timeouts left", source);
         return;
     }
-    if (left > 0) set_pause_timeouts(source, --left);
+    if (left > 0) {
+        set_pause_timeouts(source, --left);
+    }
     paused_by_ = static_cast<i32>(source);
     ++pause_serial_;
     spdlog::info("[pause] source {} paused at tick {} ({} timeouts left)", source, tick_count_,
                  left);
-    // Nothing will resume it (a replay), or its resume came already
-    if (!pause_holds_ || resumed_serial_ >= pause_serial_) paused_by_ = -1;
+    if (!pause_holds_) {
+        paused_by_ = -1;
+    }
 }
 
-void SimState::resume_pause(u32 serial) {
-    resumed_serial_ = std::max(resumed_serial_, serial);
-    if (paused_by_ >= 0 && resumed_serial_ >= pause_serial_) {
-        spdlog::info("[pause] resumed at tick {}", tick_count_);
+void SimState::resume(u32 source) {
+    if (paused_by_ >= 0 && source != kEngineSource) {
+        spdlog::info("[pause] source {} resumed at tick {}", source, tick_count_);
         paused_by_ = -1;
+    }
+}
+
+void SimState::single_step(u32 source) {
+    if (paused_by_ >= 0 && source != kEngineSource) {
+        single_step_ = true;
     }
 }
 
@@ -1653,6 +1664,10 @@ bool SimState::okay_to_mess_with(i32 army) {
 }
 
 void SimState::terminate_command_source(u32 source) {
+    // Moho's Sim::OnCommandSourceTerminated resumes the pause its source took.
+    if (paused_by_ == static_cast<i32>(source)) {
+        paused_by_ = -1;
+    }
     if (!command_sources_known_) {
         defeat_army(army_of_source(source));
         return;
@@ -1688,7 +1703,7 @@ void SimState::terminate_command_source(u32 source) {
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
-    command_scheduler_.dispatch_due(tick_count_ + 1, [&](const ScheduledCommand& scheduled) {
+    command_scheduler_.dispatch_due(beat_count_, [&](const ScheduledCommand& scheduled) {
         ScheduledCommand sc = scheduled;
         // Its source runs it, as Moho's sim plays a source's part of the
         // command stream (the engine's own commands have none).
@@ -1730,10 +1745,18 @@ void SimState::dispatch_due_commands() {
         // and networked commands alike, on the tick they ran.
         if (recording_) {
             recorded_replay_.commands.push_back(sc);
-            recorded_replay_.commands.back().exec_tick = tick_count_ + 1;
+            recorded_replay_.commands.back().exec_beat = beat_count_;
         }
         if (sc.callback && sc.callback->func_name == kRequestPauseCallback) {
             request_pause(sc.source); // (a callback doesn't know its source)
+            return;
+        }
+        if (sc.callback && sc.callback->func_name == kResumeCallback) {
+            resume(sc.source);
+            return;
+        }
+        if (sc.callback && sc.callback->func_name == kSingleStepCallback) {
+            single_step(sc.source);
             return;
         }
         if (sc.callback) {
@@ -1827,10 +1850,8 @@ void SimState::enforce_no_rush() {
 }
 
 void SimState::tick() {
-    if (game_over_) {
-        return;
-    }
     PROFILE_ZONE("Sim::tick");
+    ++beat_count_;
     if (rng_trace_) {
         const bool on = tick_count_ + 1 >= rng_trace_from_ && tick_count_ + 1 <= rng_trace_to_;
         sim_random_.set_draw_hook(on ? &SimState::trace_rng_draw : nullptr, this);
@@ -1848,7 +1869,7 @@ void SimState::tick() {
     //   table grows), and a restored snapshot's differs again. A collection
     //   it started would clear weak tables on different ticks on each peer.
     if (L_) {
-        if (tick_count_ == 0) {
+        if (beat_count_ == 1) {
             lua_pushstring(L_, "__blueprints");
             lua_rawget(L_, LUA_GLOBALSINDEX);
             if (lua_istable(L_, -1)) lua_freeze(L_, -1);
@@ -1861,6 +1882,15 @@ void SimState::tick() {
 
     // Moho's command stream applies a beat's commands as it decodes them, before ++mCurTick.
     dispatch_due_commands();
+    const bool ticks = !game_over_ && (paused_by_ < 0 || single_step_);
+    if (ticks) {
+        single_step_ = false;
+        advance_tick();
+    }
+    end_beat(ticks);
+}
+
+void SimState::advance_tick() {
     tick_count_++;
     game_time_ = tick_count_ * SECONDS_PER_TICK;
     // Moho's UpdatePaths: the clusters' background rebuild, before the
@@ -1917,6 +1947,9 @@ void SimState::tick() {
     kill_cleanup();
     // Moho's AdvanceCoords, after KillCleanup: the tick's moves are committed at once.
     entity_registry_.advance_coords();
+}
+
+void SimState::end_beat(bool ticked) {
     run_deletion_queue();
 
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
@@ -1937,7 +1970,7 @@ void SimState::tick() {
     // stop-the-world; a threshold of 0 forces one now), on Moho's schedule.
     // Its timing is part of the game: weak tables (trash bags) lose what it
     // frees, so it must fall on the same ticks on every peer.
-    if (tick_count_ % LUA_GC_PERIOD_TICKS == 0) {
+    if (L_ && tick_count_ % LUA_GC_PERIOD_TICKS == 0) {
         PROFILE_ZONE("Sim::lua_gc");
         lua_setgcthreshold(L_, 0);
     }
@@ -1956,12 +1989,12 @@ void SimState::tick() {
         release_script_handle(e);
     });
 
-    if (tick_observer_) {
+    if (beat_observer_) {
         PROFILE_ZONE("Sim::observer");
-        tick_observer_(*this);
+        beat_observer_(*this);
     }
     if (checksum_trace_ || recording_) {
-        const ChecksumParts& parts = tick_checksum();
+        const ChecksumParts& parts = beat_checksum();
         if (checksum_trace_) {
             if (!checksum_trace_header_) {
                 std::string header = "# tick total";
@@ -1974,12 +2007,14 @@ void SimState::tick() {
             *checksum_trace_ << line << '\n';
         }
         if (recording_) {
-            recorded_replay_.final_tick = tick_count_;
+            recorded_replay_.final_beat = beat_count_;
             recorded_replay_.checksums.push_back(parts.total());
         }
     }
-    if (entity_trace_ && tick_count_ >= entity_trace_from_ && tick_count_ <= entity_trace_to_)
+    if (entity_trace_ && ticked && tick_count_ >= entity_trace_from_ &&
+        tick_count_ <= entity_trace_to_) {
         write_entity_trace();
+    }
     // Death flashes and camera shakes are shown from the tick's capture;
     // the sim is done with them (events raised between ticks wait for the
     // next one).
@@ -1989,8 +2024,8 @@ void SimState::tick() {
     sound_requests_.clear();
     intel_flush_events_.clear();
     // A loaded game has caught up: the player's orders count from here.
-    if (resume_tick_ != 0 && tick_count_ >= resume_tick_) {
-        resume_tick_ = 0;
+    if (resume_beat_ != 0 && beat_count_ >= resume_beat_) {
+        resume_beat_ = 0;
         playback_ = false;
     }
     game_over_ = game_ended_;
@@ -3838,13 +3873,13 @@ void SimState::write_entity_trace() const {
     *entity_trace_ << out;
 }
 
-const SimState::ChecksumParts& SimState::tick_checksum() const {
-    if (!tick_checksum_valid_ || tick_checksum_tick_ != tick_count_) {
-        tick_checksum_ = checksum_parts();
-        tick_checksum_tick_ = tick_count_;
-        tick_checksum_valid_ = true;
+const SimState::ChecksumParts& SimState::beat_checksum() const {
+    if (!beat_checksum_valid_ || beat_checksum_beat_ != beat_count_) {
+        beat_checksum_ = checksum_parts();
+        beat_checksum_beat_ = beat_count_;
+        beat_checksum_valid_ = true;
     }
-    return tick_checksum_;
+    return beat_checksum_;
 }
 
 u32 SimState::compute_sync_checksum() const {

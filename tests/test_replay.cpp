@@ -63,12 +63,12 @@ UnitCommand move_to(osc::f32 x, osc::f32 z) {
 
 TEST_CASE("Replay serialize/deserialize round-trips", "[replay]") {
     Replay r;
-    r.final_tick = 42;
+    r.final_beat = 42;
     r.command_delay = 2;
     r.victory_condition = "domination";
 
     ScheduledCommand a;
-    a.exec_tick = 5;
+    a.exec_beat = 5;
     a.source = 1;
     a.clear_existing = true;
     a.command.type = CommandType::Move;
@@ -79,7 +79,7 @@ TEST_CASE("Replay serialize/deserialize round-trips", "[replay]") {
     r.commands.push_back(a);
 
     ScheduledCommand b;
-    b.exec_tick = 9;
+    b.exec_beat = 9;
     b.source = 0;
     b.clear_existing = false;
     b.command.type = CommandType::Attack;
@@ -92,12 +92,12 @@ TEST_CASE("Replay serialize/deserialize round-trips", "[replay]") {
     REQUIRE(Replay::deserialize(bytes, out));
 
     CHECK(out.version == Replay::kVersion);
-    CHECK(out.final_tick == 42);
+    CHECK(out.final_beat == 42);
     CHECK(out.command_delay == 2);
     CHECK(out.victory_condition == "domination");
     REQUIRE(out.commands.size() == 2);
 
-    CHECK(out.commands[0].exec_tick == 5);
+    CHECK(out.commands[0].exec_beat == 5);
     CHECK(out.commands[0].source == 1);
     CHECK(out.commands[0].clear_existing);
     CHECK(out.commands[0].command.type == CommandType::Move);
@@ -134,8 +134,8 @@ TEST_CASE("Recording keeps what the sim applies, and a checksum each tick", "[re
 
     const Replay& r = sim.recorded_replay();
     REQUIRE(r.commands.size() == 1); // only what ran
-    CHECK(r.commands[0].exec_tick == 1);
-    CHECK(r.final_tick == 2);
+    CHECK(r.commands[0].exec_beat == 1);
+    CHECK(r.final_beat == 2);
     CHECK(r.checksum_from == 1);
     REQUIRE(r.checksums.size() == 2);
     CHECK(r.checksums[1] == sim.compute_sync_checksum());
@@ -143,12 +143,13 @@ TEST_CASE("Recording keeps what the sim applies, and a checksum each tick", "[re
 
     sim.tick();
     CHECK(sim.recorded_replay().commands.size() == 2);
-    CHECK(sim.recorded_replay().commands[1].exec_tick == 3);
+    CHECK(sim.recorded_replay().commands[1].exec_beat == 3);
 }
 
-TEST_CASE("A replay ends on the tick that ended the game", "[replay]") {
+TEST_CASE("A replay's game ends on the tick that ended it, and its beats go on to the end",
+          "[replay]") {
     const auto end_at_tick_5 = [](SimState& sim) {
-        sim.set_tick_observer([&sim](const SimState&) {
+        sim.set_beat_observer([&sim](const SimState&) {
             if (sim.tick_count() == 5) {
                 sim.set_game_ended(true);
             }
@@ -162,21 +163,68 @@ TEST_CASE("A replay ends on the tick that ended the game", "[replay]") {
     for (int i = 0; i < 10; ++i) {
         a.tick();
     }
-    CHECK(a.recorded_replay().final_tick == 5);
+    CHECK(a.tick_count() == 5);
+    CHECK(a.recorded_replay().final_beat == 10);
 
-    Replay longer = a.recorded_replay();
-    longer.final_tick = 10;
     LuaGuard gb;
     SimState b(gb.L, nullptr);
     setup(b);
     end_at_tick_5(b);
-    osc::sim::ReplayPlayback playback(longer);
+    osc::sim::ReplayPlayback playback(a.recorded_replay());
     playback.start(b);
-    for (int i = 0; i < 10 && !playback.finished(b); ++i) {
+    for (int i = 0; i < 20 && !playback.finished(b); ++i) {
         b.tick();
+        CHECK(playback.check(b));
     }
     CHECK(playback.finished(b));
+    CHECK(b.beat_count() == 10);
     CHECK(b.tick_count() == 5);
+}
+
+TEST_CASE("A replay holds the pauses it recorded and runs the commands given in them",
+          "[replay][pause]") {
+    const auto engine_callback = [](const char* name) {
+        osc::sim::SimCallbackEntry cb;
+        cb.func_name = name;
+        return cb;
+    };
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    auto ids = setup(a);
+    a.set_recording(true);
+    a.tick();
+    a.tick();
+    a.schedule_callback(0, engine_callback(osc::sim::kRequestPauseCallback));
+    a.tick();
+    a.schedule_command(0, {ids[0]}, move_to(50.0f, 0.0f), true);
+    a.tick();
+    a.tick();
+    a.schedule_callback(0, engine_callback(osc::sim::kResumeCallback));
+    for (int i = 0; i < 4; ++i) {
+        a.tick();
+    }
+    REQUIRE(a.tick_count() == 6);
+    Replay recorded;
+    REQUIRE(Replay::deserialize(a.recorded_replay().serialize(), recorded));
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    auto bids = setup(b);
+    osc::sim::ReplayPlayback playback(recorded);
+    playback.start(b);
+    std::vector<osc::u32> ticks;
+    while (!playback.finished(b)) {
+        b.tick();
+        CHECK(playback.check(b));
+        ticks.push_back(b.tick_count());
+        if (b.beat_count() == 4) {
+            CHECK(b.paused());
+            const auto* mover = static_cast<const Unit*>(b.entity_registry().find(bids[0]));
+            CHECK(mover->command_queue().size() == 1);
+        }
+    }
+    CHECK(ticks == std::vector<osc::u32>{1, 2, 2, 2, 2, 3, 4, 5, 6});
+    CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
 }
 
 TEST_CASE("A lockstep peer's recording holds the other peers' commands", "[replay][lockstep]") {
@@ -248,7 +296,7 @@ TEST_CASE("Playback checks every tick against the recording", "[replay][sync]") 
     Replay tampered = recorded;
     REQUIRE(tampered.commands.size() == 2);
     tampered.commands[1].command.target_pos.x = 50.0f;
-    CHECK(play(tampered) == tampered.commands[1].exec_tick);
+    CHECK(play(tampered) == tampered.commands[1].exec_beat);
 }
 
 TEST_CASE("A replay carries the game's setup", "[replay]") {
@@ -376,7 +424,7 @@ TEST_CASE("A version 3 replay still loads, without a setup", "[replay]") {
 TEST_CASE("A formation order round-trips; a version 4 command loads without one", "[replay]") {
     Replay r;
     ScheduledCommand c;
-    c.exec_tick = 5;
+    c.exec_beat = 5;
     c.command.type = CommandType::Move;
     c.command.target_pos = {10.0f, 0.0f, 20.0f};
     c.command.formation = "AttackFormation";
@@ -431,7 +479,7 @@ TEST_CASE("A factory command round-trips; a version 6 command loads without the 
     // A player's rally order to a factory (M206k) travels with its flag.
     Replay r;
     ScheduledCommand c;
-    c.exec_tick = 5;
+    c.exec_beat = 5;
     c.command.type = CommandType::Move;
     c.command.target_pos = {10.0f, 0.0f, 20.0f};
     c.command.factory = true;
@@ -518,19 +566,19 @@ TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
 
 TEST_CASE("A version 1 replay (no seed) still loads, with the default seed", "[replay]") {
     Replay r;
-    r.final_tick = 9;
+    r.final_beat = 9;
     r.command_delay = 2;
     r.victory_condition = "demoralization";
     std::vector<osc::u8> bytes = r.serialize();
     // Version 1 had no seed: drop the 8 bytes after command_delay and
     // rewrite the version.
-    constexpr size_t kSeedAt = 4 + 4 + 4 + 4; // magic, version, final_tick, command_delay
+    constexpr size_t kSeedAt = 4 + 4 + 4 + 4; // magic, version, final_beat, command_delay
     bytes.erase(bytes.begin() + kSeedAt, bytes.begin() + kSeedAt + 8);
     bytes[4] = 1;
 
     Replay loaded;
     REQUIRE(Replay::deserialize(bytes, loaded));
-    CHECK(loaded.final_tick == 9);
+    CHECK(loaded.final_beat == 9);
     CHECK(loaded.command_delay == 2);
     CHECK(loaded.victory_condition == "demoralization");
     CHECK(loaded.seed == osc::sim::SimRandom::kDefaultSeed);

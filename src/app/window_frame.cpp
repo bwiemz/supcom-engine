@@ -35,10 +35,10 @@ bool App::Window::frame() {
     note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
-    const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
+    const osc::u32 beat0 = sim_state ? sim_state->beat_count() : 0;
     advance_sim(session_dt);
 
-    run_beats(session_dt, beat_tick0);
+    run_beats(beat0);
     finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
@@ -179,14 +179,18 @@ void App::Window::count_fps(double dt) {
 }
 
 void App::Window::advance_sim(double dt) {
-    if (sim_state && (game_state_mgr.paused() || sim_state->network_paused())) {
+    if (sim_state && game_state_mgr.paused()) {
         world_interp.one_tick_next = true;
     }
     if (fixed_step()) {
         world_interp.one_tick_next = false;
     }
     if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped() && sim_state) {
-        world_interp.clock.advance(dt * game_state_mgr.speed());
+        const bool held = sim_state->paused() || sim_state->game_over();
+        const double sim_dt = held ? dt : dt * game_state_mgr.speed();
+        if (!held) {
+            world_interp.clock.advance(sim_dt);
+        }
         if (catch_up) {
             // A loaded game catches up to its saved tick as fast as
             // the sim runs, a frame's budget of ticks at a time: the
@@ -224,8 +228,7 @@ void App::Window::advance_sim(double dt) {
             if (game_state_mgr.sim_rate() != session->speed())
                 game_state_mgr.set_sim_rate(session->speed());
             const int rounds = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
-                                                  dt * game_state_mgr.speed(),
-                                                  osc::sim::SimState::SECONDS_PER_TICK, 4);
+                                                  sim_dt, osc::sim::SimState::SECONDS_PER_TICK, 4);
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
                 session->receive_and_advance();
@@ -241,22 +244,20 @@ void App::Window::advance_sim(double dt) {
                 }
             }
         } else {
-            // At most 8 ticks per frame; a slower-than-real-time
+            // At most 8 beats per frame; a slower-than-real-time
             // sim slows the game rather than stalling every frame.
-            const int ticks = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
-                                                 dt * game_state_mgr.speed(),
-                                                 osc::sim::SimState::SECONDS_PER_TICK, 8);
-            for (int t = 0; t < ticks; ++t) {
-                // A game or a replay plays to its end, then holds there.
-                if (sim_state->game_over() ||
-                    (active_playback && active_playback->finished(*sim_state))) {
+            const int beats = osc::session_ticks(sim_accumulator, world_interp.one_tick_next,
+                                                 sim_dt, osc::sim::SimState::SECONDS_PER_TICK, 8);
+            for (int b = 0; b < beats; ++b) {
+                // A replay plays to its end, then holds there.
+                if (active_playback && active_playback->finished(*sim_state)) {
                     break;
                 }
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
                     if (!active_playback->check(*sim_state) && !diverged) {
-                        spdlog::warn("Replay: diverged from the recording at tick {}",
+                        spdlog::warn("Replay: diverged from the recording at beat {}",
                                      active_playback->diverged_at());
                     }
                 }
@@ -273,22 +274,12 @@ void App::Window::finish_world_ui_after_post_load() {
                     sim_lua_state.get(), sim_state.get());
 }
 
-void App::Window::run_beats(double dt, u32 beat_tick0) {
-    // Moho's sim beat reaches the user side once per tick, and
-    // keeps running at the tick rate while paused or the game is over.
+void App::Window::run_beats(u32 beat0) {
+    // Moho's sim beat reaches the user side once per beat.
     if (sim_state && sim_lua_state) {
-        osc::u32 beats = sim_state->tick_count() - beat_tick0;
-        if (game_state_mgr.paused() || sim_state->game_over()) {
-            paused_beat_accumulator += dt;
-            while (paused_beat_accumulator >= osc::sim::SimState::SECONDS_PER_TICK) {
-                paused_beat_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
-                ++beats;
-            }
-        } else {
-            paused_beat_accumulator = 0.0;
-        }
-        for (osc::u32 b = 0; b < beats; ++b)
+        for (osc::u32 b = beat0; b < sim_state->beat_count(); ++b) {
             world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
+        }
     }
 }
 
@@ -532,10 +523,10 @@ void App::Window::update_title(double dt) {
         title_update_timer = 0.0;
         char title[256];
         if (sim_state) {
-            const char* status_str = game_state_mgr.game_over() ? "GAME OVER "
-                                     : sim_state->resuming()    ? "LOADING "
-                                     : game_state_mgr.paused()  ? "PAUSED "
-                                                                : "";
+            const char* status_str = game_state_mgr.game_over()                       ? "GAME OVER "
+                                     : sim_state->resuming()                          ? "LOADING "
+                                     : game_state_mgr.paused() || sim_state->paused() ? "PAUSED "
+                                                                                      : "";
             std::snprintf(title, sizeof(title),
                           "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
                           status_str, game_state_mgr.speed(), sim_state->tick_count(),

@@ -176,20 +176,20 @@ void issue_order_before_save(sim::SimState& sim);
 int play_replay(sim::SimState& sim, const sim::Replay& replay);
 u64 launch_seed(const std::string& seed_arg, bool reproducible);
 
-/// The world as it is drawn: the sim's last two ticks, and how far the frame
-/// is between them. Every tick lands here, whoever runs it (the loop, the
+/// The world as it is drawn: the sim's last two beats, and how far the frame
+/// is between them. Every beat lands here, whoever runs it (the loop, the
 /// lockstep session), so interpolation follows the ticks that really came.
 struct WorldInterp {
     osc::sim::WorldHistory history;
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
 
-    /// Follow a new sim's ticks from its first one. Must outlive `sim`.
+    /// Follow a new sim's beats from its first one. Must outlive `sim`.
     void attach(osc::sim::SimState& sim) {
         history.clear();
         clock.reset();
         one_tick_next = true;
-        sim.set_tick_observer([this](const osc::sim::SimState& s) {
+        sim.set_beat_observer([this](const osc::sim::SimState& s) {
             history.capture(s);
             clock.on_tick();
         });

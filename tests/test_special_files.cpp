@@ -45,7 +45,7 @@ osc::sim::Replay playable_replay() {
     osc::sim::Replay r;
     r.has_setup = true;
     r.setup.scenario = "/maps/SCMP_009/SCMP_009_scenario.lua";
-    r.final_tick = 10;
+    r.final_beat = 10;
     return r;
 }
 
@@ -210,7 +210,7 @@ TEST_CASE("Replay files round-trip, and one without a setup is refused", "[speci
     const auto back = osc::lua::read_replay_file(path);
     REQUIRE(back);
     CHECK(back->setup.scenario == "/maps/SCMP_009/SCMP_009_scenario.lua");
-    CHECK(back->final_tick == 10);
+    CHECK(back->final_beat == 10);
 
     osc::sim::Replay no_setup;
     REQUIRE(osc::lua::write_replay_file(no_setup, dir.path / "old.oscreplay"));
@@ -238,7 +238,7 @@ TEST_CASE("A snapshot is restored only by the installation and binary that took 
     // Through the file
     osc::sim::SavedGame loaded;
     save.game = playable_replay();
-    save.tick = save.game.final_tick;
+    save.beat = save.game.final_beat;
     save.build = osc::sim::build_id();
     REQUIRE(osc::sim::SavedGame::deserialize(save.serialize(), loaded) ==
             osc::sim::SaveLoadError::None);

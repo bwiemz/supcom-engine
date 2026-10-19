@@ -27,9 +27,9 @@ enum class SaveLoadError {
 const char* save_load_error_name(SaveLoadError error);
 
 /// A saved game (M208a): the game's history, not its state. The recording
-/// holds the setup, every order the sim applied with the tick it ran on,
-/// the checksum after every tick, and the orders given before the save that
-/// had not run yet. Loading replays it to the saved tick (see
+/// holds the setup, every order the sim applied with the beat it ran in,
+/// the checksum after every beat, and the orders given before the save that
+/// had not run yet. Loading replays it to the saved beat (see
 /// SimState::start_resume); since a replay plays back identically on the
 /// build that recorded it, the loaded game is the saved one.
 struct SavedGame {
@@ -42,8 +42,8 @@ struct SavedGame {
     /// version's saves).
     std::string build;
     std::string name; ///< the name the player gave it
-    u32 tick = 0;     ///< the tick it was saved on: the game resumes after it
-    /// The game's state at `tick` (sim_snapshot.hpp; M208c): a load restores
+    u32 beat = 0;     ///< the beat it was saved on: the game resumes after it
+    /// The game's state at `beat` (sim_snapshot.hpp; M208c): a load restores
     /// it at once, where the history would take as long as the game did.
     /// Empty when it couldn't be taken: the load catches up instead.
     std::vector<u8> snapshot;
@@ -66,8 +66,8 @@ struct SavedGame {
     static SaveLoadError deserialize(const std::vector<u8>& bytes, SavedGame& out);
 };
 
-/// The game `sim` is playing, saved as it stands between ticks. `sim` must
-/// be recording (SimState::set_recording) since its first tick. With
+/// The game `sim` is playing, saved as it stands between beats. `sim` must
+/// be recording (SimState::set_recording) since its first beat. With
 /// `snapshot`, the save carries the game's state too.
 SavedGame save_game(SimState& sim, std::string name, bool snapshot = true);
 

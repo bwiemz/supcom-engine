@@ -27,24 +27,22 @@ LockstepSession::LockstepSession(SimState& sim, INetTransport& transport, u32 lo
     sim_.set_issuing_source(local_source);
 }
 
-void LockstepSession::request_pause() {
-    if (sim_.network_paused()) return; // (Moho's sim ignores it too)
-    SimCallbackEntry pause;
-    pause.func_name = kRequestPauseCallback;
-    submit_local_callback(std::move(pause));
+u32 LockstepSession::submit_local_command(const char* name) {
+    SimCallbackEntry command;
+    command.func_name = name;
+    return submit_local_callback(std::move(command));
 }
 
-bool LockstepSession::request_resume() {
-    if (!sim_.network_paused()) return false;
-    const u32 serial = sim_.pause_serial();
-    std::vector<u8> msg;
-    ByteWriter w(msg);
-    w.u8v(kResumeMessage);
-    w.u32v(local_source_);
-    w.u32v(serial);
-    transport_.broadcast(msg);
-    sim_.resume_pause(serial);
-    return true;
+u32 LockstepSession::request_pause() {
+    return submit_local_command(kRequestPauseCallback);
+}
+
+u32 LockstepSession::request_resume() {
+    return submit_local_command(kResumeCallback);
+}
+
+u32 LockstepSession::request_single_step() {
+    return submit_local_command(kSingleStepCallback);
 }
 
 void LockstepSession::set_speed_option(i32 rate, bool adjustable) {
@@ -104,7 +102,7 @@ u32 LockstepSession::drop_timeout() const {
 void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
                                    const UnitCommand& cmd, bool clear_existing) {
     ScheduledCommand sc;
-    sc.exec_tick = next_frame_;
+    sc.exec_beat = next_frame_;
     sc.source = local_source_;
     sc.command = cmd;
     sc.unit_ids = unit_ids;
@@ -113,25 +111,23 @@ void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
     pending_.push_back(std::move(sc));    // and queue for broadcast
 }
 
-void LockstepSession::submit_local_callback(SimCallbackEntry callback) {
+u32 LockstepSession::submit_local_callback(SimCallbackEntry callback) {
     ScheduledCommand sc;
-    sc.exec_tick = next_frame_;
+    sc.exec_beat = next_frame_;
     sc.source = local_source_;
     sc.callback = std::move(callback);
     sim_.command_scheduler().submit(sc); // apply to local sim
     pending_.push_back(std::move(sc));   // and queue for broadcast
+    return next_frame_;
 }
 
 void LockstepSession::send_frame() {
-    // Paused, no frames: each confirms a tick, and would run at once on
-    // resuming (its commands wait in pending_)
-    if (sim_.network_paused()) return;
     ++round_;
     std::vector<u8> msg;
     ByteWriter w(msg);
     // As far ahead of the sim as a peer runs: it waits for the others (its
     // orders wait in pending_), saying only that it is still there
-    if (next_frame_ > sim_.tick_count() + lead_cap()) {
+    if (next_frame_ > sim_.beat_count() + lead_cap()) {
         w.u8v(kAliveMessage);
         w.u32v(local_source_);
         transport_.broadcast(msg);
@@ -141,13 +137,13 @@ void LockstepSession::send_frame() {
     w.u32v(local_source_);
     w.u32v(next_frame_);
 
-    // Attach the most recent executed-tick checksum for desync detection.
-    u32 last_tick = sim_.tick_count();
-    auto it = my_checksums_.find(last_tick);
+    // Attach the last beat's checksum for desync detection.
+    const u32 last_beat = sim_.beat_count();
+    auto it = my_checksums_.find(last_beat);
     // By domain, so a peer that differs can say what differs.
-    if (last_tick > 0 && it != my_checksums_.end()) {
+    if (last_beat > 0 && it != my_checksums_.end()) {
         w.u8v(1);
-        w.u32v(last_tick);
+        w.u32v(last_beat);
         for (const u64 part : it->second) w.u64v(part);
     } else {
         w.u8v(0);
@@ -170,13 +166,6 @@ void LockstepSession::receive_and_advance() {
         const u8 type = r.u8v();
         if (type == kDropMessage) {
             take_drop_report(r);
-            continue;
-        }
-        if (type == kResumeMessage) {
-            const u32 source = r.u32v();
-            const u32 serial = r.u32v();
-            if (r.ok() && participant(source) && source != local_source_ && !has_dropped(source))
-                sim_.resume_pause(serial);
             continue;
         }
         if (type == kSpeedMessage) {
@@ -206,7 +195,7 @@ void LockstepSession::receive_and_advance() {
             continue;
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
-        u32 cs_tick = r.u32v();
+        u32 cs_beat = r.u32v();
         Parts cs_parts{};
         for (u64& part : cs_parts) part = r.u64v();
         u32 count = r.u32v();
@@ -226,7 +215,9 @@ void LockstepSession::receive_and_advance() {
         u32& pc = peer_confirmed_[source];
         if (frame > pc) pc = frame;
         peer_heard_round_[source] = round_; // arms the drop timer after first contact
-        if (has_cs) note_peer_checksum(source, cs_tick, cs_parts);
+        if (has_cs) {
+            note_peer_checksum(source, cs_beat, cs_parts);
+        }
         // Kept to relay, should this peer drop before every survivor has it.
         auto& kept = recent_frames_[source];
         kept[frame] = std::move(commands);
@@ -238,8 +229,6 @@ void LockstepSession::receive_and_advance() {
     // others (cut off from them, it would time them all out and play on
     // alone), as Moho's ejected client waits
     if (ejected_) return;
-    // Paused: no frames flow, so none is late; nothing ticks
-    if (sim_.network_paused()) return;
 
     // A peer silent for longer than the timeout, in rounds (each a tick's
     // time: a peer held at kMaxLead still has them, with no frames), is
@@ -263,12 +252,10 @@ void LockstepSession::receive_and_advance() {
     }
     finalize_drops();
 
-    // Advance as far as every peer's confirmations allow (a pause taken on
-    // a tick holds before the next).
-    while (!sim_.network_paused() && !sim_.game_over() &&
-           sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
+    // Beat as far as every peer's confirmations allow.
+    while (sim_.command_scheduler().ready_to_run(sim_.beat_count() + 1)) {
         sim_.tick();
-        record_local_checksum(sim_.tick_count(), sim_.tick_checksum().values());
+        record_local_checksum(sim_.beat_count(), sim_.beat_checksum().values());
     }
 }
 
@@ -380,14 +367,14 @@ void LockstepSession::finalize_drops() {
 void LockstepSession::finalize_drop(u32 source, const DropVote& vote) {
     u32 last = 0;
     for (const auto& [reporter, frame] : vote.last_frame) last = std::max(last, frame);
-    // This peer ran no tick past the frames it holds from the dropped one,
+    // This peer ran no beat past the frames it holds from the dropped one,
     // and no survivor holds more than `last`: every survivor applies the
     // same frames, up to `last`, before its defeat.
     auto confirmed = peer_confirmed_.find(source);
     const u32 held = confirmed == peer_confirmed_.end() ? 0 : confirmed->second;
     // Walk the frames the reports carried, not the frame numbers up to
     // `last`: that is only a peer's word, and must not set how long this
-    // runs. (Nor may the defeat's tick wrap around.)
+    // runs. (Nor may the defeat's beat wrap around.)
     last = std::min(last, std::numeric_limits<u32>::max() - 1);
     u64 applied = 0;
     for (auto it = vote.frames.upper_bound(held); it != vote.frames.end() && it->first <= last;
@@ -406,19 +393,19 @@ void LockstepSession::finalize_drop(u32 source, const DropVote& vote) {
     newly_dropped_.push_back(source);
     recent_frames_.erase(source);
 
-    // Its source ends on the tick after its last frame, on every survivor,
+    // Its source ends in the beat after its last frame, on every survivor,
     // by the engine rather than any player (Moho's CommandSourceTerminated):
     // the armies it commanded lose it, and one left with no player is
     // abandoned (SimState::terminate_command_source).
     ScheduledCommand terminated;
-    terminated.exec_tick = last + 1;
+    terminated.exec_beat = last + 1;
     terminated.source = kEngineSource;
     terminated.callback = SimCallbackEntry{};
     terminated.callback->func_name = kCommandSourceTerminatedCallback;
     terminated.callback->args["Source"] = static_cast<f64>(source);
     sim_.command_scheduler().submit(std::move(terminated));
     spdlog::warn("[lockstep] peer source {} (army {}) dropped after its frame {}; its source "
-                 "ends at tick {}",
+                 "ends in beat {}",
                  source, sim_.army_of_source(source), last, last + 1);
 }
 
@@ -453,36 +440,36 @@ bool LockstepSession::has_dropped(u32 src) const {
     return std::find(dropped_.begin(), dropped_.end(), src) != dropped_.end();
 }
 
-void LockstepSession::note_peer_checksum(u32 source, u32 tick, const Parts& parts) {
-    peer_checksums_[tick][source] = parts;
-    auto it = my_checksums_.find(tick);
+void LockstepSession::note_peer_checksum(u32 source, u32 beat, const Parts& parts) {
+    peer_checksums_[beat][source] = parts;
+    auto it = my_checksums_.find(beat);
     if (it != my_checksums_.end()) {
-        compare_checksums(tick, source, it->second, parts);
+        compare_checksums(beat, source, it->second, parts);
     }
 }
 
-void LockstepSession::record_local_checksum(u32 tick, const Parts& parts) {
-    my_checksums_[tick] = parts;
-    auto it = peer_checksums_.find(tick);
+void LockstepSession::record_local_checksum(u32 beat, const Parts& parts) {
+    my_checksums_[beat] = parts;
+    auto it = peer_checksums_.find(beat);
     if (it == peer_checksums_.end()) {
         return;
     }
     for (const auto& [source, theirs] : it->second) {
-        compare_checksums(tick, source, parts, theirs);
+        compare_checksums(beat, source, parts, theirs);
     }
 }
 
-void LockstepSession::compare_checksums(u32 tick, u32 source, const Parts& mine,
+void LockstepSession::compare_checksums(u32 beat, u32 source, const Parts& mine,
                                         const Parts& theirs) {
     if (mine == theirs) {
         return;
     }
-    desyncs_.push_back({tick, source});
+    desyncs_.push_back({beat, source});
     if (desynced_) {
         return;
     }
     desynced_ = true;
-    desync_tick_ = tick;
+    desync_beat_ = beat;
     const auto fold = [](const Parts& parts) {
         u64 h = 0xcbf29ce484222325ull;
         for (const u64 part : parts) h = (h ^ part) * 0x100000001b3ull;
@@ -495,7 +482,7 @@ void LockstepSession::compare_checksums(u32 tick, u32 source, const Parts& mine,
         desync_domains_.emplace_back(SimState::ChecksumParts::kNames[i]);
         names += (names.empty() ? "" : ", ") + desync_domains_.back();
     }
-    spdlog::error("[lockstep] desync at tick {}: {} differ", tick, names);
+    spdlog::error("[lockstep] desync at beat {}: {} differ", beat, names);
 }
 
 } // namespace osc::sim

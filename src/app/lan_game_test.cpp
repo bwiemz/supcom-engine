@@ -244,9 +244,7 @@ void LanGameTest::check_speed(lua::LuaState& ui) {
 void LanGameTest::pause_frame(lua::LuaState& ui, const sim::SimState& sim) {
     // The host paused at the check: while it holds, no tick runs here; the
     // joiner resumes it after a while (any player may)
-    auto r = ui.do_string("__osc_lan_is_paused = SessionIsPaused() and 1 or 0");
-    const bool paused = r && number_global(ui.raw(), "__osc_lan_is_paused") != 0;
-    if (!paused) {
+    if (!sim.paused()) {
         paused_tick_.reset();
         return;
     }
@@ -387,7 +385,7 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     if (mp.session->desynced()) {
         std::string domains;
         for (const std::string& d : mp.session->desync_domains()) domains += " " + d;
-        fail(fmt::format("desynced at tick {} (domains:{})", mp.session->desync_tick(), domains));
+        fail(fmt::format("desynced at beat {} (domains:{})", mp.session->desync_beat(), domains));
     }
     // Random spawn: the two slots taken, in order, are armies 0 and 1 (each
     // side's by where retail's shuffle put it), both human, each starting at

@@ -99,7 +99,7 @@ bool read_arg(ByteReader& r, SimCallbackArg& out) {
 } // namespace
 
 void write_command(ByteWriter& w, const ScheduledCommand& c) {
-    w.u32v(c.exec_tick);
+    w.u32v(c.exec_beat);
     w.u32v(c.source);
     w.u8v(c.clear_existing ? 1 : 0);
     w.u8v(static_cast<u8>(c.command.type));
@@ -143,7 +143,7 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
                   bool with_unload, bool with_factory, bool with_value, bool with_script,
                   bool with_lua_args, bool with_form_move) {
     c = ScheduledCommand{};
-    c.exec_tick = r.u32v();
+    c.exec_beat = r.u32v();
     c.source = r.u32v();
     c.clear_existing = r.u8v() != 0;
     c.command.type = static_cast<CommandType>(r.u8v());

@@ -350,7 +350,7 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     TaskSim w;
     osc::sim::Replay r;
     osc::sim::ScheduledCommand c;
-    c.exec_tick = 3;
+    c.exec_beat = 3;
     c.command.type = CommandType::Move;
     c.unit_ids = {7};
     r.commands.push_back(c);

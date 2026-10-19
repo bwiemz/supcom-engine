@@ -14,34 +14,34 @@
 
 namespace osc::sim {
 
-/// A player / AI / network command scheduled to execute on a specific sim tick.
+/// A player / AI / network command scheduled to execute in a specific sim beat.
 /// This is the unit of deterministic replay and lockstep exchange: fed the same
-/// stream, every client applies the same orders on the same ticks.
+/// stream, every client applies the same orders in the same beats.
 /// The source of commands the engine itself issues on every peer at once (a
 /// dropped player's defeat): never a lockstep participant, so the gate
-/// doesn't wait on it, and it sorts after every player within a tick.
+/// doesn't wait on it, and it sorts after every player within a beat.
 inline constexpr u32 kEngineSource = 0xFFFFFFFFu;
 
 struct ScheduledCommand {
-    u32 exec_tick = 0;          // tick at which the order is applied
+    u32 exec_beat = 0;          // beat in which the order is applied
     u32 source = 0;             // originating command source (player / peer / AI)
     u64 sequence = 0;           // submission order — deterministic tiebreak
     UnitCommand command;        // the order payload
     std::vector<u32> unit_ids;  // entities that receive the order
     bool clear_existing = true; // replace the queue (fresh order) vs append (queued)
     /// A UI script's SimCallback instead of a unit order: run in the sim at
-    /// exec_tick on every peer (see SimState::run_sim_callback).
+    /// exec_beat on every peer (see SimState::run_sim_callback).
     std::optional<SimCallbackEntry> callback;
 };
 
-/// Tick-keyed command buffer for deterministic — and lockstep-ready — command
-/// execution. Commands are submitted for a future tick and dispatched in a
-/// canonical order when that tick runs.
+/// Beat-keyed command buffer for deterministic — and lockstep-ready — command
+/// execution. Commands are submitted for a future beat and dispatched in a
+/// canonical order when that beat runs.
 ///
 /// Single-player: one local source, non-lockstep, so `ready_to_run` is always
 /// true and nothing ever stalls. Multiplayer: set lockstep and every peer must
-/// `confirm_frame` each tick (an explicit empty confirmation is allowed) before
-/// that tick may run — the classic "waiting for players" gate.
+/// `confirm_frame` each beat (an explicit empty confirmation is allowed) before
+/// that beat may run — the classic "waiting for players" gate.
 class CommandScheduler {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
@@ -50,7 +50,7 @@ public:
     void submit(ScheduledCommand cmd) {
         if (cmd.source != kEngineSource) register_source(cmd.source);
         cmd.sequence = next_sequence_++;
-        by_tick_[cmd.exec_tick].push_back(std::move(cmd));
+        by_beat_[cmd.exec_beat].push_back(std::move(cmd));
     }
 
     /// Register a participating source without submitting a command, so that
@@ -65,53 +65,60 @@ public:
         confirmed_frame_.erase(source);
     }
 
-    /// Mark that `source` has submitted every command through `tick`.
-    void confirm_frame(u32 source, u32 tick) {
+    /// Mark that `source` has submitted every command through `beat`.
+    void confirm_frame(u32 source, u32 beat) {
         register_source(source);
         u32& c = confirmed_frame_[source];
-        if (tick > c) c = tick;
+        if (beat > c) {
+            c = beat;
+        }
     }
 
-    /// True if the given tick may safely run: in non-lockstep mode always true;
-    /// in lockstep mode, true once every known source has confirmed >= tick.
-    bool ready_to_run(u32 tick) const {
+    /// True if the given beat may safely run: in non-lockstep mode always true;
+    /// in lockstep mode, true once every known source has confirmed >= beat.
+    bool ready_to_run(u32 beat) const {
         if (!lockstep_) return true;
         for (u32 s : sources_) {
             auto it = confirmed_frame_.find(s);
-            if (it == confirmed_frame_.end() || it->second < tick) return false;
+            if (it == confirmed_frame_.end() || it->second < beat) {
+                return false;
+            }
         }
         return true;
     }
 
-    /// Dispatch (and remove) all commands due at `tick`, in canonical order
+    /// Dispatch (and remove) all commands due in `beat`, in canonical order
     /// (by source, then submission sequence), invoking `apply` for each.
-    void dispatch_due(u32 tick,
-                      const std::function<void(const ScheduledCommand&)>& apply) {
-        auto it = by_tick_.find(tick);
-        if (it == by_tick_.end()) return;
+    void dispatch_due(u32 beat, const std::function<void(const ScheduledCommand&)>& apply) {
+        auto it = by_beat_.find(beat);
+        if (it == by_beat_.end()) {
+            return;
+        }
         // Taken out first: applying one (a SimCallback runs scripts) may
         // submit more commands.
         std::vector<ScheduledCommand> due = std::move(it->second);
-        by_tick_.erase(it);
+        by_beat_.erase(it);
         sort_canonical(due);
         for (const auto& c : due) apply(c);
     }
 
-    /// Peek the (canonically ordered) commands pending for a tick.
-    std::vector<ScheduledCommand> commands_for(u32 tick) const {
-        auto it = by_tick_.find(tick);
-        if (it == by_tick_.end()) return {};
+    /// Peek the (canonically ordered) commands pending for a beat.
+    std::vector<ScheduledCommand> commands_for(u32 beat) const {
+        auto it = by_beat_.find(beat);
+        if (it == by_beat_.end()) {
+            return {};
+        }
         std::vector<ScheduledCommand> v = it->second;
         sort_canonical(v);
         return v;
     }
 
-    /// Every command not yet dispatched, tick by tick, each tick's in
+    /// Every command not yet dispatched, beat by beat, each beat's in
     /// canonical order: what a saved game carries so orders given before
     /// the save still run after a load.
     std::vector<ScheduledCommand> pending() const {
         std::vector<ScheduledCommand> out;
-        for (const auto& [tick, cmds] : by_tick_) {
+        for (const auto& [beat, cmds] : by_beat_) {
             std::vector<ScheduledCommand> v = cmds;
             sort_canonical(v);
             out.insert(out.end(), std::make_move_iterator(v.begin()),
@@ -123,21 +130,21 @@ public:
     void set_lockstep(bool on) { lockstep_ = on; }
     bool lockstep() const { return lockstep_; }
 
-    /// Earliest tick that still has pending commands (0 if none).
-    u32 next_pending_tick() const {
-        return by_tick_.empty() ? 0u : by_tick_.begin()->first;
-    }
+    /// Earliest beat that still has pending commands (0 if none).
+    u32 next_pending_beat() const { return by_beat_.empty() ? 0u : by_beat_.begin()->first; }
 
     u64 submitted() const { return next_sequence_; }
 
     size_t pending_count() const {
         size_t n = 0;
-        for (const auto& [tick, cmds] : by_tick_) n += cmds.size();
+        for (const auto& [beat, cmds] : by_beat_) {
+            n += cmds.size();
+        }
         return n;
     }
 
     void clear() {
-        by_tick_.clear();
+        by_beat_.clear();
         confirmed_frame_.clear();
         sources_.clear();
         next_sequence_ = 0;
@@ -157,8 +164,8 @@ private:
                          });
     }
 
-    std::map<u32, std::vector<ScheduledCommand>> by_tick_; // ordered by exec tick
-    std::unordered_map<u32, u32> confirmed_frame_;          // source -> confirmed tick
+    std::map<u32, std::vector<ScheduledCommand>> by_beat_;  // ordered by exec beat
+    std::unordered_map<u32, u32> confirmed_frame_;          // source -> confirmed beat
     std::vector<u32> sources_;                              // participants (sorted, unique)
     u64 next_sequence_ = 0;
     bool lockstep_ = false;

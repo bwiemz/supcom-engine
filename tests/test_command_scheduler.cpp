@@ -54,7 +54,7 @@ UnitCommand move_to(osc::f32 x, osc::f32 z) {
 TEST_CASE("Scheduler dispatches commands only on their exec tick", "[cmd][sched]") {
     CommandScheduler s;
     ScheduledCommand c;
-    c.exec_tick = 5;
+    c.exec_beat = 5;
     c.source = 0;
     s.submit(c);
 
@@ -73,7 +73,7 @@ TEST_CASE("Scheduler dispatch order is canonical (source, then sequence)",
     // Submit out of order and interleaved across sources, all for tick 3.
     auto mk = [](osc::u32 src, osc::u32 tag) {
         ScheduledCommand c;
-        c.exec_tick = 3;
+        c.exec_beat = 3;
         c.source = src;
         c.command.command_id = tag; // reuse as a visible marker
         return c;
@@ -221,19 +221,19 @@ TEST_CASE("A divergent command stream desyncs the checksum", "[cmd][sim][sync]")
     CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
 }
 
-TEST_CASE("ready_to_run_next_tick reflects the lockstep gate", "[cmd][sim]") {
+TEST_CASE("ready_to_run_next_beat reflects the lockstep gate", "[cmd][sim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
-    CHECK(sim.ready_to_run_next_tick()); // single-player: never stalls
+    CHECK(sim.ready_to_run_next_beat()); // single-player: never stalls
 
     sim.command_scheduler().set_lockstep(true);
     sim.command_scheduler().add_source(0);
     sim.command_scheduler().add_source(1);
-    CHECK_FALSE(sim.ready_to_run_next_tick()); // waiting on peers
+    CHECK_FALSE(sim.ready_to_run_next_beat()); // waiting on peers
 
     sim.command_scheduler().confirm_frame(0, sim.tick_count() + 1);
     sim.command_scheduler().confirm_frame(1, sim.tick_count() + 1);
-    CHECK(sim.ready_to_run_next_tick());
+    CHECK(sim.ready_to_run_next_beat());
 }
 
 TEST_CASE("remove_source stops ready_to_run waiting on a dropped peer", "[cmd]") {
