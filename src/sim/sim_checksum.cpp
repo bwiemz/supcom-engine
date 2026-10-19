@@ -531,8 +531,8 @@ void mix_weapon(Fnv& weapons, const Weapon& w) {
 } // namespace
 
 std::array<u64, SimState::ChecksumParts::kCount> SimState::ChecksumParts::values() const {
-    return {rng,     armies,      entities, units,          orders,  navigation,
-            weapons, projectiles, shields,  economy_events, threads, terrain};
+    return {rng,     armies,      entities, units,          orders, navigation,
+            weapons, projectiles, shields,  economy_events, terrain};
 }
 
 u32 SimState::ChecksumParts::total() const {

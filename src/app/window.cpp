@@ -381,7 +381,7 @@ std::optional<int> App::Window::start_flows() {
     if (opt.lan_game_test()) {
         lan_game.emplace(opt.lan_game_host,
                          opt.lan_game_join.empty() ? "127.0.0.1" : opt.lan_game_join,
-                         opt.lan_game_port, opt.lan_game_quit_at);
+                         opt.lan_game_port, opt.lan_game_quit_at, opt.lan_game_self_destruct_at);
         if (!lan_game->start(ui_lua_state)) {
             lan_game->finish(nullptr);
             return finish_test_run("lan-game-test");
@@ -399,6 +399,13 @@ std::optional<int> App::Window::start_flows() {
         if (!mods_flow->start(ui_lua_state)) {
             mods_flow->finish();
             return finish_test_run("mods-flow-test");
+        }
+    }
+    if (opt.self_destruct_flow_test) {
+        self_destruct_flow.emplace();
+        if (!self_destruct_flow->start(ui_lua_state)) {
+            self_destruct_flow->finish();
+            return finish_test_run("self-destruct-flow-test");
         }
     }
     // --campaign-flow-test: the campaign through retail's screens (M209b)
@@ -432,6 +439,7 @@ bool App::Window::running() const {
            !(render_bench && (render_bench->done() || render_bench->gave_up())) &&
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
+           !(self_destruct_flow && self_destruct_flow->done()) &&
            !(campaign_flow && campaign_flow->done());
 }
 
@@ -476,6 +484,10 @@ std::optional<int> App::Window::finish() {
     if (mods_flow) {
         mods_flow->finish();
         return finish_test_run("mods-flow-test");
+    }
+    if (self_destruct_flow) {
+        self_destruct_flow->finish();
+        return finish_test_run("self-destruct-flow-test");
     }
     if (campaign_flow) {
         campaign_flow->finish();

@@ -666,7 +666,7 @@ public:
     /// the entities (id, army, position, health, in id order).
     /// The sim's authoritative state, hashed by domain, so a desync report
     /// names what diverged, not only that something did. Each is FNV-1a over
-    /// its state in id order; the total covers them all.
+    /// its state in id order; the total covers them all but threads.
     struct ChecksumParts {
         u64 rng = 0;            ///< the sim's random stream
         u64 armies = 0;         ///< the tick; each army's state, resources, rates, platoons
@@ -682,15 +682,19 @@ public:
         u64 projectiles = 0;    ///< velocity, target, lifetime, impacted
         u64 shields = 0;        ///< on or off (their health is an entity's)
         u64 economy_events = 0; ///< progress, done, cancelled
-        u64 threads = 0;        ///< live script threads: which, and when they wake
         u64 terrain = 0;        ///< the heightfield's digest (its flattenings included)
+        /// Live script threads: which, and when they wake. Not compared: the
+        /// trace's alone. Retail's sim scripts fork threads by the focus army,
+        /// which each client sets for itself, and Moho's checksum hashes no
+        /// Lua threads.
+        u64 threads = 0;
         u32 total() const;
-        static constexpr size_t kCount = 12;
-        /// The domains in order, with their names (kNames).
+        static constexpr size_t kCount = 11;
+        /// The compared domains in order, with their names (kNames).
         std::array<u64, kCount> values() const;
         static constexpr std::array<const char*, kCount> kNames = {
-            "rng",     "armies",      "entities", "units",          "orders",  "navigation",
-            "weapons", "projectiles", "shields",  "economy_events", "threads", "terrain"};
+            "rng",     "armies",      "entities", "units",          "orders", "navigation",
+            "weapons", "projectiles", "shields",  "economy_events", "terrain"};
     };
     ChecksumParts checksum_parts() const;
     /// The checksum of the beat just run: computed once however many ask
@@ -706,8 +710,8 @@ public:
     u32 compute_sync_checksum() const;
 
     /// Write each beat's checksum and its parts as a line of text
-    /// ("tick total" and each domain of ChecksumParts, hex, after a "#"
-    /// header naming them) -- a trace two runs can be compared by
+    /// ("tick total", each compared domain of ChecksumParts, then threads,
+    /// hex, after a "#" header naming them) -- a trace two runs can be compared by
     /// (tools/checksum_diff.py names the first domain that differs). Null
     /// stops it.
     void set_checksum_trace(std::ostream* out) {

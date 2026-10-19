@@ -314,6 +314,7 @@ void App::Window::run_flows() {
     if (mods_flow)
         mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(), renderer.ui_dispatch(),
                          ui_registry);
+    if (self_destruct_flow) self_destruct_flow->frame(ui_lua_state, sim_state.get());
     if (campaign_flow)
         campaign_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(),
                              renderer.ui_dispatch(), ui_registry);
