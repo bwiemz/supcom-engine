@@ -91,7 +91,7 @@ Vector3 owner_facing(const Unit& owner) {
 
 bool has_omni_detection(const Unit& owner, const Entity& target, const SimState* sim) {
     if (!sim || owner.army() < 0) return false;
-    return (sim->recon_of(target, static_cast<u32>(owner.army())) & SimState::kReconOmni) != 0;
+    return sim->recon_flags(target.entity_id(), static_cast<u32>(owner.army())).omni;
 }
 
 bool is_weapon_targetable(const Unit& owner, const Entity& target, const SimState* sim) {

@@ -2899,6 +2899,7 @@ void test_fow(TestContext& ctx) {
             end
             local pos = acu:GetPosition()
             local myArmy = acu:GetArmy() -- 1-based
+            local cycle = table.getn(ListArmies()) + 1
 
             -- Create an enemy unit within ACU vision range (~26 units)
             local enemy = CreateUnit('uel0201', 2,
@@ -2919,8 +2920,7 @@ void test_fow(TestContext& ctx) {
             end
             LOG('FOW TEST: far enemy #' .. farEnemy:GetEntityId())
 
-            -- Wait a few ticks for visibility to update
-            WaitTicks(5)
+            WaitTicks(cycle)
 
             -- Test 1: GetBlip for nearby enemy (should exist)
             local blip1 = enemy:GetBlip(myArmy)
@@ -3011,7 +3011,7 @@ void test_fow(TestContext& ctx) {
             -- Test 9: Move enemy far away, GetBlip returns nil
             -- (entity left our vision; no dead-reckoning yet)
             enemy:SetPosition({pos[1] + 500, pos[2], pos[3] + 500}, true)
-            WaitTicks(5)
+            WaitTicks(cycle)
             local blip3 = enemy:GetBlip(myArmy)
             if blip3 then
                 -- With dead-reckoning (M34), blip persists at last known position
@@ -3053,7 +3053,7 @@ void test_fow(TestContext& ctx) {
             local scout = CreateUnit('uel0101', 2, pos[1] - 15, pos[2], pos[3], 0, 0, 0)
             local detectedBy = {}
             scout:AddDetectedByHook(function(unit, army) table.insert(detectedBy, army) end)
-            WaitTicks(3)
+            WaitTicks(cycle)
             local sb = scout:GetBlip(myArmy)
             local sawMe = false
             for _, a in detectedBy do
@@ -3071,7 +3071,7 @@ void test_fow(TestContext& ctx) {
                 sb:AddDestroyHook(function(b) destroyedWith = b end)
             end
             scout:Destroy()
-            WaitTicks(2)
+            WaitTicks(cycle)
             if sb and destroyedWith == sb and sb:BeenDestroyed() then
                 LOG('FOW TEST 12b PASSED: the unit gone, its blip OnDestroy ran its hooks')
             else
@@ -3120,7 +3120,7 @@ void test_los(TestContext& ctx) {
             -- Test 1: Nearby enemy on same elevation should be visible
             local nearEnemy = CreateUnit('uel0201', 2,
                 pos[1] + 20, pos[2], pos[3], 0, 0, 0)
-            WaitTicks(5)
+            WaitTicks(table.getn(ListArmies()) + 1)
             local blip1 = nearEnemy:GetBlip(myArmy)
             if blip1 then
                 LOG('LOS TEST 1 PASSED: same-elevation nearby enemy visible')
@@ -3415,9 +3415,9 @@ void test_jammer(TestContext& ctx) {
             local enemyId = enemy:GetEntityId()
             LOG('JAMMER TEST: enemy unit #' .. enemyId ..
                 ' at dist=20 from ACU')
+            local cycle = table.getn(ListArmies()) + 1
 
-            -- Wait for visibility to paint
-            WaitTicks(5)
+            WaitTicks(cycle)
 
             -- Test 1: GetBlip for nearby enemy visible (blip exists, position matches)
             local blip1 = enemy:GetBlip(myArmy)
@@ -3451,23 +3451,23 @@ void test_jammer(TestContext& ctx) {
             enemy:SetPosition({farX, pos[2], farZ})
             LOG('JAMMER TEST: moved enemy to (' .. farX .. ', ' .. farZ .. ')')
 
-            -- Wait for visibility update
-            WaitTicks(5)
+            WaitTicks(cycle)
 
-            -- Test 3: Dead-reckoning position freeze
+            -- Test 3: Dead-reckoning position freeze. Moho's RefreshBlips keeps a
+            -- blip on its unit until its army's recon tick drops it (ReconBlip::Refresh).
             local blip2 = enemy:GetBlip(myArmy)
             if blip2 then
+                enemy:SetPosition({farX + 50, pos[2], farZ})
+                WaitTicks(cycle)
                 local bp2 = blip2:GetPosition()
                 local rp = enemy:GetPosition()
-                -- Blip position should be the LAST KNOWN position (near ACU),
-                -- NOT the current position (far away)
                 local dx_real = math.abs(bp2[1] - rp[1])
-                local dx_old = math.abs(bp2[1] - (pos[1] + 20))
-                if dx_old < 5 and dx_real > 100 then
-                    LOG('JAMMER TEST 3 PASSED: dead-reckoning position frozen at last known')
+                local dx_left = math.abs(bp2[1] - farX)
+                if dx_left < 5 and dx_real > 40 then
+                    LOG('JAMMER TEST 3 PASSED: dead-reckoning frozen where the recon lost it')
                 else
                     LOG('JAMMER TEST 3 FAILED: blip pos x=' .. bp2[1] ..
-                        ' real x=' .. rp[1] .. ' old x=' .. (pos[1] + 20))
+                        ' real x=' .. rp[1] .. ' lost at x=' .. farX)
                 end
             else
                 LOG('JAMMER TEST 3 FAILED: GetBlip returned nil after move')
@@ -3485,7 +3485,7 @@ void test_jammer(TestContext& ctx) {
 
             -- Test 5: Destroy enemy, check BeenDestroyed on blip
             enemy:Destroy()
-            WaitTicks(3)
+            WaitTicks(cycle)
             -- We need to call GetBlip on a destroyed entity.
             -- The entity Lua table still exists but _c_object is nil.
             -- Since entity is destroyed, we use EntityId from the table.
@@ -3525,7 +3525,7 @@ void test_jammer(TestContext& ctx) {
             if jammerUnit then
                 jammerUnit:InitIntel(2, 'Jammer', 30)
                 jammerUnit:EnableIntel('Jammer')
-                WaitTicks(3)
+                WaitTicks(cycle)
 
                 local jblip = jammerUnit:GetBlip(myArmy)
                 if jblip then
@@ -3577,7 +3577,7 @@ void test_jammer(TestContext& ctx) {
                 acu:EnableIntel('Radar')
                 -- Move stealthy unit far away but within radar range
                 stealthUnit:SetPosition({pos[1] + 100, pos[2], pos[3]})
-                WaitTicks(5)
+                WaitTicks(cycle)
 
                 local sblip = stealthUnit:GetBlip(myArmy)
                 if sblip then

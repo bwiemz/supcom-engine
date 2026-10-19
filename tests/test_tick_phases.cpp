@@ -5,6 +5,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -28,8 +29,10 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1482,4 +1485,262 @@ TEST_CASE("An entity attached to a unit pushed out of another's way follows the 
     w.sim.tick();
     REQUIRE(pushed.position().x != Catch::Approx(100.5f));
     CHECK(lua_x(w, "rider") == Catch::Approx(pushed.position().x));
+}
+
+namespace {
+
+struct Recon : Phases {
+    int armies;
+
+    explicit Recon(int count) : armies(count) {
+        for (int a = 2; a < count; ++a) {
+            const std::string name = "ARMY_" + std::to_string(a + 1);
+            sim.add_army(name, name);
+        }
+        sim.set_fog_of_war("explored");
+        REQUIRE(run("gone = {} BlipClass = setmetatable({OnDestroy = function(self)"
+                    "   table.insert(gone, GetGameTick())"
+                    " end}, {__index = moho.blip_methods}) BlipClass.__index = BlipClass"
+                    " function import(path) return {Blip = BlipClass} end"));
+        for (int a = 0; a < count; ++a) {
+            brain(("B" + std::to_string(a)).c_str(), a);
+        }
+    }
+
+    Unit& eye(const char* global, int army, f32 x, f32 z, const char* intel, f32 radius) {
+        Unit& u = make(global, "tank", army + 1, x, z);
+        u.add_intel(intel, radius);
+        u.set_intel_radius(intel, radius);
+        u.enable_intel(intel);
+        return u;
+    }
+
+    int turn_after(int tick, int army) const {
+        const int from = std::max(tick, 1);
+        return from + ((army - from) % armies + armies) % armies;
+    }
+
+    void tick_to(int tick) {
+        while (static_cast<int>(sim.tick_count()) < tick) {
+            sim.tick();
+        }
+    }
+
+    std::vector<int> ticks(const char* global) {
+        REQUIRE(run(std::string("listed = table.concat(") + global + ", ' ')"));
+        std::istringstream in(text("listed"));
+        std::vector<int> out;
+        for (int t = 0; in >> t;) {
+            out.push_back(t);
+        }
+        return out;
+    }
+};
+
+} // namespace
+
+TEST_CASE("An army hears OnIntelChange only in its recon tick, when the tick modulo the army "
+          "count is its index",
+          "[tick-phases][recon]") {
+    const int armies = GENERATE(2, 3, 4);
+    const int viewer = GENERATE_COPY(range(0, armies));
+    Recon w(armies);
+    w.eye("eye", viewer, 100.0f, 100.0f, "Vision", 20.0f);
+    const int rival = (viewer + 1) % armies;
+    REQUIRE(w.run("made = {} seen = {} B" + std::to_string(viewer) +
+                  ".OnIntelChange = function(self, blip, kind, on)"
+                  "   if kind == 'LOSNow' and on then table.insert(seen, GetGameTick()) end"
+                  " end"
+                  " ForkThread(function()"
+                  "   for i = 1, " +
+                  std::to_string(2 * armies) +
+                  " do"
+                  "     CreateUnit('tank', " +
+                  std::to_string(rival + 1) +
+                  ", 94 + 1.5 * i, 10, 105)"
+                  "     table.insert(made, GetGameTick())"
+                  "     WaitTicks(1)"
+                  "   end"
+                  " end)"));
+    w.tick_to(4 * armies);
+    std::vector<int> expected;
+    for (const int made : w.ticks("made")) {
+        expected.push_back(w.turn_after(made, viewer));
+    }
+    REQUIRE(expected.size() == static_cast<size_t>(2 * armies));
+    CHECK(w.ticks("seen") == expected);
+}
+
+TEST_CASE("An army's recon tick meets the units it sees by their army, then as made",
+          "[tick-phases][recon]") {
+    Recon w(3);
+    w.eye("eye", 0, 100.0f, 100.0f, "Vision", 20.0f);
+    w.make("third", "tank", 3, 105.0f, 100.0f);
+    w.make("second", "tank", 2, 95.0f, 100.0f);
+    REQUIRE(w.run("met = {} B0.OnIntelChange = function(self, blip, kind, on)"
+                  "   if kind == 'LOSNow' and on then"
+                  "     table.insert(met, blip:GetSource() == third and 3 or 2)"
+                  "   end"
+                  " end"));
+    w.tick_to(7);
+    CHECK(w.ticks("met") == std::vector<int>{2, 3});
+}
+
+TEST_CASE("IsSeenNow and the UI read their army's last recon tick, not where the unit is now",
+          "[tick-phases][recon]") {
+    const int armies = GENERATE(2, 3);
+    const int viewer = GENERATE_COPY(range(0, armies));
+    Recon w(armies);
+    w.eye("eye", viewer, 100.0f, 100.0f, "Vision", 20.0f);
+    const osc::u32 tank =
+        w.make("tank", "tank", (viewer + 1) % armies + 1, 105.0f, 100.0f).entity_id();
+    const int away = w.turn_after(2 * armies + 1, (viewer + 1) % armies);
+    const int back = away + 2 * armies + 1;
+    const int last = back + 2 * armies;
+    REQUIRE(w.run("at = {} reads = {} ForkThread(function()"
+                  "   local blip = tank:GetBlip(" +
+                  std::to_string(viewer + 1) +
+                  ")"
+                  "   while GetGameTick() < " +
+                  std::to_string(last) +
+                  " do"
+                  "     local t = GetGameTick()"
+                  "     if t == " +
+                  std::to_string(away) +
+                  " then Warp(tank, {200, 10, 200}) end"
+                  "     if t == " +
+                  std::to_string(back) +
+                  " then Warp(tank, {105, 10, 100}) end"
+                  "     if blip == nil then blip = tank:GetBlip(" +
+                  std::to_string(viewer + 1) +
+                  ") end"
+                  "     table.insert(at, t)"
+                  "     table.insert(reads, (blip and blip:IsSeenNow(" +
+                  std::to_string(viewer + 1) +
+                  ")) and 1 or 0)"
+                  "     WaitTicks(1)"
+                  "   end"
+                  " end)"));
+    const auto in_sight_after = [&](int t) {
+        const int recon = t - ((t - viewer) % armies + armies) % armies;
+        return recon >= 1 && (recon < away || recon >= back);
+    };
+    std::vector<int> drawn;
+    std::vector<int> drawn_expected;
+    while (static_cast<int>(w.sim.tick_count()) <= last) {
+        w.sim.tick();
+        osc::sim::WorldSnapshot snap;
+        osc::sim::capture_world(w.sim, snap);
+        const osc::sim::EntityRecord* r = snap.find(tank);
+        drawn.push_back(r && ((r->los_now >> viewer) & 1u) != 0 ? 1 : 0);
+        drawn_expected.push_back(in_sight_after(static_cast<int>(w.sim.tick_count())) ? 1 : 0);
+    }
+    std::vector<int> expected;
+    for (const int t : w.ticks("at")) {
+        expected.push_back(in_sight_after(t - 1) ? 1 : 0);
+    }
+    CHECK(w.ticks("reads") == expected);
+    CHECK(drawn == drawn_expected);
+}
+
+TEST_CASE("A jammer's fakes are made, and known fake, only in the recon tick of the army that "
+          "holds them, the cycle after its blip",
+          "[tick-phases][recon]") {
+    const int armies = GENERATE(2, 3);
+    const int viewer = GENERATE_COPY(range(0, armies));
+    Recon w(armies);
+    Unit& radar = w.eye("radar", viewer, 100.0f, 100.0f, "Radar", 80.0f);
+    const int rival = (viewer + 1) % armies;
+    const int made = w.turn_after(2 * armies + 1, rival);
+    w.tick_to(made - 1);
+    Unit& jammer = w.make("jammer", "tank", rival + 1, 120.0f, 100.0f);
+    jammer.set_jammer(2, 5.0f, 10.0f);
+    jammer.add_intel("Jammer", 0.0f);
+    jammer.enable_intel("Jammer");
+    const osc::u32 id = jammer.entity_id();
+    int blip = 0;
+    int fakes = 0;
+    while (fakes == 0 && static_cast<int>(w.sim.tick_count()) < made + 3 * armies) {
+        w.sim.tick();
+        const auto* recon = w.sim.entity_recon(id);
+        if (blip == 0 && recon && (*recon)[static_cast<size_t>(viewer)].radar) {
+            blip = static_cast<int>(w.sim.tick_count());
+        }
+        if (!w.sim.held_fakes(viewer).empty()) {
+            fakes = static_cast<int>(w.sim.tick_count());
+        }
+    }
+    const int first = w.turn_after(made, viewer);
+    CHECK(blip == first);
+    CHECK(fakes == first + armies);
+
+    const int omni = w.turn_after(fakes + 1, rival);
+    w.tick_to(omni - 1);
+    radar.add_intel("Omni", 80.0f);
+    radar.enable_intel("Omni");
+    int known = 0;
+    int hidden = 0;
+    while ((known == 0 || hidden == 0) &&
+           static_cast<int>(w.sim.tick_count()) < omni + 2 * armies) {
+        w.sim.tick();
+        const auto held = w.sim.held_fakes(viewer);
+        if (known == 0 && !held.empty() &&
+            std::all_of(held.begin(), held.end(), [](const auto& f) { return f.known_fake; })) {
+            known = static_cast<int>(w.sim.tick_count());
+        }
+        osc::sim::WorldSnapshot snap;
+        osc::sim::capture_world(w.sim, snap);
+        if (hidden == 0 &&
+            std::none_of(snap.fake_blips.begin(), snap.fake_blips.end(),
+                         [&](const osc::sim::FakeBlipRecord& f) { return f.viewer == viewer; })) {
+            hidden = static_cast<int>(w.sim.tick_count());
+        }
+    }
+    CHECK(known == w.turn_after(omni, viewer));
+    CHECK(hidden == known);
+}
+
+TEST_CASE("A unit destroyed in a tick lights its army's recon tick until it goes, and its blip "
+          "goes in the next recon tick of the army that holds it",
+          "[tick-phases][recon]") {
+    const int armies = GENERATE(2, 3);
+    const int viewer = GENERATE_COPY(range(0, armies));
+    const int rival = (viewer + 1) % armies;
+    Recon w(armies);
+    w.eye("eye", viewer, 100.0f, 100.0f, "Vision", 20.0f);
+    w.eye("x", rival, 110.0f, 100.0f, "Vision", 25.0f);
+    w.make("y", "tank", viewer + 1, 88.0f, 100.0f);
+    const int doomed = w.turn_after(3 * armies, rival);
+    REQUIRE(w.run("lost = 0 B" + std::to_string(rival) +
+                  ".OnIntelChange = function(self, blip, kind, on)"
+                  "   if kind == 'LOSNow' and not on and blip:GetSource() == y then"
+                  "     lost = GetGameTick()"
+                  "   end"
+                  " end"
+                  " reads = {} ForkThread(function()"
+                  "   while GetGameTick() < " +
+                  std::to_string(doomed) +
+                  " do WaitTicks(1) end"
+                  "   xb = x:GetBlip(" +
+                  std::to_string(viewer + 1) +
+                  ")"
+                  "   EM.Destroy(x)"
+                  "   for i = 0, " +
+                  std::to_string(2 * armies) +
+                  " do"
+                  "     table.insert(reads, xb:IsSeenNow(" +
+                  std::to_string(viewer + 1) +
+                  ") and 1 or 0)"
+                  "     WaitTicks(1)"
+                  "   end"
+                  " end)"));
+    w.tick_to(doomed + 3 * armies);
+    const int forgotten = w.turn_after(doomed, viewer);
+    std::vector<int> expected;
+    for (int t = doomed; t <= doomed + 2 * armies; ++t) {
+        expected.push_back(t <= forgotten ? 1 : 0);
+    }
+    CHECK(w.ticks("reads") == expected);
+    CHECK(w.ticks("gone") == std::vector<int>{forgotten});
+    CHECK(w.number("lost") == static_cast<f32>(doomed + armies));
 }

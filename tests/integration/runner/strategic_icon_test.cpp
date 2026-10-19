@@ -123,11 +123,14 @@ void test_strategic_icons(TestContext& ctx) {
     const std::unordered_set<u32> selection = {picked};
     std::vector<Spot> scry;
     sim::WorldHistory seen;
-    const auto next = [&] {
-        for (const Spot& at : scry)
-            run_lua(ctx,
-                    fmt::format("CreateVisibleAreaAtPoint(1, {}, 0, {}, 12, 0.1)\n", at.x, at.z));
-        ctx.sim.tick();
+    const auto next = [&](bool recon = true) {
+        do {
+            for (const Spot& at : scry) {
+                run_lua(ctx, fmt::format("CreateVisibleAreaAtPoint(1, {}, 0, {}, 12, 0.1)\n", at.x,
+                                         at.z));
+            }
+            ctx.sim.tick();
+        } while (recon && ctx.sim.recon_army() != 0);
         shots.recapture();
         shots.redraw(&selection);
         seen.capture(ctx.sim);
@@ -397,7 +400,7 @@ void test_strategic_icons(TestContext& ctx) {
         return found;
     };
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
-    f = next();
+    f = next(false);
     {
         const auto at = bolt_squares(f);
         t.check(at.size() == 1 && at[0].w == 3.0f && at[0].h == 3.0f &&
@@ -428,7 +431,7 @@ void test_strategic_icons(TestContext& ctx) {
     }
 
     r.set_weapons_yellow(false);
-    f = next();
+    f = next(false);
     {
         const auto at = bolt_squares(f);
         t.check(at.size() == 1 && same_colour(at[0], blue[0], blue[1], blue[2]),
@@ -438,7 +441,7 @@ void test_strategic_icons(TestContext& ctx) {
     r.set_weapons_yellow(true);
 
     r.camera().set_eye_distance(80.0f);
-    f = next();
+    f = next(false);
     t.check(bolt_squares(f).empty() && r.camera().zoom() < 128.0f,
             fmt::format("Test 19: at zoom {:.0f}, the bolt has no square ({} there)",
                         r.camera().zoom(), bolt_squares(f).size()));
@@ -534,8 +537,8 @@ void test_strategic_icons(TestContext& ctx) {
         return found;
     };
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
-    (void)next();
-    f = next();
+    (void)next(false);
+    f = next(false);
     {
         const auto icons = nuke_icons();
         t.check(icons.size() == 1 && icons[0].w == 20.0f && icons[0].h == 20.0f &&
@@ -554,7 +557,7 @@ void test_strategic_icons(TestContext& ctx) {
         renderer::Renderer::SceneImage scene;
         r.request_scene_capture(
             [&](renderer::Renderer::SceneImage image) { scene = std::move(image); });
-        f = next();
+        f = next(false);
         const auto icons = nuke_icons();
         int lit = 0;
         int dark = 0;
@@ -605,7 +608,7 @@ void test_strategic_icons(TestContext& ctx) {
             fmt::format("Test 25: the nuke's icon on the minimap, upside down ({} there)", icons));
     }
     r.set_projectile_glow(false);
-    f = next();
+    f = next(false);
     {
         const auto icons = nuke_icons();
         t.check(icons.size() == 1 && icons[0].glow < 0.0f,
@@ -613,7 +616,7 @@ void test_strategic_icons(TestContext& ctx) {
     }
     r.set_projectile_glow(true);
     r.set_projectile_icons(false);
-    f = next();
+    f = next(false);
     t.check(nuke_icons().empty() && squares_at(f, "tifmissilenuke01").empty() &&
                 squares_at(f, "tifantimattershells01").size() == 1,
             fmt::format("Test 27: with UI_RenProjectileIcons off, the nuke has neither icon nor "
@@ -625,7 +628,7 @@ void test_strategic_icons(TestContext& ctx) {
     // (1 as retail): the half sizes times them, about the same centres.
     r.set_strategic_icon_scale(2.0f);
     r.set_projectile_icon_scale(2.0f);
-    f = next();
+    f = next(false);
     {
         const auto at = icons_at(f, tank);
         const renderer::GPUTexture* tex =
@@ -651,7 +654,7 @@ void test_strategic_icons(TestContext& ctx) {
 
     run_lua(ctx, "__osc_ic_nuke_at = __osc_ic_nuke:GetPosition()\n"
                  "__osc_ic_nuke:SetPosition(__osc_ic_tank:GetPosition(), true)\n");
-    f = next();
+    f = next(false);
     {
         const auto texels = [&](const std::string& path, u32& w, u32& h) {
             const auto file = ctx.vfs.read_file(path);
@@ -725,7 +728,7 @@ void test_strategic_icons(TestContext& ctx) {
                             shown, overlap));
     }
     run_lua(ctx, "__osc_ic_nuke:SetPosition(__osc_ic_nuke_at, true)\n");
-    (void)next();
+    (void)next(false);
 
     OffscreenShots retina(ctx, 2.0f);
     if (!retina.ok()) {

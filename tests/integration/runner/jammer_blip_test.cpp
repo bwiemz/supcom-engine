@@ -64,6 +64,7 @@ void test_jammer_blips(TestContext& ctx) {
     const auto run = [&](int ticks) {
         for (int i = 0; i < ticks; ++i) ctx.sim.tick();
     };
+    const int cycle = static_cast<int>(ctx.sim.army_count()) + 1;
     // ARMY_1's influence map: its entries for the engineer's fakes, and
     // ARMY_2's threat about the engineer (summed every 30 ticks)
     sim::InfluenceMap* threat = ctx.sim.influence_map(0);
@@ -87,7 +88,7 @@ void test_jammer_blips(TestContext& ctx) {
     t.check(!offsets(), "a jammer with its Jammer off gives no fakes");
 
     lua("__osc_jb_engineer:EnableIntel('Jammer')\n");
-    run(5);
+    run(2 * cycle);
     const auto* fakes = offsets();
     bool within = fakes != nullptr && fakes->size() == 5;
     if (fakes)
@@ -113,7 +114,7 @@ void test_jammer_blips(TestContext& ctx) {
     // no threat from the next update on.
     lua("CreateVisibleAreaAtPoint(1, " + std::to_string(sx) + ", 0, " + std::to_string(sz) +
         ", 30, 5)\n");
-    run(2);
+    run(cycle);
     t.check(shown() == 0, "seen, the fakes are known fake");
     run(31);
     const f32 seen = threat_about();
@@ -140,13 +141,13 @@ void test_jammer_blips(TestContext& ctx) {
                                                 " -> " + std::to_string(after) + ")");
 
     lua("__osc_jb_engineer:DisableIntel('Jammer')\n");
-    run(3);
+    run(cycle);
     t.check(!offsets() && shown() == 0, "the Jammer off, its fakes go");
     lua("__osc_jb_engineer:EnableIntel('Jammer')\n");
-    run(3);
+    run(cycle);
     t.check(offsets() && !same(*offsets(), before), "on again, they are drawn afresh");
     lua("__osc_jb_engineer:Destroy()\n");
-    run(3);
+    run(cycle);
     t.check(!offsets(), "the jammer gone, its fakes go");
 
     spdlog::info("=== JAMMER BLIP TEST: {} passed, {} failed ===", t.pass, t.fail);
