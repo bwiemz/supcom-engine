@@ -188,9 +188,18 @@ if(OSC_BUILD_TESTS)
         add_test(NAME arch.blueprint_fields_self_test
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_fields.py
                          --self-test)
+        # Every retail ShaderName has a technique or is listed as having none
+        # yet: a name without one draws as a Unit without a word.
+        add_test(NAME arch.shader_names
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_shader_names.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.shader_names_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_shader_names.py
+                         --self-test)
         set_tests_properties(arch.retail_hooks arch.retail_hooks_self_test
                              arch.lua_stubs arch.lua_stubs_self_test
                              arch.blueprint_fields arch.blueprint_fields_self_test
+                             arch.shader_names arch.shader_names_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
         # retail_ref.py, which asks retail FA itself for references: its config,

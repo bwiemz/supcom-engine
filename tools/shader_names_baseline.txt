@@ -1,0 +1,22 @@
+# Retail ShaderName values with no technique yet (tools/check_shader_names.py)
+AeonCZAR
+BloatingNormalMappedAlpha
+Cloud
+Clutter
+CommandFeedback3
+CommandFeedback4
+EditorMarker
+Effect
+Explosion
+Flat
+GlassAlpha
+NormalMappedAlphaNoShadow
+NukeEMP
+NukeQuantum
+NukeUEF
+OuterCloud
+PhalanxEffect
+Shield
+UEFQuantumGate
+UnderwaterClutter
+UndulatingClutter
