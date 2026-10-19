@@ -100,6 +100,16 @@ void push_user_unit_or_nil(lua_State* L, u32 id) {
     else lua_pushnil(L);
 }
 
+bool push_blueprint(lua_State* L, const std::string& bp_id) {
+    auto* store = LuaState::get_blueprint_store(L);
+    auto* entry = store && !bp_id.empty() ? store->find(bp_id) : nullptr;
+    if (!entry) return false;
+    store->push_lua_table(*entry, L);
+    if (lua_istable(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
+}
+
 /// Queue a ProcessInfo pair for the unit, as Moho's UserUnit sends it.
 void queue_process_info(lua_State* L, u32 id, const std::string& action, const char* value) {
     auto* queue = get_callback_queue(L);
@@ -161,7 +171,7 @@ int uu_GetArmy(lua_State* L) {
 
 int uu_GetBlueprint(lua_State* L) {
     const auto* r = record(L);
-    if (!r || !blueprints::push_blueprint(L, r->blueprint_id)) lua_pushnil(L);
+    if (!r || !push_blueprint(L, r->blueprint_id)) lua_pushnil(L);
     return 1;
 }
 
@@ -198,7 +208,7 @@ int uu_ProcessInfo(lua_State* L) {
 int uu_IsInCategory(lua_State* L) {
     const auto* r = record(L);
     bool in = false;
-    if (r && blueprints::push_blueprint(L, r->blueprint_id)) {
+    if (r && push_blueprint(L, r->blueprint_id)) {
         std::unordered_set<std::string> categories;
         sim::collect_blueprint_categories(L, lua_gettop(L), categories);
         lua_pop(L, 1);
