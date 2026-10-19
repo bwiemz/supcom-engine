@@ -535,7 +535,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
                 if (!e || !e->is_unit() || e->destroyed()) continue;
                 ids.push_back(uid);
             }
-            // Player-issued order: routed so it applies inside a tick (and a
+            // Player-issued order: routed so it applies in a beat (and a
             // networked match broadcasts it).
             sim.set_human_input_active(true);
             sim.route_player_command(ids, cmd, !shift); // shift-click queues, no clear
@@ -1159,7 +1159,7 @@ std::vector<IssuedCommand> InputHandler::issue_right_orders(
             cmd.facing = formation->facing;
             cmd.form_move = formation->settled();
         }
-        // Player-issued: routed so it applies inside a tick (and a networked
+        // Player-issued: routed so it applies in a beat (and a networked
         // match broadcasts it); a move goes to factories as their rally point.
         sim.set_human_input_active(true);
         sim.route_player_command(units, cmd, !shift);

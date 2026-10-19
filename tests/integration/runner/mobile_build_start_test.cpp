@@ -10,7 +10,7 @@
 // 2. aims a tick after the order (its task's Preparing tick), so
 //    OnPrepareArmToBuild runs on tick 1 and the engineer is Building from 2;
 // 3. opens its arm (uel0105_aopen at rate 5) from the next tick, so the
-//    arm is enabled on tick 6 (the manipulators move ahead of the tasks);
+//    arm is enabled on tick 6;
 // 4. turns the arm 36 degrees a tick (SetAimingArc's 360 a second), from
 //    the root bone's line to the site, and makes the frame on tick 9, the
 //    arm 11 degrees off (inside 15); the arm settles on tick 10.
@@ -62,7 +62,7 @@ constexpr std::array<Row, 13> kOriginal = {{
 }};
 
 /// The tick the original ran each callback on, as the row the probe logged
-/// just before it (the tick's scripts and tasks run after its row).
+/// just before it.
 struct Event {
     const char* name;
     int row;

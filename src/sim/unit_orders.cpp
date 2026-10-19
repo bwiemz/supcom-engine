@@ -344,7 +344,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     while (!command_queue_.empty()) {
         note_queue_head();
         // Orders run script callbacks, which may destroy this unit (it stays
-        // allocated until the tick ends, see EntityRegistry::collect_garbage).
+        // allocated until the beat ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
             // IAiCommandDispatchImpl::Execute starts no command while its unit is attached.
@@ -1703,7 +1703,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         if (rebuilder) {
             // Its repair of it goes with it: the Guard staying, nothing else
-            // would stop it (Unit::update keeps a guard's repair).
+            // would stop it (end_gone_tasks keeps a guard's repair).
             if (is_repairing()) stop_repairing(L, registry);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             if (command_queue_.empty() || command_queue_.front().command_id != cmd_id)

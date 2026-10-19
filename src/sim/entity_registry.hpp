@@ -36,7 +36,7 @@ public:
     void unregister_entity(u32 id);
 
     /// Moho's Entity::Destroy: the entity is marked (BeenDestroyed) and queued, once, and stays
-    /// registered, found and in the grids until the queue is run at the end of the tick.
+    /// registered, found and in the grids until the queue is run at the end of the beat.
     void destroy(Entity& entity);
     /// The next entity of the deletion queue, first in first out; 0 when it is empty.
     u32 take_destroyed();
@@ -61,7 +61,7 @@ public:
     /// handle's pointer may be a platoon's, a brain's, or a freed entity's.
     bool holds(const void* e) const { return live_.count(e) != 0; }
     /// Whether `e` is an entity unregistered since the last collect_garbage
-    /// (its memory, and a script's handle to it, live to the tick's end).
+    /// (its memory, and a script's handle to it, live to the beat's end).
     bool departed(const void* e) const {
         for (const auto& dead : graveyard_)
             if (dead.get() == e) return true;
@@ -102,7 +102,7 @@ public:
     /// The live units within radius of a point (2D, ignoring Y), in ascending
     /// id order: collect_in_radius's units, from a grid of units alone (a
     /// map's props aren't walked), as the units themselves. The pointers
-    /// stay valid until collect_garbage() (the end of the tick), which frees
+    /// stay valid until collect_garbage() (the end of the beat), which frees
     /// what was unregistered meanwhile.
     std::vector<Entity*> units_in_radius(f32 x, f32 z, f32 radius) const;
 
@@ -148,7 +148,7 @@ public:
 
     /// Iterate all entities in id order: the same order on every platform,
     /// as lockstep needs (a hash map's order is the standard library's).
-    /// Entities created during the walk are visited by the next walk;
+    /// Entities created during one are visited by the next;
     /// entities removed during it are skipped.
     template <typename F>
     void for_each(F&& fn) const {

@@ -619,8 +619,8 @@ TEST_CASE("An aircraft flies one step when a move hands over to a guard", "[air_
         guard.target_id = queued.make("tank", 60.0f, 80.0f)->entity_id();
     }
     plane.push_command(guard, false);
-    // Both queues fly through the first goal; the reference's next Move
-    // already obeys the once-per-tick gate.
+    // Both queues fly through the first goal; the reference hands over to a
+    // plain Move.
     osc::sim::UnitCommand next = guard;
     next.type = osc::sim::CommandType::Move;
     next.target_id = 0;

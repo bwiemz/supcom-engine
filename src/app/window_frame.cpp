@@ -233,8 +233,8 @@ void App::Window::advance_sim(double dt) {
                 session->receive_and_advance();
                 // A timed-out peer leaves so the match resolves instead
                 // of stalling in "waiting for players": the survivors
-                // agree on its last frame, and its command source ends on
-                // the same tick on every one of them (a command, so
+                // agree on its last frame, and its command source ends in
+                // the same beat on every one of them (a command, so
                 // replays keep it) -- an army it leaves with no player is
                 // abandoned to its brain, which retail's defeats.
                 for (osc::u32 src : session->take_dropped()) {

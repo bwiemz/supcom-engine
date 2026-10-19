@@ -184,8 +184,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     // cells_: each entity's link order (its CellLink), and the count of
     // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
     // last_index_ are the map's; units_ and props_ follow from the entities
-    // and their order; moves_ is empty between ticks, and move_stamp_ and
-    // gather_ only tell one tick's moves and one gather's finds apart
+    // and their order; gather_ only tells one gather's finds apart
     w.u64v(reg.cells_.link_count());
     // default_random_, sim_random_: the sim's generator (SimState's); tick_: its tick count;
     // walking_: no walk is under way between ticks; unregister_hook_: the

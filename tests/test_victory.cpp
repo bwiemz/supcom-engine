@@ -383,7 +383,7 @@ TEST_CASE("ShareUntilDeath destroys a defeated army's remaining units",
     tick_n(sim, 2);
 
     // The leftover unit is killed; with no script to play its death out,
-    // it goes at once.
+    // it is destroyed at once.
     CHECK(sim.entity_registry().find(enemy_tank) == nullptr);
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
 }
@@ -466,7 +466,7 @@ TEST_CASE("PartialShare transfers structures/engineers to an ally, kills the res
     REQUIRE(f != nullptr);
     CHECK(f->army() == 1);        // structure handed to the ally
     CHECK_FALSE(f->is_dying());
-    // The tank is killed, not transferred (with no script, it goes at once).
+    // The tank is killed, not transferred (with no script, it is destroyed at once).
     CHECK(sim.entity_registry().find(tank) == nullptr);
 }
 

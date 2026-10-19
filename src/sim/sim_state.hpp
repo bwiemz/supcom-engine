@@ -127,7 +127,7 @@ struct BlipSnapshot {
     bool entity_dead = false;
 };
 
-/// Lightweight context passed to Unit::update() each tick.
+/// Lightweight context passed to a unit's phases each tick.
 struct SimContext {
     EntityRegistry& registry;
     lua_State* L;
@@ -481,18 +481,18 @@ public:
 
     /// A UI script's SimCallback. Moho runs these in the sim, as commands:
     /// in multiplayer it goes to the local callback sink (the lockstep
-    /// session broadcasts it and every peer runs it on the same tick); in
-    /// single-player it is scheduled for the next tick. Either way it runs
-    /// inside a tick, never between them.
+    /// session broadcasts it and every peer runs it in the same beat); in
+    /// single-player it is scheduled for the next beat. Either way it runs
+    /// in a beat, before its tick.
     void submit_callback(SimCallbackEntry callback);
     /// Schedule a SimCallback from `source` after the command delay; returns
-    /// the tick it will run on. Recorded in a replay like any command.
+    /// the beat it will run in. Recorded in a replay like any command.
     u32 schedule_callback(u32 source, SimCallbackEntry callback);
     using LocalCallbackSink = std::function<void(SimCallbackEntry)>;
     void set_local_callback_sink(LocalCallbackSink sink) { local_callback_sink_ = std::move(sink); }
     /// Run a SimCallback now: an engine-handled ProcessInfo, else FA's
     /// /lua/SimCallbacks.lua DoCallback(name, args, units). Called for due
-    /// callbacks at the start of a tick.
+    /// callbacks at the start of a beat.
     void run_sim_callback(const SimCallbackEntry& cb);
     /// True once a network command sink is installed (i.e. this is a networked
     /// multiplayer session rather than local single-player).
@@ -757,7 +757,7 @@ public:
     static constexpr f64 SECONDS_PER_TICK = 0.1;
     /// Every this many ticks the sim forces a full collection of its Lua
     /// state, as Moho's Sim::AdvanceBeat does (faf-re Sim.cpp). From the
-    /// first tick these are its only collections (lua_setmanualgc, M208c):
+    /// first beat these are its only collections (lua_setmanualgc, M208c):
     /// Lua 5.0 also collects when its heap doubles, which the late game's
     /// never did, and which would fall on different ticks on different
     /// builds (see SimState::tick). The heap is mostly live
@@ -765,9 +765,9 @@ public:
     /// blueprints: frozen (lua_freeze) and swept lazily, a collection costs
     /// about 30 ms there, not 70 (M224g).
     static constexpr u32 LUA_GC_PERIOD_TICKS = 70;
-    /// A collection marks at once and sweeps its objects a slice a tick
+    /// A collection marks at once and sweeps its objects a slice a beat
     /// after it (M224g: lua_sweepstep): this much work, a live object 1 and a
-    /// freed one 8. So its pause is the mark alone, and no tick frees more
+    /// freed one 8. So its pause is the mark alone, and no beat frees more
     /// than 10,000 objects.
     static constexpr int LUA_SWEEP_SLICE = 80'000;
 
@@ -872,7 +872,7 @@ public:
     CellRect playable_cells(const InfluenceMap& map) const;
     /// Whether army `army` has ever had entity `id` in line of sight (Moho's
     /// RECON_LOSEver): kept while the entity lives.
-    /// One army's recon of a unit, as a tick's visibility update leaves it:
+    /// One army's recon of a unit, as its last recon tick leaves it:
     /// LOSNow (vision, which a cloak defeats), radar and sonar (which
     /// stealth defeats), omni (which defeats both).
     struct EntityVisSnapshot {
@@ -1076,7 +1076,7 @@ private:
     void forget_gone(u32 army);
     bool holds_blip(const Entity& e, u32 army) const;
 
-    /// Whether army `army` sensed unit `id` on the last pass.
+    /// Whether army `army` sensed unit `id` at its last recon tick.
     bool sensed_now(u32 id, u32 army) const { return recon_flags(id, army).any(); }
     /// The intel each entity paints, brought up to date (Moho's handles:
     /// enable, disable, radius, moving and stopping) before the recon pass.
@@ -1139,7 +1139,7 @@ private:
     /// Registry unregister hook: run the script's OnDestroy and release what
     /// the entity holds in the sim (its footprint, weapons, storage).
     void on_entity_unregistered(Entity& entity);
-    /// At the end of the tick, before an unregistered entity is freed: sever
+    /// At the end of the beat, before an unregistered entity is freed: sever
     /// its Lua table (and handles made since) from the C++ object.
     void release_script_handle(Entity& entity);
 

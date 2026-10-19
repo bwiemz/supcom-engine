@@ -161,8 +161,8 @@ void test_warp(TestContext& ctx) {
 
     // The drowning tank and the climbing CZAR, at ticks 1, 5 and 20 after.
     // The probe's own rows match the original's to the hundredth; warped
-    // here between ticks, not in a script thread at a tick's start, the
-    // climb runs a little ahead.
+    // here between ticks, not in a script thread, the climb runs a little
+    // ahead.
     const std::array<int, 3> at_tick = {1, 5, 20};
     const std::array<f32, 3> tank_health = {297.0f, 285.0f, 240.0f};
     const std::array<f32, 3> czar_y = {19.94f, 24.88f, 37.15f};

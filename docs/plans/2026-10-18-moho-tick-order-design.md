@@ -473,6 +473,9 @@ several.
 
 **Step 8. Cleanup.** The air-step latch, `note_tick_position`, the duplicated cargo following and the stale
 comments about order go.
+  *Done (2026-10-19) — tick/s8-cleanup: those three went in steps 2b, 5 and 9; the downed aircraft's landing latch,
+  the time and terrain the orders no longer use and the accessors left without callers go too, and the comments and
+  docs that told the old order tell Moho's; P2, P3 and the AI skirmish's checksum trace unchanged.*
 
 ---
 

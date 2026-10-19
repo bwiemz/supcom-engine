@@ -55,7 +55,7 @@ struct WeaponRangeRecord {
     f32 min_radius = 0, max_radius = 0;
 };
 
-/// One entity at the end of a tick: its pose, and everything the renderer
+/// One entity at the end of a beat: its pose, and everything the renderer
 /// draws it with.
 struct EntityRecord {
     u32 id = 0;
@@ -160,7 +160,7 @@ struct EntityRecord {
     bool is_capturing() const { return capture_target_id != 0; }
 };
 
-/// A visual effect (IEffect) at the end of a tick.
+/// A visual effect (IEffect) at the end of a beat.
 struct EffectRecord {
     u32 id = 0;
     EffectType type = EffectType::EMITTER_AT_ENTITY;
@@ -209,7 +209,7 @@ struct ResourceRecord {
     f64 stored = 0, max_storage = 0, income = 0, requested = 0;
 };
 
-/// One army at the end of a tick: its colour and economy.
+/// One army at the end of a beat: its colour and economy.
 struct ArmyRecord {
     bool valid = false; ///< the army has a brain
     bool has_color = false;
@@ -266,7 +266,7 @@ struct SightMap {
 /// Army `army`'s sight in `sim` now (nothing for an army it hasn't).
 void capture_sight(const SimState& sim, i32 army, SightMap& out);
 
-/// The world as the renderer draws it, captured once per sim tick.
+/// The world as the renderer draws it, captured once per sim beat.
 struct WorldSnapshot {
     u32 tick = 0;
     std::vector<EntityRecord> entities; ///< ascending id
@@ -388,7 +388,7 @@ struct WorldEvents {
     }
 };
 
-/// The last two captured ticks, and the events not yet shown.
+/// The last two captured beats, and the events not yet shown.
 class WorldHistory {
 public:
     /// The previous current becomes previous; `sim` is captured as current.
@@ -416,8 +416,8 @@ private:
     WorldEvents events_;
 };
 
-/// What one frame draws: the last two ticks and how far between them the
-/// frame is (0 = the previous tick, 1 = the newest). Everything the renderer
+/// What one frame draws: the last two beats and how far between them the
+/// frame is (0 = the previous beat, 1 = the newest). Everything the renderer
 /// places at an entity reads its pose here, so a mesh and its overlays agree.
 ///
 /// The renderer draws only what the snapshots hold. The Entity overloads

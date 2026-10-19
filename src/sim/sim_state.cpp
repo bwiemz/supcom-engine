@@ -1100,9 +1100,9 @@ bool apply_silo_build(Unit& unit, const UnitCommand& cmd) {
 
 u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                             bool clear_existing) {
-    // A player's order is a command, applied inside a tick as Moho applies
-    // it: under a network session it is broadcast and every peer schedules it
-    // for the same tick; in single-player it is scheduled for the next tick.
+    // A player's order is a command, applied in a beat as Moho applies it:
+    // under a network session it is broadcast and every peer schedules it
+    // for the same beat; in single-player it is scheduled for the next beat.
     // Either way a replay can record it.
     if (human_input_active_) {
         if (playback_) return 0; // a replay plays only what it recorded
@@ -1742,7 +1742,7 @@ void SimState::dispatch_due_commands() {
             if (sc.callback) commandable_only(sc.callback->unit_ids);
         }
         // A recording keeps what the sim applies, where it applies it: local
-        // and networked commands alike, on the tick they ran.
+        // and networked commands alike, in the beat they ran.
         if (recording_) {
             recorded_replay_.commands.push_back(sc);
             recorded_replay_.commands.back().exec_beat = beat_count_;
@@ -1857,11 +1857,11 @@ void SimState::tick() {
         sim_random_.set_draw_hook(on ? &SimState::trace_rng_draw : nullptr, this);
     }
 
-    // Lua collections (M224g), from the first tick on (loading, which runs
-    // no ticks, collects as it did):
+    // Lua collections (M224g), from the first beat on (loading, which runs
+    // no beats, collects as it did):
     // - the blueprints, loaded and modded by now, freeze: half the live heap,
     //   which each collection would mark and sweep again;
-    // - the last collection's sweep runs a slice a tick;
+    // - the last collection's sweep runs a slice a beat;
     // - the sim collects only on its schedule (M208c). Lua's own threshold
     //   follows the heap's byte count, which isn't game state: it differs
     //   between builds (Instruction is 8 bytes on Linux, 4 on Windows) and
@@ -1899,8 +1899,7 @@ void SimState::advance_tick() {
         PROFILE_ZONE("Sim::path_clusters");
         path_tables_->update_background(path::kBackgroundBudget);
     }
-    // Each army's tick begins by destroying its spent platoons, before any
-    // script runs (Moho's CArmyImpl::OnTick).
+    // Each army's tick begins by destroying its spent platoons (Moho's CArmyImpl::OnTick).
     clean_up_platoons();
     update_influence_maps();
 
@@ -1936,7 +1935,6 @@ void SimState::advance_tick() {
         sound_manager_->update(0.1f);
     }
 
-    // Economy events: tick drains, wake waiting threads on completion
     {
         PROFILE_ZONE("Sim::econ_events");
         tick_economy_events();
@@ -2015,8 +2013,8 @@ void SimState::end_beat(bool ticked) {
         tick_count_ <= entity_trace_to_) {
         write_entity_trace();
     }
-    // Death flashes and camera shakes are shown from the tick's capture;
-    // the sim is done with them (events raised between ticks wait for the
+    // Death flashes and camera shakes are shown from the beat's capture;
+    // the sim is done with them (events raised between beats wait for the
     // next one).
     death_events_.clear();
     camera_shake_events_.clear();

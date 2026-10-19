@@ -162,7 +162,7 @@ bool mp_attach_session(osc::sim::SimState& sim) {
                   const osc::sim::UnitCommand& cmd, bool clear) {
             session->submit_local(ids, cmd, clear);
         });
-    // And the UI's SimCallbacks, so every peer runs them on the same tick.
+    // And the UI's SimCallbacks, so every peer runs them in the same beat.
     sim.set_local_callback_sink([session](osc::sim::SimCallbackEntry cb) {
         session->submit_local_callback(std::move(cb));
     });

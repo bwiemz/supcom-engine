@@ -51,7 +51,7 @@ UnitCommand move_to(osc::f32 x, osc::f32 z) {
 
 // ----- CommandScheduler in isolation -------------------------------------
 
-TEST_CASE("Scheduler dispatches commands only on their exec tick", "[cmd][sched]") {
+TEST_CASE("Scheduler dispatches commands only on their exec beat", "[cmd][sched]") {
     CommandScheduler s;
     ScheduledCommand c;
     c.exec_beat = 5;
@@ -70,7 +70,7 @@ TEST_CASE("Scheduler dispatches commands only on their exec tick", "[cmd][sched]
 TEST_CASE("Scheduler dispatch order is canonical (source, then sequence)",
           "[cmd][sched]") {
     CommandScheduler s;
-    // Submit out of order and interleaved across sources, all for tick 3.
+    // Submit out of order and interleaved across sources, all for beat 3.
     auto mk = [](osc::u32 src, osc::u32 tag) {
         ScheduledCommand c;
         c.exec_beat = 3;
@@ -107,7 +107,7 @@ TEST_CASE("Lockstep gate waits for every source to confirm", "[cmd][sched]") {
     CHECK_FALSE(s.ready_to_run(4)); // source 1 still pending
     s.confirm_frame(1, 4);
     CHECK(s.ready_to_run(4));
-    CHECK_FALSE(s.ready_to_run(5)); // next tick not yet confirmed
+    CHECK_FALSE(s.ready_to_run(5)); // next beat not yet confirmed
 }
 
 TEST_CASE("Non-lockstep scheduler never stalls", "[cmd][sched]") {
@@ -120,21 +120,20 @@ TEST_CASE("Non-lockstep scheduler never stalls", "[cmd][sched]") {
 
 // ----- SimState integration ----------------------------------------------
 
-TEST_CASE("Scheduled order lands in the unit queue on its exec tick",
-          "[cmd][sim]") {
+TEST_CASE("Scheduled order lands in the unit queue on its exec beat", "[cmd][sim]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     // Positive speed + far goal so the unit stays en route (order persists).
     osc::u32 id = spawn_mover(sim, 0, 5.0f);
 
-    // Submitted before tick 1 → executes at tick_count+1 = 1.
+    // Submitted before beat 1 → executes at beat_count+1 = 1.
     osc::u32 exec = sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
     CHECK(exec == 1);
 
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
-    REQUIRE(u->command_queue().empty()); // not applied before its tick
+    REQUIRE(u->command_queue().empty()); // not applied before its beat
 
-    sim.tick(); // tick 1 — dispatch happens at the start
+    sim.tick(); // beat 1 — dispatch happens at its start
     REQUIRE(u->command_queue().size() == 1);
     CHECK(u->command_queue().front().type == CommandType::Move);
     CHECK(u->command_queue().front().target_pos.x == 500.0f);
@@ -147,7 +146,7 @@ TEST_CASE("command_delay defers execution", "[cmd][sim]") {
     osc::u32 id = spawn_mover(sim, 0, 5.0f);
 
     osc::u32 exec = sim.schedule_command(0, {id}, move_to(500.0f, 0.0f), true);
-    CHECK(exec == 4); // tick_count(0) + 1 + delay(3)
+    CHECK(exec == 4); // beat_count(0) + 1 + delay(3)
 
     auto* u = static_cast<Unit*>(sim.entity_registry().find(id));
     for (int i = 0; i < 3; ++i) {

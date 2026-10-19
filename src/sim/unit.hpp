@@ -1547,7 +1547,7 @@ private:
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// The layer, the step its orders asked for, coasting, fuel.
+    /// Fuel, the layer, the step its orders asked for, coasting.
     bool motion_tick(f64 dt, SimContext& ctx);
     void take_step(f64 dt, SimContext& ctx);
     void tick_silo(f64 dt, SimContext& ctx);
