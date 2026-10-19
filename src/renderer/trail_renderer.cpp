@@ -312,7 +312,7 @@ void TrailRenderer::update(const sim::FrameView& view, const Camera& camera, con
     if (!last_tick_ || cur->tick != *last_tick_) advance(view, eye, frustum, blueprints, L, recon);
 
     // The render clock: the entity is drawn between its last two ticks.
-    const f64 now = static_cast<f64>(cur->tick) + static_cast<f64>(view.alpha());
+    const f64 now = view.time();
     // Segments spent (both ends a TrailLength old) go.
     std::erase_if(segments_, [now](const Segment& s) {
         return now >= static_cast<f64>(std::max(s.start_born, s.end_born)) +

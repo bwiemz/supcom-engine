@@ -76,6 +76,8 @@ private:
     void draw_while_ticking(double dt, std::chrono::high_resolution_clock::time_point started);
     /// The frame's time, counted in the game's frame statistics.
     void count_game_frame();
+    /// The drawn game time's step this frame, in game_frames.
+    void note_drawn_time(const sim::FrameView& view);
     /// --play-for: the rest of a 60 Hz frame, waited out.
     void pace_play_for(std::chrono::high_resolution_clock::time_point started) const;
 
@@ -234,6 +236,11 @@ private:
         double total_ms = 0, worst_ms = 0;
         u64 over_20 = 0, over_33 = 0, over_50 = 0;
         double in_game_s = 0; ///< for --play-for
+        /// The drawn game time (note_drawn_time): frames it stood still
+        /// while the game ran, and its pace's change from frame to frame,
+        /// summed over the frames counted.
+        u64 held = 0;
+        double uneven = 0, expected = 0, last_drawn = -1.0, last_pace = -1.0;
     } game_frames;
     /// The last frames' times (Moho's RollingFrameRates), whose median the
     /// session runs on: begin_frame's session_dt. The engine loads a game
@@ -249,6 +256,10 @@ private:
     /// This frame's time, unclamped, for the UI's clock (CurrentTime and
     /// WaitSeconds), which is Moho's system timer: a hitch counts in full.
     double wall_dt = 0.0;
+    /// The frame's time the drawn world moves on by: the wall's, not the
+    /// session's median (units then keep pace with the screen), a hitch's
+    /// held to a quarter second; a capture's fixed step (its frames repeat).
+    double drawn_dt() const;
     /// The entities whose loops the frame's sound plays (update_world_sounds).
     EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched

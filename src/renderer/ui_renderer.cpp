@@ -826,11 +826,15 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
     u32 count = static_cast<u32>(quads_.size());
     if (count > MAX_UI_QUADS) count = MAX_UI_QUADS;
 
+    // Scaled here, then written once: the instance buffer is the GPU's
+    // (write-combined), and scaling it in place read every rect back from
+    // it, uncached -- 7 ms a frame of an eight-AI match's 1,500 quads.
     for (u32 i = 0; i < count; i++) {
-        dst[i] = quads_[i].inst;
-        for (f32& v : dst[i].rect) {
+        UIInstance inst = quads_[i].inst;
+        for (f32& v : inst.rect) {
             v *= scale_;
         }
+        dst[i] = inst;
     }
 
     // Build draw groups — batch consecutive quads with same descriptor set AND clip rect

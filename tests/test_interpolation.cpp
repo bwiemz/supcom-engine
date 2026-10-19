@@ -4,7 +4,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include "core/fixed_step.hpp"
 #include "core/interned_string.hpp"
 #include "core/tick_clock.hpp"
 #include "lua/lua_state.hpp"
@@ -26,6 +25,9 @@ extern "C" {
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <utility>
@@ -81,44 +83,110 @@ std::array<osc::f32, 16> filled(osc::f32 v) {
 
 // --- TickClock ---------------------------------------------------------------
 
-TEST_CASE("TickClock tracks the fixed-step accumulator at a steady cadence", "[interp][clock]") {
+namespace {
+
+/// A game played at `speed` and 60 fps against the clock: each frame owes
+/// the sim its time, and a job of the ticks owed runs on the sim thread for
+/// `job_frames(n)` frames (n counting jobs), published as it ends. Returns
+/// how the drawn time went once settled: frames it stood still in, and its
+/// step's worst stray from the frame's time at the game's speed.
+struct Drawn {
+    int held = 0;
+    double worst_stray = 0.0;
+    double behind = 0.0; ///< the newest tick less the drawn time, at the end
+};
+
+template <typename JobFrames> Drawn play(double speed, JobFrames job_frames, int frames = 600) {
     TickClock clock(kTick);
-    double acc = 0.0;
-    for (int frame = 0; frame < 100; ++frame) {
-        const double dt = 0.016;
-        clock.advance(dt);
-        const int ticks = osc::consume_fixed_steps(acc, dt, kTick, 8);
-        for (int t = 0; t < ticks; ++t) clock.on_tick();
-        CHECK(clock.alpha() == Approx(acc / kTick).margin(1e-9));
+    const double frame = speed / 60.0;
+    double owed = 0.0;
+    int job_frames_left = 0;
+    int job_ticks = 0;
+    int jobs = 0;
+    std::array<double, 3> kept{0.0, 0.0, 0.0}; // older, previous, newest
+    clock.published(0.0, 0.0, 1.0);
+    Drawn out;
+    double last = 0.0;
+    for (int f = 0; f < frames; ++f) {
+        clock.advance(frame);
+        owed += frame;
+        if (job_frames_left > 0 && --job_frames_left == 0) {
+            kept = {kept[1], kept[2], kept[2] + job_ticks};
+            clock.published(kept[2], kept[0], job_ticks);
+        }
+        if (job_frames_left == 0) {
+            job_ticks = static_cast<int>(owed / kTick);
+            owed -= job_ticks * kTick;
+            job_frames_left = job_ticks > 0 ? job_frames(jobs++) : 0;
+        }
+        const double drawn = clock.drawn();
+        CHECK(drawn >= kept[0]); // always between two published ticks
+        CHECK(drawn <= kept[2]);
+        if (f >= frames / 4) { // settled
+            out.held += drawn <= last ? 1 : 0;
+            out.worst_stray = std::max(out.worst_stray, std::abs(drawn - last - frame / kTick));
+        }
+        last = drawn;
+        out.behind = kept[2] - drawn;
     }
+    return out;
 }
 
-TEST_CASE("TickClock holds at the newest tick through a stall and recovers",
+} // namespace
+
+TEST_CASE("TickClock draws one tick a publish evenly, about half a tick behind",
           "[interp][clock]") {
+    // Normal speed: a tick every six frames, the drawn time between the
+    // last two as Moho draws them
+    const Drawn d = play(1.0, [](int) { return 1; });
+    CHECK(d.held == 0);
+    CHECK(d.worst_stray < 0.02);
+    CHECK(d.behind <= 1.0);
+}
+
+TEST_CASE("TickClock draws a sped-up game's jobs of ticks on evenly, never standing still",
+          "[interp][clock]") {
+    // 4x: each frame owes two thirds of a tick, run as jobs of three frames
+    // (two ticks each). Drawn up to the newest at the game's speed, it
+    // stood still a frame in three, then leapt.
+    const Drawn even = play(4.0, [](int) { return 3; });
+    CHECK(even.held == 0);
+    CHECK(even.worst_stray < 0.1);
+    // And jobs of one frame and two in turn (one tick, then two, as the
+    // engine's own trace showed): still no frame standing still
+    const Drawn uneven = play(4.0, [](int n) { return 1 + n % 2; });
+    CHECK(uneven.held == 0);
+    CHECK(uneven.worst_stray < 0.25);
+}
+
+TEST_CASE("TickClock holds at the newest tick through a stall and recovers", "[interp][clock]") {
     TickClock clock(kTick);
-    clock.advance(0.05);
-    CHECK(clock.alpha() == Approx(0.5));
-
-    // "Waiting for players": a second passes and no tick arrives.
+    clock.published(10.0, 9.0, 1.0);
+    // "Waiting for players": a second passes and no tick arrives
     for (int i = 0; i < 60; ++i) clock.advance(1.0 / 60.0);
-    CHECK(clock.alpha() == Approx(1.0));
-
-    // The next tick lands; the one after it starts interpolating again.
-    clock.on_tick();
-    clock.advance(0.02);
-    CHECK(clock.alpha() == Approx(1.0));
-    clock.on_tick();
-    CHECK(clock.alpha() == Approx(0.2));
+    CHECK(clock.drawn() == Approx(10.0));
+    // The ticks come again: the drawn time goes on, faster for a while,
+    // until it is back behind the newest
+    double t = 10.0;
+    for (int i = 0; i < 120; ++i) {
+        clock.advance(1.0 / 60.0);
+        if (i % 6 == 5) clock.published(t += 1.0, t - 2.0, 1.0);
+    }
+    CHECK(clock.drawn() < t);
+    CHECK(clock.drawn() > t - 1.5);
 }
 
 TEST_CASE("TickClock stays put while paused and resets on a new session", "[interp][clock]") {
     TickClock clock(kTick);
+    clock.published(5.0, 3.0, 1.0);
     clock.advance(0.03);
-    const float paused_alpha = clock.alpha();
-    // Paused frames don't advance the clock.
-    CHECK(clock.alpha() == paused_alpha);
+    // Paused frames don't advance the clock
+    const double paused = clock.drawn();
+    CHECK(clock.drawn() == paused);
     clock.reset();
-    CHECK(clock.alpha() == 0.0f);
+    CHECK(clock.drawn() == 0.0);
+    clock.advance(0.05); // nothing published yet: nothing to draw between
+    CHECK(clock.drawn() == 0.0);
 }
 
 // --- capture_world -----------------------------------------------------------
@@ -200,6 +268,7 @@ TEST_CASE("A capture staged on the sim thread shows only once published (OE-134)
     // Published between frames: the newest is current, the last current
     // previous, and each record knows its previous self
     CHECK(history.publish());
+    CHECK(history.older().tick == 1); // kept, for a frame drawn behind
     CHECK(history.prev().tick == 2);
     CHECK(history.cur().tick == 4);
     CHECK(history.cur().find(id)->position.x == 5.0f);
@@ -803,6 +872,38 @@ TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][s
     history.events().clear(); // the renderer took them
     sim.tick();
     CHECK(history.events().deaths.empty());
+}
+
+TEST_CASE("A job of several ticks is captured once, with every tick's events",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.tick(); // tick 1
+
+    // The sim thread's job of three ticks: each tick's events kept, the
+    // world captured once, as the last left it
+    sim.set_tick_observer([&](const SimState& s) { history.stage_events(s); });
+    for (int t = 0; t < 3; ++t) {
+        sim.add_death_event(static_cast<osc::f32>(t), 0, 0, 1, 0);
+        entity(sim, id).set_position({static_cast<osc::f32>(t + 2), 0, 1});
+        sim.tick();
+    }
+    history.stage_world(sim);
+    REQUIRE(history.publish());
+    CHECK(history.prev().tick == 1);
+    CHECK(history.cur().tick == 4);
+    CHECK(history.cur().find(id)->position.x == 4.0f);
+    CHECK(history.cur().previous_serial == history.prev().serial);
+    REQUIRE(history.events().deaths.size() == 3);
+    CHECK(history.events().deaths[2].x == 2.0f);
+
+    // Drawn halfway across the job, it is halfway across its three ticks
+    const FrameView view(&history.prev(), &history.cur(), 0.5f);
+    CHECK(view.time() == Approx(3.5));
+    CHECK(view.position(*history.cur().find(id)).x == Approx(2.5f));
 }
 
 TEST_CASE("A light reaches the renderer where its entity was and with its particle textures",

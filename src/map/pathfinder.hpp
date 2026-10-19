@@ -87,6 +87,12 @@ private:
     const ComponentLabels& labels_for(const std::string& layer, f32 draft,
                                       bool amphibious) const;
     void build_labels(ComponentLabels& set) const;
+    /// For a goal cell the start's component doesn't hold: the cell of that
+    /// component closest to it as A* ranks cells (its heuristic, then nearer
+    /// the start), searched out to BEST_POINT_SEARCH_RADIUS cells. False when
+    /// the goal is in the start's component, or none is that near.
+    bool closest_reachable(u32 sx, u32 sz, u32 gx, u32 gz, const std::string& layer, f32 draft,
+                           bool amphibious, u32& bx, u32& bz) const;
 
     mutable std::vector<ComponentLabels> label_cache_;
     mutable u64 label_uses_ = 0;

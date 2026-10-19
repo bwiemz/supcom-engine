@@ -475,10 +475,13 @@ std::optional<int> App::Window::finish() {
                                off);
     if (game_frames.frames > 0)
         spdlog::info("Frames in the game: {}, mean {:.1f} ms, over 20 ms: {}, over 33 ms: {}, "
-                     "over 50 ms: {}, worst {:.1f} ms (sim thread: {})",
+                     "over 50 ms: {}, worst {:.1f} ms (sim thread: {}); drawn time held {} "
+                     "frames, pace changing {:.0f}% a frame",
                      game_frames.frames, game_frames.total_ms / game_frames.frames,
                      game_frames.over_20, game_frames.over_33, game_frames.over_50,
-                     game_frames.worst_ms, sim_thread ? "on" : "off");
+                     game_frames.worst_ms, sim_thread ? "on" : "off", game_frames.held,
+                     game_frames.expected > 0 ? 100.0 * game_frames.uneven / game_frames.expected
+                                              : 0.0);
     if (app.telemetry)
         app.telemetry->finish(sim_state.get(), fast_match_done() ? "ticks" : "closed");
     // The render benchmark's report, while the renderer and the game are up

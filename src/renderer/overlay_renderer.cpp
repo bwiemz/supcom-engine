@@ -408,8 +408,7 @@ void OverlayRenderer::add_unit_overlays(const sim::FrameView& view, const sim::W
             continue;
 
         // --- Lifebars (Moho's lifebar pass) ---
-        emit_lifebars(entity, pos, camera, vp_matrix, sw, sh,
-                      static_cast<f64>(snap.tick) + static_cast<f64>(view.alpha()));
+        emit_lifebars(entity, pos, camera, vp_matrix, sw, sh, view.time());
         const sim::EntityRecord* unit = &entity;
         f32 hp_frac = (entity.max_health > 0) ? entity.health / entity.max_health : 1.0f;
 

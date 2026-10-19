@@ -391,7 +391,10 @@ struct WorldEvents {
     }
 };
 
-/// The last two captured beats, and the events not yet shown.
+/// The last three published ticks, and the events not yet shown. A frame
+/// draws between two of them (TickClock: a sped-up game is drawn a little
+/// behind the newest, to have ticks ahead to go on into).
+
 class WorldHistory {
 public:
     /// The previous current becomes previous; `sim` is captured as current
@@ -401,6 +404,11 @@ public:
     /// aside with its events, where the frame being drawn doesn't read. A
     /// later capture before the publish replaces it.
     void capture_staged(const SimState& sim);
+    /// capture_staged in its two parts. A job of several ticks keeps each
+    /// tick's events (the sim forgets them) but needs the world only as its
+    /// last tick left it: no frame sees the others.
+    void stage_events(const SimState& sim);
+    void stage_world(const SimState& sim);
     /// The main thread's half, between ticks: the staged capture becomes
     /// current (the current previous) and its events the renderer's. False
     /// when nothing was staged.
@@ -414,6 +422,7 @@ public:
     /// Forget everything (a new session).
     void clear();
 
+    const WorldSnapshot& older() const { return snaps_[older_]; }
     const WorldSnapshot& prev() const { return snaps_[prev_]; }
     const WorldSnapshot& cur() const { return snaps_[cur_]; }
     u32 ticks_captured() const { return captured_; }
@@ -421,10 +430,11 @@ public:
     WorldEvents& events() { return events_; }
 
 private:
-    /// The previous, the current and the staged capture (a rotation of the
-    /// three: the sim thread writes the staged one while a frame reads the
-    /// other two).
-    std::array<WorldSnapshot, 3> snaps_;
+    /// The older, the previous, the current and the staged capture (a
+    /// rotation of the four: the sim thread writes the staged one while a
+    /// frame reads the others).
+    std::array<WorldSnapshot, 4> snaps_;
+    int older_ = 3;
     int prev_ = 1;
     int cur_ = 0;
     int staged_ = 2;
@@ -449,6 +459,10 @@ public:
         : prev_(prev), cur_(cur), alpha_(alpha) {}
 
     f32 alpha() const { return alpha_; }
+    /// The game time drawn, in ticks, a tick on from the tick it is drawn
+    /// past (cur's tick + alpha when the two are a tick apart): it runs on
+    /// evenly when they are several apart.
+    f64 time() const;
     const WorldSnapshot* prev() const { return prev_; }
     const WorldSnapshot* cur() const { return cur_; }
 

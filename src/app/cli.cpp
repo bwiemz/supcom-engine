@@ -140,6 +140,7 @@ void print_usage() {
               << "  --gpu-passes       With --render-bench: also time each pass on the GPU\n"
               << "                     (the timestamps between passes add to the frame's time)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
+              << "  --profile-frames   Profile the frames, the sim left on its own thread\n"
               << "  --no-sim-thread    Run the sim's ticks on the main thread (OE-134)\n"
               << "  --play-for <secs>  Close after this long in a game; log its frame times\n"
               << "  --play-rate <n>    ...played at game speed n (Moho's sim rate: 10 is 10x)\n"
@@ -401,6 +402,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
     o.profile_enabled = parse_flag(argc, argv, "--profile");
+    o.profile_frames = parse_flag(argc, argv, "--profile-frames");
+    if (o.profile_frames) o.profile_enabled = true;
     o.ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
     o.instrument = parse_flag(argc, argv, "--instrument");
     o.builder_debug = parse_flag(argc, argv, "--builder-debug");

@@ -159,6 +159,52 @@ the published snapshot (`ui_world`). Test runs (LAN games, fast matches,
 used off its thread (`lua/lua_thread_check.hpp`): that is how the UI reading
 the live sim from a frame callback, which desynced network games, was found.
 
+## Sped up, late in a match (2026-10-19)
+
+Ryan: at speed the units "bounce", and the game slows as units pile up.
+Measured on the eight-AI match at rate 6 (about 4x), `--play-for`; the
+frame line now also says how evenly the drawn game time ran: frames it
+**held** (stood still while the game ran) and how much its pace changed
+from frame to frame (`Window::note_drawn_time`). `--profile-frames` profiles
+the frames with the sim left on its own thread (`--profile` puts it on the
+main one, to time its zones).
+
+**The bounce.** Sped up, a sim job runs a frame's several ticks and
+publishes the last. The clock crossed those ticks in one tick's time, then
+held at the newest until the next job: move, stop, move. `TickClock` now
+keeps the drawn time a set distance behind the newest tick (three quarters
+of a publish's ticks, averaged), its pace eased toward that distance and
+slowing as it nears the newest; `WorldHistory` keeps three published ticks,
+and the frame draws between the two either side of the drawn time. The
+clock runs on the frame's wall time (`drawn_dt`), and moves before the view
+is taken (it moved after, in `start_sim`, on the frame collecting a job).
+
+| Clock (three minutes at 4x) | Held frames | Pace change a frame |
+| --- | --- | --- |
+| one tick per publish (before) | 3,049 | 130% |
+| paced, three ticks kept | 238 | 15% |
+
+At 1x and 2x: 15 and 17 held frames, 2-3%.
+
+**The frame's own hitches.** `UIRenderer::update` scaled each quad in the
+instance buffer after writing it: a read of GPU (write-combined) memory,
+uncached, for every rect, about 7 ms a frame of 1,500 quads (the minimap's
+unit marks grow with the armies). Scaled before it is written: the UI's
+update went from 8.0 to 1.2 ms a frame, and frames over 33 ms from about
+400 in three minutes to under 20.
+
+**The sim, late (about 2,000 units, 26,600 entities, per tick).** Copying
+the world for the renderer 30 ms (once a job now, not every tick:
+`stage_events` each tick, `stage_world` at the job's end); Lua (the AIs)
+26; orders 19 (patrol 7.6, move 4.4, building 3.3); visibility 14;
+manipulators 8; weapons 4; the Lua collection 45 every 70 ticks. Path
+search for an unreachable goal searched all the unit could reach (36,000
+cells, 5% of requests, 90% of the cells searched); the component labels now
+send it to the reachable cell A* would have ended at
+(`Pathfinder::closest_reachable`), 81% fewer cells searched and no more
+77 ms ticks. Five minutes at 4x against the engine before: 10,847 ticks
+played against 9,833, frames over 50 ms 2 against 234.
+
 ## Ideas not yet done
 
 - Props: the snapshot and `update_entities` visit every prop every tick;
@@ -167,5 +213,10 @@ the live sim from a frame callback, which desynced network games, was found.
 - The replay checksum walks every entity every tick again.
 - `CategoryMatcher` compiled again on each call; `GetBlueprintStat`
   building a string set per blueprint.
+- Visibility (14 ms late): a hash map of every unit's recon rebuilt each
+  tick, and each blip's blueprint id copied each tick.
+- Manipulators (8 ms late): every unit's every manipulator, idle or not.
+- The world capture's effects (9 ms of its 30): each effect's frame and
+  beam worked out from its bones every capture.
 - The Lua collection's stop-the-world mark (every 70 ticks, 35-95 ms): only
   an incremental or generational collector shortens it (M224h).

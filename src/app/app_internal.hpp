@@ -37,6 +37,7 @@
 #include "ui/wld_ui_provider.hpp"
 #include "vfs/virtual_file_system.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -136,6 +137,8 @@ struct Options {
     bool legacy_hud = false;
     bool no_decals = false;
     bool profile_enabled = false;
+    /// --profile-frames: the frames' zones only, the sim on its own thread
+    bool profile_frames = false;
     bool ai_skirmish = false;
     bool instrument = false;
     bool builder_debug = false;
@@ -210,6 +213,11 @@ struct WorldInterp {
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
 
+    /// The ticks run on the sim's own thread (OE-134): each one's events
+    /// are kept aside (WorldHistory::stage_events), the world as the job's
+    /// last tick left it captured (stage_world, by the job), and published
+    /// between frames (publish). Set only while no tick runs.
+
     bool staged = false;
     /// Capture on the sim owner; UI Sync delivery runs after collection.
     void attach(osc::sim::SimState& sim, osc::lua::LuaState* ui = nullptr) {
@@ -218,28 +226,54 @@ struct WorldInterp {
         one_tick_next = true;
         sim.set_beat_observer([this, ui](const osc::sim::SimState& s) {
             if (staged) {
-                history.capture_staged(s);
+                history.stage_events(s);
                 if (ui) osc::lua::queue_sync(s.lua_state(), nullptr);
+
                 return;
             }
 
             history.capture(s);
-            clock.on_tick();
+            note_published();
             if (ui) {
                 osc::lua::queue_sync(s.lua_state(), ui->raw());
             }
+
         });
     }
 
-    /// The sim thread's `ticks` ticks done: the newest one's world published,
-    /// and the clock told of each.
-    void publish(osc::u32 ticks) {
-        history.publish();
-        for (osc::u32 t = 0; t < ticks; ++t) clock.on_tick();
+    /// The sim thread's job done: the world its last tick left published.
+    void publish() {
+        if (history.publish()) note_published();
     }
 
+    /// The clock told of the newest tick, how far on it is from the one
+    /// before, and how far back the history reaches.
+    void note_published() {
+        const auto& prev = history.prev();
+        const auto& cur = history.cur();
+        const auto& older = history.older();
+        const double span = prev.serial != 0 && cur.tick > prev.tick ? cur.tick - prev.tick : 1.0;
+        const double oldest = older.serial != 0  ? older.tick
+                              : prev.serial != 0 ? prev.tick
+                                                 : cur.tick;
+        clock.published(cur.tick, oldest, span);
+    }
+
+    /// The two published ticks the drawn time falls between, and how far.
     osc::sim::FrameView view() const {
-        return {&history.prev(), &history.cur(), clock.alpha()};
+        const auto& older = history.older();
+        const auto& prev = history.prev();
+        const auto& cur = history.cur();
+        const double at = clock.drawn();
+        const auto between = [at](const osc::sim::WorldSnapshot& a,
+                                  const osc::sim::WorldSnapshot& b) {
+            const double alpha = (at - a.tick) / static_cast<double>(b.tick - a.tick);
+            return osc::sim::FrameView(&a, &b, static_cast<float>(std::clamp(alpha, 0.0, 1.0)));
+        };
+        if (older.serial != 0 && prev.serial != 0 && at < prev.tick && prev.tick > older.tick)
+            return between(older, prev);
+        if (prev.serial != 0 && cur.tick > prev.tick) return between(prev, cur);
+        return {&prev, &cur, 1.0f};
     }
 };
 

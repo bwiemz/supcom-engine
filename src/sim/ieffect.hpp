@@ -92,6 +92,8 @@ public:
     void set_param(const std::string& name, f64 value) {
         params_[name] = value;
         if (name == "LIFETIME") lifetime_ = value;
+        if (name == "THICKNESS") thickness_ = value;
+        if (name == "LENGTH") length_ = value;
     }
     f64 get_param(const std::string& name) const {
         auto it = params_.find(name);
@@ -154,6 +156,10 @@ public:
     /// get_param("LIFETIME"), kept at hand: expire_timed asks it of every
     /// timed effect each tick.
     f64 lifetime() const { return lifetime_; }
+    /// A beam's THICKNESS and LENGTH params (0 when unset), which every
+    /// world capture reads: kept aside, not looked up by name each time.
+    f64 thickness() const { return thickness_; }
+    f64 length() const { return length_; }
     void set_birth_time(f64 t) { birth_time_ = t; }
 
     /// Where an At-emitter was made (CreateEmitterAtEntity/AtBone: its
@@ -208,6 +214,8 @@ private:
 
     f64 birth_time_ = -1.0; // -1 = no auto-expiry
     f64 lifetime_ = 0.0;    // params_' LIFETIME (0 when unset)
+    f64 thickness_ = 0.0;   // params_' THICKNESS (0 when unset)
+    f64 length_ = 0.0;      // params_' LENGTH (0 when unset)
     f64 ends_at_ = -1.0;    // an emitter's end (see ends_at)
     u32 created_tick_ = 0;
     bool has_emitter_blueprint_ = false;

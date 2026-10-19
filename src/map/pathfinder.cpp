@@ -97,6 +97,26 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
         return result;
     }
 
+    // A goal the unit's ground doesn't reach, as the passability labels tell
+    // at once: A* would search all the ground the unit can reach for the
+    // cell closest to the goal (36,000 cells a search: nine tenths of an
+    // eight-AI match's path search, 2026-10-19). It is searched to that cell
+    // instead: the closest the unit can get, as A* ranks closeness. (With
+    // none near the goal, or the unit on it already -- closed in by
+    // buildings, which it then leaves across, or as close as it gets -- the
+    // whole search, as before.)
+    bool retargeted = false;
+    if (grid_.get(sx, sz) != CellPassability::Obstacle) {
+        u32 bx = 0;
+        u32 bz = 0;
+        if (closest_reachable(sx, sz, gx, gz, layer, draft, amphibious, bx, bz) &&
+            (bx != sx || bz != sz)) {
+            gx = bx;
+            gz = bz;
+            retargeted = true;
+        }
+    }
+
     // Run A*. A unit that can't take a first step is closed in by buildings
     // (standing in one, or in a gap between them): it leaves across them.
     auto grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious, false);
@@ -106,7 +126,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
         spdlog::trace("Pathfinder: A* found no path from ({},{}) to ({},{})", sx, sz, gx, gz);
         return result; // found = false
     }
-    result.partial = !grid_path.reached_goal;
+    result.partial = !grid_path.reached_goal || retargeted;
 
     // Smooth path
     auto smoothed = smooth_path(grid_path.cells, layer, draft, amphibious);
@@ -493,6 +513,40 @@ void Pathfinder::build_labels(ComponentLabels& set) const {
         }
     }
     set.grid_version = grid_.version();
+}
+
+bool Pathfinder::closest_reachable(u32 sx, u32 sz, u32 gx, u32 gz, const std::string& layer,
+                                   f32 draft, bool amphibious, u32& bx, u32& bz) const {
+    const auto& set = labels_for(layer, draft, amphibious);
+    const u32 w = grid_.grid_width();
+    const u32 h = grid_.grid_height();
+    const u32 from = set.labels[sz * w + sx];
+    if (from == 0 || set.labels[gz * w + gx] == from) return false;
+    // A* ranks a cell by its octile distance to the goal (its heuristic),
+    // then by its path cost: here, its distance from the start. A ring r
+    // cells out holds none nearer than r, so the search stops past the best.
+    const auto octile = [](u32 a, u32 b, u32 c, u32 d) {
+        const auto dx = static_cast<f32>(a > c ? a - c : c - a);
+        const auto dz = static_cast<f32>(b > d ? b - d : d - b);
+        return std::max(dx, dz) + (SQRT2 - 1.0f) * std::min(dx, dz);
+    };
+    f32 best = FLT_MAX;
+    f32 best_from_start = FLT_MAX;
+    for (i32 radius = 1; radius <= BEST_POINT_SEARCH_RADIUS && static_cast<f32>(radius) <= best;
+         ++radius) {
+        for_ring(static_cast<i32>(gx), static_cast<i32>(gz), radius, w, h, [&](u32 x, u32 z) {
+            if (set.labels[z * w + x] != from) return;
+            const f32 to_goal = octile(x, z, gx, gz);
+            const f32 from_start = octile(x, z, sx, sz);
+            if (to_goal < best || (to_goal == best && from_start < best_from_start)) {
+                best = to_goal;
+                best_from_start = from_start;
+                bx = x;
+                bz = z;
+            }
+        });
+    }
+    return best != FLT_MAX;
 }
 
 Reachability Pathfinder::reachability(f32 start_x, f32 start_z,

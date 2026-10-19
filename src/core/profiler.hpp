@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace osc {
@@ -51,7 +52,13 @@ public:
         return s_instance;
     }
 
-    void set_enabled(bool e) { enabled_ = e; }
+    /// Its zones are the enabling thread's (the main one): a zone another
+    /// thread runs (the sim's, OE-134) isn't counted, as it would race on
+    /// the frame's samples.
+    void set_enabled(bool e) {
+        enabled_ = e;
+        owner_ = std::this_thread::get_id();
+    }
     bool enabled() const { return enabled_; }
 
     /// Call at the start of each frame to reset per-frame accumulators.
@@ -126,7 +133,7 @@ public:
 
     /// Start timing a named zone (typically called via PROFILE_ZONE macro).
     void push_zone(const char* name) {
-        if (!enabled_) return;
+        if (!enabled_ || std::this_thread::get_id() != owner_) return;
         if (stack_depth_ >= MAX_STACK) return;
 
         stack_[stack_depth_] = {name, clock::now(), depth_};
@@ -136,7 +143,7 @@ public:
 
     /// End timing the current zone.
     void pop_zone() {
-        if (!enabled_ || stack_depth_ == 0) return;
+        if (!enabled_ || stack_depth_ == 0 || std::this_thread::get_id() != owner_) return;
 
         stack_depth_--;
         auto& entry = stack_[stack_depth_];
@@ -253,6 +260,7 @@ private:
     static constexpr u32 MAX_STACK = 16;
 
     bool enabled_ = false;
+    std::thread::id owner_;
     u32 depth_ = 0;
     u32 stack_depth_ = 0;
     StackEntry stack_[MAX_STACK] = {};

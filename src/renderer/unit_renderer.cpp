@@ -312,7 +312,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     f32 eye_z = 0;
     if (camera) camera->eye_position(eye_x, eye_y, eye_z);
     const u32 now = view.cur() ? view.cur()->tick : 0;
-    shader_time_ = std::fmod(static_cast<f32>(now) + view.alpha(), kShaderTimeWrap);
+    shader_time_ = static_cast<f32>(std::fmod(view.time(), static_cast<f64>(kShaderTimeWrap)));
     // One entity's mesh instance (or cube): the world's, then the player's
     // remembered structures gone from it unseen (MaybeDead; M215d).
     const auto draw = [&](const sim::EntityRecord& entity) {

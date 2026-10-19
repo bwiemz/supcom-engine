@@ -498,6 +498,8 @@ void StateIO::load(StateReader& r, IEffectRegistry& fx) {
         e->destroyed_ = r.b();
         e->lua_table_ref_ = r.i32v();
         e->params_ = load_str_f64<std::unordered_map<std::string, f64>>(r);
+        e->thickness_ = e->get_param("THICKNESS");
+        e->length_ = e->get_param("LENGTH");
         for (f32& v : e->emitter_params_) v = r.f32v();
         e->emitter_params_set_ = r.u32v();
         e->curve_ops_.resize(r.size(10));

@@ -475,7 +475,7 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
         advance(view, eye, frustum, blueprints, L, terrain);
 
     // The render clock: the entity is drawn between its last two ticks.
-    const f64 now = static_cast<f64>(cur->tick) + static_cast<f64>(view.alpha());
+    const f64 now = view.time();
     // Waves join now, born this frame (while the buffer has room)
     for (Particle& p : added_) {
         if (particles_.size() >= MAX_PARTICLES) break;
@@ -491,8 +491,10 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
     // a stable sort of the particles gives, in linear time. The order is
     // their blueprints', so the few blueprints are sorted; those equal fall
     // in one bucket, and each particle goes into its bucket in turn.
-    const auto drawable = [](const Particle& p) {
-        return p.bp->blendmode >= 0 && p.bp->blendmode <= kBlendRefract;
+    // (One born in a tick the drawn time hasn't reached yet waits: a sped-up
+    // game publishes several ticks' emission at once.)
+    const auto drawable = [now](const Particle& p) {
+        return p.bp->blendmode >= 0 && p.bp->blendmode <= kBlendRefract && p.born <= now;
     };
     // A stamp no other ordering has had (another system may share these
     // blueprints).

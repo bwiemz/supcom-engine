@@ -1,5 +1,6 @@
 #include "sim/world_snapshot.hpp"
 
+#include "core/profiler.hpp"
 #include "map/intel_grid.hpp"
 
 #include "sim/army_brain.hpp"
@@ -417,80 +418,86 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     // (next_record): made anew, with their strings, they took a third of an
     // eight-AI match's tick.
     size_t entities = 0;
-    sim.entity_registry().for_each([&](const Entity& e) {
-        if (e.destroyed()) return;
-        // Only prop-to-prop reuse: projectiles have conditional launch and impact
-        // fields that must be reset. A prop needs only its pose cleared.
-        const bool plain = e.is_prop();
-        EntityRecord* slot = nullptr;
-        if (entities < out.entities.size() && plain && out.entities[entities].is_prop) {
-            slot = &out.entities[entities++];
-            slot->bone_offset = 0;
-            slot->bone_count = 0;
-        } else {
-            slot = &next_record(out.entities, entities);
-        }
-        EntityRecord& r = *slot;
-        r.id = e.entity_id();
-        r.position = e.position();
-        r.orientation = e.orientation();
-        r.beam_end = e.beam_endpoint();
-        r.snap_serial = e.snap_serial();
-        if (e.is_projectile()) {
-            const auto& p = static_cast<const Projectile&>(e);
-            if (p.impact_waiting()) {
-                r.step_scale =
-                    p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
+    {
+        PROFILE_ZONE("Capture::entities");
+        sim.entity_registry().for_each([&](const Entity& e) {
+            if (e.destroyed()) return;
+            // A record that held neither a unit nor a shield holds only what
+            // every entity's sets below, and a pose: for another such entity
+            // (most are props) clearing the pose does, not a whole new record.
+            const bool plain = e.is_prop();
+            EntityRecord* slot = nullptr;
+            if (entities < out.entities.size() && plain && out.entities[entities].is_prop) {
+                slot = &out.entities[entities++];
+                slot->bone_offset = 0;
+                slot->bone_count = 0;
+            } else {
+                slot = &next_record(out.entities, entities);
+
             }
-            if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
-                r.launched = true;
-                r.launch_position = p.launch_position;
-                r.launch_orientation = p.launch_orientation;
+            EntityRecord& r = *slot;
+            r.id = e.entity_id();
+            r.position = e.position();
+            r.orientation = e.orientation();
+            r.beam_end = e.beam_endpoint();
+            r.snap_serial = e.snap_serial();
+            if (e.is_projectile()) {
+                const auto& p = static_cast<const Projectile&>(e);
+                if (p.impact_waiting()) r.step_scale = p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
+                if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
+                    r.launched = true;
+                    r.launch_position = p.launch_position;
+                    r.launch_orientation = p.launch_orientation;
+                }
             }
-        }
-        r.scroll_start = e.scroll_start();
-        r.scroll_end = e.scroll_end();
-        r.is_unit = e.is_unit();
-        r.is_prop = e.is_prop();
-        r.is_projectile = e.is_projectile();
-        r.is_shield = e.is_shield();
-        r.is_collision_beam = e.is_collision_beam();
-        r.beam_enabled = e.beam_enabled();
-        r.is_wreckage = e.is_wreckage();
-        r.army = e.army();
-        r.blueprint_id = e.interned_blueprint_id();
-        r.mesh_override = e.interned_mesh_override();
-        r.mesh_changes = e.mesh_changes();
-        r.scale_x = e.scale_x();
-        r.scale_y = e.scale_y();
-        r.scale_z = e.scale_z();
-        r.fraction_complete = e.fraction_complete();
-        r.health = e.health();
-        r.max_health = e.max_health();
-        r.custom_name = e.interned_custom_name();
-        r.strategic_underlay = e.interned_strategic_underlay();
-        if (e.is_unit()) {
-            capture_unit(static_cast<const Unit&>(e), r, out);
-            capture_recon(sim, static_cast<const Unit&>(e), r);
-        }
-        if (e.is_prop()) {
-            const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
-            if (!pose.empty()) {
-                r.bone_offset = static_cast<u32>(out.bones.size());
-                r.bone_count = static_cast<u32>(pose.size());
-                out.bones.insert(out.bones.end(), pose.begin(), pose.end());
+            r.scroll_start = e.scroll_start();
+            r.scroll_end = e.scroll_end();
+            r.is_unit = e.is_unit();
+            r.is_prop = e.is_prop();
+            r.is_projectile = e.is_projectile();
+            r.is_shield = e.is_shield();
+            r.is_collision_beam = e.is_collision_beam();
+            r.beam_enabled = e.beam_enabled();
+            r.is_wreckage = e.is_wreckage();
+            r.army = e.army();
+            r.blueprint_id = e.interned_blueprint_id();
+            r.mesh_override = e.interned_mesh_override();
+            r.mesh_changes = e.mesh_changes();
+            r.viz = static_cast<u8>(
+                static_cast<u8>(e.viz_focus_player()) | static_cast<u8>(e.viz_allies()) << 2 |
+                static_cast<u8>(e.viz_enemies()) << 4 | static_cast<u8>(e.viz_neutrals()) << 6);
+            r.scale_x = e.scale_x();
+            r.scale_y = e.scale_y();
+            r.scale_z = e.scale_z();
+            r.fraction_complete = e.fraction_complete();
+            r.health = e.health();
+            r.max_health = e.max_health();
+            r.custom_name = e.interned_custom_name();
+            r.strategic_underlay = e.interned_strategic_underlay();
+            if (e.is_unit()) {
+                PROFILE_ZONE("Capture::unit");
+                capture_unit(static_cast<const Unit&>(e), r, out);
+                capture_recon(sim, static_cast<const Unit&>(e), r);
             }
-        }
-        if (e.is_shield()) {
-            const auto& s = static_cast<const Shield&>(e);
-            r.shield_owner_id = s.owner_id;
-            // Retail's shield is up while it has its mesh (shield.lua's
-            // CreateShieldMesh and RemoveShield); its TurnOn is a script
-            // state, never the engine's (M215b).
-            r.shield_on = s.is_on || !e.mesh_override().empty();
-            r.shield_size = s.size;
-        }
-    });
+            if (e.is_prop()) {
+                const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
+                if (!pose.empty()) {
+                    r.bone_offset = static_cast<u32>(out.bones.size());
+                    r.bone_count = static_cast<u32>(pose.size());
+                    out.bones.insert(out.bones.end(), pose.begin(), pose.end());
+                }
+            }
+            if (e.is_shield()) {
+                const auto& s = static_cast<const Shield&>(e);
+                r.shield_owner_id = s.owner_id;
+                // Retail's shield is up while it has its mesh (shield.lua's
+                // CreateShieldMesh and RemoveShield); its TurnOn is a script
+                // state, never the engine's (M215b).
+                r.shield_on = s.is_on || !e.mesh_override().empty();
+                r.shield_size = s.size;
+            }
+        });
+    }
     out.entities.resize(entities);
     // The registry walks in id order, which find()'s binary search relies on.
     assert(
@@ -498,6 +505,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
                        [](const EntityRecord& a, const EntityRecord& b) { return a.id < b.id; }));
 
     size_t effects = 0;
+    PROFILE_ZONE("Capture::effects");
     for (const auto& fx : sim.effect_registry().all()) {
         if (!fx || fx->destroyed()) continue;
         EffectRecord& r = next_record(out.effects, effects);
@@ -522,8 +530,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.light_lifetime = fx->light_duration();
         r.glow_texture = fx->glow_texture();
         r.ramp_texture = fx->ramp_texture();
-        r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
-        r.length = static_cast<f32>(fx->get_param("LENGTH"));
+        r.thickness = static_cast<f32>(fx->thickness());
+        r.length = static_cast<f32>(fx->length());
         r.decal = fx->decal();
         r.seen_by = fx->seen_by();
         capture_beam(sim, *fx, r);
@@ -561,7 +569,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         a.start_z = brain->start_position().z;
     }
 
-    capture_sight(sim, sight_army, out.sight);
+    {
+        PROFILE_ZONE("Capture::sight");
+        capture_sight(sim, sight_army, out.sight);
+    }
     out.player_result = sim.player_result();
     out.no_rush_radius = sim.no_rush_active() ? sim.no_rush_radius() : 0.0f;
     capture_pending(sim, out);
@@ -604,6 +615,11 @@ void WorldHistory::capture(const SimState& sim) {
 }
 
 void WorldHistory::capture_staged(const SimState& sim) {
+    stage_world(sim);
+    stage_events(sim);
+}
+
+void WorldHistory::stage_world(const SimState& sim) {
     WorldSnapshot& now = snaps_[staged_];
     capture_world(sim, now, sight_army_.load());
     static std::atomic<u64> next_serial{0};
@@ -611,6 +627,7 @@ void WorldHistory::capture_staged(const SimState& sim) {
     // Each entity's record in the capture it will follow (both ascending by
     // id): the current one, which becomes the previous when this is published.
     const WorldSnapshot& before = snaps_[cur_];
+    PROFILE_ZONE("Capture::previous");
     now.previous.assign(now.entities.size(), WorldSnapshot::kNoPrevious);
     now.previous_serial = 0;
     if (captured_ > 0 && before.serial != 0) {
@@ -625,6 +642,9 @@ void WorldHistory::capture_staged(const SimState& sim) {
         now.previous_serial = before.serial;
     }
     staged_ready_ = true;
+}
+
+void WorldHistory::stage_events(const SimState& sim) {
     // The sim forgets its events once the tick is over: keep them until
     // the renderer shows them.
     for (const auto& d : sim.death_events())
@@ -644,10 +664,11 @@ void WorldHistory::capture_staged(const SimState& sim) {
 
 bool WorldHistory::publish() {
     if (!staged_ready_) return false;
-    const int old_prev = prev_;
+    const int freed = older_;
+    older_ = prev_;
     prev_ = cur_;
     cur_ = staged_;
-    staged_ = old_prev;
+    staged_ = freed;
     staged_ready_ = false;
     ++captured_;
     const auto take = [](auto& to, auto& from) {
@@ -666,7 +687,11 @@ bool WorldHistory::publish() {
 void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
     if (army == sight_army_) return;
     sight_army_ = army;
-    if (sim && captured_ > 0) capture_sight(*sim, army, snaps_[cur_].sight);
+    // (The previous too: a frame drawn behind the newest draws from it.)
+    if (sim && captured_ > 0) {
+        capture_sight(*sim, army, snaps_[cur_].sight);
+        if (captured_ > 1) snaps_[prev_].sight = snaps_[cur_].sight;
+    }
 }
 
 void WorldHistory::refresh_pending(const SimState& sim) {
@@ -714,7 +739,16 @@ FrameView::Pair FrameView::pair_for(const EntityRecord& e) const {
     return {from, &e};
 }
 
+f64 FrameView::time() const {
+    if (!cur_) return 0.0;
+    if (!prev_ || prev_->serial == 0 || prev_->tick >= cur_->tick)
+        return static_cast<f64>(cur_->tick) + static_cast<f64>(alpha_);
+    return static_cast<f64>(prev_->tick) + 1.0 +
+           static_cast<f64>(alpha_) * static_cast<f64>(cur_->tick - prev_->tick);
+}
+
 // UserEntity::GetInterpolatedTransform: last to current by clamp(mCurImpactValue * alpha).
+
 Vector3 FrameView::position(const EntityRecord& e) const {
     const Pair p = pair_for(e);
     const f32 a = std::clamp(alpha_ * e.step_scale, 0.0f, 1.0f);

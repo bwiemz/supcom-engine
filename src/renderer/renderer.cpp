@@ -2107,8 +2107,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         camera_.camera_follow(follow.source, follow.projectile, follow.timeout);
     }
     events.camera_follows.clear();
-    camera_game_time_ =
-        view.cur() ? (static_cast<f64>(view.cur()->tick) + view.alpha()) * 0.1 : 0.0;
+    camera_game_time_ = view.cur() ? view.time() * 0.1 : 0.0;
     // FA's own game interface replaces the C++ HUD placeholders.
     {
         bool world_ui = false;
@@ -2276,8 +2275,9 @@ void Renderer::record_view(u32 fi, const std::array<f32, 16>& vp, const Frustum&
     record_shadow_pass(fi, vp);
 
     // ==================== NORMALS ====================
-    collect_frame_decals(frustum, ticks);
+    collect_frame_decals(frustum, view.cur() ? static_cast<f32>(view.time()) : 0.0f);
     gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Normals);
+
     record_normal_pass(fi, vp);
 
     // ==================== REFLECTION ====================
@@ -3080,6 +3080,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
         movie_textures_.prepare(*ui_registry, fi);
         update_system_cursor(L);
         ui_renderer_.set_scale(ui_scale_);
+        PROFILE_ZONE("UI::tree");
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_, ui_width(), ui_height(),
                             static_cast<f32>(ui_dispatch_.mouse_x()),
                             static_cast<f32>(ui_dispatch_.mouse_y()));
@@ -3273,6 +3274,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
             painted_minimap_.clear();
             minimap_painter = [&](const ui::WorldView& wv, const ui::ControlRect& r,
                                   std::vector<UIQuad>& out) {
+                PROFILE_ZONE("UI::minimap");
                 const size_t first = out.size();
                 std::optional<PlayableRect> resources;
                 if (wv.resource_rendering() && terrain_) {
@@ -3306,6 +3308,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
         movie_textures_.prepare(*ui_registry, fi);
         update_system_cursor(L);
         ui_renderer_.set_scale(ui_scale_);
+        PROFILE_ZONE("UI::tree");
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_, ui_width(), ui_height(),
                             static_cast<f32>(ui_dispatch_.mouse_x()),
                             static_cast<f32>(ui_dispatch_.mouse_y()), minimap_painter);
@@ -3323,12 +3326,13 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     update_view_effects(fi, vp, frustum, view, events, ghost, L, selected_ids, true);
     update_minimap_meshes(view, L, fi);
 
+
     // The terrain's Time (M212f): set when the terrain would re-tessellate,
     // so TTerrainGlow's lava stands still under a still camera, as in FA.
     if (const sim::WorldSnapshot* cur = view.cur()) {
         const u64 decals = static_cast<u64>(runtime_decals_.decal_draws().size()) |
                            (static_cast<u64>(runtime_decals_.splat_count()) << 32);
-        terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
+        terrain_time_.update(camera_.view(), decals, static_cast<f32>(view.time()));
     }
 
     // Update minimap (terrain bg, units' icons, camera frustum box)
@@ -3496,7 +3500,10 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
     // FA's water: this frame's camera and time (M213a)
     water_renderer_.update(*view_camera_, vp, unit_renderer_.shader_time(), fi);
     // The sky: its time is the tick and the interpolant, unwrapped (M210b)
-    sky_renderer_.update(*view_camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
+    const f64 sky_time = view.cur() ? view.time() : 0.0;
+    const f64 sky_tick = std::floor(sky_time);
+    sky_renderer_.update(*view_camera_, vp, static_cast<u32>(sky_tick),
+                         static_cast<f32>(sky_time - sky_tick), fi);
 
     // Scripts' decals and splats: this tick's, as the player's army sees
     // them (M212c)
