@@ -3,6 +3,7 @@
 // on (OrderStep).
 
 #include "sim/unit.hpp"
+#include "blueprints/blueprint_store.hpp"
 #include "core/dmath.hpp"
 #include "sim/air_combat.hpp"
 #include "sim/bone_data.hpp"
@@ -33,24 +34,15 @@ namespace {
 f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char* field,
                              f32 fallback) {
     if (!L || bp_id.empty()) return fallback;
-    std::string key = bp_id;
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     f32 value = fallback;
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, key.c_str());
+    if (blueprints::push_blueprint(L, bp_id)) {
+        lua_pushstring(L, "Economy");
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Economy");
+            lua_pushstring(L, field);
             lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, field);
-                lua_rawget(L, -2);
-                if (lua_type(L, -1) == LUA_TNUMBER) value = static_cast<f32>(lua_tonumber(L, -1));
-            }
+            if (lua_type(L, -1) == LUA_TNUMBER) value = static_cast<f32>(lua_tonumber(L, -1));
         }
     }
     lua_settop(L, top);
@@ -179,24 +171,15 @@ u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
     // Else a new one, of its blueprint's AI.BeaconName.
     lua_State* L = ctx.L;
     if (!L || !ctx.sim) return 0;
-    std::string key = blueprint_id();
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::string beacon_bp;
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, key.c_str());
+    if (blueprints::push_blueprint(L, blueprint_id())) {
+        lua_pushstring(L, "AI");
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "AI");
+            lua_pushstring(L, "BeaconName");
             lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "BeaconName");
-                lua_rawget(L, -2);
-                if (lua_type(L, -1) == LUA_TSTRING) beacon_bp = lua_tostring(L, -1);
-            }
+            if (lua_type(L, -1) == LUA_TSTRING) beacon_bp = lua_tostring(L, -1);
         }
     }
     lua_settop(L, top);

@@ -1,5 +1,7 @@
 #include "sim/script_class.hpp"
 
+#include "blueprints/blueprint_store.hpp"
+
 extern "C" {
 #include <lua.h>
 }
@@ -28,19 +30,13 @@ void resolve(lua_State* L, const std::string& bp_id, std::string_view bp_suffix,
     const int top = lua_gettop(L);
     std::string module, class_name;
     bool default_module = false;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id.c_str());
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            const int bp = lua_gettop(L);
-            module = string_field(L, bp, "ScriptModule");
-            class_name = string_field(L, bp, "ScriptClass");
-            if (module.empty()) {
-                module = default_script_module(string_field(L, bp, "Source"), bp_suffix);
-                default_module = true;
-            }
+    if (blueprints::push_blueprint(L, bp_id)) {
+        const int bp = lua_gettop(L);
+        module = string_field(L, bp, "ScriptModule");
+        class_name = string_field(L, bp, "ScriptClass");
+        if (module.empty()) {
+            module = default_script_module(string_field(L, bp, "Source"), bp_suffix);
+            default_module = true;
         }
     }
     lua_settop(L, top);

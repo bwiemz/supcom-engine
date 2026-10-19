@@ -188,9 +188,18 @@ if(OSC_BUILD_TESTS)
         add_test(NAME arch.blueprint_fields_self_test
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_fields.py
                          --self-test)
+        # Every blueprint lookup by id goes through blueprints::push_blueprint:
+        # one of its own misses an id a script writes in upper case.
+        add_test(NAME arch.blueprint_lookups
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_lookups.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.blueprint_lookups_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_blueprint_lookups.py
+                         --self-test)
         set_tests_properties(arch.retail_hooks arch.retail_hooks_self_test
                              arch.lua_stubs arch.lua_stubs_self_test
                              arch.blueprint_fields arch.blueprint_fields_self_test
+                             arch.blueprint_lookups arch.blueprint_lookups_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
         # retail_ref.py, which asks retail FA itself for references: its config,

@@ -1167,16 +1167,7 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const sim::SimState&
                                               const std::string& bp_id) {
     sim::PlacementRules r;
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id.c_str());
-        lua_rawget(L, -2);
-    }
-    if (!lua_istable(L, -1)) {
-        lua_settop(L, top);
-        return r;
-    }
+    if (!blueprints::push_blueprint(L, bp_id)) return r;
     const int bp = lua_gettop(L);
 
     if (const auto [fx, fz] = sim::blueprint_footprint(L, bp); fx > 0 && fz > 0) {
@@ -1527,15 +1518,10 @@ static int brain_CanBuildPlatoon(lua_State* L) {
 
         // Look up the blueprint's categories
         std::unordered_set<std::string> bp_cats;
-        lua_pushstring(L, "__blueprints");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, bp_id.c_str());
-            lua_rawget(L, -2);
+        if (blueprints::push_blueprint(L, bp_id)) {
             sim::collect_blueprint_categories(L, lua_gettop(L), bp_cats);
-            lua_pop(L, 1); // bp table or nil
+            lua_pop(L, 1);
         }
-        lua_pop(L, 1); // __blueprints
 
         if (bp_cats.empty()) {
             lua_pop(L, 1); // sub
@@ -1564,59 +1550,55 @@ static int brain_CanBuildPlatoon(lua_State* L) {
             }
 
             // Look up factory blueprint's Economy.BuildableCategory
-            lua_pushstring(L, "__blueprints");
-            lua_rawget(L, LUA_GLOBALSINDEX);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, e->blueprint_id().c_str());
+            if (blueprints::push_blueprint(L, e->blueprint_id())) {
+                lua_pushstring(L, "Economy");
                 lua_rawget(L, -2);
                 if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "Economy");
+                    lua_pushstring(L, "BuildableCategory");
                     lua_rawget(L, -2);
                     if (lua_istable(L, -1)) {
-                        lua_pushstring(L, "BuildableCategory");
-                        lua_rawget(L, -2);
-                        if (lua_istable(L, -1)) {
-                            // Table of category strings
-                            int bc = lua_gettop(L);
-                            for (int b = 1; !found; b++) {
-                                lua_rawgeti(L, bc, b);
-                                if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-                                if (lua_isstring(L, -1)) {
-                                    std::string pattern = lua_tostring(L, -1);
-                                    bool match = true;
-                                    std::istringstream ss(pattern);
-                                    std::string token;
-                                    while (ss >> token) {
-                                        if (bp_cats.count(token) == 0) {
-                                            match = false;
-                                            break;
-                                        }
+                        // Table of category strings
+                        int bc = lua_gettop(L);
+                        for (int b = 1; !found; b++) {
+                            lua_rawgeti(L, bc, b);
+                            if (lua_isnil(L, -1)) {
+                                lua_pop(L, 1);
+                                break;
+                            }
+                            if (lua_isstring(L, -1)) {
+                                std::string pattern = lua_tostring(L, -1);
+                                bool match = true;
+                                std::istringstream ss(pattern);
+                                std::string token;
+                                while (ss >> token) {
+                                    if (bp_cats.count(token) == 0) {
+                                        match = false;
+                                        break;
                                     }
-                                    if (match) found = true;
                                 }
-                                lua_pop(L, 1); // entry
+                                if (match) found = true;
                             }
-                        } else if (lua_isstring(L, -1)) {
-                            // Single string fallback
-                            std::string pattern = lua_tostring(L, -1);
-                            bool match = true;
-                            std::istringstream ss(pattern);
-                            std::string token;
-                            while (ss >> token) {
-                                if (bp_cats.count(token) == 0) {
-                                    match = false;
-                                    break;
-                                }
-                            }
-                            if (match) found = true;
+                            lua_pop(L, 1); // entry
                         }
-                        lua_pop(L, 1); // BuildableCategory
+                    } else if (lua_isstring(L, -1)) {
+                        // Single string fallback
+                        std::string pattern = lua_tostring(L, -1);
+                        bool match = true;
+                        std::istringstream ss(pattern);
+                        std::string token;
+                        while (ss >> token) {
+                            if (bp_cats.count(token) == 0) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match) found = true;
                     }
-                    lua_pop(L, 1); // Economy
+                    lua_pop(L, 1); // BuildableCategory
                 }
+                lua_pop(L, 1); // Economy
                 lua_pop(L, 1); // factory bp
             }
-            lua_pop(L, 1); // __blueprints
             lua_pop(L, 1); // factory table
         }
 
@@ -1758,19 +1740,9 @@ static int brain_FindUpgradeBP(lua_State* L) {
     return 1;
 }
 
-// brain:GetUnitBlueprint(bpId) — returns blueprint table from __blueprints
+// brain:GetUnitBlueprint(bpId) — the blueprint table, or nil
 static int brain_GetUnitBlueprint(lua_State* L) {
-    const char* bp_id = luaL_checkstring(L, 2);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_pushnil(L);
-        return 1;
-    }
-    lua_pushstring(L, bp_id);
-    lua_rawget(L, -2);
-    lua_remove(L, -2); // remove __blueprints table
+    if (!blueprints::push_blueprint(L, luaL_checkstring(L, 2))) lua_pushnil(L);
     return 1;
 }
 

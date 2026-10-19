@@ -272,17 +272,7 @@ static int blip_GetBlueprint(lua_State* L) {
             if (snap) bp_id = snap->blueprint_id;
         }
     }
-    if (bp_id.empty()) { lua_pushnil(L); return 1; }
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id.c_str());
-        lua_rawget(L, -2);
-        lua_remove(L, -2); // remove __blueprints table
-    } else {
-        lua_pop(L, 1);
-        lua_pushnil(L);
-    }
+    if (!blueprints::push_blueprint(L, bp_id)) lua_pushnil(L);
     return 1;
 }
 

@@ -31,7 +31,7 @@ public:
 
 private:
     /// Resolve blueprint ID → .scm VFS path by navigating Lua tables:
-    /// unitBP.Display.MeshBlueprint → __blueprints[meshId].LODs[1].MeshName
+    /// unitBP.Display.MeshBlueprint → its mesh blueprint's LODs[1].MeshName
     /// The blueprint's Display.UniformScale (1 without one).
     f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
     /// The blueprint's AI.TargetBones, resolved against `bones`.

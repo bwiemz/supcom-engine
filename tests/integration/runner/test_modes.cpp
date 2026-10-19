@@ -243,6 +243,7 @@ constexpr Mode kModesBefore[] = {
     {"--influence-test", test_influence, false},
     {"--issue-handles-test", test_issue_handles, false},
     {"--binding-tail-test", test_binding_tail, false},
+    {"--pod-rebuild-test", test_pod_rebuild, false},
     {"--jammer-blip-test", test_jammer_blips, false},
     {"--intel-field-test", test_intel_fields, false},
     {"--destroyed-handle-test", test_destroyed_handle, false},
@@ -449,6 +450,7 @@ void IntegrationModes::print_usage() const {
               << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"
               << "  --binding-tail-test Retail's last missing engine calls (platoon transport orders,\n"
               << "                     FlushIntelInRect, PickBestAttackVector)\n"
+              << "  --pod-rebuild-test A UEF Engineering Station rebuilds its lost pod\n"
               << "  --jammer-blip-test A jammer's fake blips (M215e)\n"
               << "  --intel-field-test Stealth fields and underwater sight, with retail's units "
                  "(M215g)\n"

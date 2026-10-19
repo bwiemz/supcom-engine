@@ -3110,18 +3110,7 @@ static int l_EntityCategoryCount(lua_State* L) {
 
 // GetUnitBlueprintByName(bp_id) -> blueprint table or nil
 static int l_GetUnitBlueprintByName(lua_State* L) {
-    const char* bp_id = luaL_checkstring(L, 1);
-    // Look up __blueprints[bp_id]
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_pushnil(L);
-        return 1;
-    }
-    lua_pushstring(L, bp_id);
-    lua_rawget(L, -2);
-    lua_remove(L, -2); // remove __blueprints table
+    if (!blueprints::push_blueprint(L, luaL_checkstring(L, 1))) lua_pushnil(L);
     return 1;
 }
 

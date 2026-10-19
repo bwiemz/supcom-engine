@@ -264,39 +264,31 @@ std::vector<MeshCache::LodFields> MeshCache::read_lods(const std::string& mesh_b
                                                        lua_State* L) {
     std::vector<LodFields> lods;
     if (!L) return lods;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, mesh_bp_id.c_str());
+    if (blueprints::push_blueprint(L, mesh_bp_id)) {
+        lua_pushstring(L, "LODs");
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "LODs");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                for (int i = 1;; ++i) {
-                    lua_rawgeti(L, -1, i);
-                    if (!lua_istable(L, -1)) {
-                        lua_pop(L, 1);
-                        break;
-                    }
-                    LodFields lod;
-                    lua_pushstring(L, "LODCutoff");
-                    lua_rawget(L, -2);
-                    if (lua_isnumber(L, -1)) lod.cutoff = static_cast<f32>(lua_tonumber(L, -1));
+            for (int i = 1;; ++i) {
+                lua_rawgeti(L, -1, i);
+                if (!lua_istable(L, -1)) {
                     lua_pop(L, 1);
-                    lua_pushstring(L, "ShaderName");
-                    lua_rawget(L, -2);
-                    lod.shader = resolve_shader_name(
-                        lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "");
-                    lua_pop(L, 2); // ShaderName, the LOD
-                    lods.push_back(std::move(lod));
+                    break;
                 }
+                LodFields lod;
+                lua_pushstring(L, "LODCutoff");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) lod.cutoff = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_pushstring(L, "ShaderName");
+                lua_rawget(L, -2);
+                lod.shader =
+                    resolve_shader_name(lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "");
+                lua_pop(L, 2); // ShaderName, the LOD
+                lods.push_back(std::move(lod));
             }
-            lua_pop(L, 1); // LODs
         }
-        lua_pop(L, 1); // the mesh blueprint
+        lua_pop(L, 2); // LODs, the mesh blueprint
     }
-    lua_pop(L, 1); // __blueprints
     return lods;
 }
 
@@ -427,35 +419,23 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
 
 int MeshCache::push_lod_field(const std::string& mesh_bp_id, i32 lod_index, const char* field_name,
                               lua_State* L) {
-    if (!L) {
-        return 0;
-    }
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return 0;
-    }
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, -2);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 2);
+    if (!L || !blueprints::push_blueprint(L, mesh_bp_id)) {
         return 0;
     }
     lua_pushstring(L, "LODs");
     lua_rawget(L, -2);
     if (!lua_istable(L, -1)) {
-        lua_pop(L, 3);
+        lua_pop(L, 2);
         return 0;
     }
     lua_rawgeti(L, -1, lod_index);
     if (!lua_istable(L, -1)) {
-        lua_pop(L, 4);
+        lua_pop(L, 3);
         return 0;
     }
     lua_pushstring(L, field_name);
     lua_rawget(L, -2);
-    return 5;
+    return 4;
 }
 
 std::string MeshCache::read_lod_string_field(const std::string& mesh_bp_id,
@@ -480,47 +460,32 @@ bool MeshCache::read_lod_flag(const std::string& mesh_bp_id, i32 lod_index, cons
 }
 
 f32 MeshCache::read_mesh_number(const std::string& mesh_bp_id, const char* field, lua_State* L) {
-    if (!L) return 0.0f;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return 0.0f;
-    }
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, -2);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 2);
-        return 0.0f;
-    }
+    if (!L || !blueprints::push_blueprint(L, mesh_bp_id)) return 0.0f;
     lua_pushstring(L, field);
     lua_rawget(L, -2);
     const f32 value = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
-    lua_pop(L, 3); // value, the mesh blueprint, __blueprints
+    lua_pop(L, 2); // value, the mesh blueprint
     return value;
 }
 
 f32 MeshCache::read_lod_cutoff(const std::string& mesh_bp_id, i32 lod_index,
                                 lua_State* L) {
-    if (!L) return 0.0f;
-
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0.0f; }
-    int bps = lua_gettop(L);
-
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, bps);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); return 0.0f; }
+    if (!L || !blueprints::push_blueprint(L, mesh_bp_id)) return 0.0f;
     int mbp = lua_gettop(L);
 
     lua_pushstring(L, "LODs");
     lua_rawget(L, mbp);
-    if (!lua_istable(L, -1)) { lua_pop(L, 3); return 0.0f; }
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 2);
+        return 0.0f;
+    }
     int lods_tbl = lua_gettop(L);
 
     lua_rawgeti(L, lods_tbl, lod_index);
-    if (!lua_istable(L, -1)) { lua_pop(L, 4); return 0.0f; }
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 3);
+        return 0.0f;
+    }
     int lod_table = lua_gettop(L);
 
     lua_pushstring(L, "LODCutoff");
@@ -529,7 +494,7 @@ f32 MeshCache::read_lod_cutoff(const std::string& mesh_bp_id, i32 lod_index,
     if (lua_isnumber(L, -1)) {
         cutoff = static_cast<f32>(lua_tonumber(L, -1));
     }
-    lua_pop(L, 5); // cutoff + lod_table + lods_tbl + mbp + bps
+    lua_pop(L, 4); // cutoff + lod_table + lods_tbl + mbp
 
     return cutoff;
 }
@@ -650,14 +615,7 @@ std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
     std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
     if (mesh_bp_id.empty()) return {};
 
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
-    int blueprints_table = lua_gettop(L);
-
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, blueprints_table);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); return {}; }
+    if (!blueprints::push_blueprint(L, mesh_bp_id)) return {};
     int mesh_bp = lua_gettop(L);
 
     // Strategy 1: LODs[1].MeshName
@@ -681,7 +639,7 @@ std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
     lua_pop(L, 1);
 
     if (!mesh_name.empty()) {
-        lua_pop(L, 2);
+        lua_pop(L, 1);
         if (mesh_name[0] != '/') {
             auto slash = mesh_bp_id.rfind('/');
             if (slash != std::string::npos) {
@@ -699,7 +657,7 @@ std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
         const std::string base = derive_base_path(lua_tostring(L, -1));
         if (!base.empty()) result = base + "_lod0.scm";
     }
-    lua_pop(L, 3);
+    lua_pop(L, 2);
     return result;
 }
 
@@ -746,46 +704,9 @@ std::string MeshCache::resolve_albedo_path(const std::string& bp_id,
     std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
     if (mesh_bp_id.empty()) return {};
 
-    // Strategy 1: LODs[1].AlbedoName from mesh blueprint (works if bp not overwritten)
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        int bps = lua_gettop(L);
-        lua_pushstring(L, mesh_bp_id.c_str());
-        lua_rawget(L, bps);
-        if (lua_istable(L, -1)) {
-            int mbp = lua_gettop(L);
-            lua_pushstring(L, "LODs");
-            lua_rawget(L, mbp);
-            if (lua_istable(L, -1)) {
-                int lods = lua_gettop(L);
-                lua_rawgeti(L, lods, 1);
-                if (lua_istable(L, -1)) {
-                    int lod1 = lua_gettop(L);
-                    lua_pushstring(L, "AlbedoName");
-                    lua_rawget(L, lod1);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string name = lua_tostring(L, -1);
-                        lua_pop(L, 5); // AlbedoName+lod1+lods+mbp+bps
-                        if (!name.empty()) {
-                            if (name[0] != '/') {
-                                auto slash = mesh_bp_id.rfind('/');
-                                if (slash != std::string::npos)
-                                    name = mesh_bp_id.substr(0, slash + 1) + name;
-                            }
-                            return name;
-                        }
-                    } else {
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1); // lod1 or rawgeti result
-            }
-            lua_pop(L, 1); // LODs
-        }
-        lua_pop(L, 1); // mbp
-    }
-    lua_pop(L, 1); // bps
+    // Strategy 1: LODs[1].AlbedoName from mesh blueprint
+    if (std::string name = resolve_lod_file(mesh_bp_id, 1, "AlbedoName", L); !name.empty())
+        return name;
 
     // Strategy 2: convention-based — derive from mesh bp ID
     // "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001_Albedo.dds"
@@ -804,45 +725,8 @@ std::string MeshCache::resolve_specteam_path(const std::string& bp_id,
     if (mesh_bp_id.empty()) return {};
 
     // Strategy 1: LODs[1].SpecularName from mesh blueprint
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        int bps = lua_gettop(L);
-        lua_pushstring(L, mesh_bp_id.c_str());
-        lua_rawget(L, bps);
-        if (lua_istable(L, -1)) {
-            int mbp = lua_gettop(L);
-            lua_pushstring(L, "LODs");
-            lua_rawget(L, mbp);
-            if (lua_istable(L, -1)) {
-                int lods = lua_gettop(L);
-                lua_rawgeti(L, lods, 1);
-                if (lua_istable(L, -1)) {
-                    int lod1 = lua_gettop(L);
-                    lua_pushstring(L, "SpecularName");
-                    lua_rawget(L, lod1);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string name = lua_tostring(L, -1);
-                        lua_pop(L, 5);
-                        if (!name.empty()) {
-                            if (name[0] != '/') {
-                                auto slash = mesh_bp_id.rfind('/');
-                                if (slash != std::string::npos)
-                                    name = mesh_bp_id.substr(0, slash + 1) + name;
-                            }
-                            return name;
-                        }
-                    } else {
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
+    if (std::string name = resolve_lod_file(mesh_bp_id, 1, "SpecularName", L); !name.empty())
+        return name;
 
     // Strategy 2: convention-based — derive from mesh bp ID
     // "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001_SpecTeam.dds"
@@ -861,45 +745,8 @@ std::string MeshCache::resolve_normal_path(const std::string& bp_id,
     if (mesh_bp_id.empty()) return {};
 
     // Strategy 1: LODs[1].NormalsName from mesh blueprint
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        int bps = lua_gettop(L);
-        lua_pushstring(L, mesh_bp_id.c_str());
-        lua_rawget(L, bps);
-        if (lua_istable(L, -1)) {
-            int mbp = lua_gettop(L);
-            lua_pushstring(L, "LODs");
-            lua_rawget(L, mbp);
-            if (lua_istable(L, -1)) {
-                int lods = lua_gettop(L);
-                lua_rawgeti(L, lods, 1);
-                if (lua_istable(L, -1)) {
-                    int lod1 = lua_gettop(L);
-                    lua_pushstring(L, "NormalsName");
-                    lua_rawget(L, lod1);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string name = lua_tostring(L, -1);
-                        lua_pop(L, 5);
-                        if (!name.empty()) {
-                            if (name[0] != '/') {
-                                auto slash = mesh_bp_id.rfind('/');
-                                if (slash != std::string::npos)
-                                    name = mesh_bp_id.substr(0, slash + 1) + name;
-                            }
-                            return name;
-                        }
-                    } else {
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-    }
-    lua_pop(L, 1);
+    if (std::string name = resolve_lod_file(mesh_bp_id, 1, "NormalsName", L); !name.empty())
+        return name;
 
     // Strategy 2: convention-based — derive from mesh bp ID
     // Try _normalsTS.dds (most common FA convention)
