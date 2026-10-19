@@ -42,7 +42,6 @@ extern "C" {
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <ostream>
 #include <unordered_map>
 
@@ -185,7 +184,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     create_shadow_resources();
 
     // The frame's targets (must be created before pipelines — frame_.scene_pass() is
-    // needed for scene pipeline builds now that all scene draws target offscreen HDR)
+    // needed for scene pipeline builds now that all scene draws target the offscreen scene)
     create_frame_targets();
 
     // Pipelines (scene pipelines built against frame_.scene_pass())
@@ -2181,7 +2180,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     record_main_pass(fi, vp);
 
     // ==================== COMPOSITE + BLOOM ====================
-    // Scene always renders to offscreen HDR. End scene pass, optionally run
+    // Scene always renders offscreen. End scene pass, optionally run
     // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
     vkCmdEndRenderPass(cmd_buf_[fi]);
     const bool scene_capturing = record_scene_capture(cmd_buf_[fi]);
@@ -3297,7 +3296,7 @@ void Renderer::begin_swapchain_pass(u32 fi, u32 image_index) {
 }
 
 void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp) {
-    // Always render scene to offscreen HDR image (frame_.scene_pass()).
+    // Always render scene to the offscreen image (frame_.scene_pass()).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
     // Black, and no glow, as Moho clears the head; the sky dome draws over it
@@ -4261,7 +4260,7 @@ void Renderer::deliver_capture() {
 
 bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
     if (!pending_scene_capture_ || !frame_.scene_color().image) return false;
-    const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 8;
+    const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 4;
     if (scene_capture_buf_size_ != size) {
         if (scene_capture_buf_.buffer)
             vmaDestroyBuffer(allocator_, scene_capture_buf_.buffer, scene_capture_buf_.allocation);
@@ -4488,24 +4487,9 @@ void Renderer::deliver_scene_capture() {
         return;
     }
     vmaInvalidateAllocation(allocator_, scene_capture_buf_.allocation, 0, VK_WHOLE_SIZE);
-    // R16G16B16A16_SFLOAT: each half widened to a float.
-    const auto* halves = static_cast<const u16*>(mapped);
-    for (size_t i = 0; i < count; ++i) {
-        const u32 h = halves[i];
-        const u32 exponent = (h >> 10) & 0x1Fu;
-        const u32 mantissa = h & 0x3FFu;
-        f32 value = 0.0f;
-        if (exponent == 0) {
-            value = std::ldexp(static_cast<f32>(mantissa), -24); // subnormal
-        } else if (exponent == 31) {
-            value = mantissa != 0 ? std::numeric_limits<f32>::quiet_NaN()
-                                  : std::numeric_limits<f32>::infinity();
-        } else {
-            value =
-                std::ldexp(static_cast<f32>(mantissa | 0x400u), static_cast<int>(exponent) - 25);
-        }
-        image.rgba[i] = (h & 0x8000u) != 0 ? -value : value;
-    }
+    // R8G8B8A8_UNORM: each byte over 255.
+    const auto* bytes = static_cast<const u8*>(mapped);
+    for (size_t i = 0; i < count; ++i) image.rgba[i] = static_cast<f32>(bytes[i]) / 255.0f;
     vmaUnmapMemory(allocator_, scene_capture_buf_.allocation);
     auto callback = std::move(pending_scene_capture_);
     pending_scene_capture_ = nullptr;

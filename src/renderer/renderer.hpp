@@ -733,7 +733,7 @@ private:
     /// Moho's RenderReflections (M213b): the units mirrored in the water's
     /// plane, for the high fidelity water.
     void record_reflection_pass(u32 fi, const std::array<f32, 16>& vp);
-    /// The world's scene into the offscreen HDR target, as Moho's frame
+    /// The world's scene into the offscreen scene target, as Moho's frame
     /// draws it: the sky, the terrain and its decals, the range overlays,
     /// the meshes either side of the water, the effects, the order lines and
     /// selection, the refracting effects. Its pass is left open (the
@@ -1177,7 +1177,7 @@ private:
     bool legacy_hud_ = false;        // --legacy-hud
     bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
 
-    /// The frame's own targets (the HDR scene, the water's refraction and
+    /// The frame's own targets (the scene, the water's refraction and
     /// reflection, the normal target), the scene's passes and framebuffers.
     FrameTargets frame_;
 
@@ -1185,7 +1185,7 @@ private:
     /// puts the scene on the screen.
     BloomRenderer bloom_;
 
-    /// The frame's targets, which follow the window's size: the HDR scene,
+    /// The frame's targets, which follow the window's size: the scene,
     /// the water's refraction and reflection, the normal target, the scene's
     /// passes and framebuffers, and the bloom's.
     void create_frame_targets();

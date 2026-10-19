@@ -30,8 +30,7 @@ three light it alike and the engine draws one.
 | `NukeUEF` | `NukeHeadPS(1, 0.018, 50, 0.015)`: the normals read as noise at `uv * 6` and `uv * 4` (shifted up `1.25 * 0.018 age`) and `uv * 0.25` (`0.1 * 0.018 age`), `n2`, `n3`, `n4`; a grey `((n3.g + n2.b) / 2 + n4.b) / 2 + n4.r / 2`, lerped halfway to the albedo, plus `0.3 n2.b`, times `n3.g`, plus `n2.b`; alpha `albedo.a * fade(50, 0.015)`, 0 from 20 ticks old where `n2.a * n3.b * n2.g >= albedo.a`, times `n2.g`; tested over `0x0F` | blended, colour only, depth tested and written | after the water, before the effects |
 
 `fade(start, rate)` is `saturate(1 - (age - start) * rate)`. The blended
-three clamp their colour before they blend, as FA's 8-bit target does (the
-scene is half floats here).
+three clamp their colour before they blend, as FA's 8-bit target does.
 
 ## Rules chosen where mesh.fx is implicit
 
