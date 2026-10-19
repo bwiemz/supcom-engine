@@ -14,9 +14,8 @@ namespace {
 
 /// Frames to reach the end before the run counts as stuck.
 constexpr u32 kMaxFrames = 20000;
-/// The player's army (0-based), and the commander it starts with as UEF.
+/// The player's army (0-based).
 constexpr i32 kPlayerArmy = 1;
-constexpr const char* kCommander = "uel0001";
 
 /// The front end's skirmish, as --auto-skirmish's, with the AI in the first
 /// slot and the player in the second.
@@ -33,6 +32,28 @@ constexpr const char* kLaunch = R"(
 )";
 
 } // namespace
+
+u32 self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 army,
+                            std::string& why) {
+    u32 acu = 0;
+    sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
+        if (acu == 0 && e.army() == army && e.blueprint_id().ends_with("l0001"))
+            acu = e.entity_id();
+    });
+    if (acu == 0) {
+        why = fmt::format("army {} has no commander", army);
+        return 0;
+    }
+    const auto ctrl_k =
+        fmt::format("SelectUnits({{GetUnitById({})}}) "
+                    "import('/lua/ui/game/confirmunitdestroy.lua').ConfirmUnitDestruction()",
+                    acu);
+    if (auto r = ui.do_string(ctrl_k); !r) {
+        why = "self-destructing: " + r.error().message;
+        return 0;
+    }
+    return acu;
+}
 
 bool SelfDestructFlowTest::start(lua::LuaState& ui) {
     spdlog::info("=== self-destruct flow test: the player on ARMY_2 self-destructs ===");
@@ -56,21 +77,10 @@ void SelfDestructFlowTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             fail(fmt::format("the game focuses army {}, not the player's", sim->focus_army()));
             return;
         }
-        sim->entity_registry().for_each_unit([&](const sim::Entity& e) {
-            if (acu_ == 0 && e.army() == kPlayerArmy && e.blueprint_id() == kCommander)
-                acu_ = e.entity_id();
-        });
+        std::string why;
+        acu_ = self_destruct_commander(ui, *sim, kPlayerArmy, why);
         if (acu_ == 0) {
-            fail("the player has no commander");
-            return;
-        }
-        // Ctrl-K with the commander selected
-        const auto ctrl_k =
-            fmt::format("SelectUnits({{GetUnitById({})}}) "
-                        "import('/lua/ui/game/confirmunitdestroy.lua').ConfirmUnitDestruction()",
-                        acu_);
-        if (auto r = ui.do_string(ctrl_k); !r) {
-            fail("self-destructing: " + r.error().message);
+            fail(why);
             return;
         }
         spdlog::info("self-destruct-flow: commander {} self-destructs at tick {}", acu_, tick);

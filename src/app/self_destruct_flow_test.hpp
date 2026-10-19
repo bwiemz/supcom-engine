@@ -22,6 +22,12 @@ class SimState;
 
 namespace osc::app {
 
+/// A player's Ctrl-K on `army`'s commander (each faction's ACU, *l0001):
+/// selected, then retail's ConfirmUnitDestruction, a SimCallback. The
+/// commander's id, or 0 with `why` set.
+u32 self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 army,
+                            std::string& why);
+
 class SelfDestructFlowTest {
 public:
     static constexpr u32 kSelfDestructTick = 20;

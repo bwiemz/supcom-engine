@@ -20,8 +20,11 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <fmt/format.h>
+
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -272,6 +275,35 @@ TEST_CASE("A script thread shows in the trace's threads, not in the compared che
     CHECK(after.threads != before.threads);
     CHECK(after.values() == before.values());
     CHECK(after.total() == before.total());
+}
+
+TEST_CASE("The checksum trace keeps the threads column, after the compared domains",
+          "[sync][checksum]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    setup(sim);
+    std::ostringstream trace;
+    sim.set_checksum_trace(&trace);
+    sim.tick();
+
+    std::istringstream lines(trace.str());
+    std::string header, line;
+    REQUIRE(std::getline(lines, header));
+    REQUIRE(std::getline(lines, line));
+    const auto words = [](const std::string& text) {
+        std::vector<std::string> out;
+        std::istringstream in(text);
+        for (std::string w; in >> w;) out.push_back(w);
+        return out;
+    };
+    const auto names = words(header);
+    const auto values = words(line);
+    REQUIRE(names.size() == SimState::ChecksumParts::kCount + 4); // # tick total ... threads
+    CHECK(names.back() == "threads");
+    REQUIRE(values.size() == names.size() - 1);
+    const SimState::ChecksumParts& parts = sim.beat_checksum();
+    CHECK(values[1] == fmt::format("{:08x}", parts.total()));
+    CHECK(values.back() == fmt::format("{:016x}", parts.threads));
 }
 
 TEST_CASE("A game saved with that state, restored and played on, matches", "[sync][checksum]") {

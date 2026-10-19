@@ -480,6 +480,16 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # Each side focuses its own army; the joiner self-destructs its commander
+    # at tick 10, which forks a focus-gated script thread on its side alone
+    # (a commander's under-attack voice-over). The two must not desync.
+    add_test(NAME data.lan_game_self_destruct
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game.py
+                     $<TARGET_FILE:opensupcom> 29743 -- --lan-game-self-destruct-at 10)
+    set_tests_properties(data.lan_game_self_destruct PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
     # M220a: a matchmaking client (this script, standing in for FAF's)
     # launches the game over GPGNet: Idle, CreateLobby to a lobby, HostGame
     # hosting it on the next port, and the game ending with the link.

@@ -362,6 +362,10 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         !quit.empty() && quit.size() <= 6 &&
         quit.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_quit_at = static_cast<u32>(std::stoi(quit));
+    // --lan-game-self-destruct-at <tick>: the joiner self-destructs its commander then
+    if (const auto at = parse_string_arg(argc, argv, "--lan-game-self-destruct-at", "");
+        !at.empty() && at.size() <= 6 && at.find_first_not_of("0123456789") == std::string::npos)
+        o.lan_game_self_destruct_at = static_cast<u32>(std::stoi(at));
     // /gpgnet host:port (Moho's spelling, as FAF's client passes it)
     o.gpgnet_endpoint = parse_string_arg(argc, argv, "/gpgnet", "");
     if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
