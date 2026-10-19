@@ -157,7 +157,9 @@ std::optional<int> App::boot_game() {
 
         attach_sound(*sim_lua_state, *sim_state, &sound);
         // Only a drawn world needs its ticks captured.
-        if (!opt.headless) world_interp.attach(*sim_state);
+        if (!opt.headless) {
+            world_interp.attach(*sim_state, &ui_lua_state);
+        }
 
         // Bone cache (lazy-loaded per-blueprint SCM bone data)
         auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);

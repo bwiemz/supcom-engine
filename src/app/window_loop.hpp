@@ -76,7 +76,7 @@ private:
     /// lockstep game's rounds, or the local clock's.
     void advance_sim(double dt);
     /// The sim's beat to the user side, once a tick (paused too).
-    void run_beats(u32 beat0);
+    void run_beats();
     /// The scripted flows' frame: replay, LAN, GPGNet, mods, load.
     void run_flows();
     void drive_scripted_mouse();

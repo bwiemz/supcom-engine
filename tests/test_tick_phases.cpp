@@ -12,6 +12,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
+#include "lua/sim_sync.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/anim_cache.hpp"
@@ -2024,4 +2025,27 @@ TEST_CASE("The sim's beat is profiled as Sim::tick", "[tick-phases][beats]") {
     profiler.end_frame();
     profiler.set_enabled(false);
     CHECK(us > 0.0);
+}
+
+TEST_CASE("Two beats in a frame give the user two Sync tables", "[tick-phases][beats]") {
+    Phases w;
+    osc::lua::LuaState ui;
+    REQUIRE(w.run("function ResetSyncTable() Sync = {} end ResetSyncTable()"
+                  " ForkThread(function()"
+                  "   while true do Sync.Tick = GetGameTick() WaitTicks(1) end"
+                  " end)"));
+    REQUIRE(ui.do_string("seen = ''"
+                         " function OnSync() seen = seen .. tostring(Sync.Tick) .. ',' end")
+                .ok());
+    w.sim.set_beat_observer(
+        [&](const osc::sim::SimState& s) { osc::lua::queue_sync(s.lua_state(), ui.raw()); });
+    w.sim.tick();
+    w.sim.tick();
+    for (int b = 0; b < 2; ++b) {
+        osc::lua::sync_beat(w.state.raw(), ui.raw());
+    }
+    lua_State* U = ui.raw();
+    lua_getglobal(U, "seen");
+    CHECK(std::string(lua_tostring(U, -1)) == "1,2,");
+    lua_pop(U, 1);
 }

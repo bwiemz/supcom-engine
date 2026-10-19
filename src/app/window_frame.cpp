@@ -35,10 +35,9 @@ bool App::Window::frame() {
     note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
     // Fixed-timestep sim ticking (scaled by sim_speed)
-    const osc::u32 beat0 = sim_state ? sim_state->beat_count() : 0;
     advance_sim(session_dt);
 
-    run_beats(beat0);
+    run_beats();
     finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
@@ -274,10 +273,10 @@ void App::Window::finish_world_ui_after_post_load() {
                     sim_lua_state.get(), sim_state.get());
 }
 
-void App::Window::run_beats(u32 beat0) {
-    // Moho's sim beat reaches the user side once per beat.
+void App::Window::run_beats() {
+    // CWldSession::DoBeat: each of the sim's beats reaches the user side with its own Sync.
     if (sim_state && sim_lua_state) {
-        for (osc::u32 b = beat0; b < sim_state->beat_count(); ++b) {
+        while (osc::lua::sync_pending(sim_lua_state->raw())) {
             world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
         }
     }

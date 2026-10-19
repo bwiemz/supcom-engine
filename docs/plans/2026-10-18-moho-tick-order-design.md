@@ -465,6 +465,11 @@ not run; single step; beats and commands after the game ends; a `Sync` table per
 several.
 - Tests: `GetGameTick()` in a `SimCallback` equals the previous tick's; Stop given to a building engineer
   while paused gives `OnStopBuild` before the game resumes; two ticks in a frame give two `Sync` tables.
+  *Done (2026-10-19) — tick/s11-commands-beats: a beat's commands run before its tick, a cleared order's task
+  ends in the call; pause, resume and single step are commands, paused or over a beat runs no tick but its
+  commands, `OnDestroy`, collection and checksum; commands, replays (v17) and saves count beats; one `Sync` a
+  beat; retail's pause-beats probe agrees (callback reads N−1, the pause's beat no tick, `OnStopBuild` and
+  `OnDestroy` while paused); P3 unchanged.*
 
 **Step 8. Cleanup.** The air-step latch, `note_tick_position`, the duplicated cargo following and the stale
 comments about order go.

@@ -20,6 +20,7 @@
 #include "lua/init_loader.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/scenario_loader.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/special_files.hpp"
 #include "lua/url_bindings.hpp"
 #include "renderer/range_overlays.hpp"
@@ -184,14 +185,18 @@ struct WorldInterp {
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
 
-    /// Follow a new sim's beats from its first one. Must outlive `sim`.
-    void attach(osc::sim::SimState& sim) {
+    /// Follow a new sim's beats from its first one, each beat's Sync queued
+    /// for the user state when there is one. Must outlive `sim`.
+    void attach(osc::sim::SimState& sim, osc::lua::LuaState* ui = nullptr) {
         history.clear();
         clock.reset();
         one_tick_next = true;
-        sim.set_beat_observer([this](const osc::sim::SimState& s) {
+        sim.set_beat_observer([this, ui](const osc::sim::SimState& s) {
             history.capture(s);
             clock.on_tick();
+            if (ui) {
+                osc::lua::queue_sync(s.lua_state(), ui->raw());
+            }
         });
     }
 
