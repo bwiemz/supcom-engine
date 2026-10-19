@@ -585,12 +585,20 @@ bool push_blueprints(lua_State* L) {
 
 bool push_blueprint(lua_State* L, std::string_view id) {
     if (id.empty() || !push_blueprints(L)) return false;
-    std::string key(id);
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    lua_pushlstring(L, key.data(), key.size());
-    lua_rawget(L, -2);
-    lua_remove(L, -2);
+    const int blueprints = lua_gettop(L);
+    luaL_Buffer key;
+    luaL_buffinit(L, &key);
+    for (const char c : id) luaL_putchar(&key, std::tolower(static_cast<unsigned char>(c)));
+    luaL_pushresult(&key);
+    lua_rawget(L, blueprints);
+    // A mod may give the table an __index (an alias for an old id): it is asked
+    // with the id as given, as lua_gettable asked it before.
+    if (!lua_istable(L, -1) && lua_getmetatable(L, blueprints)) {
+        lua_pop(L, 2);
+        lua_pushlstring(L, id.data(), id.size());
+        lua_gettable(L, blueprints);
+    }
+    lua_remove(L, blueprints);
     if (lua_istable(L, -1)) return true;
     lua_pop(L, 1);
     return false;
