@@ -110,7 +110,9 @@ template <typename JobFrames> Drawn play(double speed, JobFrames job_frames, int
     for (int f = 0; f < frames; ++f) {
         clock.advance(frame);
         owed += frame;
-        if (job_frames_left > 0 && --job_frames_left == 0) {
+        const bool job_running = job_frames_left > 0;
+        if (job_running) --job_frames_left;
+        if (job_running && job_frames_left == 0) {
             kept = {kept[1], kept[2], kept[2] + job_ticks};
             clock.published(kept[2], kept[0], job_ticks);
         }
