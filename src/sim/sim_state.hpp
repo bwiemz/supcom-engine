@@ -1266,13 +1266,7 @@ public:
     /// and forgets it. A negative army's blip is a fresh one, kept nowhere.
     void push_blip(lua_State* L, u32 entity_id, i32 army);
 
-    /// Army `req_army`'s recon of `entity` as its last recon tick left it: radar, sonar, any.
-    bool has_effective_radar(const Entity* entity, u32 req_army) const {
-        return entity && recon_flags(entity->entity_id(), req_army).radar;
-    }
-    bool has_effective_sonar(const Entity* entity, u32 req_army) const {
-        return entity && recon_flags(entity->entity_id(), req_army).sonar;
-    }
+    /// Whether army `req_army`'s last recon tick sensed `entity` at all.
     bool has_any_intel(const Entity* entity, u32 req_army) const {
         return entity && recon_flags(entity->entity_id(), req_army).any();
     }

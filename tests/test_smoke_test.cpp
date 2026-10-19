@@ -864,17 +864,19 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     CHECK(unit.is_dying());
 
     // Simulate crash
+    bool landed = false;
     for (int i = 0; i < 100; i++) {
-        unit.tick_dying(0.1f, nullptr);
-        if (!unit.is_crashing()) break;
+        landed = unit.tick_dying(0.1f, nullptr);
+        if (!unit.is_crashing()) {
+            break;
+        }
     }
 
     // Should have fallen and impacted, and reports the landing once
     CHECK(unit.position().y <= 0.1f);
-    CHECK(unit.crash_impacted());
+    CHECK(landed);
     CHECK_FALSE(unit.is_crashing());
-    CHECK(unit.take_crash_impact());
-    CHECK_FALSE(unit.take_crash_impact());
+    CHECK_FALSE(unit.tick_dying(0.1f, nullptr));
 }
 
 TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
@@ -903,8 +905,7 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     // Run crash ticks
     bool hit_ground = false;
     for (int i = 0; i < 200; i++) {
-        unit.tick_dying(0.1f, nullptr);
-        if (unit.crash_impacted()) {
+        if (unit.tick_dying(0.1f, nullptr)) {
             hit_ground = true;
             break;
         }

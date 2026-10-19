@@ -20,9 +20,9 @@ class SimState;
 ///   OnImpact(type, target), which deals the damage. With nothing in the
 ///   way the type is 'Air', or 'Underwater' below the surface.
 /// The next check comes CollisionCheckInterval + 1 ticks later.
-/// `before_pass` is for a check made earlier in the tick than the beam's
+/// `before_step` is for a check made earlier in the tick than the beam's
 /// step, which then counts down once more.
-void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_pass);
+void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_step);
 
 /// Moho's CollisionBeamEntity::MotionTick: false once its launcher or its weapon is gone.
 bool step_collision_beam(SimState& sim, lua_State* L, Entity& beam);

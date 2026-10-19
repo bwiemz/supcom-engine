@@ -1441,7 +1441,6 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f32v(u.dive_surface_speed_);
     w.str(u.vert_event_);
     w.b(u.crashing_);
-    w.b(u.crash_impacted_);
     w.vec3(u.velocity_);
     // motion_step_: taken by the tick's commit, zero between ticks
     w.f32v(u.crash_velocity_y_);
@@ -1851,7 +1850,6 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.dive_surface_speed_ = r.f32v();
     u.vert_event_ = r.str();
     u.crashing_ = r.b();
-    u.crash_impacted_ = r.b();
     u.velocity_ = r.vec3();
     u.crash_velocity_y_ = r.f32v();
     u.crash_spin_rate_ = r.f32v();

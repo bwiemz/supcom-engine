@@ -561,12 +561,6 @@ void Unit::kill_cleanup(lua_State* L) {
     navigator_.abort_move();
 }
 
-bool Unit::take_crash_impact() {
-    const bool landed = crash_impacted_;
-    crash_impacted_ = false;
-    return landed;
-}
-
 void Unit::stop_air() {
     navigator_.abort_move();
     navigator_.set_air_hold(air_stop_point());
@@ -611,8 +605,10 @@ void Unit::update_speed_through() {
     navigator_.set_speed_through_goal(through);
 }
 
-void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
-    if (!dying_) return;
+bool Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
+    if (!dying_) {
+        return false;
+    }
 
     if (crashing_) {
         // Gravity acceleration
@@ -636,17 +632,17 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
         if (p.y <= ground) {
             p.y = ground;
             set_position(p);
-            crash_impacted_ = true;
             crashing_ = false;
-            return;
+            return true;
         }
 
         set_position(p);
         current_airspeed_ *= (1.0f - 0.5f * dt); // decelerate forward speed
     }
+    return false;
 }
 
-bool Unit::nav_update(f64, const map::Terrain*, f32 speed_cap) {
+bool Unit::nav_update(f32 speed_cap) {
     nav_requested_ = true;
     course_ = {};
     nav_speed_ = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
@@ -921,7 +917,7 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
         if (platform && !platform->destroyed() && platform->is_unit() &&
             static_cast<Unit*>(platform)->is_staging_platform() &&
             !static_cast<Unit*>(platform)->is_dying()) {
-            tick_docked(dt, ctx, *static_cast<Unit*>(platform));
+            tick_docked(ctx, *static_cast<Unit*>(platform));
         }
         return;
     }
@@ -1019,8 +1015,7 @@ void Unit::take_step(f64 dt, SimContext& ctx) {
         return;
     }
     if (dying_) {
-        tick_dying(static_cast<f32>(dt), ctx.terrain);
-        if (take_crash_impact() && ctx.sim) {
+        if (tick_dying(static_cast<f32>(dt), ctx.terrain) && ctx.sim) {
             ctx.sim->crash_impact(*this);
         }
         if (ctx.sim && in_registry()) {
@@ -1171,9 +1166,6 @@ void Unit::decay(lua_State* L) {
 }
 
 bool Unit::motion_tick(f64 dt, SimContext& ctx) {
-    if (!in_registry()) {
-        return false;
-    }
     auto* L = ctx.L;
 
     // Moho's CUnitMotion::MotionTick: ProcessFuelLevels, the layer from the committed transform,
@@ -3061,10 +3053,6 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
         }
         lua_pop(L, 1); // transport_tbl
     }
-}
-
-void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L, const map::Terrain* terrain) {
-    detach_cargo(cargo_ids_, registry, L, terrain);
 }
 
 bool Unit::footprint_fits(const map::PathfindingGrid& grid) const {

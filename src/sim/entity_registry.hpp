@@ -40,7 +40,6 @@ public:
     void destroy(Entity& entity);
     /// The next entity of the deletion queue, first in first out; 0 when it is empty.
     u32 take_destroyed();
-    const std::deque<u32>& deletion_queue() const { return deletion_queue_; }
     /// Unregister everything the deletion queue holds, in its order (a sim runs OnDestroy first).
     void purge_destroyed();
 
@@ -181,7 +180,6 @@ public:
 
     void set_tick_source(const u32* tick) { tick_ = tick; }
     u32 tick() const { return tick_ ? *tick_ : 0; }
-    u32 next_id() const { return next_id_; }
 
 private:
     /// Every live entity at its id (ids start at 1 and only grow), so a
