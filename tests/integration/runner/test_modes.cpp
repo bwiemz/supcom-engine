@@ -387,7 +387,7 @@ void IntegrationModes::print_usage() const {
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
               << "  --bloom-test       FA's bloom, from the glow in the frame's alpha\n"
               << "  --build-shader-test FA's build shaders, on units under construction\n"
-              << "  --effect-mesh-test FA's build effects' meshes, shader names, burnt trees\n"
+              << "  --effect-mesh-test FA's effect meshes (builds, the nuke), shader names, burnt trees\n"
               << "  --skinning-test    Rigid skinning and hidden bones\n"
               << "  --prop-material-test The props' own techniques\n"
               << "  --clipped-shadow-test Shadows cut by the albedo's alpha (DepthClip)\n"

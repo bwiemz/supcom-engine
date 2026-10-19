@@ -43,7 +43,6 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <limits>
 #include <ostream>
 #include <unordered_map>
 
@@ -192,7 +191,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     create_shadow_resources();
 
     // The frame's targets (must be created before pipelines — frame_.scene_pass() is
-    // needed for scene pipeline builds now that all scene draws target offscreen HDR)
+    // needed for scene pipeline builds now that all scene draws target the offscreen scene)
     create_frame_targets();
 
     // Pipelines (scene pipelines built against frame_.scene_pass())
@@ -1175,11 +1174,12 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
     // leaves depth unwritten (M211g). The layouts match.
     // The order marks (CommandFeedback) blend colour with no depth test;
-    // the map border's second pass writes its glow alone.
-    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback, GlowOnly };
+    // the map border's second pass writes its glow alone. OuterCloud is the
+    // cube's state but tests strictly less (Depth_Enable_Less_Write_None).
+    enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite, Feedback, GlowOnly, OuterCloud };
     const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
-        const bool colour_only =
-            blend == Blend::Fade || blend == Blend::FadeNoDepthWrite || blend == Blend::Feedback;
+        const bool no_depth_write = blend == Blend::FadeNoDepthWrite || blend == Blend::OuterCloud;
+        const bool colour_only = blend == Blend::Fade || no_depth_write || blend == Blend::Feedback;
         constexpr VkColorComponentFlags kGlowOnly = VK_COLOR_COMPONENT_A_BIT;
         const VkColorComponentFlags written = blend == Blend::GlowOnly ? kGlowOnly
                                               : colour_only            ? kColorOnly
@@ -1188,8 +1188,9 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
             .set_shaders(mv, mf)
             .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                               static_cast<u32>(attrs.size()))
-            .set_depth_test(blend != Blend::Feedback,
-                            blend != Blend::FadeNoDepthWrite && blend != Blend::Feedback)
+            .set_depth_test(blend != Blend::Feedback, !no_depth_write && blend != Blend::Feedback)
+            .set_depth_compare(blend == Blend::OuterCloud ? VK_COMPARE_OP_LESS
+                                                          : VK_COMPARE_OP_LESS_OR_EQUAL)
             .set_blend(blend != Blend::Opaque && blend != Blend::GlowOnly)
             .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
             .set_color_write_mask(written)
@@ -1213,6 +1214,7 @@ void Renderer::create_mesh_pipelines(VkShaderModule mv, VkShaderModule mf) {
     mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     mesh_feedback_pipeline_ = build_mesh(Blend::Feedback, &mesh_feedback_layout_);
     mesh_glow_pipeline_ = build_mesh(Blend::GlowOnly, &mesh_glow_layout_);
+    mesh_outer_cloud_pipeline_ = build_mesh(Blend::OuterCloud, &mesh_outer_cloud_layout_);
 
     // The shields' (M211k): their own shaders, the mesh's input, push
     // block and sets, and mesh.fx's states. Each depth-tests; only the
@@ -2218,7 +2220,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     }
 
     // ==================== COMPOSITE + BLOOM ====================
-    // Scene always renders to offscreen HDR. End scene pass, optionally run
+    // Scene always renders offscreen. End scene pass, optionally run
     // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
     const bool scene_capturing = record_scene_capture(cmd_);
 
@@ -2777,9 +2779,10 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         else if (technique == MeshTechnique::AeonBuild && fidelity() > 0)
             passes[1] = mesh_fade_pipeline_;
         // The build effects' (M211g): AlphaFade blends colour and alpha,
-        // UEF's cube colour only and writes no depth.
+        // UEF's cube colour only and writes no depth, as OuterCloud does.
         else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
         else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
+        else if (technique == MeshTechnique::OuterCloud) passes[0] = mesh_outer_cloud_pipeline_;
         else if (is_feedback_technique(technique)) passes[0] = mesh_feedback_pipeline_;
         // The shields' (M211k), by mesh.fx's states; Cybran's draws twice,
         // the second time pushed out along its normal.
@@ -3541,7 +3544,7 @@ void Renderer::begin_swapchain_pass(u32 fi, u32 image_index) {
 }
 
 void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool after_another) {
-    // Always render scene to offscreen HDR image (frame_.scene_pass()).
+    // Always render scene to the offscreen image (frame_.scene_pass()).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
     // Black, and no glow, as Moho clears the head; the sky dome draws over it
@@ -4548,7 +4551,7 @@ void Renderer::deliver_capture() {
 
 bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
     if (!pending_scene_capture_ || !frame_.scene_color().image) return false;
-    const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 8;
+    const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 4;
     if (scene_capture_buf_size_ != size) {
         if (scene_capture_buf_.buffer)
             vmaDestroyBuffer(allocator_, scene_capture_buf_.buffer, scene_capture_buf_.allocation);
@@ -4775,24 +4778,9 @@ void Renderer::deliver_scene_capture() {
         return;
     }
     vmaInvalidateAllocation(allocator_, scene_capture_buf_.allocation, 0, VK_WHOLE_SIZE);
-    // R16G16B16A16_SFLOAT: each half widened to a float.
-    const auto* halves = static_cast<const u16*>(mapped);
-    for (size_t i = 0; i < count; ++i) {
-        const u32 h = halves[i];
-        const u32 exponent = (h >> 10) & 0x1Fu;
-        const u32 mantissa = h & 0x3FFu;
-        f32 value = 0.0f;
-        if (exponent == 0) {
-            value = std::ldexp(static_cast<f32>(mantissa), -24); // subnormal
-        } else if (exponent == 31) {
-            value = mantissa != 0 ? std::numeric_limits<f32>::quiet_NaN()
-                                  : std::numeric_limits<f32>::infinity();
-        } else {
-            value =
-                std::ldexp(static_cast<f32>(mantissa | 0x400u), static_cast<int>(exponent) - 25);
-        }
-        image.rgba[i] = (h & 0x8000u) != 0 ? -value : value;
-    }
+    // R8G8B8A8_UNORM: each byte over 255.
+    const auto* bytes = static_cast<const u8*>(mapped);
+    for (size_t i = 0; i < count; ++i) image.rgba[i] = static_cast<f32>(bytes[i]) / 255.0f;
     vmaUnmapMemory(allocator_, scene_capture_buf_.allocation);
     auto callback = std::move(pending_scene_capture_);
     pending_scene_capture_ = nullptr;
@@ -4979,6 +4967,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_feedback_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_glow_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_glow_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_outer_cloud_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_outer_cloud_layout_, nullptr);
     for (u32 i = 0; i < kShieldStates; ++i) {
         vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
         vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);

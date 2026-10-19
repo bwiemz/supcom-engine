@@ -147,9 +147,12 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPas
     // TLight's Depth_Disable_Write_None
     VkPipelineDepthStencilStateCreateInfo no_depth{};
     no_depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    // A TRamp technique's pipeline: `frag` blended src/dst, colour only.
+    // A TRamp technique's pipeline: `frag` blended src/dst, colour only; or,
+    // `glows`, colour and alpha alike (TLight_ADD's Write_RGBA: D3D9 blends
+    // alpha by the same factors).
     const auto make = [&](VkShaderModule fragment, VkPipelineLayout layout, const Blend& b,
-                          const VkPipelineDepthStencilStateCreateInfo& depth_state) {
+                          const VkPipelineDepthStencilStateCreateInfo& depth_state,
+                          bool glows = false) {
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -164,12 +167,13 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPas
         att.srcColorBlendFactor = b.src;
         att.dstColorBlendFactor = b.dst;
         att.colorBlendOp = VK_BLEND_OP_ADD;
-        att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        att.srcAlphaBlendFactor = glows ? b.src : VK_BLEND_FACTOR_ZERO;
+        att.dstAlphaBlendFactor = glows ? b.dst : VK_BLEND_FACTOR_ONE;
         att.alphaBlendOp = VK_BLEND_OP_ADD;
-        // The frame's alpha is its glow (M211e): particles leave it be.
+        // The frame's alpha is its glow (M211e): particles but the lights leave it be.
         att.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+        if (glows) att.colorWriteMask |= VK_COLOR_COMPONENT_A_BIT;
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         blend.attachmentCount = 1;
@@ -198,7 +202,7 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPas
     for (size_t i = 0; i < kBlends.size(); ++i) {
         pipelines_[i] = make(frag, layout_, kBlends[i], depth);
     }
-    light_pipeline_ = make(frag, layout_, kBlends[kBlendAdd], no_depth);
+    light_pipeline_ = make(frag, layout_, kBlends[kBlendAdd], no_depth, true);
     // TRamp_REFRACT and its kin: AlphaBlend_SrcAlpha_InvSrcAlpha_Write_RGB.
     refract_pipeline_ =
         make(refract, refract_layout_,

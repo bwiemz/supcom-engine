@@ -758,7 +758,7 @@ private:
     /// Moho's RenderReflections (M213b): the units mirrored in the water's
     /// plane, for the high fidelity water.
     void record_reflection_pass(u32 fi, const std::array<f32, 16>& vp);
-    /// The world's scene into the offscreen HDR target, as Moho's frame
+    /// The world's scene into the offscreen scene target, as Moho's frame
     /// draws it: the sky, the terrain and its decals, the range overlays,
     /// the meshes either side of the water, the effects, the order lines and
     /// selection, the refracting effects. Its pass is left open (the
@@ -884,6 +884,9 @@ private:
     /// alpha alone, unblended, depth tested and written.
     VkPipeline mesh_glow_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_glow_layout_ = VK_NULL_HANDLE;
+    /// OuterCloud: the cube's state, but depth tested strictly less.
+    VkPipeline mesh_outer_cloud_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_outer_cloud_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
     /// (Seraphim), added colour and glow (the impact), the fill's depth, and
@@ -896,7 +899,7 @@ private:
     std::array<VkPipeline, kCartographicMeshStates> cartographic_mesh_pipelines_{};
     std::array<VkPipelineLayout, kCartographicMeshStates> cartographic_mesh_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).
-    std::array<u32, 32> mesh_draws_{};
+    std::array<u32, 36> mesh_draws_{};
     /// And a cartographic view's, by CartographicTechnique, a pass each
     std::array<u32, 7> cartographic_mesh_draws_{};
     /// The cartographic minimap's mesh pipelines (its output's pass), and
@@ -1215,7 +1218,7 @@ private:
     bool legacy_hud_ = false;        // --legacy-hud
     bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
 
-    /// The frame's own targets (the HDR scene, the water's refraction and
+    /// The frame's own targets (the scene, the water's refraction and
     /// reflection, the normal target), the scene's passes and framebuffers.
     FrameTargets frame_;
 
@@ -1223,7 +1226,7 @@ private:
     /// puts the scene on the screen.
     BloomRenderer bloom_;
 
-    /// The frame's targets, which follow the window's size: the HDR scene,
+    /// The frame's targets, which follow the window's size: the scene,
     /// the water's refraction and reflection, the normal target, the scene's
     /// passes and framebuffers, and the bloom's.
     void create_frame_targets();
