@@ -8,8 +8,10 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 extern "C" {
@@ -248,6 +250,14 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "Cloud") return MeshTechnique::Cloud;
     if (shader_name == "OuterCloud") return MeshTechnique::OuterCloud;
     if (shader_name == "NukeUEF") return MeshTechnique::NukeUEF;
+    if (shader_name != "Unit" && !is_wreckage_shader(shader_name)) {
+        static std::mutex mutex;
+        static std::unordered_set<std::string> warned;
+        const std::lock_guard lock(mutex);
+        if (warned.insert(shader_name).second)
+            spdlog::warn("MeshCache: no technique for ShaderName '{}'; drawing it as Unit",
+                         shader_name);
+    }
     return MeshTechnique::Unit;
 }
 

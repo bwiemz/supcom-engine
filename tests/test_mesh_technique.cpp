@@ -3,6 +3,13 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/unit_renderer.hpp"
 
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
+
+#include <memory>
+#include <sstream>
+#include <string>
+
 using namespace osc::renderer;
 
 TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer][mesh]") {
@@ -233,4 +240,37 @@ TEST_CASE("drawn_technique: a ghost group draws as UnitPlace, whatever its mesh'
     CHECK(drawn_technique(group) == MeshTechnique::Aeon);
     group.ghost = true;
     CHECK(drawn_technique(group) == MeshTechnique::UnitPlace);
+}
+
+namespace {
+struct LogCapture {
+    std::ostringstream text;
+    std::shared_ptr<spdlog::logger> previous = spdlog::default_logger();
+    LogCapture() {
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+            "capture", std::make_shared<spdlog::sinks::ostream_sink_st>(text)));
+    }
+    ~LogCapture() { spdlog::set_default_logger(previous); }
+    size_t count(const std::string& line) const {
+        const std::string all = text.str();
+        size_t n = 0;
+        for (size_t at = all.find(line); at != std::string::npos; at = all.find(line, at + 1)) ++n;
+        return n;
+    }
+};
+} // namespace
+
+TEST_CASE("mesh_technique: a ShaderName with no technique warns once and draws as Unit",
+          "[renderer][mesh]") {
+    LogCapture log;
+    for (int i = 0; i < 3; ++i) {
+        CHECK(mesh_technique("NoSuchShaderA") == MeshTechnique::Unit);
+        CHECK(mesh_technique("NoSuchShaderB") == MeshTechnique::Unit);
+    }
+    CHECK(log.count("no technique for ShaderName 'NoSuchShaderA'") == 1);
+    CHECK(log.count("no technique for ShaderName 'NoSuchShaderB'") == 1);
+
+    for (const char* quiet : {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage"})
+        mesh_technique(quiet);
+    CHECK(log.count("no technique") == 2);
 }
