@@ -534,7 +534,7 @@ TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][
     // UI scripts keep unit objects across beats (avatars, idle lists,
     // selections). They must resolve through the registry, never hold a
     // pointer: an unregistered entity waits in the graveyard and is freed at
-    // tick end, while the script's handle lives on.
+    // the beat's end, while the script's handle lives on.
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);
     osc::ui::UIControlRegistry ui_registry;

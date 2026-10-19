@@ -398,7 +398,7 @@ public:
     CellLink& cell_link() { return cell_link_; }
     const CellLink& cell_link() const { return cell_link_; }
     void set_registry(EntityRegistry* r) { registry_ = r; }
-    /// False once unregistered (the object may outlive that until the tick ends).
+    /// False once unregistered (the object may outlive that until the beat ends).
     bool in_registry() const { return registry_ != nullptr; }
     const EntityRegistry* registry() const { return registry_; }
 

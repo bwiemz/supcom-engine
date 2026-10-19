@@ -1,6 +1,6 @@
 // What an entity owns outside the registry must be released however it is
 // removed: its structure footprint on the pathfinding grid, and (when it is
-// freed at the end of the tick) its Lua table's _c_object pointer back to the
+// freed at the end of the beat) its Lua table's _c_object pointer back to the
 // C++ object.
 
 #include <catch2/catch_approx.hpp>
@@ -221,7 +221,7 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     raw->update(0.1, sim.entity_registry(), L, nullptr);
     REQUIRE(raw->destroyed());
 
-    sim.tick(); // freed at the tick's end, its handle cut first
+    sim.tick(); // freed at the beat's end, its handle cut first
     CHECK(sim.entity_registry().find(id) == nullptr);
     CHECK(table_object(L, "proj_table") == nullptr);
 }

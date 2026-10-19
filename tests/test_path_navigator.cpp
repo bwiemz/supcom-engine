@@ -85,8 +85,7 @@ std::vector<Cell> walk(GridLine line) {
 }
 
 /// A stand-in unit on a 128 x 128 map, following its navigator's target at
-/// `speed` a tick, its army's queue served first each tick (as the sim's
-/// tick runs them).
+/// `speed` a tick, its army's queue served first each tick.
 struct Walk {
     std::unique_ptr<osc::map::Terrain> terrain = flat_terrain(kMap);
     OccupancyGrid grid{kMap, kMap};

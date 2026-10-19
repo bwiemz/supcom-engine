@@ -28,13 +28,13 @@ inline constexpr const char* kDecreaseBuildCountCallback = "__osc_DecreaseBuildC
 inline constexpr const char* kIncreaseBuildCountCallback = "__osc_IncreaseBuildCount";
 
 /// Func name of a dropped player's defeat (Args Army, 0-based), which the
-/// game loop decided between ticks and the sim applied in the next one.
+/// game loop decided between beats and the sim applied in the next one.
 /// Recordings from before command sources still carry it.
 inline constexpr const char* kDefeatArmyCallback = "__osc_DefeatArmy";
 
 /// Func name of a dropped player's command source ending (Args Source):
 /// Moho's CMDST_CommandSourceTerminated, which the game loop decides between
-/// ticks and the sim applies in the next one (SimState::
+/// beats and the sim applies in the next one (SimState::
 /// terminate_command_source).
 inline constexpr const char* kCommandSourceTerminatedCallback = "__osc_CommandSourceTerminated";
 

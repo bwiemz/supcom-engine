@@ -104,7 +104,7 @@ bool Unit::docks_at(u32 platform_id) const {
     return refuels(head) && head.target_id == platform_id && head.dock_phase == DockPhase::Approach;
 }
 
-bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx,
+bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, SimContext& ctx,
                        std::optional<f32> facing_cos) {
     const f32 dx = at.x - position().x;
     const f32 dz = at.z - position().z;
@@ -120,7 +120,9 @@ bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, Sim
                 std::abs(goal.x - at.x) > 1.0f || std::abs(goal.z - at.z) > 1.0f) {
                 navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
             }
-            if (nav_update(dt, ctx.terrain)) return false;
+            if (nav_update()) {
+                return false;
+            }
         }
         navigator_.abort_move();
         glided = true;
@@ -168,7 +170,7 @@ void Unit::settle_step(const Vector3& at, f32 heading, f64 dt, const map::Terrai
     set_orientation(euler_to_quat(heading_, 0.0f, 0.0f));
 }
 
-OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_refuel(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     // Scripts run on the way (the attach, the detach) may clear the queue (and
     // cmd with it) or replace it: the order goes only if it is still the head.
@@ -195,7 +197,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             navigator_.set_speed_through_goal(true);
             navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
     };
 
     // The task ends with its platform: dead, busy with an order of its own,
@@ -232,7 +234,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             navigator_.set_speed_through_goal(false);
             navigator_.abort_move();
         }
-        const LandStep step = carrier_land_step(*pad, true, dt, ctx);
+        const LandStep step = carrier_land_step(*pad, true, ctx);
         if (gone()) return OrderStep::Gone;
         if (command_queue_.empty() || &command_queue_.front() != &cmd ||
             command_queue_.front().command_id != order_id)
@@ -289,7 +291,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         const TransportSlots::Slot* slot = slots ? slots->slot_of(entity_id()) : nullptr;
         if (!slot) return finish();
         const f32 facing = bone_heading(*pad, slot->bone);
-        if (!settle_over(pad->bone_world_position(slot->bone), facing, cmd.started, dt, ctx,
+        if (!settle_over(pad->bone_world_position(slot->bone), facing, cmd.started, ctx,
                          kAttachAlignment)) {
             return OrderStep::Hold;
         }
@@ -333,7 +335,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
             std::abs(goal.z - at.z) > 1.0f)
             navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_, false);
-        nav_update(dt, ctx.terrain);
+        nav_update();
         return OrderStep::Hold;
     }
     if (!carrier && current_altitude_ != elevation_target_) {
@@ -360,7 +362,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     return finish();
 }
 
-Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimContext& ctx) {
+Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, SimContext& ctx) {
     const u32 me = entity_id();
     const auto fail = [&] {
         abandon_landing(ctx.registry);
@@ -399,8 +401,9 @@ Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimCo
     if (landing_.phase == LandPhase::Approach) {
         // In to the point it comes in from, down at the deck's height, facing
         // the way the place does.
-        if (!settle_over(landing_.approach, landing_.place.heading, landing_.glided, dt, ctx))
+        if (!settle_over(landing_.approach, landing_.place.heading, landing_.glided, ctx)) {
             return LandStep::Landing;
+        }
         landing_.phase = LandPhase::Hold;
     }
 
@@ -423,8 +426,9 @@ Unit::LandStep Unit::carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimCo
     }
 
     // Descend: onto the place; there the carrier stores it.
-    if (!settle_over(landing_.place.point, landing_.place.heading, landing_.glided, dt, ctx))
+    if (!settle_over(landing_.place.point, landing_.place.heading, landing_.glided, ctx)) {
         return LandStep::Landing;
+    }
     carrier.add_to_storage(*this, ctx.registry, ctx.L);
     if (destroyed() || !in_registry()) return LandStep::Failed;
     if (transport_id_ != carrier.entity_id()) return fail();
@@ -441,7 +445,7 @@ void Unit::abandon_landing(EntityRegistry& registry) {
     set_unit_state("TransportLoading", false);
 }
 
-OrderStep Unit::order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_carrier_landing(UnitCommand& cmd, SimContext& ctx) {
     // Ordered aboard a carrier (Moho's CUnitCarrierLand from a load order):
     // the carrier takes its own share of the order (its retrieve; each load
     // order its own, as each is its own Moho command), and the unit lands
@@ -469,7 +473,7 @@ OrderStep Unit::order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx)
         load.command_id = cmd.command_id;
         carrier->command_queue_.push_back(load);
     }
-    const LandStep step = carrier_land_step(*carrier, false, dt, ctx);
+    const LandStep step = carrier_land_step(*carrier, false, ctx);
     if (destroyed() || !in_registry()) return OrderStep::Gone;
     if (command_queue_.empty() || &command_queue_.front() != &cmd ||
         command_queue_.front().command_id != order_id)
@@ -517,13 +521,13 @@ Unit* Unit::find_platform(SimContext& ctx) {
     return found;
 }
 
-void Unit::tick_docked(f64 dt, SimContext& ctx, Unit& platform) {
+void Unit::tick_docked(SimContext& ctx, Unit& platform) {
     const u32 platform_id = platform.entity_id();
     if (!command_queue_.empty()) {
         UnitCommand& head = command_queue_.front();
         if (refuels(head) && head.target_id == platform_id &&
             head.dock_phase == DockPhase::Docked) {
-            order_refuel(head, dt, ctx);
+            order_refuel(head, ctx);
         }
     }
 }

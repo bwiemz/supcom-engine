@@ -189,7 +189,7 @@ int ThreadManager::fork_thread(lua_State* L) {
     entry.coroutine = co;
     entry.lua_ref = ref;
     entry.serial = next_serial_++;
-    entry.wait_until_tick = 0; // resume immediately on next tick
+    entry.wait_until_tick = 0;
     entry.dead = false;
     entry.source = std::move(source_info);
 

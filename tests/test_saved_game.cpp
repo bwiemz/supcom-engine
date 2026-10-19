@@ -151,7 +151,7 @@ TEST_CASE("A loaded game plays on as the saved one did", "[savegame][sync]") {
     a.set_recording(true);
     a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
     for (int i = 0; i < 10; ++i) a.tick();
-    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs at tick 11
+    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs in beat 11
     SavedGame loaded;
     const SavedGame save = osc::sim::save_game(a, "mid-game");
     CHECK(save.beat == 10);
@@ -223,7 +223,7 @@ TEST_CASE("A game restored from its snapshot plays on as the saved one did", "[s
     a.set_recording(true);
     a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
     for (int i = 0; i < 10; ++i) a.tick();
-    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs at tick 11
+    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs in beat 11
     const SavedGame save = osc::sim::save_game(a, "mid-game");
     REQUIRE_FALSE(save.snapshot.empty());
     SavedGame loaded;

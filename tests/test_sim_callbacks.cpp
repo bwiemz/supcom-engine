@@ -451,7 +451,7 @@ TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lo
     CHECK(a.sim.compute_sync_checksum() == b.sim.compute_sync_checksum());
 }
 
-TEST_CASE("The UI's unit settings apply inside a tick, with their script hooks", "[simcallback]") {
+TEST_CASE("The UI's unit settings apply in a beat, with their script hooks", "[simcallback]") {
     CallbackSim w;
     const osc::u32 id = w.spawn();
     w.unit(id).economy().consumption_active = true;
@@ -842,7 +842,7 @@ TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simca
     CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
 }
 
-TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallback][drop]") {
+TEST_CASE("A dropped player's defeat is a command in the next beat", "[simcallback][drop]") {
     CallbackSim w;
     w.sim.add_army("ARMY_1", "ARMY_1");
     w.sim.add_army("ARMY_2", "ARMY_2");

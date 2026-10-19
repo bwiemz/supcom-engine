@@ -26,7 +26,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 72; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
+constexpr u32 kVersion = 73; // 2: entities' wanted loops (M216b); 3: emitter overrides (M214d);
                              // 4: jammers' fake blips (M215e); 5: intel handles (M215g);
                              // 6: weapons' lead physics;
                              // 7: unit cap costs, the army's cap exemption, build cap waits;
@@ -100,6 +100,7 @@ constexpr u32 kVersion = 72; // 2: entities' wanted loops (M216b); 3: emitter ov
                              //     no collision beam list
                              // 71: which of each army's fakes it sensed at its last recon tick
                              // 72: the beat count and a single step due; no resumed pause serial
+                             // 73: no units' crash landing latch
 
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
@@ -183,8 +184,7 @@ void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
     // cells_: each entity's link order (its CellLink), and the count of
     // links made (seq_). The rest is rebuilt: width_, height_, shift_ and
     // last_index_ are the map's; units_ and props_ follow from the entities
-    // and their order; moves_ is empty between ticks, and move_stamp_ and
-    // gather_ only tell one tick's moves and one gather's finds apart
+    // and their order; gather_ only tells one gather's finds apart
     w.u64v(reg.cells_.link_count());
     // default_random_, sim_random_: the sim's generator (SimState's); tick_: its tick count;
     // walking_: no walk is under way between ticks; unregister_hook_: the

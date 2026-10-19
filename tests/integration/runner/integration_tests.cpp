@@ -6479,7 +6479,7 @@ void test_prop(TestContext& ctx) {
         Warp(__osc_cell_units[1], {__osc_cell_home[1] + 60, __osc_cell_home[2], __osc_cell_home[3]})
     )");
     for (int i = 0; i < 2; ++i) ctx.sim.tick();
-    lua_check("Test 10d: one warped away leaves its cell as the tick ends", R"(
+    lua_check("Test 10d: one warped away leaves its cell", R"(
         if __osc_cell_order() ~= '3 2' then error('away: ' .. __osc_cell_order()) end
         Warp(__osc_cell_units[1], __osc_cell_home)
     )");
@@ -12468,7 +12468,7 @@ void test_transport_slots(TestContext& ctx) {
 
     // A UEF T2 transport (14 small, 6 medium and 3 large attach points) on
     // the flat ground east of the map's centre; 15 T1 tanks (class 1) and 4
-    // T3 bots (class 3) beside it, made first, so they tick before it does.
+    // T3 bots (class 3) beside it, made first, so they come before it in the walk.
     // The transport's script notes each bone it is told of.
     if (!lua(R"(
         local function spawn(bp, x, z)
@@ -12565,8 +12565,8 @@ void test_transport_slots(TestContext& ctx) {
     }
 
     // Unloaded, they are set down where they hung, not on top of each other,
-    // and the slots are free again. In flight, they stay on their bones: the
-    // tanks tick before the transport, and it moves them with it.
+    // and the slots are free again. In flight, they stay on their bones: each
+    // waits for the transport in the walk and follows it.
     lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
     {
         const osc::sim::Vector3 from = transport ? transport->position() : osc::sim::Vector3{};
@@ -18546,12 +18546,12 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
 
     // 4b. OnFirstUpdate's rename (UserUnit:SetCustomName) is, as in Moho, a
-    //     command to the sim: queued, not applied, since no tick has run it.
+    //     command to the sim: queued, not applied, since no beat has run it.
     if (acu == 0) osc::test_status::fail("[FAIL] Test 4b: army 1 has no commander");
     else if (acu_name() != kMarkerName)
-        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a tick",
+        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a beat",
                                acu_name());
-    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a tick");
+    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a beat");
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
     //    HideGameUI('off') after ~4 s of UI time.
@@ -19301,7 +19301,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10k: unpause", "GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'false')");
     play(1);
     // The orders panel's own settings: retail's pause toggle, fire state and
-    // script toggles are requests the sim applies in its next tick.
+    // script toggles are requests the sim applies in its next beat.
     lua_ok("Test 10l: the orders panel pauses the selection", R"(
         import('/lua/ui/game/orders.lua').TogglePauseState()
         if GetIsPaused(GetSelectedUnits()) then error('paused before the sim ran') end
@@ -19338,7 +19338,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     // The construction panel's orders reach the sim as commands: a factory's
     // builds (IssueBlueprintCommand), the queue display read from its
     // orders, Decrease- and IncreaseBuildCountInQueue and the Stop button, each applied in
-    // the sim's next tick. (They were SimCallbacks retail's scripts have no
+    // the sim's next beat. (They were SimCallbacks retail's scripts have no
     // handler for.)
     sim_lua(R"(
         local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
@@ -19869,7 +19869,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else
             osc::test_status::fail("[FAIL] Test 11b: build click issued nothing");
     }
-    play(1); // the order applies in the sim's next tick
+    play(1); // the order applies in the sim's next beat
     lua_ok("Test 11c: the commander builds it; the mode ended", R"(
         local q = GetSelectedUnits()[1]:GetCommandQueue()
         if not q[1] or q[1].commandType ~= 8 then

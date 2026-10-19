@@ -3075,7 +3075,7 @@ static std::optional<bool> blueprint_matches(lua_State* L, const std::string& id
 /// unit by its categories' ids (no string hashed), a projectile by its names
 /// (M206b), any other (a prop) by its blueprint's. nullopt for a value that
 /// names no blueprint (a script's bare Entity, a number). An entity
-/// destroyed this tick still answers, as Moho's does until the tick's end.
+/// destroyed this beat still answers, as Moho's does until the beat's end.
 static std::optional<bool> category_test(lua_State* L, int idx,
                                          const osc::lua::CategoryMatcher& category) {
     if (lua_type(L, idx) == LUA_TSTRING)
@@ -3407,7 +3407,7 @@ static void read_rect(lua_State* L, int idx, f32& x0, f32& z0, f32& x1, f32& z1)
 /// take a Rect, or x0, z0, x1, z1, and give what the collision cells under it
 /// hold (CollisionCells): each unit, and with `props` each prop, whose
 /// collision box touches those cells, in their order. A destroyed one is
-/// still there until the tick ends, as in Moho. Nil if there is none.
+/// still there until the beat ends, as in Moho. Nil if there is none.
 static int push_rect_gather(lua_State* L, bool props) {
     auto* sim = get_sim(L);
     if (!sim) {

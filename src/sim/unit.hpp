@@ -1063,12 +1063,8 @@ public:
     // A killed aircraft's fall (see begin_dying).
     bool is_crashing() const { return crashing_; }
     bool teleporting() const { return teleporting_; }
-    bool crash_impacted() const { return crash_impacted_; }
     f32 crash_velocity_y() const { return crash_velocity_y_; }
     f32 crash_spin_rate() const { return crash_spin_rate_; }
-    /// The landing a falling aircraft made, taken once (SimState then calls
-    /// its script's OnImpact).
-    bool take_crash_impact();
 
     // Misc flags
     u32 creator_id() const { return creator_id_; }
@@ -1115,7 +1111,8 @@ public:
     /// falls until it lands.
     bool is_dying() const { return dying_; }
     void begin_dying();
-    void tick_dying(f32 dt, const map::Terrain* terrain);
+    /// True on the step it lands.
+    bool tick_dying(f32 dt, const map::Terrain* terrain);
     bool needs_kill_cleanup() const { return needs_kill_cleanup_; }
     /// Moho's Unit::KillCleanup (faf-re unit/core/Unit.cpp:16252), at the end of the death tick.
     void kill_cleanup(lua_State* L);
@@ -1331,11 +1328,8 @@ public:
     /// than dropping cargo: a CARRIER that is an air (or pod) staging
     /// platform, with something stored (Moho's dispatch of TransportUnload).
     bool launches_on_unload() const;
-    /// Drop the cargo (all of it, or those of `ids` still aboard, in cargo
-    /// order): each is set down where it hung, level, and on the ground when
-    /// `terrain` is given (M206n).
-    void detach_all_cargo(EntityRegistry& registry, lua_State* L,
-                          const map::Terrain* terrain = nullptr);
+    /// Drop those of `ids` still aboard, in cargo order: each is set down
+    /// where it hung, level, and on the ground when `terrain` is given (M206n).
     void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
                       const map::Terrain* terrain = nullptr);
     /// Whether the unit's footprint fits the ground where it is (Moho's
@@ -1514,7 +1508,7 @@ private:
     /// Ask for this tick's step along the navigator's path, no faster than
     /// `speed_cap` if set (a formation keeping its slowest unit's pace). True
     /// while the move goes on, as the last motion step left it.
-    bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    bool nav_update(f32 speed_cap = 0);
     bool nav_step(f64 dt, const map::Terrain* terrain);
     void set_course(const AirCourse& course);
     /// Moho's one CalcMove* a tick: the course its orders set, else its navigator's step.
@@ -1527,7 +1521,7 @@ private:
     /// unit): nav_update, first asking again for a path the pathfinder put
     /// off (the navigator keeps a throttled request without retrying it).
     /// True until the unit gets there.
-    bool approach_update(f64 dt, SimContext& ctx);
+    bool approach_update(SimContext& ctx);
     /// An order that walked toward its target lets the navigator go when it
     /// ends before it got there (its target gone, taken or whole): Moho's
     /// task ends its move with it, so the unit isn't left Moving.
@@ -1553,7 +1547,7 @@ private:
     /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
     /// target. False when a script took the unit or the order.
     bool engage(UnitCommand& cmd, lua_State* L);
-    /// The layer, the step its orders asked for, coasting, fuel.
+    /// Fuel, the layer, the step its orders asked for, coasting.
     bool motion_tick(f64 dt, SimContext& ctx);
     void take_step(f64 dt, SimContext& ctx);
     void tick_silo(f64 dt, SimContext& ctx);
@@ -1565,11 +1559,11 @@ private:
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     OrderStep order_stop(lua_State* L);
-    OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_move(UnitCommand& cmd, SimContext& ctx);
     /// Close to the best weapon's range of the target, and stay on it.
-    OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_attack(UnitCommand& cmd, SimContext& ctx);
     /// An Attack with no target unit: at a point on the ground.
-    OrderStep order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_attack_ground(UnitCommand& cmd, SimContext& ctx);
     /// Reach the site, start the structure, build it.
     OrderStep order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory's build, or an upgrade: started where the unit stands.
@@ -1592,7 +1586,7 @@ private:
     /// still at the head -- the brain's scripts ran) waits kTaskRetryTicks.
     OrderStep hold_for_unit_cap(u32 command_id);
     /// Go to the point, then queue it again at the back.
-    OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_patrol(UnitCommand& cmd, SimContext& ctx);
     /// An enemy a patrol on leg `cmd` breaks off to attack (Moho's
     /// CUnitPatrolTask::FindTarget), or null.
     Entity* find_patrol_target(const UnitCommand& cmd, SimContext& ctx);
@@ -1604,11 +1598,11 @@ private:
     /// or nothing while the guard goes on as before. `ref` is what it
     /// guards: the guarded unit's position, or the point.
     std::optional<OrderStep> guard_engage(UnitCommand& cmd, const Unit* guarded, const Vector3& ref,
-                                          f64 dt, SimContext& ctx);
+                                          SimContext& ctx);
     /// A Guard of a point: go there, and take on enemies near it.
-    OrderStep order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_guard_point(UnitCommand& cmd, SimContext& ctx);
     /// Head for `goal`, setting a new path only when it moved by a unit.
-    void walk_to(const Vector3& goal, f64 dt, SimContext& ctx);
+    void walk_to(const Vector3& goal, SimContext& ctx);
     /// Moho's FindBestEnemy with the unit's primary weapon: of `candidates`
     /// (in id order), the enemy within `range` (XZ) of the unit it takes on
     /// first, or null (unit_patrol.cpp).
@@ -1655,7 +1649,7 @@ private:
     /// other units within 10; past that, it comes back to just clear of it.
     /// Never ends: Hold.
     OrderStep guard_follow(const Unit& target, bool working,
-                           const std::optional<Vector3>& winged_goal, f64 dt, SimContext& ctx);
+                           const std::optional<Vector3>& winged_goal, SimContext& ctx);
     /// A guard order ends: a factory's assisted build (M206h) is cancelled,
     /// as a factory's build is when its order goes; an assist just stops.
     void end_guard_build(EntityRegistry& registry, lua_State* L);
@@ -1699,12 +1693,12 @@ private:
     int tick_script_task(lua_State* L);
     /// A load order (M206m, Moho's shared TransportLoadUnits): the transport
     /// it targets runs the pickup, and the units it carries call it.
-    OrderStep order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_transport_load(UnitCommand& cmd, SimContext& ctx);
     /// The transport's side (CUnitLoadUnits): slots for the units calling
     /// it, a flight to their centre, a low hover while they board.
-    OrderStep order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_transport_pickup(UnitCommand& cmd, SimContext& ctx);
     /// A unit's side (CUnitCallTransport): to its place, then a beam up.
-    OrderStep order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_call_transport(UnitCommand& cmd, SimContext& ctx);
     /// End the pickup: slots of units that never came are given up.
     void finish_pickup(bool completed, lua_State* L);
     /// A transport at its drop (M206n, Moho's CUnitUnloadUnits): it comes
@@ -1721,11 +1715,11 @@ private:
     /// ShouldHoverInsteadOfLand): MovingDown, then the Hover event. True there.
     bool hover_low(f64 dt, SimContext& ctx);
     /// A transport flies to the point and drops all its cargo.
-    OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_transport_unload(UnitCommand& cmd, SimContext& ctx);
     /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
     /// a slot, the flight to its bone, docking, and the climb away once full.
-    OrderStep order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx);
-    void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
+    OrderStep order_refuel(UnitCommand& cmd, SimContext& ctx);
+    void tick_docked(SimContext& ctx, Unit& platform);
     /// A patrolling aircraft that needs fuel or repair (Moho's
     /// Unit::FindPlatform): the first of its army's idle staging platforms
     /// in reach with room for it; null when it needs none or finds none.
@@ -1734,7 +1728,7 @@ private:
     /// docked at `platform`, and burns in flight. False if a script killed it.
     bool tick_fuel(f64 dt, SimContext& ctx, Unit* platform);
     /// An aircraft ordered aboard a carrier (M206s): it lands, and is stored.
-    OrderStep order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_carrier_landing(UnitCommand& cmd, SimContext& ctx);
     /// A carrier's share of a load order onto it (Moho's CUnitCarrierRetrieve):
     /// it stops (surfacing, if under water) and waits while its aircraft land.
     OrderStep order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx);
@@ -1745,13 +1739,13 @@ private:
     /// place, fly in, wait its turn, come down, be stored. `refuel`: landing
     /// to refuel, which needs the carrier idle rather than loading.
     enum class LandStep : u8 { Landing, Stored, Failed };
-    LandStep carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimContext& ctx);
+    LandStep carrier_land_step(Unit& carrier, bool refuel, SimContext& ctx);
     /// A landing given up: its place and its loading state go.
     void abandon_landing(EntityRegistry& registry);
     /// Fly to `at` until it is within the unit's turning circle, then glide
     /// over it, coming down to `y` turned to `heading` (M206r's approach).
     /// True once its last step settled it there, facing within `facing_cos`.
-    bool settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx,
+    bool settle_over(const Vector3& at, f32 heading, bool& glided, SimContext& ctx,
                      std::optional<f32> facing_cos = std::nullopt);
     void settle_step(const Vector3& at, f32 heading, f64 dt, const map::Terrain* terrain);
     /// A staging platform's unload (M206r): its aircraft go from where they
@@ -1760,14 +1754,14 @@ private:
     /// A carrier's unload: its stored units are launched (M206q).
     OrderStep order_carrier_launch(UnitCommand& cmd, SimContext& ctx);
     /// A nuke, a tactical missile or an OverCharge, by its weapon.
-    OrderStep order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx);
-    OrderStep order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_launch(UnitCommand& cmd, SimContext& ctx);
+    OrderStep order_sacrifice(UnitCommand& cmd, SimContext& ctx);
     /// Handed to the script, and held until the warp.
     OrderStep order_teleport(UnitCommand& cmd, lua_State* L);
     /// A ferry's cycle along its route (the leading Ferry orders).
-    OrderStep order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_ferry(UnitCommand& cmd, SimContext& ctx);
     /// Wait at a beacon until a ferry takes the unit, then board it.
-    OrderStep order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx);
 
     std::string unit_id_;
     std::string armor_type_ = "Default";
@@ -1999,7 +1993,7 @@ private:
     /// already keeps there, else a new one from AI.BeaconName. 0 without one.
     u32 ferry_beacon(SimContext& ctx, UnitCommand& head);
     /// Fly a ferry leg toward `to`; true while under way.
-    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through = false);
+    bool ferry_fly(SimContext& ctx, const Vector3& to, bool through = false);
     /// A teleport or an OverCharge whose order went unfinished: the script
     /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
     void settle_interrupted_orders(lua_State* L);
@@ -2070,7 +2064,6 @@ private:
     std::string vert_event_ = "Top";
     // Air crash state
     bool crashing_ = false;
-    bool crash_impacted_ = false; // set on landing, taken by SimState
     Vector3 velocity_{};
     Vector3 motion_step_{};
     f32 crash_velocity_y_ = 0;

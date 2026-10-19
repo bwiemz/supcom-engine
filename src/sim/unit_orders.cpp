@@ -301,7 +301,7 @@ void Unit::set_path_goal(const Vector3& goal, const SimContext& ctx) {
                         std::max(naval_draft_, fp.min_water_depth), false);
 }
 
-bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through) {
+bool Unit::ferry_fly(SimContext& ctx, const Vector3& to, bool through) {
     navigator_.set_speed_through_goal(through);
     const Vector3 heading = navigator_.goal();
     if (!ferry_leg_set_ || std::abs(heading.x - to.x) > 1.0f || std::abs(heading.z - to.z) > 1.0f ||
@@ -309,17 +309,17 @@ bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to, bool through) {
         set_path_goal(to, ctx);
         ferry_leg_set_ = true;
     }
-    const bool going = nav_update(dt, ctx.terrain);
+    const bool going = nav_update();
     if (!going) ferry_leg_set_ = false;
     return going;
 }
 
-bool Unit::approach_update(f64 dt, SimContext& ctx) {
+bool Unit::approach_update(SimContext& ctx) {
     if (navigator_.status() == Navigator::Status::WaitingForPath) {
         const Vector3 goal = navigator_.goal();
         set_path_goal(goal, ctx);
     }
-    return nav_update(dt, ctx.terrain);
+    return nav_update();
 }
 
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
@@ -344,7 +344,7 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     while (!command_queue_.empty()) {
         note_queue_head();
         // Orders run script callbacks, which may destroy this unit (it stays
-        // allocated until the tick ends, see EntityRegistry::collect_garbage).
+        // allocated until the beat ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
             // IAiCommandDispatchImpl::Execute starts no command while its unit is attached.
@@ -410,13 +410,13 @@ bool Unit::engage(UnitCommand& cmd, lua_State* L) {
 OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     switch (cmd.type) {
     case CommandType::Stop: return order_stop(ctx.L);
-    case CommandType::Move: return order_move(cmd, dt, ctx);
-    case CommandType::Attack: return order_attack(cmd, dt, ctx);
+    case CommandType::Move: return order_move(cmd, ctx);
+    case CommandType::Attack: return order_attack(cmd, ctx);
     case CommandType::BuildMobile: return order_build_mobile(cmd, dt, ctx, econ_eff);
     case CommandType::BuildFactory:
     case CommandType::Upgrade: return order_build_in_place(cmd, dt, ctx, econ_eff);
     case CommandType::Patrol:
-    case CommandType::AggressiveMove: return order_patrol(cmd, dt, ctx);
+    case CommandType::AggressiveMove: return order_patrol(cmd, ctx);
     case CommandType::Reclaim: return order_reclaim(cmd, dt, ctx);
     case CommandType::Repair: return order_repair(cmd, dt, ctx, econ_eff);
     case CommandType::Capture: return order_capture(cmd, dt, ctx, econ_eff);
@@ -425,15 +425,15 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Enhance: return order_enhance(cmd, dt, ctx, econ_eff);
     case CommandType::Script: return order_script(cmd, ctx);
     case CommandType::TransportLoad:
-    case CommandType::Dock: return order_transport_load(cmd, dt, ctx);
-    case CommandType::TransportUnload: return order_transport_unload(cmd, dt, ctx);
+    case CommandType::Dock: return order_transport_load(cmd, ctx);
+    case CommandType::TransportUnload: return order_transport_unload(cmd, ctx);
     case CommandType::Nuke:
     case CommandType::Tactical:
-    case CommandType::Overcharge: return order_launch(cmd, dt, ctx);
-    case CommandType::Sacrifice: return order_sacrifice(cmd, dt, ctx);
+    case CommandType::Overcharge: return order_launch(cmd, ctx);
+    case CommandType::Sacrifice: return order_sacrifice(cmd, ctx);
     case CommandType::Teleport: return order_teleport(cmd, ctx.L);
-    case CommandType::Ferry: return order_ferry(cmd, dt, ctx);
-    case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, dt, ctx);
+    case CommandType::Ferry: return order_ferry(cmd, ctx);
+    case CommandType::WaitForFerry: return order_wait_for_ferry(cmd, ctx);
     default: // an order no handler runs: dropped
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -447,7 +447,7 @@ OrderStep Unit::order_stop(lua_State* L) {
     return OrderStep::Next;
 }
 
-OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_move(UnitCommand& cmd, SimContext& ctx) {
     // Its move aborted by a Warp as it ran: Moho's move task hears it as a
     // failure and the order ends, the unit coasting to a stop
     if (warp_aborted_command_ != 0 && cmd.command_id == warp_aborted_command_) {
@@ -463,7 +463,7 @@ OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
         set_path_goal(cmd.target_pos, ctx);
     }
-    if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
+    if (!nav_update(cmd.speed_cap)) {
         command_queue_.pop_front();
         if (is_air_unit() &&
             (command_queue_.empty() || instant_order(command_queue_.front().type))) {
@@ -474,13 +474,15 @@ OrderStep Unit::order_move(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     return OrderStep::Hold; // Still moving
 }
 
-OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_attack(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     // A structure or a TARGETCHASER keeps no slot in its formation (Moho's
     // attack task drops the formation as it starts for them).
     if (cmd.has_slot && (!is_mobile() || has_category("TARGETCHASER"))) cmd.has_slot = false;
     // Attack: move toward target if out of weapon range, else stop
-    if (cmd.target_id == 0) return order_attack_ground(cmd, dt, ctx);
+    if (cmd.target_id == 0) {
+        return order_attack_ground(cmd, ctx);
+    }
     auto* target = registry.find(cmd.target_id);
     // faf-re CUnitAttackTargetTask::TaskTick, CAiTarget::HasTarget: a dying unit is no target.
     const bool dead = target && target->is_unit() && static_cast<const Unit*>(target)->is_dying();
@@ -520,7 +522,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             navigator_.goal().z != target->position().z) {
             set_path_goal(target->position(), ctx);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
         return OrderStep::Hold;
     }
     // A guard's or patrol's fight goes only so far (Moho's acquire task,
@@ -614,7 +616,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             navigator_.goal().z != goal.z) {
             set_path_goal(goal, ctx);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
     };
     if (dist2 > range2) {
         close_in();
@@ -646,7 +648,7 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     return OrderStep::Hold; // Stay on this command
 }
 
-OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_attack_ground(UnitCommand& cmd, SimContext& ctx) {
     // Moho's CUnitAttackTargetTask on a ground target (faf-re). The first
     // weapon that can hit the ground there (CAiAttackerImpl::GetTargetWeapon;
     // here the first enabled one) brings its unit within its range, and the
@@ -789,7 +791,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             set_path_goal(
                 {std::clamp(position().x, x0, x1), at.y, std::clamp(position().z, z0, z1)}, ctx);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
         return OrderStep::Hold;
     }
     const f32 gx = goal.x - position().x;
@@ -801,7 +803,7 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     if (!navigator_.is_moving() || navigator_.goal().x != goal.x || navigator_.goal().z != goal.z) {
         set_path_goal(goal, ctx);
     }
-    nav_update(dt, ctx.terrain);
+    nav_update();
     return OrderStep::Hold;
 }
 
@@ -883,7 +885,9 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             cmd.prepared = true;
             return OrderStep::Hold;
         }
-        if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
+        if (cmd.approached && approach_update(ctx)) {
+            return OrderStep::Hold;
+        }
         // After the walk only range decides: the pathfinder may have moved
         // its goal onto the site
         const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
@@ -1082,7 +1086,7 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
     return OrderStep::Next;
 }
 
-OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_patrol(UnitCommand& cmd, SimContext& ctx) {
     // Moho's CUnitPatrolTask::Execute, every 6 ticks (it returns 7).
     if (cmd.patrol_scan > 0) {
         --cmd.patrol_scan;
@@ -1141,7 +1145,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         navigator_.goal().x != cmd.target_pos.x || navigator_.goal().z != cmd.target_pos.z) {
         set_path_goal(cmd.target_pos, ctx);
     }
-    if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
+    if (!nav_update(cmd.speed_cap)) {
         // An attack-move is one leg: Moho's dispatch removes the order when
         // its patrol task is done.
         if (cmd.type == CommandType::AggressiveMove) {
@@ -1206,7 +1210,9 @@ OrderStep Unit::reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                                              target->footprint_size_z() * 0.5f),
                               ctx);
             }
-            if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
+            if (cmd.approached && approach_update(ctx)) {
+                return OrderStep::Hold;
+            }
             if (gap > max_build_distance_) {
                 if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
                 return OrderStep::Next;
@@ -1346,7 +1352,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
                                              runit.skirt_size_z() * 0.5f + 1),
                               ctx);
             }
-            if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
+            if (cmd.approached && approach_update(ctx)) {
+                return OrderStep::Hold;
+            }
             if (gap > max_build_distance_) {
                 let_go();
                 command_queue_.pop_front();
@@ -1483,7 +1491,9 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
                                              cunit.skirt_size_z() * 0.5f),
                               ctx);
             }
-            if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
+            if (cmd.approached && approach_update(ctx)) {
+                return OrderStep::Hold;
+            }
             if (gap > kCaptureHold) {
                 if (is_capturing()) stop_capturing(L, registry, true);
                 command_queue_.pop_front();
@@ -1590,17 +1600,17 @@ bool Unit::guard_reacts(const Unit* guarded) const {
     return scan_weapon() != nullptr;
 }
 
-void Unit::walk_to(const Vector3& goal, f64 dt, SimContext& ctx) {
+void Unit::walk_to(const Vector3& goal, SimContext& ctx) {
     const Vector3 heading = navigator_.goal();
     if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
         std::abs(heading.z - goal.z) > 1.0f) {
         set_path_goal(goal, ctx);
     }
-    nav_update(dt, ctx.terrain);
+    nav_update();
 }
 
 std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarded,
-                                            const Vector3& ref, f64 dt, SimContext& ctx) {
+                                            const Vector3& ref, SimContext& ctx) {
     if (!guard_reacts(guarded)) return std::nullopt;
     // Back from a fight, it goes home before it looks about again (Moho's
     // Starting state: within its guarded unit's footprint and half its
@@ -1613,7 +1623,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
         const f32 dy = position().y - ref.y;
         const f32 dz = position().z - ref.z;
         if (dx * dx + dy * dy + dz * dz > home * home) {
-            walk_to(ref, dt, ctx);
+            walk_to(ref, ctx);
             return OrderStep::Hold;
         }
         cmd.guard_returning = false;
@@ -1651,10 +1661,12 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     return OrderStep::Next;
 }
 
-OrderStep Unit::order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_guard_point(UnitCommand& cmd, SimContext& ctx) {
     // A place to guard (IssueGuard at a position): Moho's guard task with
     // no guarded unit, its reference the point.
-    if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, dt, ctx)) return *step;
+    if (const auto step = guard_engage(cmd, nullptr, cmd.target_pos, ctx)) {
+        return *step;
+    }
     // A hovering aircraft with nothing to do flies as a winged one, hunting
     // round its point rather than hanging still (flies_winged_on_guard).
     if (flies_winged_on_guard(*this) && ctx.sim) {
@@ -1665,7 +1677,7 @@ OrderStep Unit::order_guard_point(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     const f32 dx = cmd.target_pos.x - position().x;
     const f32 dz = cmd.target_pos.z - position().z;
     if (dx * dx + dz * dz > 2.0f * 2.0f) {
-        walk_to(cmd.target_pos, dt, ctx);
+        walk_to(cmd.target_pos, ctx);
     } else if (navigator_.is_moving()) {
         navigator_.abort_move();
     }
@@ -1677,7 +1689,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
         end_guard_build(registry, L);
-        return order_guard_point(cmd, dt, ctx);
+        return order_guard_point(cmd, ctx);
     }
     // A REBUILDER (the support commanders) guards a place more than a unit
     // (faf-re CUnitGuardTask): its order outlives what it guards, and it
@@ -1691,12 +1703,12 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         if (rebuilder) {
             // Its repair of it goes with it: the Guard staying, nothing else
-            // would stop it (Unit::update keeps a guard's repair).
+            // would stop it (end_gone_tasks keeps a guard's repair).
             if (is_repairing()) stop_repairing(L, registry);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
             if (command_queue_.empty() || command_queue_.front().command_id != cmd_id)
                 return OrderStep::Next;
-            return order_guard_point(cmd, dt, ctx);
+            return order_guard_point(cmd, ctx);
         }
         release_navigator(); // the walk to it ends too
         if (!command_queue_.empty() && command_queue_.front().command_id == cmd_id)
@@ -1713,8 +1725,9 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
     // after factory assist, before build, reclaim and repair help).
-    if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), dt, ctx))
+    if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), ctx)) {
         return *step;
+    }
 
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair
@@ -1755,7 +1768,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 std::abs(heading.z - goal.z) > 1.0f) {
                 set_path_goal(goal, ctx);
             }
-            nav_update(dt, ctx.terrain);
+            nav_update();
         }
         return false;
     };
@@ -1977,7 +1990,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         }
     }
 
-    return guard_follow(*target_unit, working, winged_goal, dt, ctx);
+    return guard_follow(*target_unit, working, winged_goal, ctx);
 }
 
 OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt, SimContext& ctx,
@@ -2108,7 +2121,7 @@ OrderStep Unit::guard_factory_queue(UnitCommand& cmd, Unit& target_unit, f64 dt,
 }
 
 OrderStep Unit::guard_follow(const Unit& target, bool working,
-                             const std::optional<Vector3>& winged_goal, f64 dt, SimContext& ctx) {
+                             const std::optional<Vector3>& winged_goal, SimContext& ctx) {
     auto& registry = ctx.registry;
     if (flies_winged_on_guard(*this) && ctx.sim && !destroyed() && in_registry()) {
         const Entity* focus = is_reclaiming()  ? registry.find(reclaim_target_id_)
@@ -2137,7 +2150,7 @@ OrderStep Unit::guard_follow(const Unit& target, bool working,
                 std::abs(heading.z - goal.z) > 1.0f) {
                 set_path_goal(goal, ctx);
             }
-            nav_update(dt, ctx.terrain);
+            nav_update();
         } else if (navigator_.is_moving()) {
             navigator_.abort_move();
         }
@@ -2236,7 +2249,7 @@ bool Unit::calls_transport(u32 transport_id) const {
            loads_itself(command_queue_.front(), transport_id);
 }
 
-OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_transport_load(UnitCommand& cmd, SimContext& ctx) {
     // Moho dispatches Dock and TransportLoadUnits alike. At an air staging
     // platform the unit refuels (M206r); a carrier takes a load order's
     // units in to store them (M206s), and a Dock there refuels too. A Dock
@@ -2247,9 +2260,11 @@ OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) 
         const auto* target =
             e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
         if (target && target->has_category(kCarrier))
-            return cmd.type == CommandType::Dock ? order_refuel(cmd, dt, ctx)
-                                                 : order_carrier_landing(cmd, dt, ctx);
-        if (target && target->is_staging_platform()) return order_refuel(cmd, dt, ctx);
+            return cmd.type == CommandType::Dock ? order_refuel(cmd, ctx)
+                                                 : order_carrier_landing(cmd, ctx);
+        if (target && target->is_staging_platform()) {
+            return order_refuel(cmd, ctx);
+        }
         if (cmd.type == CommandType::Dock) {
             set_unit_state("Refueling", false);
             command_queue_.pop_front();
@@ -2262,12 +2277,12 @@ OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             return OrderStep::Next;
         }
         return has_category(kCarrier) ? order_carrier_retrieve(cmd, ctx)
-                                      : order_transport_pickup(cmd, dt, ctx);
+                                      : order_transport_pickup(cmd, ctx);
     }
-    return order_call_transport(cmd, dt, ctx);
+    return order_call_transport(cmd, ctx);
 }
 
-OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_transport_pickup(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     const u32 me = entity_id();
@@ -2376,7 +2391,9 @@ OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx
             std::abs(goal.z - pickup_center_.z) > 1.0f) {
             set_path_goal(pickup_center_, ctx);
         }
-        if (nav_update(dt, ctx.terrain)) return OrderStep::Hold;
+        if (nav_update()) {
+            return OrderStep::Hold;
+        }
         navigator_.abort_move();
         pickup_phase_ = PickupPhase::Landing;
     }
@@ -2469,7 +2486,7 @@ bool Unit::hover_low(f64 dt, SimContext& ctx) {
     return !destroyed() && in_registry();
 }
 
-OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_call_transport(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     const u32 me = entity_id();
@@ -2568,7 +2585,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
             std::abs(goal.z - at.z) > 1.0f) {
             set_path_goal(at, ctx);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
     };
     if (!transport->pickup_ready()) {
         // Wait about the centre, twice its bone's offset out
@@ -2604,7 +2621,7 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
     return OrderStep::Hold;
 }
 
-OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_transport_unload(UnitCommand& cmd, SimContext& ctx) {
     // A carrier launches what it keeps in storage instead (M206q).
     if (cmd.launch_wait >= 0 || launches_on_unload()) return order_carrier_launch(cmd, ctx);
     // Transport drops its cargo at target position: the order's
@@ -2636,7 +2653,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
         }
         // Flown, for an aircraft (the ground navigator had dragged transports
         // along the ground).
-        nav_update(dt, ctx.terrain);
+        nav_update();
         return OrderStep::Hold;
     }
     navigator_.abort_move();
@@ -2707,7 +2724,7 @@ bool Unit::unload_step(SimContext& ctx, const std::vector<u32>& ids) {
     return true;
 }
 
-OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_launch(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     // A launch: its weapon takes the order's target (see
@@ -2755,7 +2772,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             const f32 back = weapon->min_range * 1.1f;
             set_path_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
         return OrderStep::Hold;
     }
     if (dist2 > weapon->max_range * weapon->max_range) {
@@ -2768,7 +2785,7 @@ OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         if (!navigator_.is_moving() || navigator_.goal().x != at.x || navigator_.goal().z != at.z) {
             set_path_goal(at, ctx);
         }
-        nav_update(dt, ctx.terrain);
+        nav_update();
     } else {
         navigator_.abort_move();
         if (overcharge && !cmd.started) {
@@ -2881,7 +2898,7 @@ void Unit::destroy_through_script(EntityRegistry& registry, lua_State* L) {
 
 // Moho's IAiCommandDispatchImpl hands the order to a CUnitSacrificeTask only
 // for these targets; faf-re CUnitSacrificeTask.cpp for the task.
-OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_sacrifice(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     const auto give_up = [&] {
@@ -2904,7 +2921,7 @@ OrderStep Unit::order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             cmd.target_id = focus->entity_id();
         }
     }
-    if (cmd.approached && !cmd.started && approach_update(dt, ctx)) {
+    if (cmd.approached && !cmd.started && approach_update(ctx)) {
         return OrderStep::Hold;
     }
     Unit* target = live_unit(registry, cmd.target_id);
@@ -2995,7 +3012,7 @@ OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
     return OrderStep::Hold;
 }
 
-OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_ferry(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     // A ferry route (Moho's CUnitFerryTask): the leading Ferry orders,
     // which stay queued. The first is where it loads, at a beacon;
@@ -3085,14 +3102,16 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             ferry_index_ = 1;
             ferry_leg_set_ = false;
         } else {
-            ferry_fly(dt, ctx, home);
+            ferry_fly(ctx, home);
             return OrderStep::Hold;
         }
     }
     if (ferry_phase_ == FerryPhase::Out) {
         // Out along the waypoints, then to the drop-off.
         if (ferry_index_ < route - 1) {
-            if (!ferry_fly(dt, ctx, point(ferry_index_), true)) ++ferry_index_;
+            if (!ferry_fly(ctx, point(ferry_index_), true)) {
+                ++ferry_index_;
+            }
             return OrderStep::Hold;
         }
         ferry_phase_ = FerryPhase::Unload;
@@ -3103,7 +3122,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         const f32 udx = drop.x - position().x;
         const f32 udz = drop.z - position().z;
         if (udx * udx + udz * udz > unload_range * unload_range && !cargo_ids_.empty()) {
-            ferry_fly(dt, ctx, drop);
+            ferry_fly(ctx, drop);
             return OrderStep::Hold;
         }
         navigator_.abort_move();
@@ -3118,17 +3137,19 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     // Back along the waypoints, then to the beacon to load again.
     if (ferry_index_ > 1) {
-        if (!ferry_fly(dt, ctx, point(ferry_index_ - 1), true)) --ferry_index_;
+        if (!ferry_fly(ctx, point(ferry_index_ - 1), true)) {
+            --ferry_index_;
+        }
         return OrderStep::Hold;
     }
-    if (!ferry_fly(dt, ctx, home)) {
+    if (!ferry_fly(ctx, home)) {
         ferry_phase_ = FerryPhase::Load;
         ferry_index_ = 0;
     }
     return OrderStep::Hold;
 }
 
-OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     // Waiting for a ferry (Moho's CUnitWaitForFerryTask): walk to the
@@ -3165,7 +3186,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
                 std::abs(heading.z - ferry->position().z) > 1.0f) {
                 set_path_goal(ferry->position(), ctx);
             }
-            nav_update(dt, ctx.terrain);
+            nav_update();
             return OrderStep::Hold;
         }
     }
@@ -3180,8 +3201,7 @@ OrderStep Unit::order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) 
     if (!navigator_.is_moving() && !navigator_.ended()) {
         set_path_goal(beacon->position(), ctx);
     }
-    if (!nav_update(dt, ctx.terrain) && effective_speed() > 0 &&
-        navigator_.status() == Navigator::Status::Idle) {
+    if (!nav_update() && effective_speed() > 0 && navigator_.status() == Navigator::Status::Idle) {
         // As near as it gets.
         set_unit_state("WaitForFerry", true);
     }

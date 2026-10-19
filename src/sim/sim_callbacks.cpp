@@ -1,6 +1,6 @@
 // SimCallbacks: a UI script's request for the sim to do something. Moho runs
-// them as commands, inside a tick; here too (SimState::dispatch_due_commands),
-// so in multiplayer every peer runs each one on the same tick.
+// them as commands, in a beat; here too (SimState::dispatch_due_commands),
+// so in multiplayer every peer runs each one in the same beat.
 
 #include "map/terrain.hpp"
 #include "sim/build_placement.hpp"

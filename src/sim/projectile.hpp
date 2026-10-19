@@ -120,8 +120,8 @@ public:
     /// Entities an OnCollisionCheck turned it away from: it passes them.
     std::vector<u32> passed;
 
-    /// Per-tick, `tick` the sim's: move (Moho's MotionTick), check
-    /// collision, impact.
+    /// Its step, `tick` the sim's (Moho's MotionTick): the impact its last
+    /// step found, else its move and the collision check.
     void update(f64 dt, EntityRegistry& registry, lua_State* L,
                 const map::Terrain* terrain = nullptr, u32 tick = 0);
 

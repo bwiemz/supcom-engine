@@ -2333,8 +2333,8 @@ static int l_GetIsAutoSurfaceMode(lua_State* L) {
 }
 
 // The orders panel's unit settings. Each is a request the sim applies
-// inside a tick, like an order: in multiplayer every peer applies it on the
-// same tick. A toggle is resolved here, from the state the UI shows, to the
+// in a beat, like an order: in multiplayer every peer applies it in the
+// same beat. A toggle is resolved here, from the state the UI shows, to the
 // value it sets, so every unit in a mixed selection ends up alike.
 
 /// Queue `setting` = `value` (plus the script bit, if any) for the units in
@@ -2953,7 +2953,7 @@ static int l_GetUnitCommandDataOfUnit(lua_State* L) {
 
 // The UI's orders. Each is the local player's order, routed as human input
 // like the input handler's clicks: a command on the sim's input that it
-// applies inside its next tick, and that a networked match broadcasts.
+// applies in its next beat, and that a networked match broadcasts.
 
 /// Route `cmd` for `ids` as the local player's order.
 void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::UnitCommand& cmd,
@@ -3334,7 +3334,7 @@ static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
 }
 
 /// A change to the count at `index` of the queue display's factory's
-/// queue: a request the sim applies in its next tick.
+/// queue: a request the sim applies in its next beat.
 static int push_build_count_request(lua_State* L, const char* func_name) {
     auto* fq = get_factory_queue(L);
     auto* queue = get_callback_queue(L);

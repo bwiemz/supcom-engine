@@ -112,14 +112,14 @@ int weapon_ref(const EntityRegistry& registry, const Entity& beam) {
 
 } // namespace
 
-void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_pass) {
+void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_step) {
     EntityRegistry& registry = sim.entity_registry();
     Entity* beam = registry.find(beam_id);
     if (!beam || beam->destroyed() || !beam->is_collision_beam()) return;
     const std::optional<Vector3> facing = pose(registry, *beam);
     if (!facing) return;
     auto& setup = beam->beam_setup();
-    setup.check_clock = setup.check_interval + (before_pass ? 1 : 0);
+    setup.check_clock = setup.check_interval + (before_step ? 1 : 0);
 
     const u32 launcher_id = beam->beam_launcher_id();
     const f32 length = setup.length > 0 ? setup.length : 1.0f;
