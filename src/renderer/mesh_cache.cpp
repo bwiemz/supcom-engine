@@ -386,9 +386,9 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         }
 
         gpu.uniform_scale = scale;
-        gpu.texture_path = resolve_albedo_path(bp_id, L);
-        gpu.specteam_path = resolve_specteam_path(bp_id, L);
-        gpu.normal_path = resolve_normal_path(bp_id, L);
+        gpu.texture_path = resolve_albedo_path_for_lod(mesh_bp_id, 1, L);
+        gpu.specteam_path = resolve_specteam_path_for_lod(mesh_bp_id, 1, L);
+        gpu.normal_path = resolve_normal_path_for_lod(mesh_bp_id, 1, L);
         gpu.lookup_path = resolve_lod_file(mesh_bp_id, 1, "LookupName", L);
         gpu.secondary_path = resolve_lod_file(mesh_bp_id, 1, "SecondaryName", L);
         const std::string shader = read_lod_string_field(mesh_bp_id, 1, "ShaderName", L);
@@ -738,69 +738,6 @@ std::string MeshCache::derive_base_path(const std::string& mesh_bp_id) {
         if (ends_with(id, variant)) id.remove_suffix(variant.size());
     const std::string_view suffix = "_mesh";
     if (ends_with(id, suffix)) return std::string(id.substr(0, id.size() - suffix.size()));
-    return {};
-}
-
-std::string MeshCache::resolve_albedo_path(const std::string& bp_id,
-                                            lua_State* L) {
-    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
-    if (mesh_bp_id.empty()) return {};
-
-    // Strategy 1: LODs[1].AlbedoName from mesh blueprint
-    if (std::string name = resolve_lod_file(mesh_bp_id, 1, "AlbedoName", L); !name.empty())
-        return name;
-
-    // Strategy 2: convention-based — derive from mesh bp ID
-    // "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001_Albedo.dds"
-    std::string base = derive_base_path(mesh_bp_id);
-    if (!base.empty()) {
-        std::string path = base + "_Albedo.dds";
-        if (vfs_ && vfs_->read_file(path)) return path;
-    }
-
-    return {};
-}
-
-std::string MeshCache::resolve_specteam_path(const std::string& bp_id,
-                                              lua_State* L) {
-    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
-    if (mesh_bp_id.empty()) return {};
-
-    // Strategy 1: LODs[1].SpecularName from mesh blueprint
-    if (std::string name = resolve_lod_file(mesh_bp_id, 1, "SpecularName", L); !name.empty())
-        return name;
-
-    // Strategy 2: convention-based — derive from mesh bp ID
-    // "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001_SpecTeam.dds"
-    std::string base = derive_base_path(mesh_bp_id);
-    if (!base.empty() && vfs_) {
-        std::string path = base + "_SpecTeam.dds";
-        if (vfs_->read_file(path)) return path;
-    }
-
-    return {};
-}
-
-std::string MeshCache::resolve_normal_path(const std::string& bp_id,
-                                            lua_State* L) {
-    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
-    if (mesh_bp_id.empty()) return {};
-
-    // Strategy 1: LODs[1].NormalsName from mesh blueprint
-    if (std::string name = resolve_lod_file(mesh_bp_id, 1, "NormalsName", L); !name.empty())
-        return name;
-
-    // Strategy 2: convention-based — derive from mesh bp ID
-    // Try _normalsTS.dds (most common FA convention)
-    std::string base = derive_base_path(mesh_bp_id);
-    if (!base.empty() && vfs_) {
-        std::string path = base + "_normalsTS.dds";
-        if (vfs_->read_file(path)) return path;
-        // Try capitalized variant
-        path = base + "_NormalsTS.dds";
-        if (vfs_->read_file(path)) return path;
-    }
-
     return {};
 }
 
