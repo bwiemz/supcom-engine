@@ -4476,10 +4476,12 @@ static int l_IssueClearCommands(lua_State* L) {
     if (!sim) {
         return 0;
     }
+    sim::SimContext ctx = sim->sim_context();
+    ctx.L = L;
     for (const u32 id : collect_unit_ids(L, 1)) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit()) {
-            static_cast<sim::Unit*>(e)->clear_commands(sim->entity_registry(), L);
+            static_cast<sim::Unit*>(e)->clear_commands(ctx);
         }
     }
     return 0;
@@ -4504,7 +4506,9 @@ static int l_IssueToUnitClearCommands(lua_State* L) {
     auto* u = extract_unit(L, 1);
     auto* sim = get_sim(L);
     if (u && sim) {
-        u->clear_commands(sim->entity_registry(), L);
+        sim::SimContext ctx = sim->sim_context();
+        ctx.L = L;
+        u->clear_commands(ctx);
     }
     return 0;
 }

@@ -1,6 +1,6 @@
 // SimCallbacks in the command stream (M198): a UI script's request runs
-// inside a tick, on every lockstep peer at the same tick, and is recorded in
-// replays -- never applied locally between ticks.
+// in a beat, on every lockstep peer in the same beat, and is recorded in
+// replays -- never applied locally between beats.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -176,7 +176,8 @@ SimCallbackEntry setting(const char* name, osc::sim::SimCallbackArg value, osc::
 
 } // namespace
 
-TEST_CASE("A SimCallback runs inside the next tick, not when submitted", "[simcallback]") {
+TEST_CASE("A SimCallback runs in the next beat, before its tick, not when submitted",
+          "[simcallback]") {
     CallbackSim w;
     const osc::u32 unit = w.spawn();
     w.sim.tick();                       // tick 1
@@ -187,7 +188,7 @@ TEST_CASE("A SimCallback runs inside the next tick, not when submitted", "[simca
 
     w.sim.tick(); // tick 2
     REQUIRE(w.call_count() == 1);
-    CHECK(w.field(1, "c.tick") == "2");
+    CHECK(w.field(1, "c.tick") == "1");
     CHECK(w.field(1, "c.name") == "ToggleThing");
     CHECK(w.field(1, "c.args.Mode") == "fast");
     CHECK(w.field(1, "c.args.Level") == "3");
@@ -206,9 +207,9 @@ TEST_CASE("A recorded SimCallback replays on the same tick", "[simcallback][repl
         const osc::u32 unit = rec.spawn();
         rec.sim.set_recording(true);
         for (int i = 0; i < 4; ++i) rec.sim.tick();
-        rec.sim.submit_callback(toggle(unit)); // runs at tick 5
+        rec.sim.submit_callback(toggle(unit)); // runs before tick 5
         for (int i = 0; i < 3; ++i) rec.sim.tick();
-        REQUIRE(rec.field(1, "c.tick") == "5");
+        REQUIRE(rec.field(1, "c.tick") == "4");
         REQUIRE(Replay::deserialize(rec.sim.recorded_replay().serialize(), replay));
     }
     REQUIRE(replay.commands.size() == 1);
@@ -219,7 +220,7 @@ TEST_CASE("A recorded SimCallback replays on the same tick", "[simcallback][repl
     play.sim.queue_replay(replay);
     for (int i = 0; i < 8; ++i) play.sim.tick();
     REQUIRE(play.call_count() == 1);
-    CHECK(play.field(1, "c.tick") == "5");
+    CHECK(play.field(1, "c.tick") == "4");
     CHECK(play.field(1, "c.args.Mode") == "fast");
 }
 

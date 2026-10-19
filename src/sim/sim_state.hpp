@@ -148,6 +148,7 @@ public:
 
     EntityRegistry& entity_registry() { return entity_registry_; }
     const EntityRegistry& entity_registry() const { return entity_registry_; }
+    SimContext sim_context();
 
     BoundedProps& bounded_props() { return bounded_props_; }
 
@@ -986,7 +987,6 @@ private:
     void count_held_storage();
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
-    SimContext sim_context();
     /// Moho's CArmyImpl::OnTick, each army in turn: its economy, with Moho
     /// pathing its navigators and steering, its units' weapons, its path
     /// searches.

@@ -310,7 +310,8 @@ TEST_CASE("A mobile build whose orders are cleared is let go at once, its frame 
     w.start();
     REQUIRE(w.built());
     REQUIRE(w.engineer->build_target_id() == w.built_id);
-    w.engineer->clear_commands(w.sim.entity_registry(), w.L);
+    osc::sim::SimContext ctx = w.sim.sim_context();
+    w.engineer->clear_commands(ctx);
     CHECK(w.engineer->build_target_id() == 0);
     CHECK_FALSE(w.engineer->economy().consumption_active);
     CHECK(heard(w.L) == "start MobileBuild stop MobileBuild failed ");
@@ -365,7 +366,9 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
         w.L,
         [](lua_State* L) {
             auto* site = static_cast<WreckSite*>(lua_touserdata(L, lua_upvalueindex(1)));
-            site->engineer->clear_commands(site->sim.entity_registry(), L);
+            osc::sim::SimContext ctx = site->sim.sim_context();
+            ctx.L = L;
+            site->engineer->clear_commands(ctx);
             lua_getglobal(L, "__replace");
             const bool replace = lua_toboolean(L, -1) != 0;
             lua_pop(L, 1);
@@ -385,7 +388,8 @@ TEST_CASE("A build callback can clear its orders without stopping the build twic
     SECTION("an incomplete build is cancelled") {
         w.start();
         REQUIRE(w.built());
-        w.engineer->clear_commands(w.sim.entity_registry(), w.L);
+        osc::sim::SimContext ctx = w.sim.sim_context();
+        w.engineer->clear_commands(ctx);
         failures = 1;
         CHECK(w.built()->is_being_built());
     }

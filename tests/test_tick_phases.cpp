@@ -14,6 +14,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/anim_cache.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
 #include "sim/sca_parser.hpp"
@@ -1743,4 +1744,113 @@ TEST_CASE("A unit destroyed in a tick lights its army's recon tick until it goes
     CHECK(w.ticks("reads") == expected);
     CHECK(w.ticks("gone") == std::vector<int>{forgotten});
     CHECK(w.number("lost") == static_cast<f32>(doomed + armies));
+}
+
+namespace {
+
+void callbacks_module(Phases& w) {
+    REQUIRE(
+        w.run("modules = modules or {}"
+              " modules['/lua/SimCallbacks.lua'] = {DoCallback = function(name, data, units)"
+              "   _G[name](data, units)"
+              " end}"
+              " function import(path) return modules[path] or error('no module ' .. path) end"));
+}
+
+osc::sim::SimCallbackEntry callback(const char* name) {
+    osc::sim::SimCallbackEntry cb;
+    cb.func_name = name;
+    return cb;
+}
+
+UnitCommand order(CommandType type, osc::u32 target_id) {
+    UnitCommand c;
+    c.type = type;
+    c.target_id = target_id;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("A SimCallback runs before its beat's tick: GetGameTick is the last tick's",
+          "[tick-phases][commands]") {
+    Phases w;
+    callbacks_module(w);
+    REQUIRE(w.run("seen = 0 forked = 0"
+                  " function Note()"
+                  "   seen = GetGameTick()"
+                  "   ForkThread(function() forked = GetGameTick() end)"
+                  " end"));
+    w.sim.tick();
+    w.sim.tick();
+    w.sim.submit_callback(callback("Note"));
+    w.sim.tick();
+    CHECK(w.number("seen") == 2.0f);
+    CHECK(w.number("forked") == 3.0f);
+    CHECK(w.sim.tick_count() == 3);
+}
+
+TEST_CASE("A Lua thread's IssueClearCommands ends a unit's task inside the call",
+          "[tick-phases][commands]") {
+    const std::string task = GENERATE("reclaim", "repair", "capture", "script");
+    CAPTURE(task);
+    Phases w;
+    Unit& eng = w.make("eng", "tank", 1, 100.0f, 100.0f);
+    eng.set_build_rate(10.0f);
+    eng.set_max_build_distance(10.0f);
+    REQUIRE(
+        w.run("stopped = 0"
+              " function Plain:OnStopReclaim() stopped = GetGameTick() end"
+              " function Plain:OnStopBuild() stopped = GetGameTick() end"
+              " function Plain:OnFailedCapture() stopped = GetGameTick() end"
+              " function Plain:GetReclaimCosts() return 100, 0, 30 end"
+              " Wait = {TaskTick = function() return 1 end,"
+              "   OnDestroy = function() stopped = GetGameTick() end}"
+              " Wait.__index = Wait"
+              " modules = {['/lua/sim/tasks/Wait.lua'] = {Wait = Wait}}"
+              " function import(path) return modules[path] or error('no module ' .. path) end"));
+    if (task == "reclaim") {
+        eng.add_category("RECLAIM");
+        auto wreck = std::make_unique<osc::sim::Prop>();
+        wreck->set_position({102.0f, 10.0f, 100.0f});
+        wreck->reclaim_mass_max = 30.0f;
+        wreck->reclaimable_category = true;
+        const osc::u32 id = w.sim.entity_registry().register_entity(std::move(wreck));
+        eng.push_command(order(CommandType::Reclaim, id), false);
+    } else if (task == "repair" || task == "capture") {
+        Unit& target = w.make("target", "t1", task == "repair" ? 1 : 2, 102.0f, 100.0f);
+        target.set_health(5.0f);
+        eng.push_command(order(task == "repair" ? CommandType::Repair : CommandType::Capture,
+                               target.entity_id()),
+                         false);
+    } else {
+        lua_State* L = w.state.raw();
+        REQUIRE(w.run("args = {TaskName = 'Wait'}"));
+        lua_getglobal(L, "args");
+        UnitCommand script;
+        script.type = CommandType::Script;
+        const auto bytes = osc::sim::lua_to_bytes(L, -1);
+        lua_pop(L, 1);
+        REQUIRE(bytes);
+        script.script_args = *bytes;
+        eng.push_command(script, false);
+    }
+    const auto working = [&] {
+        return eng.is_reclaiming() || eng.is_repairing() || eng.is_capturing() ||
+               eng.has_script_task();
+    };
+    for (int t = 0; t < 5 && !working(); ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(working());
+    REQUIRE(w.number("stopped") == 0.0f);
+    REQUIRE(w.run("cleared = 0 after = 0 ForkThread(function()"
+                  "   IssueClearCommands({eng})"
+                  "   cleared = GetGameTick()"
+                  "   after = stopped"
+                  " end)"));
+    w.sim.tick();
+    CHECK(w.number("cleared") > 0.0f);
+    CHECK(w.number("after") == w.number("cleared"));
+    CHECK_FALSE(working());
 }

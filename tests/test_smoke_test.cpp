@@ -1518,8 +1518,9 @@ TEST_CASE("A stopped upgrade takes its unfinished unit with it", "[session][rule
         h.sim.route_command({h.factory->entity_id()}, stop, true);
     }
     SECTION("by taking its order off") {
-        h.factory->remove_command(h.factory->command_queue().front().command_id,
-                                  h.sim.entity_registry(), L);
+        osc::sim::SimContext ctx = h.sim.sim_context();
+        ctx.L = L;
+        h.factory->remove_command(h.factory->command_queue().front().command_id, ctx);
     }
     h.sim.tick();
 

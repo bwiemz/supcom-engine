@@ -954,7 +954,8 @@ TEST_CASE("A selected unit's head order of a refreshing type, taken off, reports
         w.unit().note_queue_head();
         input.prune_selection(w.sim.entity_registry());
         REQUIRE_FALSE(input.take_selection_event());
-        w.unit().remove_command(head.command_id, w.sim.entity_registry(), w.sim_lua.raw());
+        osc::sim::SimContext ctx = w.sim.sim_context();
+        w.unit().remove_command(head.command_id, ctx);
         w.unit().note_queue_head();
         input.prune_selection(w.sim.entity_registry());
         CHECK(input.take_selection_event() == refreshes);

@@ -1141,7 +1141,8 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
             stop_unit(*unit);
         } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd, clear_existing)) {
             if (clear_existing) {
-                unit->clear_commands(entity_registry_, L_);
+                SimContext ctx = sim_context();
+                unit->clear_commands(ctx);
                 if (unit->destroyed()) {
                     continue;
                 }
@@ -1576,7 +1577,8 @@ SimState::projectile_blueprint_info(const std::string& bp_id) {
 }
 
 void SimState::stop_unit(Unit& unit) {
-    unit.clear_commands(entity_registry_, L_);
+    SimContext ctx = sim_context();
+    unit.clear_commands(ctx);
     if (!unit.destroyed()) {
         unit.run_stop(L_);
     }
@@ -1686,7 +1688,7 @@ void SimState::terminate_command_source(u32 source) {
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
-    command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& scheduled) {
+    command_scheduler_.dispatch_due(tick_count_ + 1, [&](const ScheduledCommand& scheduled) {
         ScheduledCommand sc = scheduled;
         // Its source runs it, as Moho's sim plays a source's part of the
         // command stream (the engine's own commands have none).
@@ -1728,7 +1730,7 @@ void SimState::dispatch_due_commands() {
         // and networked commands alike, on the tick they ran.
         if (recording_) {
             recorded_replay_.commands.push_back(sc);
-            recorded_replay_.commands.back().exec_tick = tick_count_;
+            recorded_replay_.commands.back().exec_tick = tick_count_ + 1;
         }
         if (sc.callback && sc.callback->func_name == kRequestPauseCallback) {
             request_pause(sc.source); // (a callback doesn't know its source)
@@ -1775,7 +1777,8 @@ void SimState::dispatch_due_commands() {
             // appends (queued/shift) — matching the Issue* bindings.
             if (!takes_command(*unit, cmd, sc.clear_existing)) continue;
             if (sc.clear_existing) {
-                unit->clear_commands(entity_registry_, L_);
+                SimContext ctx = sim_context();
+                unit->clear_commands(ctx);
                 if (unit->destroyed()) {
                     continue;
                 }
@@ -1828,10 +1831,8 @@ void SimState::tick() {
         return;
     }
     PROFILE_ZONE("Sim::tick");
-    tick_count_++;
-    game_time_ = tick_count_ * SECONDS_PER_TICK;
     if (rng_trace_) {
-        const bool on = tick_count_ >= rng_trace_from_ && tick_count_ <= rng_trace_to_;
+        const bool on = tick_count_ + 1 >= rng_trace_from_ && tick_count_ + 1 <= rng_trace_to_;
         sim_random_.set_draw_hook(on ? &SimState::trace_rng_draw : nullptr, this);
     }
 
@@ -1847,7 +1848,7 @@ void SimState::tick() {
     //   table grows), and a restored snapshot's differs again. A collection
     //   it started would clear weak tables on different ticks on each peer.
     if (L_) {
-        if (tick_count_ == 1) {
+        if (tick_count_ == 0) {
             lua_pushstring(L_, "__blueprints");
             lua_rawget(L_, LUA_GLOBALSINDEX);
             if (lua_istable(L_, -1)) lua_freeze(L_, -1);
@@ -1858,9 +1859,10 @@ void SimState::tick() {
         lua_sweepstep(L_, LUA_SWEEP_SLICE);
     }
 
-    // Apply the commands scheduled for this tick before anything simulates,
-    // so orders take effect deterministically at the start of the frame.
+    // Moho's command stream applies a beat's commands as it decodes them, before ++mCurTick.
     dispatch_due_commands();
+    tick_count_++;
+    game_time_ = tick_count_ * SECONDS_PER_TICK;
     // Moho's UpdatePaths: the clusters' background rebuild, before the
     // armies tick (Sim::AdvanceBeat).
     if (path_tables_) {
