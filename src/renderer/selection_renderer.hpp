@@ -67,8 +67,7 @@ public:
                 const std::optional<std::array<sim::Vector3, 4>>& drag, TextureCache& tex_cache,
                 MeshCache& mesh_cache, lua_State* L, u32 fi);
 
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
-                u32 fi) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
@@ -90,6 +89,7 @@ private:
     const SelectionBlueprint& box_blueprint(const std::string& id, lua_State* L);
 
     WorldQuadBatch batch_;
+    WorldQuadBatch drag_batch_;
     bool enabled_ = true;
     std::vector<Bracket> brackets_;
     bool drew_drag_box_ = false;

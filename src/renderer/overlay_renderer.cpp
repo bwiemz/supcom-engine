@@ -125,26 +125,6 @@ std::vector<std::array<f32, 4>> convex_rows(const std::array<f32, 4>& xs,
     return rows;
 }
 
-std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
-                                             const std::array<f32, 4>& ys, f32 thickness) {
-    std::vector<std::array<f32, 4>> rows;
-    for (size_t i = 0; i < 4; ++i) {
-        const size_t j = (i + 1) % 4;
-        const f32 dx = xs[j] - xs[i];
-        const f32 dy = ys[j] - ys[i];
-        const f32 len = std::sqrt(dx * dx + dy * dy);
-        if (len < 1e-3f) {
-            continue;
-        }
-        const f32 nx = -dy / len * thickness * 0.5f;
-        const f32 ny = dx / len * thickness * 0.5f;
-        const auto edge = convex_rows({xs[i] + nx, xs[j] + nx, xs[j] - nx, xs[i] - nx},
-                                      {ys[i] + ny, ys[j] + ny, ys[j] - ny, ys[i] - ny}, 1.0f);
-        rows.insert(rows.end(), edge.begin(), edge.end());
-    }
-    return rows;
-}
-
 std::vector<std::pair<sim::StructureSite, f32>> structure_pads(const sim::FrameView& view,
                                                                const ReconView* recon) {
     std::vector<std::pair<sim::StructureSite, f32>> pads;
@@ -188,11 +168,39 @@ std::vector<bool> adjacency_lit(const std::vector<sim::StructureSite>& pads,
     return lit;
 }
 
-void OverlayRenderer::emit_outline(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys,
-                                   f32 r, f32 g, f32 b, f32 a) {
-    for (const auto& q : outline_rows(xs, ys, kOutlineThickness)) {
-        emit_quad(q[0], q[1], q[2], q[3], r, g, b, a);
+std::vector<PadOutline> build_outlines(const std::vector<std::pair<sim::StructureSite, f32>>& pads,
+                                       const BuildGhost& ghost) {
+    std::vector<sim::StructureSite> pad_sites;
+    pad_sites.reserve(pads.size());
+    for (const auto& pad : pads) pad_sites.push_back(pad.first);
+    std::vector<const BuildGhost*> sites{&ghost};
+    for (const BuildGhost& site : ghost.line) sites.push_back(&site);
+
+    std::vector<bool> lit(pad_sites.size(), false);
+    std::vector<bool> site_lit(sites.size(), false);
+    for (size_t g = 0; g < sites.size(); ++g) {
+        const BuildGhost& site = *sites[g];
+        if (!site.valid) continue;
+        const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
+        const auto touched = adjacency_lit(pad_sites, site_pad);
+        for (size_t i = 0; i < touched.size(); ++i) {
+            lit[i] = lit[i] || touched[i];
+            site_lit[g] = site_lit[g] || touched[i];
+        }
     }
+    std::vector<PadOutline> out;
+    out.reserve(sites.size() + pads.size());
+    for (size_t g = 0; g < sites.size(); ++g) {
+        const BuildGhost& site = *sites[g];
+        out.push_back({{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1},
+                       site.y,
+                       !site.valid   ? kOutlineInvalid
+                       : site_lit[g] ? kOutlineLit
+                                     : kOutlineDim});
+    }
+    for (size_t i = 0; i < pads.size(); ++i)
+        out.push_back({pads[i].first, pads[i].second, lit[i] ? kOutlineLit : kOutlineDim});
+    return out;
 }
 
 namespace {
@@ -338,7 +346,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                              const Camera& camera, const std::array<f32, 16>& vp_matrix,
                              const std::unordered_set<u32>* selected_ids, TextureCache& tex_cache,
                              u32 viewport_w, u32 viewport_h, i32 game_result, f32 dt,
-                             const Frustum* frustum, const BuildGhost* ghost) {
+                             const Frustum* frustum) {
     quads_.clear();
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
@@ -355,8 +363,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     // Eye position for distance culling
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
-
-    if (ghost) add_build_ghost(view, *ghost, vp_matrix, sw, sh);
 
     // A death draws nothing of the engine's own: its effects are the unit
     // script's (FA's CreateDefault*Explosion emitters, through the particle
@@ -377,60 +383,6 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         u32 count = std::min(quad_count_, MAX_OVERLAY_QUADS);
         std::memcpy(instance_mapped_[fi_], quads_.data(),
                     count * sizeof(UIInstance));
-    }
-}
-
-void OverlayRenderer::add_build_ghost(const sim::FrameView& view, const BuildGhost& ghost,
-                                      const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh) {
-    constexpr f32 kDim = 216.0f / 255.0f;
-    const auto pads = structure_pads(view, recon_);
-    std::vector<sim::StructureSite> pad_sites;
-    pad_sites.reserve(pads.size());
-    for (const auto& pad : pads) {
-        pad_sites.push_back(pad.first);
-    }
-    std::vector<const BuildGhost*> ghost_sites{&ghost};
-    for (const BuildGhost& site : ghost.line) {
-        ghost_sites.push_back(&site);
-    }
-    std::vector<bool> lit(pad_sites.size(), false);
-    std::vector<bool> ghost_lit(ghost_sites.size(), false);
-    for (size_t ghost_index = 0; ghost_index < ghost_sites.size(); ++ghost_index) {
-        const BuildGhost& site = *ghost_sites[ghost_index];
-        if (!site.valid) continue;
-        const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
-        const auto site_lit = adjacency_lit(pad_sites, site_pad);
-        for (size_t pad_index = 0; pad_index < site_lit.size(); ++pad_index) {
-            lit[pad_index] = lit[pad_index] || site_lit[pad_index];
-            ghost_lit[ghost_index] = ghost_lit[ghost_index] || site_lit[pad_index];
-        }
-    }
-    const auto outline = [&](const sim::StructureSite& pad, f32 y, f32 r, f32 g, f32 a) {
-        const std::array<std::array<f32, 2>, 4> corners = {
-            {{pad.x0, pad.z0}, {pad.x1, pad.z0}, {pad.x1, pad.z1}, {pad.x0, pad.z1}}};
-        std::array<f32, 4> xs{};
-        std::array<f32, 4> ys{};
-        for (size_t i = 0; i < 4; ++i) {
-            if (!world_to_screen(corners[i][0], y, corners[i][1], vp_matrix, sw, sh, xs[i],
-                                 ys[i])) {
-                return;
-            }
-        }
-        emit_outline(xs, ys, r, g, 0.0f, a);
-    };
-    for (size_t i = 0; i < ghost_sites.size(); ++i) {
-        const BuildGhost& site = *ghost_sites[i];
-        const sim::StructureSite site_pad{site.pad_x0, site.pad_z0, site.pad_x1, site.pad_z1};
-        if (!site.valid) {
-            outline(site_pad, site.y, kDim, 0.0f, kDim);
-        } else if (ghost_lit[i]) {
-            outline(site_pad, site.y, 0.0f, 1.0f, 1.0f);
-        } else {
-            outline(site_pad, site.y, 0.0f, kDim, kDim);
-        }
-    }
-    for (size_t i = 0; i < pads.size(); ++i) {
-        outline(pads[i].first, pads[i].second, 0.0f, lit[i] ? 1.0f : kDim, lit[i] ? 1.0f : kDim);
     }
 }
 
@@ -754,30 +706,25 @@ void OverlayRenderer::add_game_over_banner(i32 game_result, f32 sw, f32 sh) {
     emit_quad(hx, hy, hint_w, hint_h, 0.1f, 0.1f, 0.15f, 0.7f);
 }
 
-void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
-                             u32 viewport_h, f32 scale) {
-    if (quad_count_ == 0 || !white_ds_) return;
+void OverlayRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, const Drawn& drawn,
+                             const VkRect2D& area, f32 scale) const {
+    if (drawn.quads == 0 || !white_ds_) {
+        return;
+    }
 
-    // Push viewport size (same format as UI pipeline)
-    f32 vp[2] = {static_cast<f32>(viewport_w) / scale, static_cast<f32>(viewport_h) / scale};
+    f32 vp[2] = {static_cast<f32>(area.extent.width) / scale,
+                 static_cast<f32>(area.extent.height) / scale};
     vkc::push_constants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
+    vkc::set_area(cmd, area);
 
-    // Full-screen scissor
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-    // Bind white texture
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &white_ds_, 0,
                               nullptr);
 
-    // Bind instance buffer
-    VkBuffer buf = instance_buf_[fi_].buffer;
+    VkBuffer buf = instance_buf_[drawn.slot].buffer;
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buf, &offset);
 
-    // Draw all quads (6 verts per quad, instanced)
-    vkc::draw(cmd, 6, quad_count_, 0, 0);
+    vkc::draw(cmd, 6, drawn.quads, 0, 0);
 }
 
 } // namespace osc::renderer

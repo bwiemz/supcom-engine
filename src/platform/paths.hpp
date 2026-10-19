@@ -18,8 +18,10 @@ EnvLookup system_env();
 /// (so the user's own setting always wins). Returns true if it was set.
 bool set_env_default(const char* name, const std::string& value);
 
-/// Per-user directories. On Windows these are the Known Folders; on POSIX
-/// they follow the XDG Base Directory spec.
+/// Per-user directories. On Windows these are the Known Folders; on Linux
+/// they follow the XDG Base Directory spec; on macOS they default to
+/// ~/Library/Application Support (~/Library/Caches for the cache), XDG
+/// variables overriding as on Linux.
 enum class KnownFolder {
     Documents,    ///< FA's SHGetFolderPath('PERSONAL'): "My Games/..." lives here
     LocalAppData, ///< FA's SHGetFolderPath('LOCAL_APPDATA'): prefs, cache

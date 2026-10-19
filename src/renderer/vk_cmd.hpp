@@ -63,6 +63,17 @@ inline void bind_descriptor_sets(VkCommandBuffer cmd, VkPipelineBindPoint point,
                             dynamic_offsets);
 }
 
+inline void set_area(VkCommandBuffer cmd, const VkRect2D& area) {
+    VkViewport viewport{};
+    viewport.x = static_cast<f32>(area.offset.x);
+    viewport.y = static_cast<f32>(area.offset.y);
+    viewport.width = static_cast<f32>(area.extent.width);
+    viewport.height = static_cast<f32>(area.extent.height);
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &area);
+}
+
 inline void push_constants(VkCommandBuffer cmd, VkPipelineLayout layout, VkShaderStageFlags stages,
                            u32 offset, u32 size, const void* values) {
     ++command_counts().push_constants;

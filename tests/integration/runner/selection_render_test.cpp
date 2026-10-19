@@ -15,6 +15,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/selection_renderer.hpp"
 #include "renderer/unit_renderer.hpp"
+#include "renderer/vision_renderer.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
@@ -28,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace osc::test {
 
@@ -58,6 +60,41 @@ std::optional<std::array<f32, 3>> mesh_colour_at(const renderer::Renderer& r,
 
 bool ends_with(const std::string& s, const std::string& tail) {
     return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+/// The pixels (x0, y0, x1, y1) that `points` span on `r`'s frame
+std::array<int, 4> screen_area(const renderer::Renderer& r,
+                               const std::vector<sim::Vector3>& points) {
+    const f32 w = static_cast<f32>(r.width());
+    const f32 h = static_cast<f32>(r.height());
+    const auto view = r.camera().view_proj(w / std::max(h, 1.0f));
+    std::array<f32, 4> area = {w, h, 0, 0};
+    for (const auto& p : points) {
+        if (const auto s = renderer::screen_point(view, p, w, h)) {
+            area = {std::min(area[0], (*s)[0]), std::min(area[1], (*s)[1]),
+                    std::max(area[2], (*s)[0]), std::max(area[3], (*s)[1])};
+        }
+    }
+    return {std::max(0, static_cast<int>(area[0])), std::max(0, static_cast<int>(area[1])),
+            std::min(static_cast<int>(w) - 1, static_cast<int>(area[2])),
+            std::min(static_cast<int>(h) - 1, static_cast<int>(area[3]))};
+}
+
+std::vector<sim::Vector3> tile_corners(const renderer::SelectionRenderer::Bracket& b) {
+    std::vector<sim::Vector3> out;
+    for (const auto& tile : renderer::bracket_quads(b.box, b.corner)) {
+        out.insert(out.end(), tile.begin(), tile.end());
+    }
+    return out;
+}
+
+int colour_gap(const ImageRGBA8& a, const ImageRGBA8& b, size_t i) {
+    int gap = 0;
+    for (size_t c = 0; c < 3; ++c) {
+        gap = std::max(
+            gap, std::abs(static_cast<int>(a.pixels[i + c]) - static_cast<int>(b.pixels[i + c])));
+    }
+    return gap;
 }
 
 } // namespace
@@ -299,6 +336,146 @@ void test_selection_render(TestContext& ctx) {
             fmt::format("Test 12: a drag box holds the aircraft where it is drawn ({}), not "
                         "where the ground under it is ({})",
                         boxed_air, boxed_ground));
+
+    // Test 13: brackets are tested against the scene's depth
+    const u32 walls = spawn_unit(ctx, "__osc_sel_pg", "ueb1301", "ARMY_1", {sx + 30, sz + 40});
+    const auto* we = ctx.sim.entity_registry().find(walls);
+    const sim::Vector3 wp = we ? we->position() : sim::Vector3{sx + 30, 0, sz + 40};
+    const u32 inside = spawn_unit(ctx, "__osc_sel_in", "uel0105", "ARMY_1", {wp.x, wp.z});
+    const u32 outside = spawn_unit(ctx, "__osc_sel_out", "uel0105", "ARMY_1", {sx + 30, sz + 50});
+    ctx.sim.tick();
+    shots.recapture();
+    const auto bracket_pixels = [&](u32 id) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        const sim::Vector3 p = e ? e->position() : sim::Vector3{};
+        (void)shots.shoot_frame(*ctx.sim.terrain(), p.x, p.z, 25.0f);
+        const std::unordered_set<u32> one{id};
+        const ImageRGBA8 plain = shots.grab();
+        const ImageRGBA8 marked = shots.grab(&one);
+        const auto* b = bracket_of(r, id);
+        if (!b || plain.width == 0 || plain.pixels.size() != marked.pixels.size()) {
+            return -1;
+        }
+        const auto [x0, y0, x1, y1] = screen_area(r, tile_corners(*b));
+        const int width = static_cast<int>(plain.width);
+        int n = 0;
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                const size_t i = static_cast<size_t>(y * width + x) * 4;
+                if (marked.pixels[i + 2] > plain.pixels[i + 2] + 25) {
+                    ++n;
+                }
+            }
+        }
+        return n;
+    };
+    const int open = bracket_pixels(outside);
+    const int walled = bracket_pixels(inside);
+    t.check(walls != 0 && open > 20 && walled == 0,
+            fmt::format("Test 13: brackets behind a mesh are hidden: {} pixels of an engineer's "
+                        "in the open, {} of one's inside a power generator",
+                        open, walled));
+
+    // Test 14: the fog of war is drawn over the brackets
+    r.set_unit_bars(false);
+    run_lua(ctx, "__osc_sel_air:Destroy()");
+    ctx.sim.tick();
+    const u32 wall = spawn_unit(ctx, "__osc_sel_wall", "ueb5101", "ARMY_1", {sx - 25, sz + 65});
+    shots.recapture();
+    seen.capture(ctx.sim);
+    seen.capture(ctx.sim);
+    const auto* wall_e = ctx.sim.entity_registry().find(wall);
+    const sim::Vector3 wl = wall_e ? wall_e->position() : sim::Vector3{sx - 25, 0, sz + 65};
+    bool unseen = true;
+    for (const auto& c :
+         renderer::vision_circles(sim::FrameView(&seen.prev(), &seen.cur(), 1.0f), 0)) {
+        const f32 dx = c.x - wl.x;
+        const f32 dz = c.z - wl.z;
+        if (dx * dx + dz * dz < c.outer * c.outer) {
+            unseen = false;
+        }
+    }
+    (void)shots.shoot_frame(*ctx.sim.terrain(), wl.x, wl.z, 20.0f);
+    const std::unordered_set<u32> wall_set{wall};
+    r.set_fog_enabled(true);
+    const ImageRGBA8 fog_plain = shots.grab();
+    const ImageRGBA8 fog_marked = shots.grab(&wall_set);
+    r.set_fog_enabled(false);
+    const ImageRGBA8 lit_plain = shots.grab();
+    const ImageRGBA8 lit_marked = shots.grab(&wall_set);
+    std::vector<f32> dimmed;
+    const auto* wb = bracket_of(r, wall);
+    if (wb && lit_plain.pixels.size() == fog_marked.pixels.size()) {
+        const auto [x0, y0, x1, y1] = screen_area(r, tile_corners(*wb));
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                const size_t i = static_cast<size_t>(y * static_cast<int>(lit_plain.width) + x) * 4;
+                if (lit_marked.pixels[i + 2] > lit_plain.pixels[i + 2] + 25) {
+                    dimmed.push_back(static_cast<f32>(fog_marked.pixels[i + 2]) /
+                                     static_cast<f32>(lit_marked.pixels[i + 2]));
+                }
+            }
+        }
+    }
+    const f32 dim = dimmed.empty() ? 1.0f : median(dimmed);
+    t.check(unseen && dimmed.size() >= 20 && dim < 0.8f,
+            fmt::format("Test 14: a wall's brackets out of sight ({}) are darkened by the fog of "
+                        "war: {} pixels, their blue {:.2f} of the lit ones'",
+                        unseen ? "unseen" : "seen", dimmed.size(), dim));
+
+    // Test 15: the brackets write their depth where their texture shows
+    const u32 high = spawn_unit(ctx, "__osc_sel_hi", "uel0105", "ARMY_1", {sx + 45, sz + 20}, 1.0f);
+    shots.recapture();
+    const auto* high_e = ctx.sim.entity_registry().find(high);
+    const sim::Vector3 hp = high_e ? high_e->position() : sim::Vector3{sx + 45, 0, sz + 20};
+    (void)shots.shoot_frame(*ctx.sim.terrain(), hp.x, hp.z, 20.0f);
+    r.camera().eye_position(eye.x, eye.y, eye.z);
+    const sim::Vector3 ray = {hp.x - eye.x, hp.y - eye.y, hp.z - eye.z};
+    const f32 beyond = (hp.y - ctx.sim.terrain()->get_terrain_height(hp.x, hp.z)) / -ray.y;
+    const u32 low = spawn_unit(ctx, "__osc_sel_lo", "uel0105", "ARMY_2",
+                               {hp.x + ray.x * beyond, hp.z + ray.z * beyond});
+    shots.recapture();
+    const std::unordered_set<u32> upper_set{high};
+    const ImageRGBA8 unmarked = shots.grab();
+    const ImageRGBA8 upper = shots.grab(&upper_set);
+    r.set_selection_marks(low, std::nullopt);
+    const ImageRGBA8 lower = shots.grab();
+    const ImageRGBA8 stacked = shots.grab(&upper_set);
+    const auto* hb = bracket_of(r, high);
+    r.set_selection_marks(0, std::nullopt);
+    r.set_unit_bars(true);
+    int overlap = 0;
+    int upper_shown = 0;
+    int clear = 0;
+    int lower_shown = 0;
+    if (hb && unmarked.pixels.size() == stacked.pixels.size()) {
+        const auto [x0, y0, x1, y1] = screen_area(r, tile_corners(*hb));
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                const size_t i = static_cast<size_t>(y * static_cast<int>(unmarked.width) + x) * 4;
+                if (colour_gap(lower, unmarked, i) <= 40) {
+                    continue;
+                }
+                if (colour_gap(upper, unmarked, i) > 40) {
+                    ++overlap;
+                    if (colour_gap(stacked, upper, i) < colour_gap(stacked, lower, i)) {
+                        ++upper_shown;
+                    }
+                } else if (colour_gap(upper, unmarked, i) == 0) {
+                    ++clear;
+                    if (colour_gap(stacked, lower, i) < colour_gap(stacked, unmarked, i)) {
+                        ++lower_shown;
+                    }
+                }
+            }
+        }
+    }
+    t.check(overlap >= 10 && upper_shown * 10 >= overlap * 9 && clear >= 10 &&
+                lower_shown * 10 >= clear * 9,
+            fmt::format("Test 15: a hovered unit's brackets beneath a selected one's: hidden "
+                        "under its strokes at {} of {} pixels, shown through its clear texels "
+                        "at {} of {}",
+                        upper_shown, overlap, lower_shown, clear));
 
     spdlog::info("Selection test: {}/{} passed", t.pass, t.pass + t.fail);
 }

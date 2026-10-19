@@ -166,17 +166,10 @@ void RangeRenderer::update(const std::vector<RangeBatch>& batches,
         std::memcpy(band_mapped_[fi], bands_.data(), sizeof(RangeRing) * bands_.size());
 }
 
-void RangeRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                           const f32* view_proj, u32 fi) const {
+void RangeRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                           u32 fi) const {
     if (drawn_.empty() || !cast_ || !mask_ || !fill_ || !burn_ || !band_buf_[fi].buffer) return;
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(viewport_w);
-    viewport.height = static_cast<f32>(viewport_h);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkc::set_area(cmd, area);
 
     CastPush push{};
     std::memcpy(push.view_proj, view_proj, sizeof(push.view_proj));
@@ -212,7 +205,7 @@ void RangeRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
         clear.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
         clear.clearValue.depthStencil = {1.0f, 0};
         VkClearRect rect{};
-        rect.rect = scissor;
+        rect.rect = area;
         rect.layerCount = 1;
         vkCmdClearAttachments(cmd, 1, &clear, 1, &rect);
     }

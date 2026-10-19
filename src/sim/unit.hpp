@@ -732,6 +732,21 @@ public:
     i32 silo_blocks() const { return silo_blocks_; }
     /// An assisting engineer's build power, `rate`, on the missile under way.
     void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
+    /// The silo whose missile this unit's Guard helps build, else 0.
+    u32 silo_assist_id() const { return silo_assist_id_; }
+    /// What it works on (Moho's CBuildTaskHelper focus), else 0.
+    u32 focus_id() const {
+        if (build_target_id_ != 0) {
+            return build_target_id_;
+        }
+        if (capture_target_id_ != 0) {
+            return capture_target_id_;
+        }
+        if (silo_assist_id_ != 0) {
+            return silo_assist_id_;
+        }
+        return repair_target_id_;
+    }
 
     /// The weapon a launch order uses: the first enabled one with ManualFire
     /// and CountedProjectile (a NukeWeapon for a nuke), OverCharge aside.
@@ -1510,11 +1525,15 @@ private:
     /// targets of an immobile NeedUnpack unit, so its weapon packs up and
     /// the unit can go.
     void begin_order(UnitCommand& cmd, lua_State* L);
+    /// Moho's CAiAttackerImpl::SetDesiredTarget: every weapon drops its
+    /// target. False when a script took the unit or the order.
+    bool engage(UnitCommand& cmd, lua_State* L);
     /// Coasting, amphibious layer changes, fuel.
     bool tick_after_orders(f64 dt, SimContext& ctx);
     /// A silo assist ended, regeneration, the silo, motion events, weapons,
     /// manipulators. Runs while paused too.
-    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff);
+    void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
 
@@ -1920,7 +1939,8 @@ private:
     std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
     SiloBuild silo_build_;
     i32 silo_blocks_ = 0;
-    bool assisting_silo_ = false; // this tick, a Guard lent a silo its build power
+    u32 silo_assist_id_ = 0;           // the silo a Guard lends its build power, Repairing it
+    bool silo_assist_renewed_ = false; // ...lent this tick
     // Orders handed to the script (M206d): a teleport charging (and the snap
     // count its warp will change), an OverCharge weapon switched on.
     bool teleporting_ = false;

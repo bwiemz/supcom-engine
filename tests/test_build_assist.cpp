@@ -203,6 +203,31 @@ TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothin
     CHECK(w.log() == stopped);
 }
 
+TEST_CASE("A guard's help ends with OnStopBuild when what it guards is gone", "[build][assist]") {
+    // An upgrade's end: the structure upgrading destroys itself once the
+    // new one stands, and its helpers' guards go with it. Each helper's
+    // script must hear its build stop (retail's OnStopBuild ends the build
+    // effects and the commander's build pose); it had gone on building in
+    // silence until some later build order.
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    for (int i = 0; i < 3; ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(helper->is_building());
+    w.log();
+    const osc::u32 id = eng->entity_id();
+    eng->mark_destroyed();
+    w.sim.entity_registry().unregister_entity(id);
+    w.sim.tick();
+    CHECK(w.log() == "helper stop");
+    CHECK_FALSE(helper->is_building());
+    CHECK(helper->command_queue().empty());
+}
+
 TEST_CASE("A guard helping a build aims its arm at what it helps build", "[build][assist]") {
     AssistSim w;
     Unit* eng = w.engineer("eng", 16.0f);
@@ -465,4 +490,34 @@ TEST_CASE("Repairing a script set goes when a repair of a unit under constructio
     }
     REQUIRE(w.site->fraction_complete() == 1.0f);
     CHECK_FALSE(eng->has_unit_state("Repairing"));
+}
+
+TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is done or stopped",
+          "[build][assist][repair]") {
+    AssistSim w;
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(50.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->is_repairing());
+    CHECK(eng->focus_id() == w.site->entity_id());
+    for (int i = 0; i < 200 && eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(w.site->health() == w.site->max_health());
+    CHECK(eng->focus_id() == 0);
+
+    w.site->set_health(50.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 2), true);
+    for (int i = 0; i < 3 && !eng->is_repairing(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->focus_id() == w.site->entity_id());
+    eng->push_command(order(CommandType::Stop, *w.site, 3), true);
+    w.sim.tick();
+    CHECK(eng->focus_id() == 0);
 }

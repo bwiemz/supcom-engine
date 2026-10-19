@@ -120,6 +120,7 @@ add_executable(osc_tests
     test_camera_basis.cpp
     test_camera_moves.cpp
     test_camera_ortho.cpp
+    test_scene_views.cpp
     test_window_mode.cpp
     test_console_vars.cpp
     test_team_color_lookup.cpp
@@ -188,6 +189,7 @@ add_executable(osc_tests
     test_command_sources.cpp
     test_sim_rand.cpp
     test_video_decoder.cpp
+    test_vulkan_layer.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

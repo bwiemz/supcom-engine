@@ -51,6 +51,9 @@ public:
     /// square from `corner` to corner + (size, 0, size), the thickness (at
     /// least two pixels) wide across its edges, mitred at its corners.
     void rect(const sim::Vector3& corner, f32 size, u32 color, f32 thickness);
+    /// DRAW_Rect's border round the box from `corner` to corner + (size_x,
+    /// 0, size_z): a rect of any aspect, mitred alike at its corners.
+    void box(const sim::Vector3& corner, f32 size_x, f32 size_z, u32 color, f32 thickness);
 
     const std::vector<ShapeQuad>& quads() const { return quads_; }
 

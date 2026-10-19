@@ -340,11 +340,20 @@ static int weapon_SetOnTransport(lua_State* L) {
 
 static int weapon_GetProjectileBlueprint(lua_State* L) {
     auto* w = check_weapon(L);
-    if (w && !w->projectile_bp_id.empty()) {
-        lua_pushstring(L, w->projectile_bp_id.c_str());
-    } else {
+    if (!w || w->projectile_bp_id.empty()) {
         lua_pushnil(L);
+        return 1;
     }
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, w->projectile_bp_id.c_str());
+    lua_rawget(L, -2);
+    lua_remove(L, -2);
     return 1;
 }
 

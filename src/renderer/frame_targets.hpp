@@ -41,6 +41,10 @@ public:
     VkRenderPass first_pass() const { return scene_first_pass_; }
     VkRenderPass second_pass() const { return scene_second_pass_; }
     VkRenderPass middle_pass() const { return scene_middle_pass_; }
+    /// The scene's pass and its first pass for a second view: they clear
+    /// only their render area and keep the first view's drawing.
+    VkRenderPass next_view_pass() const { return next_view_pass_; }
+    VkRenderPass next_view_first_pass() const { return next_view_first_pass_; }
 
     /// The scene's framebuffer, the reflection's and the normal pass's, all
     /// on the frame's depth.
@@ -59,6 +63,8 @@ private:
     VkRenderPass scene_first_pass_ = VK_NULL_HANDLE;
     VkRenderPass scene_second_pass_ = VK_NULL_HANDLE;
     VkRenderPass scene_middle_pass_ = VK_NULL_HANDLE;
+    VkRenderPass next_view_pass_ = VK_NULL_HANDLE;
+    VkRenderPass next_view_first_pass_ = VK_NULL_HANDLE;
     VkFramebuffer scene_framebuffer_ = VK_NULL_HANDLE;
     VkFramebuffer reflection_framebuffer_ = VK_NULL_HANDLE;
     VkFramebuffer terrain_normal_framebuffer_ = VK_NULL_HANDLE;

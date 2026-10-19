@@ -92,6 +92,9 @@ public:
 
     /// This frame's input from the window, then apply().
     void update(GLFWwindow* window, f64 dt);
+    CameraInput read_input(GLFWwindow* window) const;
+    /// Moho's camera variables are global.
+    void copy_options(const Camera& from);
     /// The world view's input for this frame (CUIWorldView::Frame and
     /// HandleEvent): keyboard pan and spin, Space spin and its revert, the
     /// middle-button drag. Then frame().
@@ -262,6 +265,7 @@ public:
     /// When false, the mouse's drags aren't the world view's: it is over a UI
     /// control.
     void set_mouse_enabled(bool enabled) { mouse_enabled_ = enabled; }
+    bool input_enabled() const { return input_enabled_; }
     /// Whether the mouse is the world view's now (the wheel's zoom).
     bool accepts_mouse() const { return input_enabled_ && mouse_enabled_; }
 

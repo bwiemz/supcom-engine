@@ -218,13 +218,12 @@ public:
     /// Build this frame's strips for the units in `selected` (may be null).
     /// `L` is the UI state, whose CommandGraphParams give the styles (read
     /// once); `time` in seconds scrolls an animated line. `shown`: Shift is
-    /// held.
+    /// held; the strips draw only then, the planned sites are kept either way.
     void update(const sim::FrameView& view, const Camera& camera,
                 const std::unordered_set<u32>* selected, i32 player_army, TextureCache& tex_cache,
                 lua_State* L, f32 time, u32 viewport_h, bool shown, u32 fi);
 
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
-                u32 fi) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

@@ -57,9 +57,26 @@ std::vector<bool> adjacency_lit(const std::vector<sim::StructureSite>& pads,
                                 const sim::StructureSite& ghost);
 
 /// The outline of a quad on screen (corners in order), `thickness` wide, as
-/// convex_rows' rows of a pixel
-std::vector<std::array<f32, 4>> outline_rows(const std::array<f32, 4>& xs,
-                                             const std::array<f32, 4>& ys, f32 thickness);
+/// A pad outlined while a structure is placed: on the ground at `y`, in a
+/// packed ARGB colour
+struct PadOutline {
+    sim::StructureSite site;
+    f32 y = 0;
+    u32 color = 0;
+};
+/// Outline colours: bright where a site that can be built and a structure
+/// would be adjacent, dim otherwise; a site that can't be built is dim red
+inline constexpr u32 kOutlineLit = 0xFF00FF00u;
+inline constexpr u32 kOutlineDim = 0xD800D800u;
+inline constexpr u32 kOutlineInvalid = 0xD8D80000u;
+
+/// The adjacency outlines while placing a build (`ghost` and its line): each
+/// site's pad, then the `pads` of the structures standing or under way
+/// (structure_pads). Drawn as world shapes, four quads each: the
+/// screen-space overlay had spent a quad per pixel row of every pad in the
+/// world, and ran out of its budget in a built-up base.
+std::vector<PadOutline> build_outlines(const std::vector<std::pair<sim::StructureSite, f32>>& pads,
+                                       const BuildGhost& ghost);
 
 /// Renders game overlays: health bars, selection rings, command lines.
 /// Uses the same UI pipeline (UIInstance quads, pixel coords, fallback white texture).
@@ -74,11 +91,17 @@ public:
     void update(const sim::FrameView& view, sim::WorldEvents& events, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix, const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache, u32 viewport_w, u32 viewport_h, i32 game_result = 0,
-                f32 dt = 0.0f, const Frustum* frustum = nullptr, const BuildGhost* ghost = nullptr);
+                f32 dt = 0.0f, const Frustum* frustum = nullptr);
+
+    struct Drawn {
+        u32 quads = 0;
+        u32 slot = 0;
+    };
+    Drawn drawn() const { return {quad_count_, fi_}; }
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
-    void render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w, u32 viewport_h,
-                f32 scale = 1.0f);
+    void render(VkCommandBuffer cmd, VkPipelineLayout layout, const Drawn& drawn,
+                const VkRect2D& area, f32 scale = 1.0f) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
@@ -140,13 +163,6 @@ private:
     void emit_argb(f32 left, f32 top, f32 right, f32 bottom, u32 argb);
     // The frame's overlays, in update's order. `vp_matrix`, `sw` and `sh`
     // project world to screen.
-    /// The adjacency outlines while placing a build (`ghost` and its line):
-    /// each site's pad and the pads of the structures standing or under way
-    /// that the player sees (structure_pads), bright where a site that can be
-    /// built and a structure would be adjacent, dim otherwise; a site that
-    /// can't be built is dim magenta.
-    void add_build_ghost(const sim::FrameView& view, const BuildGhost& ghost,
-                         const std::array<f32, 16>& vp_matrix, f32 sw, f32 sh);
     /// Each unit in view: its lifebars, veterancy chevrons and cargo dots.
     void add_unit_overlays(const sim::FrameView& view, const sim::WorldSnapshot& snap,
                            const Camera& camera, const std::array<f32, 16>& vp_matrix,
@@ -174,10 +190,6 @@ private:
                        const std::array<f32, 16>& vp, f32 sw, f32 sh, f64 sim_time);
     /// A line, as line_runs lays it
     void emit_line(f32 x0, f32 y0, f32 x1, f32 y1, f32 thick, f32 r, f32 g, f32 b, f32 a);
-    /// A placement outline's width, pixels
-    static constexpr f32 kOutlineThickness = 2.0f;
-    void emit_outline(const std::array<f32, 4>& xs, const std::array<f32, 4>& ys, f32 r, f32 g,
-                      f32 b, f32 a);
 
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};

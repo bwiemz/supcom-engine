@@ -52,8 +52,7 @@ public:
 
     /// The fog, in a pass with a depth buffer that has a stencil; the
     /// stencil is cleared first and left as the circles counted it.
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
-                u32 fi) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, u32 fi) const;
 
     /// What the last update() drew (tests read it)
     const std::vector<RangeRing>& circles() const { return circles_; }

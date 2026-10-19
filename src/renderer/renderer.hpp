@@ -7,6 +7,7 @@
 #include "renderer/gpu_queries.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/scene_views.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
 #include "renderer/terrain_time.hpp"
@@ -207,6 +208,15 @@ public:
 
     Camera& camera() { return camera_; }
     const Camera& camera() const { return camera_; }
+    CameraSet& cameras() { return cameras_; }
+    Camera& add_camera(const std::string& name);
+    std::vector<SceneView> drawn_views() const;
+    SceneView view_at(f32 x, f32 y) const;
+    SceneView view_of(const Camera* camera) const;
+    std::vector<SceneView> ui_views() const;
+    SceneView ui_view_at(f32 x, f32 y) const;
+    SceneView ui_view_of(const Camera* camera) const;
+    void set_mouse_over_ui(bool over) { mouse_over_ui_ = over; }
     /// The player's army (0-based), whose fog of war and intel the view
     /// shows; -1 for an observer, who sees everything.
     void set_player_army(i32 army) { player_army_ = army; }
@@ -692,10 +702,11 @@ private:
     /// overlays, the water's, sky's and terrain's time, the scripts' decals,
     /// the legacy HUD, the strategic icons and the profile overlay -- in that
     /// order, into frame slot `fi`'s buffers.
-    /// FAF's world drawing: the main world view's OnRenderWorld(self,
-    /// delta), with its custom rendering on (SetCustomRender), collecting
-    /// the shapes UI_DrawLine and its kin draw; into frame slot `fi`.
-    void update_world_shapes(lua_State* L, u32 fi);
+    /// FAF's world drawing: the drawn view's OnRenderWorld(self, delta),
+    /// with its custom rendering on (SetCustomRender), collecting the shapes
+    /// UI_DrawLine and its kin draw; into frame slot `fi`.
+    void update_world_shapes(lua_State* L, const sim::FrameView& frame, const Frustum& frustum,
+                             const BuildGhost* ghost, u32 fi);
     void update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
                             const sim::FrameView& view, sim::WorldEvents& events,
                             const BuildGhost* ghost, lua_State* L,
@@ -708,11 +719,25 @@ private:
                                  const std::unordered_set<u32>* selected_ids, f32 span, u32 fi);
     /// The minimap's rings and fog into its cartographic frame (record()'s
     /// overlays), frame slot `fi`'s.
-    void draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, u32 width, u32 height,
+    void draw_minimap_overlays(VkCommandBuffer cmd, const f32* view_proj, const VkRect2D& area,
                                u32 fi) const;
     /// The heights the range and fog volumes span: from 5 below the map's
     /// lowest point to its highest (FAF's Sim::Create_exxt).
     void set_volume_heights(const map::Heightmap& heights);
+    void update_view_units(u32 fi, const Frustum& frustum, const sim::FrameView& view,
+                           const BuildGhost* ghost, lua_State* L,
+                           const std::unordered_set<u32>* selected_ids);
+    void update_view_effects(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
+                             const sim::FrameView& view, sim::WorldEvents& events,
+                             const BuildGhost* ghost, lua_State* L,
+                             const std::unordered_set<u32>* selected_ids, bool primary);
+    void record_view(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum, f32 ticks,
+                     bool after_another);
+    void keep_scene_drawn();
+    void use_view(const SceneView& view);
+    f32 view_aspect() const;
+    std::array<u32, 2> view_points() const;
+    void set_frame_slot(u32 fi);
 
     // A frame's command stages, in render()'s order (render_ui_only takes the
     // first, the swapchain pass and the last).
@@ -738,7 +763,7 @@ private:
     /// the meshes either side of the water, the effects, the order lines and
     /// selection, the refracting effects. Its pass is left open (the
     /// composite ends it).
-    void record_main_pass(u32 fi, const std::array<f32, 16>& vp);
+    void record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool after_another);
     /// A cartographic main view's scene in its place, in the open pass (the
     /// rest of Moho's Cartographic::Render): the frame's Stage 1, the light
     /// particles, then the world view's own drawing. No sky, terrain, water,
@@ -772,9 +797,13 @@ private:
                                                 VkPipelineLayout* layout);
     /// The minimap's set of them, once the cartographic renderer is made.
     void create_minimap_mesh_pipelines();
+    struct ScreenLayers {
+        VkRect2D area{};
+        OverlayRenderer::Drawn overlays;
+    };
     /// The screen's 2D layers over the composited scene: the overlays, the
     /// legacy HUD, FA's interface, then the profile overlay on top.
-    void record_screen_layers(u32 fi);
+    void record_screen_layers(const std::vector<ScreenLayers>& views);
     /// End slot `fi`'s commands, submit them and present `image_index`,
     /// delivering the captures recorded (`capturing`, `scene_capturing`)
     /// once it is presented, and move on to the next slot. A `world` frame
@@ -1011,6 +1040,18 @@ private:
     TextureCache texture_cache_;
     FontCache font_cache_;
     Camera camera_;
+    CameraSet cameras_{camera_};
+    std::vector<SceneView> scene_views_;
+    Camera* view_camera_ = &camera_;
+    const ui::WorldView* view_world_view_ = nullptr;
+    VkRect2D view_area_{};
+    bool view_resources_ = true;
+    std::vector<WorldMeshDraw> world_meshes_;
+    std::vector<std::string> border_meshes_;
+    bool split_ = false;
+    bool split_last_frame_ = false;
+    bool mouse_over_ui_ = false;
+    VkCommandBuffer cmd_ = VK_NULL_HANDLE;
     i32 player_army_ = 0;
     ReconView recon_;
     UserPlayableRect playable_rect_;
@@ -1220,6 +1261,7 @@ private:
     DeletionQueue deletion_queue_;
     bool initialized_ = false;
     bool caches_initialized_ = false;
+    ui::UIControlRegistry* frame_ui_registry_ = nullptr;
 };
 
 } // namespace osc::renderer

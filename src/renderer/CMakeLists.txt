@@ -14,6 +14,7 @@ add_library(osc_renderer STATIC
     dds_parser.cpp
     dds_decode.cpp
     camera.cpp
+    scene_views.cpp
     frustum.cpp
     shadow_camera.cpp
     shadow_map.cpp
@@ -89,9 +90,20 @@ target_link_libraries(osc_renderer PRIVATE osc::warnings)
 # (manifest feature "vulkan-validation"), so validation works without a
 # system-wide SDK. Absent the feature, a system-installed layer is used.
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-    set(_osc_vvl_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/vulkan/explicit_layer.d")
+    set(_osc_vcpkg_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    set(_osc_vvl_dir "${_osc_vcpkg_dir}/share/vulkan/explicit_layer.d")
     if(EXISTS "${_osc_vvl_dir}/VkLayer_khronos_validation.json")
-        target_compile_definitions(osc_renderer PRIVATE
+        # The installed manifest names its library bare, for the system's library
+        # search, which vcpkg's lib/ is not on: a copy names it by its full path.
+        file(READ "${_osc_vvl_dir}/VkLayer_khronos_validation.json" _osc_vvl_manifest)
+        string(JSON _osc_vvl_lib GET "${_osc_vvl_manifest}" layer library_path)
+        if(NOT _osc_vvl_lib MATCHES "[/\\\\]" AND EXISTS "${_osc_vcpkg_dir}/lib/${_osc_vvl_lib}")
+            string(JSON _osc_vvl_manifest SET "${_osc_vvl_manifest}"
+                layer library_path "\"${_osc_vcpkg_dir}/lib/${_osc_vvl_lib}\"")
+            set(_osc_vvl_dir "${CMAKE_CURRENT_BINARY_DIR}/explicit_layer.d")
+            file(WRITE "${_osc_vvl_dir}/VkLayer_khronos_validation.json" "${_osc_vvl_manifest}")
+        endif()
+        target_compile_definitions(osc_renderer PUBLIC
             OSC_VULKAN_LAYER_PATH="${_osc_vvl_dir}")
     endif()
 endif()

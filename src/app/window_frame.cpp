@@ -382,7 +382,9 @@ void App::Window::update_ui(double dt) {
     {
         osc::f64 mx = 0, my = 0;
         renderer.ui_mouse_position(mx, my);
-        renderer.camera().set_mouse_enabled(!mouse_over_ui(ui_lua_state.raw(), mx, my));
+        const bool over_ui = mouse_over_ui(ui_lua_state.raw(), mx, my);
+        renderer.set_mouse_over_ui(over_ui);
+        renderer.camera().set_mouse_enabled(!over_ui);
     }
     if (sim_state && sim_state->has_playable_rect()) {
         renderer.camera().set_playable_rect(sim_state->playable_x0(), sim_state->playable_z0(),

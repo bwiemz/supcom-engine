@@ -360,12 +360,10 @@ static int worldview_GetScreenPos(lua_State* L) {
 }
 
 static int worldview_GetsGlobalCameraCommands(lua_State* L) {
-    auto* wv = check_world_view(L);
-    if (wv) {
-        lua_pushboolean(L, wv->gets_global_camera_commands() ? 1 : 0);
-        return 1;
+    if (auto* wv = check_world_view(L)) {
+        wv->set_global_camera_commands(lua_toboolean(L, 2) != 0);
     }
-    lua_pushboolean(L, 0);
+    lua_settop(L, 1);
     return 1;
 }
 
@@ -411,9 +409,9 @@ static int worldview_SetCartographic(lua_State* L) {
         const bool on = lua_toboolean(L, 2) != 0;
         wv->set_cartographic(on);
         // CUIWorldView::SetOrthographic: the view's camera goes orthographic
-        // and stops shaking. Every view here shares the renderer's camera,
-        // and the minimap draws its own frame (cartographic_minimap), so
-        // only a main view's turns it.
+        // and stops shaking. The minimap draws its own frame
+        // (cartographic_minimap) and holds the WorldCamera, so only a main
+        // view's turns it.
         if (!wv->is_minimap() && wv->camera()) wv->camera()->set_ortho(on);
     }
     return 0;

@@ -64,12 +64,18 @@ void WorldShapes::circle(const sim::Vector3& centre, f32 radius, u32 color, f32 
 }
 
 void WorldShapes::rect(const sim::Vector3& corner, f32 size, u32 color, f32 thickness) {
-    // DRAW_Rect with no height field: its four border quads
+    box(corner, size, size, color, thickness);
+}
+
+void WorldShapes::box(const sim::Vector3& corner, f32 size_x, f32 size_z, u32 color,
+                      f32 thickness) {
+    // DRAW_Rect with no height field: its four border quads, the corners
+    // mitred along the diagonals (a square's axes' sum and difference)
     const f32 half = width(corner, thickness) * 0.5f;
-    const sim::Vector3 height_axis{0.0f, 0.0f, size};
-    const sim::Vector3 width_axis{size, 0.0f, 0.0f};
-    const sim::Vector3 outer = with_length(add3(height_axis, width_axis), half);
-    const sim::Vector3 edge = with_length(sub3(height_axis, width_axis), half);
+    const sim::Vector3 height_axis{0.0f, 0.0f, size_z};
+    const sim::Vector3 width_axis{size_x, 0.0f, 0.0f};
+    const sim::Vector3 outer = with_length({1.0f, 0.0f, 1.0f}, half);
+    const sim::Vector3 edge = with_length({-1.0f, 0.0f, 1.0f}, half);
     const sim::Vector3 far = add3(add3(corner, width_axis), height_axis);
     const sim::Vector3 top_outer_left = sub3(corner, outer);
     const sim::Vector3 top_outer_right = sub3(add3(corner, width_axis), edge);

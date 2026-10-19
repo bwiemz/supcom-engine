@@ -162,6 +162,15 @@ void FrameTargets::create(VkDevice device, VmaAllocator allocator, u32 width, u3
             middle[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             rp_ci.pAttachments = middle.data();
             VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_middle_pass_));
+
+            std::array<VkAttachmentDescription, 2> next = attachments;
+            next[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            rp_ci.pAttachments = next.data();
+            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &next_view_pass_));
+            std::array<VkAttachmentDescription, 2> next_first = first;
+            next_first[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            rp_ci.pAttachments = next_first.data();
+            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &next_view_first_pass_));
         }
     }
 
@@ -204,9 +213,17 @@ void FrameTargets::destroy() {
     if (scene_first_pass_) vkDestroyRenderPass(device_, scene_first_pass_, nullptr);
     if (scene_second_pass_) vkDestroyRenderPass(device_, scene_second_pass_, nullptr);
     if (scene_middle_pass_) vkDestroyRenderPass(device_, scene_middle_pass_, nullptr);
+    if (next_view_pass_) {
+        vkDestroyRenderPass(device_, next_view_pass_, nullptr);
+    }
+    if (next_view_first_pass_) {
+        vkDestroyRenderPass(device_, next_view_first_pass_, nullptr);
+    }
     scene_first_pass_ = VK_NULL_HANDLE;
     scene_second_pass_ = VK_NULL_HANDLE;
     scene_middle_pass_ = VK_NULL_HANDLE;
+    next_view_pass_ = VK_NULL_HANDLE;
+    next_view_first_pass_ = VK_NULL_HANDLE;
 
     // Images
     auto destroy_img = [&](AllocatedImage& img) {

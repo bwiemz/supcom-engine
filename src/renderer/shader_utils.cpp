@@ -1017,7 +1017,7 @@ void main() {
 
     // The frame behind, at this pixel.
     float oneOverW = 1.0 / fragScreenPos.w;
-    vec2 screenPos = fragScreenPos.xy * oneOverW * 0.5 + 0.5;
+    vec2 screenPos = gl_FragCoord.xy / vec2(textureSize(refractionMap, 0));
     vec4 background = texture(refractionMap, screenPos);
     float mask = clamp(background.a * 255.0, 0.0, 1.0);
     // Not water (its alpha test): drawn over by nothing.
@@ -2478,6 +2478,24 @@ void main() {
 }
 )glsl";
 
+const char* prim_alpha_test_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D tex;
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec4 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = texture(tex, fragUV) * fragColor;
+    if (outColor.a <= 0.0) {
+        discard;
+    }
+}
+)glsl";
+
 // ---------------------------------------------------------------------------
 // FA's trails (M214b): particle.fx's TrailVS/TrailPS. The ribbon is built on
 // the CPU; each vertex carries its end's age fraction t, V across the ribbon
@@ -2609,7 +2627,8 @@ void main() {
     vec2 rampUV = clamp(fragRamp, rampHalf, 1.0 - rampHalf);
     vec4 texel = texture(texParticle, uv);
     vec2 offset = 0.005 * (2.0 * texel.rg - 1.0);
-    outColor = vec4(texture(background, fragScreen + offset).rgb,
+    vec2 screen = gl_FragCoord.xy / vec2(textureSize(background, 0));
+    outColor = vec4(texture(background, screen + offset).rgb,
                     texel.a * texture(texRamp, rampUV).a);
 }
 )glsl";

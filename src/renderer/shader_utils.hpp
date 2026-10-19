@@ -86,6 +86,7 @@ extern const char* particle_frag;     // particle.fx's WorldPS: texture × ramp
 extern const char* particle_refract_frag; // WorldRefractPS: the frame, displaced (M214d)
 extern const char* beam_vert;         // FA's beam strip (M214a)
 extern const char* beam_frag;         // particle.fx's BeamPS: texture × colour
+extern const char* prim_alpha_test_frag; // primbatcher.fx's PrimBatcherPS, AlphaRef 0 Greater
 extern const char* trail_vert;        // FA's trail ribbon (M214b)
 extern const char* trail_frag;        // particle.fx's TrailPS: ramp × repeat within its life
 extern const char* bloom_bright_vert;     // fullscreen triangle (no VBO)

@@ -29,8 +29,8 @@ public:
     /// others, but the refracting; the scene pass must be open. With
     /// `only_light`, the light particles alone (TLight's: a cartographic
     /// view's, Cartographic::RenderParticles).
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
-                bool under_water, u32 fi, bool only_light = false) const;
+    void render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj, bool under_water,
+                u32 fi, bool only_light = false) const;
 
     /// The copy of the frame the refracting particles bend (M214d; set again
     /// after a resize).
@@ -40,8 +40,8 @@ public:
     bool refracting() const;
     /// Draw the refracting particles, last, over the copy set_background
     /// names; the scene pass must be open.
-    void render_refracting(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                           const f32* view_proj, u32 fi) const;
+    void render_refracting(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                           u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

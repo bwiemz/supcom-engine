@@ -703,9 +703,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 ctx.army_grants[static_cast<u32>(army())].of(0.0, economy_.capture_energy));
     }
 
-    // Assisting a silo is renewed each tick (see Guard); one that stops
-    // stops paying below.
-    const bool was_assisting_silo = std::exchange(assisting_silo_, false);
+    // Assisting a silo is renewed each tick (see Guard); one that isn't ends
+    // below.
+    silo_assist_renewed_ = false;
 
     // A teleport or an OverCharge whose order was taken away unfinished.
     if (teleporting_ || overcharge_armed_) {
@@ -763,6 +763,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
         if ((factory_assist_build_ || !assist_pending_bp_.empty()) &&
             !(head && head->type == CommandType::Guard)) {
             end_guard_build(ctx.registry, ctx.L);
+            if (destroyed() || !in_registry()) return;
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
         }
         // A mobile build, or a repair's or guard's help, whose order is gone
         // (replaced or stopped): the builder lets it go and stops paying; the
@@ -809,7 +811,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
     if (ctx.sim) {
         tick_hover(ctx.terrain, ctx.sim->tick_count(), ctx.sim->random());
     }
-    tick_upkeep(dt, ctx, econ_eff, was_assisting_silo);
+    tick_upkeep(dt, ctx, econ_eff);
 }
 
 void Unit::tend_unfinished(SimContext& ctx) {
@@ -984,17 +986,17 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     return true;
 }
 
-void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo) {
+void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
     if (stun_ticks_ > 0) --stun_ticks_; // a stun wears off a tick at a time
 
-    if (was_assisting_silo && !assisting_silo_ && !is_building() && !is_reclaiming() &&
-        !is_repairing() && !is_capturing() && !enhancing_) {
-        economy_.consumption_energy = 0;
-        economy_.consumption_mass = 0;
-        economy_.consumption_active = false;
+    if (silo_assist_id_ != 0 && !silo_assist_renewed_) {
+        end_silo_assist(L, registry);
+        if (destroyed() || !in_registry()) {
+            return;
+        }
     }
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
@@ -4115,6 +4117,11 @@ void Unit::update_pose() {
     for (size_t i = 0; i < count; ++i)
         locals.local[i] = {bd->bones[i].local_position, bd->bones[i].local_rotation};
     for (Manipulator* m : order) m->apply_pose(locals);
+    for (const auto& m : manipulators_) {
+        if (!m->is_destroyed()) {
+            m->after_pose(locals);
+        }
+    }
     if (!locals.changed) {
         pose_.clear(); // the bind pose; the render matrices stay identity
         return;
@@ -4465,6 +4472,19 @@ void Unit::set_silo_blocks(i32 blocks) {
     } else {
         silo_blocks_ = blocks;
     }
+}
+
+void Unit::end_silo_assist(lua_State* L, EntityRegistry& registry) {
+    const u32 silo = std::exchange(silo_assist_id_, 0);
+    aim_builder_arms(nullptr, L);
+    if (!is_building() && !is_reclaiming() && !is_repairing() && !is_capturing() && !enhancing_) {
+        economy_.consumption_energy = 0;
+        economy_.consumption_mass = 0;
+        economy_.consumption_active = false;
+        work_progress_ = 0;
+    }
+    set_unit_state("Repairing", false);
+    tell_stop_build(*this, L, lua_ref_of(registry, silo), "Repair");
 }
 
 void Unit::assist_silo_build(f32 rate, f64 dt, f32 efficiency) {

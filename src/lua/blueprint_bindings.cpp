@@ -164,10 +164,8 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
     lua_pop(L, 1);
     const int physics = push_section(L, 1, "Physics");
     static constexpr std::pair<const char*, lua_Number> kPhysicsDefaults[] = {
-        {"MaxSpeed", 0},
-        {"MaxAcceleration", 0},
-        {"MaxBrake", 0},
-        {"TurnRate", 0},
+        {"MaxSpeed", 0}, {"MaxAcceleration", 0}, {"MaxBrake", 0},
+        {"TurnRate", 0}, {"FuelUseTime", 0},
     };
     default_numbers(L, physics, kPhysicsDefaults);
     for (const char* field : {"MotionType", "AltMotionType"}) {
@@ -195,6 +193,13 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
         lua_rawset(L, physics);
     }
     lua_pop(L, 1); // Physics
+
+    // RUnitBlueprintAir's constructor (0x0051EF00) defaults TurnSpeed to
+    // 1 rad/s. LOUD's build-button rollover formats it before setting the
+    // hover latch, so leaving it nil also prevents that button's click.
+    static constexpr std::pair<const char*, lua_Number> kAirDefaults[] = {{"TurnSpeed", 1}};
+    default_numbers(L, push_section(L, 1, "Air"), kAirDefaults);
+    lua_pop(L, 1);
 
     // Moho hands scripts blueprints rebuilt from its typed copies, so a
     // numeric weapon field a .bp leaves out reads as its default

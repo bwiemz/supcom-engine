@@ -325,6 +325,7 @@ bool Unit::approach_update(f64 dt, SimContext& ctx) {
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
+        silo_assist_id_ == 0 &&
         (command_queue_.empty() || (command_queue_.front().type != CommandType::BuildMobile &&
                                     command_queue_.front().task_wait <= 0))) {
         aim_builder_arms(nullptr, ctx.L);
@@ -386,6 +387,20 @@ void Unit::begin_order(UnitCommand& cmd, lua_State* L) {
         if (destroyed() || is_dying()) return;
         weapons_[i]->drop_target(L);
     }
+}
+
+bool Unit::engage(UnitCommand& cmd, lua_State* L) {
+    cmd.engaged = true;
+    const UnitCommand* const order = &cmd;
+    for (size_t i = 0; i < weapons_.size(); ++i) {
+        if (destroyed() || is_dying()) {
+            return false;
+        }
+        weapons_[i]->drop_target(L);
+        weapons_[i]->target_check_clock = 0;
+    }
+    return !destroyed() && !is_dying() && !command_queue_.empty() &&
+           &command_queue_.front() == order;
 }
 
 OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
@@ -542,8 +557,11 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // the target to the attacker and CalcMoveAir flies the combat tactics
     // from then on. It never parks at range.
     if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
+        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage_distance * engage_distance) &&
+            !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         if (cmd.engaged) {
             navigator_.abort_move();
             fly_attack_run(*this, *target, *ctx.sim, ctx.terrain, static_cast<f32>(dt));
@@ -551,15 +569,21 @@ OrderStep Unit::order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
     }
     // A hovering aircraft is handed its target alike, and from then on
-    // circles it (Moho's CalcCirclingOrientation) at its target weapon's
-    // reach -- the first weapon that can attack it -- facing it.
+    // circles its target point (Moho's CalcCirclingOrientation, at
+    // GetTargetPosGun) at its target weapon's reach -- the first weapon that
+    // can attack it -- facing it.
     if (circles(*this) && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
-        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage * engage)) cmd.engaged = true;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
+        if (!cmd.engaged && (dist2 <= range2 || dist2 < engage_distance * engage_distance) &&
+            !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         if (cmd.engaged) {
             navigator_.abort_move();
             CircleAround around;
-            around.center = target->position();
+            around.center = target->is_unit()
+                                ? static_cast<const Unit*>(target)->target_point(cmd.target_point)
+                                : target->position();
             around.move_goal = target->position();
             for (const auto& w : weapons_) {
                 if (w->enabled && w->attacks_on_order() && w->can_pick(*this, *target, ctx.sim)) {
@@ -668,15 +692,17 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // its EngageDistance, makes its runs over it. With no weapon that can
     // hit it, the order ends there (the attacker can't attack it).
     if (air_combat_rules_.winged && layer_ == "Air" && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
-        const bool reached =
-            (weapon && weapon->in_firing_range(*this, at)) || dist2 < engage * engage;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
+        const bool reached = (weapon && weapon->in_firing_range(*this, at)) ||
+                             dist2 < engage_distance * engage_distance;
         if (!cmd.engaged && reached) {
             if (!weapon) {
                 command_queue_.pop_front();
                 return OrderStep::Next;
             }
-            cmd.engaged = true;
+            if (!engage(cmd, ctx.L)) {
+                return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+            }
         }
         if (cmd.engaged) {
             navigator_.abort_move();
@@ -687,10 +713,13 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // A hovering aircraft, handed the point alike, circles it at its
     // weapon's reach (with none, StartTurnDistance's circle).
     if (circles(*this) && ctx.sim) {
-        const f32 engage = air_combat_rules_.engage_distance;
+        const f32 engage_distance = air_combat_rules_.engage_distance;
         if (!cmd.engaged &&
-            ((weapon && weapon->in_firing_range(*this, at)) || dist2 < engage * engage))
-            cmd.engaged = true;
+            ((weapon && weapon->in_firing_range(*this, at)) ||
+             dist2 < engage_distance * engage_distance) &&
+            !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         if (cmd.engaged) {
             navigator_.abort_move();
             CircleAround around;
@@ -704,11 +733,15 @@ OrderStep Unit::order_attack_ground(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     // A structure's attacker takes the point at once; its weapons fire when
     // it is in their range.
     if (!is_mobile()) {
-        cmd.engaged = true;
+        if (!cmd.engaged && !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         return OrderStep::Hold;
     }
     if (weapon && weapon->in_firing_range(*this, at)) {
-        cmd.engaged = true;
+        if (!cmd.engaged && !engage(cmd, ctx.L)) {
+            return destroyed() ? OrderStep::Gone : OrderStep::Hold;
+        }
         cmd.has_slot = false; // the formation dropped, as on a unit
         if (!can_fly()) {
             navigator_.abort_move();
@@ -1084,6 +1117,7 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             attack.type = CommandType::Attack;
             attack.target_id = enemy->entity_id();
             attack.target_pos = enemy->position();
+            ctx.sim->pick_target_point(attack);
             // Moho's patrol task keeps where it broke off (GuardedPos): the
             // fight's leash runs from there.
             attack.leash_anchor_pos = position();
@@ -1486,7 +1520,11 @@ void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
         assist_rolloff_wait_ = 0;
         cancel_factory_build(registry, L);
     } else if (is_building()) {
-        stop_assisting();
+        // Its script hears the stop (OnStopBuild ends retail's build effects
+        // and the commander's build pose): a structure upgrading destroys
+        // itself once the new one stands, and its helpers had gone on in the
+        // pose until some later build order.
+        stop_assisting(L, &registry);
     }
 }
 
@@ -1583,7 +1621,9 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     }
     // It looks every 6 ticks (Moho's Execute returns 7), and not while it
     // helps: Moho's help is a task of its own above the guard's.
-    if (is_building() || is_reclaiming() || is_repairing()) return std::nullopt;
+    if (is_building() || is_reclaiming() || is_repairing() || silo_assist_id_ != 0) {
+        return std::nullopt;
+    }
     if (cmd.patrol_scan > 0) {
         --cmd.patrol_scan;
         return std::nullopt;
@@ -1599,6 +1639,7 @@ std::optional<OrderStep> Unit::guard_engage(UnitCommand& cmd, const Unit* guarde
     attack.type = CommandType::Attack;
     attack.target_id = enemy->entity_id();
     attack.target_pos = enemy->position();
+    ctx.sim->pick_target_point(attack);
     attack.command_id = cmd.command_id;
     attack.from_guard = true;
     attack.leash_anchor_id = guarded ? guarded->entity_id() : 0;
@@ -1644,16 +1685,21 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     const bool rebuilder = has_category("REBUILDER");
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed() || !target->is_unit()) {
-        end_guard_build(registry, L);
+        const u32 cmd_id = cmd.command_id;
+        end_guard_build(registry, L); // scripts may run: `cmd` may be gone
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
         if (rebuilder) {
             // Its repair of it goes with it: the Guard staying, nothing else
             // would stop it (Unit::update keeps a guard's repair).
             if (is_repairing()) stop_repairing(L, registry);
             if (destroyed() || !in_registry()) return OrderStep::Gone;
+            if (command_queue_.empty() || command_queue_.front().command_id != cmd_id)
+                return OrderStep::Next;
             return order_guard_point(cmd, dt, ctx);
         }
         release_navigator(); // the walk to it ends too
-        command_queue_.pop_front();
+        if (!command_queue_.empty() && command_queue_.front().command_id == cmd_id)
+            command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target_unit = static_cast<Unit*>(target);
@@ -1663,7 +1709,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY"))
         return guard_factory_queue(cmd, *target_unit, dt, ctx, econ_eff);
 
-    const bool task_waits = waits_out_task(cmd);
+    bool task_waits = waits_out_task(cmd);
     // Enemies near it come before helping (Moho's guard task looks for one
     // after factory assist, before build, reclaim and repair help).
     if (const auto step = guard_engage(cmd, target_unit, target_unit->position(), dt, ctx))
@@ -1722,6 +1768,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // commander guarding a factory doesn't build with it (probed
     // 2026-10-13, `scu-assist`). It still repairs it.
     const bool repairs = has_category("REPAIR") && build_rate_ > 0;
+    const auto needs_repair = [&] {
+        return target_unit->health() < target_unit->max_health() ||
+               target_unit->shield_needs_repair(registry, L);
+    };
     const bool reclaims = has_category("RECLAIM") && build_rate_ > 0 && !rebuilder;
 
     // Assist: if target is building, contribute build power
@@ -1828,7 +1878,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 }
             }
         }
-    } else if (repairs && !rebuilder && target_unit->silo_building() && !target_unit->is_paused()) {
+    } else if (repairs && !rebuilder && target_unit->silo_building() && !target_unit->is_paused() &&
+               (silo_assist_id_ == cmd.target_id || !needs_repair())) {
         // Assist a silo's missile: this unit's build power on it, at
         // its share of the cost (retail's UpdateConsumptionValues
         // for a SiloBuildingAmmo focus). A paused silo's helpers
@@ -1836,9 +1887,41 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         working = true;
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
+        if (repair_target_id_ == cmd.target_id) {
+            stop_repairing(L, registry);
+            cmd.task_wait = 6;
+            cmd.patrol_scan = 0;
+            task_waits = true;
+        }
         if (within_reach(*target_unit, true, false)) {
-            assisting_silo_ = true;
-            if (!paused_) {
+            // Moho's repair task on it, begun unpaused: focus, OnStartBuild,
+            // Repairing, and the silo's progress for its own (faf-re
+            // CUnitRepairTask, CBuildTaskHelper)
+            if (silo_assist_id_ != cmd.target_id && !paused_) {
+                const Vector3 at = target_unit->position();
+                aim_builder_arms(&at, ctx.L);
+                if (destroyed() || !in_registry()) {
+                    return OrderStep::Gone;
+                }
+                if (!turns_to_face(at) && !awaits_arm() && !task_waits) {
+                    if (silo_assist_id_ != 0) {
+                        end_silo_assist(ctx.L, registry);
+                    }
+                    silo_assist_id_ = cmd.target_id;
+                    call_build_callback(ctx.L, "OnStartBuild", target_unit, "Repair");
+                    if (destroyed() || !in_registry()) {
+                        return OrderStep::Gone;
+                    }
+                    if (target_unit->destroyed() || !target_unit->silo_building()) {
+                        return OrderStep::Hold;
+                    }
+                }
+            }
+            if (silo_assist_id_ == cmd.target_id) {
+                silo_assist_renewed_ = true;
+                work_progress_ = target_unit->work_progress();
+            }
+            if (silo_assist_id_ == cmd.target_id && !paused_) {
                 const SiloBuild& missile = target_unit->silo_build();
                 const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
                 economy_.consumption_energy = missile.energy * per_second;
@@ -1848,13 +1931,19 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             }
         }
     } else {
+        // faf-re CUnitGuardTask::Execute returns 7: after the silo's missile the guard looks at
+        // once, then every 6 ticks, and a task it hands out first runs 6 ticks on
+        if (silo_assist_id_ == cmd.target_id && !target_unit->silo_building()) {
+            cmd.task_wait = needs_repair() ? 6 : 12;
+            cmd.patrol_scan = 0;
+            task_waits = true;
+        }
         // Target not building/reclaiming — stop if we were
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
         // Auto-repair: if target is damaged and we have build_rate
-        if (repairs && (target_unit->health() < target_unit->max_health() ||
-                        target_unit->shield_needs_repair(registry, L))) {
+        if (repairs && needs_repair()) {
             working = true;
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                 if (is_repairing()) stop_repairing(L, registry);
@@ -1876,6 +1965,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 }
                 if (repair_target_id_ != 0) {
                     progress_repair(dt, registry, L, econ_eff);
+                    if (repair_target_id_ == 0 && target_unit->silo_building()) {
+                        cmd.task_wait = 6;
+                        cmd.patrol_scan = 0;
+                    }
                 }
             }
         } else {

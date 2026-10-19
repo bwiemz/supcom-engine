@@ -18,6 +18,7 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -520,4 +521,68 @@ TEST_CASE("An aircraft the engine held docked or hovering flies again from rest"
                                  before.w * after.w);
         CHECK(2.0f * std::acos(std::min(dot, 1.0f)) < 0.05f);
     }
+}
+
+TEST_CASE("An aircraft's weapon takes its ordered target only once the attack engages",
+          "[air_motion]") {
+    World w(true);
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 25.0f;
+    gun->damage = 10.0f;
+    a.add_weapon(std::move(gun));
+    const Unit& tank = w.make("tank", 150.0f, 128.0f, 2);
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = tank.entity_id();
+    a.push_command(attack, true);
+    const osc::sim::Weapon& weapon = *a.weapons().front();
+    bool early = false;
+    for (int t = 0; t < 300 && !a.command_queue().front().engaged; ++t) {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+        early = early ||
+                (!a.command_queue().front().engaged && weapon.target_entity_id == tank.entity_id());
+    }
+    REQUIRE(a.command_queue().front().engaged);
+    CHECK_FALSE(early);
+    CHECK(weapon.target_entity_id == tank.entity_id());
+}
+
+TEST_CASE("An attack that engages makes the weapons drop their target, then take the order's",
+          "[air_motion]") {
+    World w(true);
+    lua_State* L = w.state.raw();
+    Unit& a = w.make("uea0102", 30.0f, 128.0f);
+    auto gun = std::make_unique<osc::sim::Weapon>();
+    gun->max_range = 25.0f;
+    gun->damage = 10.0f;
+    REQUIRE(w.state
+                .do_string("heard = {} gun = {"
+                           " OnGotTarget = function(self) table.insert(heard, 'got') end,"
+                           " OnLostTarget = function(self) table.insert(heard, 'lost') end}")
+                .ok());
+    lua_getglobal(L, "gun");
+    gun->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    gun->script_class = true;
+    a.add_weapon(std::move(gun));
+    const Unit& tank = w.make("tank", 45.0f, 128.0f, 2);
+    const osc::sim::Weapon& weapon = *a.weapons().front();
+    for (int t = 0; t < 20 && weapon.target_entity_id != tank.entity_id(); ++t) {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    }
+    REQUIRE(weapon.target_entity_id == tank.entity_id());
+    REQUIRE(w.state.do_string("heard = {}").ok());
+    osc::sim::UnitCommand attack;
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = tank.entity_id();
+    a.push_command(attack, true);
+    for (int t = 0; t < 100 && !a.command_queue().front().engaged; ++t) {
+        a.weapons().front()->fire_clock = 1000000;
+        w.sim.tick();
+    }
+    REQUIRE(a.command_queue().front().engaged);
+    REQUIRE(w.state.do_string("assert(table.concat(heard, ' ') == 'lost got')").ok());
+    CHECK(weapon.target_entity_id == tank.entity_id());
 }

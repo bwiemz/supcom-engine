@@ -11,8 +11,8 @@
 namespace osc::renderer {
 
 void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
-                          VkDescriptorSetLayout texture_ds_layout, u32 max_quads,
-                          const char* name) {
+                          VkDescriptorSetLayout texture_ds_layout, u32 max_quads, const char* name,
+                          bool depth) {
     max_quads_ = max_quads;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo buf_ci{};
@@ -42,7 +42,9 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
 
     // primbatcher.fx's CommandPS is the beam's: texture × colour
     VkShaderModule vert = compile_glsl(device, shaders::beam_vert, "world_quad_vert", true);
-    VkShaderModule frag = compile_glsl(device, shaders::beam_frag, "world_quad_frag", false);
+    VkShaderModule frag =
+        compile_glsl(device, depth ? shaders::prim_alpha_test_frag : shaders::beam_frag,
+                     "world_quad_frag", false);
     if (!vert || !frag) {
         spdlog::error("{}: shader compilation failed", name);
         if (vert) {
@@ -89,11 +91,13 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
     VkPipelineMultisampleStateCreateInfo ms{};
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    // Depth_TCommand: no depth test, so no ground or unit hides a quad
-    VkPipelineDepthStencilStateCreateInfo depth{};
-    depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth.depthTestEnable = VK_FALSE;
-    depth.depthWriteEnable = VK_FALSE;
+    // Depth_TCommand: no depth test, so no ground or unit hides a quad;
+    // with depth, gal's LessEqual and writes (faf-re PipelineStateD3D9::BeginTechnique)
+    VkPipelineDepthStencilStateCreateInfo depth_state{};
+    depth_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_state.depthTestEnable = depth ? VK_TRUE : VK_FALSE;
+    depth_state.depthWriteEnable = depth ? VK_TRUE : VK_FALSE;
+    depth_state.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -128,7 +132,7 @@ void WorldQuadBatch::init(VkDevice device, VmaAllocator allocator, VkRenderPass 
     ci.pViewportState = &vp;
     ci.pRasterizationState = &raster;
     ci.pMultisampleState = &ms;
-    ci.pDepthStencilState = &depth;
+    ci.pDepthStencilState = &depth_state;
     ci.pColorBlendState = &blend;
     ci.pDynamicState = &dyn;
     ci.layout = layout_;
@@ -161,19 +165,12 @@ void WorldQuadBatch::upload(const std::vector<Quad>& quads, u32 fi) {
     }
 }
 
-void WorldQuadBatch::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                            const f32* view_proj, u32 fi) const {
+void WorldQuadBatch::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                            u32 fi) const {
     if (groups_.empty() || !pipeline_ || !vertex_buf_[fi].buffer) {
         return;
     }
-    VkViewport viewport{};
-    viewport.width = static_cast<f32>(viewport_w);
-    viewport.height = static_cast<f32>(viewport_h);
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    VkRect2D scissor{};
-    scissor.extent = {viewport_w, viewport_h};
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkc::set_area(cmd, area);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buf_[fi].buffer, &offset);
     vkc::bind_pipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);

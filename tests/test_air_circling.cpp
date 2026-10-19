@@ -12,6 +12,7 @@
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/air_combat.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/saved_game.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/sim_snapshot.hpp"
@@ -29,6 +30,7 @@ extern "C" {
 #include <deque>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -151,10 +153,17 @@ struct World {
         lua_settop(L, 0);
     }
 
-    Unit* make(const char* bp, f32 x, f32 z) {
+    /// A second army, ARMY_1's enemy, in a game no one wins.
+    void foe() {
+        sim.add_army("ARMY_2", "ARMY_2");
+        sim.set_victory_condition("sandbox");
+    }
+
+    Unit* make(const char* bp, f32 x, f32 z, int army = 1) {
         REQUIRE(state
-                    .do_string("made = CreateUnit('" + std::string(bp) + "', 1, " +
-                               std::to_string(x) + ", 20, " + std::to_string(z) + ")")
+                    .do_string("made = CreateUnit('" + std::string(bp) + "', " +
+                               std::to_string(army) + ", " + std::to_string(x) + ", 20, " +
+                               std::to_string(z) + ")")
                     .ok());
         Unit* found = nullptr;
         sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
@@ -491,6 +500,83 @@ TEST_CASE("A unit that can't fly stops at its weapon's reach of its attack targe
     INFO("nearest " << nearest);
     CHECK(nearest > 20.0f);
     CHECK_FALSE(g.navigator().busy());
+}
+
+namespace {
+
+/// A skeleton whose bones past its root, at `at`, are its target bones.
+osc::sim::BoneData target_bones(const std::vector<Vector3>& at) {
+    osc::sim::BoneData bd;
+    bd.bones.emplace_back();
+    for (const Vector3& p : at) {
+        osc::sim::BoneInfo b;
+        b.parent_index = 0;
+        b.local_position = p;
+        b.world_position = p;
+        bd.target_bones.push_back(static_cast<osc::i32>(bd.bones.size()));
+        bd.bones.push_back(b);
+    }
+    return bd;
+}
+
+osc::sim::UnitCommand attack_order(const Unit& target) {
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::Attack;
+    cmd.target_id = target.entity_id();
+    cmd.target_pos = target.position();
+    return cmd;
+}
+
+} // namespace
+
+TEST_CASE("A gunship circles its order's target point on a unit, not the unit's centre",
+          "[air_circling]") {
+    World w;
+    w.foe();
+    Unit& g = *w.make("steady", 20.0f, 64.0f);
+    World::arm(g, 22.0f);
+    Unit& target = *w.make("tank", 64.0f, 64.0f, 2);
+    const osc::sim::BoneData bones = target_bones({{8.0f, 0.0f, 0.0f}});
+    target.set_bone_data(&bones);
+    const Vector3 bow = target.target_point(0);
+    REQUIRE(bow.x == 72.0f);
+    REQUIRE(w.sim.route_command({g.entity_id()}, attack_order(target), true) != 0);
+    REQUIRE(w.run_until(g, [&] { return engaged(g); }, 300) < 300);
+
+    for (int t = 0; t < 100; ++t) {
+        w.tick(g);
+    }
+    f32 nearest = 1e9f;
+    f32 farthest = 0.0f;
+    for (int t = 0; t < 300; ++t) {
+        w.tick(g);
+        nearest = std::min(nearest, flat_dist(g, bow));
+        farthest = std::max(farthest, flat_dist(g, bow));
+    }
+    INFO("nearest " << nearest << " farthest " << farthest);
+    CHECK(nearest > 0.6f * 22.0f - 2.0f);
+    CHECK(farthest < 0.9f * 22.0f + 2.0f);
+}
+
+TEST_CASE("An attack order draws its target point once, for all its units", "[air_circling]") {
+    World w;
+    w.foe();
+    const Unit& a = *w.make("gunship", 20.0f, 60.0f);
+    const Unit& b = *w.make("gunship", 20.0f, 68.0f);
+    Unit& target = *w.make("tank", 64.0f, 64.0f, 2);
+    const osc::sim::BoneData bones = target_bones(
+        {{0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, -3.0f}, {1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}});
+    target.set_bone_data(&bones);
+    std::set<osc::i32> drawn;
+    for (int i = 0; i < 8; ++i) {
+        REQUIRE(w.sim.route_command({a.entity_id(), b.entity_id()}, attack_order(target), true) !=
+                0);
+        const osc::i32 point = a.command_queue().front().target_point;
+        CHECK(b.command_queue().front().target_point == point);
+        drawn.insert(point);
+    }
+    CHECK(*drawn.begin() >= 0);
+    CHECK(drawn.size() > 1);
 }
 
 TEST_CASE("A drone at work circles what it repairs at StartTurnDistance's ratio; it stops "

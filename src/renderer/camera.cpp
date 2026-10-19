@@ -673,6 +673,10 @@ void Camera::update(GLFWwindow* window, f64 dt) {
         frame(dt);
         return;
     }
+    apply(read_input(window), dt);
+}
+
+CameraInput Camera::read_input(GLFWwindow* window) const {
     // Moho's MAUI_KeyIsDown: no key while the focused control blocks them
     const auto key = [&](int k) { return keys_enabled_ && glfwGetKey(window, k) == GLFW_PRESS; };
     CameraInput in;
@@ -712,7 +716,21 @@ void Camera::update(GLFWwindow* window, f64 dt) {
         in.at_right = mx >= win_w - 1;
         in.at_bottom = my >= win_h - 1;
     }
-    apply(in, dt);
+    return in;
+}
+
+void Camera::copy_options(const Camera& from) {
+    input_enabled_ = from.input_enabled_;
+    keys_enabled_ = from.keys_enabled_;
+    zoom_amount_ = from.zoom_amount_;
+    keyboard_pan_speed_ = from.keyboard_pan_speed_;
+    keyboard_pan_accelerate_ = from.keyboard_pan_accelerate_;
+    keyboard_rotate_speed_ = from.keyboard_rotate_speed_;
+    keyboard_rotate_accelerate_ = from.keyboard_rotate_accelerate_;
+    edge_scroll_ = from.edge_scroll_;
+    arrow_scroll_ = from.arrow_scroll_;
+    invert_middle_ = from.invert_middle_;
+    free_ = from.free_;
 }
 
 void Camera::apply(const CameraInput& in, f64 dt) {

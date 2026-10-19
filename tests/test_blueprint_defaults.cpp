@@ -184,6 +184,78 @@ TEST_CASE("A unit blueprint's omitted intel, cap cost and drive read as Moho's d
     )"));
 }
 
+TEST_CASE(
+    "Omitted air turn speed and fuel time read as native defaults before a build button is hovered",
+    "[blueprints][air-turn-default]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bare = {BlueprintId = 'synthetic_no_air_or_physics'}
+        RegisterUnitBlueprint(bare)
+        assert(bare.Air.TurnSpeed == 1, 'missing Air section not defaulted')
+        assert(bare.Physics.FuelUseTime == 0, 'missing Physics section not defaulted')
+    )"));
+    CHECK(w.check(R"(
+        local flyer = {BlueprintId = 'synthetic_flyer', Air = {MaxAirspeed = 25}}
+        RegisterUnitBlueprint(flyer)
+        assert(flyer.Air.TurnSpeed == 1, 'air turn speed not defaulted to 1')
+        assert(flyer.Air.MaxAirspeed == 25, 'own airspeed changed')
+    )"));
+    CHECK(w.check(R"(
+        local flyer = {BlueprintId = 'synthetic_button_flyer', Air = {MaxAirspeed = 25}}
+        RegisterUnitBlueprint(flyer)
+        local button, queued = {}, 0
+        local function enter()
+            -- A detail-view failure before the hover latch prevents the
+            -- release handler from submitting the factory build.
+            button.detail = string.format('%.2f', flyer.Air.TurnSpeed * 20)
+            button.inside = true
+        end
+        enter()
+        if button.inside then queued = queued + 1 end
+        assert(button.detail == '20.00' and queued == 1, 'build click lost on rollover')
+    )"));
+    CHECK(w.check(R"(
+        local stopped = {BlueprintId = 'synthetic_stopped', Air = {TurnSpeed = 0},
+                         Physics = {FuelUseTime = 0}}
+        local own = {BlueprintId = 'synthetic_own', Air = {TurnSpeed = 2.25}}
+        RegisterUnitBlueprint(stopped)
+        RegisterUnitBlueprint(own)
+        assert(stopped.Air.TurnSpeed == 0, 'explicit zero changed')
+        assert(stopped.Physics.FuelUseTime == 0, 'explicit zero fuel duration changed')
+        assert(own.Air.TurnSpeed == 2.25, 'explicit turn speed changed')
+    )"));
+    CHECK(w.check(R"(
+        local unlimited = {BlueprintId = 'synthetic_unlimited',
+                           Air = {MaxAirspeed = 20},
+                           Physics = {MotionType = 'RULEUMT_Air'}}
+        RegisterUnitBlueprint(unlimited)
+        assert(unlimited.Physics.FuelUseTime == 0, 'omitted fuel use time not zero')
+        local text = 'unlimited'
+        if unlimited.Physics.FuelUseTime ~= 0 then
+            text = string.format('%02d', math.floor(unlimited.Physics.FuelUseTime / 60))
+        end
+        assert(text == 'unlimited', 'fuel-free detail entered timed-fuel branch')
+    )"));
+    CHECK(w.check(R"(
+        local fuelled = {BlueprintId = 'synthetic_fuelled',
+                         Air = {MaxAirspeed = 20},
+                         Physics = {MotionType = 'RULEUMT_Air', FuelUseTime = 400}}
+        RegisterUnitBlueprint(fuelled)
+        assert(fuelled.Physics.FuelUseTime == 400, 'explicit fuel duration changed')
+        assert(math.floor(fuelled.Physics.FuelUseTime / 60) == 6, 'fuel detail lost duration')
+    )"));
+    w.store.copy_lua_tables(w.state.raw());
+    w.store.expose_to_lua(w.state.raw());
+    CHECK(w.check(R"(
+        assert(__blueprints.synthetic_flyer.Air.TurnSpeed == 1, 'export lost air default')
+        assert(__blueprints.synthetic_unlimited.Physics.FuelUseTime == 0,
+               'export lost fuel default')
+        assert(__blueprints.synthetic_stopped.Air.TurnSpeed == 0, 'export lost explicit zero')
+        assert(__blueprints.synthetic_fuelled.Physics.FuelUseTime == 400,
+               'export lost explicit fuel duration')
+    )"));
+}
+
 TEST_CASE("Scripts iterate a blueprint's tables in the order of Moho's copy of it",
           "[blueprints]") {
     BlueprintWorld w;

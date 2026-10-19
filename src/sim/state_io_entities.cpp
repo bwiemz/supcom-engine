@@ -408,6 +408,7 @@ void StateIO::save(StateWriter& w, const UnitCommand& c) {
     w.b(c.form_attack);
     w.b(c.has_slot);
     w.vec3(c.slot_offset);
+    w.i32v(c.target_point);
 }
 
 void StateIO::load(StateReader& r, UnitCommand& c) {
@@ -464,6 +465,7 @@ void StateIO::load(StateReader& r, UnitCommand& c) {
     c.form_attack = r.b();
     c.has_slot = r.b();
     c.slot_offset = r.vec3();
+    c.target_point = r.i32v();
 }
 
 // ------------------------------------------------------------- Navigator
@@ -834,6 +836,10 @@ void StateIO::save(StateWriter& w, const Manipulator& m) {
         const auto& x = static_cast<const SlaverManipulator&>(m);
         w.i32v(x.slave_bone_);
         w.i32v(x.master_bone_);
+        w.quat(x.master_turn_);
+        w.quat(x.current_);
+        w.f32v(x.max_rate_rad_);
+        w.b(x.at_goal_);
         break;
     }
     case ManipKind::CollisionDetector: {
@@ -984,6 +990,10 @@ std::unique_ptr<Manipulator> StateIO::load_manipulator(StateReader& r, Unit& own
         auto x = std::make_unique<SlaverManipulator>();
         x->slave_bone_ = r.i32v();
         x->master_bone_ = r.i32v();
+        x->master_turn_ = r.quat();
+        x->current_ = r.quat();
+        x->max_rate_rad_ = r.f32v();
+        x->at_goal_ = r.b();
         m = std::move(x);
         break;
     }
@@ -1310,7 +1320,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(sb.energy);
     w.f64v(sb.mass);
     w.i32v(u.silo_blocks_);
-    w.b(u.assisting_silo_);
+    w.u32v(u.silo_assist_id_); // (silo_assist_renewed_ isn't: a tick's update sets it afresh)
     w.b(u.teleporting_);
     w.u32v(u.teleport_snap_);
     w.b(u.overcharge_armed_);
@@ -1723,7 +1733,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     sb.energy = r.f64v();
     sb.mass = r.f64v();
     u.silo_blocks_ = r.i32v();
-    u.assisting_silo_ = r.b();
+    u.silo_assist_id_ = r.u32v();
     u.teleporting_ = r.b();
     u.teleport_snap_ = r.u32v();
     u.overcharge_armed_ = r.b();

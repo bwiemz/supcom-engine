@@ -645,11 +645,14 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     legs_.clear();
     planned_.clear();
     const sim::WorldSnapshot* cur = view.cur();
+    // The army's planned structures stand as ghosts with or without Shift
+    // (retail shows a queued structure's ghost until it is started, so
+    // another engineer can be sent to it); Shift shows the order lines.
+    if (cur) planned_ = planned_build_sites(*cur, selected, player_army);
     if (!shown || !cur || !batch_.ready(fi)) {
         batch_.upload({}, fi);
         return;
     }
-    planned_ = planned_build_sites(*cur, selected, player_army);
 
     f32 ex = 0;
     f32 ey = 0;
@@ -777,9 +780,9 @@ void CommandGraphRenderer::update(const sim::FrameView& view, const Camera& came
     batch_.upload(lines, fi);
 }
 
-void CommandGraphRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                                  const f32* view_proj, u32 fi) const {
-    batch_.render(cmd, viewport_w, viewport_h, view_proj, fi);
+void CommandGraphRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                                  u32 fi) const {
+    batch_.render(cmd, area, view_proj, fi);
 }
 
 void CommandGraphRenderer::destroy(VkDevice device, VmaAllocator allocator) {

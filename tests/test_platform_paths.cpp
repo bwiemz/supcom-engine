@@ -2,6 +2,7 @@
 
 #include "platform/executable.hpp"
 #include "platform/paths.hpp"
+#include "support/temp_path.hpp"
 
 #include <filesystem>
 #include <map>
@@ -38,6 +39,34 @@ TEST_CASE("known_folder uses XDG variables when set", "[platform]") {
     CHECK(known_folder(KnownFolder::Documents, env) == "/docs");
 }
 
+#ifdef __APPLE__
+
+TEST_CASE("known_folder falls back to ~/Library on macOS", "[platform]") {
+    auto env = fake_env({{"HOME", "/home/u"}});
+    CHECK(known_folder(KnownFolder::LocalAppData, env) == "/home/u/Library/Application Support");
+    CHECK(known_folder(KnownFolder::Config, env) == "/home/u/Library/Application Support");
+    CHECK(known_folder(KnownFolder::Cache, env) == "/home/u/Library/Caches");
+    CHECK(known_folder(KnownFolder::State, env) == "/home/u/Library/Application Support");
+    CHECK(known_folder(KnownFolder::Documents, env) == "/home/u/Documents");
+
+    // An earlier build's ~/.config/opensupcom is kept
+    const osc::test::TempDir home("osc_paths_home");
+    std::filesystem::create_directories(home.path() / ".config" / "opensupcom");
+    auto legacy = fake_env({{"HOME", home.path().string()}});
+    CHECK(known_folder(KnownFolder::Config, legacy) == home.path() / ".config");
+    CHECK(known_folder(KnownFolder::State, legacy) ==
+          home.path() / "Library" / "Application Support");
+}
+
+TEST_CASE("known_folder ignores relative and empty XDG values", "[platform]") {
+    auto env =
+        fake_env({{"HOME", "/home/u"}, {"XDG_CONFIG_HOME", "relative/dir"}, {"XDG_DATA_HOME", ""}});
+    CHECK(known_folder(KnownFolder::Config, env) == "/home/u/Library/Application Support");
+    CHECK(known_folder(KnownFolder::LocalAppData, env) == "/home/u/Library/Application Support");
+}
+
+#else
+
 TEST_CASE("known_folder falls back to HOME-relative XDG defaults", "[platform]") {
     auto env = fake_env({{"HOME", "/home/u"}});
     CHECK(known_folder(KnownFolder::LocalAppData, env) == "/home/u/.local/share");
@@ -55,6 +84,8 @@ TEST_CASE("known_folder ignores relative and empty XDG values", "[platform]") {
     CHECK(known_folder(KnownFolder::Config, env) == "/home/u/.config");
     CHECK(known_folder(KnownFolder::LocalAppData, env) == "/home/u/.local/share");
 }
+
+#endif
 
 TEST_CASE("home_dir falls back when HOME is unset", "[platform]") {
     auto env = fake_env({});

@@ -90,7 +90,9 @@ std::array<std::array<Vector3, 4>, 4> bracket_quads(const SelectionBox& box, f32
 
 void SelectionRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
                              VkDescriptorSetLayout texture_ds_layout) {
-    batch_.init(device, allocator, render_pass, texture_ds_layout, MAX_QUADS, "SelectionRenderer");
+    batch_.init(device, allocator, render_pass, texture_ds_layout, MAX_QUADS, "SelectionRenderer",
+                /*depth=*/true);
+    drag_batch_.init(device, allocator, render_pass, texture_ds_layout, 1, "SelectionDragBox");
 }
 
 const SelectionBlueprint& SelectionRenderer::box_blueprint(const std::string& id, lua_State* L) {
@@ -132,9 +134,11 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
     brackets_.clear();
     drew_drag_box_ = false;
     std::vector<WorldQuadBatch::Quad> quads;
+    std::vector<WorldQuadBatch::Quad> drag_quads;
     const sim::WorldSnapshot* cur = view.cur();
-    if (!enabled_ || !cur || !batch_.ready(fi)) {
+    if (!enabled_ || !cur || !batch_.ready(fi) || !drag_batch_.ready(fi)) {
         batch_.upload(quads, fi);
+        drag_batch_.upload(drag_quads, fi);
         return;
     }
     const sim::ArmyRecord* me = cur->army(player_army);
@@ -218,20 +222,23 @@ void SelectionRenderer::update(const sim::FrameView& view, const Camera& camera,
             const auto b = vertex(c[1], 1, 0);
             const auto m = vertex(c[2], 1, 1);
             const auto d = vertex(c[3], 0, 1);
-            quads.push_back({tex->descriptor_set, {a, b, m, a, m, d}});
+            drag_quads.push_back({tex->descriptor_set, {a, b, m, a, m, d}});
             drew_drag_box_ = true;
         }
     }
     batch_.upload(quads, fi);
+    drag_batch_.upload(drag_quads, fi);
 }
 
-void SelectionRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                               const f32* view_proj, u32 fi) const {
-    batch_.render(cmd, viewport_w, viewport_h, view_proj, fi);
+void SelectionRenderer::render(VkCommandBuffer cmd, const VkRect2D& area, const f32* view_proj,
+                               u32 fi) const {
+    batch_.render(cmd, area, view_proj, fi);
+    drag_batch_.render(cmd, area, view_proj, fi);
 }
 
 void SelectionRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     batch_.destroy(device, allocator);
+    drag_batch_.destroy(device, allocator);
 }
 
 } // namespace osc::renderer

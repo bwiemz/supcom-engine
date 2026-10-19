@@ -207,6 +207,22 @@ std::vector<fs::path> steam_roots(const EnvLookup& env) {
     // Flatpak Steam keeps its own XDG tree.
     add_existing_unique(roots, home / ".var" / "app" / "com.valvesoftware.Steam" /
                                    ".local" / "share" / "Steam");
+#ifdef __APPLE__
+    // FA is Windows-only on Steam, so Mac owners usually run Windows Steam in
+    // a CrossOver bottle: each bottle's drive_c is an ordinary folder.
+    const fs::path bottles = home / "Library" / "Application Support" / "CrossOver" / "Bottles";
+    std::error_code ec;
+    std::vector<fs::path> bottle_dirs;
+    for (auto it = fs::directory_iterator(bottles, ec); !ec && it != fs::directory_iterator();
+         it.increment(ec)) {
+        bottle_dirs.push_back(it->path());
+    }
+    std::sort(bottle_dirs.begin(), bottle_dirs.end()); // directory order is unspecified
+    for (const auto& bottle : bottle_dirs) {
+        add_existing_unique(roots, bottle / "drive_c" / "Program Files (x86)" / "Steam");
+        add_existing_unique(roots, bottle / "drive_c" / "Program Files" / "Steam");
+    }
+#endif
 #endif
     return roots;
 }
