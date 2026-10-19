@@ -365,16 +365,19 @@ static int proj_SetVelocityAlign(lua_State* L) {
     return 0;
 }
 
+f32 draw_scale_unit(lua_State* L, const sim::Entity& e) {
+    auto* sim = get_sim(L);
+    auto* bones = sim ? sim->bone_cache() : nullptr;
+    return e.is_projectile() && bones ? 1.0f / bones->resolve_uniform_scale(e.blueprint_id(), L)
+                                      : 1.0f;
+}
+
 // SetScaleVelocity(sv) or (svx, svy, svz): how fast its draw scale grows
-// (or shrinks) each second. Movement is untouched. Moho's draw scale starts
-// at Display.UniformScale and the velocity adds to it; the entity's scale
-// here multiplies UniformScale, so the velocity is divided by it.
+// (or shrinks) each second. Movement is untouched.
 static int proj_SetScaleVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) {
-        auto* sim = get_sim(L);
-        auto* bones = sim ? sim->bone_cache() : nullptr;
-        const f32 per = bones ? 1.0f / bones->resolve_uniform_scale(p->blueprint_id(), L) : 1.0f;
+        const f32 per = draw_scale_unit(L, *p);
         const auto sx = static_cast<f32>(luaL_checknumber(L, 2));
         p->scale_velocity = {sx * per, static_cast<f32>(luaL_optnumber(L, 3, sx)) * per,
                              static_cast<f32>(luaL_optnumber(L, 4, sx)) * per};

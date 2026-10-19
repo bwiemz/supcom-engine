@@ -889,7 +889,8 @@ static int entity_SetScale(lua_State* L) {
     const auto x = static_cast<f32>(luaL_checknumber(L, 2));
     const auto y = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : x;
     const auto z = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : x;
-    e->set_scale(x, y, z);
+    const f32 per = draw_scale_unit(L, *e);
+    e->set_scale(x * per, y * per, z * per);
     return 0;
 }
 

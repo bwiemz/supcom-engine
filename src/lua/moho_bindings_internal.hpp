@@ -108,6 +108,10 @@ f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
 void request_world_sound(lua_State* L, const sim::Entity& e, std::string bank, std::string cue,
                          std::string lod_cutoff);
 i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg);
+/// What one of Moho's draw scale units is in the entity's scale: 1 over a
+/// projectile's Display.UniformScale (Moho's draw scale starts there; the
+/// entity's scale here multiplies it), else 1.
+f32 draw_scale_unit(lua_State* L, const sim::Entity& e);
 sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx);
 bool under_water(const sim::SimState* sim, const sim::Vector3& p);
 void apply_script_projectile_physics(lua_State* L, sim::Projectile& p);

@@ -641,6 +641,38 @@ void test_effect_meshes(TestContext& ctx) {
         const auto killed = ctx.lua_state.do_string(
             "__osc_nuke_acu = CreateUnitHPR('uel0001', 'ARMY_1', 32, 0, 40, 0, 0, 0)\n");
         if (!killed) spdlog::warn("the commander: {}", killed.error().message);
+        // SetScale names the draw scale, whatever the blueprint's UniformScale:
+        // the dome's (17) set to 8.5 is drawn 8.5 times its mesh, a debris's
+        // (0.15) set to 0.3 is drawn 0.3 times its. Each stands off the
+        // commander, which the frame draws too.
+        const auto scaled_width = [&](const char* bp, f32 scale, f32 offset, f32 distance) {
+            const auto made = ctx.lua_state.do_string(fmt::format(
+                "__osc_scaled = __osc_nuke_acu:CreateProjectile('{}', {}, 0, 0, nil, nil, nil)\n"
+                "__osc_scaled:SetScale({})\n",
+                bp, offset, scale));
+            if (!made) spdlog::warn("{}: {}", bp, made.error().message);
+            const auto* p = ctx.sim.entity_registry().find(
+                static_cast<u32>(lua_number("__osc_scaled:GetEntityId()")));
+            const f32 x = p ? p->position().x : 0.0f;
+            const f32 z = p ? p->position().z : 0.0f;
+            (void)frame(x, z, map::ScmapLighting{}, distance);
+            const Drawn d = drawn_at(x, z, r.mesh_technique(lower(bp), ctx.L));
+            const auto gone = ctx.lua_state.do_string("__osc_scaled:Destroy()\n");
+            if (!gone) spdlog::warn("{}'s end: {}", bp, gone.error().message);
+            return d;
+        };
+        const Drawn dome = scaled_width("/effects/entities/UEFNukeEffect01/UEFNukeEffect01_proj.bp",
+                                        8.5f, 40.0f, 160.0f);
+        const Drawn debris =
+            scaled_width("/effects/entities/DebrisMisc04/DebrisMisc04_proj.bp", 0.3f, 10.0f, 30.0f);
+        t.check(dome.mesh_width > 0.0f && debris.mesh_width > 0.0f &&
+                    std::abs(dome.width - 8.5f * dome.mesh_width) < 1e-3f * dome.width &&
+                    std::abs(debris.width - 0.3f * debris.mesh_width) < 1e-3f * debris.width,
+                fmt::format("Test 12: SetScale(8.5) draws the dome {:.3f} across ({:.3f}: its "
+                            "mesh, {:.3f}, times 8.5); SetScale(0.3) a debris (UniformScale "
+                            "0.15) {:.4f} ({:.4f}: its mesh, {:.4f}, times 0.3)",
+                            dome.width, 8.5f * dome.mesh_width, dome.mesh_width, debris.width,
+                            0.3f * debris.mesh_width, debris.mesh_width));
         for (int i = 0; i < 10; ++i) ctx.sim.tick();
         const auto dead =
             ctx.lua_state.do_string("Damage(nil, __osc_nuke_acu, 99999, nil, 'Normal')\n");
