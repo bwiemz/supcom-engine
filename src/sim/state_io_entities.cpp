@@ -1905,6 +1905,7 @@ void StateIO::save(StateWriter& w, const Projectile& p) {
     w.f32v(p.damage_amount);
     w.f32v(p.damage_radius);
     w.str(p.damage_type);
+    w.b(p.engine_damage);
     w.u32v(p.lifetime_end);
     w.f32v(p.max_speed);
     w.f32v(p.acceleration);
@@ -1956,6 +1957,7 @@ void StateIO::load(StateReader& r, Projectile& p) {
     p.damage_amount = r.f32v();
     p.damage_radius = r.f32v();
     p.damage_type = r.str();
+    p.engine_damage = r.b();
     p.lifetime_end = r.u32v();
     p.max_speed = r.f32v();
     p.acceleration = r.f32v();

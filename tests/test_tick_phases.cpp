@@ -785,6 +785,88 @@ TEST_CASE("A projectile's hit is found by one step and dealt at the start of its
     CHECK(w.number("seen_x") == Catch::Approx(w.number("hit_x")));
 }
 
+TEST_CASE("A scripted projectile's damage is its OnImpact's alone, however its weapon passed it",
+          "[projectile][damage]") {
+    const std::string passed =
+        GENERATE(std::string("a table"), std::string("a metatable"), std::string("nothing"));
+    CAPTURE(passed);
+    Phases w;
+    w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.cy = 1.0f;
+    box.sx = 1.0f;
+    box.sy = 1.0f;
+    box.sz = 1.0f;
+    rival.set_collision_shape(box);
+    REQUIRE(w.run("Plain.OnCollisionCheck = function(self, other) return true end"));
+    w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
+                                 "   local data = self.DamageData"
+                                 "   if data and data.DamageAmount and other then"
+                                 "     Damage(self, other, data.DamageAmount, 'Normal')"
+                                 "   end"
+                                 "   hit = GetGameTick()"
+                                 "   EM.Destroy(self)"
+                                 " end");
+    std::string pass;
+    if (passed == "a table") {
+        pass = "shot.DamageData = {DamageAmount = 10}";
+    } else if (passed == "a metatable") {
+        pass = "local data = {DamageAmount = 10} data.__index = data"
+               " shot.DamageData = setmetatable({}, data)";
+    }
+    REQUIRE(w.run("hit = 0 ForkThread(function()"
+                  "   shot = EM.CreateProjectile(shooter, '/shell', 0, 1, 0)"
+                  "   PM.SetDamage(shot, 10)"
+                  "   PM.SetBallisticAcceleration(shot, 0)"
+                  "   PM.SetVelocity(shot, 35, 0, 0) " +
+                  pass + " end)"));
+    const f32 full = rival.health();
+    for (int t = 0; t < 8 && w.number("hit") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("hit") > 0);
+    CHECK(full - rival.health() == Catch::Approx(passed == "nothing" ? 0.0f : 10.0f));
+}
+
+TEST_CASE("A shot from a weapon with no script takes the engine's damage once",
+          "[projectile][damage]") {
+    const bool scripted = GENERATE(false, true);
+    CAPTURE(scripted);
+    Phases w;
+    Unit& shooter = w.make("shooter", "tank", 1, 100.0f, 100.0f);
+    Unit& rival = w.make("rival", "tank", 2, 110.0f, 100.0f);
+    osc::sim::CollisionShape box;
+    box.type = osc::sim::CollisionShapeType::BOX;
+    box.cy = 1.0f;
+    box.sx = 1.0f;
+    box.sy = 1.0f;
+    box.sz = 1.0f;
+    rival.set_collision_shape(box);
+    REQUIRE(w.run("hits = 0 Plain.OnCollisionCheck = function(self, other) return true end"));
+    if (scripted) {
+        w.projectile_class("/shell", "OnImpact = function(self, kind, other)"
+                                     "   local data = self.DamageData"
+                                     "   if data and data.DamageAmount and other then"
+                                     "     Damage(self, other, data.DamageAmount, 'Normal')"
+                                     "   end"
+                                     "   hits = hits + 1"
+                                     "   EM.Destroy(self)"
+                                     " end");
+    }
+    Weapon& gun = w.arm(shooter, nullptr);
+    gun.muzzle_velocity = 35.0f;
+    const f32 full = rival.health();
+    for (int t = 0; t < 30 && rival.health() == full; ++t) {
+        w.sim.tick();
+    }
+    CHECK(full - rival.health() == Catch::Approx(10.0f));
+    if (scripted) {
+        CHECK(w.number("hits") == 1.0f);
+    }
+}
+
 TEST_CASE("The snapshot of the tick that finds a hit holds the projectile at the impact point",
           "[tick-phases]") {
     Phases w;

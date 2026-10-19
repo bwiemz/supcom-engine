@@ -622,31 +622,19 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     const u32 target_id = target ? target->entity_id() : 0;
     const char* type = type_override ? type_override : impact_type(target, terrain);
 
-    // Its script's OnImpact plays the impact out, as in retail: damage from
-    // the DamageData its weapon passed (friendly fire, damage over time and
-    // buffs included), effects chosen by the terrain, sound, and its own
-    // destruction. A projectile no weapon passed damage to keeps the
-    // engine's damage, so every hit counts once.
     bool scripted = false;
-    bool script_damages = false;
     if (lua_table_ref() >= 0) {
         const int top = lua_gettop(L);
         lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
         lua_pushstring(L, "OnImpact");
         lua_gettable(L, -2);
         scripted = lua_isfunction(L, -1);
-        lua_pop(L, 1);
-        lua_pushstring(L, "DamageData");
-        lua_gettable(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "DamageAmount");
-            lua_rawget(L, -2);
-            script_damages = scripted && lua_isnumber(L, -1) && lua_tonumber(L, -1) > 0;
-            lua_pop(L, 1);
-        }
         lua_settop(L, top);
     }
-    if (!script_damages) deal_engine_damage(L, target, registry);
+    // Moho's Projectile::Impact deals no damage: a scripted projectile's OnImpact deals it.
+    if (!scripted || engine_damage) {
+        deal_engine_damage(L, target, registry);
+    }
 
     if (scripted) {
         Entity* self = registry.find(id);

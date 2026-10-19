@@ -850,9 +850,12 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry, lua_State* L, const
     }
 
     const std::string& layer = owner.layer();
-    const Projectile* fired = launch(owner, spawn_pos, target, registry, L,
-                                     layer == "Sub" || layer == "Seabed", muzzle_dir);
-    if (!fired) return false;
+    Projectile* fired = launch(owner, spawn_pos, target, registry, L,
+                               layer == "Sub" || layer == "Seabed", muzzle_dir);
+    if (!fired) {
+        return false;
+    }
+    fired->engine_damage = true;
     // With no script to take it, the engine spends the missile.
     if (counted_projectile) owner.remove_silo_ammo(nuke_weapon, 1);
     spdlog::debug("Weapon '{}' fired projectile #{} at entity #{}", label, fired->entity_id(),

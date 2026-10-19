@@ -65,6 +65,9 @@ public:
     f32 damage_amount = 0;
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
+    /// Fired by a weapon with no script, which passes its OnImpact no DamageData: the engine deals
+    /// its damage.
+    bool engine_damage = false;
     /// Moho's mLifetimeEnd: it fuzes after its step on this tick.
     u32 lifetime_end = static_cast<u32>(DEFAULT_LIFETIME * 10.0f);
     void set_lifetime(f32 seconds, u32 now);
