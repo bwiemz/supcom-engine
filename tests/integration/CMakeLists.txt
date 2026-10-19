@@ -393,6 +393,17 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # A windowed game whose player is ARMY_2, self-destructing their
+    # commander, replays headless: nothing the UI alone decides (the army it
+    # focuses) reaches the sim's checksum.
+    add_test(NAME data.self_destruct_flow
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/self_destruct_flow.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py)
+    set_tests_properties(data.self_destruct_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+
     # M208a, M191 step 4: retail's Load dialog path -- GetSpecialFiles lists
     # the save, LoadSavedGame loads it -- then the game catches up (never a
     # replay meanwhile), plays on, and InternalSaveGame saves it again. Then

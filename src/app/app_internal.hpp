@@ -86,6 +86,7 @@ struct Options {
     bool replay_flow_test = false;
     bool load_flow_test = false;
     bool mods_flow_test = false;
+    bool self_destruct_flow_test = false;
     bool campaign_flow_test = false; ///< (M209b)
     bool tutorial_flow_test = false; ///< its tutorial route (campaign_flow_test is set too)
     bool outro_flow_test = false;    ///< its outro route (campaign_flow_test is set too)

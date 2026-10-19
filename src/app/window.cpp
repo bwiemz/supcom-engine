@@ -401,6 +401,13 @@ std::optional<int> App::Window::start_flows() {
             return finish_test_run("mods-flow-test");
         }
     }
+    if (opt.self_destruct_flow_test) {
+        self_destruct_flow.emplace();
+        if (!self_destruct_flow->start(ui_lua_state)) {
+            self_destruct_flow->finish();
+            return finish_test_run("self-destruct-flow-test");
+        }
+    }
     // --campaign-flow-test: the campaign through retail's screens (M209b)
     if (opt.campaign_flow_test) {
         using Route = osc::app::CampaignFlowTest::Route;
@@ -432,6 +439,7 @@ bool App::Window::running() const {
            !(render_bench && (render_bench->done() || render_bench->gave_up())) &&
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
+           !(self_destruct_flow && self_destruct_flow->done()) &&
            !(campaign_flow && campaign_flow->done());
 }
 
@@ -476,6 +484,10 @@ std::optional<int> App::Window::finish() {
     if (mods_flow) {
         mods_flow->finish();
         return finish_test_run("mods-flow-test");
+    }
+    if (self_destruct_flow) {
+        self_destruct_flow->finish();
+        return finish_test_run("self-destruct-flow-test");
     }
     if (campaign_flow) {
         campaign_flow->finish();
