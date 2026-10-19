@@ -127,7 +127,8 @@ void test_binding_tail(TestContext& ctx) {
             ctx.sim.tick();
         }
     };
-    next(3);
+    const int cycle = static_cast<int>(ctx.sim.army_count()) + 1;
+    next(cycle);
     check("both generators are in sight", R"(
         for _, u in {__osc_bt_near, __osc_bt_far} do
             local blip = u:GetBlip(1)
@@ -137,7 +138,7 @@ void test_binding_tail(TestContext& ctx) {
     const std::string flush = fmt::format("__osc_bt_log = {{}}\nFlushIntelInRect({}, {}, {}, {})\n",
                                           sx + 30, sz + 50, sx + 50, sz + 70);
     check("a flush in sight loses what was seen, and says so", flush + R"(
-        if __osc_bt_near:GetBlip(1):IsSeenEver(1) then error('still seen ever') end
+        if __osc_bt_near:GetBlip(1) then error('still held') end
         if not __osc_bt_logged(__osc_bt_near, 'LOSNow', false) then error('no LOSNow lost') end
         if not __osc_bt_far:GetBlip(1):IsSeenEver(1) then error('the other forgotten too') end
     )");
@@ -145,7 +146,7 @@ void test_binding_tail(TestContext& ctx) {
     t.check(events.size() == 1 && events[0].forgotten.size() == 1 &&
                 events[0].forgotten[0].first == near_gen && (events[0].forgotten[0].second & 1u),
             "the flush is handed on for the renderer: army 1 forgot the near generator");
-    next(1);
+    next(cycle);
     t.check(ctx.sim.intel_flush_events().empty(), "the tick's flushes are forgotten after it");
     check("still in sight, it is seen again", R"(
         if not __osc_bt_logged(__osc_bt_near, 'LOSNow', true) then error('no LOSNow again') end
@@ -195,11 +196,12 @@ void test_binding_tail(TestContext& ctx) {
         if table.getn(brain:GetUnitsAroundPoint(categories.STRUCTURE, forgotten, 10)) ~= 0 then
             error('a forgotten enemy is found')
         end
-        if not has(brain:GetUnitsAroundPoint(categories.MOBILE, {{{3}, 0, {4}}}, 4), __osc_bt_idle) then
+        local idle_at = __osc_bt_idle:GetPosition()
+        if not has(brain:GetUnitsAroundPoint(categories.MOBILE, idle_at, 4), __osc_bt_idle) then
             error('its own unit is not found')
         end
     )",
-                      sx - 20, sz + 60, sx + 40, sx - 8, sz));
+                      sx - 20, sz + 60, sx + 40));
     check("FlushIntelInRect takes four numbers", R"(
         if pcall(FlushIntelInRect, 1, 2, 3) then error('three taken') end
         if pcall(FlushIntelInRect, 1, 2, 3, 'x') then error('a string taken') end

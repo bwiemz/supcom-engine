@@ -881,11 +881,23 @@ public:
         bool any() const { return vision || radar || sonar || omni; }
     };
     static constexpr u32 MAX_VIS_ARMIES = 16;
-    /// Every army's recon of unit `id` as of the last tick's pass, or null
+    /// Every army's recon of unit `id` as its last recon tick left it, or null
     /// (not a unit, or no grids).
     const std::array<EntityVisSnapshot, MAX_VIS_ARMIES>* entity_recon(u32 id) const {
         const auto it = prev_entity_vis_.find(id);
         return it == prev_entity_vis_.end() ? nullptr : &it->second;
+    }
+    // Moho's ReconBlip::mReconDat[army].mReconFlags: set by the army's ReconTick only.
+    EntityVisSnapshot recon_flags(u32 id, u32 army) const {
+        const auto it = prev_entity_vis_.find(id);
+        if (it == prev_entity_vis_.end() || army >= MAX_VIS_ARMIES) {
+            return {};
+        }
+        return it->second[army];
+    }
+    // Sim::AdvanceBeat: army tick % N runs ReconTick (FR sim/Sim.cpp:10565-10585).
+    u32 recon_army() const {
+        return armies_.empty() ? 0 : static_cast<u32>(tick_count_ % armies_.size());
     }
 
     /// Jammers' fake blips (M215e), as Moho's recon keeps them: while an
@@ -1046,19 +1058,22 @@ private:
     /// blip of the unit (Moho calls it as its recon makes the blip).
     void fire_on_detected_by(u32 entity_id, u32 army_idx);
     /// Keep each jammer's fakes for each army that senses it (M215e).
-    void update_jam_blips();
+    void update_jam_blips(u32 army, const std::set<u32>& held);
     /// A fake's offset from jammer `u`: JamRadius's Min plus a share of
     /// its range, then a random fraction of that along a random heading.
     Vector3 jam_offset(const Unit& u);
     /// The blip objects of entities now gone: each one's OnDestroy (its
-    /// destroy hooks), in entity then army order, and forgotten.
-    void destroy_gone_blips();
+    /// destroy hooks), in entity order, and forgotten.
+    void destroy_gone_blips(u32 army);
+    void refresh_blips();
+    /// The units alive, by army, then id: the order Moho's ReconTick walks them in (EntId).
+    std::vector<u32> units_by_army() const;
+    void recon_tick(u32 army);
+    void forget_gone(u32 army);
+    bool holds_blip(const Entity& e, u32 army) const;
 
     /// Whether army `army` sensed unit `id` on the last pass.
-    bool sensed_now(u32 id, u32 army) const {
-        const auto it = prev_entity_vis_.find(id);
-        return it != prev_entity_vis_.end() && army < MAX_VIS_ARMIES && it->second[army].any();
-    }
+    bool sensed_now(u32 id, u32 army) const { return recon_flags(id, army).any(); }
     /// The intel each entity paints, brought up to date (Moho's handles:
     /// enable, disable, radius, moving and stopping) before the recon pass.
     void sync_intel();
@@ -1213,6 +1228,7 @@ private:
     /// a bit per fake, latched as Moho's UpdateBlip keeps RECON_KnownFake
     /// (newFlags |= oldFlags & 0x30) until the fake goes.
     std::map<u64, u64> jam_known_;
+    std::map<u64, u64> jam_sensed_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>
@@ -1245,15 +1261,15 @@ public:
     /// and forgets it. A negative army's blip is a fresh one, kept nowhere.
     void push_blip(lua_State* L, u32 entity_id, i32 army);
 
-    /// Army `req_army`'s recon of `entity` now (recon_of): radar, sonar, any.
+    /// Army `req_army`'s recon of `entity` as its last recon tick left it: radar, sonar, any.
     bool has_effective_radar(const Entity* entity, u32 req_army) const {
-        return entity && (recon_of(*entity, req_army) & kReconRadar) != 0;
+        return entity && recon_flags(entity->entity_id(), req_army).radar;
     }
     bool has_effective_sonar(const Entity* entity, u32 req_army) const {
-        return entity && (recon_of(*entity, req_army) & kReconSonar) != 0;
+        return entity && recon_flags(entity->entity_id(), req_army).sonar;
     }
     bool has_any_intel(const Entity* entity, u32 req_army) const {
-        return entity && recon_of(*entity, req_army) != 0;
+        return entity && recon_flags(entity->entity_id(), req_army).any();
     }
 };
 

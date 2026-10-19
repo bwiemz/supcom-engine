@@ -159,66 +159,32 @@ static int blip_GetPosition(lua_State* L) {
     return 1;
 }
 
-static int blip_IsSeenNow(lua_State* L) {
-    auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
-                                  : -1;
+static sim::SimState::EntityVisSnapshot blip_recon(lua_State* L) {
     auto* sim = get_sim(L);
-    if (sim && army >= 0) {
-        lua_pushboolean(
-            L, (sim->recon_of(*e, static_cast<u32>(army)) & sim::SimState::kReconLOS) != 0 ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 0);
+    const i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1 : -1;
+    if (!sim || army < 0) {
+        return {};
     }
+    return sim->recon_flags(get_blip_entity_id(L), static_cast<u32>(army));
+}
+
+static int blip_IsSeenNow(lua_State* L) {
+    lua_pushboolean(L, blip_recon(L).vision ? 1 : 0);
     return 1;
 }
 
 static int blip_IsOnRadar(lua_State* L) {
-    auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
-                                  : -1;
-    auto* sim = get_sim(L);
-    if (sim && army >= 0) {
-        // Stealth-aware: RadarStealth negates radar unless observer has Omni
-        lua_pushboolean(
-            L, sim->has_effective_radar(e, static_cast<u32>(army)) ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 0);
-    }
+    lua_pushboolean(L, blip_recon(L).radar ? 1 : 0);
     return 1;
 }
 
 static int blip_IsOnSonar(lua_State* L) {
-    auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
-                                  : -1;
-    auto* sim = get_sim(L);
-    if (sim && army >= 0) {
-        // Stealth-aware: SonarStealth negates sonar unless observer has Omni
-        lua_pushboolean(
-            L, sim->has_effective_sonar(e, static_cast<u32>(army)) ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 0);
-    }
+    lua_pushboolean(L, blip_recon(L).sonar ? 1 : 0);
     return 1;
 }
 
 static int blip_IsOnOmni(lua_State* L) {
-    auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
-                                  : -1;
-    auto* sim = get_sim(L);
-    if (sim && army >= 0) {
-        lua_pushboolean(
-            L,
-            (sim->recon_of(*e, static_cast<u32>(army)) & sim::SimState::kReconOmni) != 0 ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 0);
-    }
+    lua_pushboolean(L, blip_recon(L).omni ? 1 : 0);
     return 1;
 }
 
@@ -252,24 +218,13 @@ static int blip_IsSeenEver(lua_State* L) {
 
 static int blip_IsMaybeDead(lua_State* L) {
     auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) {
-        lua_pushboolean(L, 1); // entity dead → definitely maybe dead
-        return 1;
-    }
-    // Entity alive — check if requesting army has current intel
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
-    if (army >= 0 && army == e->army()) {
+    if (e && army >= 0 && army == e->army()) {
         lua_pushboolean(L, 0); // own army always knows
         return 1;
     }
-    auto* sim = get_sim(L);
-    if (sim && army >= 0) {
-        bool has_intel = sim->has_any_intel(e, static_cast<u32>(army));
-        lua_pushboolean(L, has_intel ? 0 : 1);
-    } else {
-        lua_pushboolean(L, 1);
-    }
+    lua_pushboolean(L, blip_recon(L).any() ? 0 : 1);
     return 1;
 }
 
@@ -379,6 +334,12 @@ static int blip_GetAIBrain(lua_State* L) {
 /// BeenDestroyed(): the blip goes with its unit (SimState::push_blip's
 /// objects, whose OnDestroy runs then), so it has once the unit has.
 static int blip_BeenDestroyed(lua_State* L) {
+    if (get_blip_req_army(L) >= 0) {
+        lua_pushstring(L, "_c_gone");
+        lua_rawget(L, 1);
+        lua_pushboolean(L, lua_toboolean(L, -1));
+        return 1;
+    }
     const auto* e = check_blip_entity(L);
     lua_pushboolean(L, e && !e->destroyed() ? 0 : 1);
     return 1;

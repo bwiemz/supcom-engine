@@ -2571,10 +2571,10 @@ ThreatSource threat_source_of(const Unit& u) {
 
 void SimState::feed_influence_map() {
     if (!intel_grids_) return;
-    const u32 n = static_cast<u32>(std::min(army_count(), static_cast<size_t>(MAX_VIS_ARMIES)));
-    if (n == 0) return;
-    // Moho's recon ticks one army a tick, in turn.
-    const u32 a = tick_count_ % n;
+    const u32 a = recon_army();
+    if (a >= intel_grids_->armies()) {
+        return;
+    }
     InfluenceMap* map = influence_map(static_cast<i32>(a));
     if (!map) return;
     const i32 owner = static_cast<i32>(a);
@@ -2902,103 +2902,163 @@ u8 SimState::recon_in(f32 x0, f32 z0, f32 x1, f32 z1, f32 y, u32 viewer) const {
 
 void SimState::update_visibility() {
     PROFILE_ZONE("Sim::visibility");
-    // 1. Each source's intel painted where Moho's handles would have it.
     sync_intel();
-    if (!intel_grids_) return;
-    const u32 n = intel_grids_->armies();
-    std::array<u32, MAX_VIS_ARMIES> sharers{};
-    for (u32 a = 0; a < n; ++a) sharers[a] = intel_sharers(a);
-
-    // 2. Each army's recon of each unit, once (ReconCanDetect).
-    std::vector<u32> ids;
-    ids.reserve(entity_registry_.count());
-    std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>> recon;
-    recon.reserve(entity_registry_.count());
-    entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed() || !e.is_unit()) return;
-        ids.push_back(e.entity_id());
-        auto& states = recon[e.entity_id()];
-        for (u32 a = 0; a < n; ++a) {
-            const u8 f = recon_detect(e, e.position(), a, sharers[a]);
-            states[a] = {(f & kReconLOS) != 0, (f & kReconRadar) != 0, (f & kReconSonar) != 0,
-                         (f & kReconOmni) != 0};
-        }
-    });
-
-    // 3. The blip cache (dead-reckoning positions). An army's first blip of
-    // a unit is its detection (OnDetectedBy, after the pass).
-    std::vector<std::pair<u32, u32>> detected;
-    for (const u32 eid : ids) {
-        const Entity* e = entity_registry_.find(eid);
-        const auto& states = recon[eid];
-        for (u32 a = 0; a < n; ++a) {
-            if (static_cast<i32>(a) == e->army() || !states[a].any()) continue;
-            auto& snap = blip_cache_[eid][a];
-            if (snap.entity_army < 0) detected.emplace_back(eid, a);
-            snap.last_known_position = e->position();
-            snap.blueprint_id = e->blueprint_id();
-            snap.entity_army = e->army();
-            snap.entity_dead = false;
-            // Without intel, the stale data stays: that IS the dead-reckoning
-        }
+    if (!intel_grids_) {
+        return;
     }
-
-    // Erase destroyed entities from blip cache (prevents unbounded growth)
-    for (auto it = los_ever_.begin(); it != los_ever_.end();) {
-        const auto* e = entity_registry_.find(it->first);
-        it = !e || e->destroyed() ? los_ever_.erase(it) : std::next(it);
+    refresh_blips();
+    const u32 army = recon_army();
+    if (army < intel_grids_->armies()) {
+        recon_tick(army);
     }
-    for (auto it = blip_cache_.begin(); it != blip_cache_.end();) {
-        auto* e = entity_registry_.find(it->first);
+}
+
+bool SimState::holds_blip(const Entity& e, u32 army) const {
+    if (recon_flags(e.entity_id(), army).any()) {
+        return true;
+    }
+    return e.is_unit() && !static_cast<const Unit&>(e).is_mobile() &&
+           ever_in_sight(e.entity_id(), army);
+}
+
+// Sim::RefreshBlips: every blip follows its source, whatever its army senses
+// (FR sim/ReconBlip.cpp:977).
+void SimState::refresh_blips() {
+    for (auto& [id, snaps] : blip_cache_) {
+        const Entity* e = entity_registry_.find(id);
         if (!e || e->destroyed()) {
-            it = blip_cache_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    destroy_gone_blips();
-    for (const auto& [eid, a] : detected) fire_on_detected_by(eid, a);
-
-    // 4. OnIntelChange for each sense gained or lost
-    for (const u32 eid : ids) {
-        const Entity* e = entity_registry_.find(eid);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
-        std::array<EntityVisSnapshot, MAX_VIS_ARMIES> prev{};
-        if (const auto it = prev_entity_vis_.find(eid); it != prev_entity_vis_.end())
-            prev = it->second;
-        const auto cur = recon[eid];
-        for (u32 a = 0; a < n; ++a) {
-            if (static_cast<i32>(a) == e->army()) continue; // skip own army
-            const auto fire = [&](bool was, bool now, const char* sense) {
-                if (was == now) return true;
-                fire_on_intel_change(eid, a, sense, now);
-                e = entity_registry_.find(eid);
-                return e && !e->destroyed();
-            };
-            if (!fire(prev[a].vision, cur[a].vision, "LOSNow") ||
-                !fire(prev[a].radar, cur[a].radar, "Radar") ||
-                !fire(prev[a].sonar, cur[a].sonar, "Sonar") ||
-                !fire(prev[a].omni, cur[a].omni, "Omni"))
-                break;
-        }
-    }
-
-    // 5. This pass's recon, for the next and for the tick's queries; and
-    // whatever was in sight is seen ever.
-    for (auto it = recon.begin(); it != recon.end();) {
-        const Entity* e = entity_registry_.find(it->first);
-        if (!e || e->destroyed()) {
-            it = recon.erase(it);
             continue;
         }
-        for (u32 a = 0; a < n; ++a)
-            if (it->second[a].vision) los_ever_[it->first] |= 1u << a;
-        ++it;
+        const auto vis = prev_entity_vis_.find(id);
+        const auto ever = los_ever_.find(id);
+        const bool kept_seen =
+            e->is_unit() && !static_cast<const Unit&>(*e).is_mobile() && ever != los_ever_.end();
+        for (u32 a = 0; a < MAX_VIS_ARMIES; ++a) {
+            BlipSnapshot& snap = snaps[a];
+            if (snap.entity_army < 0) {
+                continue;
+            }
+            const bool held = (vis != prev_entity_vis_.end() && vis->second[a].any()) ||
+                              (kept_seen && ((ever->second >> a) & 1u) != 0);
+            if (!held) {
+                continue;
+            }
+            snap.last_known_position = e->pending_position();
+            if (snap.blueprint_id != e->blueprint_id()) {
+                snap.blueprint_id = e->blueprint_id();
+            }
+            snap.entity_army = e->army();
+        }
     }
-    prev_entity_vis_ = std::move(recon);
+}
 
-    // 6. Jammers' fake blips.
-    update_jam_blips();
+void SimState::forget_gone(u32 army) {
+    const auto gone = [&](u32 id) {
+        const Entity* e = entity_registry_.find(id);
+        return !e || e->destroyed();
+    };
+    for (auto it = prev_entity_vis_.begin(); it != prev_entity_vis_.end();) {
+        if (!gone(it->first)) {
+            ++it;
+            continue;
+        }
+        it->second[army] = {};
+        const bool held = std::any_of(it->second.begin(), it->second.end(),
+                                      [](const EntityVisSnapshot& f) { return f.any(); });
+        it = held ? std::next(it) : prev_entity_vis_.erase(it);
+    }
+    for (auto it = blip_cache_.begin(); it != blip_cache_.end();) {
+        if (!gone(it->first)) {
+            ++it;
+            continue;
+        }
+        it->second[army] = BlipSnapshot{};
+        const bool held = std::any_of(it->second.begin(), it->second.end(),
+                                      [](const BlipSnapshot& b) { return b.entity_army >= 0; });
+        it = held ? std::next(it) : blip_cache_.erase(it);
+    }
+    for (auto it = los_ever_.begin(); it != los_ever_.end();) {
+        if (gone(it->first) && army < 32) {
+            it->second &= ~(1u << army);
+        }
+        it = it->second == 0 ? los_ever_.erase(it) : std::next(it);
+    }
+    destroy_gone_blips(army);
+}
+
+// CAiReconDBImpl::ReconTick (FR ai/CAiReconDBImpl.cpp:520): a held blip's changes in unit order,
+// then the new blips', each OnIntelChange before its OnDetectedBy (GenerateNewBlips).
+void SimState::recon_tick(u32 army) {
+    forget_gone(army);
+    const u32 sharers = intel_sharers(army);
+    const u32 bit = 1u << army;
+    const std::vector<u32> ids = units_by_army();
+    const auto fire = [&](u32 id, const EntityVisSnapshot& was, const EntityVisSnapshot& now) {
+        if (was.vision != now.vision) {
+            fire_on_intel_change(id, army, "LOSNow", now.vision);
+        }
+        if (was.radar != now.radar) {
+            fire_on_intel_change(id, army, "Radar", now.radar);
+        }
+        if (was.sonar != now.sonar) {
+            fire_on_intel_change(id, army, "Sonar", now.sonar);
+        }
+        if (was.omni != now.omni) {
+            fire_on_intel_change(id, army, "Omni", now.omni);
+        }
+    };
+    struct Fresh {
+        u32 id;
+        EntityVisSnapshot now;
+    };
+    std::vector<Fresh> fresh;
+    std::set<u32> held;
+    for (const u32 id : ids) {
+        const Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed()) {
+            continue;
+        }
+        const u8 f = recon_detect(*e, e->position(), army, sharers);
+        const EntityVisSnapshot now{(f & kReconLOS) != 0, (f & kReconRadar) != 0,
+                                    (f & kReconSonar) != 0, (f & kReconOmni) != 0};
+        const bool own = e->army() == static_cast<i32>(army);
+        const bool had = !own && holds_blip(*e, army);
+        if (!own && !had && now.any()) {
+            fresh.push_back({id, now});
+            continue;
+        }
+        EntityVisSnapshot& slot = prev_entity_vis_[id][army];
+        const EntityVisSnapshot was = slot;
+        slot = now;
+        if (now.vision) {
+            los_ever_[id] |= bit;
+        }
+        if (had) {
+            held.insert(id);
+            fire(id, was, now);
+        }
+    }
+    for (const Fresh& f : fresh) {
+        const Entity* e = entity_registry_.find(f.id);
+        if (!e || e->destroyed()) {
+            continue;
+        }
+        prev_entity_vis_[f.id][army] = f.now;
+        if (f.now.vision) {
+            los_ever_[f.id] |= bit;
+        }
+        BlipSnapshot& snap = blip_cache_[f.id][army];
+        const bool first = snap.entity_army < 0;
+        snap.last_known_position = e->pending_position();
+        snap.blueprint_id = e->blueprint_id();
+        snap.entity_army = e->army();
+        snap.entity_dead = false;
+        fire(f.id, EntityVisSnapshot{}, f.now);
+        if (first) {
+            fire_on_detected_by(f.id, army);
+        }
+    }
+    update_jam_blips(army, held);
 }
 
 Vector3 SimState::jam_offset(const Unit& u) {
@@ -3024,42 +3084,83 @@ Vector3 SimState::jam_offset(const Unit& u) {
     return {x / len * reach, 0.0f, z / len * reach};
 }
 
-void SimState::update_jam_blips() {
-    const u32 n = intel_grids_ ? intel_grids_->armies() : 0;
-    std::set<u64> kept;
-    // Units in id order, armies in index order: the draws fall alike on
-    // every peer.
+// UpdateBlips keeps a jammer's fakes only where its army held the jammer's blip before this tick.
+std::vector<u32> SimState::units_by_army() const {
+    std::vector<std::pair<i32, u32>> order;
+    order.reserve(entity_registry_.count());
     entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed()) return;
-        auto& u = static_cast<Unit&>(e);
-        if (u.jammer_blips() == 0 || u.is_dying() || u.is_being_built() ||
-            !u.is_intel_enabled("Jammer"))
-            return;
-        const i32 owner = u.army();
-        for (u32 a = 0; a < n; ++a) {
-            if (static_cast<i32>(a) == owner || is_ally(static_cast<i32>(a), owner)) continue;
-            // Moho keeps a unit's blips while the army senses it, or has
-            // seen a structure; the fakes live with them.
-            const bool sensed = sensed_now(u.entity_id(), a);
-            if (!sensed && (u.is_mobile() || !ever_in_sight(u.entity_id(), a))) continue;
-            const u64 key = jam_key(u.entity_id(), a);
-            auto& offsets = jam_offsets_[key];
-            while (offsets.size() < u.jammer_blips()) offsets.push_back(jam_offset(u));
-            offsets.resize(u.jammer_blips());
-            kept.insert(key);
-            // Known fake once, known fake while the army holds it
-            u64& known = jam_known_[key];
-            for (size_t i = 0; i < offsets.size() && i < 64; ++i) {
-                const Vector3 at{u.position().x + offsets[i].x, u.position().y + offsets[i].y,
-                                 u.position().z + offsets[i].z};
-                if (fake_known_now(u, at, a)) known |= u64{1} << i;
-            }
-            if (offsets.size() < 64) known &= (u64{1} << offsets.size()) - 1;
-            if (known == 0) jam_known_.erase(key);
+        if (!e.destroyed()) {
+            order.emplace_back(e.army(), e.entity_id());
         }
     });
-    std::erase_if(jam_offsets_, [&](const auto& entry) { return kept.count(entry.first) == 0; });
-    std::erase_if(jam_known_, [&](const auto& entry) { return kept.count(entry.first) == 0; });
+    std::sort(order.begin(), order.end());
+    std::vector<u32> ids;
+    ids.reserve(order.size());
+    for (const auto& [owner, id] : order) {
+        ids.push_back(id);
+    }
+    return ids;
+}
+
+void SimState::update_jam_blips(u32 army, const std::set<u32>& held) {
+    std::set<u64> kept;
+    for (const u32 id : units_by_army()) {
+        Entity* found = entity_registry_.find(id);
+        if (!found || found->destroyed()) {
+            continue;
+        }
+        Entity& e = *found;
+        auto& u = static_cast<Unit&>(e);
+        if (u.jammer_blips() == 0 || u.is_dying() || u.is_being_built() ||
+            !u.is_intel_enabled("Jammer")) {
+            continue;
+        }
+        const i32 owner = u.army();
+        if (static_cast<i32>(army) == owner || is_ally(static_cast<i32>(army), owner)) {
+            continue;
+        }
+        if (held.count(u.entity_id()) == 0 || !holds_blip(u, army)) {
+            continue;
+        }
+        const u64 key = jam_key(u.entity_id(), army);
+        auto& offsets = jam_offsets_[key];
+        while (offsets.size() < u.jammer_blips()) {
+            offsets.push_back(jam_offset(u));
+        }
+        offsets.resize(u.jammer_blips());
+        kept.insert(key);
+        u64 known = jam_known_[key];
+        u64 sensed = 0;
+        for (size_t i = 0; i < offsets.size() && i < 64; ++i) {
+            const Vector3 at{u.position().x + offsets[i].x, u.position().y + offsets[i].y,
+                             u.position().z + offsets[i].z};
+            if (recon_of(u, at, army) != 0) {
+                sensed |= u64{1} << i;
+            }
+            if (fake_known_now(u, at, army)) {
+                known |= u64{1} << i;
+            }
+        }
+        if (offsets.size() < 64) {
+            known &= (u64{1} << offsets.size()) - 1;
+        }
+        if (known == 0) {
+            jam_known_.erase(key);
+        } else {
+            jam_known_[key] = known;
+        }
+        if (sensed == 0) {
+            jam_sensed_.erase(key);
+        } else {
+            jam_sensed_[key] = sensed;
+        }
+    }
+    const auto dropped = [&](const auto& entry) {
+        return (entry.first & 0xFF) == army && kept.count(entry.first) == 0;
+    };
+    std::erase_if(jam_offsets_, dropped);
+    std::erase_if(jam_known_, dropped);
+    std::erase_if(jam_sensed_, dropped);
 }
 
 bool SimState::fake_known_now(const Unit& jammer, const Vector3& pos, u32 army) const {
@@ -3100,15 +3201,11 @@ std::vector<SimState::HeldFake> SimState::held_fakes(i32 viewer) const {
             f.index = static_cast<u32>(i);
             f.position = {u.position().x + offsets[i].x, u.position().y + offsets[i].y,
                           u.position().z + offsets[i].z};
-            // The army's recon of the jammer where the fake lies (Moho asks
-            // ReconCanDetect of the fake's source unit at the fake's place):
-            // the jammer's layer, cloak and stealth count.
-            const u8 recon = recon_of(u, f.position, army);
-            f.sensed = recon != 0;
+            const auto sensed = jam_sensed_.find(key);
+            f.sensed = sensed != jam_sensed_.end() && i < 64 && ((sensed->second >> i) & 1) != 0;
             const auto latched = jam_known_.find(key);
             f.known_fake =
-                (latched != jam_known_.end() && i < 64 && ((latched->second >> i) & 1) != 0) ||
-                fake_known_now(u, f.position, army);
+                latched != jam_known_.end() && i < 64 && ((latched->second >> i) & 1) != 0;
             held.push_back(f);
         }
     }
@@ -3346,46 +3443,63 @@ void SimState::push_blip(lua_State* L, u32 entity_id, i32 army) {
     lua_settop(L, store);
 }
 
-void SimState::destroy_gone_blips() {
-    if (!L_ || blip_objects_.empty()) return;
+void SimState::destroy_gone_blips(u32 army) {
+    if (!L_ || blip_objects_.empty()) {
+        return;
+    }
     std::vector<u32> gone;
     for (const u32 id : blip_objects_) {
         const Entity* e = entity_registry_.find(id);
-        if (!e || e->destroyed()) gone.push_back(id);
+        if (!e || e->destroyed()) {
+            gone.push_back(id);
+        }
     }
-    if (gone.empty()) return;
+    if (gone.empty()) {
+        return;
+    }
+    const u32 recon_armies = intel_grids_ ? intel_grids_->armies() : 0;
     push_blip_store(L_);
     const int store = lua_gettop(L_);
     for (const u32 id : gone) {
-        blip_objects_.erase(id);
         lua_rawgeti(L_, store, static_cast<int>(id));
         const int per_entity = lua_gettop(L_);
-        // Forgotten first: a hook asking for it again doesn't get it back.
-        lua_pushnil(L_);
-        lua_rawseti(L_, store, static_cast<int>(id));
         if (lua_istable(L_, per_entity)) {
-            for (u32 a = 1; a <= MAX_VIS_ARMIES; ++a) {
-                lua_rawgeti(L_, per_entity, static_cast<int>(a));
+            for (u32 a = 0; a < MAX_VIS_ARMIES; ++a) {
+                if (a != army && a < recon_armies) {
+                    continue;
+                }
+                lua_rawgeti(L_, per_entity, static_cast<int>(a + 1));
                 const int blip = lua_gettop(L_);
                 if (lua_istable(L_, blip)) {
+                    // Forgotten first: a hook asking for it again doesn't get it back.
+                    lua_pushnil(L_);
+                    lua_rawseti(L_, per_entity, static_cast<int>(a + 1));
+                    lua_pushstring(L_, "_c_gone");
+                    lua_pushboolean(L_, 1);
+                    lua_rawset(L_, blip);
                     lua_pushstring(L_, "OnDestroy");
                     lua_gettable(L_, blip);
                     if (lua_isfunction(L_, -1)) {
                         lua_pushvalue(L_, blip);
                         if (lua_pcall(L_, 1, 0, 0) != 0) {
                             spdlog::warn("Blip OnDestroy error: {}", lua_tostring(L_, -1));
-                            lua_pop(L_, 1);
                         }
-                    } else {
-                        lua_pop(L_, 1);
                     }
                 }
                 lua_settop(L_, per_entity);
             }
+            lua_pushnil(L_);
+            if (lua_next(L_, per_entity) != 0) {
+                lua_settop(L_, store);
+                continue;
+            }
         }
+        blip_objects_.erase(id);
+        lua_pushnil(L_);
+        lua_rawseti(L_, store, static_cast<int>(id));
         lua_settop(L_, store);
     }
-    lua_pop(L_, 1); // store
+    lua_pop(L_, 1);
 }
 
 namespace {

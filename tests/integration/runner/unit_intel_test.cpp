@@ -121,10 +121,10 @@ void test_unit_intel(TestContext& ctx) {
     r.set_selection_marks(near_id, std::nullopt);
 
     // The world `ticks` on (scrying, if the sight is on, each tick), drawn
-    // as the game's next frame draws it.
+    // as the game's next frame draws it, after ARMY_1's recon tick (Moho's: tick % N).
     sim::WorldHistory seen;
     const auto next = [&](int ticks = 1) {
-        for (int i = 0; i < ticks; ++i) {
+        for (int i = 0; i < ticks || ctx.sim.recon_army() != 0; ++i) {
             if (vision)
                 for (const Spot& at : {near_at, pgen_at})
                     lua(fmt::format("CreateVisibleAreaAtPoint(1, {}, 0, {}, 12, 0.1)\n", at.x,
@@ -638,7 +638,7 @@ void test_effect_intel(TestContext& ctx) {
     const u32 fog_right = click(false);
     const u32 fog_order = click(true);
     run_lua(ctx, "__osc_fx_radar:EnableIntel('Radar')\n");
-    f = next();
+    f = next(static_cast<int>(ctx.sim.army_count()));
     const u32 blip_right = click(false);
     const u32 blip_order = click(true);
     // (In the fog a right-click may still land on a rock, to reclaim.)

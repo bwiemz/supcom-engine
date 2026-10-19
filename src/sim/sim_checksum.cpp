@@ -558,6 +558,8 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             for (const Vector3& o : offsets) mix_vec(armies, o);
             const auto known = jam_known_.find(key);
             armies.mix(known == jam_known_.end() ? 0 : known->second);
+            const auto sensed = jam_sensed_.find(key);
+            armies.mix(sensed == jam_sensed_.end() ? 0 : sensed->second);
         }
     }
     parts.armies = armies.h;

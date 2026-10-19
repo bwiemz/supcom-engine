@@ -454,6 +454,10 @@ stun, regeneration).
 flags, callbacks and jammer blips only on `ReconTick`; `RefreshBlips` every tick; recon reads committed
 positions.
 - Tests: army i's `OnIntelChange` only on ticks ≡ i (mod N); `IsSeenNow` reports the last `ReconTick`.
+  *Done (2026-10-19) — tick/s10-recon-by-army: army tick % N runs its recon (flags, blips, `OnIntelChange` then
+  `OnDetectedBy`, a jammer's fakes the cycle after its blip, a gone unit's blip), every blip follows its unit each
+  tick; Lua's blip readers, `GetBlip`, patrol, the omni check and the UI's units and fakes read the last recon; P1,
+  P2, P3 and a34 unchanged.*
 
 **Step 11. Commands and beats.** Commands before `++tick`; a cancelled task's callbacks when the command is
 applied; pause as beats without a tick (commands, `OnDestroy`, `Sync`, GC run); the tick of a pause request

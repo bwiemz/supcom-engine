@@ -156,7 +156,8 @@ Entity* Unit::best_enemy(const std::vector<Entity*>& candidates, f32 range, SimC
         if (dist2 > range * range) {
             continue;
         }
-        if (sim->recon_of(enemy, static_cast<u32>(army())) == 0 || enemy.has_category(kBenign)) {
+        if (!sim->recon_flags(enemy.entity_id(), static_cast<u32>(army())).any() ||
+            enemy.has_category(kBenign)) {
             continue;
         }
         const bool air = enemy.is_air_unit();

@@ -82,14 +82,18 @@ void test_counter_intel(TestContext& ctx) {
     };
     sim::WorldHistory seen;
     const auto next = [&] {
-        for (const Spot& at : scry)
-            run_lua(ctx,
-                    fmt::format("CreateVisibleAreaAtPoint(1, {}, 0, {}, 12, 0.1)\n", at.x, at.z));
-        ctx.sim.tick();
-        // The diver keeps to the seabed (the layer's the unit's: radar
-        // can't reach it, sonar can).
-        if (auto* e = ctx.sim.entity_registry().find(diver); e && e->is_unit())
-            static_cast<sim::Unit*>(e)->set_layer("Seabed");
+        do {
+            for (const Spot& at : scry) {
+                run_lua(ctx, fmt::format("CreateVisibleAreaAtPoint(1, {}, 0, {}, 12, 0.1)\n", at.x,
+                                         at.z));
+            }
+            ctx.sim.tick();
+            // The diver keeps to the seabed (the layer's the unit's: radar
+            // can't reach it, sonar can).
+            if (auto* e = ctx.sim.entity_registry().find(diver); e && e->is_unit()) {
+                static_cast<sim::Unit*>(e)->set_layer("Seabed");
+            }
+        } while (ctx.sim.recon_army() != 0);
         shots.recapture();
         shots.redraw();
         seen.capture(ctx.sim);
