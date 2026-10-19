@@ -122,8 +122,9 @@ so a later reader can check the reasoning without the game's code.
 
 - **Supported:** Windows (MSVC) and Linux (GCC or Clang) on x86-64. CI builds and tests both.
   Release packages are a Windows zip and a Linux AppImage (M227).
-- **Supported:** macOS on Apple Silicon (arm64, macOS 14 or later), built with the `macos-release` preset.
-  CI builds it and runs the data-free tests (the `macos-arm64` job). There is no macOS release package yet.
+- **Supported:** macOS on Apple Silicon (arm64, macOS 14 or later). CI builds it and passes the data-free
+  tests (the `macos-arm64` job). Multiplayer against Windows or Linux builds is unchecked, and there is no macOS
+  release package yet.
 - **Not yet:** Intel Macs, and other architectures.
 
 ## Changing this policy

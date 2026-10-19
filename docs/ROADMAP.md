@@ -130,8 +130,9 @@ Scores run from 0 to 5.
    and its justification belongs in the milestone spec.
 2. **Two data targets, both first-class.** Retail FA 3599 (Steam or GOG) and FAForever. Retail
    is the stable baseline that every developer can own. FAF is the living ecosystem.
-3. **Two platforms, one feature set.** Windows (MSVC) and Linux (GCC and Clang) build in CI on
-   every PR. macOS stays "portable, untested" until Vulkan via MoltenVK matters.
+3. **Three platforms, one feature set.** Windows (MSVC), Linux (GCC and Clang) and macOS on Apple
+   Silicon build in CI on every PR; macOS runs the data-free tests only, and multiplayer against the
+   other two is unchecked.
 4. **Prove it or it isn't done.** Every milestone ships with an automated check that fails when
    the feature breaks: a unit test, a data-backed headless test with a real exit code, a
    determinism trace, or a golden image.
