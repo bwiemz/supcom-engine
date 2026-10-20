@@ -80,7 +80,8 @@ public:
         bool timed = false;   ///< the device has timestamps on the graphics queue
         f64 gpu_ms = 0;       ///< its command buffer's start to end, on the GPU
         bool passes_timed = false; ///< marks split it: pass_ms holds figures
-        PassTimes pass_ms{};  ///< gpu_ms by pass (they sum to it, unless a step back counted none)
+        PassTimes pass_ms{}; ///< gpu_ms by pass (they sum to it, unless a step back counted none)
+        std::array<bool, kPasses> pass_marked{}; ///< a mark named it (its span may be 0 long)
         bool counted = false; ///< the device has pipeline statistics
         u64 primitives = 0;   ///< primitives the input assembler put out
         u64 vertex_invocations = 0;

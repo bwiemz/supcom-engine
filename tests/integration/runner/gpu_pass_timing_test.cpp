@@ -77,6 +77,14 @@ void test_gpu_pass_timing(TestContext& ctx) {
                         pass(split, Pass::RefractionCopy), pass(split, Pass::Bloom),
                         pass(split, Pass::Composite), pass(split, Pass::Other)));
 
+    // A pass's span can be zero long on a driver, so its mark is checked apart from its time
+    for (const Pass p : {Pass::Shadow, Pass::Normals, Pass::Reflection, Pass::Main,
+                         Pass::RefractionCopy, Pass::Bloom, Pass::Composite}) {
+        const auto i = static_cast<size_t>(p);
+        t.check(split.pass_marked[i], fmt::format("Test 5b: the {} pass was marked",
+                                                  renderer::GpuFrameQueries::kPassNames[i]));
+    }
+
     r.set_timing_passes(false);
     (void)frames("Test 6");
     const Frame after = frames("Test 7");

@@ -108,6 +108,8 @@ void GpuFrameQueries::collect(VkDevice device, u32 slot) {
                 frame.passes_timed = true;
                 frame.pass_ms = split(std::span(ticks.data(), written), held.marks.passes(),
                                       ns_per_tick_, valid_mask_);
+                for (const Pass p : held.marks.passes())
+                    frame.pass_marked[static_cast<size_t>(p)] = true;
             }
         }
     }
