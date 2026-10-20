@@ -2,6 +2,7 @@
 // render bench asks for it, and a frame's two timestamps alone without it.
 
 #include "app/support.hpp"
+#include "core/test_status.hpp"
 #include "integration_tests.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
@@ -33,8 +34,14 @@ void test_gpu_pass_timing(TestContext& ctx) {
     }
     renderer::Renderer& r = shots.renderer();
     if (!r.gpu_timestamps_supported()) {
-        spdlog::warn("GPU pass timing test: the device counts no timestamps; skipped");
-        std::exit(app::kExitSkippedNoData);
+        // A skip must not drop a failure already recorded: report it and fail instead
+        const int code = test_status::failure_count() > 0
+                             ? app::finish_test_run("gpu-pass-timing-test")
+                             : app::kExitSkippedNoData;
+        if (code == app::kExitSkippedNoData)
+            spdlog::warn("GPU pass timing test: the device counts no timestamps; skipped");
+        spdlog::default_logger()->flush();
+        std::exit(code);
     }
     // Ground under water, so the frame copies itself for the water to refract
     std::vector<u16> heights(static_cast<size_t>(kSize + 1) * (kSize + 1), 5 * 128);
