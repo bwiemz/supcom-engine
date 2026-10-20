@@ -337,6 +337,12 @@ std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
     return result;
 }
 
+bool EntityRegistry::live_within(const Entity& e, f32 x0, f32 z0, f32 x1, f32 z1) {
+    const f32 ex = e.position().x;
+    const f32 ez = e.position().z;
+    return !e.destroyed() && ex >= x0 && ex <= x1 && ez >= z0 && ez <= z1;
+}
+
 std::vector<Entity*> EntityRegistry::units_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const {
     std::vector<Entity*> result;
     if (x0 > x1) std::swap(x0, x1);
