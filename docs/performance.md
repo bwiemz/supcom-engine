@@ -233,6 +233,14 @@ scripts call (call to return; the waits left out): over 20 minutes of the
 eight-AI match they come to about 2 ms a tick. The AIs' 26 ms is their own
 scripts' work, not the engine's.
 
+**Patrols.** A patrolling engineer looks for work every 6 ticks over a box
+along its leg, and a long leg's box holds thousands of props. The search
+listed and sorted every entity in the box's bounds; it now visits them in
+place (`EntityRegistry::for_each_in_rect`, `sim/unit_patrol.cpp`), the
+nearest kept with ties to the lowest id as before. Over the same 6,000
+ticks: patrol orders 4.9 to 3.3 s, every tick's checksum the same.
+
+
 ## Ideas not yet done
 
 - Props: the snapshot and `update_entities` visit every prop every tick;
