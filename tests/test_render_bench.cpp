@@ -96,6 +96,10 @@ TEST_CASE("A frame's GPU time splits by the pass each mark starts", "[bench]") {
     CHECK(ms[static_cast<size_t>(Pass::Shadow)] == 840.0); // 250 + 590
     CHECK(ms[static_cast<size_t>(Pass::Main)] == 10.0);
     CHECK(ms[static_cast<size_t>(Pass::Bloom)] == 0.0);
+    // Monotonic timestamps: the passes sum to the frame, start to end.
+    CHECK(ms[static_cast<size_t>(Pass::Other)] + ms[static_cast<size_t>(Pass::Shadow)] +
+              ms[static_cast<size_t>(Pass::Main)] ==
+          900.0);
 
     // A counter of 8 valid bits wraps between two marks; one that steps back
     // counts nothing rather than most of its range.

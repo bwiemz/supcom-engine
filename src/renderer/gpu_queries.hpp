@@ -80,7 +80,7 @@ public:
         bool timed = false;   ///< the device has timestamps on the graphics queue
         f64 gpu_ms = 0;       ///< its command buffer's start to end, on the GPU
         bool passes_timed = false; ///< marks split it: pass_ms holds figures
-        PassTimes pass_ms{};       ///< gpu_ms by pass (they sum to it)
+        PassTimes pass_ms{};  ///< gpu_ms by pass (they sum to it, unless a step back counted none)
         bool counted = false; ///< the device has pipeline statistics
         u64 primitives = 0;   ///< primitives the input assembler put out
         u64 vertex_invocations = 0;
@@ -99,8 +99,8 @@ public:
     /// At the start of `slot`'s command buffer, before any render pass.
     void begin(VkCommandBuffer cmd, u32 slot, u64 sequence);
     /// Between begin() and end(), outside any render pass: the GPU's work
-    /// from here is `pass`'s, in the command buffer begun last (whichever
-    /// slot a split view's second view draws from). Only while timing passes:
+    /// from here is `pass`'s, in the command buffer begun last: the frame's,
+    /// which a split view's second view records into too. Only while timing passes:
     /// on a tiler a timestamp between passes can cost the frame a millisecond.
     void mark(VkCommandBuffer cmd, Pass pass);
     void set_timing_passes(bool on) { timing_passes_ = on; }
@@ -109,6 +109,9 @@ public:
 
     /// The latest frame whose results are in: a frame in flight behind.
     const Frame& latest() const { return latest_; }
+    /// The device counts timestamps on the graphics queue (whether or not
+    /// its query pool could be made).
+    bool timestamps_supported() const { return ns_per_tick_ > 0; }
 
 private:
     struct Slot {

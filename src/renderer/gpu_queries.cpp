@@ -47,6 +47,7 @@ void GpuFrameQueries::init(VkPhysicalDevice physical, VkDevice device, u32 queue
                            bool statistics, u32 slots) {
     slots_.assign(slots, {});
     latest_ = {};
+    ns_per_tick_ = 0;
 
     // Timestamps: the graphics queue must count them (timestampValidBits),
     // and the device says how long a tick is.
