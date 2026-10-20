@@ -1,6 +1,7 @@
 #include "renderer/command_graph_renderer.hpp"
 #include "renderer/vk_cmd.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/color.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/shader_utils.hpp"
@@ -576,29 +577,23 @@ const std::array<f32, 6>& CommandGraphRenderer::pad_of(const std::string& bp, lu
         return out;
     }
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp.c_str());
-        lua_rawget(L, -2);
+    if (blueprints::push_blueprint(L, bp)) {
+        const int table = lua_gettop(L);
+        const auto [fx, fz] = sim::blueprint_footprint(L, table);
+        out[0] = fx > 0 ? fx : 1.0f;
+        out[1] = fz > 0 ? fz : 1.0f;
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, table);
         if (lua_istable(L, -1)) {
-            const int table = lua_gettop(L);
-            const auto [fx, fz] = sim::blueprint_footprint(L, table);
-            out[0] = fx > 0 ? fx : 1.0f;
-            out[1] = fz > 0 ? fz : 1.0f;
-            lua_pushstring(L, "Physics");
-            lua_rawget(L, table);
-            if (lua_istable(L, -1)) {
-                const int physics = lua_gettop(L);
-                const char* keys[] = {"SkirtSizeX", "SkirtSizeZ", "SkirtOffsetX", "SkirtOffsetZ"};
-                for (size_t i = 0; i < 4; ++i) {
-                    lua_pushstring(L, keys[i]);
-                    lua_rawget(L, physics);
-                    if (lua_isnumber(L, -1)) {
-                        out[2 + i] = static_cast<f32>(lua_tonumber(L, -1));
-                    }
-                    lua_pop(L, 1);
+            const int physics = lua_gettop(L);
+            const char* keys[] = {"SkirtSizeX", "SkirtSizeZ", "SkirtOffsetX", "SkirtOffsetZ"};
+            for (size_t i = 0; i < 4; ++i) {
+                lua_pushstring(L, keys[i]);
+                lua_rawget(L, physics);
+                if (lua_isnumber(L, -1)) {
+                    out[2 + i] = static_cast<f32>(lua_tonumber(L, -1));
                 }
+                lua_pop(L, 1);
             }
         }
     }

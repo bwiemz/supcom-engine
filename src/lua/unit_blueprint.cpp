@@ -43,16 +43,9 @@ using blueprints::BlueprintStore;
 static std::optional<sim::Weapon::ProjectilePhysics> projectile_physics(lua_State* L,
                                                                         const std::string& id) {
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, id.c_str());
-        lua_rawget(L, -2);
-    }
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "Physics");
-        lua_rawget(L, -2);
-    }
+    if (!blueprints::push_blueprint(L, id)) return std::nullopt;
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, -2);
     if (!lua_istable(L, -1)) {
         lua_settop(L, top);
         return std::nullopt;

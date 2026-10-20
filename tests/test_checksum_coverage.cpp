@@ -16,11 +16,15 @@
 #include "sim/weapon.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
+#include <fmt/format.h>
+
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -254,6 +258,52 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
                          d->watched().front().below_foot_height = true;
              }},
         });
+}
+
+TEST_CASE("A script thread shows in the trace's threads, not in the compared checksum",
+          "[sync][checksum]") {
+    // Retail's sim scripts fork threads by the focus army (aibrain.lua's
+    // voice-overs), which each client sets for itself.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    setup(sim);
+    const SimState::ChecksumParts before = sim.checksum_parts();
+    REQUIRE(luaL_loadbuffer(g.L, "coroutine.yield()", 17, "=voice") == 0);
+    sim.thread_manager().fork_thread(g.L);
+    lua_settop(g.L, 0);
+    const SimState::ChecksumParts after = sim.checksum_parts();
+    CHECK(after.threads != before.threads);
+    CHECK(after.values() == before.values());
+    CHECK(after.total() == before.total());
+}
+
+TEST_CASE("The checksum trace keeps the threads column, after the compared domains",
+          "[sync][checksum]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    setup(sim);
+    std::ostringstream trace;
+    sim.set_checksum_trace(&trace);
+    sim.tick();
+
+    std::istringstream lines(trace.str());
+    std::string header, line;
+    REQUIRE(std::getline(lines, header));
+    REQUIRE(std::getline(lines, line));
+    const auto words = [](const std::string& text) {
+        std::vector<std::string> out;
+        std::istringstream in(text);
+        for (std::string w; in >> w;) out.push_back(w);
+        return out;
+    };
+    const auto names = words(header);
+    const auto values = words(line);
+    REQUIRE(names.size() == SimState::ChecksumParts::kCount + 4); // # tick total ... threads
+    CHECK(names.back() == "threads");
+    REQUIRE(values.size() == names.size() - 1);
+    const SimState::ChecksumParts& parts = sim.beat_checksum();
+    CHECK(values[1] == fmt::format("{:08x}", parts.total()));
+    CHECK(values.back() == fmt::format("{:016x}", parts.threads));
 }
 
 TEST_CASE("A game saved with that state, restored and played on, matches", "[sync][checksum]") {

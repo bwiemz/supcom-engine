@@ -45,6 +45,8 @@ add_executable(osc_integration
     runner/resource_icon_render_test.cpp
     runner/counter_intel_test.cpp
     runner/binding_tail_test.cpp
+    runner/pod_rebuild_test.cpp
+    runner/mesh_texture_test.cpp
     runner/destroyed_handle_test.cpp
     runner/jammer_blip_test.cpp
     runner/intel_field_test.cpp
@@ -394,6 +396,17 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # A windowed game whose player is ARMY_2, self-destructing their
+    # commander, replays headless: nothing the UI alone decides (the army it
+    # focuses) reaches the sim's checksum.
+    add_test(NAME data.self_destruct_flow
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/self_destruct_flow.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py)
+    set_tests_properties(data.self_destruct_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+
     # M208a, M191 step 4: retail's Load dialog path -- GetSpecialFiles lists
     # the save, LoadSavedGame loads it -- then the game catches up (never a
     # replay meanwhile), plays on, and InternalSaveGame saves it again. Then
@@ -467,6 +480,16 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game.py
                      $<TARGET_FILE:opensupcom> 29742 -- --lan-game-quit-at 120)
     set_tests_properties(data.lan_game_quit PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+    # Each side focuses its own army; the joiner self-destructs its commander
+    # at tick 10, which forks a focus-gated script thread on its side alone
+    # (a commander's under-attack voice-over). The two must not desync.
+    add_test(NAME data.lan_game_self_destruct
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game.py
+                     $<TARGET_FILE:opensupcom> 29743 -- --lan-game-self-destruct-at 10)
+    set_tests_properties(data.lan_game_self_destruct PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)

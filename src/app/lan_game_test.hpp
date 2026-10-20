@@ -13,6 +13,11 @@
 // reaches both. The host's lobby makes the game's speed adjustable, and the
 // joiner, resuming, raises it to +2 (M218i): both hear it, and play on at it.
 //
+// With `self_destruct_at` the joiner self-destructs its commander at that
+// tick, as Ctrl-K does: retail's sim scripts fork threads for the focus army
+// alone (a commander's under-attack voice-over), and each side focuses its
+// own, yet the two must agree.
+//
 // With `quit_at` (M218e) the joiner leaves the game at that tick: the host
 // must drop it by the lockstep's agreement, defeat its army, show and close
 // retail's disconnect dialog without a script error, and play on alone.
@@ -39,7 +44,8 @@ public:
     static constexpr u32 kEndTick = 150;
 
     /// `address` and `port`: the host's lobby (the host listens on `port`).
-    LanGameTest(bool host, std::string address, u16 port, u32 quit_at = 0);
+    LanGameTest(bool host, std::string address, u16 port, u32 quit_at = 0,
+                u32 self_destruct_at = 0);
 
     /// With the front end up: open retail's lobby (the host hosts at once;
     /// the other joins once the host listens). False (reported) on a script
@@ -74,6 +80,9 @@ private:
     std::string address_;
     u16 port_;
     u32 quit_at_ = 0; ///< the joiner leaves at this tick (0: it plays on)
+    u32 self_destruct_at_ = 0; ///< the joiner self-destructs then (0: never)
+    u32 self_destructed_ = 0;  ///< the joiner's commander, once it self-destructs
+    bool self_destruct_failed_ = false;
     u32 frames_ = 0;
     bool joined_ = false;           ///< the joiner's JoinGame went out
     bool listening_ = false;        ///< the game's chat is heard

@@ -21,14 +21,15 @@ void FrameTargets::create(VkDevice device, VmaAllocator allocator, u32 width, u3
     allocator_ = allocator;
     const u32 w = width;
     const u32 h = height;
-    VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    // 8-bit, as FA's targets are (A8R8G8B8): colour saturates at 1 with
+    // every write, and the bloom reads nothing brighter.
+    const VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
 
-    // Helper to create an HDR image + view
-    auto create_hdr_image = [&](AllocatedImage& img, u32 iw, u32 ih) {
+    auto create_image = [&](AllocatedImage& img, u32 iw, u32 ih) {
         VkImageCreateInfo img_ci{};
         img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.format = hdr_format;
+        img_ci.format = format;
         img_ci.extent = {iw, ih, 1};
         img_ci.mipLevels = 1;
         img_ci.arrayLayers = 1;
@@ -47,26 +48,25 @@ void FrameTargets::create(VkDevice device, VmaAllocator allocator, u32 width, u3
         view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_ci.image = img.image;
         view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_ci.format = hdr_format;
+        view_ci.format = format;
         view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
     };
 
-    // Scene color uses HDR format — all scene pipelines are built against
-    // scene_render_pass_ so format compatibility is guaranteed. HDR allows
-    // overbright values for proper bloom extraction.
-    create_hdr_image(scene_color_image_, w, h);
+    // Every scene pipeline is built against scene_render_pass_, so all four
+    // share its format.
+    create_image(scene_color_image_, w, h);
     // The frame as it is before the water, which the water refracts (M213a).
-    create_hdr_image(refraction_image_, w, h);
+    create_image(refraction_image_, w, h);
     // The units reflected in the water (M213b).
-    create_hdr_image(reflection_image_, w, h);
+    create_image(reflection_image_, w, h);
     // The normal target (M212e): the normal pass's, which the scene reads.
-    create_hdr_image(terrain_normal_image_, w, h);
+    create_image(terrain_normal_image_, w, h);
 
-    // Scene render pass (color + depth, HDR format for overbright bloom extraction)
+    // Scene render pass (color + depth)
     {
         VkAttachmentDescription color_att{};
-        color_att.format = hdr_format;
+        color_att.format = format;
         color_att.samples = VK_SAMPLE_COUNT_1_BIT;
         color_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;

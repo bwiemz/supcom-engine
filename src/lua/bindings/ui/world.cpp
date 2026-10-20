@@ -471,33 +471,23 @@ static int worldview_SetBuildGhost(lua_State* L) {
     f32 size_x = 1.0f, size_z = 1.0f;
 
     // Read footprint from blueprint table
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id.c_str());
-        lua_rawget(L, -2);
+    if (blueprints::push_blueprint(L, bp_id)) {
+        int bp = lua_gettop(L);
+        lua_pushstring(L, "Footprint");
+        lua_rawget(L, bp);
         if (lua_istable(L, -1)) {
-            int bp = lua_gettop(L);
-            lua_pushstring(L, "Footprint");
-            lua_rawget(L, bp);
-            if (lua_istable(L, -1)) {
-                int fp = lua_gettop(L);
-                lua_pushstring(L, "SizeX");
-                lua_rawget(L, fp);
-                if (lua_isnumber(L, -1))
-                    size_x = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-                lua_pushstring(L, "SizeZ");
-                lua_rawget(L, fp);
-                if (lua_isnumber(L, -1))
-                    size_z = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // Footprint
+            int fp = lua_gettop(L);
+            lua_pushstring(L, "SizeX");
+            lua_rawget(L, fp);
+            if (lua_isnumber(L, -1)) size_x = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            lua_pushstring(L, "SizeZ");
+            lua_rawget(L, fp);
+            if (lua_isnumber(L, -1)) size_z = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
         }
-        lua_pop(L, 1); // bp table
+        lua_pop(L, 2); // Footprint, bp table
     }
-    lua_pop(L, 1); // __blueprints
 
     sim->set_build_ghost(bp_id, size_x, size_z);
     return 0;

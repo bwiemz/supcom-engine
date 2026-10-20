@@ -40,12 +40,12 @@ set(OSC_DATA_TESTS_GATE
     script-order-test
     gameui-test impact-test influence-test issue-handles-test
     enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test guard-engage-test rebuilder-guard-test mobile-build-start-test build-site-join-test assist-beam-test drown-test spawn-layer-test warp-test
-    feedback-render-test focus-army-test command-sources-test footfall-test full-smoke-test ghost-render-test hull-facing-test
+    feedback-render-test focus-army-test command-sources-test footfall-test full-smoke-test ghost-render-test mesh-texture-test hull-facing-test
     input-test intel-field-test intel-overlay-test intel-test interp-test itemlist-render-test
     economy-overlay-test jammer-blip-test jammer-test keyboard-test keymap-test
     layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test shadow-map-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test need-unpack-test normal-test notify-upgrade-test
-    onframe-test particle-render-test path-test phase2-test phase3-test placement-layers-test phase4-test phase5-test
+    onframe-test particle-render-test path-test phase2-test phase3-test placement-layers-test pod-rebuild-test phase4-test phase5-test
     patrol-test persist-test platoon-test prebuilt-test profile-test projectile-test prop-test range-render-test range-test reclaim-test refract-render-test
     runtime-decal-test terrain-normal-render-test
     repair-test resource-icon-render-test right-click-test scale-test scissor-test scroll-render-test scrollbar-render-test selection-render-test session-command-test shadow-test

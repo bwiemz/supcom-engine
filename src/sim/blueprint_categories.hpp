@@ -23,7 +23,7 @@ void collect_blueprint_categories(lua_State* L, int bp_index,
 /// Whether a unit of blueprint `builder_bp` can build `target_bp`: an entry
 /// of its Economy.BuildableCategory (a list, or one string) names the
 /// blueprint, or all of the entry's tokens are among the target's
-/// categories (unit:CanBuild; M206h's factory assist). Reads __blueprints;
+/// categories (unit:CanBuild; M206h's factory assist). Reads the blueprints;
 /// the Lua stack is left balanced.
 bool blueprint_can_build(lua_State* L, const std::string& builder_bp, const std::string& target_bp);
 

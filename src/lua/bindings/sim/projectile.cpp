@@ -16,6 +16,7 @@
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
+#include "sim/bone_cache.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity.hpp"
@@ -367,14 +368,22 @@ static int proj_SetVelocityAlign(lua_State* L) {
     return 0;
 }
 
+f32 draw_scale_unit(lua_State* L, const sim::Entity& e) {
+    auto* sim = get_sim(L);
+    auto* bones = sim ? sim->bone_cache() : nullptr;
+    return e.is_projectile() && bones ? 1.0f / bones->resolve_uniform_scale(e.blueprint_id(), L)
+                                      : 1.0f;
+}
+
 // SetScaleVelocity(sv) or (svx, svy, svz): how fast its draw scale grows
 // (or shrinks) each second. Movement is untouched.
 static int proj_SetScaleVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) {
+        const f32 per = draw_scale_unit(L, *p);
         const auto sx = static_cast<f32>(luaL_checknumber(L, 2));
-        p->scale_velocity = {sx, static_cast<f32>(luaL_optnumber(L, 3, sx)),
-                             static_cast<f32>(luaL_optnumber(L, 4, sx))};
+        p->scale_velocity = {sx * per, static_cast<f32>(luaL_optnumber(L, 3, sx)) * per,
+                             static_cast<f32>(luaL_optnumber(L, 4, sx)) * per};
     }
     lua_pushvalue(L, 1); // return self for chaining
     return 1;

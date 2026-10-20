@@ -15,6 +15,8 @@ namespace osc::blueprints {
 
 namespace {
 
+constexpr const char* kBlueprintsGlobal = "__blueprints";
+
 void push_fresh_copy(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) {
         lua_pushvalue(L, idx);
@@ -552,7 +554,7 @@ void BlueprintStore::expose_to_lua(lua_State* L) const {
         lua_settable(L, -3);
     }
     // Set as global __blueprints (use rawset to bypass strict mode)
-    lua_pushstring(L, "__blueprints");
+    lua_pushstring(L, kBlueprintsGlobal);
     lua_pushvalue(L, -2);
     lua_rawset(L, LUA_GLOBALSINDEX);
     lua_pop(L, 1); // pop table
@@ -571,6 +573,35 @@ void BlueprintStore::rebind(lua_State* new_L) {
     if (new_L)
         spdlog::info("BlueprintStore rebound to new Lua state ({} blueprints, refs cleared)",
                      blueprints_.size());
+}
+
+bool push_blueprints(lua_State* L) {
+    lua_pushstring(L, kBlueprintsGlobal);
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
+}
+
+bool push_blueprint(lua_State* L, std::string_view id) {
+    if (id.empty() || !push_blueprints(L)) return false;
+    const int blueprints = lua_gettop(L);
+    luaL_Buffer key;
+    luaL_buffinit(L, &key);
+    for (const char c : id) luaL_putchar(&key, std::tolower(static_cast<unsigned char>(c)));
+    luaL_pushresult(&key);
+    lua_rawget(L, blueprints);
+    // A mod may give the table an __index (an alias for an old id): it is asked
+    // with the id as given, as lua_gettable asked it before.
+    if (!lua_istable(L, -1) && lua_getmetatable(L, blueprints)) {
+        lua_pop(L, 2);
+        lua_pushlstring(L, id.data(), id.size());
+        lua_gettable(L, blueprints);
+    }
+    lua_remove(L, blueprints);
+    if (lua_istable(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
 }
 
 } // namespace osc::blueprints
