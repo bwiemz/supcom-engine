@@ -369,6 +369,25 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
     o.profile_enabled = parse_flag(argc, argv, "--profile");
+#if OSC_PYROSCOPE
+    o.pyroscope_url = parse_string_arg(argc, argv, "--pyroscope", "");
+    o.pyroscope_app = parse_string_arg(argc, argv, "--pyroscope-app", "opensupcom");
+    o.pyroscope_labels = parse_string_arg(argc, argv, "--pyroscope-labels", "");
+    if (const std::string hz = parse_string_arg(argc, argv, "--pyroscope-hz", ""); !hz.empty()) {
+        const unsigned long value = std::strtoul(hz.c_str(), nullptr, 10);
+        if (value < 1 || value > 1000) {
+            spdlog::error("--pyroscope-hz {}: give 1 to 1000 samples per second", hz);
+            return std::nullopt;
+        }
+        o.pyroscope_hz = static_cast<unsigned>(value);
+    }
+#else
+    if (parse_flag(argc, argv, "--pyroscope")) {
+        spdlog::error("--pyroscope: this build has no Pyroscope support "
+                      "(configure with -DOSC_PYROSCOPE=ON)");
+        return std::nullopt;
+    }
+#endif
     o.ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
     o.instrument = parse_flag(argc, argv, "--instrument");
     o.builder_debug = parse_flag(argc, argv, "--builder-debug");

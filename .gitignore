@@ -11,3 +11,6 @@ smoke_report.txt
 
 # Python bytecode (a tool importing another, as cross_os_pairs.py does run_pair.py)
 __pycache__/
+tools/pyroscope/.env
+tools/pyroscope/*.env
+!tools/pyroscope/env.example

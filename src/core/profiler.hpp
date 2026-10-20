@@ -1,6 +1,9 @@
 #pragma once
 
 #include "core/types.hpp"
+#if OSC_PYROSCOPE
+#include "core/pyroscope.hpp"
+#endif
 
 #include <spdlog/spdlog.h>
 
@@ -123,6 +126,15 @@ public:
         auto& entry = stack_[stack_depth_];
         f64 elapsed = to_us(clock::now() - entry.start);
         depth_ = entry.depth;
+#if OSC_PYROSCOPE
+        {
+            const char* names[MAX_STACK];
+            for (u32 i = 0; i < stack_depth_; ++i) names[i] = stack_[i].name;
+            names[stack_depth_] = entry.name;
+            if (stack_depth_ > 0) stack_[stack_depth_ - 1].child_us += elapsed;
+            pyroscope::record_zone(names, stack_depth_ + 1, elapsed - entry.child_us);
+        }
+#endif
 
         // Accumulate into frame zones
         i32 fz = find_frame_zone(entry.name);
@@ -199,6 +211,9 @@ private:
         const char* name;
         time_point start;
         u32 depth;
+#if OSC_PYROSCOPE
+        f64 child_us = 0; // in zones nested in this one (self = elapsed - child)
+#endif
     };
 
     struct FrameZone {
