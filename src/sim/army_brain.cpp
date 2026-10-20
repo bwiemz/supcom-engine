@@ -49,6 +49,36 @@ bool turn_off_maintained_shield(Unit& unit, const EntityRegistry& registry) {
     return true;
 }
 
+// The share loop of Moho's ProcessArmyEconomy (sim/CEconomy.cpp)
+std::pair<f64, f64> share_overflow(const std::vector<ArmyBrain*>& allies, f64 dt, f64 mass,
+                                   f64 energy) {
+    if (mass <= 0.0 && energy <= 0.0) {
+        return {0.0, 0.0};
+    }
+    std::vector<ArmyBrain*> takers;
+    for (ArmyBrain* ally : allies) {
+        const EconomyState& e = ally->economy();
+        if (e.mass.stored < e.mass.max_storage || e.energy.stored < e.energy.max_storage) {
+            takers.push_back(ally);
+        }
+    }
+    f64 shared_mass = 0.0;
+    f64 shared_energy = 0.0;
+    for (size_t i = 0; i < takers.size(); ++i) {
+        const f64 fraction = 1.0 / static_cast<f64>(takers.size() - i);
+        const EconomyState& e = takers[i]->economy();
+        const f64 m = std::min(mass * fraction, std::max(0.0, e.mass.max_storage - e.mass.stored));
+        const f64 en =
+            std::min(energy * fraction, std::max(0.0, e.energy.max_storage - e.energy.stored));
+        takers[i]->bank(m / dt, en / dt);
+        mass -= m;
+        energy -= en;
+        shared_mass += m;
+        shared_energy += en;
+    }
+    return {shared_mass, shared_energy};
+}
+
 } // namespace
 
 bool ArmyBrain::is_defeated() const {
@@ -197,7 +227,8 @@ void ArmyBrain::update_unit_cap_stats(const EntityRegistry& registry) {
     stats_["UnitCap_MaxCap"] = static_cast<f64>(unit_cap_);
 }
 
-void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt) {
+void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
+                               const std::vector<ArmyBrain*>& allies) {
     f64 mass_income = std::exchange(bank_mass_, 0.0);
     f64 energy_income = std::exchange(bank_energy_, 0.0);
     // Moho's two classes of request (ProcessArmyEconomy): those that want
@@ -286,8 +317,8 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt) {
     economy_.energy.requested = energy_consumption;
     count_storage(held_mass, held_energy);
 
-    economy_.mass.stored += refund_mass + std::exchange(shared_mass_, 0.0);
-    economy_.energy.stored += refund_energy + std::exchange(shared_energy_, 0.0);
+    economy_.mass.stored += refund_mass;
+    economy_.energy.stored += refund_energy;
     // ProcessArmyEconomy: what the army holds this tick against what is
     // asked. Both classes' demand bounds the pooled ratio, energy first; the
     // resource that bounds it last is the limiting one.
@@ -328,14 +359,15 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt) {
     const f64 energy_consumed = g.mass_limits
                                     ? (dual_energy * g.dual + single_energy * g.single) * dt
                                     : energy_needed * g.dual;
-    {
-        const f64 mass_raw = mass_avail - mass_consumed;
-        economy_.mass.stored = std::clamp(mass_raw, 0.0, economy_.mass.max_storage);
-        economy_.mass.overflow = std::max(0.0, mass_raw - economy_.mass.max_storage);
-        const f64 energy_raw = energy_avail - energy_consumed;
-        economy_.energy.stored = std::clamp(energy_raw, 0.0, economy_.energy.max_storage);
-        economy_.energy.overflow = std::max(0.0, energy_raw - economy_.energy.max_storage);
-    }
+    const f64 mass_raw = mass_avail - mass_consumed;
+    const f64 energy_raw = energy_avail - energy_consumed;
+    const f64 excess_mass = std::max(0.0, mass_raw - economy_.mass.max_storage);
+    const f64 excess_energy = std::max(0.0, energy_raw - economy_.energy.max_storage);
+    const auto [shared_mass, shared_energy] =
+        resource_sharing_ ? share_overflow(allies, dt, excess_mass, excess_energy)
+                          : std::pair<f64, f64>{0.0, 0.0};
+    economy_.mass.stored = std::clamp(mass_raw, 0.0, economy_.mass.max_storage);
+    economy_.energy.stored = std::clamp(energy_raw, 0.0, economy_.energy.max_storage);
     // What Moho reports used (mLastUseActual): each class at its own ratio
     const f64 mass_used = dual_mass * g.dual + single_mass * g.single;
     const f64 energy_used = dual_energy * g.dual + single_energy * g.single;
@@ -375,8 +407,10 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt) {
     stats_["Economy_Income_Energy"] = energy_income * dt;
     stats_["Economy_Output_Mass"] = mass_consumed;
     stats_["Economy_Output_Energy"] = energy_consumed;
-    stats_["Economy_AccumExcess_Mass"] += economy_.mass.overflow;
-    stats_["Economy_AccumExcess_Energy"] += economy_.energy.overflow;
+    stats_["Economy_Shared_Mass"] += shared_mass;
+    stats_["Economy_Shared_Energy"] += shared_energy;
+    stats_["Economy_AccumExcess_Mass"] += excess_mass - shared_mass;
+    stats_["Economy_AccumExcess_Energy"] += excess_energy - shared_energy;
     stats_["Economy_Ratio_Mass"] = get_economy_stored_ratio("MASS");
     stats_["Economy_Ratio_Energy"] = get_economy_stored_ratio("ENERGY");
     stats_["Units_Active"] = static_cast<f64>(active_units);

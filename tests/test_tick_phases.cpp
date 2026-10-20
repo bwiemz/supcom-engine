@@ -742,7 +742,6 @@ TEST_CASE("An army's overflow reaches a higher-index ally that tick, a lower-ind
     CAPTURE(giver);
     const int taker = 1 - giver;
     Phases w;
-    w.sim.set_team_share_overflow(true);
     w.sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
     w.brain("taker", taker);
     for (int a = 0; a < 2; ++a) {

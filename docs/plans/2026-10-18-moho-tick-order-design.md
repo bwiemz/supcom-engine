@@ -521,3 +521,6 @@ rather than kept; unit–unit contact is a positional push rather than Moho's im
 (formation layer, same command, naval, layers, landed aircraft, stationary pairs); terrain type and lava
 damage; a factory's skirt in the collision cells; production not scaled by the grant; overflow not shared
 with allies by default; economy events not all-or-nothing.
+
+*Overflow sharing done (2026-10-21) — fix/econ-overflow-default-2: an army shares its overflow with its allies unless
+its `SetResourceSharing` is off, an equal cut of what is left to each ally with room, as Moho's `ProcessArmyEconomy`.*

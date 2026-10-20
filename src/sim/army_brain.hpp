@@ -56,7 +56,6 @@ struct ResourceState {
     f64 requested = 0.0;
     f64 stored = 0.0;
     f64 max_storage = 200.0;
-    f64 overflow = 0.0; // amount discarded this tick at full storage (for sharing)
 };
 
 struct EconomyState {
@@ -139,17 +138,13 @@ public:
     f64 get_economy_trend(const std::string& resource_type) const;
 
     /// Per-tick economy update: grant the units' requests, take in the bank, update stored.
-    void update_economy(EntityRegistry& registry, f64 dt);
+    void update_economy(EntityRegistry& registry, f64 dt,
+                        const std::vector<ArmyBrain*>& allies = {});
     /// Moho's CEconomy::mResources, per second: what its units produced and
     /// reclaimed since its last economy, which the next one takes in.
     void bank(f64 mass, f64 energy) {
         bank_mass_ += mass;
         bank_energy_ += energy;
-    }
-    /// An ally's overflow, which Moho banks for this army's next economy.
-    void bank_share(f64 mass, f64 energy) {
-        shared_mass_ += mass;
-        shared_energy_ += energy;
     }
     void count_storage(f64 held_mass, f64 held_energy) {
         economy_.mass.max_storage = std::max(0.0, extra_storage_mass_ + held_mass);
@@ -347,8 +342,6 @@ private:
     f64 extra_storage_energy_ = 0.0;
     f64 bank_mass_ = 0.0;
     f64 bank_energy_ = 0.0;
-    f64 shared_mass_ = 0.0;
-    f64 shared_energy_ = 0.0;
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;
@@ -359,7 +352,7 @@ private:
     u8 color_r_ = 255, color_g_ = 255, color_b_ = 255;
 
     std::string current_plan_;
-    bool resource_sharing_ = false;
+    bool resource_sharing_ = true;
     std::string skin_name_;
     std::set<std::string> restricted_blueprints_;
     std::unordered_map<std::string, f64> stats_;

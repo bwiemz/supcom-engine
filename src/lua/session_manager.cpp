@@ -87,11 +87,6 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
             no_rush_minutes = option_as_number(value);
         } else if (key == "NoRushRadius") {
             no_rush_radius = option_as_number(value);
-        } else if (key == "TeamShareOverflow" && value.type == GameOptionValue::Type::String) {
-            // FAF values: 'enabled' / 'disabled'. Enable only when explicitly on.
-            const std::string& v = value.string_value;
-            sim.set_team_share_overflow(v == "enabled" || v == "on" ||
-                                        v == "true" || v == "all");
         }
     }
     if (no_rush_minutes > 0.0) {
