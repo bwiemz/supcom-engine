@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 OWNER = "src/blueprints/blueprint_store.cpp"
@@ -135,10 +136,15 @@ def problems_in(rel: str, text: str) -> list[str]:
 
 def check(root: Path) -> list[str]:
     problems = []
+    scanned = set()
     for path in sorted((root / "src").rglob("*")):
         if path.suffix in SUFFIXES:
             rel = path.relative_to(root).as_posix()
+            scanned.add(rel)
             problems += problems_in(rel, path.read_text(encoding="utf-8", errors="replace"))
+    if OWNER not in scanned:
+        problems.append(f"{OWNER} was not scanned ({len(scanned)} files read under {root / 'src'}); "
+                        "is this the repository root?")
     return problems
 
 
@@ -169,6 +175,18 @@ def self_test() -> int:
     if problems_in("src/sim/sim_state.cpp", bulk):
         print("self-test: push_blueprints in a bulk reader is allowed")
         failed += 1
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        if not check(root) or "was not scanned" not in check(root)[0]:
+            print("self-test: a tree without the owner fails")
+            failed += 1
+        (root / OWNER).parent.mkdir(parents=True)
+        (root / OWNER).write_text('push(L, "__blueprints");\n')
+        (root / "src/sim/unit.cpp").parent.mkdir(parents=True)
+        (root / "src/sim/unit.cpp").write_text('f();\nlua_pushstring(L, "__blueprints");\n')
+        if [p.split(":")[:2] for p in check(root)] != [["src/sim/unit.cpp", "2"]]:
+            print(f"self-test: the scan of a tree finds its raw lookup alone: {check(root)}")
+            failed += 1
     if failed:
         return 1
     print("self-test: ok")
