@@ -8,6 +8,7 @@
 #include "core/fullscreen.hpp"
 #include "core/profiler.hpp"
 #include "lua/lua_thread_check.hpp"
+#include "lua/match_records.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/moho_bindings.hpp"
@@ -68,8 +69,14 @@ bool App::Window::frame() {
 
         PROFILE_ZONE("Frame::sim");
         beat_tick0 = sim_state ? sim_state->tick_count() : 0;
+        const auto ticks_started = std::chrono::steady_clock::now();
         advance_sim(session_dt);
         collected_tick = sim_state ? sim_state->tick_count() : 0;
+        if (collected_tick > beat_tick0)
+            time_ticks(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                 ticks_started)
+                           .count(),
+                       collected_tick - beat_tick0);
     }
     app.deliver_network_save_notices(); // a network save the ticks wrote
 
@@ -176,6 +183,54 @@ void App::Window::count_game_frame() {
     game_frames.over_33 += ms > 33.0 ? 1 : 0;
     game_frames.over_50 += ms > 50.0 ? 1 : 0;
     game_frames.in_game_s += wall_dt;
+    perf_stretch.frame_ms.push_back(static_cast<float>(ms));
+    perf_stretch.over_33 += ms > 33.0 ? 1 : 0;
+    perf_stretch.wall_s += wall_dt;
+    write_perf_sample();
+}
+
+void App::Window::time_ticks(double ms, u32 ticks) {
+    if (ticks == 0) return;
+    perf_stretch.tick_ms += ms;
+    perf_stretch.ticks_timed += ticks;
+    perf_stretch.tick_ms_worst = std::max(perf_stretch.tick_ms_worst, ms / ticks);
+    job_ms = 0;
+    job_ticks = 0;
+}
+
+void App::Window::write_perf_sample() {
+    if (!app.telemetry) {
+        osc::lua::pending_marks().clear();
+        return;
+    }
+    const osc::u32 tick = settled_tick();
+    for (const std::string& note : osc::lua::pending_marks()) app.telemetry->write_mark(tick, note);
+    osc::lua::pending_marks().clear();
+    PerfStretch& s = perf_stretch;
+    if (s.wall_s < 10.0 || s.frame_ms.empty()) return;
+    osc::app::PerfSample p;
+    p.wall_seconds = s.wall_s;
+    p.tick = tick;
+    p.ticks = tick > s.tick0 ? tick - s.tick0 : 0;
+    p.speed = game_state_mgr.speed();
+    p.frames = static_cast<u32>(s.frame_ms.size());
+    double total = 0;
+    for (const float ms : s.frame_ms) total += ms;
+    p.frame_ms_mean = total / p.frames;
+    std::sort(s.frame_ms.begin(), s.frame_ms.end());
+    p.frame_ms_p95 = s.frame_ms[std::min(s.frame_ms.size() - 1, s.frame_ms.size() * 95 / 100)];
+    p.frame_ms_worst = s.frame_ms.back();
+    p.frames_over_33 = s.over_33;
+    p.held = s.held;
+    p.pace_change = s.paces > 0 ? s.pace_change / s.paces : 0.0;
+    p.tick_ms_mean = s.ticks_timed > 0 ? s.tick_ms / s.ticks_timed : 0.0;
+    p.tick_ms_worst = s.tick_ms_worst;
+    // From the published world: the live one may be ticking on its thread
+    const auto& world = world_interp.history.cur();
+    p.entities = static_cast<u32>(world.entities.size());
+    for (const auto& e : world.entities) p.units += e.is_unit ? 1 : 0;
+    app.telemetry->write_perf(p);
+    s.clear(tick);
 }
 
 void App::Window::note_drawn_time(const sim::FrameView& view) {
@@ -193,11 +248,14 @@ void App::Window::note_drawn_time(const sim::FrameView& view) {
         const double expected =
             wall_dt * game_state_mgr.speed() / osc::sim::SimState::SECONDS_PER_TICK;
         game_frames.held += step <= 0.0 ? 1 : 0;
+        perf_stretch.held += step <= 0.0 ? 1 : 0;
         if (expected > 0.0) {
             const double pace = step / expected;
             if (game_frames.last_pace >= 0.0) {
                 game_frames.uneven += std::abs(pace - game_frames.last_pace);
                 game_frames.expected += 1.0;
+                perf_stretch.pace_change += std::abs(pace - game_frames.last_pace);
+                ++perf_stretch.paces;
             }
             game_frames.last_pace = pace;
         }
@@ -442,6 +500,7 @@ osc::u32 App::Window::collect_sim() {
     if (sim_state) sim_state->set_ticking_elsewhere(false);
     world_interp.publish();
     collected_tick = sim_state ? sim_state->tick_count() : 0;
+    time_ticks(job_ms, job_ticks);
     // A timed-out peer, defeated by the lockstep's agreement, is let go
     for (const osc::u32 src : job_dropped) {
         spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
@@ -480,6 +539,7 @@ void App::Window::start_sim(double dt) {
         osc::lua::watch_lua_state(sim_lua_state ? sim_lua_state->raw() : nullptr, sim_thread->id());
         sim_state->set_ticking_elsewhere(true);
         sim_thread->start([this, session, rounds] {
+            const auto started = std::chrono::steady_clock::now();
             const osc::u32 tick0 = sim_state->tick_count();
             for (int r = 0; r < rounds; ++r) {
                 session->send_frame();
@@ -487,6 +547,10 @@ void App::Window::start_sim(double dt) {
                 for (const osc::u32 src : session->take_dropped()) job_dropped.push_back(src);
             }
             if (sim_state->tick_count() != tick0) world_interp.history.stage_world(*sim_state);
+            job_ticks = sim_state->tick_count() - tick0;
+            job_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                               started)
+                         .count();
         });
         return;
     }
@@ -496,6 +560,7 @@ void App::Window::start_sim(double dt) {
     osc::lua::watch_lua_state(sim_lua_state ? sim_lua_state->raw() : nullptr, sim_thread->id());
     sim_state->set_ticking_elsewhere(true);
     sim_thread->start([this, ticks] {
+        const auto started = std::chrono::steady_clock::now();
         const osc::u32 tick0 = sim_state->tick_count();
         for (int t = 0; t < ticks; ++t) {
             // A replay plays to its end, then holds there.
@@ -513,6 +578,10 @@ void App::Window::start_sim(double dt) {
         // The world is captured once, as the job's last tick left it (each
         // tick's events as it ran): no frame sees the ticks between
         if (sim_state->tick_count() != tick0) world_interp.history.stage_world(*sim_state);
+        job_ticks = sim_state->tick_count() - tick0;
+        job_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+                .count();
     });
 }
 

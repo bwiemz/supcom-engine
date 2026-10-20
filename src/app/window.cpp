@@ -463,7 +463,14 @@ bool App::Window::running() const {
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
            !(self_destruct_flow && self_destruct_flow->done()) &&
            !(campaign_flow && campaign_flow->done()) &&
-           !(opt.play_for > 0 && game_frames.in_game_s >= opt.play_for);
+           !(opt.play_for > 0 && game_frames.in_game_s >= opt.play_for) && !played_to_the_end();
+}
+
+bool App::Window::played_to_the_end() const {
+    if (opt.play_for <= 0 || opt.play_until_tick == 0 || !sim_state) return false;
+    if (settled_tick() >= opt.play_until_tick) return true;
+    // (the live sim read only between its ticks)
+    return !(sim_thread && sim_thread->busy()) && sim_state->game_ended();
 
 }
 

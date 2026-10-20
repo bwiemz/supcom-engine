@@ -123,6 +123,9 @@ struct Options {
     double play_for = 0;
     /// --play-rate: the game speed --play-for plays at (Moho's sim rate, 0 normal)
     int play_rate = 0;
+    /// --play-until-tick: --play-for closes at this game tick, or when the
+    /// game is won (a long match's whole run, for its performance). 0: none.
+    unsigned play_until_tick = 0;
 
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to

@@ -77,7 +77,7 @@ void MatchTelemetry::write_match(const sim::SimState& sim) {
                           {"civilian", brain->is_civilian()}});
     }
     out_ << nlohmann::json{{"record", "match"},
-                           {"schema", 3},
+                           {"schema", 4},
                            {"engine", "opensupcom"},
                            {"version", osc::core::version()},
                            {"build", osc::core::build_id()},
@@ -307,6 +307,40 @@ void MatchTelemetry::after_tick(const sim::SimState& sim) {
     }
     write_events(sim);
     if (tick - last_sample_tick_ >= kSampleEvery) write_samples(sim);
+}
+
+void MatchTelemetry::write_perf(const PerfSample& p) {
+    if (!out_.is_open() || finished_ || !started_) return;
+    const auto r1 = [](f64 v) { return std::round(v * 10.0) / 10.0; };
+    out_ << nlohmann::json{{"record", "perf"},
+                           {"tick", p.tick},
+                           {"wall_seconds", r1(p.wall_seconds)},
+                           {"ticks", p.ticks},
+                           {"speed", std::round(p.speed * 100.0) / 100.0},
+                           {"frames", p.frames},
+                           {"frame_ms_mean", r1(p.frame_ms_mean)},
+                           {"frame_ms_p95", r1(p.frame_ms_p95)},
+                           {"frame_ms_worst", r1(p.frame_ms_worst)},
+                           {"frames_over_33", p.frames_over_33},
+                           {"held", p.held},
+                           {"pace_change", std::round(p.pace_change * 1000.0) / 1000.0},
+                           {"tick_ms_mean", r1(p.tick_ms_mean)},
+                           {"tick_ms_worst", r1(p.tick_ms_worst)},
+                           {"units", p.units},
+                           {"entities", p.entities}}
+                .dump()
+         << '\n';
+}
+
+void MatchTelemetry::write_mark(u32 tick, const std::string& note) {
+    if (!out_.is_open() || finished_ || !started_) return;
+    out_ << nlohmann::json{{"record", "event"},
+                           {"tick", tick},
+                           {"kind", "player_mark"},
+                           {"note", note}}
+                .dump()
+         << '\n';
+    out_.flush(); // a mark made just before a crash is the one most wanted
 }
 
 void MatchTelemetry::finish(const sim::SimState* sim, const std::string& ended) {

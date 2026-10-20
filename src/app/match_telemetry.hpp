@@ -30,6 +30,12 @@
 //
 // They are found by looking at the units each tick, not by the sim telling:
 // an event carries the tick it was seen at.
+//
+// Schema 4 adds how the game ran (WOPC, 2026-10-19: Ryan, as he plays, to
+// call out where it lagged): a `perf` record every ten seconds of a drawn
+// game (PerfSample: its frames, how evenly the world was drawn, its ticks'
+// wall time, the speed asked and got, the units), and a `player_mark` event
+// when the player marks a moment (WopcMarkMoment, with a note).
 
 #include "core/types.hpp"
 
@@ -44,6 +50,25 @@ class SimState;
 }
 
 namespace osc::app {
+
+/// How a drawn game ran over a stretch of wall time (the window's frames).
+struct PerfSample {
+    f64 wall_seconds = 0; ///< the stretch
+    u32 tick = 0;         ///< the game tick at its end
+    u32 ticks = 0;        ///< ticks played in it
+    f64 speed = 1.0;      ///< the game speed asked for (1: normal)
+    u32 frames = 0;
+    f64 frame_ms_mean = 0;
+    f64 frame_ms_p95 = 0;
+    f64 frame_ms_worst = 0;
+    u32 frames_over_33 = 0; ///< hitches at 60 fps
+    u32 held = 0;           ///< frames the drawn world stood still in
+    f64 pace_change = 0;    ///< the drawn pace's change a frame, 0 to 1+
+    f64 tick_ms_mean = 0;   ///< a tick's own run time
+    f64 tick_ms_worst = 0;
+    u32 units = 0;
+    u32 entities = 0;
+};
 
 class MatchTelemetry {
 public:
@@ -63,6 +88,11 @@ public:
     /// and the armies' samples when one is due. A tick it has seen is
     /// ignored, so every frame may call it.
     void after_tick(const sim::SimState& sim);
+
+    /// How the game ran over the last stretch: a `perf` record.
+    void write_perf(const PerfSample& p);
+    /// The player marked this moment (a lag, say): a `player_mark` event.
+    void write_mark(u32 tick, const std::string& note);
 
     /// The run's end: a last sample of every army and the `end` record, with
     /// `ended` ("victory", "ticks", "closed"...). Later calls do nothing.

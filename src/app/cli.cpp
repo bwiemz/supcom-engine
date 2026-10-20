@@ -144,6 +144,7 @@ void print_usage() {
               << "  --no-sim-thread    Run the sim's ticks on the main thread (OE-134)\n"
               << "  --play-for <secs>  Close after this long in a game; log its frame times\n"
               << "  --play-rate <n>    ...played at game speed n (Moho's sim rate: 10 is 10x)\n"
+              << "  --play-until-tick <n>  ...and closed at game tick n, or when the game is won\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --log <file>       Write the log there (default: a player's game logs to\n"
               << "                     the user's state folder, anything else to ./opensupcom.log)\n"
@@ -379,6 +380,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     {
         const std::string rate = parse_string_arg(argc, argv, "--play-rate", "0");
         std::from_chars(rate.data(), rate.data() + rate.size(), o.play_rate);
+        const std::string until = parse_string_arg(argc, argv, "--play-until-tick", "0");
+        std::from_chars(until.data(), until.data() + until.size(), o.play_until_tick);
     }
 
     // --lan-game-quit-at <tick>: the joiner leaves the game then (M218e)

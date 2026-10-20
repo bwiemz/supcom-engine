@@ -18,6 +18,8 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
+#include <vector>
 
 struct lua_State;
 
@@ -34,8 +36,13 @@ inline constexpr size_t kMaxNotable = 1000;
 /// no match. See GetMatchRecord above for what a summary leaves out.
 std::optional<nlohmann::json> read_match_record(const std::filesystem::path& path, bool summary);
 
-/// GetMatchRecord, for the UI state (needs its special files registered).
+/// GetMatchRecord and WopcMarkMoment, for the UI state (needs its special
+/// files registered).
 void register_match_record_bindings(LuaState& state);
+
+/// The moments the player marked (WopcMarkMoment(note)) since the window
+/// last wrote them into the match record, each its note.
+std::vector<std::string>& pending_marks();
 
 /// A JSON value as a Lua value on the stack (arrays 1-based).
 void push_json(lua_State* L, const nlohmann::json& value);

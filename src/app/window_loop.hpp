@@ -76,6 +76,8 @@ private:
     void draw_while_ticking(double dt, std::chrono::high_resolution_clock::time_point started);
     /// The frame's time, counted in the game's frame statistics.
     void count_game_frame();
+    /// --play-until-tick: the game reached its tick, or was won.
+    bool played_to_the_end() const;
     /// The drawn game time's step this frame, in game_frames.
     void note_drawn_time(const sim::FrameView& view);
     /// --play-for: the rest of a 60 Hz frame, waited out.
@@ -242,6 +244,30 @@ private:
         u64 held = 0;
         double uneven = 0, expected = 0, last_drawn = -1.0, last_pace = -1.0;
     } game_frames;
+    /// The same over the stretch the match record's next `perf` record
+    /// covers (write_perf_sample), with the ticks' own run time.
+    struct PerfStretch {
+        double wall_s = 0;
+        u32 tick0 = 0;
+        std::vector<float> frame_ms;
+        u32 over_33 = 0, held = 0;
+        double pace_change = 0;
+        u32 paces = 0;
+        double tick_ms = 0, tick_ms_worst = 0;
+        u32 ticks_timed = 0;
+        void clear(u32 tick) {
+            *this = PerfStretch{};
+            tick0 = tick;
+        }
+    } perf_stretch;
+    /// A sim job's run time and ticks (the sim thread's, read once collected).
+    double job_ms = 0;
+    u32 job_ticks = 0;
+    /// The ticks' run time, into perf_stretch: `ticks` run in `ms`.
+    void time_ticks(double ms, u32 ticks);
+    /// Every ten seconds of a game's frames, a `perf` record in the match
+    /// record; and the moments the player marked.
+    void write_perf_sample();
     /// The last frames' times (Moho's RollingFrameRates), whose median the
     /// session runs on: begin_frame's session_dt. The engine loads a game
     /// before its first frame, where Moho's loading screen runs frames, so the

@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "app/match_telemetry.hpp"
@@ -84,8 +85,9 @@ TEST_CASE("A match's record says what happened to its units, and when", "[teleme
 
     const auto match = records(path, "match");
     REQUIRE(match.size() == 1);
-    CHECK(match[0]["schema"] == 3);
-    CHECK(match[0]["armies"][0]["ai"] == "");
+    CHECK(match[0]["schema"] == 4);
+    CHECK(match[0]["armies"][0]["ai"].get<std::string>().empty());
+
 
     const auto built = records(path, "unit_built");
     REQUIRE(built.size() == 2);
@@ -216,5 +218,55 @@ TEST_CASE("Match income sources retain banked output after rate changes", "[tele
     CHECK(samples.back()["mass_from"]["extractors"].get<double>() == 2);
     CHECK(samples.back()["energy_from"]["other"].get<double>() == 4);
     CHECK(samples.back()["mass_from"]["reclaim"].get<double>() == 0);
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("How a game ran, and the moments its player marked, are kept and read back",
+          "[telemetry]") {
+    const auto path = std::filesystem::temp_directory_path() / "osc_match_perf_test.jsonl";
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    {
+        osc::app::MatchTelemetry telemetry(path.string());
+        REQUIRE(telemetry.is_open());
+        sim.tick();
+        telemetry.after_tick(sim);
+        osc::app::PerfSample p;
+        p.wall_seconds = 10.0;
+        p.tick = 41;
+        p.ticks = 40;
+        p.speed = 3.98;
+        p.frames = 600;
+        p.frame_ms_mean = 16.7;
+        p.frame_ms_p95 = 18.2;
+        p.frame_ms_worst = 41.0;
+        p.frames_over_33 = 2;
+        p.held = 3;
+        p.tick_ms_mean = 22.5;
+        p.units = 120;
+        telemetry.write_perf(p);
+        telemetry.write_mark(41, "lag");
+        telemetry.finish(&sim, "ticks");
+    }
+    const auto perf = records(path, "perf");
+    REQUIRE(perf.size() == 1);
+    CHECK(perf[0]["frame_ms_p95"] == 18.2);
+    CHECK(perf[0]["units"] == 120);
+    const auto marks = records(path, "player_mark");
+    REQUIRE(marks.size() == 1);
+    CHECK(marks[0]["note"] == "lag");
+
+    // The screens': the speed got (4 game seconds in 10), and the marks;
+    // a mark is no unit's event
+    const auto full = osc::lua::read_match_record(path, false);
+    REQUIRE(full);
+    REQUIRE((*full)["perf"].size() == 1);
+    CHECK((*full)["perf"][0]["achieved"].get<double>() == Catch::Approx(0.4));
+    CHECK((*full)["perf"][0]["held"].get<double>() == 3.0);
+    REQUIRE((*full)["marks"].size() == 1);
+    CHECK((*full)["marks"][0]["tick"].get<double>() == 41.0);
+    CHECK((*full)["marks"][0]["note"] == "lag");
+
     std::filesystem::remove(path);
 }

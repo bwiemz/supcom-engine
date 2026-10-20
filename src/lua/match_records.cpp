@@ -75,6 +75,8 @@ std::optional<json> read_match_record(const fs::path& path, bool summary) {
     std::map<int, std::vector<json>> samples;
     std::map<int, json> last_sample;
     std::vector<json> events;
+    std::vector<json> perf; ///< how the game ran (schema 4), as the screens read it
+    json marks = json::array();
     for (std::string line; std::getline(in, line);) {
         if (line.empty()) continue;
         json r = json::parse(line, nullptr, false);
@@ -86,7 +88,27 @@ std::optional<json> read_match_record(const fs::path& path, bool summary) {
             const int army = static_cast<int>(num(r, "army"));
             if (!summary) samples[army].push_back(point(r));
             last_sample[army] = std::move(r);
-        } else if (kind == "event") events.push_back(std::move(r));
+        } else if (kind == "perf") {
+            if (!summary) {
+                const double wall = num(r, "wall_seconds");
+                perf.push_back({{"tick", num(r, "tick")},
+                                {"speed", num(r, "speed")},
+                                // the speed got: game seconds a wall second
+                                {"achieved", wall > 0 ? num(r, "ticks") * 0.1 / wall : 0.0},
+                                {"frameMean", num(r, "frame_ms_mean")},
+                                {"frameP95", num(r, "frame_ms_p95")},
+                                {"frameWorst", num(r, "frame_ms_worst")},
+                                {"hitches", num(r, "frames_over_33")},
+                                {"held", num(r, "held")},
+                                {"tickMean", num(r, "tick_ms_mean")},
+                                {"tickWorst", num(r, "tick_ms_worst")},
+                                {"units", num(r, "units")}});
+            }
+        } else if (kind == "event") {
+            if (r.value("kind", "") == "player_mark")
+                marks.push_back({{"tick", num(r, "tick")}, {"note", r.value("note", "")}});
+            else events.push_back(std::move(r));
+        }
     }
     if (match.is_null()) return std::nullopt;
 
@@ -163,7 +185,11 @@ std::optional<json> read_match_record(const fs::path& path, bool summary) {
         armies.push_back(std::move(army));
     }
     out["armies"] = std::move(armies);
-    if (!summary) out["notable"] = std::move(notable);
+    if (!summary) {
+        out["notable"] = std::move(notable);
+        out["perf"] = thin(perf, kMaxPoints);
+    }
+    out["marks"] = std::move(marks);
     return out;
 }
 
@@ -226,10 +252,23 @@ int l_GetMatchRecord(lua_State* L) {
     return 1;
 }
 
+/// WopcMarkMoment([note]) -- the player marks this moment of the game (a
+/// lag, say) in its match record, for whoever reads it after.
+int l_WopcMarkMoment(lua_State* L) {
+    pending_marks().emplace_back(luaL_optstring(L, 1, ""));
+    return 0;
+}
+
 } // namespace
+
+std::vector<std::string>& pending_marks() {
+    static std::vector<std::string> marks;
+    return marks;
+}
 
 void register_match_record_bindings(LuaState& state) {
     state.register_function("GetMatchRecord", l_GetMatchRecord);
+    state.register_function("WopcMarkMoment", l_WopcMarkMoment);
 }
 
 } // namespace osc::lua
