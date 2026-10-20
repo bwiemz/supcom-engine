@@ -27,7 +27,7 @@ namespace osc {
 class TickClock {
 public:
     /// How far the pace may stray from the game's speed.
-    static constexpr double kSlowest = 0.5;
+    static constexpr double kSlowest = 0.1;
     static constexpr double kFastest = 1.5;
     /// How far behind the newest tick the drawn time is kept, in publishes.
     static constexpr double kBehind = 1.0;
@@ -45,9 +45,12 @@ public:
     void advance(double sim_dt) {
         if (!started_) return;
         sim_dt = std::max(sim_dt, 0.0);
+        asked_ += sim_dt / tick_;
         const double off = (newest_ - kBehind * span_) - drawn_;
         off_ += kSmooth * (off - off_);
-        pace_ = std::clamp(1.0 + kSteer * off_ / span_, kSlowest, kFastest);
+        // At the pace the ticks come (a late game's sim may make a quarter
+        // of the speed asked), steered toward its distance behind
+        pace_ = std::clamp(made_ * (1.0 + kSteer * off_ / span_), kSlowest, kFastest);
         // Closing on the newest tick (the sim slow a moment), it eases in
         // rather than run into it and stand
         const double room = newest_ - drawn_;
@@ -60,6 +63,10 @@ public:
     void published(double newest, double oldest, double span) {
         span = std::max(span, 1.0);
         span_ = started_ ? 0.75 * span_ + 0.25 * span : span;
+        // The ticks made against the game time asked since the last publish
+        if (started_ && asked_ > 0.0)
+            made_ = 0.75 * made_ + 0.25 * std::clamp(span / asked_, kSlowest, kFastest);
+        asked_ = 0.0;
         if (!started_) drawn_ = newest - kBehind * span_;
         started_ = true;
         newest_ = newest;
@@ -69,7 +76,8 @@ public:
     /// A new session: nothing has been drawn yet.
     void reset() {
         started_ = false;
-        drawn_ = newest_ = off_ = 0.0;
+        drawn_ = newest_ = off_ = asked_ = 0.0;
+        made_ = 1.0;
         span_ = 1.0;
         pace_ = 1.0;
     }
@@ -85,6 +93,8 @@ private:
     double drawn_ = 0.0;
     double newest_ = 0.0;
     double off_ = 0.0;  ///< how far it is off its distance behind, averaged
+    double asked_ = 0.0; ///< game time asked since the last publish, in ticks
+    double made_ = 1.0;  ///< ticks published against those asked, averaged
     double span_ = 1.0; ///< ticks a publish brings, averaged
     double pace_ = 1.0;
 };

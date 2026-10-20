@@ -161,6 +161,51 @@ TEST_CASE("TickClock draws a sped-up game's jobs of ticks on evenly, never stand
     CHECK(uneven.worst_stray < 0.25);
 }
 
+TEST_CASE("TickClock slows to the pace of a sim that can't keep up, never standing still",
+          "[interp][clock]") {
+    // Asked 4x, a late game's sim makes 1x: a job of the ticks owed (at
+    // most 8, the rest let go, as the engine does) takes four frames a
+    // tick. Held to half the asked pace at the slowest, the drawn time ran
+    // into the newest tick and stood (WOPC's long run, 2026-10-19: 45% of
+    // frames held from 35 minutes on).
+    TickClock clock(kTick);
+    const double frame = 4.0 / 60.0;
+    double owed = 0.0;
+    int job_frames_left = 0;
+    int job_ticks = 0;
+    std::array<double, 3> kept{0.0, 0.0, 0.0};
+    clock.published(0.0, 0.0, 1.0);
+    double last = 0.0;
+    double last_step = -1.0;
+    int held = 0;
+    double worst_change = 0.0;
+    for (int f = 0; f < 2400; ++f) {
+        clock.advance(frame);
+        owed += frame;
+        const bool job_running = job_frames_left > 0;
+        if (job_running) --job_frames_left;
+        if (job_running && job_frames_left == 0) {
+            kept = {kept[1], kept[2], kept[2] + job_ticks};
+            clock.published(kept[2], kept[0], job_ticks);
+        }
+        if (job_frames_left == 0) {
+            job_ticks = std::min(static_cast<int>(owed / kTick), 8);
+            if (job_ticks > 0) owed = 0.0; // what the job doesn't take is let go
+            job_frames_left = job_ticks * 4;
+        }
+        const double drawn = clock.drawn();
+        if (f >= 1200) { // settled
+            const double step = drawn - last;
+            held += step <= 0.0 ? 1 : 0;
+            if (last_step >= 0.0) worst_change = std::max(worst_change, std::abs(step - last_step));
+            last_step = step;
+        }
+        last = drawn;
+    }
+    CHECK(held == 0);
+    CHECK(worst_change < 0.05); // a quarter tick a frame, steady
+}
+
 TEST_CASE("TickClock holds at the newest tick through a stall and recovers", "[interp][clock]") {
     TickClock clock(kTick);
     clock.published(10.0, 9.0, 1.0);
