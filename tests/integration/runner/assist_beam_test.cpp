@@ -118,12 +118,13 @@ void test_assist_beam(TestContext& ctx) {
     const u32 moved = global_number("__osc_ab_moved_id");
     const u32 done = global_number("__osc_ab_done_id");
     if (!until("both begin to help", "__osc_ab_heard(__osc_ab_moved) == 'OnStartBuild' and "
-                                      "__osc_ab_heard(__osc_ab_done) == 'OnStartBuild'")) {
+                                     "__osc_ab_heard(__osc_ab_done) == 'OnStartBuild'")) {
         return;
     }
     ticks(2);
     t.check(drawn_beams(moved) > 0, "1: the helping commander's beams are drawn");
-    run("1: its build effects stand", "if __osc_ab_effects(__osc_ab_moved) == 0 then error('none') end");
+    run("1: its build effects stand",
+        "if __osc_ab_effects(__osc_ab_moved) == 0 then error('none') end");
 
     run("a Move to one of them, mid-upgrade", R"(
         IssueClearCommands({__osc_ab_moved.acu})
@@ -138,9 +139,11 @@ void test_assist_beam(TestContext& ctx) {
     )");
     t.check(drawn_beams(moved) == 0, "2: the next frame draws none of its beams");
     run("2: the other commander, still helping, heard no stop",
-        "if __osc_ab_heard(__osc_ab_done) ~= 'OnStartBuild' then error(__osc_ab_heard(__osc_ab_done)) end");
+        "if __osc_ab_heard(__osc_ab_done) ~= 'OnStartBuild' then "
+        "error(__osc_ab_heard(__osc_ab_done)) end");
 
-    if (!until("the other's upgrade finishes, its old factory gone", "__osc_ab_done.fac:BeenDestroyed()")) {
+    if (!until("the other's upgrade finishes, its old factory gone",
+               "__osc_ab_done.fac:BeenDestroyed()")) {
         return;
     }
     ticks(2);
