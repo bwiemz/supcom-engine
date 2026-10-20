@@ -34,10 +34,11 @@ void test_gpu_pass_timing(TestContext& ctx) {
     }
     renderer::Renderer& r = shots.renderer();
     if (!r.gpu_timestamps_supported()) {
-        // A skip must not drop a failure already recorded: report it and fail instead
-        const int code = test_status::failure_count() > 0
-                             ? app::finish_test_run("gpu-pass-timing-test")
-                             : app::kExitSkippedNoData;
+        // A skip must not drop a failure already recorded, a validation error included
+        const bool failed =
+            test_status::failure_count() > 0 || renderer::Renderer::validation_error_count() > 0;
+        const int code =
+            failed ? app::finish_test_run("gpu-pass-timing-test") : app::kExitSkippedNoData;
         if (code == app::kExitSkippedNoData)
             spdlog::warn("GPU pass timing test: the device counts no timestamps; skipped");
         spdlog::default_logger()->flush();
