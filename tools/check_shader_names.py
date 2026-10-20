@@ -13,7 +13,8 @@ Usage: check_shader_names.py <repo root>          (exit 1 on a problem)
        check_shader_names.py --extract <FA dir> > tools/shader_names.txt
        check_shader_names.py --installed <repo root> <opensupcom>
            (the same check on the installed game's .bp files, in the install
-           `opensupcom --print-install` names; exit 77, a skip, when there is none)
+           `opensupcom --print-install` names; exit 77, a skip, only when the
+           engine reports no installation; any other failure fails)
        check_shader_names.py --self-test
 """
 
@@ -101,19 +102,33 @@ def check(root: Path, names: list[str] | None = None) -> tuple[list[str], int]:
     return problems_of(missing, read_names(tools / "shader_names_baseline.txt")), len(missing)
 
 
-def install_of(print_install: str) -> Path | None:
-    """The FA directory in `opensupcom --print-install`'s output, if it found one."""
-    m = re.search(r"^fa_path=(.+)$", print_install, re.M)
-    return Path(m.group(1)) if m else None
+NO_INSTALL = "No Supreme Commander: Forged Alliance installation found."
+
+
+def install_of(code: int, out: str) -> Path | str | None:
+    """From `opensupcom --print-install`'s exit code and output: the FA directory, None when the engine
+    reports no installation, or the problem when it did neither."""
+    if code == 1 and NO_INSTALL in out:
+        return None
+    m = re.search(r"^fa_path=(.+)$", out, re.M)
+    if code != 0 or not m:
+        return f"--print-install exited {code} without naming an install or reporting none"
+    return Path(m.group(1))
 
 
 def check_installed(root: Path, engine: str) -> int:
     run = subprocess.run([engine, "--print-install"], capture_output=True, text=True)
-    fa = install_of(run.stdout) if run.returncode == 0 else None
-    names = names_in(fa) if fa and (fa / "gamedata").is_dir() else set()
-    if not names:
+    fa = install_of(run.returncode, run.stdout)
+    if fa is None:
         print(f"{engine} --print-install found no installed game; skipping")
         return 77
+    if isinstance(fa, str):
+        print(f"{engine} {fa}")
+        return 1
+    names = names_in(fa)
+    if not names:
+        print(f"{fa}: no ShaderName in any gamedata/*.scd blueprint; is it a game install?")
+        return 1
     return report(*check(root, sorted(names)), "installed")
 
 
@@ -149,10 +164,14 @@ def self_test() -> int:
         if len(problems_of(missing, baseline)) != n:
             print(f"self-test: baseline {baseline}: want {n} problem(s)")
             return 1
-    if install_of("source=steam\nfa_path=/g/FA\ninit_file=/g/FA/bin/x.lua\n") != Path("/g/FA") \
-            or install_of("searched steam: /s\n") is not None:
-        print("self-test: install_of must read fa_path= and nothing else")
-        return 1
+    cases = [(0, "source=steam\nfa_path=/g/FA\ninit_file=/g/FA/bin/x.lua\n", Path("/g/FA")),
+             (1, f"{NO_INSTALL}\nsearched steam: /s\n", None),
+             (1, "searched steam: /s\n", str), (-11, "", str), (0, "source=steam\n", str)]
+    for code, out, want in cases:
+        got = install_of(code, out)
+        if (type(got) is not want) if want is str else got != want:
+            print(f"self-test: install_of({code}, {out!r}) gave {got!r}")
+            return 1
     with tempfile.TemporaryDirectory() as empty:
         if extract(Path(empty)) != 1:
             print("self-test: --extract on a directory without game data must fail")
