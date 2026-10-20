@@ -170,7 +170,7 @@ TEST_CASE("The render bench reports every pass's GPU time", "[bench]") {
     CHECK(osc::app::gpu_passes_json(frames).is_null());
 }
 
-TEST_CASE("--gpu-passes asks the render bench to time each pass", "[bench]") {
+TEST_CASE("The --gpu-passes flag asks the render bench to time each pass", "[bench]") {
     const auto parse = [](std::vector<std::string> args) {
         args.insert(args.begin(), "opensupcom");
         std::vector<char*> argv;
