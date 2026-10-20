@@ -134,7 +134,7 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server.bind(("127.0.0.1", link_port))
             server.listen(1)
-            server.settimeout(CONNECT_SECONDS)
+            server.settimeout(0.5)
             servers[name] = server
             user_dir = root / name
             user_dir.mkdir()
@@ -158,13 +158,17 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
                     stderr=subprocess.STDOUT,
                 )
         for name, server in servers.items():
-            try:
-                conn, _ = server.accept()
-            except TimeoutError:
-                if games[name].poll() == SKIPPED:
-                    return SKIPPED
-                print(f"client: the {name} never connected")
-                return 1
+            deadline = time.monotonic() + CONNECT_SECONDS
+            while True:
+                try:
+                    conn, _ = server.accept()
+                    break
+                except TimeoutError:
+                    if games[name].poll() == SKIPPED:
+                        return SKIPPED
+                    if time.monotonic() > deadline:
+                        print(f"client: the {name} never connected")
+                        return 1
             links[name] = Link(conn)
             links[name].expect("GameState", ["Idle"], CONNECT_SECONDS)
 

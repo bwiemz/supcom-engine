@@ -133,19 +133,23 @@ def run(exe: str, port: int, user_dir: Path) -> int:
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("127.0.0.1", port))
     server.listen(1)
-    server.settimeout(CONNECT_SECONDS)
+    server.settimeout(0.5)
     game = subprocess.Popen(
         [exe, "--user-dir", str(user_dir), "/gpgnet", f"127.0.0.1:{port}", "--gpgnet-scripted"]
     )
     try:
-        try:
-            conn, _ = server.accept()
-        except TimeoutError:
-            code = game.poll()
-            if code == SKIPPED:
-                return SKIPPED
-            print(f"client: the game never connected (exit {code})")
-            return 1
+        deadline = time.monotonic() + CONNECT_SECONDS
+        while True:
+            try:
+                conn, _ = server.accept()
+                break
+            except TimeoutError:
+                code = game.poll()
+                if code == SKIPPED:
+                    return SKIPPED
+                if time.monotonic() > deadline:
+                    print(f"client: the game never connected (exit {code})")
+                    return 1
         link = Link(conn)
         link.expect("GameState", ["Idle"], CONNECT_SECONDS)
         link.send("CreateLobby", 0, lobby_port, "Tester", 42, 1)

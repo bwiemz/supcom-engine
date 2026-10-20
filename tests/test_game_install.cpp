@@ -254,10 +254,9 @@ TEST_CASE("locate_game_install explains a failed search", "[platform][install]")
     CHECK_FALSE(result.searched.empty());
 }
 
-#endif
-
-TEST_CASE("OSC_RETAIL_ONLY picks Steam retail over FAF, and nothing without it",
-          "[platform][install]") {
+TEST_CASE(
+    "OSC_RETAIL_ONLY=1 runs retail's init, never FAF's, and finds FA through FAF's fa_path.lua",
+    "[platform][install]") {
     TempDir tmp;
     fs::path faf = tmp.path / "home" / ".faforever";
     write_file(faf / "bin" / "init_faf.lua", "-- faf\n");
@@ -267,7 +266,20 @@ TEST_CASE("OSC_RETAIL_ONLY picks Steam retail over FAF, and nothing without it",
     CHECK_FALSE(locate_game_install({}, fake_env(vars)).install.has_value());
 
     make_steam_tree(tmp.path);
-    auto result = locate_game_install({}, fake_env(vars));
-    REQUIRE(result.install.has_value());
-    CHECK(result.install->source == "steam");
+    auto steam = locate_game_install({}, fake_env(vars));
+    REQUIRE(steam.install.has_value());
+    CHECK(steam.install->source == "steam");
+
+    fs::path elsewhere = tmp.path / "elsewhere";
+    write_file(elsewhere / "bin" / "SupComDataPath.lua", "-- retail\n");
+    write_file(faf / "fa_path.lua", "fa_path = \"" + elsewhere.generic_string() + "\"\n");
+    auto named = locate_game_install({}, fake_env(vars));
+    REQUIRE(named.install.has_value());
+    CHECK(named.install->init_file == elsewhere / "bin" / "SupComDataPath.lua");
+    CHECK(named.install->faf_data_path.empty());
+
+    vars["OSC_RETAIL_ONLY"] = "0";
+    CHECK(locate_game_install({}, fake_env(vars)).install->source == "env");
 }
+
+#endif

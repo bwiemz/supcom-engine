@@ -107,7 +107,8 @@ set_target_properties(osc_integration PROPERTIES
 #   mp          two processes over localhost TCP; need no game data (run in CI)
 #   data        need Forged Alliance game data, located like `opensupcom
 #               --print-install` does (OSC_FA_PATH, FAForever, or a Steam
-#               library). Exit code 77 = no data = skipped.
+#               library); a `gate` test sets OSC_RETAIL_ONLY=1 and so runs
+#               on retail's files alone. Exit code 77 = no data = skipped.
 #   gate        data tests that pass on retail FA 3599 today: the regression
 #               gate to run before merging (`ctest -L gate`)
 #   golden      render a fixed frame and compare with a recorded golden image
