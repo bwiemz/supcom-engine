@@ -19,6 +19,7 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <array>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -76,8 +77,10 @@ void test_world_fog(TestContext& ctx) {
         return;
     }
     // The scene's pixel at world (wx, wz) on the ground, fog on over fog off,
-    // per colour channel (nullopt off the screen or on black)
-    const auto ratio = [&](f32 wx, f32 wz) -> std::optional<f32> {
+    // per colour channel (nullopt off the screen or on black), and how far
+    // from the fog's factor that may be: 0.01, plus what rounding each
+    // channel to 8 bits (FA's A8R8G8B8 frame) moves the ratio
+    const auto ratio = [&](f32 wx, f32 wz) -> std::optional<std::array<f32, 2>> {
         const auto s = screen_of(r, {wx, terrain->get_terrain_height(wx, wz), wz});
         if (!s) return std::nullopt;
         const auto px = static_cast<u32>((*s)[0]);
@@ -91,7 +94,8 @@ void test_world_fog(TestContext& ctx) {
             sum_fog += fogged.rgba[i + c];
         }
         if (sum <= 0.001f) return std::nullopt;
-        return sum_fog / sum;
+        const f32 q = sum_fog / sum;
+        return std::array<f32, 2>{q, 0.01f + 1.5f / 255.0f * (1.0f + q) / sum};
     };
     // In the scout's vision: the ground as it was; beyond: at 67%
     int inside = 0;
@@ -103,12 +107,12 @@ void test_world_fog(TestContext& ctx) {
         if (const auto q =
                 ratio(x + vision * 0.5f * std::cos(a), z + vision * 0.5f * std::sin(a))) {
             ++inside;
-            inside_ok += std::abs(*q - 1.0f) < 0.01f ? 1 : 0;
+            inside_ok += std::abs((*q)[0] - 1.0f) < (*q)[1] ? 1 : 0;
         }
         if (const auto q =
                 ratio(x + (vision + 8.0f) * std::cos(a), z + (vision + 8.0f) * std::sin(a))) {
             ++outside;
-            outside_ok += std::abs(*q - 0.67f) < 0.01f ? 1 : 0;
+            outside_ok += std::abs((*q)[0] - 0.67f) < (*q)[1] ? 1 : 0;
         }
     }
     t.check(inside > 4 && inside_ok == inside,

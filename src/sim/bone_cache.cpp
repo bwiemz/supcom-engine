@@ -144,23 +144,14 @@ std::string BoneCache::resolve_mesh_path(const std::string& bp_id,
 
     if (mesh_bp_id.empty()) return {};
 
-    // __blueprints keys are lowercased — normalize before lookup
+    // Lowercase, as the mesh path made from it below is
     std::transform(mesh_bp_id.begin(), mesh_bp_id.end(), mesh_bp_id.begin(),
                    [](unsigned char c) { return std::tolower(c); });
 
-    // Look up mesh blueprint in __blueprints global
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
-    int blueprints_table = lua_gettop(L);
-
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, blueprints_table);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); return {}; }
+    if (!blueprints::push_blueprint(L, mesh_bp_id)) return {};
     int mesh_bp = lua_gettop(L);
 
     // Strategy 1: Try LODs[1].MeshName (standalone _mesh.bp files have this)
-    // Stack: [..., __blueprints, mesh_bp]
     std::string mesh_name;
     lua_pushstring(L, "LODs");
     lua_rawget(L, mesh_bp);
@@ -179,10 +170,9 @@ std::string BoneCache::resolve_mesh_path(const std::string& bp_id,
         lua_pop(L, 1); // LODs[1]
     }
     lua_pop(L, 1); // LODs
-    // Stack: [..., __blueprints, mesh_bp]
 
     if (!mesh_name.empty()) {
-        lua_pop(L, 2); // mesh_bp + __blueprints
+        lua_pop(L, 1); // mesh_bp
         // MeshName may be relative (e.g. "uel0001_lod0.scm")
         if (mesh_name[0] != '/') {
             auto slash = mesh_bp_id.rfind('/');
@@ -207,7 +197,7 @@ std::string BoneCache::resolve_mesh_path(const std::string& bp_id,
             result = bp_path.substr(0, bp_path.size() - suffix.size()) + "_lod0.scm";
         }
     }
-    lua_pop(L, 3); // BlueprintId + mesh_bp + __blueprints
+    lua_pop(L, 2); // BlueprintId + mesh_bp
     return result;
 }
 

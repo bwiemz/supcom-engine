@@ -88,6 +88,7 @@ struct Options {
     bool replay_flow_test = false;
     bool load_flow_test = false;
     bool mods_flow_test = false;
+    bool self_destruct_flow_test = false;
     bool campaign_flow_test = false; ///< (M209b)
     bool tutorial_flow_test = false; ///< its tutorial route (campaign_flow_test is set too)
     bool outro_flow_test = false;    ///< its outro route (campaign_flow_test is set too)
@@ -100,6 +101,7 @@ struct Options {
     std::string lan_game_join;
     u16 lan_game_port = 47624;
     u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
+    u32 lan_game_self_destruct_at = 0; ///< --lan-game-self-destruct-at: the joiner's Ctrl-K
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
     /// link to, instead of the front end (M220a).

@@ -29,6 +29,17 @@ formulas, never copied; faf-re's `CBloomRenderer` for the passes.
 The targets are half the head's size. The blur's scale compounds: four
 passes at 1.5 grow the glow's energy about fivefold.
 
+FA's targets are 8-bit. The GOG executable (`SupremeCommander.exe`, SHA-256
+`79074e294ea72fb179914cc393525720c523b65d6c9e300f11d31edceccdb887`) makes
+the bloom's two targets at 0x007F4D10 with GAL format 2, which its format
+table at 0x00D41E84 maps to `A8R8G8B8`; that table holds no floating-point
+format at all. Colour therefore saturates at 1 with every write: an additive
+effect stacked past white blooms as white does, and each blur pass clips.
+The engine's scene, its copies and the bloom's targets are `R8G8B8A8_UNORM`
+for the same reason (they were `R16G16B16A16_SFLOAT` until 2026-10, which
+let stacked additive effects reach several times white and bloom wider and
+brighter than FA's targets allow).
+
 ## What each surface leaves in alpha
 
 The scene pass clears alpha to 0, and each technique writes (or keeps) it
@@ -42,6 +53,7 @@ as FA's does:
 | Wrecks | `glowMinimum` | the same |
 | Props (`NormalMappedAlpha`) | not written (`Write_RGB`) | 0 (the terrain beneath is at most 0.01 + its specular: under the copy's 0.02 for XP maps) |
 | Decals, water, particles | not written (`Write_RGB`, mostly) | not written: colour write mask RGB |
+| Light particles (`TLight_ADD`) | `Write_RGBA` by `SrcAlpha, One`: `a = a_src^2 + a_dst` | the same |
 | Meshes without a mesh (cubes) | — | not written |
 
 A unit under construction (the engine's fade, until the build shaders) is
@@ -56,7 +68,8 @@ the fade and writes colour only; they don't glow.
 - Terrain and mesh shaders write FA's alpha; the mesh pipeline stops
   blending, and a fade pipeline takes the fading instances (their own draw
   groups).
-- Decals, water, cubes and particles write colour only.
+- Decals, water, cubes and particles write colour only, but light particles
+  add to the glow: the UEF nuke's flash blooms.
 - The bloom's bright pass becomes the glow copy (push: `GlowCopyAdd`), the
   blur FA's kernel with its scale, run twice, and the composite a plain
   sum.
@@ -89,6 +102,11 @@ standing off it:
    1.062 times.
 5. **Fading.** A glowing plate under construction isn't brightened
    (1.000): it blends, and writes no glow.
+8. **8-bit.** The frame's colour is at most 1 at a white plate glowing
+   fully (2.000 with float targets), and the plate shows white. Over
+   black its halo saturates 1,492 pixels. An unclipped bloom is linear: it
+   would saturate 3,206, where the dim plate's halo times 12.75 does, and
+   float targets did (4,730; 3,200 with only the bloom's made float).
 
 **Mutation testing: 12 of 12 mutants killed.**
 - The copy: without `MinimumGlow`; scale 1; the map's bloom ignored.
@@ -98,7 +116,8 @@ standing off it:
   SpecTeam red; the fade pipeline writing alpha; the colour interpolated.
 
 The masks on decals, water and particles aren't exercised: the test's
-scene has none.
+scene has none. Test 7 checks a light particle's glow, and that one at
+half alpha adds its alpha squared to the frame's (0.263 over 0.01).
 
 ## Left for later
 

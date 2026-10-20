@@ -110,4 +110,16 @@ private:
     std::vector<NamedFootprint> footprint_classes_;
 };
 
+/// Push the table of blueprint `id` from the Lua state's blueprints and
+/// return true; push nothing and return false when there is none. The id is
+/// matched in any case, as Moho's lookups canonicalize it (retail's scripts
+/// write 'XEA3204'; the tables are keyed lowercase). Every engine read of a
+/// blueprint table by id goes through here (tools/check_blueprint_lookups.py).
+bool push_blueprint(lua_State* L, std::string_view id);
+
+/// Push the table of every blueprint, keyed by lowercase id, and return
+/// true; push nothing and return false before expose_to_lua has made it. For
+/// walking or freezing the whole table only: look one up with push_blueprint.
+bool push_blueprints(lua_State* L);
+
 } // namespace osc::blueprints

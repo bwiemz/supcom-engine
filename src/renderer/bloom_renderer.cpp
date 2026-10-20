@@ -27,14 +27,14 @@ void BloomRenderer::create(VkDevice device, VmaAllocator allocator, u32 width, u
     allocator_ = allocator;
     half_w_ = std::max(width / 2, 1u);
     half_h_ = std::max(height / 2, 1u);
-    const VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
-
-    // The targets, HDR as the frame is, half its size.
-    const auto create_hdr_image = [&](AllocatedImage& img) {
+    // The targets, 8-bit as FA's (A8R8G8B8) and the frame are, half its size:
+    // each pass saturates at 1.
+    const VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+    const auto create_image = [&](AllocatedImage& img) {
         VkImageCreateInfo img_ci{};
         img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.format = hdr_format;
+        img_ci.format = format;
         img_ci.extent = {half_w_, half_h_, 1};
         img_ci.mipLevels = 1;
         img_ci.arrayLayers = 1;
@@ -52,18 +52,18 @@ void BloomRenderer::create(VkDevice device, VmaAllocator allocator, u32 width, u
         view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_ci.image = img.image;
         view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_ci.format = hdr_format;
+        view_ci.format = format;
         view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
     };
-    create_hdr_image(bright_image_);
-    create_hdr_image(blur_h_image_);
-    create_hdr_image(blur_v_image_);
+    create_image(bright_image_);
+    create_image(blur_h_image_);
+    create_image(blur_v_image_);
 
     // Its pass: one colour target, no depth.
     {
         VkAttachmentDescription att{};
-        att.format = hdr_format;
+        att.format = format;
         att.samples = VK_SAMPLE_COUNT_1_BIT;
         att.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;

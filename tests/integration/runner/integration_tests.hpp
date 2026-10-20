@@ -129,6 +129,8 @@ void test_resource_icon_render(TestContext& ctx);
 void test_counter_intel(TestContext& ctx);
 /// --binding-tail-test (M184's tail), in binding_tail_test.cpp.
 void test_binding_tail(TestContext& ctx);
+/// --pod-rebuild-test, in pod_rebuild_test.cpp.
+void test_pod_rebuild(TestContext& ctx);
 /// --jammer-blip-test (M215e), in jammer_blip_test.cpp.
 void test_jammer_blips(TestContext& ctx);
 /// --intel-field-test (M215g), in intel_field_test.cpp.
@@ -143,6 +145,8 @@ void test_beam_render(TestContext& ctx);
 void test_selection_render(TestContext& ctx);
 /// --ghost-render-test, in ghost_render_test.cpp.
 void test_ghost_render(TestContext& ctx);
+/// --mesh-texture-test, in mesh_texture_test.cpp.
+void test_mesh_texture(TestContext& ctx);
 /// --range-render-test, in range_render_test.cpp.
 void test_range_render(TestContext& ctx);
 /// --feedback-render-test, in feedback_render_test.cpp.

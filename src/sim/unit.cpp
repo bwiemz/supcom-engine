@@ -149,21 +149,15 @@ bool queued_build(const UnitCommand& c) {
 
 bool upgrades_to(lua_State* L, const std::string& from, const std::string& to) {
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
     std::string next;
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, from.c_str());
+    if (blueprints::push_blueprint(L, from)) {
+        lua_pushstring(L, "General");
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "General");
+            lua_pushstring(L, "UpgradesTo");
             lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "UpgradesTo");
-                lua_rawget(L, -2);
-                if (lua_type(L, -1) == LUA_TSTRING) {
-                    next = lua_tostring(L, -1);
-                }
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                next = lua_tostring(L, -1);
             }
         }
     }
@@ -1345,39 +1339,28 @@ Unit::BuildStart Unit::start_build(const UnitCommand& cmd, EntityRegistry& regis
         static_cast<Unit*>(target)->set_unit_state("BeingUpgraded", true);
     }
 
-    // Read economy data from the target blueprint via the __blueprints global
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, cmd.blueprint_id.c_str());
+    // Read economy data from the target blueprint
+    if (blueprints::push_blueprint(L, cmd.blueprint_id)) {
+        lua_pushstring(L, "Economy");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Economy");
+            lua_pushstring(L, "BuildTime");
             lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "BuildTime");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    build_time_ = lua_tonumber(L, -1);
-                lua_pop(L, 1);
+            if (lua_isnumber(L, -1)) build_time_ = lua_tonumber(L, -1);
+            lua_pop(L, 1);
 
-                lua_pushstring(L, "BuildCostMass");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    build_cost_mass_ = lua_tonumber(L, -1);
-                lua_pop(L, 1);
+            lua_pushstring(L, "BuildCostMass");
+            lua_gettable(L, -2);
+            if (lua_isnumber(L, -1)) build_cost_mass_ = lua_tonumber(L, -1);
+            lua_pop(L, 1);
 
-                lua_pushstring(L, "BuildCostEnergy");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    build_cost_energy_ = lua_tonumber(L, -1);
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // Economy
+            lua_pushstring(L, "BuildCostEnergy");
+            lua_gettable(L, -2);
+            if (lua_isnumber(L, -1)) build_cost_energy_ = lua_tonumber(L, -1);
+            lua_pop(L, 1);
         }
-        lua_pop(L, 1); // blueprint entry
+        lua_pop(L, 2); // Economy, the blueprint
     }
-    lua_pop(L, 1); // __blueprints
 
     spdlog::info("start_build: entity #{} building {} (target #{}), "
                  "BuildTime={:.0f} BuildRate={:.1f} CostMass={:.0f} CostEnergy={:.0f}",
@@ -1940,30 +1923,22 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
 
 BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_id) {
     BuildEconomy out;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, blueprint_id.c_str());
+    if (blueprints::push_blueprint(L, blueprint_id)) {
+        lua_pushstring(L, "Economy");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Economy");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                const auto field = [&](const char* name, f64& v) {
-                    lua_pushstring(L, name);
-                    lua_gettable(L, -2);
-                    if (lua_isnumber(L, -1)) v = lua_tonumber(L, -1);
-                    lua_pop(L, 1);
-                };
-                field("BuildTime", out.time);
-                field("BuildCostMass", out.mass);
-                field("BuildCostEnergy", out.energy);
-            }
-            lua_pop(L, 1); // Economy
+            const auto field = [&](const char* name, f64& v) {
+                lua_pushstring(L, name);
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) v = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+            };
+            field("BuildTime", out.time);
+            field("BuildCostMass", out.mass);
+            field("BuildCostEnergy", out.energy);
         }
-        lua_pop(L, 1); // blueprint entry
+        lua_pop(L, 2); // Economy, the blueprint
     }
-    lua_pop(L, 1); // __blueprints
     return out;
 }
 
@@ -2011,12 +1986,8 @@ f32 script_number(lua_State* L, const Entity& entity, const char* field) {
 
 f32 blueprint_regen_assist_mult(lua_State* L, const std::string& blueprint_id) {
     f32 out = 1.0f;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    const int base = lua_gettop(L);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, blueprint_id.c_str());
-        lua_gettable(L, -2);
+    const int top = lua_gettop(L);
+    if (blueprints::push_blueprint(L, blueprint_id)) {
         for (const char* key : {"Defense", "Shield", "RegenAssistMult"}) {
             if (!lua_istable(L, -1)) {
                 break;
@@ -2028,7 +1999,7 @@ f32 blueprint_regen_assist_mult(lua_State* L, const std::string& blueprint_id) {
             out = static_cast<f32>(lua_tonumber(L, -1));
         }
     }
-    lua_settop(L, base - 1);
+    lua_settop(L, top);
     return out;
 }
 
@@ -2207,32 +2178,22 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
     f64 build_time = 0;
     f64 build_cost_energy = 0;
 
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, target_unit->unit_id().c_str());
+    if (blueprints::push_blueprint(L, target_unit->unit_id())) {
+        lua_pushstring(L, "Economy");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Economy");
+            lua_pushstring(L, "BuildTime");
             lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "BuildTime");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    build_time = lua_tonumber(L, -1);
-                lua_pop(L, 1);
+            if (lua_isnumber(L, -1)) build_time = lua_tonumber(L, -1);
+            lua_pop(L, 1);
 
-                lua_pushstring(L, "BuildCostEnergy");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    build_cost_energy = lua_tonumber(L, -1);
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // Economy
+            lua_pushstring(L, "BuildCostEnergy");
+            lua_gettable(L, -2);
+            if (lua_isnumber(L, -1)) build_cost_energy = lua_tonumber(L, -1);
+            lua_pop(L, 1);
         }
-        lua_pop(L, 1); // blueprint entry
+        lua_pop(L, 2); // Economy, the blueprint
     }
-    lua_pop(L, 1); // __blueprints
 
     if (build_time <= 0) return false;
 
@@ -4546,16 +4507,9 @@ MissileCost missile_cost(lua_State* L, const std::string& projectile_bp_id) {
     MissileCost cost;
     if (!L || projectile_bp_id.empty()) return cost;
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, projectile_bp_id.c_str());
-        lua_rawget(L, -2);
-    }
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "Economy");
-        lua_rawget(L, -2);
-    }
+    if (!blueprints::push_blueprint(L, projectile_bp_id)) return cost;
+    lua_pushstring(L, "Economy");
+    lua_rawget(L, -2);
     if (lua_istable(L, -1)) {
         const int econ = lua_gettop(L);
         for (auto [key, out] :

@@ -3,6 +3,13 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/unit_renderer.hpp"
 
+#include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
+
+#include <memory>
+#include <sstream>
+#include <string>
+
 using namespace osc::renderer;
 
 TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer][mesh]") {
@@ -30,6 +37,14 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     CHECK(mesh_technique("NormalMappedTerrain") == MeshTechnique::NormalMappedTerrain);
     CHECK(mesh_technique("UndulatingNormalMappedAlpha") ==
           MeshTechnique::UndulatingNormalMappedAlpha);
+    // The explosions' and effects', by their legacy names too.
+    CHECK(mesh_technique("Effect") == MeshTechnique::Effect);
+    CHECK(mesh_technique("TMeshAdd") == MeshTechnique::Effect);
+    CHECK(mesh_technique("Cloud") == MeshTechnique::Cloud);
+    CHECK(mesh_technique("TMeshCloud") == MeshTechnique::Cloud);
+    CHECK(mesh_technique("OuterCloud") == MeshTechnique::OuterCloud);
+    CHECK(mesh_technique("TMeshOuterCloud") == MeshTechnique::OuterCloud);
+    CHECK(mesh_technique("NukeUEF") == MeshTechnique::NukeUEF);
     // Anything unported draws as Unit.
     CHECK(mesh_technique("") == MeshTechnique::Unit);
     CHECK(mesh_technique("Clutter") == MeshTechnique::Unit);
@@ -78,6 +93,25 @@ TEST_CASE("is_build_technique: the four build techniques alone", "[renderer][mes
     CHECK_FALSE(is_build_technique(MeshTechnique::Metal));
     CHECK_FALSE(is_build_technique(MeshTechnique::Seraphim));
     CHECK_FALSE(is_build_technique(MeshTechnique::UEFBuildCube));
+}
+
+TEST_CASE("The explosions' techniques: mesh.fx's stages and blending", "[renderer][mesh]") {
+    // STAGE_POSTWATER + STAGE_POSTEFFECT
+    CHECK(is_post_effect_technique(MeshTechnique::Effect));
+    CHECK(is_post_effect_technique(MeshTechnique::Cloud));
+    // STAGE_POSTWATER + STAGE_PREEFFECT
+    CHECK(is_post_water_technique(MeshTechnique::OuterCloud));
+    CHECK(is_post_water_technique(MeshTechnique::NukeUEF));
+    for (const MeshTechnique t : {MeshTechnique::Effect, MeshTechnique::Cloud,
+                                  MeshTechnique::OuterCloud, MeshTechnique::NukeUEF}) {
+        CHECK(is_post_effect_technique(t) != is_post_water_technique(t));
+        CHECK_FALSE(has_depth_stage(t)); // no STAGE_DEPTH: no shadow
+    }
+    // Effect sets no alpha state: opaque. The rest blend by SrcAlpha.
+    CHECK_FALSE(is_blended_technique(MeshTechnique::Effect));
+    CHECK(is_blended_technique(MeshTechnique::Cloud));
+    CHECK(is_blended_technique(MeshTechnique::OuterCloud));
+    CHECK(is_blended_technique(MeshTechnique::NukeUEF));
 }
 
 TEST_CASE("is_blended_technique: what draws after the opaque meshes", "[renderer][mesh]") {
@@ -206,4 +240,37 @@ TEST_CASE("drawn_technique: a ghost group draws as UnitPlace, whatever its mesh'
     CHECK(drawn_technique(group) == MeshTechnique::Aeon);
     group.ghost = true;
     CHECK(drawn_technique(group) == MeshTechnique::UnitPlace);
+}
+
+namespace {
+struct LogCapture {
+    std::ostringstream text;
+    std::shared_ptr<spdlog::logger> previous = spdlog::default_logger();
+    LogCapture() {
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+            "capture", std::make_shared<spdlog::sinks::ostream_sink_st>(text)));
+    }
+    ~LogCapture() { spdlog::set_default_logger(previous); }
+    size_t count(const std::string& line) const {
+        const std::string all = text.str();
+        size_t n = 0;
+        for (size_t at = all.find(line); at != std::string::npos; at = all.find(line, at + 1)) ++n;
+        return n;
+    }
+};
+} // namespace
+
+TEST_CASE("mesh_technique: a ShaderName with no technique warns once and draws as Unit",
+          "[renderer][mesh]") {
+    LogCapture log;
+    for (int i = 0; i < 3; ++i) {
+        CHECK(mesh_technique("NoSuchShaderA") == MeshTechnique::Unit);
+        CHECK(mesh_technique("NoSuchShaderB") == MeshTechnique::Unit);
+    }
+    CHECK(log.count("no technique for ShaderName 'NoSuchShaderA'") == 1);
+    CHECK(log.count("no technique for ShaderName 'NoSuchShaderB'") == 1);
+
+    for (const char* quiet : {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage"})
+        mesh_technique(quiet);
+    CHECK(log.count("no technique") == 2);
 }
