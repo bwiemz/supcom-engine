@@ -77,11 +77,13 @@ struct Options {
     bool scripted_orders = false;
     std::string bench_report; ///< --bench <file>: the headless run's tick times (M223)
     /// --render-bench <file> (M223b): a saved game's scene rendered, its
-    /// frames' figures written; --render-scene, --render-frames, --render-warmup.
+    /// frames' figures written; --render-scene, --render-frames, --render-warmup,
+    /// --gpu-passes.
     std::string render_bench_report;
     std::string render_scene = "battle";
     u32 render_frames = 600;
     u32 render_warmup = 120;
+    bool gpu_passes = false;
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
     bool load_flow_test = false;

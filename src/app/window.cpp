@@ -204,8 +204,8 @@ std::optional<int> App::Window::set_up() {
             spdlog::error("--render-bench renders a saved game's scene: pass --load <file>");
             return 1;
         }
-        render_bench = std::make_unique<RenderBench>(opt.render_bench_report, *scene,
-                                                     opt.render_warmup, opt.render_frames);
+        render_bench = std::make_unique<RenderBench>(
+            opt.render_bench_report, *scene, opt.render_warmup, opt.render_frames, opt.gpu_passes);
         // A fixed clock (the same frames each run), the camera the scene's,
         // and no wait for the display
         renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));

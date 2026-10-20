@@ -1,0 +1,86 @@
+// --gpu-pass-timing-test: the GPU's frame time split by pass (M223b), as the
+// render bench asks for it, and a frame's two timestamps alone without it.
+
+#include "integration_tests.hpp"
+#include "map/heightmap.hpp"
+#include "map/terrain.hpp"
+#include "render_probe.hpp"
+#include "renderer/gpu_queries.hpp"
+#include "renderer/renderer.hpp"
+
+#include <fmt/format.h>
+#include <spdlog/spdlog.h>
+
+#include <cmath>
+#include <numeric>
+#include <vector>
+
+namespace osc::test {
+
+namespace {
+
+constexpr u32 kSize = 64;
+
+/// A few frames drawn, so the last one's results are in (a frame in flight behind).
+const renderer::GpuFrameQueries::Frame& frames(OffscreenShots& shots) {
+    for (int i = 0; i < 4; ++i) shots.redraw();
+    return shots.renderer().last_gpu_frame();
+}
+
+} // namespace
+
+void test_gpu_pass_timing(TestContext& ctx) {
+    spdlog::info("=== GPU pass timing test ===");
+    Tally t;
+    OffscreenShots shots(ctx);
+    if (!shots.ok()) {
+        t.check(false, "renderer init (no Vulkan?)");
+        return;
+    }
+    renderer::Renderer& r = shots.renderer();
+    // Ground under water, so the frame copies itself for the water to refract
+    std::vector<u16> heights(static_cast<size_t>(kSize + 1) * (kSize + 1), 5 * 128);
+    map::Terrain ground(map::Heightmap(kSize, kSize, 1.0f / 128.0f, std::move(heights)), 10.0f,
+                        true);
+    (void)shots.shoot(ground, kSize * 0.5f, kSize * 0.5f, 80.0f, false);
+
+    using Pass = renderer::GpuFrameQueries::Pass;
+    const auto pass = [](const renderer::GpuFrameQueries::Frame& f, Pass p) {
+        return f.pass_ms[static_cast<size_t>(p)];
+    };
+
+    const renderer::GpuFrameQueries::Frame whole = frames(shots);
+    if (!whole.timed) {
+        spdlog::info("GPU pass timing test: the device has no timestamps; skipped");
+        return;
+    }
+    t.check(!whole.passes_timed && whole.gpu_ms > 0.0,
+            fmt::format("Test 1: not timing passes, the frame is timed whole ({:.3f} ms) and not "
+                        "split",
+                        whole.gpu_ms));
+
+    r.set_timing_passes(true);
+    (void)frames(shots); // the frame recorded before the switch drains out
+    const renderer::GpuFrameQueries::Frame split = frames(shots);
+    const f64 sum = std::accumulate(split.pass_ms.begin(), split.pass_ms.end(), 0.0);
+    t.check(split.passes_timed && pass(split, Pass::Main) > 0.0 &&
+                pass(split, Pass::Composite) + pass(split, Pass::Bloom) > 0.0 &&
+                std::abs(sum - split.gpu_ms) < 1e-3,
+            fmt::format("Test 2: timing passes, the frame ({:.3f} ms) splits into shadow {:.3f}, "
+                        "normals {:.3f}, reflection {:.3f}, main {:.3f}, refraction copy {:.3f}, "
+                        "bloom {:.3f}, composite {:.3f}, other {:.3f}",
+                        split.gpu_ms, pass(split, Pass::Shadow), pass(split, Pass::Normals),
+                        pass(split, Pass::Reflection), pass(split, Pass::Main),
+                        pass(split, Pass::RefractionCopy), pass(split, Pass::Bloom),
+                        pass(split, Pass::Composite), pass(split, Pass::Other)));
+
+    r.set_timing_passes(false);
+    (void)frames(shots);
+    const renderer::GpuFrameQueries::Frame after = frames(shots);
+    t.check(after.timed && !after.passes_timed,
+            "Test 3: timing turned off again, the frame is timed whole");
+
+    spdlog::info("GPU pass timing test: {} passed, {} failed", t.pass, t.fail);
+}
+
+} // namespace osc::test

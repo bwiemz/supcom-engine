@@ -127,6 +127,8 @@ void print_usage() {
               << "  --render-scene <battle|late|strategic>  The scene (default battle)\n"
               << "  --render-frames <n> --render-warmup <n>  Frames measured (default 600),\n"
               << "                     after the warm-up's (default 120)\n"
+              << "  --gpu-passes       With --render-bench: also time each pass on the GPU\n"
+              << "                     (the timestamps between passes add to the frame's time)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --log <file>       Write the log there (default: a player's game logs to\n"
@@ -298,6 +300,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.bench_report = parse_string_arg(argc, argv, "--bench", "");
     o.render_bench_report = parse_string_arg(argc, argv, "--render-bench", "");
     o.render_scene = parse_string_arg(argc, argv, "--render-scene", "battle");
+    o.gpu_passes = parse_flag(argc, argv, "--gpu-passes");
     o.render_frames = static_cast<u32>(
         std::strtoul(parse_string_arg(argc, argv, "--render-frames", "600").c_str(), nullptr, 10));
     o.render_warmup = static_cast<u32>(

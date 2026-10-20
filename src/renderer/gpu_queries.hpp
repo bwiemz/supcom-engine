@@ -11,6 +11,7 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -38,17 +39,48 @@ public:
         "main",  "refraction_copy", "bloom",   "composite"};
     using PassTimes = std::array<f64, kPasses>;
 
-    /// `ticks[i + 1] - ticks[i]` (under `valid_mask`, so a wrapped counter
-    /// still counts) goes to `passes[i]`'s time.
+    static constexpr u32 kMaxMarks = 32; ///< per frame; marks past it fold into the span before
+    static constexpr u32 kQueriesPerSlot = kMaxMarks + 2; ///< its start, its marks, its end
+
+    /// Ticks from `from` to `to` under `valid_mask`: a counter that wrapped
+    /// still counts, and one that stepped back (more than half its range
+    /// "forward") counts none.
+    static u64 ticks_between(u64 from, u64 to, u64 valid_mask);
+    /// `ticks[i + 1] - ticks[i]` goes to `passes[i]`'s time.
     static PassTimes split(std::span<const u64> ticks, std::span<const Pass> passes,
                            f64 ns_per_tick, u64 valid_mask);
+
+    /// One slot's timestamps, by their place in its range of the pool: the
+    /// start, each mark while timing passes, the end.
+    class Marks {
+    public:
+        /// A frame begins: the queries to reset (only the start and end's
+        /// when not timing passes).
+        u32 begin(bool timing);
+        /// The query a mark of `pass` writes; none when not timing passes or
+        /// past kMaxMarks.
+        std::optional<u32> mark(Pass pass);
+        /// The query the end writes.
+        u32 end() const { return count_; }
+        /// The timestamps written: the start, the marks, the end.
+        u32 written() const { return count_ + 1; }
+        bool timing() const { return timing_; }
+        /// The pass each span between two timestamps belongs to.
+        std::span<const Pass> passes() const { return {passes_.data(), count_}; }
+
+    private:
+        bool timing_ = false;
+        u32 count_ = 1; ///< spans so far: the start's, then one a mark
+        std::array<Pass, kMaxMarks + 1> passes_{};
+    };
 
     /// One frame's figures, as far as the device measures them.
     struct Frame {
         u64 sequence = 0;     ///< which frame (Renderer::frame_sequence), 0 for none yet
         bool timed = false;   ///< the device has timestamps on the graphics queue
         f64 gpu_ms = 0;       ///< its command buffer's start to end, on the GPU
-        PassTimes pass_ms{};  ///< gpu_ms by pass (they sum to it)
+        bool passes_timed = false; ///< marks split it: pass_ms holds figures
+        PassTimes pass_ms{};       ///< gpu_ms by pass (they sum to it)
         bool counted = false; ///< the device has pipeline statistics
         u64 primitives = 0;   ///< primitives the input assembler put out
         u64 vertex_invocations = 0;
@@ -79,11 +111,9 @@ public:
     const Frame& latest() const { return latest_; }
 
 private:
-    static constexpr u32 kMaxMarks = 32; ///< per frame; marks past it fold into the span before
-    static constexpr u32 kQueriesPerSlot = kMaxMarks + 2; ///< its start, its marks, its end
     struct Slot {
-        u64 sequence = 0;         ///< the frame it holds results for (0: none)
-        std::vector<Pass> passes; ///< the span each timestamp after the first starts
+        u64 sequence = 0; ///< the frame it holds results for (0: none)
+        Marks marks;
     };
     VkQueryPool timestamps_ = VK_NULL_HANDLE;
     VkQueryPool statistics_ = VK_NULL_HANDLE;
