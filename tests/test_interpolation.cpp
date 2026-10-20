@@ -217,7 +217,10 @@ TEST_CASE("TickClock holds at the newest tick through a stall and recovers", "[i
     double t = 10.0;
     for (int i = 0; i < 120; ++i) {
         clock.advance(1.0 / 60.0);
-        if (i % 6 == 5) clock.published(t += 1.0, t - 2.0, 1.0);
+        if (i % 6 == 5) {
+            t += 1.0;
+            clock.published(t, t - 2.0, 1.0);
+        }
     }
     CHECK(clock.drawn() < t);
     CHECK(clock.drawn() > t - 1.5);

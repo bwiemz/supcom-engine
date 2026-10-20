@@ -3329,7 +3329,7 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
 
     // The terrain's Time (M212f): set when the terrain would re-tessellate,
     // so TTerrainGlow's lava stands still under a still camera, as in FA.
-    if (const sim::WorldSnapshot* cur = view.cur()) {
+    if (view.cur()) {
         const u64 decals = static_cast<u64>(runtime_decals_.decal_draws().size()) |
                            (static_cast<u64>(runtime_decals_.splat_count()) << 32);
         terrain_time_.update(camera_.view(), decals, static_cast<f32>(view.time()));
