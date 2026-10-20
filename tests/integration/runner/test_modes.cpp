@@ -164,6 +164,7 @@ constexpr Mode kModesBefore[] = {
     {"--beam-render-test", test_beam_render, false},
     {"--selection-render-test", test_selection_render, false},
     {"--ghost-render-test", test_ghost_render, false},
+    {"--mesh-texture-test", test_mesh_texture, false},
     {"--range-render-test", test_range_render, false},
     {"--feedback-render-test", test_feedback_render, false},
     {"--hull-facing-test", test_hull_facing, false},
@@ -243,6 +244,7 @@ constexpr Mode kModesBefore[] = {
     {"--influence-test", test_influence, false},
     {"--issue-handles-test", test_issue_handles, false},
     {"--binding-tail-test", test_binding_tail, false},
+    {"--pod-rebuild-test", test_pod_rebuild, false},
     {"--jammer-blip-test", test_jammer_blips, false},
     {"--intel-field-test", test_intel_fields, false},
     {"--destroyed-handle-test", test_destroyed_handle, false},
@@ -387,7 +389,7 @@ void IntegrationModes::print_usage() const {
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
               << "  --bloom-test       FA's bloom, from the glow in the frame's alpha\n"
               << "  --build-shader-test FA's build shaders, on units under construction\n"
-              << "  --effect-mesh-test FA's build effects' meshes, shader names, burnt trees\n"
+              << "  --effect-mesh-test FA's effect meshes (builds, the nuke), shader names, burnt trees\n"
               << "  --skinning-test    Rigid skinning and hidden bones\n"
               << "  --prop-material-test The props' own techniques\n"
               << "  --clipped-shadow-test Shadows cut by the albedo's alpha (DepthClip)\n"
@@ -401,6 +403,7 @@ void IntegrationModes::print_usage() const {
               << "  --beam-render-test FA's beams: strips, colours, UV scroll, blends, LOD\n"
               << "  --selection-render-test Selection brackets, hover and the drag box\n"
               << "  --ghost-render-test A structure being placed, drawn as UnitPlace\n"
+              << "  --mesh-texture-test Empty texture names leave the Lua stack alone\n"
               << "  --range-render-test FA's range overlays (RangeRenderer's rings)\n"
               << "  --feedback-render-test An order's mark, drawn as CommandFeedback\n"
               << "  --hull-facing-test Slaved weapons and AttackAngle turn the hull\n"
@@ -449,6 +452,7 @@ void IntegrationModes::print_usage() const {
               << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"
               << "  --binding-tail-test Retail's last missing engine calls (platoon transport orders,\n"
               << "                     FlushIntelInRect, PickBestAttackVector)\n"
+              << "  --pod-rebuild-test A UEF Engineering Station rebuilds its lost pod\n"
               << "  --jammer-blip-test A jammer's fake blips (M215e)\n"
               << "  --intel-field-test Stealth fields and underwater sight, with retail's units "
                  "(M215g)\n"

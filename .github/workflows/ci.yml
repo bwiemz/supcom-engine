@@ -177,6 +177,39 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  macos:
+    name: macos-arm64
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        # vcpkg prerequisites; Ninja is the presets' generator.
+        run: brew install ninja pkg-config autoconf autoconf-archive automake libtool
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-macos-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*') }}-${{ env.VCPKG_COMMIT }}
+          restore-keys: vcpkg-macos-
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset macos-debug -DOSC_WERROR=ON
+
+      - name: Build
+        run: cmake --build --preset macos-debug
+
+      - name: Test (data-free)
+        run: ctest --preset macos-debug -LE "data|lint" --output-on-failure
+
   cross-os:
     # Windows and Linux in one game (M219): the data-free lockstep pairs
     # (run_pair.py), one side the Linux build's runner and the other the

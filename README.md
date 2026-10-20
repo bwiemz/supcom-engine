@@ -12,7 +12,7 @@ This is **not** a compatibility layer or wrapper around the original binary. It 
 
 The original Moho engine is closed-source, 32-bit, single-threaded, and increasingly difficult to maintain. A clean reimplementation opens the door to:
 
-- **64-bit and cross-platform support** (Windows and Linux; macOS later)
+- **64-bit and cross-platform support** (Windows, Linux and macOS on Apple Silicon)
 - **Modern C++ performance** (C++17, no legacy COM/DirectX constraints in the sim)
 - **Debuggability** (full source, structured logging, deterministic replay)
 - **Community extension** (open codebase for FAForever and modders)

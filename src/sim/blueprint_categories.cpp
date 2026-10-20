@@ -1,5 +1,7 @@
 #include "sim/blueprint_categories.hpp"
 
+#include "blueprints/blueprint_store.hpp"
+
 extern "C" {
 #include <lua.h>
 }
@@ -75,24 +77,14 @@ bool entry_allows(const std::string& entry, const std::string& target_bp,
 bool blueprint_can_build(lua_State* L, const std::string& builder_bp,
                          const std::string& target_bp) {
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_settop(L, top);
-        return false;
-    }
-    const int bps = lua_gettop(L);
-
     std::unordered_set<std::string> target_cats;
-    lua_pushstring(L, target_bp.c_str());
-    lua_rawget(L, bps);
-    if (lua_istable(L, -1)) collect_blueprint_categories(L, lua_gettop(L), target_cats);
-    lua_pop(L, 1);
+    if (blueprints::push_blueprint(L, target_bp)) {
+        collect_blueprint_categories(L, lua_gettop(L), target_cats);
+        lua_pop(L, 1);
+    }
 
     bool can = false;
-    lua_pushstring(L, builder_bp.c_str());
-    lua_rawget(L, bps);
-    if (lua_istable(L, -1)) {
+    if (blueprints::push_blueprint(L, builder_bp)) {
         lua_pushstring(L, "Economy");
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {

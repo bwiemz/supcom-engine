@@ -1,4 +1,5 @@
 #include "renderer/strategic_icon_renderer.hpp"
+#include "blueprints/blueprint_store.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
@@ -325,7 +326,7 @@ void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, con
 
 namespace {
 
-/// Lowercase ASCII (__blueprints keys and FA's paths are lowercase).
+/// Lowercase ASCII (FA's paths are lowercase).
 std::string lowered(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
@@ -368,12 +369,8 @@ StrategicIconRenderer::icon_blueprint(const std::string& id, lua_State* L) {
     IconBlueprint& out = icon_blueprints_[key];
 
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    const int bps = lua_gettop(L);
-    push_field(L, bps, key.c_str());
-    const int bp = lua_gettop(L);
-    if (lua_istable(L, bp)) {
+    if (blueprints::push_blueprint(L, key)) {
+        const int bp = lua_gettop(L);
         // StrategicIconName names the four textures under the icon
         // directory (an absolute one is its own base).
         const std::string name = lowered(string_field(L, bp, "StrategicIconName"));
@@ -414,9 +411,9 @@ StrategicIconRenderer::icon_blueprint(const std::string& id, lua_State* L) {
             out.icon_size = static_cast<f32>(lua_tonumber(L, -1));
         }
         lua_pop(L, 1);
-        const std::string mesh = lowered(string_field(L, display, "MeshBlueprint"));
-        if (!mesh.empty()) push_field(L, bps, mesh.c_str());
-        else push_field(L, display, "Mesh");
+        const std::string mesh = string_field(L, display, "MeshBlueprint");
+        if (mesh.empty()) push_field(L, display, "Mesh");
+        else if (!blueprints::push_blueprint(L, mesh)) lua_pushnil(L);
         push_field(L, -1, "IconFadeInZoom");
         if (lua_isnumber(L, -1)) out.fade_in_zoom = static_cast<f32>(lua_tonumber(L, -1));
     }

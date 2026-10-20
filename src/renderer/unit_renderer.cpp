@@ -355,9 +355,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         // entity's default; UserEntity::UpdateVisibility's CanSeePoint).
         if (script_mesh && recon_ && !recon_->sees_at(view, entity.army, pos.x, pos.z)) return;
 
-        // Frustum cull all entities (units, props, projectiles)
-        if (frustum) {
-            f32 bound_radius = 5.0f; // default for projectiles
+        // Frustum cull units, props and script meshes; a projectile once its
+        // mesh is known
+        if (frustum && !entity.is_projectile) {
+            f32 bound_radius = 5.0f;
             if (entity.is_unit) {
                 bound_radius = std::max(entity.footprint_size_x * 1.5f, 5.0f);
             } else if (entity.is_prop) {
@@ -407,6 +408,16 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
             f32 sx = entity.scale_x * mesh_scale;
             f32 sy = entity.scale_y * mesh_scale;
             f32 sz = entity.scale_z * mesh_scale;
+            // Bounded by its scaled mesh: the UEF nuke's dome spans tens of units.
+            if (frustum && entity.is_projectile) {
+                const auto reach = [](f32 lo, f32 hi) { return std::max(-lo, hi); };
+                const f32 rx = reach(gpu->bounds_min.x, gpu->bounds_max.x);
+                const f32 ry = reach(gpu->bounds_min.y, gpu->bounds_max.y);
+                const f32 rz = reach(gpu->bounds_min.z, gpu->bounds_max.z);
+                const f32 radius =
+                    std::max(5.0f, std::sqrt(rx * rx + ry * ry + rz * rz) * std::max({sx, sy, sz}));
+                if (!frustum->is_sphere_visible(pos.x, pos.y, pos.z, radius)) return;
+            }
             build_model_matrix(inst.model, pos, view.orientation(entity), sx, sy, sz);
             // A wreck has no team colour: a negative red tells the mesh
             // shaders to crumple it and draw it as FA's WreckagePS does.

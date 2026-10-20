@@ -1,5 +1,6 @@
 #include "app/lan_game_test.hpp"
 
+#include "app/self_destruct_flow_test.hpp"
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/mp_net_state.hpp"
@@ -8,6 +9,7 @@
 #include "sim/lockstep_session.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/socket_platform.hpp"
+#include "sim/unit.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -111,8 +113,10 @@ u32 joiner_source_of(const lua::MpNetState& mp) {
 
 } // namespace
 
-LanGameTest::LanGameTest(bool host, std::string address, u16 port, u32 quit_at)
-    : host_(host), address_(std::move(address)), port_(port), quit_at_(quit_at) {}
+LanGameTest::LanGameTest(bool host, std::string address, u16 port, u32 quit_at,
+                         u32 self_destruct_at)
+    : host_(host), address_(std::move(address)), port_(port), quit_at_(quit_at),
+      self_destruct_at_(self_destruct_at) {}
 
 bool LanGameTest::start(lua::LuaState& ui) {
     spdlog::info("=== LAN game test ({}): retail's lobby to a game on port {} ===",
@@ -151,6 +155,16 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         return;
     }
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
+    if (!host_ && self_destruct_at_ > 0 && self_destructed_ == 0 && !self_destruct_failed_ &&
+        sim->tick_count() >= self_destruct_at_) {
+        std::string why;
+        self_destructed_ = self_destruct_commander(ui, *sim, lua::mp_net_state().local_army(), why);
+        self_destruct_failed_ = self_destructed_ == 0;
+        if (self_destruct_failed_) fail(why);
+        else
+            spdlog::info("[lan-game] the joiner's commander {} self-destructs at tick {}",
+                         self_destructed_, sim->tick_count());
+    }
     // --lan-game-quit-at: the joiner leaves here; the host plays on
     const bool resumed = saw_pause_ && number_global(ui.raw(), "__osc_lan_resumed") >= 1;
     if (!host_ && quit_at_ > 0 && checked_at_ && resumed && sim->tick_count() >= quit_at_) {
@@ -180,6 +194,11 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         // dropped)
         if (sim->tick_count() < kEndTick)
             fail(fmt::format("stalled at tick {}, short of {}", sim->tick_count(), kEndTick));
+        if (self_destructed_ != 0) {
+            const auto* acu = sim->entity_registry().find(self_destructed_);
+            if (acu && !acu->destroyed() && !static_cast<const sim::Unit*>(acu)->is_dying())
+                fail("the joiner's commander never died");
+        }
         // No one dropped; or, the joiner having left, it alone: its army
         // defeated, and retail's disconnect dialog shown and closed
         const auto& mp = lua::mp_net_state();
@@ -473,7 +492,9 @@ void LanGameTest::finish(const sim::SimState* sim) const {
                      "tick {}, as army {}{}",
                      host_ ? "host" : "joiner", sim ? sim->tick_count() : 0,
                      lua::mp_net_state().local_army() + 1,
-                     quit_at_ > 0 ? ", the joiner dropped when it left" : "");
+                     quit_at_ > 0            ? ", the joiner dropped when it left"
+                     : self_destructed_ != 0 ? ", its commander self-destructed"
+                                             : "");
     }
 }
 

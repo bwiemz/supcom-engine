@@ -1,5 +1,6 @@
 #include "renderer/selection_renderer.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/texture_cache.hpp"
@@ -107,20 +108,14 @@ const SelectionBlueprint& SelectionRenderer::box_blueprint(const std::string& id
         return out;
     }
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, key.c_str());
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            const int bp = lua_gettop(L);
-            out.size_x = number_field(L, bp, "SelectionSizeX");
-            out.size_z = number_field(L, bp, "SelectionSizeZ");
-            out.offset = {number_field(L, bp, "SelectionCenterOffsetX"),
-                          number_field(L, bp, "SelectionCenterOffsetY"),
-                          number_field(L, bp, "SelectionCenterOffsetZ")};
-            out.thickness = number_field(L, bp, "SelectionThickness");
-        }
+    if (blueprints::push_blueprint(L, key)) {
+        const int bp = lua_gettop(L);
+        out.size_x = number_field(L, bp, "SelectionSizeX");
+        out.size_z = number_field(L, bp, "SelectionSizeZ");
+        out.offset = {number_field(L, bp, "SelectionCenterOffsetX"),
+                      number_field(L, bp, "SelectionCenterOffsetY"),
+                      number_field(L, bp, "SelectionCenterOffsetZ")};
+        out.thickness = number_field(L, bp, "SelectionThickness");
     }
     lua_settop(L, top);
     return out;

@@ -110,7 +110,7 @@ struct RangeBlueprint {
 RangeBlueprint read_range_blueprint(lua_State* L, int index);
 
 /// The UI state's unit blueprints as the extractors read them, read once
-/// each (from __blueprints, by lowercase id).
+/// each (blueprints::push_blueprint).
 class RangeBlueprints {
 public:
     /// `id`'s, or nothing if the UI state has no such blueprint.

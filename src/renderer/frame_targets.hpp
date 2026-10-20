@@ -1,7 +1,7 @@
 #pragma once
 
 // The frame's own targets, out of the renderer (roadmap item 10's
-// decomposition): the HDR scene it draws into, the copies the water refracts
+// decomposition): the scene it draws into, the copies the water refracts
 // (M213a) and reflects (M213b), the normal target (M212e), the scene's passes
 // and their framebuffers. All follow the window's size, and are made again
 // with it.
@@ -22,8 +22,8 @@ public:
                 VkFormat depth_format, VkImageView depth_view);
     void destroy();
 
-    /// The scene, HDR (overbright for the bloom), which every scene
-    /// pipeline draws into.
+    /// The scene, 8-bit as FA's frame is, which every scene pipeline draws
+    /// into.
     const AllocatedImage& scene_color() const { return scene_color_image_; }
     /// The frame before the water, which the water refracts (M213a).
     const AllocatedImage& refraction() const { return refraction_image_; }

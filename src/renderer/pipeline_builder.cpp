@@ -41,6 +41,11 @@ PipelineBuilder& PipelineBuilder::set_depth_test(bool test, bool write) {
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::set_depth_compare(VkCompareOp op) {
+    depth_compare_ = op;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::set_blend(bool enable) {
     blend_ = enable;
     return *this;
@@ -161,7 +166,7 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
     depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth.depthTestEnable = depth_test_ ? VK_TRUE : VK_FALSE;
     depth.depthWriteEnable = depth_write_ ? VK_TRUE : VK_FALSE;
-    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth.depthCompareOp = depth_compare_;
 
     // Color blend
     VkPipelineColorBlendAttachmentState blend_att{};

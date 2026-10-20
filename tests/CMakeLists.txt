@@ -80,6 +80,7 @@ add_executable(osc_tests
     test_sim_sync.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp
+    test_blueprint_lookup.cpp
     test_map.cpp
     test_cartographic_math.cpp
     test_cartographic_technique.cpp

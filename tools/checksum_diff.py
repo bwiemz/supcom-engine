@@ -7,9 +7,13 @@ whose parts differ is where two runs -- two processes, two platforms, a replay
 and its recording -- stopped playing the same game, and the domains that
 differ say where to look: `rng` (one side rolled more or fewer numbers),
 `armies` (economy or army state), `entities` (a position, health or
-existence), `orders`, `weapons`, `threads`, and so on (see
-SimState::ChecksumParts). A trace without a header is the old four-column
-one ("tick total rng armies entities").
+existence), `orders`, `weapons`, and so on (see SimState::ChecksumParts).
+Diagnostic columns (`threads`, live script threads) aren't in the total:
+they can differ where the games agree, as each client's focus army forks its
+own script threads. The first divergence is reported among the compared
+domains, and separately the first tick a diagnostic column differs, which is
+where to look when a compared one follows. A trace without a header is the
+old four-column one ("tick total rng armies entities").
 
     tools/checksum_diff.py a.txt b.txt    # exit 0 if identical, 1 if not
 """
@@ -21,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LEGACY_PARTS = ("total", "rng", "armies", "entities")
+DIAGNOSTIC = frozenset({"threads"})
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,26 @@ def read_trace(path: Path) -> Trace:
     return Trace(names, ticks)
 
 
+def first_difference(a: Trace, b: Trace, diagnostic: bool) -> Tick | None:
+    """The first tick of `a` whose compared (or, with `diagnostic`, whose
+    diagnostic) columns differ from `b`'s; traces must name the same parts."""
+    columns = [i for i, name in enumerate(a.names) if (name in DIAGNOSTIC) == diagnostic]
+    for ta, tb in zip(a.ticks, b.ticks):
+        if any(ta.parts[i] != tb.parts[i] for i in columns):
+            return ta
+    return None
+
+
+def show(a: Trace, b: Trace, tick: Tick, label: str) -> None:
+    tb = next(t for t in b.ticks if t.tick == tick.tick)
+    pairs = list(zip(a.names, tick.parts, tb.parts))
+    differing = [name for name, x, y in pairs[1:] if x != y]
+    print(f"{label} at tick {tick.tick}: {', '.join(differing)} differ")
+    width = max(len(name) for name in a.names)
+    for name, x, y in pairs:
+        print(f"  {name:{width}} {x}  {y}{'' if x == y else '  <-'}")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print(__doc__, file=sys.stderr)
@@ -65,20 +90,18 @@ def main() -> int:
     if a.names != b.names:
         print(f"traces name different parts: {' '.join(a.names)} vs {' '.join(b.names)}")
         return 1
-    names = a.names
-    width = max(len(name) for name in names)
     for ta, tb in zip(a.ticks, b.ticks):
         if ta.tick != tb.tick:
             print(f"traces are out of step: tick {ta.tick} vs {tb.tick}")
             return 1
-        if ta.parts != tb.parts:
-            differing = [
-                name for name, x, y in zip(names[1:], ta.parts[1:], tb.parts[1:]) if x != y
-            ]
-            print(f"first divergence at tick {ta.tick}: {', '.join(differing)} differ")
-            for name, x, y in zip(names, ta.parts, tb.parts):
-                print(f"  {name:{width}} {x}  {y}{'' if x == y else '  <-'}")
-            return 1
+    compared = first_difference(a, b, diagnostic=False)
+    diagnostic = first_difference(a, b, diagnostic=True)
+    if compared:
+        show(a, b, compared, "first divergence")
+    if diagnostic:
+        show(a, b, diagnostic, "first diagnostic difference")
+    if compared or diagnostic:
+        return 1
     if len(a.ticks) != len(b.ticks):
         print(
             f"identical for {min(len(a.ticks), len(b.ticks))} ticks, then one trace ends "

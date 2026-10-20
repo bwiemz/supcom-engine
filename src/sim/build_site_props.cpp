@@ -1,5 +1,6 @@
 #include "sim/build_site_props.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/collision.hpp"
@@ -37,9 +38,7 @@ bool data_has_obstructs_building(lua_State* L) {
     }
     lua_pop(L, 1);
     bool known = false;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
+    if (blueprints::push_blueprints(L)) {
         lua_pushnil(L);
         while (lua_next(L, -2) != 0) {
             if (lua_istable(L, -1)) {
@@ -53,32 +52,12 @@ bool data_has_obstructs_building(lua_State* L) {
                 break;
             }
         }
+        lua_pop(L, 1);
     }
-    lua_pop(L, 1);
     lua_pushstring(L, kObstructsKey);
     lua_pushboolean(L, known ? 1 : 0);
     lua_rawset(L, LUA_REGISTRYINDEX);
     return known;
-}
-
-bool push_blueprint(lua_State* L, const std::string& bp_id) {
-    std::string key = bp_id;
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return false;
-    }
-    lua_pushstring(L, key.c_str());
-    lua_rawget(L, -2);
-    lua_remove(L, -2);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return false;
-    }
-    return true;
 }
 
 bool equal_nocase(const std::string& a, const char* b) {
@@ -173,7 +152,7 @@ BuildSiteProp find_build_site_prop(lua_State* L, const EntityRegistry& registry,
         return found;
     }
     const int top = lua_gettop(L);
-    if (!push_blueprint(L, bp_id)) {
+    if (!blueprints::push_blueprint(L, bp_id)) {
         return found;
     }
     const auto [size_x, size_z] = blueprint_footprint(L, lua_gettop(L));
@@ -254,7 +233,7 @@ bool build_site_taken(lua_State* L, const EntityRegistry& registry, const std::s
         return false;
     }
     const int top = lua_gettop(L);
-    if (!push_blueprint(L, bp_id)) {
+    if (!blueprints::push_blueprint(L, bp_id)) {
         return false;
     }
     const int bp = lua_gettop(L);

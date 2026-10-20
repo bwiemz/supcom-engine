@@ -1,4 +1,5 @@
 #include "sim/projectile.hpp"
+#include "blueprints/blueprint_store.hpp"
 #include "sim/sim_random.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
@@ -480,16 +481,9 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L, S
     velocity_align = true;
     if (!L || blueprint_id().empty()) return found;
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, blueprint_id().c_str());
-        lua_rawget(L, -2);
-    }
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "Physics");
-        lua_rawget(L, -2);
-    }
+    if (!blueprints::push_blueprint(L, blueprint_id())) return found;
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, -2);
     if (!lua_istable(L, -1)) {
         lua_settop(L, top);
         return found;

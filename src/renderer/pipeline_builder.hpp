@@ -16,6 +16,8 @@ public:
     PipelineBuilder& set_topology(VkPrimitiveTopology topo);
     PipelineBuilder& set_cull_mode(VkCullModeFlags cull, VkFrontFace front);
     PipelineBuilder& set_depth_test(bool test, bool write);
+    /// How a depth-testing pipeline compares (LESS_OR_EQUAL by default).
+    PipelineBuilder& set_depth_compare(VkCompareOp op);
     PipelineBuilder& set_blend(bool enable);
     /// How a blending pipeline blends alpha (by default the source's
     /// replaces it). D3D9 without a separate alpha blend, as FA draws,
@@ -52,6 +54,7 @@ private:
     VkFrontFace front_face_ = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     bool depth_test_ = true;
     bool depth_write_ = true;
+    VkCompareOp depth_compare_ = VK_COMPARE_OP_LESS_OR_EQUAL;
     bool blend_ = false;
     VkBlendFactor src_alpha_ = VK_BLEND_FACTOR_ONE;
     VkBlendFactor dst_alpha_ = VK_BLEND_FACTOR_ZERO;

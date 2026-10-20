@@ -1,10 +1,10 @@
 #include "sim/work_range.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "sim/collision.hpp"
 #include "sim/unit.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <limits>
 
@@ -26,19 +26,10 @@ f32 skirt_extent(const Unit& u) {
 std::pair<f32, f32> blueprint_footprint_cells(lua_State* L, const std::string& bp_id) {
     std::pair<f32, f32> size{1.0f, 1.0f};
     if (!L || bp_id.empty()) return size;
-    std::string key = bp_id;
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, key.c_str());
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            const auto [x, z] = blueprint_footprint(L, lua_gettop(L));
-            size = {std::max(x, 1.0f), std::max(z, 1.0f)};
-        }
+    if (blueprints::push_blueprint(L, bp_id)) {
+        const auto [x, z] = blueprint_footprint(L, lua_gettop(L));
+        size = {std::max(x, 1.0f), std::max(z, 1.0f)};
     }
     lua_settop(L, top);
     return size;
@@ -47,36 +38,26 @@ std::pair<f32, f32> blueprint_footprint_cells(lua_State* L, const std::string& b
 std::pair<f32, f32> blueprint_skirt(lua_State* L, const std::string& bp_id) {
     std::pair<f32, f32> skirt{1.0f, 1.0f};
     if (!L || bp_id.empty()) return skirt;
-    std::string key = bp_id;
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     const int top = lua_gettop(L);
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, key.c_str());
-        lua_rawget(L, -2);
+    if (blueprints::push_blueprint(L, bp_id)) {
+        const int bp = lua_gettop(L);
+        const auto [fx, fz] = blueprint_footprint(L, bp);
+        f32 sx = 0, sz = 0;
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, bp);
         if (lua_istable(L, -1)) {
-            const int bp = lua_gettop(L);
-            const auto [fx, fz] = blueprint_footprint(L, bp);
-            f32 sx = 0, sz = 0;
-            lua_pushstring(L, "Physics");
-            lua_rawget(L, bp);
-            if (lua_istable(L, -1)) {
-                const auto number = [&](const char* name) {
-                    lua_pushstring(L, name);
-                    lua_rawget(L, -2);
-                    const f32 v = lua_type(L, -1) == LUA_TNUMBER
-                                      ? static_cast<f32>(lua_tonumber(L, -1))
-                                      : 0.0f;
-                    lua_pop(L, 1);
-                    return v;
-                };
-                sx = number("SkirtSizeX");
-                sz = number("SkirtSizeZ");
-            }
-            skirt = {std::max({sx, fx, 1.0f}), std::max({sz, fz, 1.0f})};
+            const auto number = [&](const char* name) {
+                lua_pushstring(L, name);
+                lua_rawget(L, -2);
+                const f32 v =
+                    lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 1);
+                return v;
+            };
+            sx = number("SkirtSizeX");
+            sz = number("SkirtSizeZ");
         }
+        skirt = {std::max({sx, fx, 1.0f}), std::max({sz, fz, 1.0f})};
     }
     lua_settop(L, top);
     return skirt;
