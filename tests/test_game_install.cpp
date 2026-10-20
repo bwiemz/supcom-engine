@@ -255,3 +255,19 @@ TEST_CASE("locate_game_install explains a failed search", "[platform][install]")
 }
 
 #endif
+
+TEST_CASE("OSC_RETAIL_ONLY picks Steam retail over FAF, and nothing without it",
+          "[platform][install]") {
+    TempDir tmp;
+    fs::path faf = tmp.path / "home" / ".faforever";
+    write_file(faf / "bin" / "init_faf.lua", "-- faf\n");
+    std::map<std::string, std::string> vars{{"HOME", (tmp.path / "home").string()},
+                                            {"OSC_RETAIL_ONLY", "1"},
+                                            {"OSC_FAF_DATA", faf.string()}};
+    CHECK_FALSE(locate_game_install({}, fake_env(vars)).install.has_value());
+
+    make_steam_tree(tmp.path);
+    auto result = locate_game_install({}, fake_env(vars));
+    REQUIRE(result.install.has_value());
+    CHECK(result.install->source == "steam");
+}

@@ -634,3 +634,13 @@ set_tests_properties(data.binding_coverage PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
+
+# The gate means "passes on retail FA 3599": its tests never fall back to
+# FAF's files, and skip (exit 77) where no retail install is found.
+get_property(_osc_tests DIRECTORY PROPERTY TESTS)
+foreach(_t IN LISTS _osc_tests)
+    get_test_property(${_t} LABELS _labels)
+    if("${_labels}" MATCHES "(^|;)gate(;|$)")
+        set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT OSC_RETAIL_ONLY=1)
+    endif()
+endforeach()

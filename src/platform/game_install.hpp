@@ -48,6 +48,7 @@ std::optional<std::filesystem::path> parse_fa_path_lua(std::string_view text);
 ///      %ProgramData%/FAForever, Linux: ~/.faforever)
 ///   4. Steam app 9420 in any Steam library -> retail bin/SupComDataPath.lua
 ///   5. The folder the player chose (hints.chosen_fa_path)
+/// With OSC_RETAIL_ONLY set, FAF is left out of 2 (OSC_INIT_FILE, OSC_FAF_DATA) and 3.
 /// When FAF is chosen but its fa_path.lua is missing, FA itself is taken from
 /// Steam. A lone FA path implies the retail init file inside it.
 GameInstallSearch locate_game_install(const GameInstallHints& hints,
