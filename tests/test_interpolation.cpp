@@ -933,7 +933,7 @@ TEST_CASE("A capture shared over the worker pool is the one a walk in id order m
     // records point into), between props with poses
     for (int i = 0; i < 3000; ++i) {
         const osc::u32 id =
-            spawn_at(sim, {static_cast<float>(i % 200), 0, static_cast<float>(i / 200)});
+            spawn_at(sim, {static_cast<float>(i % 200), 0, static_cast<float>(i) / 200.0f});
         auto& u = unit(sim, id);
         for (int c = 0; c < i % 4; ++c) {
             osc::sim::UnitCommand move;
