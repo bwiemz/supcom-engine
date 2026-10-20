@@ -11,16 +11,16 @@ baseline entry that has a technique now or that retail no longer sets.
 
 Usage: check_shader_names.py <repo root>          (exit 1 on a problem)
        check_shader_names.py --extract <FA dir> > tools/shader_names.txt
-       check_shader_names.py --installed <repo root>
-           (the same check on the installed game's .bp files, found as the engine
-           finds them through OSC_FA_PATH; exit 77, a skip, when there are none)
+       check_shader_names.py --installed <repo root> <opensupcom>
+           (the same check on the installed game's .bp files, in the install
+           `opensupcom --print-install` names; exit 77, a skip, when there is none)
        check_shader_names.py --self-test
 """
 
 from __future__ import annotations
 
-import os
 import re
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -101,11 +101,18 @@ def check(root: Path, names: list[str] | None = None) -> tuple[list[str], int]:
     return problems_of(missing, read_names(tools / "shader_names_baseline.txt")), len(missing)
 
 
-def check_installed(root: Path) -> int:
-    fa = os.environ.get("OSC_FA_PATH")
-    names = names_in(Path(fa)) if fa and (Path(fa) / "gamedata").is_dir() else set()
+def install_of(print_install: str) -> Path | None:
+    """The FA directory in `opensupcom --print-install`'s output, if it found one."""
+    m = re.search(r"^fa_path=(.+)$", print_install, re.M)
+    return Path(m.group(1)) if m else None
+
+
+def check_installed(root: Path, engine: str) -> int:
+    run = subprocess.run([engine, "--print-install"], capture_output=True, text=True)
+    fa = install_of(run.stdout) if run.returncode == 0 else None
+    names = names_in(fa) if fa and (fa / "gamedata").is_dir() else set()
     if not names:
-        print("no installed game found through OSC_FA_PATH; skipping")
+        print(f"{engine} --print-install found no installed game; skipping")
         return 77
     return report(*check(root, sorted(names)), "installed")
 
@@ -142,6 +149,10 @@ def self_test() -> int:
         if len(problems_of(missing, baseline)) != n:
             print(f"self-test: baseline {baseline}: want {n} problem(s)")
             return 1
+    if install_of("source=steam\nfa_path=/g/FA\ninit_file=/g/FA/bin/x.lua\n") != Path("/g/FA") \
+            or install_of("searched steam: /s\n") is not None:
+        print("self-test: install_of must read fa_path= and nothing else")
+        return 1
     with tempfile.TemporaryDirectory() as empty:
         if extract(Path(empty)) != 1:
             print("self-test: --extract on a directory without game data must fail")
@@ -155,8 +166,8 @@ def main(argv: list[str]) -> int:
         return self_test()
     if len(argv) == 2 and argv[0] == "--extract":
         return extract(Path(argv[1]))
-    if len(argv) == 2 and argv[0] == "--installed":
-        return check_installed(Path(argv[1]))
+    if len(argv) == 3 and argv[0] == "--installed":
+        return check_installed(Path(argv[1]), argv[2])
     if len(argv) != 1:
         print(__doc__)
         return 2

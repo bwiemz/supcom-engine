@@ -6,9 +6,12 @@
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace osc::renderer;
 
@@ -273,4 +276,33 @@ TEST_CASE("mesh_technique: a ShaderName with no technique warns once and draws a
     for (const char* quiet : {"TMeshAlpha", "Aeon", "", "Unit", "Simple", "Wreckage"})
         mesh_technique(quiet);
     CHECK(log.count("no technique") == 2);
+}
+
+namespace {
+std::vector<std::string> names_listed(const std::string& file) {
+    std::ifstream in(std::string(OSC_SOURCE_DIR) + "/tools/" + file);
+    std::vector<std::string> names;
+    for (std::string line; std::getline(in, line);) {
+        line = line.substr(0, line.find('#'));
+        line.erase(line.find_last_not_of(" \t\r") + 1);
+        if (!line.empty()) names.push_back(line);
+    }
+    return names;
+}
+} // namespace
+
+TEST_CASE("mesh_technique: every retail ShaderName has a technique, or is listed as having none",
+          "[renderer][mesh]") {
+    // What mesh_technique returns, not what its source reads as: tools/check_shader_names.py
+    // reads the source's text, so a name mapped to the wrong technique passes it.
+    const std::vector<std::string> retail = names_listed("shader_names.txt");
+    const std::vector<std::string> listed = names_listed("shader_names_baseline.txt");
+    REQUIRE(retail.size() > 20);
+    const std::set<std::string> none_yet(listed.begin(), listed.end());
+    for (const std::string& name : retail) {
+        const std::string resolved = resolve_shader_name(name);
+        if (resolved == "Unit" || resolved == "Wreckage" || none_yet.count(resolved)) continue;
+        INFO(name << " resolves to " << resolved);
+        CHECK(mesh_technique(resolved) != MeshTechnique::Unit);
+    }
 }

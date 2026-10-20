@@ -205,10 +205,11 @@ if(OSC_BUILD_TESTS)
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_shader_names.py
                          --self-test)
         # The same check on the installed game's blueprints, so a ShaderName
-        # retail gains is caught without the snapshot being refreshed.
+        # retail gains is caught without the snapshot being refreshed. The
+        # engine names the install, so the check finds the game wherever it does.
         add_test(NAME data.shader_names
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_shader_names.py
-                         --installed ${CMAKE_SOURCE_DIR})
+                         --installed ${CMAKE_SOURCE_DIR} $<TARGET_FILE:opensupcom>)
         set_tests_properties(data.shader_names PROPERTIES
                              LABELS "data;gate" SKIP_RETURN_CODE 77 TIMEOUT 300)
         set_tests_properties(arch.retail_hooks arch.retail_hooks_self_test

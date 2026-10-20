@@ -212,6 +212,8 @@ target_link_libraries(osc_tests PRIVATE
 )
 
 target_include_directories(osc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# The repository's lists (tools/shader_names.txt) that unit tests read.
+target_compile_definitions(osc_tests PRIVATE OSC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 include(Catch)
 # A test that SKIPs exits 4 when run alone, as ctest runs each: report it
