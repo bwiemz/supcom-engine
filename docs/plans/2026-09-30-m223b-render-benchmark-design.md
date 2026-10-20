@@ -35,6 +35,7 @@ Without a pinned visual workload, that is a guess.
 | CPU frame time | `render()`'s own time, and its profiler zones (`unit_update`, `ui_update`, `shadow_pass`, `main_pass`, `submit`, ...), with the profiler's overlay hidden | where the CPU's time goes |
 | CPU wait for the GPU | `Render::gpu_wait` (the fence) | whether the CPU idles on the GPU |
 | GPU frame time | Vulkan timestamp queries at the command buffer's start and end, read back a frame later | the GPU's own cost |
+| GPU time by pass (`gpu_passes`) | a timestamp between the frame's passes, outside any render pass: shadow, normals, reflection, main, refraction copy (the frame copied for the water and refracting effects to read), bloom, composite (the swapchain pass, UI included), and other (what no pass names: movies, terrain sync, the minimap's frame) | which pass the GPU time goes to |
 | Draw calls, pipeline binds, descriptor-set binds, descriptor writes, push constants | counted by thin wrappers (`vk_cmd.hpp`) the renderer's 127 `vkCmd*` and descriptor-write calls go through | submission pressure and state churn |
 | Primitives and shader invocations | a pipeline-statistics query per frame, when the device supports it | scene complexity on the GPU |
 | Mesh instances (units and props drawn), particles, beams, trail segments, strategic icons | the renderers' own counts | what the scene holds |

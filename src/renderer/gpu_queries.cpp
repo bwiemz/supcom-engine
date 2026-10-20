@@ -1,6 +1,7 @@
 #include "renderer/gpu_queries.hpp"
 
 #include <array>
+#include <vector>
 
 namespace osc::renderer {
 
@@ -13,9 +14,20 @@ constexpr VkQueryPipelineStatisticFlags kStatistics =
 
 } // namespace
 
+GpuFrameQueries::PassTimes GpuFrameQueries::split(std::span<const u64> ticks,
+                                                  std::span<const Pass> passes, f64 ns_per_tick,
+                                                  u64 valid_mask) {
+    PassTimes ms{};
+    for (size_t i = 0; i + 1 < ticks.size() && i < passes.size(); ++i) {
+        const u64 span = ((ticks[i + 1] & valid_mask) - (ticks[i] & valid_mask)) & valid_mask;
+        ms[static_cast<size_t>(passes[i])] += static_cast<f64>(span) * ns_per_tick / 1.0e6;
+    }
+    return ms;
+}
+
 void GpuFrameQueries::init(VkPhysicalDevice physical, VkDevice device, u32 queue_family,
                            bool statistics, u32 slots) {
-    slot_sequence_.assign(slots, 0);
+    slots_.assign(slots, {});
     latest_ = {};
 
     // Timestamps: the graphics queue must count them (timestampValidBits),
@@ -34,7 +46,7 @@ void GpuFrameQueries::init(VkPhysicalDevice physical, VkDevice device, u32 queue
         VkQueryPoolCreateInfo ci{};
         ci.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
         ci.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        ci.queryCount = 2 * slots;
+        ci.queryCount = kQueriesPerSlot * slots;
         if (vkCreateQueryPool(device, &ci, nullptr, &timestamps_) != VK_SUCCESS)
             timestamps_ = VK_NULL_HANDLE;
     }
@@ -54,21 +66,26 @@ void GpuFrameQueries::destroy(VkDevice device) {
     if (statistics_) vkDestroyQueryPool(device, statistics_, nullptr);
     timestamps_ = VK_NULL_HANDLE;
     statistics_ = VK_NULL_HANDLE;
-    slot_sequence_.clear();
+    slots_.clear();
 }
 
 void GpuFrameQueries::collect(VkDevice device, u32 slot) {
-    if (slot >= slot_sequence_.size() || slot_sequence_[slot] == 0) return;
+    if (slot >= slots_.size() || slots_[slot].sequence == 0) return;
+    Slot& held = slots_[slot];
     Frame frame;
-    frame.sequence = slot_sequence_[slot];
-    slot_sequence_[slot] = 0;
+    frame.sequence = held.sequence;
+    held.sequence = 0;
     if (timestamps_) {
-        std::array<u64, 2> ticks{};
-        if (vkGetQueryPoolResults(device, timestamps_, 2 * slot, 2, sizeof(ticks), ticks.data(),
-                                  sizeof(u64), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
-            const u64 span = ((ticks[1] & valid_mask_) - (ticks[0] & valid_mask_)) & valid_mask_;
+        const u32 count = static_cast<u32>(held.passes.size()) + 1;
+        std::vector<u64> ticks(count);
+        if (vkGetQueryPoolResults(device, timestamps_, kQueriesPerSlot * slot, count,
+                                  ticks.size() * sizeof(u64), ticks.data(), sizeof(u64),
+                                  VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            const u64 span =
+                ((ticks.back() & valid_mask_) - (ticks[0] & valid_mask_)) & valid_mask_;
             frame.timed = true;
             frame.gpu_ms = static_cast<f64>(span) * ns_per_tick_ / 1.0e6;
+            frame.pass_ms = split(ticks, held.passes, ns_per_tick_, valid_mask_);
         }
     }
     if (statistics_) {
@@ -85,23 +102,39 @@ void GpuFrameQueries::collect(VkDevice device, u32 slot) {
 }
 
 void GpuFrameQueries::begin(VkCommandBuffer cmd, u32 slot, u64 sequence) {
-    if (slot >= slot_sequence_.size()) return;
+    if (slot >= slots_.size()) return;
+    open_ = slot;
+    slots_[slot].passes.assign(1, Pass::Other);
     if (timestamps_) {
-        vkCmdResetQueryPool(cmd, timestamps_, 2 * slot, 2);
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamps_, 2 * slot);
+        vkCmdResetQueryPool(cmd, timestamps_, kQueriesPerSlot * slot, kQueriesPerSlot);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamps_,
+                            kQueriesPerSlot * slot);
     }
     if (statistics_) {
         vkCmdResetQueryPool(cmd, statistics_, slot, 1);
         vkCmdBeginQuery(cmd, statistics_, slot, 0);
     }
-    slot_sequence_[slot] = (timestamps_ || statistics_) ? sequence : 0;
+    slots_[slot].sequence = (timestamps_ || statistics_) ? sequence : 0;
+}
+
+void GpuFrameQueries::mark(VkCommandBuffer cmd, Pass pass) {
+    const u32 slot = open_;
+    if (!timing_passes_ || slot >= slots_.size() || slots_[slot].sequence == 0 || !timestamps_)
+        return;
+    std::vector<Pass>& passes = slots_[slot].passes;
+    if (passes.size() > kMaxMarks) return;
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps_,
+                        kQueriesPerSlot * slot + static_cast<u32>(passes.size()));
+    passes.push_back(pass);
 }
 
 void GpuFrameQueries::end(VkCommandBuffer cmd, u32 slot) {
-    if (slot >= slot_sequence_.size() || slot_sequence_[slot] == 0) return;
+    open_ = ~0u;
+    if (slot >= slots_.size() || slots_[slot].sequence == 0) return;
     if (statistics_) vkCmdEndQuery(cmd, statistics_, slot);
     if (timestamps_)
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps_, 2 * slot + 1);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps_,
+                            kQueriesPerSlot * slot + static_cast<u32>(slots_[slot].passes.size()));
 }
 
 } // namespace osc::renderer

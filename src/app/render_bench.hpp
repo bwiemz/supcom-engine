@@ -32,6 +32,10 @@ namespace osc::app {
 /// a tie; nullopt when there is none. The same game picks the same square.
 std::optional<sim::Vector3> busiest_battle(const sim::SimState& sim, f32 side = 64.0f);
 
+/// The timed frames' GPU time by pass (GpuFrameQueries::kPassNames), each
+/// summarised as the report's other times are; null when none was timed.
+nlohmann::json gpu_passes_json(const std::vector<renderer::GpuFrameQueries::Frame>& frames);
+
 class RenderBench {
 public:
     enum class Scene {
