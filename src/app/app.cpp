@@ -79,12 +79,11 @@ int run(int argc, char* argv[], TestModes* tests) {
                       "--fa-path <dir>, set OSC_FA_PATH, or run --print-install "
                       "to see where we looked.");
         const char* retail_only = std::getenv("OSC_RETAIL_ONLY"); // the gate's test switch
-        const bool data_test_mode = tests ||
-                                    (retail_only && std::string_view(retail_only) == "1") ||
-                                    opt->any_test || opt->lan_game_test() || opt->gpgnet_scripted ||
-                                    opt->mods_flow_test || opt->self_destruct_flow_test ||
-                                    opt->campaign_flow_test ||
-                                    !parse_string_arg(argc, argv, "--binding-coverage", "").empty();
+        const bool data_test_mode =
+            tests || (retail_only && std::string_view(retail_only) == "1") || opt->any_test ||
+            opt->lan_game_test() || opt->gpgnet_scripted || opt->mods_flow_test ||
+            opt->self_destruct_flow_test || opt->campaign_flow_test ||
+            !parse_string_arg(argc, argv, "--binding-coverage", "").empty();
         return data_test_mode ? kExitSkippedNoData : 1;
     }
 
