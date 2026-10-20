@@ -174,6 +174,7 @@ TEST_CASE("The --gpu-passes flag asks the render bench to time each pass", "[ben
     const auto parse = [](std::vector<std::string> args) {
         args.insert(args.begin(), "opensupcom");
         std::vector<char*> argv;
+        argv.reserve(args.size());
         for (auto& a : args) argv.push_back(a.data());
         return osc::app::parse_options(static_cast<int>(argv.size()), argv.data(), {});
     };
