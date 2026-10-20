@@ -138,8 +138,11 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME mp.lockstep_slow_peer
              COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29734
                      -- --mp-slow 200 --mp-frames 80)
+    add_test(NAME mp.no_game_exit
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/no_game_exit.py
+                     $<TARGET_FILE:opensupcom>)
     set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected mp.lockstep_peer_drop
-                         mp.lockstep_slow_peer PROPERTIES LABELS mp TIMEOUT 240)
+                         mp.lockstep_slow_peer mp.no_game_exit PROPERTIES LABELS mp TIMEOUT 240)
 else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()
