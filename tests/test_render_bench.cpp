@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "app/app_internal.hpp"
 #include "app/render_bench.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
@@ -16,6 +17,7 @@ extern "C" {
 }
 
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::app::busiest_battle;
@@ -166,4 +168,19 @@ TEST_CASE("The render bench reports every pass's GPU time", "[bench]") {
     // timestamps): none.
     for (auto& f : frames) f.passes_timed = false;
     CHECK(osc::app::gpu_passes_json(frames).is_null());
+}
+
+TEST_CASE("--gpu-passes asks the render bench to time each pass", "[bench]") {
+    const auto parse = [](std::vector<std::string> args) {
+        args.insert(args.begin(), "opensupcom");
+        std::vector<char*> argv;
+        for (auto& a : args) argv.push_back(a.data());
+        return osc::app::parse_options(static_cast<int>(argv.size()), argv.data(), {});
+    };
+    const auto split = parse({"--render-bench", "report.json", "--gpu-passes"});
+    REQUIRE(split);
+    CHECK(split->gpu_passes);
+    const auto whole = parse({"--render-bench", "report.json"});
+    REQUIRE(whole);
+    CHECK_FALSE(whole->gpu_passes);
 }
