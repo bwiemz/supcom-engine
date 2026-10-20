@@ -521,3 +521,6 @@ rather than kept; unit–unit contact is a positional push rather than Moho's im
 (formation layer, same command, naval, layers, landed aircraft, stationary pairs); terrain type and lava
 damage; a factory's skirt in the collision cells; production not scaled by the grant; overflow not shared
 with allies by default; economy events not all-or-nothing.
+
+*Production scaled by the grant: done (2026-10-21) — fix/econ-limiting-rate-2: a unit asking the economy produces at
+its request's grant (Moho's `LimitingRate`), unless its blueprint is a `NaturalProducer`.*

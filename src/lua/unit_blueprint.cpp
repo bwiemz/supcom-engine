@@ -472,6 +472,11 @@ static void read_economy(lua_State* L, const BlueprintStore& store, const Bluepr
         if (lua_isnumber(L, -1)) unit.economy().production_energy = lua_tonumber(L, -1);
         lua_pop(L, 1);
 
+        lua_pushstring(L, "NaturalProducer");
+        lua_gettable(L, -2);
+        unit.economy().natural_producer = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+
         lua_pushstring(L, "MaintenanceConsumptionPerSecondEnergy");
         lua_gettable(L, -2);
         if (lua_isnumber(L, -1)) unit.economy().consumption_energy = lua_tonumber(L, -1);

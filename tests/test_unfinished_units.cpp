@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
@@ -22,6 +23,7 @@ extern "C" {
 
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -331,4 +333,30 @@ TEST_CASE("A unit is made with its consumption off, for its script to switch on"
                 .do_string("local d = moho.unit_methods.GetEconData(radar)"
                            " assert(d.energyProduced == 0, d.energyProduced)")
                 .ok());
+}
+
+TEST_CASE("A unit is a natural producer as its blueprint's Economy says", "[sim][economy]") {
+    const bool natural = GENERATE(false, true);
+    CAPTURE(natural);
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store{state.raw()};
+    SimState sim{state.raw(), &store};
+    osc::lua::register_moho_bindings(state, sim);
+    osc::lua::register_sim_bindings(state, sim);
+    sim.add_army("ARMY_1", "ARMY_1");
+    lua_State* L = state.raw();
+    REQUIRE(state
+                .do_string(std::string("return {BlueprintId = 'acu', Categories = {'COMMAND'},"
+                                       " Defense = {MaxHealth = 100},"
+                                       " Economy = {NaturalProducer = ") +
+                           (natural ? "true" : "false") + "}}")
+                .ok());
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+    lua_settop(L, 0);
+    store.expose_to_lua(L);
+    REQUIRE(state.do_string("CreateUnit('acu', 1, 10, 0, 10)").ok());
+    Unit* acu = nullptr;
+    sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) { acu = static_cast<Unit*>(&e); });
+    REQUIRE(acu);
+    CHECK(acu->economy().natural_producer == natural);
 }

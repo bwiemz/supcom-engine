@@ -990,10 +990,12 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
 void Unit::manage_resources(ArmyBrain* army) {
     const bool upkeep = economy_.maintenance_active && economy_.energy_maintenance_override > 0.0;
-    economy_.resource_consumed = economy_.consumption_active || upkeep ? economy_.granted : 0.0;
+    const bool asking = economy_.consumption_active || upkeep;
+    economy_.resource_consumed = asking ? economy_.granted : 0.0;
     holds_storage_ = producing();
     if (holds_storage_ && army) {
-        army->bank(economy_.production_mass, economy_.production_energy);
+        const f64 rate = asking && !economy_.natural_producer ? economy_.granted : 1.0;
+        army->bank(economy_.production_mass * rate, economy_.production_energy * rate);
     }
 }
 
