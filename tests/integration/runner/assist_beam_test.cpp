@@ -8,6 +8,8 @@
 #include "lua/lua_state.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <fmt/format.h>
@@ -15,6 +17,7 @@
 #include <spdlog/spdlog.h>
 
 #include <string>
+#include <tuple>
 
 namespace osc::test {
 
@@ -58,8 +61,9 @@ void test_assist_beam(TestContext& ctx) {
         return n;
     };
     // Ticks until the Lua expression holds, at most kWaitTicks.
-    const auto until = [&](const std::string& what, const std::string& expr) {
-        for (int i = 0; i < kWaitTicks; ++i) {
+    const auto until = [&](const std::string& what, const std::string& expr,
+                           int limit = kWaitTicks) {
+        for (int i = 0; i < limit; ++i) {
             const auto r = ctx.lua_state.do_string("__osc_ab_hold = (" + expr + ")");
             lua_pushstring(ctx.L, "__osc_ab_hold");
             lua_rawget(ctx.L, LUA_GLOBALSINDEX);
@@ -71,7 +75,7 @@ void test_assist_beam(TestContext& ctx) {
             }
             ctx.sim.tick();
         }
-        t.check(false, fmt::format("{}: not within {} ticks", what, kWaitTicks));
+        t.check(false, fmt::format("{}: not within {} ticks", what, limit));
         return false;
     };
 
@@ -122,38 +126,64 @@ void test_assist_beam(TestContext& ctx) {
         return;
     }
     ticks(2);
-    t.check(drawn_beams(moved) > 0, "1: the helping commander's beams are drawn");
-    run("1: its build effects stand",
-        "if __osc_ab_effects(__osc_ab_moved) == 0 then error('none') end");
-
-    run("a Move to one of them, mid-upgrade", R"(
-        IssueClearCommands({__osc_ab_moved.acu})
-        IssueMove({__osc_ab_moved.acu}, {258, GetTerrainHeight(258, 800), 800})
+    for (const auto& [name, id, var] : {std::tuple{"first", moved, "__osc_ab_moved"},
+                                        std::tuple{"second", done, "__osc_ab_done"}}) {
+        t.check(drawn_beams(id) > 0, fmt::format("1: the {} commander's beams are drawn", name));
+        run(fmt::format("1: the {} commander's build effects stand", name),
+            fmt::format("if __osc_ab_effects({}) == 0 then error('none') end", var));
+    }
+    run("the second upgrade's frame, begun and unfinished", R"(
+        __osc_ab_done.t2 = __osc_ab_done.fac:GetFocusUnit()
+        if not __osc_ab_done.t2 then error('the factory builds nothing') end
+        if __osc_ab_done.t2:GetFractionComplete() >= 1 then error('already finished') end
     )");
-    ticks(2);
-    run("2: the Move ended its help with one stop, and its effects are gone", R"(
+
+    // A player's Move, replacing the queue as the command route applies it.
+    {
+        sim::UnitCommand move;
+        move.type = sim::CommandType::Move;
+        move.target_pos = {258.0f, 0.0f, 800.0f};
+        ctx.sim.set_human_input_active(true);
+        ctx.sim.route_player_command({moved}, move, true);
+        ctx.sim.set_human_input_active(false);
+    }
+    until("the Move ends the first commander's help",
+          "__osc_ab_heard(__osc_ab_moved) == 'OnStartBuild OnStopBuild'", 20);
+    {
+        const auto* acu = static_cast<const sim::Unit*>(ctx.sim.entity_registry().find(moved));
+        t.check(acu && !acu->command_queue().empty() &&
+                    acu->command_queue().front().type == sim::CommandType::Move,
+                "2: the Move was accepted, at the head of its queue");
+    }
+    run("2: one stop heard, its effects are gone", R"(
         if __osc_ab_heard(__osc_ab_moved) ~= 'OnStartBuild OnStopBuild' then
             error('it heard "' .. __osc_ab_heard(__osc_ab_moved) .. '"')
         end
         if __osc_ab_effects(__osc_ab_moved) ~= 0 then error('effects remain') end
     )");
     t.check(drawn_beams(moved) == 0, "2: the next frame draws none of its beams");
-    run("2: the other commander, still helping, heard no stop",
-        "if __osc_ab_heard(__osc_ab_done) ~= 'OnStartBuild' then "
-        "error(__osc_ab_heard(__osc_ab_done)) end");
+    run("2: the second commander, still helping, heard no stop and still has its effects", R"(
+        if __osc_ab_heard(__osc_ab_done) ~= 'OnStartBuild' then error(__osc_ab_heard(__osc_ab_done)) end
+        if __osc_ab_effects(__osc_ab_done) == 0 then error('its effects are gone') end
+    )");
+    t.check(drawn_beams(done) > 0, "2: its beams are still drawn");
 
-    if (!until("the other's upgrade finishes, its old factory gone",
-               "__osc_ab_done.fac:BeenDestroyed()")) {
-        return;
-    }
-    ticks(2);
-    run("3: its help ended with the upgrade: one stop heard, effects gone", R"(
+    until("the second upgrade is half built", "__osc_ab_done.t2:GetFractionComplete() >= 0.5");
+    run("3: halfway, its help goes on: no stop, effects stand", R"(
+        if __osc_ab_heard(__osc_ab_done) ~= 'OnStartBuild' then error(__osc_ab_heard(__osc_ab_done)) end
+        if __osc_ab_effects(__osc_ab_done) == 0 then error('its effects are gone') end
+    )");
+    t.check(drawn_beams(done) > 0, "3: halfway, its beams are drawn");
+    until("the second upgrade completes", "__osc_ab_done.t2:GetFractionComplete() >= 1");
+    until("3: the stop comes within a few ticks of the completion",
+          "__osc_ab_heard(__osc_ab_done) == 'OnStartBuild OnStopBuild'", 5);
+    run("3: at completion its help ended: one stop heard, effects gone", R"(
         if __osc_ab_heard(__osc_ab_done) ~= 'OnStartBuild OnStopBuild' then
             error('it heard "' .. __osc_ab_heard(__osc_ab_done) .. '"')
         end
         if __osc_ab_effects(__osc_ab_done) ~= 0 then error('effects remain') end
     )");
-    t.check(drawn_beams(done) == 0, "3: the next frame draws none of its beams");
+    t.check(drawn_beams(done) == 0, "3: at completion the frame draws none of its beams");
     spdlog::info("Assist beam test: {} passed, {} failed", t.pass, t.fail);
 }
 
