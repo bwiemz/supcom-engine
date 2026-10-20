@@ -280,6 +280,17 @@ TEST_CASE(
 
     vars["OSC_RETAIL_ONLY"] = "0";
     CHECK(locate_game_install({}, fake_env(vars)).install->source == "env");
+
+    // The gate on a Mac that names its game only through OSC_FA_PATH.
+    fs::path pinned = tmp.path / "pinned";
+    write_file(pinned / "bin" / "SupComDataPath.lua", "-- retail\n");
+    vars["OSC_RETAIL_ONLY"] = "1";
+    vars["OSC_FA_PATH"] = pinned.string();
+    auto from_env = locate_game_install({}, fake_env(vars));
+    REQUIRE(from_env.install.has_value());
+    CHECK(from_env.install->source == "env");
+    CHECK(from_env.install->fa_path == pinned);
+    CHECK(from_env.install->faf_data_path.empty());
 }
 
 #endif
