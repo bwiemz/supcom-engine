@@ -26,6 +26,16 @@ worst frame and which frame that was, and how many frames it alone took over
 thread whose resume takes over 30 ms is logged too (`Slow Lua thread:`),
 with where it stopped and where it was forked.
 
+**A drawn game, across the whole match.** Every drawn game's match record
+(a player's, or `--match-telemetry`) has a `perf` record each ten seconds:
+frames (mean, slowest 5%, worst, over 33 ms), frames the drawn world held,
+the drawn pace's change, a tick's own run time, speed asked and ticks
+played, units and entities; and a `player_mark` event where the player
+pressed Ctrl-M (WOPC's key: a lag felt). WOPC's match history graphs them
+(Performance), and its `scripts/telemetry/perf_report.py` reads a match a
+stretch to a line. `--play-for <s> --play-rate <n> --play-until-tick <t>`
+plays the eight-AI match drawn at a speed to a tick or a win.
+
 **Which scripts: the Lua profile.** Also under `--profile`, the end of the
 run lists the Lua functions that ran the most instructions (a sample every
 1,000, `src/sim/lua_profile.cpp`), by source and the line each starts on:
