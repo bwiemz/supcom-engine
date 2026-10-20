@@ -22,6 +22,7 @@ add_executable(osc_tests
     test_prop_collision.cpp
     test_prop_fall.cpp
     test_sim_thread.cpp
+    test_worker_pool.cpp
     test_lua_profile.cpp
     test_image.cpp
     test_navigation_throttle.cpp

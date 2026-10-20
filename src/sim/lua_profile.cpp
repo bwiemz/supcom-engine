@@ -7,8 +7,11 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <unordered_map>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,7 +37,45 @@ Samples& samples() {
     return s;
 }
 
+using Clock = std::chrono::steady_clock;
+
+/// An engine function's calls and their time.
+struct Binding {
+    uint64_t calls = 0;
+    double ms = 0;
+};
+
+/// The engine functions called, by name, and each Lua state's calls under
+/// way (a coroutine's own; a C function calls none that hook).
+struct Bindings {
+    std::map<std::string, Binding> by_name;
+    std::unordered_map<lua_State*, std::vector<std::pair<std::string, Clock::time_point>>> open;
+};
+
+Bindings& bindings() {
+    static Bindings b;
+    return b;
+}
+
+void time_binding(lua_State* L, lua_Debug* ar) {
+    if (!lua_getinfo(L, "Sn", ar) || ar->what == nullptr || ar->what[0] != 'C') return;
+    auto& open = bindings().open[L];
+    if (ar->event == LUA_HOOKCALL) {
+        open.emplace_back(ar->name ? ar->name : "?", Clock::now());
+    } else if (!open.empty()) {
+        Binding& b = bindings().by_name[open.back().first];
+        ++b.calls;
+        b.ms +=
+            std::chrono::duration<double, std::milli>(Clock::now() - open.back().second).count();
+        open.pop_back();
+    }
+}
+
 void hook(lua_State* L, lua_Debug* ar) {
+    if (ar->event == LUA_HOOKCALL || ar->event == LUA_HOOKRET) {
+        time_binding(L, ar);
+        return;
+    }
     if (ar->event != LUA_HOOKCOUNT || !lua_getinfo(L, "Sn", ar)) return;
     Samples& s = samples();
     ++s.total;
@@ -49,7 +90,8 @@ void hook(lua_State* L, lua_Debug* ar) {
 } // namespace
 
 void attach(lua_State* L) {
-    if (L && lua_gethook(L) != hook) lua_sethook(L, hook, LUA_MASKCOUNT, kInstructions);
+    if (L && lua_gethook(L) != hook)
+        lua_sethook(L, hook, LUA_MASKCOUNT | LUA_MASKCALL | LUA_MASKRET, kInstructions);
 }
 
 std::vector<std::pair<std::string, uint64_t>> top(size_t count) {
@@ -73,6 +115,21 @@ void log_report(size_t count) {
     for (const auto& [where, n] : top(count))
         spdlog::info("  {:>5.1f}% {:>9}  {}",
                      100.0 * static_cast<double>(n) / static_cast<double>(all), n, where);
+    // (Not what waits: a thread's yield or wait spans the ticks it sleeps.
+    // A call that calls Lua -- pcall, a sort's compare -- counts that too.)
+    static const std::set<std::string> kWaits{"WaitTicks",           "WaitFrames", "WaitFor",
+                                              "WaitSeconds",         "yield",      "CoroutineYield",
+                                              "SuspendCurrentThread"};
+    std::vector<std::pair<std::string, Binding>> called;
+    for (const auto& entry : bindings().by_name)
+        if (!kWaits.contains(entry.first)) called.push_back(entry);
+    std::sort(called.begin(), called.end(),
+              [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
+    if (called.size() > count) called.resize(count);
+    spdlog::info("=== Engine functions the scripts called, by time ===");
+    for (const auto& [name, b] : called)
+        spdlog::info("  {:>10.1f} ms {:>10} calls {:>8.3f} ms each  {}", b.ms, b.calls,
+                     b.calls ? b.ms / static_cast<double>(b.calls) : 0.0, name);
 }
 
 } // namespace osc::sim::lua_profile

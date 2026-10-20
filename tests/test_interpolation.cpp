@@ -6,6 +6,7 @@
 
 #include "core/interned_string.hpp"
 #include "core/tick_clock.hpp"
+#include "core/worker_pool.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
@@ -922,6 +923,61 @@ TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][s
     history.events().clear(); // the renderer took them
     sim.tick();
     CHECK(history.events().deaths.empty());
+}
+
+TEST_CASE("A capture shared over the worker pool is the one a walk in id order makes",
+          "[interp][snapshot][pool]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    // Enough units for many chunks, each with orders and a weapon (lists the
+    // records point into), between props with poses
+    for (int i = 0; i < 3000; ++i) {
+        const osc::u32 id =
+            spawn_at(sim, {static_cast<float>(i % 200), 0, static_cast<float>(i / 200)});
+        auto& u = unit(sim, id);
+        for (int c = 0; c < i % 4; ++c) {
+            osc::sim::UnitCommand move;
+            move.type = osc::sim::CommandType::Move;
+            move.target_pos = {static_cast<float>(c), 0, static_cast<float>(i)};
+            u.push_command(move, false);
+        }
+        if (i % 7 == 0) {
+            auto prop = std::make_unique<osc::sim::Prop>();
+            prop->pose.assign(static_cast<size_t>(1 + i % 3), osc::sim::BoneMatrix{});
+            sim.entity_registry().register_entity(std::move(prop));
+        }
+    }
+    const auto capture = [&](bool pool) {
+        osc::WorkerPool::instance().set_enabled(pool);
+        WorldSnapshot snap;
+        osc::sim::capture_world(sim, snap, -1);
+        osc::WorkerPool::instance().set_enabled(true);
+        return snap;
+    };
+    const WorldSnapshot shared = capture(true);
+    const WorldSnapshot alone = capture(false);
+    REQUIRE(shared.entities.size() == alone.entities.size());
+    for (size_t i = 0; i < alone.entities.size(); ++i) {
+        const auto& a = shared.entities[i];
+        const auto& b = alone.entities[i];
+        const bool same =
+            a.id == b.id && a.position.x == b.position.x && a.is_unit == b.is_unit &&
+            a.command_offset == b.command_offset && a.command_count == b.command_count &&
+            a.rally_offset == b.rally_offset && a.bone_offset == b.bone_offset &&
+            a.bone_count == b.bone_count && a.weapon_range_offset == b.weapon_range_offset &&
+            a.intel_offset == b.intel_offset && a.adjacent_offset == b.adjacent_offset;
+        CHECK(same);
+        if (!same) break;
+    }
+    CHECK(shared.commands.size() == alone.commands.size());
+    CHECK(shared.bones.size() == alone.bones.size());
+    for (size_t i = 0; i < alone.commands.size(); ++i) {
+        CHECK(shared.commands[i].target_pos.z == alone.commands[i].target_pos.z);
+        if (shared.commands[i].target_pos.z != alone.commands[i].target_pos.z) break;
+    }
+    // And a record finds its own orders
+    const auto& last = alone.entities.back();
+    CHECK(last.command_offset + last.command_count <= alone.commands.size());
 }
 
 TEST_CASE("A job of several ticks is captured once, with every tick's events",

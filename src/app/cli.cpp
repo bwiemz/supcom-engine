@@ -142,6 +142,7 @@ void print_usage() {
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-frames   Profile the frames, the sim left on its own thread\n"
               << "  --no-sim-thread    Run the sim's ticks on the main thread (OE-134)\n"
+              << "  --no-workers       The sim's work on its own thread alone, not the worker pool\n"
               << "  --play-for <secs>  Close after this long in a game; log its frame times\n"
               << "  --play-rate <n>    ...played at game speed n (Moho's sim rate: 10 is 10x)\n"
               << "  --play-until-tick <n>  ...and closed at game tick n, or when the game is won\n"
@@ -376,6 +377,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.lan_game_save = parse_string_arg(argc, argv, "--lan-game-save", "");
     o.lan_game_resume = parse_string_arg(argc, argv, "--lan-game-resume", "");
     o.sim_thread = !parse_flag(argc, argv, "--no-sim-thread");
+    o.workers = !parse_flag(argc, argv, "--no-workers");
     o.play_for = std::strtod(parse_string_arg(argc, argv, "--play-for", "0").c_str(), nullptr);
     {
         const std::string rate = parse_string_arg(argc, argv, "--play-rate", "0");

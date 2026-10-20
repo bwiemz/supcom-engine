@@ -4,7 +4,9 @@
 // kInstructions Lua instructions, the function running is counted. At the
 // end of the run, the functions that ran the most instructions, by source
 // and the line they start on: which scripts the Lua threads' and callbacks'
-// time goes to (docs/performance.md).
+// time goes to (docs/performance.md). And each engine function the scripts
+// call (a C binding: GetUnitsAroundPoint, say), timed from its call to its
+// return: the time the samples, counting Lua instructions, can't see.
 
 #include <cstddef>
 #include <cstdint>

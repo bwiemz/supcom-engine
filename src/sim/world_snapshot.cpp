@@ -1,5 +1,6 @@
 #include "sim/world_snapshot.hpp"
 
+#include "core/worker_pool.hpp"
 #include "core/profiler.hpp"
 #include "map/intel_grid.hpp"
 
@@ -199,7 +200,18 @@ CommandRecord command_record(const UnitCommand& c, bool pending) {
             c.command_id, static_cast<u8>(moho_command_number(c))};
 }
 
-void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
+/// What records point into (offset and count): one chunk of records' own,
+/// joined into the snapshot's in order after (capture_world).
+struct SideLists {
+    size_t begin = 0, end = 0; ///< the records that filled them
+    decltype(WorldSnapshot::bones) bones;
+    decltype(WorldSnapshot::commands) commands;
+    decltype(WorldSnapshot::intel) intel;
+    decltype(WorldSnapshot::weapon_ranges) weapon_ranges;
+    decltype(WorldSnapshot::adjacent) adjacent;
+};
+
+void capture_unit(const Unit& u, EntityRecord& r, SideLists& out) {
     r.unit_id = u.interned_unit_id();
     r.icon = icon_class(u);
     r.is_mobile = u.is_mobile();
@@ -414,92 +426,135 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     capture_fake_blips(sim, out);
     out.deposits.assign(sim.resource_deposits().begin(), sim.resource_deposits().end());
 
-    // The records are kept from capture to capture and rewritten in place
-    // (next_record): made anew, with their strings, they took a third of an
-    // eight-AI match's tick.
-    size_t entities = 0;
+    // The records are kept from capture to capture and rewritten in place:
+    // made anew, with their strings, they took a third of an eight-AI
+    // match's tick. Each is filled on the worker pool (it reads the sim
+    // only), a chunk of them with lists of their own that are joined in
+    // order after, so the snapshot is the one a walk in id order makes.
+    std::vector<const Entity*> live;
+    live.reserve(out.entities.size() + 64);
+    sim.entity_registry().for_each([&](const Entity& e) {
+        if (!e.destroyed()) live.push_back(&e);
+    });
+    const size_t old_size = out.entities.size();
+    out.entities.resize(live.size());
+    constexpr size_t kChunk = 256;
+    std::vector<SideLists> sides((live.size() + kChunk - 1) / kChunk);
     {
         PROFILE_ZONE("Capture::entities");
-        sim.entity_registry().for_each([&](const Entity& e) {
-            if (e.destroyed()) return;
-            // A record that held neither a unit nor a shield holds only what
-            // every entity's sets below, and a pose: for another such entity
-            // (most are props) clearing the pose does, not a whole new record.
-            const bool plain = e.is_prop();
-            EntityRecord* slot = nullptr;
-            if (entities < out.entities.size() && plain && out.entities[entities].is_prop) {
-                slot = &out.entities[entities++];
-                slot->bone_offset = 0;
-                slot->bone_count = 0;
-            } else {
-                slot = &next_record(out.entities, entities);
-
-
-            }
-            EntityRecord& r = *slot;
-            r.id = e.entity_id();
-            r.position = e.position();
-            r.orientation = e.orientation();
-            r.beam_end = e.beam_endpoint();
-            r.snap_serial = e.snap_serial();
-            if (e.is_projectile()) {
-                const auto& p = static_cast<const Projectile&>(e);
-                if (p.impact_waiting()) r.step_scale = p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
-                if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
-                    r.launched = true;
-                    r.launch_position = p.launch_position;
-                    r.launch_orientation = p.launch_orientation;
+        WorkerPool::instance().for_each(live.size(), kChunk, [&](size_t begin, size_t end) {
+            SideLists& side = sides[begin / kChunk];
+            side.begin = begin;
+            side.end = end;
+            for (size_t i = begin; i < end; ++i) {
+                const Entity& e = *live[i];
+                // A record that held neither a unit nor a shield holds only what
+                // every entity's sets below, and a pose: for another such entity
+                // (most are props) clearing the pose does, not a whole new record.
+                const bool plain = e.is_prop();
+                EntityRecord& r = out.entities[i];
+                if (i < old_size && plain && r.is_prop) {
+                    r.bone_offset = 0;
+                    r.bone_count = 0;
+                } else {
+                    recycle(r);
                 }
-            }
-            r.scroll_start = e.scroll_start();
-            r.scroll_end = e.scroll_end();
-            r.is_unit = e.is_unit();
-            r.is_prop = e.is_prop();
-            r.is_projectile = e.is_projectile();
-            r.is_shield = e.is_shield();
-            r.is_collision_beam = e.is_collision_beam();
-            r.beam_enabled = e.beam_enabled();
-            r.is_wreckage = e.is_wreckage();
-            r.army = e.army();
-            r.blueprint_id = e.interned_blueprint_id();
-            r.mesh_override = e.interned_mesh_override();
-            r.mesh_changes = e.mesh_changes();
-            r.viz = static_cast<u8>(
-                static_cast<u8>(e.viz_focus_player()) | static_cast<u8>(e.viz_allies()) << 2 |
-                static_cast<u8>(e.viz_enemies()) << 4 | static_cast<u8>(e.viz_neutrals()) << 6);
-            r.scale_x = e.scale_x();
-            r.scale_y = e.scale_y();
-            r.scale_z = e.scale_z();
-            r.fraction_complete = e.fraction_complete();
-            r.health = e.health();
-            r.max_health = e.max_health();
-            r.custom_name = e.interned_custom_name();
-            r.strategic_underlay = e.interned_strategic_underlay();
-            if (e.is_unit()) {
-                PROFILE_ZONE("Capture::unit");
-                capture_unit(static_cast<const Unit&>(e), r, out);
-                capture_recon(sim, static_cast<const Unit&>(e), r);
-            }
-            if (e.is_prop()) {
-                const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
-                if (!pose.empty()) {
-                    r.bone_offset = static_cast<u32>(out.bones.size());
-                    r.bone_count = static_cast<u32>(pose.size());
-                    out.bones.insert(out.bones.end(), pose.begin(), pose.end());
+                r.id = e.entity_id();
+                r.position = e.position();
+                r.orientation = e.orientation();
+                r.beam_end = e.beam_endpoint();
+                r.snap_serial = e.snap_serial();
+                if (e.is_projectile()) {
+                    const auto& p = static_cast<const Projectile&>(e);
+                    if (p.impact_waiting()) r.step_scale = p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
+                    if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
+                        r.launched = true;
+                        r.launch_position = p.launch_position;
+                        r.launch_orientation = p.launch_orientation;
+                    }
                 }
-            }
-            if (e.is_shield()) {
-                const auto& s = static_cast<const Shield&>(e);
-                r.shield_owner_id = s.owner_id;
-                // Retail's shield is up while it has its mesh (shield.lua's
-                // CreateShieldMesh and RemoveShield); its TurnOn is a script
-                // state, never the engine's (M215b).
-                r.shield_on = s.is_on || !e.mesh_override().empty();
-                r.shield_size = s.size;
+                r.scroll_start = e.scroll_start();
+                r.scroll_end = e.scroll_end();
+                r.is_unit = e.is_unit();
+                r.is_prop = e.is_prop();
+                r.is_projectile = e.is_projectile();
+                r.is_shield = e.is_shield();
+                r.is_collision_beam = e.is_collision_beam();
+                r.beam_enabled = e.beam_enabled();
+                r.is_wreckage = e.is_wreckage();
+                r.army = e.army();
+                r.blueprint_id = e.interned_blueprint_id();
+                r.mesh_override = e.interned_mesh_override();
+                r.mesh_changes = e.mesh_changes();
+                r.viz = static_cast<u8>(
+                    static_cast<u8>(e.viz_focus_player()) | static_cast<u8>(e.viz_allies()) << 2 |
+                    static_cast<u8>(e.viz_enemies()) << 4 | static_cast<u8>(e.viz_neutrals()) << 6);
+                r.scale_x = e.scale_x();
+                r.scale_y = e.scale_y();
+                r.scale_z = e.scale_z();
+                r.fraction_complete = e.fraction_complete();
+                r.health = e.health();
+                r.max_health = e.max_health();
+                r.custom_name = e.interned_custom_name();
+                r.strategic_underlay = e.interned_strategic_underlay();
+                if (e.is_unit()) {
+                    capture_unit(static_cast<const Unit&>(e), r, side);
+                    capture_recon(sim, static_cast<const Unit&>(e), r);
+                }
+                if (e.is_prop()) {
+                    const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
+                    if (!pose.empty()) {
+                        r.bone_offset = static_cast<u32>(side.bones.size());
+                        r.bone_count = static_cast<u32>(pose.size());
+                        side.bones.insert(side.bones.end(), pose.begin(), pose.end());
+                    }
+                }
+                if (e.is_shield()) {
+                    const auto& s = static_cast<const Shield&>(e);
+                    r.shield_owner_id = s.owner_id;
+                    // Retail's shield is up while it has its mesh (shield.lua's
+                    // CreateShieldMesh and RemoveShield); its TurnOn is a script
+                    // state, never the engine's (M215b).
+                    r.shield_on = s.is_on || !e.mesh_override().empty();
+                    r.shield_size = s.size;
+
+                }
             }
         });
     }
-    out.entities.resize(entities);
+    // The chunks' lists joined in order, each record's offsets moved on by
+    // what came before its chunk
+    {
+        PROFILE_ZONE("Capture::join");
+        for (size_t c = 0; c < sides.size(); ++c) {
+            SideLists& side = sides[c];
+            const auto bones = static_cast<u32>(out.bones.size());
+            const auto commands = static_cast<u32>(out.commands.size());
+            const auto intel = static_cast<u32>(out.intel.size());
+            const auto weapon_ranges = static_cast<u32>(out.weapon_ranges.size());
+            const auto adjacent = static_cast<u32>(out.adjacent.size());
+            for (size_t i = side.begin; i < side.end; ++i) {
+                EntityRecord& r = out.entities[i];
+                if (r.bone_count > 0) r.bone_offset += bones;
+                if (r.is_unit) {
+                    r.command_offset += commands;
+                    r.rally_offset += commands;
+                    r.intel_offset += intel;
+                    r.weapon_range_offset += weapon_ranges;
+                    r.adjacent_offset += adjacent;
+                }
+            }
+            const auto append = [](auto& to, auto& from) {
+                to.insert(to.end(), std::make_move_iterator(from.begin()),
+                          std::make_move_iterator(from.end()));
+            };
+            append(out.bones, side.bones);
+            append(out.commands, side.commands);
+            append(out.intel, side.intel);
+            append(out.weapon_ranges, side.weapon_ranges);
+            append(out.adjacent, side.adjacent);
+        }
+    }
     // The registry walks in id order, which find()'s binary search relies on.
     assert(
         std::is_sorted(out.entities.begin(), out.entities.end(),

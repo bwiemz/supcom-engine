@@ -215,6 +215,24 @@ send it to the reachable cell A* would have ended at
 77 ms ticks. Five minutes at 4x against the engine before: 10,847 ticks
 played against 9,833, frames over 50 ms 2 against 234.
 
+## The sim's spare cores (2026-10-20)
+
+The sim ticks on one thread; a late tick's work that splits into
+independent pieces runs on a worker pool (`core/worker_pool.hpp`: the
+hardware's threads less two). Determinism holds by construction: each
+piece reads only and writes its own slot, and the results are applied in
+order on the sim's thread. So far: each unit's recon for each army
+(`update_visibility`'s step 2) and the world capture's records (each chunk
+with lists of its own, joined in order). `--no-workers` turns the pool off;
+the eight-AI match's checksums over 12,000 ticks are the same either way.
+Capturing the entities went from 3.10 to 1.23 ms a tick on average, the
+recon from 0.88 to 0.27.
+
+Under `--profile` the Lua profile also times each engine function the
+scripts call (call to return; the waits left out): over 20 minutes of the
+eight-AI match they come to about 2 ms a tick. The AIs' 26 ms is their own
+scripts' work, not the engine's.
+
 ## Ideas not yet done
 
 - Props: the snapshot and `update_entities` visit every prop every tick;

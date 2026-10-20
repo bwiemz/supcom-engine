@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "core/profiler.hpp"
+#include "core/worker_pool.hpp"
 #include "lua/match_records.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
@@ -796,6 +797,8 @@ std::optional<int> App::start() {
             sim_lua_state->raw(), ui_lua_state.raw(), vfs, coverage_out,
             parse_string_arg(argc, argv, "--binding-baseline", ""));
     }
+
+    osc::WorkerPool::instance().set_enabled(opt.workers);
 
     // Enable profiler if requested
     if (opt.profile_enabled) {

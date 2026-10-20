@@ -116,6 +116,7 @@ struct Options {
     std::string lan_game_resume;
 
     bool sim_thread = true;      ///< --no-sim-thread: ticks on the main thread (OE-134)
+    bool workers = true;         ///< --no-workers: no worker pool (core/worker_pool.hpp)
     /// --play-for <seconds>: a game played offscreen for this long, its
     /// frames paced as a 60 Hz display's are (the rest of each frame waited
     /// out, as a present waits for the display), and their times logged:
