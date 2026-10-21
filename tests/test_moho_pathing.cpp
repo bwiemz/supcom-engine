@@ -405,18 +405,6 @@ bool run_all(World& w, const std::vector<Unit*>& units, int limit, int& ticks) {
     return fitted;
 }
 
-/// The closest two of `units` stand.
-f32 closest_pair(const std::vector<Unit*>& units) {
-    f32 best = 1e9f;
-    for (size_t i = 0; i < units.size(); ++i)
-        for (size_t j = i + 1; j < units.size(); ++j) {
-            const f32 dx = units[i]->position().x - units[j]->position().x;
-            const f32 dz = units[i]->position().z - units[j]->position().z;
-            best = std::min(best, std::sqrt(dx * dx + dz * dz));
-        }
-    return best;
-}
-
 /// Spot `i` of a grid `per_row` wide from (x0, z0), `step_x` and `step_z` apart.
 osc::sim::Vector3 grid_spot(int i, int per_row, f32 x0, f32 z0, f32 step_x, f32 step_z) {
     const int col = i % per_row;
@@ -486,28 +474,35 @@ TEST_CASE("With Moho pathing a goal walled in all round ends the move outside, b
     CHECK(queue.search().traveler() == nullptr);
 }
 
-TEST_CASE("With Moho pathing a crowd of twenty goes through one gap to twenty places beyond "
-          "it, and every one arrives",
+TEST_CASE("With Moho pathing a tank wedged at a wall's end stands still and gives its move up",
           "[moho_pathing][scenarios]") {
+    // Retail (tools/moho_probes/corner): a Striker at the end of a wall two cells thick,
+    // inside its width, ordered to a goal whose line clips the wall's end, moves 0.02 and
+    // stands still; its order ends on tick 40. A step that won't fit leaves it where
+    // it was (CalcMoveCommon), so its navigator sees it still and gives the move up after
+    // 30 ticks. (A crowd through a gap is data.crowdgap-test, on retail's units.)
     World w(true);
-    wall_with_gap(w, 70, 76);
-    std::vector<Unit*> tanks;
-    tanks.reserve(20);
-    for (int i = 0; i < 20; ++i) {
-        const osc::sim::Vector3 at = grid_spot(i, 5, 30.5f, 60.5f, 3.0f, 6.0f);
-        tanks.push_back(w.make("tank", at.x, at.z));
+    osc::sim::GroundOccupant wall;
+    wall.caps = oc::kLand;
+    wall.rects = {{60, 76, 62, static_cast<i32>(kMap)}};
+    w.sim.occupy_ground(9999, wall);
+    Unit& tank = *w.make("tank", 61.77f, 75.998f);
+    World::move(tank, 90.5f, 78.5f);
+    osc::sim::Vector3 last = tank.position();
+    f32 moved_late = 0;
+    int ended = -1;
+    for (int t = 0; t < 120; ++t) {
+        w.sim.tick();
+        const osc::sim::Vector3 at = tank.position();
+        if (t >= 10) moved_late += std::abs(at.x - last.x) + std::abs(at.z - last.z);
+        last = at;
+        if (ended < 0 && tank.command_queue().empty()) ended = t;
     }
-    for (int i = 0; i < 20; ++i) {
-        const osc::sim::Vector3 to = grid_spot(i, 5, 90.5f, 60.5f, 3.0f, 6.0f);
-        World::move(*tanks[static_cast<size_t>(i)], to.x, to.z);
-    }
-    int ticks = 0;
-    CHECK(run_all(w, tanks, 3000, ticks));
-    INFO("ticks " << ticks);
-    int arrived = 0;
-    for (const Unit* u : tanks) arrived += u->command_queue().empty() && u->position().x > 85.0f;
-    CHECK(arrived == 20);
-    CHECK(closest_pair(tanks) > 1.0f); // none stacked on another
+    INFO("ended on tick " << ended << ", moved " << moved_late << " after tick 10, at "
+                          << tank.position().x << ", " << tank.position().z);
+    CHECK(moved_late < 0.05f);           // still, not rocking
+    CHECK((ended >= 30 && ended <= 60)); // given up after 30 still ticks
+    CHECK(tank.position().x < 62.5f);    // at the wall's end
 }
 
 TEST_CASE("With Moho pathing a formation of nine goes through the gap to its slots, and a game "

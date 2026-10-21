@@ -27,6 +27,7 @@ constexpr int kHoldTicks = 5; ///< a mode 4 path ends five still nodes on
 constexpr int kCheckEvery = kNodes / 2;
 constexpr f32 kCone = 0.707f; ///< ahead and going its way: within 45 degrees
 constexpr f32 kTick = 0.1f;
+constexpr f32 kPi = 3.14159265358979f;
 
 struct V2 {
     f32 x = 0, z = 0;
@@ -266,6 +267,39 @@ bool wins(const Unit& a, const Unit& b) {
     return a.entity_id() < b.entity_id();
 }
 
+/// Where a sidestep to `p` ends, as Moho's func_TryBuildStructureAt(border 1)
+/// finds it: `p` if the unit's footprint fits there, else the first place
+/// that fits a cell at a time in square rings round it (900 tries), snapped
+/// to its footprint's cells; none when `p` is within a cell of the playable
+/// area's edge (the binary tests the first place's bounds throughout).
+bool place(SimState& sim, const Unit& u, Vector3& p) {
+    const OccupancyRect b = sim.move_bounds(u.army(), false);
+    if (p.x - 1 < static_cast<f32>(b.x0) || p.z - 1 < static_cast<f32>(b.z0) ||
+        p.x + 1 > static_cast<f32>(b.x1) || p.z + 1 > static_cast<f32>(b.z1))
+        return false;
+    const blueprints::Footprint& fp = u.footprint();
+    const auto fits = [&](f32 x, f32 z) {
+        if (sim.footprint_fits_at(fp, x, z) == 0) return false;
+        const OccupancyRect r = footprint_rect(fp, x, z);
+        p.x = static_cast<f32>(r.x0) + static_cast<f32>(fp.size_x) * 0.5f;
+        p.z = static_cast<f32>(r.z0) + static_cast<f32>(fp.size_z) * 0.5f;
+        return true;
+    };
+    const f32 x = p.x, z = p.z;
+    if (fits(x, z)) return true;
+    int tries = 0;
+    for (int ring = 1; tries < 900; ++ring) {
+        for (int i = -ring; i <= ring; ++i) {
+            const int step = i == -ring || i == ring ? 1 : 2 * ring;
+            for (int j = -ring; j <= ring; j += step) {
+                ++tries;
+                if (fits(x + static_cast<f32>(i), z + static_cast<f32>(j))) return true;
+            }
+        }
+    }
+    return false;
+}
+
 /// Moho's ResolvePossibleCollision, at the tick of the meeting.
 void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
     Navigator& nav = owner.navigator();
@@ -298,13 +332,20 @@ void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
         return;
     }
     const V2 to_other = normalized({other_at.x - owner_at.x, other_at.z - owner_at.z});
+    const V2 from_other{-to_other.x, -to_other.z};
     V2 heading = normalized(other_vel);
     if (zero(heading)) heading = forward(other);
-    // Crossing or head-on: it stops and lets the other pass. When the
-    // other yields to it too (two of other armies, or a tie in rank, where
-    // Moho's timing tells them apart), the one that wins goes first: two
-    // yielding to each other would stop for ever.
-    if (dot(to_other, heading) <= kCone) {
+    // Moho's cone (retail 0x0059DA00): it is within the other's forward cone,
+    // the other coming at it. faf-re's decompile reads it the other way round.
+    const bool coming = dot(from_other, heading) > kCone;
+    // shortcut: retail overtakes by its path navigator moving the target aside, which the engine
+    // lacks; until it does, one ahead going its way is stepped round here.
+    const bool overtaking = dot(from_other, heading) < -kCone;
+    // Crossing: it stops and lets the other pass. When the other yields to
+    // it too (two of other armies, or a tie in rank, where Moho's timing
+    // tells them apart), the one that wins goes first: two yielding to each
+    // other would stop for ever.
+    if (!coming && !overtaking) {
         const Navigator& on = other.navigator();
         const bool other_yields =
             on.held_for() == owner.entity_id() || on.collision().other == owner.entity_id();
@@ -315,12 +356,49 @@ void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
         nav.hold(kHoldTicks, other.entity_id());
         return;
     }
-    // Ahead and going its way: it steps aside to overtake, and the other
+    // Coming at it (or ahead going its way): it steps aside, and the other
     // stops (unless both are in one formation, or only the other is naval).
     const bool formation = same_formation(owner, other);
     if (!formation && (!other.is_naval() || owner.is_naval()))
         other.navigator().hold(kHoldTicks, owner.entity_id());
     const f32 apart = larger_size(owner) + larger_size(other) + 0.5f;
+    if (coming) {
+        // Retail's step aside (0x0059DA00): driving at the other, it makes for
+        // a point off the other's side it is on (meeting head-on, beside the
+        // other itself), else it turns from the other's way, a right angle
+        // (half that in a formation).
+        V2 from = owner_at;
+        V2 dir;
+        if (!zero(owner_vel) && dot(from_other, forward(owner)) < 0) {
+            const V2 own = normalized(owner_vel);
+            const V2 of = forward(other);
+            V2 side{of.z, -of.x};
+            if (dot(side, from_other) <= 0) side = {-side.x, -side.z};
+            const f32 ways = dot(own, heading);
+            if (ways > kCone) {
+                dir = normalized({from_other.x + side.x, from_other.z + side.z});
+            } else if (ways < -kCone) {
+                dir = side;
+                from = other_at;
+            } else {
+                dir = normalized({own.x + from_other.x, own.z + from_other.z});
+            }
+        } else {
+            const f32 cross =
+                (owner_at.z - other_at.z) * heading.x - heading.z * (owner_at.x - other_at.x);
+            const f32 turn = (formation ? kPi * 0.25f : kPi * 0.5f) * (cross > 0 ? -1.0f : 1.0f);
+            const f32 c = osc::dmath::cos(turn), s = osc::dmath::sin(turn);
+            dir = {heading.x * c + heading.z * s, -heading.x * s + heading.z * c};
+        }
+        Vector3 point{from.x + dir.x * apart, owner.position().y, from.z + dir.z * apart};
+        // No place it fits near there: Moho leaves it on its way.
+        if (zero(dir) || !place(sim, owner, point)) {
+            nav.set_next_check(now);
+            return;
+        }
+        nav.sidestep(point);
+        return;
+    }
     V2 own_heading = moving(owner) && !zero(owner_vel) ? normalized(owner_vel) : forward(owner);
     if (zero(own_heading)) own_heading = forward(owner);
     V2 base = heading;

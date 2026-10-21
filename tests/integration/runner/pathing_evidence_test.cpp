@@ -258,4 +258,87 @@ void test_choke(TestContext& ctx) {
     spdlog::info("=== CHOKE TEST: {} passed, {} failed ===", t.pass, t.fail);
 }
 
+void test_crowdgap(TestContext& ctx) {
+    spdlog::info("=== CROWDGAP TEST: twenty to twenty places beyond a wall's gap ===");
+    Tally t;
+    const int failures_before = osc::test_status::failure_count();
+
+    // tools/moho_probes/crowdgap: a wall two cells thick down x 640-642, open
+    // at z 110-116; twenty Strikers 5 x 4 west of it, each sent to its own
+    // place east of it. In retail FA all twenty arrive, by tick 300.
+    make_peace(ctx, t);
+    lua_check(ctx, t, "setup: the wall and the crowd", R"(
+        __osc_wall = {640, 642}
+        __osc_gap = {110, 116}
+        for z = 70, 155 do
+            if z < __osc_gap[1] or z >= __osc_gap[2] then
+                for x = __osc_wall[1], __osc_wall[2] - 1 do
+                    CreateUnitHPR('ueb5101', 'ARMY_1', x + 0.5, GetTerrainHeight(x + 0.5, z + 0.5),
+                                  z + 0.5, 0, 0, 0)
+                end
+            end
+        end
+        __osc_crowd = {}
+        __osc_goals = {}
+        for i = 0, 19 do
+            local col, row = math.mod(i, 5), math.floor(i / 5)
+            local x, z = 610.5 + col * 3, 100.5 + row * 6
+            table.insert(__osc_crowd, CreateUnitHPR('uel0201', 'ARMY_1', x,
+                GetTerrainHeight(x, z), z, 0, math.pi / 2, 0))
+            local gx, gz = 670.5 + col * 3, 100.5 + row * 6
+            table.insert(__osc_goals, {gx, GetTerrainHeight(gx, gz), gz})
+        end
+        for i, u in __osc_crowd do IssueMove({u}, __osc_goals[i]) end
+
+        -- Where each crossed the wall's middle, and how near any two came.
+        __osc_crossed = {}
+        __osc_last_x = {}
+        __osc_closest = 1e9
+        function __osc_crowdgap_sample(tick)
+            for i, u in __osc_crowd do
+                local p = u:GetPosition()
+                local before = __osc_last_x[i]
+                if before and before < 641 and p[1] >= 641 and not __osc_crossed[i] then
+                    __osc_crossed[i] = p[3]
+                end
+                __osc_last_x[i] = p[1]
+                for j = i + 1, table.getn(__osc_crowd) do
+                    local q = __osc_crowd[j]:GetPosition()
+                    __osc_closest = math.min(__osc_closest, VDist2(p[1], p[3], q[1], q[3]))
+                end
+            end
+        end
+    )");
+    run_sampled(ctx, t, 900, "__osc_crowdgap_sample");
+    lua_check(ctx, t, "Test 1: every one arrives at its place, as in retail", R"(
+        local short = ''
+        for i, u in __osc_crowd do
+            local p, g = u:GetPosition(), __osc_goals[i]
+            if table.getn(u:GetCommandQueue()) > 0 or VDist2(p[1], p[3], g[1], g[3]) > 2 then
+                short = short .. string.format(' %d at (%.1f, %.1f);', i, p[1], p[3])
+            end
+        end
+        if short ~= '' then error('not arrived:' .. short) end
+    )");
+    // Retail's twenty all cross by the gap and come no nearer than 0.76; the
+    // engine's sends one round the wall's end and lets two pass nearer, on
+    // main as well (current-state.md, known gaps). Logged, not checked.
+    lua_check(ctx, t, "log: where they crossed, how near two came", R"(
+        local by_gap, round = 0, 0
+        for i = 1, table.getn(__osc_crowd) do
+            local z = __osc_crossed[i]
+            if z and z >= __osc_gap[1] - 0.25 and z <= __osc_gap[2] + 0.25 then
+                by_gap = by_gap + 1
+            elseif z then
+                round = round + 1
+            end
+        end
+        LOG(string.format('crowdgap-test: %d by the gap, %d round the wall, closest pair %.2f',
+                          by_gap, round, __osc_closest))
+    )");
+    t.check(osc::test_status::failure_count() - t.fail == failures_before,
+            "Test 2: no script errors");
+    spdlog::info("=== CROWDGAP TEST: {} passed, {} failed ===", t.pass, t.fail);
+}
+
 } // namespace osc::test

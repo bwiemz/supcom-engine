@@ -177,7 +177,7 @@ endforeach()
 # default), again with it: each holds its expectations both ways until the
 # flag is the default.
 foreach(mode drive-test steer-test crowd-test weapon-test range-test factory-rally-test
-             shore-test choke-test)
+             shore-test choke-test crowdgap-test)
     add_test(NAME data.moho.${mode}
              COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode} --moho-pathing)
     set_tests_properties(data.moho.${mode} PROPERTIES

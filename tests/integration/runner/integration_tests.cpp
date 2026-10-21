@@ -9296,10 +9296,11 @@ void test_steer(TestContext& ctx) {
     }
     clear({"__osc_east", "__osc_north"});
 
-    // 3. Head-on in one army: a Pillar (footprint 2) and an engineer (1),
-    //    half a unit apart sideways (exactly in line, separation would push
-    //    straight back). The engineer stops; the Pillar keeps its line. The
-    //    engineer is made first, so its smaller footprint decides, not its id.
+    // 3. Head-on in one army: a Pillar and an engineer, half a unit apart
+    //    sideways (exactly in line, separation would push straight back).
+    //    As retail's (tools/moho_probes/steer, its /synclog): the engineer,
+    //    the Pillar coming at it, steps aside without stopping (2 to 3.7 off
+    //    its line), and the Pillar stops a moment and keeps its line.
     lua(moho ? R"(
         __osc_eng = __osc_spawn('uel0105', 'ARMY_1', 24, 0.5, -math.pi / 2)
         __osc_big = __osc_spawn('uel0202', 'ARMY_1', -24, 0, math.pi / 2)
@@ -9318,11 +9319,14 @@ void test_steer(TestContext& ctx) {
         // row off its line, until it is halfway there (as Moho's navigator
         // picks its next target): it may stray up to a cell, not step aside.
         const float keeps_line = moho ? 1.0f : 0.5f;
-        check(w.held[1] && !w.held[0] && !w.stepped[0] && w.stray[0] < keeps_line && w.arrived[0] &&
-                  w.arrived[1],
-              fmt::format("Test 3: head-on, the engineer stops and the Pillar keeps its line "
-                          "(engineer held {}, Pillar held {} strayed {:.2f}, arrived {} {})",
-                          w.held[1], w.held[0], w.stray[0], w.arrived[0], w.arrived[1]));
+        check(
+            w.stepped[1] && !w.held[1] && w.held[0] && !w.stepped[0] && w.stray[0] < keeps_line &&
+                w.arrived[0] && w.arrived[1],
+            fmt::format("Test 3: head-on, the engineer steps aside and the Pillar stops and keeps "
+                        "its line (engineer stepped {} held {} strayed {:.2f}, Pillar held {} "
+                        "strayed {:.2f}, arrived {} {})",
+                        w.stepped[1], w.held[1], w.stray[1], w.held[0], w.stray[0], w.arrived[0],
+                        w.arrived[1]));
     }
     clear({"__osc_big", "__osc_eng"});
 

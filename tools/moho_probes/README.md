@@ -190,10 +190,25 @@ Asked on 2026-10-15: the original once; the engine on main 9f454781. 383 of 48,7
 
 | Field | The original | The engine | So |
 |---|---|---|---|
-| a mobile unit's footprint | its `footprints.lua` class's (134 of 134 ground-mobile units; almost all 1x1) | `ceil(SizeX/Z)`, e.g. 1x2 | `ComputeDerivedQuantities` replaces the footprint with its class's. Left for a change of its own (the note's section 5): it changes who yields in steering. |
-| its skirt | at least the class's footprint (268 of 268 axes) | at least the old footprint | The same function. Left with the footprint. |
+| a mobile unit's footprint | its `footprints.lua` class's (134 of 134 ground-mobile units; almost all 1x1) | `ceil(SizeX/Z)`, e.g. 1x2 | `ComputeDerivedQuantities` replaces the footprint with its class's. Fixed by the collision-cone change (M203f), which changes who yields in steering. |
+| its skirt | at least the class's footprint (268 of 268 axes) | at least the old footprint | The same function. Fixed with the footprint (M203f). |
 | `BackUpDistance` left out | `SizeZ * 3` (495 of 495) | 0 | Fixed with the note. |
 | `DesiredShooterCap` left out | 3 (278 of 287 projectiles) | 0 | Fixed with the note. |
 | `FiringTolerance` left out | 0.01 (37 of 37 weapons) | 0 | Fixed with the note. |
 | `LifeBarSize` left out | 1 (12 of 12) | 0 | Fixed with the note. |
 | `TurnRadius` left out | 5 (419 of 419) | 0 | Not changed: without Moho's spline its effect on turns is unmeasured. |
+
+**`steer/`**, **`cone/`**, **`corner/`** and **`crowdgap/`** ask how Moho resolves a meeting, and how a unit wedged at a wall ends. Their hooks set `sim_KeepAllLogFiles` from the interface, so the original run with `/synclog <dir>` keeps its beat files, in which Moho logs each resolution: `ResolvePossibleCollision(unit, other)`, then `collide.` and `within cone.` or `not within cone.`
+- `steer`: the engine's steer test 3, a Pillar and an engineer of one army head-on, half a cell apart sideways, 24 each side of (640, 110) and then 40. Done at `PROBE steer done`.
+- `cone`: pairs meeting at several angles: overtaking (one army, two), crossing at 90 degrees (two armies, one), at 60 and at 120, and head-on (two Strikers, an engineer and a Striker). Done at `PROBE cone done`.
+- `corner`: a Striker at the end of a wall of `ueb5101` two cells thick, ordered to a goal whose line clips the wall's end, from four places. Done at `PROBE corner done`.
+- `crowdgap`: `test_moho_pathing`'s crowd of twenty through a gap, with Strikers: a wall two cells thick with a gap of 6, the twenty 5 by 4 west of it, each sent to its own place east of it. Done at `PROBE crowdgap done`.
+
+Asked on 2026-10-20: the original once each, with `/synclog`; the engine with the cone of `docs/plans/2026-10-21-moho-steering-cone-design.md`, `--moho-pathing` on.
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `steer` | the engineer, the Pillar coming at it, keeps its speed and veers 3.44 (near) and 3.67 (far) off its line; the Pillar stops a few ticks, 0.74 and 1.11 off its line; done in 263 and 433 ticks | 3.03 and 4.08; the Pillar stops, 0.74 and 1.11; 262 and 432 ticks. Before: the engineer stopped. | Moho's cone: the unit the other comes at steps aside, beside the other on its own side, and the other stops (retail 0x0059DA00). |
+| `cone` | 11 resolutions: within the cone exactly when the unit is in the other's forward cone (dot 0.707; borderline crossings at 0.70 are not) | the same test | faf-re's decompile reads the cone the other way round. Where each unit then drives fits the binary's step aside in 6 of 8 (a slow unit turning and one backing aside). Overtaking is the path navigator's: the faster unit's target cell moves 4 aside on the order's third tick. |
+| `corner` | from 0.002 below the wall's end it moves 0.02 by tick 9, then stands still; its order ends on tick 40. From 0.3 below or more it drives out. | stands still from the start; its order ends on tick 33. From 0.3 and 0.5 below it drives out on the original's line to the thousandth; toward the goal further north, within 0.35 of it. Before, a bounced unit could work itself free of such a place, or rock in it with its order (`test_moho_pathing`). | A refused step leaves the unit where it was (`CalcMoveCommon`), so its navigator sees it still and gives the move up after 30 ticks. |
+| `crowdgap` | all 20 arrive, by tick 300, every one by the gap; no two nearer than 0.76 | all 20 (also with the synthetic tank's physics given to the Striker, a blueprint hook not kept); 15 by the gap and 5 round the wall's end, two within 0.39 (main: 16 and 4, 0.29) | All arrive, as the original's: `data.crowdgap-test` holds it. The detours and the near passes are a gap of the engine's crowd, on main as well. |

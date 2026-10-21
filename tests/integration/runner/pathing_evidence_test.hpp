@@ -12,4 +12,8 @@ void test_shore(TestContext& ctx);
 /// whose class ignores structures, over the wall with Moho's pathing.
 void test_choke(TestContext& ctx);
 
+/// --crowdgap-test: twenty Strikers through a wall's gap to twenty places
+/// beyond it all arrive, as in retail FA.
+void test_crowdgap(TestContext& ctx);
+
 } // namespace osc::test

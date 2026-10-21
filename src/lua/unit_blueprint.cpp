@@ -953,8 +953,22 @@ static void resolve_footprints(lua_State* L, const sim::SimState& sim, const Blu
     namespace oc = blueprints::occupancy;
     const u8 build_caps = (rules.on_land ? oc::kLand : 0) | (rules.on_seabed ? oc::kSeabed : 0) |
                           (rules.on_sub ? oc::kSub : 0) | (rules.on_water ? oc::kWater : 0);
-    unit.set_footprints(blueprints::resolve_unit_footprints(
-        store.footprint_classes(), own, unit.motion_type(), alt_motion, build_caps));
+    const blueprints::UnitFootprints resolved = blueprints::resolve_unit_footprints(
+        store.footprint_classes(), own, unit.motion_type(), alt_motion, build_caps);
+    unit.set_footprints(resolved);
+    // The class replaces the footprint whole, and Moho's ranges, formations and
+    // steering read that size; the skirt is then at least it. A skirt the .bp
+    // left out came in as the old size (read_shape) and is the class's now.
+    // Retail's /synclog beat 0 agrees on all 134 ground-mobile units.
+    if (resolved.main_class >= 0) {
+        const auto skirt = [](f32 skirt_size, f32 old_size, u8 size) {
+            return skirt_size == old_size ? f32(size) : std::max(skirt_size, f32(size));
+        };
+        unit.set_skirt(skirt(unit.skirt_size_x(), unit.footprint_size_x(), resolved.main.size_x),
+                       skirt(unit.skirt_size_z(), unit.footprint_size_z(), resolved.main.size_z),
+                       unit.skirt_offset_x(), unit.skirt_offset_z());
+        unit.set_footprint_size(resolved.main.size_x, resolved.main.size_z);
+    }
     // Where it is made decides its layer (Moho's Entity::GetStartingLayer),
     // for a structure and for a unit that walks or floats: a land tank made
     // in water, however shallow, stands on the seabed, where it drowns (the

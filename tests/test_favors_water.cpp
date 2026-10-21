@@ -283,6 +283,18 @@ TEST_CASE("A unit without LifeBarSize has Moho's 1", "[blueprint-defaults]") {
     CHECK(w.make(40.0f, 40.0f)->life_bar().size == 1.0f);
 }
 
+TEST_CASE("Moho replaces a mobile unit's footprint and skirt with its class's", "[footprints]") {
+    MohoSea w;
+    Unit* u = w.make(40.0f, 40.0f);
+    // The .bp's 2 x 8 resolves to WaterLand5x5, and ranges, formations and
+    // steering read that: retail's /synclog beat 0 holds the class's size for
+    // all 134 ground-mobile units, and a skirt the .bp leaves out as it.
+    CHECK(u->footprint_size_x() == 5.0f);
+    CHECK(u->footprint_size_z() == 5.0f);
+    CHECK(u->skirt_size_x() == 5.0f);
+    CHECK(u->skirt_size_z() == 5.0f);
+}
+
 TEST_CASE("FAF's Unit:ForceAltFootprint sets and clears the forced alt footprint",
           "[favorswater]") {
     MohoSea w;

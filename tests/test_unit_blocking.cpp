@@ -367,6 +367,48 @@ TEST_CASE("Units in one formation don't block each other's way", "[unit_blocking
     CHECK(w.blockers().swept_blocked(id, WorldPoint{20, 0, 30}, WorldPoint{40, 0, 30}, 2));
 }
 
+TEST_CASE("Head-on, the one the other comes at makes for beside the other, on its own side, "
+          "and the other stops",
+          "[unit_blocking]") {
+    using osc::sim::CommandType;
+    World w;
+    Unit& a = *w.make("tank", 20.5f, 64.5f);
+    Unit& b = *w.make("tank", 100.5f, 64.0f); // half a unit to -z
+    const auto go = [](Unit& u, f32 x, f32 z) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = CommandType::Move;
+        cmd.command_id = 41;
+        cmd.target_pos = {x, 10.0f, z};
+        u.push_command(cmd, true);
+    };
+    go(a, 100.5f, 64.5f);
+    go(b, 20.5f, 64.0f);
+    // Retail's resolution (0x0059DA00): meeting head-on, the point is the
+    // other's position plus its side axis toward the one stepping aside.
+    const Unit* stepper = nullptr;
+    const Unit* other = nullptr;
+    osc::sim::Vector3 point{}, other_at{};
+    bool other_held = false;
+    for (int t = 0; t < 400 && !stepper; ++t) {
+        w.sim.tick();
+        for (Unit* u : {&a, &b}) {
+            if (!u->navigator().sidestepping() || !u->navigator().waypoint()) continue;
+            stepper = u;
+            other = u == &a ? &b : &a;
+            point = *u->navigator().waypoint();
+            other_at = other->position();
+            other_held = other->navigator().holding();
+            break;
+        }
+    }
+    REQUIRE(stepper);
+    INFO("point " << point.x << ", " << point.z << "; other at " << other_at.x << ", "
+                  << other_at.z);
+    CHECK(std::abs(point.x - other_at.x) < 1.0f); // beside it, not ahead
+    CHECK((point.z - other_at.z) * (stepper->position().z - other_at.z) > 0); // its own side
+    CHECK(other_held);
+}
+
 TEST_CASE("Overtaking in one formation, the slower unit isn't stopped for the faster",
           "[unit_blocking]") {
     using osc::sim::CommandType;
