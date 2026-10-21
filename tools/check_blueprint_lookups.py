@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 OWNER = "src/blueprints/blueprint_store.cpp"
@@ -49,7 +50,9 @@ _RAW_OPEN = re.compile(r'R"([^(\s\\]{0,16})\(')
 def read_literal(text: str, i: int) -> tuple[str, int] | None:
     """The string literal starting at `i` (any prefix, or raw) as (contents,
     index after it); None if none starts there."""
-    prefix = re.match(r"(?:u8|u|U|L)?", text[i:]).group(0)  # type: ignore[union-attr]
+    prefix_match = re.match(r"(?:u8|u|U|L)?", text[i:])
+    assert prefix_match is not None  # The optional prefix also matches the empty string.
+    prefix = prefix_match.group(0)
     raw = _RAW_OPEN.match(text, i + len(prefix))
     if raw is not None:
         end = ")" + raw.group(1) + '"'
@@ -117,7 +120,7 @@ def scan(text: str) -> tuple[list[tuple[int, str]], str]:
 
 def problems_in(rel: str, text: str) -> list[str]:
     literals, code = scan(text)
-    out = []
+    out: list[str] = []
     if rel not in NAME_ALLOWED:
         out += [
             f"{rel}:{ln}: raw __blueprints lookup; use blueprints::push_blueprint"
@@ -127,23 +130,30 @@ def problems_in(rel: str, text: str) -> list[str]:
     if rel not in BULK_ALLOWED:
         out += [
             f"{rel}:{code.count(chr(10), 0, m.start()) + 1}: push_blueprints outside the "
-            "readers of the whole table; look one up with blueprints::push_blueprint"
+            + "readers of the whole table; look one up with blueprints::push_blueprint"
             for m in _BULK_CALL.finditer(code)
         ]
     return out
 
 
 def check(root: Path) -> list[str]:
-    problems = []
+    problems: list[str] = []
+    scanned: set[str] = set()
     for path in sorted((root / "src").rglob("*")):
         if path.suffix in SUFFIXES:
             rel = path.relative_to(root).as_posix()
+            scanned.add(rel)
             problems += problems_in(rel, path.read_text(encoding="utf-8", errors="replace"))
+    if OWNER not in scanned:
+        problems.append(
+            f"{OWNER} was not scanned ({len(scanned)} files read under {root / 'src'}); "
+            + "is this the repository root?"
+        )
     return problems
 
 
 def self_test() -> int:
-    cases = [
+    cases: list[tuple[str, str, list[int]]] = [
         ("a lookup", 'lua_pushstring(L, "__blueprints");\n', [1]),
         ("a comment", '// "__blueprints"\n/* lua_pushstring(L, "__blueprints"); */\n', []),
         ("a // inside a string", 'log("https://x"); push(L, "__blueprints");\n', [1]),
@@ -169,6 +179,18 @@ def self_test() -> int:
     if problems_in("src/sim/sim_state.cpp", bulk):
         print("self-test: push_blueprints in a bulk reader is allowed")
         failed += 1
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        if not check(root) or "was not scanned" not in check(root)[0]:
+            print("self-test: a tree without the owner fails")
+            failed += 1
+        (root / OWNER).parent.mkdir(parents=True)
+        _ = (root / OWNER).write_text('push(L, "__blueprints");\n')
+        (root / "src/sim/unit.cpp").parent.mkdir(parents=True)
+        _ = (root / "src/sim/unit.cpp").write_text('f();\nlua_pushstring(L, "__blueprints");\n')
+        if [p.split(":")[:2] for p in check(root)] != [["src/sim/unit.cpp", "2"]]:
+            print(f"self-test: the scan of a tree finds its raw lookup alone: {check(root)}")
+            failed += 1
     if failed:
         return 1
     print("self-test: ok")
