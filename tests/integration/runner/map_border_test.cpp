@@ -216,7 +216,7 @@ void test_map_border(TestContext& ctx) {
             if (std::min({px[0], px[1], px[2]}) >= 4) ++lit;
             // MapImagerPS1's glowMinimum at the least
             const f32 glow = scene.rgba[i * 4 + 3];
-            if (glow >= 0.009f) ++glowing;
+            if (glow > 0.01f - 1.0f / 255.0f) ++glowing;
             if (glow >= 0.3f) ++glow_bright;
         } else if (same_pixel(none, cleared, i)) {
             // Within the frame's middle, well inside the map: at the map's

@@ -112,13 +112,12 @@ void test_terrain_glow(TestContext& ctx) {
     for (size_t i = 3; i < lit.rgba.size(); i += 4) {
         top = std::max(top, lit.rgba[i]);
         // The ground's least (what isn't ground, the backdrop, is 0): its
-        // 0.01 as FA's 8-bit frame holds it, 3/255
+        // 0.01, which Vulkan may round to either 8-bit neighbour
         if (lit.rgba[i] > 0.0f) floor = std::min(floor, lit.rgba[i]);
     }
     const size_t lava = glowing(lit);
-    const f32 ground_glow = std::round(0.01f * 255.0f) / 255.0f;
     t.check(nearest > 60.0f && lava > 200 && glowing(dull) * 10 < lava && top <= 1.011f &&
-                std::abs(floor - ground_glow) < 1e-3f,
+                std::abs(floor - 0.01f) < 1.0f / 255.0f,
             fmt::format("Test 2: {} pixels glow over the lava as TTerrainGlow, {} as TTerrain "
                         "(the ground's glow {:.3f} to {:.3f}; the nearest unit {:.0f} away)",
                         lava, glowing(dull), floor, top, nearest));

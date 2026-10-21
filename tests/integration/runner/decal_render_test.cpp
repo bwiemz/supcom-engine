@@ -404,7 +404,7 @@ void test_decal_render(TestContext& ctx) {
         const auto o = scene_at(both, mid);
         const f32 half_moved = std::max({std::abs(h[0] - g[0]), std::abs(h[1] - g[1]),
                                          std::abs(h[2] - g[2]), std::abs(h[3] - g[3])});
-        t.check(m[0] > 0.9f && m[1] < 0.05f && std::abs(m[3] - 0.01f) < 0.002f &&
+        t.check(m[0] > 0.9f && m[1] < 0.05f && std::abs(m[3] - 0.01f) < 1.0f / 255.0f &&
                     half_moved < 0.002f && std::abs(o[3] - 0.26f) < 0.005f,
                 fmt::format("Test 10: a Glow Mask decal draws ({:.2f} {:.2f} {:.2f}) with glow "
                             "{:.3f}; at half alpha it moves the scene {:.4f}; a Glow decal "

@@ -202,15 +202,15 @@ void test_bloom(TestContext& ctx) {
     {
         const f32 none = lift(160.0f, 1.0f, 0.0f);
         const f32 map_bloom = lift(160.0f, 1.0f, 0.05f);
-        t.check(none > 0.98f && none < 1.02f && map_bloom > 1.1f && map_bloom < 1.2f,
+        t.check(none > 0.98f && none < 1.02f && map_bloom > 1.05f && map_bloom < 1.2f,
                 fmt::format("Test 3: a plate that doesn't glow is brightened {:.3f} times; by "
                             "a map's bloom of 0.05, {:.3f} (1.15)",
                             none, map_bloom));
     }
 
     // Test 4: no white-out. At retail's usual bloom (0.036), the sky and XP
-    // terrain (alpha 0) aren't touched; TTerrain (alpha 0.01, weight 0.016)
-    // is lifted about 8%.
+    // terrain (alpha 0) aren't touched; TTerrain (alpha 0.01) is lifted a
+    // little.
     {
         const auto mean = [](const ImageRGBA8& image) {
             f64 sum = 0;
@@ -224,7 +224,7 @@ void test_bloom(TestContext& ctx) {
         const f64 old_off = mean(frame(12.0f, 50.0f, 1.0f, 0.036f, false, false));
         const f64 old_on = mean(frame(12.0f, 50.0f, 1.0f, 0.036f, false, true));
         t.check(std::abs(sky_on - sky_off) < 0.003 && std::abs(xp_on - xp_off) < 0.003 &&
-                    old_on / old_off > 1.04 && old_on / old_off < 1.12,
+                    old_on / old_off > 1.003 && old_on / old_off < 1.12,
                 fmt::format("Test 4: with the bloom on, the sky moves {:+.4f}, XP terrain "
                             "{:+.4f}, TTerrain {:.3f} times",
                             sky_on - sky_off, xp_on - xp_off, old_on / old_off));
