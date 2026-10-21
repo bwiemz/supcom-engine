@@ -8953,12 +8953,14 @@ void test_drive(TestContext& ctx) {
     run(120);
     lua_check("Test 2: it turns round on the spot before it drives", R"(
         local s = __osc_striker.samples
-        -- While the goal is more than 45 degrees off its heading it pivots.
+        -- From rest it pivots till the goal is within acos 0.98 (11.5
+        -- degrees) of its heading (Moho's steering speed cap); in retail a
+        -- Striker turning back drives from 1 degree off.
         for i = 1, table.getn(s) do
             local off = __osc_turned(s[i][3], math.pi)
-            if off > math.rad(50) then
+            if off > math.rad(12) then
                 local moved = math.sqrt((s[i][1] - 620) ^ 2 + (s[i][2] - 100) ^ 2)
-                if moved > 0.3 then error('it moved ' .. moved .. ' before turning, at tick ' .. i) end
+                if moved > 0.05 then error('it moved ' .. moved .. ' before turning, at tick ' .. i) end
             end
         end
         if __osc_turned(s[table.getn(s)][3], math.pi) > math.rad(3) then error('it never faced the goal') end
@@ -8983,9 +8985,28 @@ void test_drive(TestContext& ctx) {
         local v = __osc_speeds(__osc_striker)
         local slowing = 0
         for i = 2, table.getn(v) do
-            if v[i] < v[i - 1] - 1e-3 and v[i - 1] - v[i] > 3.4 * 0.1 + 0.02 then
+            -- At its brake while it drives; coasting once there, Moho's
+            -- CalcMoveCommon damps it to 0.8 as well, so a fifth of its
+            -- speed more.
+            if v[i] < v[i - 1] - 1e-3 and v[i - 1] - v[i] > 0.2 * v[i - 1] + 3.4 * 0.1 + 0.02 then
                 error('braked by ' .. (v[i - 1] - v[i]) .. ' in a tick')
             end
+        end
+        -- With Moho's pathing the move ends in the goal's cell while it still
+        -- goes, and it coasts: each tick 0.8 of its speed less its brake
+        -- (retail's Striker: 2.04, 1.29, 0.69, 0.21, then still).
+        if __osc_moho_pathing then
+            local coasted = 0
+            for i = 2, table.getn(v) do
+                if v[i - 1] > 3.4 * 0.1 and v[i - 1] - v[i] > 3.4 * 0.1 + 0.03 then
+                    local want = 0.8 * v[i - 1] - 3.4 * 0.1
+                    if math.abs(v[i] - want) > 0.03 then
+                        error(string.format('coasted from %.3f to %.3f, not %.3f', v[i - 1], v[i], want))
+                    end
+                    coasted = coasted + 1
+                end
+            end
+            if coasted == 0 then error('it never coasted') end
         end
     )");
     lua_check("Test 5: its motion events come in order", R"(
@@ -9002,6 +9023,10 @@ void test_drive(TestContext& ctx) {
         __osc_mantis = __osc_track(__osc_spawn('url0107', 'ARMY_1', 700, 80, 0))
         __osc_mantis_goal = {712, GetTerrainHeight(712, 80), 80}
         IssueMove({__osc_mantis.u}, __osc_mantis_goal)
+        -- A pivoting unit (RotateOnSpot) with a goal 3 behind it, inside its
+        -- BackUpDistance of 4.
+        __osc_pivoter = __osc_track(__osc_spawn('url0111', 'ARMY_1', 680, 116, 0))
+        IssueMove({__osc_pivoter.u}, {680, GetTerrainHeight(680, 113), 113})
     )");
     run(100);
     lua_check("Test 6: a Fatboy backs up to a goal just behind it", R"(
@@ -9026,6 +9051,13 @@ void test_drive(TestContext& ctx) {
         local miss = math.sqrt((last[1] - __osc_mantis_goal[1]) ^ 2 + (last[2] - __osc_mantis_goal[3]) ^ 2)
         -- In its goal's cell with Moho's pathing (Test 4).
         if miss > (__osc_moho_pathing and 0.75 or 0.5) then error('it ended ' .. miss .. ' from its goal') end
+    )");
+    lua_check("Test 7b: a pivoting unit gets to a goal just behind it", R"(
+        -- Retail's (tools/moho_probes/drivegrid) gets there, 0.85 off; the
+        -- speed cap had read its heading, not its way back, and held it still.
+        local s = __osc_pivoter.samples
+        local last = s[table.getn(s)]
+        if math.abs(last[2] - 113) > 1.0 then error('it ended at z ' .. last[2] .. ', 113 its goal') end
     )");
 
     // SetImmobile holds it; GetCurrentMoveLocation is where it is going.
@@ -9496,8 +9528,15 @@ void test_formation(TestContext& ctx) {
                 for _, t in __osc_tracks do
                     local p = t.u:GetPosition()
                     if t.last then
-                        local v = math.sqrt((p[1] - t.last[1]) ^ 2 + (p[3] - t.last[3]) ^ 2) * 10
-                        if v > t.top then t.top = v end
+                        -- Its pace over the last ten ticks: a neighbour's push,
+                        -- mostly sideways, adds to one tick's step, not to that.
+                        t.trail = t.trail or {}
+                        table.insert(t.trail, p)
+                        if table.getn(t.trail) > 10 then
+                            local a = table.remove(t.trail, 1)
+                            local v = math.sqrt((p[1] - a[1]) ^ 2 + (p[3] - a[3]) ^ 2)
+                            if v > t.top then t.top = v end
+                        end
                     end
                     t.last = p
                     if t.near then
@@ -9603,8 +9642,8 @@ void test_formation(TestContext& ctx) {
         end
     )");
     lua_check("Test 5: the group keeps its slowest unit's pace (a Lobo's 2.8)", R"(
-        -- Measured from positions, which neighbours' pushes add to: a
-        -- Striker alone would reach 3.4.
+        -- Each unit's pace over a second (ten ticks), which neighbours'
+        -- pushes add little to: a Striker alone would reach 3.4.
         for _, t in __osc_tracks do
             if t.top > 2.8 + 0.25 then error(t.u:GetUnitId() .. ' reached ' .. t.top) end
         end
@@ -11188,7 +11227,10 @@ void test_range(TestContext& ctx) {
               R"(
         if not __osc_far:IsUnitState('Building') then error('far is not building') end
         local d = __osc_from(__osc_far, 609.5, 110.5)
-        if d < 1.5 or d > 3 then error(string.format('far builds from %.2f', d)) end
+        -- Moho sends it to the cell nearest the site clear of its skirt grown
+        -- by a cell, touching counting (CUnitMobileBuildTask, PrepareMove):
+        -- in retail this one builds from 3.47 (the build reach probe).
+        if d < 2.9 or d > 4 then error(string.format('far builds from %.2f', d)) end
     )");
     lua_check("Test 10: a reclaimer out of reach walks up, and reclaims", R"(
         if not __osc_walker:IsUnitState('Reclaiming') then error('the walker is not reclaiming') end

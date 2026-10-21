@@ -31,14 +31,24 @@ blueprints::Footprint move_footprint(const Unit& unit, const map::Terrain& map,
 }
 
 bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid& grid,
-                  const OccupancyRect& bounds, Vector3& dest) {
+                  const OccupancyRect& bounds, Vector3& dest, i32 step,
+                  const MoveExclusion* exclude) {
     const blueprints::Footprint fp = move_footprint(unit, map, dest);
     const i32 side = std::max<i32>(std::max(fp.size_x, fp.size_z), 1);
     const f32 hx = static_cast<f32>(fp.size_x) * 0.5f;
     const f32 hz = static_cast<f32>(fp.size_z) * 0.5f;
-    // Moho's IsPrepareMoveCandidateValid: inside the bounds by its side; its
-    // footprint fits (on the Water layer, SUB aside); no one has reserved it.
+    // Moho's IsPrepareMoveCandidateValid: clear of the skirt rect (its one
+    // cell, touching counting: ShouldTestPrepareMoveCellAgainstSkirt); inside
+    // the bounds by its side; its footprint fits (on the Water layer, SUB
+    // aside); no one has reserved it.
     const auto valid = [&](i32 x, i32 z, f32 wx, f32 wz) {
+        if (exclude && exclude->x1 > exclude->x0 && exclude->z1 > exclude->z0) {
+            const auto cx = static_cast<f32>(x);
+            const auto cz = static_cast<f32>(z);
+            const bool clear = exclude->x0 > cx + 1.0f || cx > exclude->x1 ||
+                               exclude->z0 > cz + 1.0f || cz > exclude->z1;
+            if (!clear) return false;
+        }
         const auto border = static_cast<f32>(side);
         if (wx - border < static_cast<f32>(bounds.x0) ||
             wz - border < static_cast<f32>(bounds.z0) ||
@@ -57,7 +67,7 @@ bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid
     const i32 sx = start.x0;
     const i32 sz = start.z0;
     if (valid(sx, sz, dest.x, dest.z)) return true;
-    const i32 step = side * 2;
+    if (step <= 0) step = side * 2;
     std::vector<Vector3> found;
     int looked = 0;
     for (i32 ring = 1;; ++ring) {

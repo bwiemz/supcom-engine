@@ -13,6 +13,7 @@
 #include "sim/build_site_props.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/prepare_move.hpp"
 #include "sim/work_range.hpp"
 #include "map/terrain.hpp"
 
@@ -860,7 +861,21 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 return OrderStep::Next;
             }
             cmd.approached = true;
-            set_path_goal(approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1), ctx);
+            // Moho's CUnitMobileBuildTask: the place nearest the site, looked
+            // for a cell at a time, clear of the site's skirt grown by a cell
+            // all round (Unit::PrepareMove(1, site, skirt), faf-re
+            // CUnitMobileBuildTask.cpp): stopped anywhere in that cell, the
+            // builder is off the site, though another skirt hem it in.
+            Vector3 goal = approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1);
+            if (ctx.sim && ctx.terrain) {
+                Vector3 site = cmd.target_pos;
+                const MoveExclusion skirt{site.x - half_x - 1.0f, site.z - half_z - 1.0f,
+                                          site.x + half_x + 1.0f, site.z + half_z + 1.0f};
+                if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(),
+                                 ctx.sim->move_bounds(army()), site, 1, &skirt))
+                    goal = site;
+            }
+            set_path_goal(goal, ctx);
         }
         // The task's first tick checks the site and sends the builder; it
         // aims from the next (Moho's TASKSTATE_Preparing returns 1).
@@ -2998,6 +3013,7 @@ OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
             set_position(to);
             note_snap();
             place_now();
+            ground_speed_ = 0; // a warp leaves nothing to coast on (Unit::warp)
             command_queue_.pop_front();
             return OrderStep::Next;
         }

@@ -219,7 +219,8 @@ TEST_CASE("Moving, the hull faces its path; arrived, it turns to the target", "[
     const f32 bearing = osc::dmath::atan2(foe->position().x - u->position().x,
                                           foe->position().z - u->position().z) /
                         kDeg;
-    CHECK(std::abs(wrap_deg(heading_deg(*u) - bearing)) < 0.5f);
+    // Faced as rotate_yaw_toward counts it: within a dot of 0.9999, 0.81 degrees.
+    CHECK(std::abs(wrap_deg(heading_deg(*u) - bearing)) < 0.82f);
 }
 
 TEST_CASE("AttackAngle puts the target that far off the bow, on its own side", "[hull-facing]") {

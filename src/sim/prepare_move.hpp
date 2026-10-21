@@ -25,11 +25,22 @@ class Unit;
 blueprints::Footprint move_footprint(const Unit& unit, const map::Terrain& map,
                                      const Vector3& dest);
 
+/// A rectangle of the world (Moho's gpg::Rect2f) a destination keeps out of.
+struct MoveExclusion {
+    f32 x0 = 0;
+    f32 z0 = 0;
+    f32 x1 = 0;
+    f32 z1 = 0;
+};
+
 /// A destination the unit's footprint won't fit, or that another has
 /// reserved, moves to the nearest place it will (nearest the unit), looked
-/// for in rings twice its larger side apart, 900 places at most, each inside
-/// `bounds` by that side. False, `dest` untouched, if none.
+/// for in rings `step` cells apart (twice its larger side for 0), 900 places
+/// at most, each inside `bounds` by that side. With `exclude`, a place whose
+/// cell touches it is no place (Moho's skirt rect). False, `dest` untouched,
+/// if none.
 bool prepare_move(const Unit& unit, const map::Terrain& map, const OccupancyGrid& grid,
-                  const OccupancyRect& bounds, Vector3& dest);
+                  const OccupancyRect& bounds, Vector3& dest, i32 step = 0,
+                  const MoveExclusion* exclude = nullptr);
 
 } // namespace osc::sim

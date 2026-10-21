@@ -130,10 +130,6 @@ public:
 
     /// A goal behind it this far off its heading is backed up to, if near.
     static constexpr f32 REVERSE_ANGLE = 1.5707964f; // 90 degrees
-    /// A unit that can pivot does so once its goal is this far off its heading.
-    static constexpr f32 PIVOT_ANGLE = 0.7853982f; // 45 degrees
-    /// One that can't keeps this share of its speed to turn.
-    static constexpr f32 TURNING_SPEED = 0.3f;
     /// Jostled this many ticks near its goal without getting nearer, a unit
     /// in a crowd counts itself there (others hold the spot).
     static constexpr int CROWD_TICKS = 5;

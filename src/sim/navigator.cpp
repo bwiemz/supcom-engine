@@ -467,6 +467,8 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     }
     // Forward, or backing up to a goal close behind.
     f32 err = dist > 1e-4f ? wrap_angle(osc::dmath::atan2(dx, dz) - heading) : 0.0f;
+    // Moho caps the speed from the heading the unit has before this tick's turn.
+    const f32 err_before_turn = err;
     const f32 brake = (d.max_brake > 0 ? d.max_brake : d.max_accel) * unit.accel_mult();
 
     // In a crowd others may hold its spot: jostled near it without getting
@@ -495,6 +497,8 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     const bool reverse = final && d.max_speed_reverse > 0 && std::abs(err) > REVERSE_ANGLE &&
                          to_goal <= d.backup_distance;
     if (reverse) err = wrap_angle(err + kPi);
+    // The cap reads the way it goes: backing up, its tail's.
+    const f32 cap_err = reverse ? wrap_angle(err_before_turn + kPi) : err_before_turn;
 
     // Turn: at its TurnRate, faster at speed where its TurnRadius allows.
     f32 omega = d.turn_rate * unit.turn_mult();
@@ -509,18 +513,33 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
                                          ? Unit::MotionTurn::SharpTurn
                                          : Unit::MotionTurn::Turn;
 
-    // How fast it wants to go: slower the farther off its heading the
-    // waypoint lies. One that can pivot stops to; one that can't keeps
-    // moving to turn. Always slow enough to stop on its goal.
+    // How fast it may go (Moho's steering speed cap, faf-re CAiPathSpline.cpp
+    // ComputeSteeringSpeedCapFromParams, 0x00699760, from the heading before
+    // this tick's turn):
+    // - one that rotates on the spot, slower than its RotateOnSpotThreshold
+    //   share of its top speed, stands until the waypoint is within acos 0.98
+    //   (11.5 degrees) of its heading;
+    // - any other goes as fast as lets it turn onto the waypoint along the
+    //   circle through it tangent to its heading (radius dist / 2 sin err), at
+    //   half its TurnRate; on a circle at least its TurnRadius wide, at that
+    //   radius a tick. Always slow enough to stop on its goal (below).
     const f32 top = reverse ? std::min(d.max_speed_reverse, max_speed) : max_speed;
-    f32 target = top * std::max(osc::dmath::cos(err), 0.0f);
-    if (d.rotate_on_spot && std::abs(err) > PIVOT_ANGLE) target = 0;
-    else if (!d.rotate_on_spot) target = std::max(target, top * TURNING_SPEED);
-    // No faster than lets it turn onto the waypoint: the circle along its
-    // heading through it has radius dist / (2 sin err). Else it would circle
-    // a goal inside its turn for ever.
-    if (const f32 side = std::abs(osc::dmath::sin(err)); side > 1e-3f)
-        target = std::min(target, omega * dist / (2.0f * side));
+    f32 target = top;
+    const f32 ratio = max_speed > 0 ? std::abs(speed) / max_speed : 0.0f;
+    if (d.rotate_on_spot && d.rotate_threshold > ratio) {
+        target = osc::dmath::cos(cap_err) >= 0.98f ? top : 0.0f;
+    } else {
+        const f32 side = std::abs(osc::dmath::sin(cap_err));
+        const f32 circle = side > 0 ? dist / (2.0f * side) : 0.0f;
+        const f32 radius = d.turn_radius > 0 ? d.turn_radius / unit.turn_mult()
+                                             : std::numeric_limits<f32>::infinity();
+        if (circle < radius) {
+            if (circle > 0) target = d.turn_rate * unit.turn_mult() * circle * 0.5f;
+        } else {
+            target = radius / step; // the turn radius a tick
+        }
+    }
+    target = std::min(target, top);
     // Braking to stop on its goal, a tick ahead so it doesn't overrun.
     const f32 stop_at =
         brake > 0 && !through
