@@ -3491,7 +3491,11 @@ static int l_ui_SessionIsActive(lua_State* L) {
     const auto state = mgr ? mgr->current() : osc::GameState::INIT;
     const bool in_session = state == osc::GameState::LOADING || state == osc::GameState::GAME ||
                             state == osc::GameState::SCORE;
-    lua_pushboolean(L, in_session && !mgr->sim_stopped() ? 1 : 0);
+    // ...and its sim made: SetupUI runs as a game is launched, before the
+    // sim (and the scenario its UI reads, SessionGetScenarioInfo) exists,
+    // and as the front end comes back, after the sim is gone. Either way
+    // FAF's world border looked for a map that wasn't there (OE-145).
+    lua_pushboolean(L, in_session && get_sim(L) != nullptr && !mgr->sim_stopped() ? 1 : 0);
     return 1;
 }
 
