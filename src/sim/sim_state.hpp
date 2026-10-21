@@ -616,11 +616,6 @@ public:
     void set_fog_of_war(const std::string& mode);
     FogMode fog_mode() const { return fog_mode_; }
 
-    /// Team Share Overflow: resources a teammate would waste at full storage
-    /// flow to allies with room, instead of being lost. Off by default.
-    void set_team_share_overflow(bool on) { team_share_overflow_ = on; }
-    bool team_share_overflow() const { return team_share_overflow_; }
-
     /// "No Rush" rule: for the first `seconds` of game time, units are confined
     /// within `radius` of their army's start position. seconds <= 0 disables it.
     void set_no_rush(f32 seconds, f32 radius);
@@ -986,12 +981,7 @@ private:
     /// triggers and its unit-cap stats.
     void tick_army_economy(size_t index);
     void fire_stat_triggers(ArmyBrain& army);
-    /// Moho's ProcessArmyEconomy offers what full storage would waste to the
-    /// allies, banked for their own economies (Team Share Overflow).
-    void share_overflow(size_t index);
     void count_held_storage();
-    /// Partition all non-civilian armies into alliance-connected teams.
-    std::vector<std::vector<i32>> alliance_teams() const;
     /// Moho's CArmyImpl::OnTick, each army in turn: its economy, with Moho
     /// pathing its navigators and steering, its units' weapons, its path
     /// searches.
@@ -1206,7 +1196,6 @@ private:
     FogMode fog_mode_ = FogMode::Explored;
     f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
     f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
-    bool team_share_overflow_ = false; // route wasted overflow to allies
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<CameraFollowEvent> camera_follow_events_;
     std::vector<ResourceDeposit> resource_deposits_;

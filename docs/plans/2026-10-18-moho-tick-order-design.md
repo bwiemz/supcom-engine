@@ -524,3 +524,6 @@ with allies by default; economy events not all-or-nothing.
 
 *Production scaled by the grant: done (2026-10-21) — fix/econ-limiting-rate-2: a unit asking the economy produces at
 its request's grant (Moho's `LimitingRate`), unless its blueprint is a `NaturalProducer`.*
+
+*Overflow sharing done (2026-10-21) — fix/econ-overflow-default-2: an army shares its overflow with its allies unless
+its `SetResourceSharing` is off, an equal cut of what is left to each ally with room, as Moho's `ProcessArmyEconomy`.*

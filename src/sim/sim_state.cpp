@@ -2027,8 +2027,13 @@ void SimState::tick_army_economy(size_t index) {
     PROFILE_ZONE("Sim::economy");
     ArmyBrain& army = *armies_[index];
     request_economy_events(index);
-    army.update_economy(entity_registry_, SECONDS_PER_TICK);
-    share_overflow(index);
+    std::vector<ArmyBrain*> allies;
+    for (const auto& other : armies_) {
+        if (other.get() != &army && army.is_ally(other->index())) {
+            allies.push_back(other.get());
+        }
+    }
+    army.update_economy(entity_registry_, SECONDS_PER_TICK, allies);
     // CArmyImpl::OnTick checks the stats triggers only once mCurTick > 10.
     if (tick_count_ > 10) {
         fire_stat_triggers(army);
@@ -2072,78 +2077,6 @@ void SimState::count_held_storage() {
     });
     for (size_t i = 0; i < armies_.size(); ++i) {
         armies_[i]->count_storage(held[i].first, held[i].second);
-    }
-}
-
-std::vector<std::vector<i32>> SimState::alliance_teams() const {
-    std::vector<i32> members;
-    for (size_t i = 0; i < armies_.size(); ++i) {
-        if (!armies_[i]->is_civilian()) members.push_back(static_cast<i32>(i));
-    }
-    const size_t m = members.size();
-    std::vector<char> seen(m, 0);
-    std::vector<std::vector<i32>> teams;
-    std::vector<size_t> stack;
-    for (size_t s = 0; s < m; ++s) {
-        if (seen[s]) continue;
-        std::vector<i32> team;
-        seen[s] = 1;
-        stack.push_back(s);
-        while (!stack.empty()) {
-            size_t cur = stack.back();
-            stack.pop_back();
-            team.push_back(members[cur]);
-            for (size_t t = 0; t < m; ++t) {
-                if (seen[t]) continue;
-                if (armies_[members[cur]]->is_ally(members[t])) {
-                    seen[t] = 1;
-                    stack.push_back(t);
-                }
-            }
-        }
-        teams.push_back(std::move(team));
-    }
-    return teams;
-}
-
-void SimState::share_overflow(size_t index) {
-    ArmyBrain& giver = *armies_[index];
-    if (!team_share_overflow_ || giver.is_defeated()) {
-        return;
-    }
-    std::vector<ArmyBrain*> allies;
-    for (const auto& team : alliance_teams()) {
-        if (std::find(team.begin(), team.end(), static_cast<i32>(index)) == team.end()) {
-            continue;
-        }
-        for (const i32 member : team) {
-            ArmyBrain* ally = armies_[static_cast<size_t>(member)].get();
-            if (static_cast<size_t>(member) != index && !ally->is_defeated()) {
-                allies.push_back(ally);
-            }
-        }
-    }
-    const auto shares = [&](f64 pool, ResourceState EconomyState::* resource) {
-        std::vector<f64> cut(allies.size(), 0.0);
-        f64 room_total = 0.0;
-        for (const ArmyBrain* ally : allies) {
-            const ResourceState& r = ally->economy().*resource;
-            room_total += std::max(0.0, r.max_storage - r.stored);
-        }
-        if (pool <= 0.0 || room_total <= 0.0) {
-            return cut;
-        }
-        const f64 give = std::min(pool, room_total);
-        for (size_t i = 0; i < allies.size(); ++i) {
-            const ResourceState& r = allies[i]->economy().*resource;
-            cut[i] = give * (std::max(0.0, r.max_storage - r.stored) / room_total);
-        }
-        return cut;
-    };
-    const std::vector<f64> mass = shares(giver.economy().mass.overflow, &EconomyState::mass);
-    const std::vector<f64> energy = shares(giver.economy().energy.overflow, &EconomyState::energy);
-    for (size_t i = 0; i < allies.size(); ++i) {
-        allies[i]->bank_share(mass[i], energy[i]);
     }
 }
 

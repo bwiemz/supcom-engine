@@ -87,7 +87,6 @@ void save_resource(StateWriter& w, const ResourceState& s) {
     w.f64v(s.requested);
     w.f64v(s.stored);
     w.f64v(s.max_storage);
-    w.f64v(s.overflow);
 }
 ResourceState load_resource(StateReader& r) {
     ResourceState s;
@@ -95,7 +94,6 @@ ResourceState load_resource(StateReader& r) {
     s.requested = r.f64v();
     s.stored = r.f64v();
     s.max_storage = r.f64v();
-    s.overflow = r.f64v();
     return s;
 }
 
@@ -263,8 +261,6 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.f64v(a.extra_storage_energy_);
     w.f64v(a.bank_mass_);
     w.f64v(a.bank_energy_);
-    w.f64v(a.shared_mass_);
-    w.f64v(a.shared_energy_);
     {
         std::vector<std::pair<i32, Alliance>> sorted(a.alliances_.begin(), a.alliances_.end());
         std::sort(sorted.begin(), sorted.end(),
@@ -351,8 +347,6 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.extra_storage_energy_ = r.f64v();
     a.bank_mass_ = r.f64v();
     a.bank_energy_ = r.f64v();
-    a.shared_mass_ = r.f64v();
-    a.shared_energy_ = r.f64v();
     a.alliances_.clear();
     const size_t alliances = r.size(8);
     for (size_t i = 0; i < alliances; ++i) {
