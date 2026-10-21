@@ -2116,8 +2116,8 @@ static int unit_GetEconData(lua_State* L) {
         lua_pushnumber(L, v);
         lua_rawset(L, -3);
     };
-    set("massProduced", (u->producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
-    set("energyProduced", (u->producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
+    set("massProduced", econ.mass_produced());
+    set("energyProduced", econ.energy_produced());
     set("massConsumed", econ.mass_consumed());
     set("energyConsumed", econ.energy_consumed());
     set("massRequested", econ.mass_requested());

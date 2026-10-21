@@ -220,10 +220,8 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.build_rate = u.build_rate();
     r.creator_id = u.creator_id();
     const auto& econ = u.economy();
-    r.mass_produced =
-        static_cast<f32>((u.producing() ? econ.production_mass : 0.0) + econ.reclaim_mass);
-    r.energy_produced =
-        static_cast<f32>((u.producing() ? econ.production_energy : 0.0) + econ.reclaim_energy);
+    r.mass_produced = static_cast<f32>(econ.mass_produced());
+    r.energy_produced = static_cast<f32>(econ.energy_produced());
     r.mass_consumed = static_cast<f32>(econ.mass_consumed());
     r.energy_consumed = static_cast<f32>(econ.energy_consumed());
     r.mass_requested = static_cast<f32>(econ.mass_requested());

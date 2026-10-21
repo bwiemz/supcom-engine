@@ -211,3 +211,33 @@ TEST_CASE("GetRolloverInfo tells only a blip's army, and a seen one's blueprint 
         assert(info.massProduced == -1 and info.shieldRatio == -1 and info.fuelRatio == -1)
     )"));
 }
+
+TEST_CASE("GetRolloverInfo reports banked production and reclaim after a stall",
+          "[ui][economy][banked]") {
+    KillWorld w;
+    osc::lua::register_user_bindings(w.state);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(w.check("producer = CreateUnit('tank', 1, 0, 0, 0)"));
+    auto* producer = w.unit("producer");
+    REQUIRE(producer);
+    auto& economy = producer->economy();
+    economy.production_mass = 4.0;
+    economy.production_energy = 20.0;
+    economy.production_active = true;
+    economy.consumption_active = true;
+    economy.granted = 0.25;
+    economy.reclaim_mass = 2.0;
+    economy.reclaim_energy = 6.0;
+    producer->bank_reclaim(w.sim.get_army(0));
+    producer->manage_resources(w.sim.get_army(0));
+    // Late script changes apply to the next banking step.
+    economy.production_mass = 100.0;
+    economy.production_energy = 200.0;
+    input.set_selected({producer->entity_id()});
+    CHECK(w.check("local e = GetRolloverInfo() assert(e.massProduced == 3, e.massProduced)"
+                  " assert(e.energyProduced == 11, e.energyProduced)"));
+}

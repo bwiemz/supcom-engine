@@ -1923,9 +1923,9 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("fuelRatio", static_cast<lua_Number>(unit->fuel_ratio()));
 
     const auto& econ = unit->economy();
-    set_num("massProduced", static_cast<lua_Number>(econ.production_mass));
+    set_num("massProduced", static_cast<lua_Number>(econ.mass_produced()));
     set_num("massConsumed", static_cast<lua_Number>(econ.mass_consumed()));
-    set_num("energyProduced", static_cast<lua_Number>(econ.production_energy));
+    set_num("energyProduced", static_cast<lua_Number>(econ.energy_produced()));
     set_num("energyConsumed", static_cast<lua_Number>(econ.energy_consumed()));
     set_num("massRequested", static_cast<lua_Number>(econ.mass_requested()));
     set_num("energyRequested", static_cast<lua_Number>(econ.energy_requested()));

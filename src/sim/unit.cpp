@@ -993,15 +993,21 @@ void Unit::manage_resources(ArmyBrain* army) {
     const bool asking = economy_.consumption_active || upkeep;
     economy_.resource_consumed = asking ? economy_.granted : 0.0;
     holds_storage_ = producing();
+    economy_.produced_mass = 0;
+    economy_.produced_energy = 0;
     if (holds_storage_ && army) {
         const f64 rate = asking && !economy_.natural_producer ? economy_.granted : 1.0;
-        army->bank(economy_.production_mass * rate, economy_.production_energy * rate);
+        economy_.produced_mass = economy_.production_mass * rate;
+        economy_.produced_energy = economy_.production_energy * rate;
+        army->bank(economy_.produced_mass, economy_.produced_energy);
     }
 }
 
-void Unit::bank_reclaim(ArmyBrain* army) const {
-    if (army && (economy_.reclaim_mass != 0.0 || economy_.reclaim_energy != 0.0)) {
-        army->bank(economy_.reclaim_mass, economy_.reclaim_energy);
+void Unit::bank_reclaim(ArmyBrain* army) {
+    economy_.reclaimed_mass = army ? economy_.reclaim_mass : 0;
+    economy_.reclaimed_energy = army ? economy_.reclaim_energy : 0;
+    if (army && (economy_.reclaimed_mass != 0.0 || economy_.reclaimed_energy != 0.0)) {
+        army->bank(economy_.reclaimed_mass, economy_.reclaimed_energy);
     }
 }
 

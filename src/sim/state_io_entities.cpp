@@ -1147,6 +1147,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.storage_energy);
     w.f64v(ec.reclaim_mass);
     w.f64v(ec.reclaim_energy);
+    w.f64v(ec.produced_mass);
+    w.f64v(ec.produced_energy);
+    w.f64v(ec.reclaimed_mass);
+    w.f64v(ec.reclaimed_energy);
     w.f64v(ec.silo_mass);
     w.f64v(ec.silo_energy);
     w.f64v(ec.dock_repair_mass);
@@ -1548,6 +1552,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.storage_energy = r.f64v();
     ec.reclaim_mass = r.f64v();
     ec.reclaim_energy = r.f64v();
+    ec.produced_mass = r.f64v();
+    ec.produced_energy = r.f64v();
+    ec.reclaimed_mass = r.f64v();
+    ec.reclaimed_energy = r.f64v();
     ec.silo_mass = r.f64v();
     ec.silo_energy = r.f64v();
     ec.dock_repair_mass = r.f64v();

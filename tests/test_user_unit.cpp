@@ -339,6 +339,73 @@ TEST_CASE("A factory's GetCommandQueue is its rally orders, not its builds", "[u
     CHECK(std::string(lua_tostring(w.ui.raw(), -1)) == "1 Move 40 60");
 }
 
+TEST_CASE("GetEconData reports the production and reclaim banked this tick",
+          "[userunit][economy][banked]") {
+    const bool natural = GENERATE(false, true);
+    const double grant = GENERATE(0.0, 0.25, 0.5, 1.0);
+    CAPTURE(natural, grant);
+    UiWorld w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    auto& u = w.unit();
+    auto& econ = u.economy();
+    econ.production_active = true;
+    econ.production_mass = 4;
+    econ.production_energy = 20;
+    econ.consumption_active = true;
+    econ.consumption_energy = 10;
+    econ.natural_producer = natural;
+    econ.granted = grant;
+    econ.reclaim_mass = 2;
+    econ.reclaim_energy = 6;
+    u.bank_reclaim(w.sim.get_army(0));
+    u.manage_resources(w.sim.get_army(0));
+    const double mass = (natural ? 4 : 4 * grant) + 2;
+    const double energy = (natural ? 20 : 20 * grant) + 6;
+
+    // A later script callback changes the next tick's rates and request.
+    // It cannot change what this tick already credited to the army.
+    econ.production_mass = 1000;
+    econ.production_energy = 2000;
+    econ.consumption_active = false;
+    econ.granted = 1;
+    econ.reclaim_mass = 50;
+    econ.reclaim_energy = 60;
+    osc::sim::WorldSnapshot snapshot;
+    osc::sim::capture_world(w.sim, snapshot);
+    const auto* record = snapshot.find(w.id);
+    REQUIRE(record);
+    CHECK(record->mass_produced == mass);
+    CHECK(record->energy_produced == energy);
+
+    auto result =
+        w.ui.do_string("local e = units[1]:GetEconData(); return e.massProduced, e.energyProduced");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(lua_tonumber(w.ui.raw(), -2) == mass);
+    CHECK(lua_tonumber(w.ui.raw(), -1) == energy);
+
+    osc::lua::register_moho_bindings(w.sim_lua, w.sim);
+    osc::lua::push_units_for_ui(w.sim_lua.raw(), {w.id});
+    lua_setglobal(w.sim_lua.raw(), "units");
+    result = w.sim_lua.do_string("local e = moho.unit_methods.GetEconData(units[1]); return "
+                                 "e.massProduced, e.energyProduced");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(lua_tonumber(w.sim_lua.raw(), -2) == mass);
+    CHECK(lua_tonumber(w.sim_lua.raw(), -1) == energy);
+
+    econ.production_active = false;
+    econ.reclaim_mass = 0;
+    econ.reclaim_energy = 0;
+    u.bank_reclaim(w.sim.get_army(0));
+    u.manage_resources(w.sim.get_army(0));
+    osc::sim::capture_world(w.sim, snapshot);
+    const auto* stopped = snapshot.find(w.id);
+    REQUIRE(stopped);
+    CHECK(stopped->mass_produced == 0);
+    CHECK(stopped->energy_produced == 0);
+}
+
 TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     UiWorld w;
     auto& u = w.unit();
@@ -360,6 +427,9 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     u.economy().consumption_active = true;
     u.economy().consumption_mass = 1;
     u.economy().consumption_energy = 5;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    u.economy().granted = 1;
+    u.manage_resources(w.sim.get_army(0));
     // Another unit: this one's creator, the focus of its build, and the one
     // it guards.
     auto other = std::make_unique<osc::sim::Unit>();

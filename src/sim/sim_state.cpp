@@ -1893,6 +1893,18 @@ void SimState::advance_tick() {
         PROFILE_ZONE("Sim::path_clusters");
         path_tables_->update_background(path::kBackgroundBudget);
     }
+    // Moho clears the beat's resource accumulators globally before any army or task runs.
+    // Paused beats never enter advance_tick, so their last report remains available.
+    entity_registry_.for_each_unit([](Entity& e) {
+        auto& unit = static_cast<Unit&>(e);
+        if (!unit.destroyed() && !unit.is_dying()) {
+            auto& economy = unit.economy();
+            economy.produced_mass = 0;
+            economy.produced_energy = 0;
+            economy.reclaimed_mass = 0;
+            economy.reclaimed_energy = 0;
+        }
+    });
     // Each army's tick begins by destroying its spent platoons (Moho's CArmyImpl::OnTick).
     clean_up_platoons();
     update_influence_maps();

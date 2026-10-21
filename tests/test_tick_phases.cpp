@@ -2131,3 +2131,32 @@ TEST_CASE("Two beats in a frame give the user two Sync tables", "[tick-phases][b
     CHECK(std::string(lua_tostring(U, -1)) == "1,2,");
     lua_pop(U, 1);
 }
+
+TEST_CASE("Production reports reset before tick threads and survive paused beats",
+          "[tick-phases][economy][banked]") {
+    Phases w;
+    Unit& producer = w.make("producer", "gen", 1, 100.0f, 100.0f);
+    producer.economy().production_active = true;
+    w.sim.tick();
+    REQUIRE(producer.economy().energy_produced() == 5.0);
+    // All four previous-tick components must disappear before Lua threads run.
+    producer.economy().produced_mass = 2.0;
+    producer.economy().reclaimed_mass = 3.0;
+    producer.economy().reclaimed_energy = 7.0;
+    REQUIRE(w.run("seen_mass = -1 seen_energy = -1 ForkThread(function()"
+                  " local e = producer:GetEconData()"
+                  " seen_mass = e.massProduced seen_energy = e.energyProduced end)"));
+    command(w, osc::sim::kRequestPauseCallback);
+    w.sim.tick();
+    REQUIRE(w.sim.paused());
+    CHECK(producer.economy().mass_produced() == 5.0);
+    CHECK(producer.economy().energy_produced() == 12.0);
+    CHECK(w.number("seen_mass") == -1.0f);
+    command(w, osc::sim::kResumeCallback);
+    w.sim.tick();
+    CHECK_FALSE(w.sim.paused());
+    CHECK(w.number("seen_mass") == 0.0f);
+    CHECK(w.number("seen_energy") == 0.0f);
+    CHECK(producer.economy().mass_produced() == 0.0);
+    CHECK(producer.economy().energy_produced() == 5.0);
+}

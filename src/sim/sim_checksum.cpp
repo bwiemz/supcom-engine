@@ -324,6 +324,14 @@ void mix_unit_work(Fnv& units, const Unit& u) {
     units.mix_f32(static_cast<f32>(econ.consumption_energy));
     units.mix_f32(static_cast<f32>(econ.production_mass));
     units.mix_f32(static_cast<f32>(econ.production_energy));
+    if (econ.produced_mass != 0 || econ.produced_energy != 0 || econ.reclaimed_mass != 0 ||
+        econ.reclaimed_energy != 0) {
+        units.mix(0x50524f44u); // "PROD": the last output GetEconData can read
+        units.mix_f32(static_cast<f32>(econ.produced_mass));
+        units.mix_f32(static_cast<f32>(econ.produced_energy));
+        units.mix_f32(static_cast<f32>(econ.reclaimed_mass));
+        units.mix_f32(static_cast<f32>(econ.reclaimed_energy));
+    }
     // Docked at a staging platform (M206r), only then: its tank and its
     // repair's ask.
     if (u.refuel_started() || econ.dock_repair_energy != 0 || econ.dock_repair_mass != 0) {

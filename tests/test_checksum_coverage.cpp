@@ -14,6 +14,7 @@
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
+#include "sim/world_snapshot.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -135,6 +136,10 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
             {"attack facing", "units", [&] { u.set_attack_facing({0, 0, 1}); }},
             {"statistics (KILLS)", "units", [&] { u.set_stat("KILLS", 3.0); }},
             {"a second statistic", "units", [&] { u.set_stat("DamageTaken", 40.0); }},
+            {"banked mass production", "units", [&] { u.economy().produced_mass = 1; }},
+            {"banked energy production", "units", [&] { u.economy().produced_energy = 5; }},
+            {"banked mass reclaim", "units", [&] { u.economy().reclaimed_mass = 2; }},
+            {"banked energy reclaim", "units", [&] { u.economy().reclaimed_energy = 6; }},
             {"unit state", "units", [&] { u.set_unit_state("Busy", true); }},
             {"busy", "units", [&] { u.set_busy(true); }},
             {"blocked command queue", "units", [&] { u.set_block_command_queue(true); }},
@@ -410,4 +415,43 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
     CHECK(detector->watched().front().below_foot_height);
     for (int i = 0; i < 30; ++i) b.tick();
     CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
+}
+
+TEST_CASE("Banked production and reclaim reports survive a snapshot",
+          "[economy][snapshot][banked]") {
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    const auto ids = setup(a);
+    auto& u = unit(a, ids[0]);
+    auto& econ = u.economy();
+    econ.production_active = true;
+    econ.production_mass = 4;
+    econ.production_energy = 20;
+    econ.consumption_active = true;
+    econ.consumption_energy = 10;
+    econ.granted = 0.25;
+    econ.reclaim_mass = 2;
+    econ.reclaim_energy = 6;
+    u.bank_reclaim(a.get_army(0));
+    u.manage_resources(a.get_army(0));
+    // Saved after a callback changes the next tick's configured rates.
+    econ.production_mass = 9;
+    econ.production_energy = 90;
+    econ.reclaim_mass = 8;
+    econ.reclaim_energy = 80;
+    const auto save = osc::sim::save_game(a, "banked production");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    REQUIRE(setup(b) == ids);
+    const std::string error = osc::sim::load_snapshot(b, save.snapshot);
+    INFO(error);
+    REQUIRE(error.empty());
+    osc::sim::WorldSnapshot world;
+    osc::sim::capture_world(b, world);
+    const auto* record = world.find(ids[0]);
+    REQUIRE(record);
+    CHECK(record->mass_produced == 3);
+    CHECK(record->energy_produced == 11);
 }
