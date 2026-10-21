@@ -295,6 +295,10 @@ The engine needs FA game data and finds it on its own. The search order is:
    answer in `~/.config/opensupcom/settings.json` (`%LOCALAPPDATA%` on Windows,
    `~/Library/Application Support/opensupcom` on macOS)
 
+The tests labelled `gate` set `OSC_RETAIL_ONLY=1`, a test switch: step 3 then takes only
+the FA folder that FAForever's `fa_path.lua` names, with retail's own init script, and step 2
+ignores `OSC_INIT_FILE` and `OSC_FAF_DATA`.
+
 To see what it picked and everything it checked, run:
 
 ```bash

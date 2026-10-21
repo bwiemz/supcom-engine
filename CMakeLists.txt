@@ -122,6 +122,18 @@ option(OSC_BUILD_TESTS "Build unit tests" ON)
 if(OSC_BUILD_TESTS)
     find_package(Catch2 3 CONFIG REQUIRED)
     enable_testing()
+    # The gate means "passes on retail FA 3599": its tests never fall back to
+    # FAF's files, and skip (exit 77) where no retail install is found. Each
+    # directory that registers gate tests calls this after its last one.
+    function(osc_gate_tests_retail_only)
+        get_property(_tests DIRECTORY PROPERTY TESTS)
+        foreach(_t IN LISTS _tests)
+            get_test_property(${_t} LABELS _labels)
+            if("${_labels}" MATCHES "(^|;)gate(;|$)")
+                set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT OSC_RETAIL_ONLY=1)
+            endif()
+        endforeach()
+    endfunction()
     add_subdirectory(tests)
     add_subdirectory(tests/integration)
 
@@ -269,4 +281,7 @@ if(OSC_LINT AND OSC_BUILD_TESTS)
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     # The full-repository scan can exceed 30 minutes on small CI runners.
     set_tests_properties(lint.clang_tidy PROPERTIES LABELS "lint" TIMEOUT 3600)
+endif()
+if(OSC_BUILD_TESTS)
+    osc_gate_tests_retail_only()
 endif()

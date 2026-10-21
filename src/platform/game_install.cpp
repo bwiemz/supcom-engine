@@ -149,11 +149,17 @@ GameInstallSearch locate_game_install(const GameInstallHints& hints,
         return search;
     }
 
+    // A test switch (the gate tests set it): OSC_RETAIL_ONLY=1 never runs FAF's files.
+    const auto retail_only = env("OSC_RETAIL_ONLY");
+    const bool no_faf = retail_only && *retail_only == "1";
+
     // 2. Environment.
     GameInstallHints env_hints;
     if (auto v = env("OSC_FA_PATH"); v && !v->empty()) env_hints.fa_path = *v;
-    if (auto v = env("OSC_INIT_FILE"); v && !v->empty()) env_hints.init_file = *v;
-    if (auto v = env("OSC_FAF_DATA"); v && !v->empty()) env_hints.faf_data_path = *v;
+    if (!no_faf) {
+        if (auto v = env("OSC_INIT_FILE"); v && !v->empty()) env_hints.init_file = *v;
+        if (auto v = env("OSC_FAF_DATA"); v && !v->empty()) env_hints.faf_data_path = *v;
+    }
     if (env_hints.fa_path || env_hints.init_file || env_hints.faf_data_path) {
         search.install = from_explicit(env_hints, "env", env, search);
         return search;
@@ -161,8 +167,25 @@ GameInstallSearch locate_game_install(const GameInstallHints& hints,
 
     // 3. FAForever.
     const fs::path faf_dir = default_faf_dir(env);
-    search.searched.push_back("faf: " + faf_dir.string());
-    if (auto init = find_file_ci(faf_dir / "bin", "init_faf.lua")) {
+    // With OSC_RETAIL_ONLY, FAF's client still names where retail is: its fa_path.lua.
+    if (no_faf) {
+        search.searched.push_back("faf: " + (faf_dir / "fa_path.lua").string() +
+                                  " (OSC_RETAIL_ONLY: retail's own init only)");
+        const auto text = read_text(faf_dir / "fa_path.lua");
+        if (auto fa = text ? parse_fa_path_lua(*text) : std::nullopt) {
+            if (auto init = retail_init(*fa)) {
+                GameInstall install;
+                install.source = "faf-retail";
+                install.fa_path = *fa;
+                install.init_file = *init;
+                search.install = std::move(install);
+                return search;
+            }
+        }
+    } else {
+        search.searched.push_back("faf: " + faf_dir.string());
+    }
+    if (auto init = no_faf ? std::nullopt : find_file_ci(faf_dir / "bin", "init_faf.lua")) {
         GameInstall install;
         install.source = "faf";
         install.init_file = *init;

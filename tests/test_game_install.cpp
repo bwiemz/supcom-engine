@@ -254,4 +254,43 @@ TEST_CASE("locate_game_install explains a failed search", "[platform][install]")
     CHECK_FALSE(result.searched.empty());
 }
 
+TEST_CASE(
+    "OSC_RETAIL_ONLY=1 runs retail's init, never FAF's, and finds FA through FAF's fa_path.lua",
+    "[platform][install]") {
+    TempDir tmp;
+    fs::path faf = tmp.path / "home" / ".faforever";
+    write_file(faf / "bin" / "init_faf.lua", "-- faf\n");
+    std::map<std::string, std::string> vars{{"HOME", (tmp.path / "home").string()},
+                                            {"OSC_RETAIL_ONLY", "1"},
+                                            {"OSC_FAF_DATA", faf.string()}};
+    CHECK_FALSE(locate_game_install({}, fake_env(vars)).install.has_value());
+
+    make_steam_tree(tmp.path);
+    auto steam = locate_game_install({}, fake_env(vars));
+    REQUIRE(steam.install.has_value());
+    CHECK(steam.install->source == "steam");
+
+    fs::path elsewhere = tmp.path / "elsewhere";
+    write_file(elsewhere / "bin" / "SupComDataPath.lua", "-- retail\n");
+    write_file(faf / "fa_path.lua", "fa_path = \"" + elsewhere.generic_string() + "\"\n");
+    auto named = locate_game_install({}, fake_env(vars));
+    REQUIRE(named.install.has_value());
+    CHECK(named.install->init_file == elsewhere / "bin" / "SupComDataPath.lua");
+    CHECK(named.install->faf_data_path.empty());
+
+    vars["OSC_RETAIL_ONLY"] = "0";
+    CHECK(locate_game_install({}, fake_env(vars)).install->source == "env");
+
+    // The gate on a Mac that names its game only through OSC_FA_PATH.
+    fs::path pinned = tmp.path / "pinned";
+    write_file(pinned / "bin" / "SupComDataPath.lua", "-- retail\n");
+    vars["OSC_RETAIL_ONLY"] = "1";
+    vars["OSC_FA_PATH"] = pinned.string();
+    auto from_env = locate_game_install({}, fake_env(vars));
+    REQUIRE(from_env.install.has_value());
+    CHECK(from_env.install->source == "env");
+    CHECK(from_env.install->fa_path == pinned);
+    CHECK(from_env.install->faf_data_path.empty());
+}
+
 #endif

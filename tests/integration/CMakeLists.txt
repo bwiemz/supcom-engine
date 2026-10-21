@@ -109,7 +109,8 @@ set_target_properties(osc_integration PROPERTIES
 #   mp          two processes over localhost TCP; need no game data (run in CI)
 #   data        need Forged Alliance game data, located like `opensupcom
 #               --print-install` does (OSC_FA_PATH, FAForever, or a Steam
-#               library). Exit code 77 = no data = skipped.
+#               library); a `gate` test sets OSC_RETAIL_ONLY=1 and so runs
+#               on retail's files alone. Exit code 77 = no data = skipped.
 #   gate        data tests that pass on retail FA 3599 today: the regression
 #               gate to run before merging (`ctest -L gate`)
 #   golden      render a fixed frame and compare with a recorded golden image
@@ -139,8 +140,11 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME mp.lockstep_slow_peer
              COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29734
                      -- --mp-slow 200 --mp-frames 80)
+    add_test(NAME mp.no_game_exit
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/no_game_exit.py
+                     $<TARGET_FILE:opensupcom>)
     set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected mp.lockstep_peer_drop
-                         mp.lockstep_slow_peer PROPERTIES LABELS mp TIMEOUT 240)
+                         mp.lockstep_slow_peer mp.no_game_exit PROPERTIES LABELS mp TIMEOUT 240)
 else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()
@@ -657,3 +661,5 @@ set_tests_properties(data.binding_coverage PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
+
+osc_gate_tests_retail_only()

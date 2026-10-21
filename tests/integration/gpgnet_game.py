@@ -42,8 +42,10 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import final
 
-from gpgnet_lobby import Link, listening
+# CTest executes this file directly, with its sibling module on sys.path.
+from gpgnet_lobby import Link, listening  # pyright: ignore[reportImplicitRelativeImport]
 
 SKIPPED = 77
 CONNECT_SECONDS = 120  # the games load FA's data and build their renderers first
@@ -57,13 +59,14 @@ TICK_LINE = re.compile(r"\[gpgnet\] tick (\d+)")
 
 def ticks_logged(log: Path) -> int:
     """The latest tick a game's log says it reached."""
-    found = TICK_LINE.findall(log.read_text(errors="replace")) if log.exists() else []
-    return int(found[-1]) if found else 0
+    found = list(TICK_LINE.finditer(log.read_text(errors="replace"))) if log.exists() else []
+    return int(found[-1].group(1)) if found else 0
 
 
 HOST_UID, JOINER_UID = 1234, 5678
 
 
+@final
 class Relay:
     """FAF's ICE adapter, as the games see it: one local UDP port standing
     for each player at the other's side. What the joiner sends to the host's
@@ -89,15 +92,15 @@ class Relay:
         while not self.stop:
             ready, _, _ = select.select([self.for_host, self.for_joiner], [], [], 0.05)
             for sock in ready:
-                data, _ = sock.recvfrom(4096)
+                data = sock.recvfrom(4096)[0]
                 if self.rng.random() < self.loss:
                     self.lost += 1
                     continue
                 self.carried += 1
                 if sock is self.for_host:  # the joiner's, to the host
-                    self.for_joiner.sendto(data, ("127.0.0.1", self.host_lobby))
+                    _ = self.for_joiner.sendto(data, ("127.0.0.1", self.host_lobby))
                 else:  # the host's, to the joiner
-                    self.for_host.sendto(data, ("127.0.0.1", self.joiner_lobby))
+                    _ = self.for_host.sendto(data, ("127.0.0.1", self.joiner_lobby))
 
     def close(self) -> None:
         self.stop = True
@@ -134,7 +137,7 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server.bind(("127.0.0.1", link_port))
             server.listen(1)
-            server.settimeout(CONNECT_SECONDS)
+            server.settimeout(0.5)
             servers[name] = server
             user_dir = root / name
             user_dir.mkdir()
@@ -158,13 +161,17 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
                     stderr=subprocess.STDOUT,
                 )
         for name, server in servers.items():
-            try:
-                conn, _ = server.accept()
-            except TimeoutError:
-                if games[name].poll() == SKIPPED:
-                    return SKIPPED
-                print(f"client: the {name} never connected")
-                return 1
+            deadline = time.monotonic() + CONNECT_SECONDS
+            while True:
+                try:
+                    conn = server.accept()[0]
+                    break
+                except TimeoutError:
+                    if games[name].poll() == SKIPPED:
+                        return SKIPPED
+                    if time.monotonic() > deadline:
+                        print(f"client: the {name} never connected")
+                        return 1
             links[name] = Link(conn)
             links[name].expect("GameState", ["Idle"], CONNECT_SECONDS)
 
@@ -215,7 +222,7 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
         for game in games.values():
             if game.poll() is None:
                 game.kill()
-                game.wait()
+                _ = game.wait()
         for server in servers.values():
             server.close()
         for name, log in logs.items():
@@ -227,7 +234,9 @@ def run(exe: str, port: int, root: Path, loss: float | None) -> int:
     failed = False
     for name, code in codes.items():
         text = logs[name].read_text(errors="replace")
-        ticks = [int(t) for t in re.findall(r"\[gpgnet\] the game reached tick (\d+)", text)]
+        ticks = [
+            int(m.group(1)) for m in re.finditer(r"\[gpgnet\] the game reached tick (\d+)", text)
+        ]
         print(f"client: the {name} ended (exit {code}), at tick {ticks[-1] if ticks else '-'}")
         if code != 0 or not ticks or ticks[-1] < PLAY_TICKS or "in lockstep" not in text:
             failed = True
