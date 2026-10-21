@@ -129,8 +129,11 @@ void print_usage() {
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops), and one\n"
               << "                     more just before --save-at's save\n"
-              << "  --bench <file>     With --ticks or --ai-skirmish: write each tick's time\n"
-              << "                     and the game's checksum as JSON (tools/bench.py)\n"
+              << "  --bench <file>     With --ticks, --ai-skirmish or --fast-match: write\n"
+              << "                     each tick's time and the game's checksum as JSON\n"
+              << "                     (tools/bench.py); with --profile, the profile too\n"
+              << "                     (each zone's own time, Lua functions, engine calls)\n"
+              << "  --bench-scenario <name>  The --bench run's scenario, named in its report\n"
               << "  --render-bench <file>  With --load: render a scene of the saved game\n"
               << "                     offscreen at 1920x1080 and write its frames' figures\n"
               << "                     as JSON (M223b; tools/bench.py)\n"
@@ -314,6 +317,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
     o.load_by_replay = parse_flag(argc, argv, "--load-by-replay");
     o.bench_report = parse_string_arg(argc, argv, "--bench", "");
+    o.bench_scenario = parse_string_arg(argc, argv, "--bench-scenario", "");
     o.render_bench_report = parse_string_arg(argc, argv, "--render-bench", "");
     o.render_scene = parse_string_arg(argc, argv, "--render-scene", "battle");
     o.gpu_passes = parse_flag(argc, argv, "--gpu-passes");
@@ -454,11 +458,23 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         std::strtoul(parse_string_arg(argc, argv, "--post-load-at", "0").c_str(), nullptr, 10));
     // --save <file> --save-at <tick>: save the game after that tick.
     o.save_path = parse_string_arg(argc, argv, "--save", "");
-    o.save_at = static_cast<u32>(
-        std::strtoul(parse_string_arg(argc, argv, "--save-at", "0").c_str(), nullptr, 10));
-    if (!o.save_path.empty() && (o.save_at == 0 || !o.headless)) {
+    {
+        const std::string at = parse_string_arg(argc, argv, "--save-at", "0");
+        for (size_t from = 0; from <= at.size();) {
+            const size_t comma = std::min(at.find(',', from), at.size());
+            const auto tick =
+                static_cast<u32>(std::strtoul(at.substr(from, comma - from).c_str(), nullptr, 10));
+            if (tick > 0) o.save_ticks.push_back(tick);
+            from = comma + 1;
+        }
+        std::sort(o.save_ticks.begin(), o.save_ticks.end());
+        o.save_at = o.save_ticks.empty() ? 0 : o.save_ticks.front();
+    }
+    const bool windowed_run = o.fast_match_ticks > 0 || o.play_for > 0;
+    if (!o.save_path.empty() && (o.save_at == 0 || (!o.headless && !windowed_run))) {
         // A headless run saves after a tick: its checks run after each one.
-        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks or --ai-skirmish");
+        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks, --ai-skirmish, "
+                      "--fast-match or --play-for");
         return std::nullopt;
     }
     return o;

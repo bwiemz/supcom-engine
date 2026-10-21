@@ -25,6 +25,7 @@ struct ProfileZoneStats {
     u32 depth = 0;          // nesting depth (for display indentation)
     // Since enabling: what a whole run's report sums
     f64 total_us = 0;
+    f64 total_self_us = 0; // of total_us, outside the zones within it
     u64 total_calls = 0;
     f64 worst_frame_us = 0; // the most this zone took in one frame
     u64 worst_frame = 0;    // which frame that was (counting from 1)
@@ -98,6 +99,7 @@ public:
             zone.last_us = sample.elapsed_us;
             zone.call_count = sample.call_count;
             zone.total_us += sample.elapsed_us;
+            zone.total_self_us += sample.self_us;
             zone.total_calls += sample.call_count;
             if (sample.elapsed_us > zone.worst_frame_us) {
                 zone.worst_frame_us = sample.elapsed_us;
@@ -136,7 +138,7 @@ public:
         if (!enabled_ || std::this_thread::get_id() != owner_) return;
         if (stack_depth_ >= MAX_STACK) return;
 
-        stack_[stack_depth_] = {name, clock::now(), depth_};
+        stack_[stack_depth_] = {name, clock::now(), depth_, 0.0};
         stack_depth_++;
         depth_++;
     }
@@ -149,16 +151,22 @@ public:
         auto& entry = stack_[stack_depth_];
         f64 elapsed = to_us(clock::now() - entry.start);
         depth_ = entry.depth;
+        // Its own time: less what the zones within it took (self time, what
+        // a ranking of costs sums without counting a nested zone twice)
+        const f64 self = elapsed - entry.child_us;
+        if (stack_depth_ > 0) stack_[stack_depth_ - 1].child_us += elapsed;
 
         // Accumulate into frame zones
         i32 fz = find_frame_zone(entry.name);
         if (fz >= 0) {
             frame_zones_[fz].elapsed_us += elapsed;
+            frame_zones_[fz].self_us += self;
             frame_zones_[fz].call_count++;
         } else if (frame_zone_count_ < MAX_ZONES) {
             auto& z = frame_zones_[frame_zone_count_++];
             z.name = entry.name;
             z.elapsed_us = elapsed;
+            z.self_us = self;
             z.call_count = 1;
             z.depth = entry.depth;
         }
@@ -173,6 +181,10 @@ public:
         return i >= 0 ? frame_zones_[i].elapsed_us : 0.0;
     }
     u32 zone_count() const { return persistent_zone_count_; }
+    /// The run's frames since enabling, their time, and the worst of them.
+    u64 timed_frames() const { return timed_frames_; }
+    f64 total_frame_us() const { return total_frame_us_; }
+    f64 worst_frame_us() const { return worst_frame_us_; }
 
     /// Get frame time history (for sparkline graph).
     const f64* frame_time_history() const { return frame_time_history_; }
@@ -248,11 +260,13 @@ private:
         const char* name;
         time_point start;
         u32 depth;
+        f64 child_us; ///< what the zones within it have taken so far
     };
 
     struct FrameZone {
         const char* name = "";
         f64 elapsed_us = 0;
+        f64 self_us = 0;
         u32 call_count = 0;
         u32 depth = 0;
     };

@@ -112,6 +112,22 @@ uint64_t total() {
     return samples().total;
 }
 
+std::vector<EngineCall> engine_calls(size_t count) {
+    // (Not what waits: a thread's yield or wait spans the ticks it sleeps.
+    // A call that calls Lua -- pcall, a sort's compare -- counts that too.)
+    static const std::set<std::string> kWaits{"WaitTicks",           "WaitFrames", "WaitFor",
+                                              "WaitSeconds",         "yield",      "CoroutineYield",
+                                              "SuspendCurrentThread"};
+    std::vector<EngineCall> out;
+    for (const auto& [name, b] : bindings().by_name)
+        if (!kWaits.contains(name)) out.push_back({name, b.calls, b.ms});
+    std::sort(out.begin(), out.end(), [](const EngineCall& a, const EngineCall& b) {
+        return a.ms != b.ms ? a.ms > b.ms : a.name < b.name;
+    });
+    if (out.size() > count) out.resize(count);
+    return out;
+}
+
 void log_report(size_t count) {
     const uint64_t all = total();
     if (all == 0) return;
@@ -119,21 +135,10 @@ void log_report(size_t count) {
     for (const auto& [where, n] : top(count))
         spdlog::info("  {:>5.1f}% {:>9}  {}",
                      100.0 * static_cast<double>(n) / static_cast<double>(all), n, where);
-    // (Not what waits: a thread's yield or wait spans the ticks it sleeps.
-    // A call that calls Lua -- pcall, a sort's compare -- counts that too.)
-    static const std::set<std::string> kWaits{"WaitTicks",           "WaitFrames", "WaitFor",
-                                              "WaitSeconds",         "yield",      "CoroutineYield",
-                                              "SuspendCurrentThread"};
-    std::vector<std::pair<std::string, Binding>> called;
-    for (const auto& entry : bindings().by_name)
-        if (!kWaits.contains(entry.first)) called.push_back(entry);
-    std::sort(called.begin(), called.end(),
-              [](const auto& a, const auto& b) { return a.second.ms > b.second.ms; });
-    if (called.size() > count) called.resize(count);
     spdlog::info("=== Engine functions the scripts called, by time ===");
-    for (const auto& [name, b] : called)
-        spdlog::info("  {:>10.1f} ms {:>10} calls {:>8.3f} ms each  {}", b.ms, b.calls,
-                     b.calls ? b.ms / static_cast<double>(b.calls) : 0.0, name);
+    for (const auto& c : engine_calls(count))
+        spdlog::info("  {:>10.1f} ms {:>10} calls {:>8.3f} ms each  {}", c.ms, c.calls,
+                     c.calls ? c.ms / static_cast<double>(c.calls) : 0.0, c.name);
 }
 
 } // namespace osc::sim::lua_profile

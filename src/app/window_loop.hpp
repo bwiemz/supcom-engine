@@ -228,6 +228,18 @@ private:
     /// rounds dropped (let go at the collect).
     std::unique_ptr<SimThread> sim_thread;
     u32 job_tick0 = 0;
+    /// --save-at's ticks in this window: the next to save at (an index)
+    size_t next_save = 0;
+    /// Whether a tick now would pass the next --save-at tick: the ticks stop
+    /// there, for the save to be the game at that tick.
+    bool at_save_tick() const;
+    /// Save the game after each --save-at tick reached (the sim not running).
+    void write_due_saves();
+    /// The game paused by its players, or over, as the last frame that
+    /// collected the sim found it: its beats run at the tick rate and its
+    /// drawn time stands (held_dt).
+    bool sim_held = false;
+
     u32 collected_tick = 0;
     std::vector<u32> job_dropped;
     /// The frames' wall times while a game plays: how many, their sum, the

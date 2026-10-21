@@ -614,6 +614,12 @@ std::optional<int> App::Window::finish() {
         spdlog::info("Fast match: {} ticks ({:.1f}s game time) in {} frames, {} drawn",
                      sim_state->tick_count(), sim_state->game_time(), fast_match_frames,
                      fast_match_drawn);
+        if (app.bench) {
+            if (app.bench->write(*sim_state))
+                spdlog::info("Bench report: {} ({} ticks)", opt.bench_report,
+                             app.bench->tick_ms().size());
+            else spdlog::error("--bench: cannot write {}", opt.bench_report);
+        }
         if (opt.profile_enabled) {
             osc::Profiler::instance().log_totals();
             osc::sim::lua_profile::log_report(40);

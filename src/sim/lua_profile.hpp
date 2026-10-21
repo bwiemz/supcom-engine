@@ -30,6 +30,15 @@ void attach(lua_State* L);
 std::vector<std::pair<std::string, uint64_t>> top(size_t count);
 /// All the samples taken.
 uint64_t total();
+/// An engine function the scripts called: its calls, and their time.
+struct EngineCall {
+    std::string name;
+    uint64_t calls = 0;
+    double ms = 0;
+};
+/// The `count` engine functions that took the most time, a wait's
+/// (WaitTicks, a yield: the ticks it sleeps) left out.
+std::vector<EngineCall> engine_calls(size_t count);
 /// Log the `count` functions with the most samples, and their share.
 void log_report(size_t count);
 

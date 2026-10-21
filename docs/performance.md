@@ -46,6 +46,36 @@ run lists the Lua functions that ran the most instructions (a sample every
     8.8%    121296  /lua/ai/gridrecon.lua:68
 ```
 
+With `OSC_LUA_PROFILE_LINES` set (any value) it counts by the line running
+instead. A file a WOPC patch hooks (`schook`) runs as the original with the
+patch after it, so a line past the original's end is the patch's line less
+the original's length.
+
+**A moment of a match, measured again and again (the Performance Lab).** A
+late match took an hour of play to measure. Instead the match is saved at
+the moments that matter and measured from there in a minute or two:
+
+- `--fast-match <ticks> --save <dir>/match-{tick}.sav --save-at
+  12000,24000,36000` plays the match and saves it after each tick (the sim's
+  jobs stop at each, so the save is the game at that tick; `{tick}` names
+  the file).
+- `--load <save> --fast-match <ticks> --profile --bench <report.json>
+  --bench-scenario <name>` loads one (in about a second) and plays on to
+  `<ticks>`, measured. The report (`app/bench.hpp`) has each tick's time,
+  the units it ran (`units_mean`, a cost per unit's divisor), the final
+  checksum (the same save and build give the same one: the verifier), and
+  under `--profile` each zone's time and its own time (`self_ms`: less the
+  zones within it, so a ranking counts nothing twice), the Lua functions
+  and the engine functions the scripts called.
+- Both runs take the same `--user-dir`: a save's snapshot is signed with
+  its user folder's key, and a run without one gets a temporary folder of
+  its own (another key: the snapshot isn't trusted, the save is caught up
+  from its first beat instead).
+
+A save holds one build's snapshot format (`state_io.cpp`'s version): a
+change of format makes the moments anew, from the same match and seed.
+
+
 **The same game twice.** A slot whose `Faction` is 5 (random) draws its
 faction afresh each run, not from `--seed`: CI's match config has five.
 Fix the factions before comparing two builds, and compare their telemetry

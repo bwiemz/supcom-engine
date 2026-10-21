@@ -73,12 +73,19 @@ struct Options {
     std::string load_path;
     std::string save_path; ///< --save <file>: the game, saved at --save-at's tick
     u32 save_at = 0;       ///< --save-at <tick>
+    /// --save-at <tick,tick,...> in a windowed game (--fast-match, --play-for):
+    /// the game saved after each, `{tick}` in --save's path naming it (the
+    /// Performance Lab's scenarios: a match at 20, 40 and 60 minutes)
+    std::vector<u32> save_ticks;
     /// --post-load-at <tick>: the game schedules a post-load after that tick
     /// (after a save there), as a load at it would -- the save/load oracle's
     /// like for like (docs/plans/2026-10-05-campaign-saves-design.md).
     u32 post_load_at = 0;
     bool scripted_orders = false;
-    std::string bench_report; ///< --bench <file>: the headless run's tick times (M223)
+    std::string bench_report; ///< --bench <file>: the run's tick times (M223), and its profile
+    /// --bench-scenario <name>: what the --bench run is (a Performance Lab
+    /// scenario's name), for its report
+    std::string bench_scenario;
     /// --match-telemetry <file>: the match's statistics, as JSON Lines
     std::string match_telemetry_path;
     /// --render-bench <file> (M223b): a saved game's scene rendered, its

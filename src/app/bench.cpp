@@ -1,9 +1,11 @@
 #include "app/bench.hpp"
 
+#include "core/profiler.hpp"
 #include "core/version.hpp"
 #include "platform/system_info.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
+#include "sim/lua_profile.hpp"
 #include "sim/sim_state.hpp"
 
 #include <fmt/format.h>
@@ -33,6 +35,47 @@ nlohmann::json to_json(const TickStats& s) {
 
 constexpr size_t kWindow = 1000; ///< ticks per window of the report
 constexpr size_t kSlowest = 10;  ///< the slowest ticks the report lists
+constexpr size_t kTopLua = 40;   ///< the Lua functions and engine calls listed
+
+/// The profile of the run (--profile): each zone, the costliest by its own
+/// time first, the Lua functions that ran the most instructions, and the
+/// engine functions the scripts called, by time.
+nlohmann::json profile_json(size_t ticks) {
+    const Profiler& p = Profiler::instance();
+    const double per_tick = ticks ? 1.0 / static_cast<double>(ticks) : 0.0;
+    std::vector<const ProfileZoneStats*> zones;
+    for (u32 i = 0; i < p.zone_count(); ++i) zones.push_back(&p.zone_stats()[i]);
+    std::sort(zones.begin(), zones.end(), [](const ProfileZoneStats* a, const ProfileZoneStats* b) {
+        return a->total_self_us > b->total_self_us;
+    });
+    nlohmann::json z = nlohmann::json::array();
+    for (const ProfileZoneStats* zone : zones)
+        z.push_back({{"name", zone->name},
+                     {"total_ms", zone->total_us / 1e3},
+                     {"self_ms", zone->total_self_us / 1e3},
+                     {"self_ms_per_tick", zone->total_self_us / 1e3 * per_tick},
+                     {"calls", zone->total_calls},
+                     {"worst_frame_ms", zone->worst_frame_us / 1e3},
+                     {"worst_frame", zone->worst_frame}});
+    const auto lua_total = sim::lua_profile::total();
+    nlohmann::json lua = nlohmann::json::array();
+    for (const auto& [where, n] : sim::lua_profile::top(kTopLua))
+        lua.push_back(
+            {{"where", where},
+             {"samples", n},
+             {"share", lua_total ? static_cast<double>(n) / static_cast<double>(lua_total) : 0.0}});
+    nlohmann::json calls = nlohmann::json::array();
+    for (const auto& c : sim::lua_profile::engine_calls(kTopLua))
+        calls.push_back({{"name", c.name}, {"calls", c.calls}, {"ms", c.ms}});
+    return {{"frames", p.timed_frames()},
+            {"frame_ms_total", p.total_frame_us() / 1e3},
+            {"worst_frame_ms", p.worst_frame_us() / 1e3},
+            {"zones", z},
+            {"lua_samples", lua_total},
+            {"lua_per_sample", sim::lua_profile::kInstructions},
+            {"lua", lua},
+            {"engine_calls", calls}};
+}
 
 } // namespace
 
@@ -60,6 +103,24 @@ BenchRecorder::BenchRecorder(std::string report_path)
 void BenchRecorder::record(Clock::duration tick) {
     if (tick_ms_.empty()) first_tick_ = Clock::now() - tick;
     tick_ms_.push_back(std::chrono::duration<double, std::milli>(tick).count());
+}
+
+void BenchRecorder::record_ms(double ms, size_t ticks) {
+    if (ticks == 0) return;
+    if (tick_ms_.empty())
+        first_tick_ = Clock::now() - std::chrono::duration_cast<Clock::duration>(
+                                         std::chrono::duration<double, std::milli>(ms));
+    for (size_t i = 0; i < ticks; ++i) tick_ms_.push_back(ms / static_cast<double>(ticks));
+}
+
+void BenchRecorder::note_units(size_t units) {
+    unit_ticks_ += static_cast<double>(units);
+    ++unit_notes_;
+}
+
+void BenchRecorder::set_scenario(std::string name, size_t start_tick) {
+    scenario_ = std::move(name);
+    start_tick_ = start_tick;
 }
 
 bool BenchRecorder::write(const sim::SimState& sim) const {
@@ -125,9 +186,14 @@ bool BenchRecorder::write(const sim::SimState& sim) const {
           {"path_expansions", expansions}}},
         {"peak_memory_mb", static_cast<double>(platform::peak_memory_bytes()) / (1024.0 * 1024.0)},
     };
+    nlohmann::json full = report;
+    full["scenario"] = scenario_;
+    full["start_tick"] = start_tick_;
+    full["units_mean"] = unit_notes_ ? unit_ticks_ / static_cast<double>(unit_notes_) : 0.0;
+    if (Profiler::instance().enabled()) full["profile"] = profile_json(tick_ms_.size());
     std::ofstream out(path_, std::ios::binary | std::ios::trunc);
     if (!out) return false;
-    out << report.dump(2) << '\n';
+    out << full.dump(2) << '\n';
     return static_cast<bool>(out.flush());
 }
 

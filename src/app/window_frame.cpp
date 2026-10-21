@@ -7,6 +7,7 @@
 #include "core/fixed_step.hpp"
 #include "core/fullscreen.hpp"
 #include "core/profiler.hpp"
+#include "core/test_status.hpp"
 #include "lua/lua_thread_check.hpp"
 #include "lua/match_records.hpp"
 #include "lua/net_lobby.hpp"
@@ -79,6 +80,7 @@ bool App::Window::frame() {
                        collected_tick - beat_tick0);
     }
     app.deliver_network_save_notices(); // a network save the ticks wrote
+    write_due_saves();
 
     app.begin_match_record();
     if (app.telemetry && sim_state) {
@@ -189,8 +191,46 @@ void App::Window::count_game_frame() {
     write_perf_sample();
 }
 
+bool App::Window::at_save_tick() const {
+    return next_save < opt.save_ticks.size() &&
+           sim_state->tick_count() >= opt.save_ticks[next_save];
+}
+
+void App::Window::write_due_saves() {
+    if (opt.save_path.empty() || !sim_state) return;
+    while (next_save < opt.save_ticks.size() &&
+           sim_state->tick_count() >= opt.save_ticks[next_save]) {
+        const osc::u32 tick = opt.save_ticks[next_save++];
+        if (sim_state->tick_count() != tick) continue; // (passed: a load began later)
+        std::string path = opt.save_path;
+        if (const auto at = path.find("{tick}"); at != std::string::npos)
+            path.replace(at, 6, std::to_string(tick));
+        const auto start = std::chrono::steady_clock::now();
+        auto save = osc::sim::save_game(*sim_state, fmt::format("tick {}", tick));
+        if (app.special_files) (void)app.special_files->sign_snapshot(save);
+        if (osc::lua::write_saved_game(save, path))
+            spdlog::info(
+                "Saved game: {} at tick {}, written in {:.0f} ms", path, tick,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                    .count());
+        else osc::test_status::fail("[FAIL] saved game: cannot write {}", path);
+    }
+}
+
 void App::Window::time_ticks(double ms, u32 ticks) {
     if (ticks == 0) return;
+    // --bench: the ticks' time, and the units they ran (a cost per unit's
+    // divisor); read here, the sim not running
+    if (app.bench && sim_state) {
+        if (app.bench->tick_ms().empty())
+            app.bench->set_scenario(opt.bench_scenario, sim_state->tick_count() - ticks);
+        app.bench->record_ms(ms, ticks);
+        size_t units = 0;
+        sim_state->entity_registry().for_each_unit([&](const osc::sim::Entity& e) {
+            if (!e.destroyed()) ++units;
+        });
+        app.bench->note_units(units);
+    }
     perf_stretch.tick_ms += ms;
     perf_stretch.ticks_timed += ticks;
     perf_stretch.tick_ms_worst = std::max(perf_stretch.tick_ms_worst, ms / ticks);
@@ -473,6 +513,7 @@ void App::Window::advance_sim(double dt) {
                 if (active_playback && active_playback->finished(*sim_state)) {
                     break;
                 }
+                if (at_save_tick()) break;
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
@@ -566,6 +607,7 @@ void App::Window::start_sim(double dt) {
             // A replay plays to its end, then holds there.
             if (active_playback && active_playback->finished(*sim_state)) break;
             if (opt.fast_match_ticks > 0 && sim_state->tick_count() >= opt.fast_match_ticks) break;
+            if (at_save_tick()) break;
             sim_state->tick();
             if (active_playback) {
                 const bool diverged = active_playback->diverged_at() != 0;

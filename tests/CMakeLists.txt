@@ -76,6 +76,7 @@ add_executable(osc_tests
     test_user_unit.cpp
     test_faf_bindings.cpp
     test_external_factory.cpp
+    test_profiler_self_time.cpp
     test_transport_unload.cpp
     test_special_files.cpp
     test_binding_coverage.cpp
