@@ -40,6 +40,13 @@ for the same reason (they were `R16G16B16A16_SFLOAT` until 2026-10, which
 let stacked additive effects reach several times white and bloom wider and
 brighter than FA's targets allow).
 
+The glow's floor, 0.01, is 2.55 steps of 8 bits, and Vulkan lets a GPU
+store either neighbour: an RTX 3050 stores 2/255; the GPU the tests were
+first measured on, 3/255. At a map's bloom of 0.036 the floor is then copied
+at 0.012 rather than 0.020, a step or two of the bloom's 8 bits, so how much
+it blooms differs between GPUs (tests 3, 4 and 7 give both), and the tests
+take either.
+
 ## What each surface leaves in alpha
 
 The scene pass clears alpha to 0, and each technique writes (or keeps) it
@@ -96,10 +103,11 @@ standing off it:
    frame: 6.04). One glowing a fifth, with an albedo five times brighter,
    brightens 2.90 times (alpha 0.21, weight 0.38: 2.93).
 3. **Under `MinimumGlow`.** A plate that doesn't glow (alpha 0.01) isn't
-   brightened (1.000). A map's bloom of 0.05 lifts it 1.148 times (1.15).
+   brightened (1.000). A map's bloom of 0.05 lifts it 1.148 times (1.15);
+   1.102 where the 0.01 is stored as 2/255.
 4. **No white-out.** At retail's usual bloom (0.036), the sky moves
    +0.0000 and XP terrain +0.0001, while TTerrain (alpha 0.01) is lifted
-   1.062 times.
+   1.063 times; 1.007 where the 0.01 is stored as 2/255.
 5. **Fading.** A glowing plate under construction isn't brightened
    (1.000): it blends, and writes no glow.
 8. **8-bit.** The frame's colour is at most 1 at a white plate glowing
@@ -117,7 +125,8 @@ standing off it:
 
 The masks on decals, water and particles aren't exercised: the test's
 scene has none. Test 7 checks a light particle's glow, and that one at
-half alpha adds its alpha squared to the frame's (0.263 over 0.01).
+half alpha adds its alpha squared to the frame's (0.263 over 0.01; 0.259
+over 2/255).
 
 ## Left for later
 
