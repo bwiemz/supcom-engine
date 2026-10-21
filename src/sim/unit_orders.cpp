@@ -1382,11 +1382,15 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
 }
 
 OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
-                                          Unit& target) {
+                                          Unit& target, bool task_waits) {
     auto& registry = ctx.registry;
     const u32 order_id = cmd.command_id;
     const u32 tid = target.entity_id();
+    const bool guarding = cmd.type == CommandType::Guard;
     const auto done = [&] {
+        // A guard lends a construction task to its target; completing that
+        // work does not complete the standing guard order.
+        if (guarding) return OrderStep::Hold;
         if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
             command_queue_.front().command_id == order_id)
             command_queue_.pop_front();
@@ -1404,7 +1408,8 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
         if (destroyed() || !in_registry()) {
             return OrderStep::Gone;
         }
-        if (turns_to_face(at) || awaits_arm() || waits_out_task(cmd) || waits_paused(cmd)) {
+        if (turns_to_face(at) || awaits_arm() || (guarding ? task_waits : waits_out_task(cmd)) ||
+            waits_paused(cmd)) {
             return OrderStep::Hold;
         }
         build_target_id_ = tid;
@@ -1770,6 +1775,18 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                target_unit->shield_needs_repair(registry, L);
     };
     const bool reclaims = has_category("RECLAIM") && build_rate_ > 0 && !rebuilder;
+
+    // An unfinished ward needs construction, just as a direct Repair on
+    // it does. start_repair rejects unfinished units: trying it each tick
+    // only re-aimed the commander's arm and never advanced the factory.
+    if (repairs && target_unit->is_being_built()) {
+        if (is_repairing()) stop_repairing(L, registry);
+        if (is_reclaiming()) stop_reclaiming(L, &registry);
+        if (within_reach(*target_unit, true, build_target_id_ == cmd.target_id))
+            return order_repair_construction(cmd, dt, ctx, econ_eff, *target_unit, task_waits);
+        if (is_building()) stop_assisting(L, &registry);
+        return guard_follow(*target_unit, true, winged_goal, ctx);
+    }
 
     // Assist: if target is building, contribute build power
     const Entity* guarded_build = repairs && !rebuilder && target_unit->is_building()

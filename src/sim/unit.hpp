@@ -1626,7 +1626,7 @@ private:
     /// it builds alongside any builder, and completes it if it gets there
     /// first.
     OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
-                                        Unit& target);
+                                        Unit& target, bool task_waits = false);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory guarding a factory takes work from its queue (Moho's guard

@@ -165,6 +165,51 @@ TEST_CASE("A repair of a unit under construction aims the arm and builds it as a
     CHECK_FALSE(arm_of(*eng).has_target());
 }
 
+TEST_CASE("A guard builds its unfinished target and keeps guarding when the work ends",
+          "[build][assist][guard]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->push_command(order(CommandType::Guard, *w.site, 1), true);
+    for (int tick = 0; tick < 20 && !eng->is_building(); ++tick) {
+        w.sim.tick();
+    }
+    REQUIRE(eng->is_building());
+    CHECK(eng->build_target_id() == w.site->entity_id());
+    CHECK(w.log() == "eng arm,eng start Repair");
+    const osc::f32 before = w.site->fraction_complete();
+    w.sim.tick();
+    CHECK(w.site->fraction_complete() > before);
+
+    SECTION("completion keeps the guard and ends the build effects once") {
+        for (int tick = 0; tick < 150 && w.site->is_being_built(); ++tick) {
+            w.sim.tick();
+        }
+        REQUIRE_FALSE(w.site->is_being_built());
+        CHECK(w.site->fraction_complete() == 1.0f);
+        CHECK(w.log() == "eng stop");
+        REQUIRE(eng->command_queue().size() == 1);
+        CHECK(eng->command_queue().front().type == CommandType::Guard);
+        for (int tick = 0; tick < 10; ++tick) w.sim.tick();
+        CHECK(w.log().empty());
+        CHECK_FALSE(eng->is_building());
+    }
+    SECTION("replacing the guard releases the unfinished target") {
+        eng->push_command(order(CommandType::Stop, *w.site, 2), true);
+        w.sim.tick();
+        CHECK(w.log() == "eng stop");
+        CHECK_FALSE(eng->is_building());
+        CHECK_FALSE(arm_of(*eng).has_target());
+        CHECK(w.site->is_being_built());
+    }
+    SECTION("a destroyed target ends the guard and its build effects") {
+        w.site->mark_destroyed();
+        w.sim.tick();
+        CHECK(w.log() == "eng stop");
+        CHECK_FALSE(eng->is_building());
+        CHECK(eng->command_queue().empty());
+    }
+}
+
 TEST_CASE("A repair whose target is gone stops with nil for it, and fails nothing",
           "[build][assist]") {
     AssistSim w;
@@ -337,6 +382,27 @@ TEST_CASE("A guard paused before it helps a build waits until a retry after unpa
     }
     w.sim.tick();
     CHECK(helper->is_building());
+}
+
+TEST_CASE("A guard paused before building its ward consumes its retry timer once per tick",
+          "[build][assist][guard][pause]") {
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->set_paused(true);
+    eng->push_command(order(CommandType::Guard, *w.site, 1), true);
+    for (int tick = 0; tick < 15; ++tick) {
+        w.sim.tick();
+        CHECK_FALSE(eng->is_building());
+    }
+    // Like a direct repair, the arm arrives on tick 2, then retries on
+    // ticks 12 and 22. Unpausing on tick 15 leaves seven ticks to wait.
+    eng->set_paused(false);
+    for (int tick = 0; tick < 6; ++tick) {
+        w.sim.tick();
+        CHECK_FALSE(eng->is_building());
+    }
+    w.sim.tick();
+    CHECK(eng->is_building());
 }
 
 TEST_CASE("A paused guard helping a build holds it and adds nothing", "[build][assist][pause]") {
