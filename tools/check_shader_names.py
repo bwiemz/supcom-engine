@@ -11,16 +11,17 @@ baseline entry that has a technique now or that retail no longer sets.
 
 Usage: check_shader_names.py <repo root>          (exit 1 on a problem)
        check_shader_names.py --extract <FA dir> > tools/shader_names.txt
-       check_shader_names.py --installed <repo root>
-           (the same check on the installed game's .bp files, found as the engine
-           finds them through OSC_FA_PATH; exit 77, a skip, when there are none)
+       check_shader_names.py --installed <repo root> <opensupcom>
+           (the same check on the installed game's .bp files, in the install
+           `opensupcom --print-install` names; exit 77, a skip, only when the
+           engine reports no installation; any other failure fails)
        check_shader_names.py --self-test
 """
 
 from __future__ import annotations
 
-import os
 import re
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -63,8 +64,10 @@ def names_in(fa: Path) -> set[str]:
 def extract(fa: Path) -> int:
     names = names_in(fa)
     if not names:
-        print(f"{fa}: no ShaderName in any gamedata/*.scd blueprint; is it a game install?",
-              file=sys.stderr)
+        print(
+            f"{fa}: no ShaderName in any gamedata/*.scd blueprint; is it a game install?",
+            file=sys.stderr,
+        )
         return 1
     print("# Retail ShaderName values: tools/check_shader_names.py --extract")
     for n in sorted(names):
@@ -73,7 +76,7 @@ def extract(fa: Path) -> int:
 
 
 def read_names(path: Path) -> list[str]:
-    out = []
+    out: list[str] = []
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if line:
@@ -82,14 +85,18 @@ def read_names(path: Path) -> list[str]:
 
 
 def problems_of(missing: set[str], baseline: list[str]) -> list[str]:
-    out = []
+    out: list[str] = []
     for n in sorted(missing - set(baseline)):
-        out.append(f"{n}: retail sets this ShaderName and the renderer has no technique for it; "
-                   "add one, or list it in tools/shader_names_baseline.txt")
+        out.append(
+            f"{n}: retail sets this ShaderName and the renderer has no technique for it; "
+            + "add one, or list it in tools/shader_names_baseline.txt"
+        )
     for n in baseline:
         if n not in missing:
-            out.append(f"{n}: has a technique now, or retail no longer sets it; "
-                       "take it off tools/shader_names_baseline.txt")
+            out.append(
+                f"{n}: has a technique now, or retail no longer sets it; "
+                + "take it off tools/shader_names_baseline.txt"
+            )
     return out
 
 
@@ -101,12 +108,33 @@ def check(root: Path, names: list[str] | None = None) -> tuple[list[str], int]:
     return problems_of(missing, read_names(tools / "shader_names_baseline.txt")), len(missing)
 
 
-def check_installed(root: Path) -> int:
-    fa = os.environ.get("OSC_FA_PATH")
-    names = names_in(Path(fa)) if fa and (Path(fa) / "gamedata").is_dir() else set()
-    if not names:
-        print("no installed game found through OSC_FA_PATH; skipping")
+NO_INSTALL = "No Supreme Commander: Forged Alliance installation found."
+
+
+def install_of(code: int, out: str) -> Path | str | None:
+    """From `opensupcom --print-install`'s exit code and output: the FA directory, None when the engine
+    reports no installation, or the problem when it did neither."""
+    if code == 1 and NO_INSTALL in out:
+        return None
+    m = re.search(r"^fa_path=(.+)$", out, re.MULTILINE)
+    if code != 0 or not m:
+        return f"--print-install exited {code} without naming an install or reporting none"
+    return Path(m.group(1))
+
+
+def check_installed(root: Path, engine: str) -> int:
+    run = subprocess.run([engine, "--print-install"], capture_output=True, text=True, check=False)
+    fa = install_of(run.returncode, run.stdout)
+    if fa is None:
+        print(f"{engine} --print-install found no installed game; skipping")
         return 77
+    if isinstance(fa, str):
+        print(f"{engine} {fa}")
+        return 1
+    names = names_in(fa)
+    if not names:
+        print(f"{fa}: no ShaderName in any gamedata/*.scd blueprint; is it a game install?")
+        return 1
     return report(*check(root, sorted(names)), "installed")
 
 
@@ -120,14 +148,18 @@ def report(problems: list[str], n: int, what: str) -> int:
 
 
 def self_test() -> int:
-    got = shader_names("Mesh { LODs = { { ShaderName = 'Aeon' }, { shadername = \"Flat\" },"
-                       " { ShaderName = '' } } }")
+    got = shader_names(
+        "Mesh { LODs = { { ShaderName = 'Aeon' }, { shadername = \"Flat\" },"
+        + " { ShaderName = '' } } }"
+    )
     if got != {"Aeon", "Flat"}:
         print(f"self-test: shader_names gave {sorted(got)}")
         return 1
-    source = ('kRemaps[] = {\n {"TMeshNoLighting", "Flat"},\n};\n'
-              'MeshTechnique mesh_technique(x) {\n if (shader_name == "Aeon") return 1;\n'
-              ' return Unit;\n}')
+    source = (
+        'kRemaps[] = {\n {"TMeshNoLighting", "Flat"},\n};\n'
+        'MeshTechnique mesh_technique(x) {\n if (shader_name == "Aeon") return 1;\n'
+        " return Unit;\n}"
+    )
     later = source + '\nvoid other() {\n if (shader_name == "Helper") return;\n}\n'
     remaps, known = engine_shaders(later)
     if remaps != {"TMeshNoLighting": "Flat"} or known != {"Aeon", "Unit", "Wreckage"}:
@@ -142,6 +174,18 @@ def self_test() -> int:
         if len(problems_of(missing, baseline)) != n:
             print(f"self-test: baseline {baseline}: want {n} problem(s)")
             return 1
+    cases = [
+        (0, "source=steam\nfa_path=/g/FA\ninit_file=/g/FA/bin/x.lua\n", Path("/g/FA")),
+        (1, f"{NO_INSTALL}\nsearched steam: /s\n", None),
+        (1, "searched steam: /s\n", str),
+        (-11, "", str),
+        (0, "source=steam\n", str),
+    ]
+    for code, out, want in cases:
+        got = install_of(code, out)
+        if (type(got) is not want) if want is str else got != want:
+            print(f"self-test: install_of({code}, {out!r}) gave {got!r}")
+            return 1
     with tempfile.TemporaryDirectory() as empty:
         if extract(Path(empty)) != 1:
             print("self-test: --extract on a directory without game data must fail")
@@ -155,8 +199,8 @@ def main(argv: list[str]) -> int:
         return self_test()
     if len(argv) == 2 and argv[0] == "--extract":
         return extract(Path(argv[1]))
-    if len(argv) == 2 and argv[0] == "--installed":
-        return check_installed(Path(argv[1]))
+    if len(argv) == 3 and argv[0] == "--installed":
+        return check_installed(Path(argv[1]), argv[2])
     if len(argv) != 1:
         print(__doc__)
         return 2
