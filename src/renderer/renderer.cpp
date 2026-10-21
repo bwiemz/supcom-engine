@@ -2225,12 +2225,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     const bool scene_capturing = record_scene_capture(cmd_);
 
     const bool do_bloom = bloom_enabled_ && bloom_.ready();
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Bloom);
     if (do_bloom) {
         bloom_.record(cmd_, kBloomGlowCopyScale, lighting_.bloom, kBloomBlurKernelScale,
                       kBloomBlurCount);
     }
 
     // Begin swapchain render pass for composite + UI
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Composite);
     begin_swapchain_pass(fi, image_index);
 
     // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
@@ -2259,22 +2261,27 @@ void Renderer::record_view(u32 fi, const std::array<f32, 16>& vp, const Frustum&
     }
 
     // ==================== SHADOW PASS ====================
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Shadow);
     record_shadow_pass(fi, vp);
 
     // ==================== NORMALS ====================
     collect_frame_decals(frustum, ticks);
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Normals);
     record_normal_pass(fi, vp);
 
     // ==================== REFLECTION ====================
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Reflection);
     record_reflection_pass(fi, vp);
 
     // ==================== MAIN PASS ====================
     PROFILE_ZONE("Render::main_pass");
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Main);
     if (after_another) {
         keep_scene_drawn();
     }
     record_main_pass(fi, vp, after_another);
     vkCmdEndRenderPass(cmd_);
+    gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Other);
 }
 
 void Renderer::keep_scene_drawn() {
@@ -2957,7 +2964,9 @@ void Renderer::draw_cartographic_groups(
 
 void Renderer::copy_and_continue(VkCommandBuffer cmd, VkRenderPass next) {
     vkCmdEndRenderPass(cmd);
+    gpu_queries_.mark(cmd, GpuFrameQueries::Pass::RefractionCopy);
     copy_refraction(cmd);
+    gpu_queries_.mark(cmd, GpuFrameQueries::Pass::Main);
     VkRenderPassBeginInfo again{};
     again.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     again.renderPass = next;

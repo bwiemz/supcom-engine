@@ -32,6 +32,10 @@ namespace osc::app {
 /// a tie; nullopt when there is none. The same game picks the same square.
 std::optional<sim::Vector3> busiest_battle(const sim::SimState& sim, f32 side = 64.0f);
 
+/// The frames' GPU time by pass (GpuFrameQueries::kPassNames), each
+/// summarised as the report's other times are; null when none was split.
+nlohmann::json gpu_passes_json(const std::vector<renderer::GpuFrameQueries::Frame>& frames);
+
 class RenderBench {
 public:
     enum class Scene {
@@ -42,7 +46,9 @@ public:
     /// "battle", "late" or "strategic"; nullopt for another name.
     static std::optional<Scene> scene_named(const std::string& name);
 
-    RenderBench(std::string report_path, Scene scene, u32 warmup_frames, u32 frames);
+    /// `passes`: split the GPU time by pass (--gpu-passes), at a cost to it.
+    RenderBench(std::string report_path, Scene scene, u32 warmup_frames, u32 frames,
+                bool passes = false);
 
     /// Before a frame renders: the scene's view, the first time the game is
     /// in (its focus chosen then), then the next step of its path.
@@ -78,6 +84,7 @@ private:
     Scene scene_;
     u32 warmup_;
     u32 frames_;
+    bool passes_;
     static constexpr u32 kMaxWait = 3600; ///< a minute of frames on the fixed clock
     u32 seen_ = 0;                        ///< frames since the scene began, warm-up included
     u32 waited_ = 0;                      ///< frames before it, the save loading

@@ -182,6 +182,7 @@ constexpr Mode kModesBefore[] = {
     {"--minimap-mesh-test", test_minimap_meshes, true},
     {"--world-shapes-test", test_world_shapes, true},
     {"--skirt-render-test", test_skirt_render, false},
+    {"--gpu-pass-timing-test", test_gpu_pass_timing, false},
     {"--water-reflection-test", test_water_reflection, false},
     {"--refract-render-test", test_refract_render, false},
     {"--decal-render-test", test_decal_render, false},
@@ -419,6 +420,7 @@ void IntegrationModes::print_usage() const {
               << "  --playable-boundary-test  Outside a smaller playable rect, the world black\n"
               << "  --world-shapes-test FAF's OnRenderWorld draws its shapes in the world\n"
               << "  --skirt-render-test The terrain's skirt below the map's edges (TTerrainSkirt)\n"
+              << "  --gpu-pass-timing-test The GPU's frame time split by pass, only when asked\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
               << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"
               << "  --decal-render-test The map's decals: projected by the corner, lit, masked, faded\n"

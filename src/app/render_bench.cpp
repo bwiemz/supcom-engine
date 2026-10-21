@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <map>
@@ -68,6 +69,19 @@ const char* scene_name(RenderBench::Scene scene) {
 
 } // namespace
 
+nlohmann::json gpu_passes_json(const std::vector<renderer::GpuFrameQueries::Frame>& frames) {
+    using Queries = renderer::GpuFrameQueries;
+    std::array<std::vector<f64>, Queries::kPasses> ms;
+    for (const auto& f : frames)
+        if (f.passes_timed)
+            for (size_t p = 0; p < Queries::kPasses; ++p) ms[p].push_back(f.pass_ms[p]);
+    if (ms[0].empty()) return nullptr;
+    nlohmann::json passes = nlohmann::json::object();
+    for (size_t p = 0; p < Queries::kPasses; ++p)
+        passes[Queries::kPassNames[p]] = stats_json(ms[p]);
+    return passes;
+}
+
 std::optional<sim::Vector3> busiest_battle(const sim::SimState& sim, f32 side) {
     struct Square {
         u32 units = 0;
@@ -107,9 +121,10 @@ std::optional<RenderBench::Scene> RenderBench::scene_named(const std::string& na
     return std::nullopt;
 }
 
-RenderBench::RenderBench(std::string report_path, Scene scene, u32 warmup_frames, u32 frames)
+RenderBench::RenderBench(std::string report_path, Scene scene, u32 warmup_frames, u32 frames,
+                         bool passes)
     : path_(std::move(report_path)), scene_(scene), warmup_(warmup_frames),
-      frames_(std::max<u32>(frames, 1)) {
+      frames_(std::max<u32>(frames, 1)), passes_(passes) {
     samples_.reserve(frames_);
     gpu_.reserve(frames_);
 }
@@ -118,6 +133,7 @@ void RenderBench::before_frame(renderer::Renderer& renderer, const sim::SimState
     renderer::Camera& camera = renderer.camera();
     if (!started_) {
         started_ = true;
+        renderer.set_timing_passes(passes_);
         tick_at_start_ = sim.tick_count();
         const map::Terrain* terrain = sim.terrain();
         const f32 width = terrain ? static_cast<f32>(terrain->map_width()) : 512.0f;
@@ -228,11 +244,13 @@ bool RenderBench::write(const renderer::Renderer& renderer, const sim::SimState&
           {"height", renderer.height()},
           {"warmup_frames", warmup_},
           {"frames", samples_.size()},
+          {"pass_timing", passes_},
           {"focus", {focus_.x, focus_.z}}}},
         {"cpu", stats_json(cpu)},
         {"cpu_zones", zones_json()},
         {"gpu_wait", stats_json(wait)},
         {"gpu", gpu_ms.empty() ? nlohmann::json(nullptr) : stats_json(gpu_ms)},
+        {"gpu_passes", gpu_passes_json(gpu_)},
         {"commands",
          {{"draws", counts([](const Sample& s) { return s.counts.draws; })},
           {"vertices", counts([](const Sample& s) { return s.counts.vertices; })},

@@ -566,6 +566,9 @@ public:
     const CommandCounts& last_command_counts() const { return last_command_counts_; }
     f64 last_gpu_wait_ms() const { return last_gpu_wait_ms_; }
     const GpuFrameQueries::Frame& last_gpu_frame() const { return gpu_queries_.latest(); }
+    /// The GPU's time split by pass in last_gpu_frame(), at a cost to the frame.
+    void set_timing_passes(bool on) { gpu_queries_.set_timing_passes(on); }
+    bool gpu_timestamps_supported() const { return gpu_queries_.timestamps_supported(); }
     /// How many world frames render() has recorded (the GPU figures name one).
     u64 frame_sequence() const { return frame_sequence_; }
     /// VRAM over the device-local heaps (VMA): what the renderer allocated,
