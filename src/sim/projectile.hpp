@@ -23,8 +23,8 @@ struct ProjectileBlueprintInfo {
     /// Its Categories, and ALLPROJECTILES.
     std::unordered_set<std::string> categories;
     /// DesiredShooterCap: at most this many weapons shoot at it at once (0:
-    /// no cap).
-    u32 desired_shooter_cap = 0;
+    /// no cap). REntityBlueprint's default is 3 (retail's /synclog beat 0).
+    u32 desired_shooter_cap = 3;
     bool camera_follows = false;
     f32 camera_follow_timeout = 1.0f;
 };

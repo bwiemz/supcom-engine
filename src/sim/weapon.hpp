@@ -99,7 +99,7 @@ public:
     f32 firing_randomness = 0;
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
     f32 max_height_diff = 0;               // MaxHeightDiff / ChangeMaxHeightDiff (<= 0: unlimited)
-    f32 firing_tolerance = 0;              // FiringTolerance (degrees) / ChangeFiringTolerance
+    f32 firing_tolerance = 0.01f;          // FiringTolerance (degrees) / ChangeFiringTolerance
     f32 tracking_radius = 1;               // TrackingRadius: acquire out to MaxRadius * this
     f32 heading_arc_center = 0;            // HeadingArcCenter (degrees from the unit's facing)
     f32 heading_arc_range = 180;           // HeadingArcRange (degrees either side)

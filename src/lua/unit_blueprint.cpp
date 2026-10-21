@@ -130,8 +130,17 @@ static void read_drive(lua_State* L, const BlueprintStore& store, const Blueprin
         drive.turn_radius = number("TurnRadius", 0);
         // FAF: MaxSpeedReverse defaults to MaxSpeed (every retail unit gives it).
         drive.max_speed_reverse = number("MaxSpeedReverse", max_speed);
-        // Two retail blueprints spell it BackupDistance.
-        drive.backup_distance = number("BackUpDistance", number("BackupDistance", 0));
+        // Two retail blueprints spell it BackupDistance. Unset (negative), it
+        // is three times the unit's length (RUnitBlueprintPhysics; SizeZ
+        // defaults to 1).
+        drive.backup_distance = number("BackUpDistance", number("BackupDistance", -1));
+        if (drive.backup_distance < 0) {
+            lua_pushstring(L, "SizeZ");
+            lua_rawget(L, physics - 1);
+            const f32 size_z = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 1.0f;
+            lua_pop(L, 1);
+            drive.backup_distance = size_z * 3.0f;
+        }
         drive.rotate_threshold = number("RotateOnSpotThreshold", 0.5f);
         drive.turn_facing_rate = number("TurnFacingRate", 0) * kDegToRad;
         lua_pushstring(L, "RotateOnSpot");
@@ -821,14 +830,15 @@ static void read_life_bar(lua_State* L, const BlueprintStore& store, const Bluep
     store.push_lua_table(entry, L);
     const int bp = lua_gettop(L);
     sim::Unit::LifeBar bar;
-    const auto number = [&](const char* key) {
+    const auto number = [&](const char* key, f32 fallback = 0.0f) {
         lua_pushstring(L, key);
         lua_rawget(L, bp);
-        const f32 v = lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+        const f32 v =
+            lua_type(L, -1) == LUA_TNUMBER ? static_cast<f32>(lua_tonumber(L, -1)) : fallback;
         lua_pop(L, 1);
         return v;
     };
-    bar.size = number("LifeBarSize");
+    bar.size = number("LifeBarSize", 1.0f); // Moho's default (retail's /synclog beat 0)
     bar.height = number("LifeBarHeight");
     bar.offset = number("LifeBarOffset");
     lua_pushstring(L, "LifeBarRender");

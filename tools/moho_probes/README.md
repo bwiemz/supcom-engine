@@ -177,3 +177,23 @@ Asked on 2026-10-15 and 2026-10-20: the original three times (`drive`, once with
 | `buildreach` point defence | builds from (606.03, 110.52), 3.47 from the site | within 3 on main (the range test's bound then); 3.04 now (3.30 with `--moho-pathing`) | Moho sends it to the cell nearest the site clear of its skirt grown by a cell, touching counting (`PrepareMove(1, site, skirt)`), and it builds once in that cell. |
 | `buildreach` power generator | builds from (640.50, 107.13), 3.37 from the site | 3.03 now | The same rule. |
 | `buildreach` land factory | builds where it stands, 12 from the site, on t=2 | the same | Its skirt is 8: the gap, 3, is within its `MaxBuildDistance`. |
+
+**`blueprints/`** compares every unit blueprint with the original's. Run with `/synclog <dir>`, the original writes a file a beat, and its hooks set `sim_KeepAllLogFiles` from the interface so that it keeps them (without it Moho deletes each beat's file unless that beat went out of sync). Beat 0's file holds every blueprint as Moho filled it in, after its constructors and `OnInitBlueprint`: the defaults a `.bp` leaves out included. On the engine, its other hook logs each blueprint as the scripts see it, a `PROBE bp <id> <path>=<value>` line a field; a few ticks are enough. Then:
+
+```sh
+python tools/moho_probes/blueprints/bp_diff.py <dir>/<date>/beat00000.log opensupcom.log
+```
+
+It lists, per field, the units whose values differ, then each field the `.bp` files leave out with the value Moho gives it, for the engine's code to supply. Beat 0 prints Moho's C++ copy, whose footprint and skirt are derived (its footprint class's), while the scripts' tables keep the `.bp`'s; those fields are listed however the engine's units hold them.
+
+Asked on 2026-10-15: the original once; the engine on main 9f454781. 383 of 48,722 fields the two share differed (nearly all the footprint and skirt), and six defaults were not Moho's. `docs/plans/2026-10-20-moho-blueprint-defaults-design.md` ports four of them.
+
+| Field | The original | The engine | So |
+|---|---|---|---|
+| a mobile unit's footprint | its `footprints.lua` class's (134 of 134 ground-mobile units; almost all 1x1) | `ceil(SizeX/Z)`, e.g. 1x2 | `ComputeDerivedQuantities` replaces the footprint with its class's. Left for a change of its own (the note's section 5): it changes who yields in steering. |
+| its skirt | at least the class's footprint (268 of 268 axes) | at least the old footprint | The same function. Left with the footprint. |
+| `BackUpDistance` left out | `SizeZ * 3` (495 of 495) | 0 | Fixed with the note. |
+| `DesiredShooterCap` left out | 3 (278 of 287 projectiles) | 0 | Fixed with the note. |
+| `FiringTolerance` left out | 0.01 (37 of 37 weapons) | 0 | Fixed with the note. |
+| `LifeBarSize` left out | 1 (12 of 12) | 0 | Fixed with the note. |
+| `TurnRadius` left out | 5 (419 of 419) | 0 | Not changed: without Moho's spline its effect on turns is unmeasured. |

@@ -7,6 +7,8 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/blueprint_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "sim/projectile.hpp"
+#include "sim/weapon.hpp"
 
 #include <string>
 
@@ -275,4 +277,16 @@ TEST_CASE("Scripts iterate a blueprint's tables in the order of Moho's copy of i
         end
         assert(order == 'RCH Back LCH ', order)
     )"));
+}
+
+TEST_CASE("A weapon without FiringTolerance has Moho's 0.01 degrees", "[blueprint-defaults]") {
+    // retail's /synclog beat 0: the 37 weapons that leave it out hold 0.01.
+    const osc::sim::Weapon weapon;
+    CHECK(weapon.firing_tolerance == 0.01f);
+}
+
+TEST_CASE("A projectile without DesiredShooterCap has Moho's 3", "[blueprint-defaults]") {
+    // REntityBlueprint's default: 278 of retail's 287 projectiles hold 3.
+    const osc::sim::ProjectileBlueprintInfo info;
+    CHECK(info.desired_shooter_cap == 3);
 }
