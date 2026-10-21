@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "app/support.hpp"
 #include "core/front_end_data.hpp"
 #include "sim/army_brain.hpp"
@@ -174,6 +175,41 @@ TEST_CASE("A reclaimer's own production stays beside its reclaim, and after it",
     CHECK(a->economy().production_mass == 1.0);
     CHECK(a->economy().production_active);
     CHECK(a->economy().reclaim_mass == 0.0);
+}
+
+TEST_CASE("A producer with a request produces at its grant, unless it is a natural producer",
+          "[army][economy]") {
+    const bool natural = GENERATE(false, true);
+    const double share = GENERATE(0.0, 0.25, 0.5, 1.0);
+    CAPTURE(natural, share);
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto generator = std::make_unique<osc::sim::Unit>();
+    generator->set_army(0);
+    generator->economy().production_energy = 20.0 * share;
+    generator->economy().production_active = true;
+    auto extractor = std::make_unique<osc::sim::Unit>();
+    extractor->set_army(0);
+    extractor->economy().production_mass = 4.0;
+    extractor->economy().production_active = true;
+    extractor->economy().consumption_energy = 20.0;
+    extractor->economy().consumption_active = true;
+    extractor->economy().natural_producer = natural;
+    auto* x = extractor.get();
+    registry.register_entity(std::move(generator));
+    registry.register_entity(std::move(extractor));
+
+    for (int i = 0; i < 3; ++i) {
+        economy_tick(brain, registry, 0.1);
+    }
+    CHECK(x->economy().resource_consumed == Catch::Approx(share));
+    CHECK(brain.economy().energy.income == Catch::Approx(20.0 * share));
+    CHECK(brain.economy().mass.income == Catch::Approx(natural ? 4.0 : 4.0 * share));
+
+    x->economy().consumption_active = false;
+    economy_tick(brain, registry, 0.1);
+    CHECK(brain.economy().mass.income == Catch::Approx(4.0));
 }
 
 TEST_CASE("A stats trigger fires once, when all its conditions hold", "[army][stats]") {

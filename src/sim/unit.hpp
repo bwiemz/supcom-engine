@@ -58,6 +58,7 @@ struct UnitEconomy {
     f64 consumption_energy = 0.0;
     bool production_active = false;
     bool consumption_active = false;
+    bool natural_producer = false;
     /// The consumption flag as the unit's script last set it (Moho's
     /// ConsumptionActive): its OnConsumptionActive/InActive fire on a change
     /// of this, not of the drain the engine switches while building.

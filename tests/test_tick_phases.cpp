@@ -597,6 +597,7 @@ TEST_CASE("A unit finished in a tick's orders is in its army's income from the n
     fac.economy().production_mass = 100.0;
     fac.economy().production_energy = 100.0;
     fac.economy().production_active = true;
+    fac.economy().natural_producer = true;
     REQUIRE(w.run(
         "done = 0 income = {}"
         " function Plain:OnStopBeingBuilt() done = GetGameTick() end"
@@ -622,12 +623,12 @@ TEST_CASE("A unit finished in a tick's orders is in its army's income from the n
 
 namespace {
 
-std::pair<double, double> killed_in_its_step(const char* what, double stored_energy) {
+std::pair<double, double> killed_in_its_step(const char* what) {
     Phases w;
     w.brain("brain", 0);
     osc::sim::ArmyBrain& army = *w.sim.get_army(0);
     army.set_extra_storage(0.0, 100.0);
-    army.set_stored_resources(0.0, stored_energy);
+    army.set_stored_resources(0.0, 50.0);
     Unit& ship = w.make("ship", "ship", 1, 100.0f, 100.0f);
     ship.economy().production_energy = 5.0;
     ship.economy().production_active = true;
@@ -654,20 +655,20 @@ std::pair<double, double> killed_in_its_step(const char* what, double stored_ene
 } // namespace
 
 TEST_CASE("A unit its own step kills produces nothing for the next economy", "[tick-phases]") {
-    const auto [before, after] = killed_in_its_step("brain:GetEconomyIncome('ENERGY')", 0.0);
+    const auto [before, after] = killed_in_its_step("brain:GetEconomyIncome('ENERGY')");
     CHECK(before == Catch::Approx(0.5));
     CHECK(after == 0.0);
 }
 
 TEST_CASE("A unit its own step kills takes its storage away by the next economy", "[tick-phases]") {
-    const auto [before, after] = killed_in_its_step("brain:GetEconomyStoredRatio('ENERGY')", 50.0);
+    const auto [before, after] = killed_in_its_step("brain:GetEconomyStoredRatio('ENERGY')");
     CHECK(before == Catch::Approx(50.0 / 200.0).epsilon(0.05));
     CHECK(after == Catch::Approx(50.0 / 100.0).epsilon(0.05));
 }
 
 TEST_CASE("A unit its own step kills reads no ResourceConsumed from the next tick",
           "[tick-phases]") {
-    const auto [before, after] = killed_in_its_step("ship:GetResourceConsumed()", 50.0);
+    const auto [before, after] = killed_in_its_step("ship:GetResourceConsumed()");
     CHECK(before == 1.0);
     CHECK(after == 0.0);
 }

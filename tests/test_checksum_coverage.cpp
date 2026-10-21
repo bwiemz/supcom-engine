@@ -333,6 +333,7 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
         u.set_elevation_target(25.0f);
         u.set_vet_level(1);
         u.set_last_attacker_id(ids[1]);
+        u.economy().natural_producer = true;
         u.add_enhancement("Back", "Shield");
         auto* p = sim.get_army(0)->create_platoon("Label");
         p->set_unique_name("KeepMe");
@@ -391,6 +392,7 @@ TEST_CASE("A game saved with that state, restored and played on, matches", "[syn
     CHECK(u.turn_mult() == 0.5f);
     CHECK(u.last_attacker_id() == ids[1]);
     CHECK(u.get_stat("KILLS") == 3.0);
+    CHECK(u.economy().natural_producer);
     CHECK(b.get_army(0)->find_platoon_by_name("keepme") != nullptr);
     CHECK(u.idle_landing().descending);
     CHECK(u.idle_landing().layer == "Land");

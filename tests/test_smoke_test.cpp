@@ -338,6 +338,7 @@ osc::sim::Unit* find_factory(const BuildRuleHarness& h) {
         found->economy().production_mass = 100.0;
         found->economy().production_energy = 100.0;
         found->economy().production_active = true;
+        found->economy().natural_producer = true;
     }
     return found;
 }
@@ -1427,6 +1428,7 @@ struct UpgradeHarness {
         factory->economy().production_mass = 100.0;
         factory->economy().production_energy = 100.0;
         factory->economy().production_active = true;
+        factory->economy().natural_producer = true;
     }
 
     void queue(osc::sim::CommandType type, const char* bp) {
