@@ -44,6 +44,7 @@ nlohmann::json profile_json(size_t ticks) {
     const Profiler& p = Profiler::instance();
     const double per_tick = ticks ? 1.0 / static_cast<double>(ticks) : 0.0;
     std::vector<const ProfileZoneStats*> zones;
+    zones.reserve(p.zone_count());
     for (u32 i = 0; i < p.zone_count(); ++i) zones.push_back(&p.zone_stats()[i]);
     std::sort(zones.begin(), zones.end(), [](const ProfileZoneStats* a, const ProfileZoneStats* b) {
         return a->total_self_us > b->total_self_us;
@@ -110,7 +111,7 @@ void BenchRecorder::record_ms(double ms, size_t ticks) {
     if (tick_ms_.empty())
         first_tick_ = Clock::now() - std::chrono::duration_cast<Clock::duration>(
                                          std::chrono::duration<double, std::milli>(ms));
-    for (size_t i = 0; i < ticks; ++i) tick_ms_.push_back(ms / static_cast<double>(ticks));
+    tick_ms_.insert(tick_ms_.end(), ticks, ms / static_cast<double>(ticks));
 }
 
 void BenchRecorder::note_units(size_t units) {
