@@ -321,6 +321,75 @@ TEST_CASE("A frame's batches, in Moho's order and colours", "[range]") {
     CHECK(osc::renderer::range_batches(o, scene).empty());
 }
 
+TEST_CASE("A selected sensor lights the same intel's ring on the army's others in view",
+          "[range]") {
+    RangeOverlays o;
+    o.set_profile(profile("Radar"));
+    o.set_profile(profile("Sonar"));
+    o.set_profile(profile("Omni"));
+    o.set_profile(profile("DirectFire"));
+    o.settings().render_selected = true;
+    RangeBlueprint bp;
+    bp.categories = {"STRUCTURE", "INTELLIGENCE"};
+    const auto sensor = [&](osc::u32 id, f32 x, f32 radar, f32 sonar, f32 omni) {
+        RangeUnit u = at(bp, {}, x, 0);
+        u.id = id;
+        u.radar = radar;
+        u.sonar = sonar;
+        u.omni = omni;
+        return u;
+    };
+    RangeScene scene;
+    // Two radars, a sonar, and an omni (which has radar too), all in view
+    scene.in_view = {sensor(1, 1, 50, 0, 0), sensor(2, 2, 60, 0, 0), sensor(3, 3, 0, 40, 0),
+                     sensor(4, 4, 70, 0, 30)};
+
+    // Radar 1 picked: its own ring in the selected colour, then every other
+    // radar's (2 and the omni's radar) in the normal colour; no sonar, no omni
+    scene.selected = {scene.in_view[0]};
+    auto batches = osc::renderer::range_batches(o, scene);
+    REQUIRE(batches.size() == 2);
+    CHECK(batches[0].color == o.profiles().at("Radar").selected);
+    REQUIRE(batches[0].rings.size() == 1);
+    CHECK(batches[0].rings[0].outer == 50);
+    CHECK(batches[1].color == o.profiles().at("Radar").normal);
+    REQUIRE(batches[1].rings.size() == 2);
+    CHECK(batches[1].rings[0].x == 2);
+    CHECK(batches[1].rings[0].outer == 60);
+    CHECK(batches[1].rings[1].x == 4);
+    CHECK(batches[1].rings[1].outer == 70);
+
+    // The omni picked: radar and omni rings of its own, the others' radars;
+    // no other omni exists, so no normal-colour omni batch
+    scene.selected = {scene.in_view[3]};
+    batches = osc::renderer::range_batches(o, scene);
+    REQUIRE(batches.size() == 3);
+    CHECK(batches[0].color == o.profiles().at("Omni").selected);
+    CHECK(batches[1].color == o.profiles().at("Radar").selected);
+    CHECK(batches[2].color == o.profiles().at("Radar").normal);
+    REQUIRE(batches[2].rings.size() == 2);
+    CHECK(batches[2].rings[0].outer == 50);
+    CHECK(batches[2].rings[1].outer == 60);
+
+    // With the Radar filter already on, pass 2 drew the coverage: no repeat
+    o.set_filters({"Radar"});
+    scene.selected = {scene.in_view[0]};
+    batches = osc::renderer::range_batches(o, scene);
+    REQUIRE(batches.size() == 2);
+    CHECK(batches[0].color == o.profiles().at("Radar").normal);
+    CHECK(batches[0].rings.size() == 3);
+    CHECK(batches[1].color == o.profiles().at("Radar").selected);
+    o.set_filters({});
+
+    // A unit with no intel selected lights nothing but itself
+    const RangeBlueprint tank_bp = tank();
+    const std::array<WeaponRangeRecord, 1> now = {{{0, 3, 20}}};
+    scene.selected = {at(tank_bp, now, 9, 9)};
+    batches = osc::renderer::range_batches(o, scene);
+    REQUIRE(batches.size() == 1);
+    CHECK(batches[0].color == o.profiles().at("DirectFire").selected);
+}
+
 TEST_CASE("Ring lines thicken as the camera zooms out", "[range]") {
     // AntiAir's outer line {0.04, 4} on a 512 map, coefficient 1/1024
     const osc::renderer::RingThickness t{0.04f, 4.0f};
