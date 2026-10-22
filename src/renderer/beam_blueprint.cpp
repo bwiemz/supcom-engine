@@ -1,6 +1,7 @@
 #include "renderer/beam_blueprint.hpp"
 
 #include "renderer/effect_blueprint_file.hpp"
+#include "renderer/render_scripts.hpp"
 
 #include <lua.h>
 
@@ -45,7 +46,7 @@ BeamBlueprintData parse(lua_State* L, int t) {
 
 const BeamBlueprintData* BeamBlueprintCache::get(const std::string& path, lua_State* L) {
     if (auto it = cache_.find(path); it != cache_.end()) return &it->second;
-    if (path.empty() || failed_.count(path)) return nullptr;
+    if (path.empty() || failed_.count(path) || !RenderScriptScope::allowed()) return nullptr;
     BeamBlueprintData data;
     if (!load(path, L, data)) {
         failed_.insert(path);

@@ -92,10 +92,10 @@ private:
     bool started_ = false;
     double drawn_ = 0.0;
     double newest_ = 0.0;
-    double off_ = 0.0;  ///< how far it is off its distance behind, averaged
+    double off_ = 0.0;   ///< how far it is off its distance behind, averaged
     double asked_ = 0.0; ///< game time asked since the last publish, in ticks
     double made_ = 1.0;  ///< ticks published against those asked, averaged
-    double span_ = 1.0; ///< ticks a publish brings, averaged
+    double span_ = 1.0;  ///< ticks a publish brings, averaged
     double pace_ = 1.0;
 };
 

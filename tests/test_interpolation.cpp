@@ -302,12 +302,12 @@ TEST_CASE("A capture staged on the sim thread shows only once published (OE-134)
     SimState sim(g.L, nullptr);
     WorldHistory history;
     const osc::u32 id = spawn_at(sim, {1, 0, 1});
-    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
     sim.tick(); // tick 1, published at once
     sim.tick(); // tick 2
 
     // The sim thread's next two ticks: staged, the frame's two untouched
-    sim.set_tick_observer([&](const SimState& s) { history.capture_staged(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.capture_staged(s); });
     entity(sim, id).set_position({5, 0, 5});
     sim.tick();
     sim.tick();
@@ -986,12 +986,12 @@ TEST_CASE("A job of several ticks is captured once, with every tick's events",
     SimState sim(g.L, nullptr);
     WorldHistory history;
     const osc::u32 id = spawn_at(sim, {1, 0, 1});
-    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
     sim.tick(); // tick 1
 
     // The sim thread's job of three ticks: each tick's events kept, the
     // world captured once, as the last left it
-    sim.set_tick_observer([&](const SimState& s) { history.stage_events(s); });
+    sim.set_beat_observer([&](const SimState& s) { history.stage_events(s); });
     for (int t = 0; t < 3; ++t) {
         sim.add_death_event(static_cast<osc::f32>(t), 0, 0, 1, 0);
         entity(sim, id).set_position({static_cast<osc::f32>(t + 2), 0, 1});

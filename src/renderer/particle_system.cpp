@@ -1,4 +1,5 @@
 #include "renderer/particle_system.hpp"
+#include "renderer/render_scripts.hpp"
 #include "renderer/wave_system.hpp"
 
 #include "map/terrain.hpp"
@@ -117,6 +118,7 @@ void ParticleSystem::clear() {
     particles_.clear();
     added_.clear();
     last_tick_.reset();
+    deferred_blueprints_ = false;
     instances_.clear();
     groups_.clear();
     drawn_.clear();
@@ -368,7 +370,9 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
                              const map::Terrain* terrain) {
     const sim::WorldSnapshot& snap = *view.cur();
     const u32 tick = snap.tick;
-    const u32 steps = last_tick_ ? tick - *last_tick_ : 1;
+    const bool same_tick = last_tick_ && tick == *last_tick_;
+    const u32 steps = last_tick_ ? std::max(tick - *last_tick_, 1u) : 1;
+    deferred_blueprints_ = false;
     std::unordered_set<u32> live;
     for (const sim::EffectRecord& fx : snap.effects) {
         if (!fx.framed) continue;
@@ -382,12 +386,16 @@ void ParticleSystem::advance(const sim::FrameView& view, const Vector3& eye, con
             continue;
         }
         auto it = emitters_.find(fx.id);
+        // A settled retry hydrates only deferred emitters. Existing ones
+        // already processed this tick, including their emission clocks.
+        if (same_tick && it != emitters_.end()) continue;
         const Frame frame{fx.frame_position, fx.frame_rotation};
         const Vector3 offset{fx.offset_x, fx.offset_y, fx.offset_z};
         if (it == emitters_.end()) {
             const EmitterBlueprintData* bp = blueprints.get(fx.blueprint_path, L);
             if (!bp) {
-                unknown_.insert(fx.id);
+                if (RenderScriptScope::allowed()) unknown_.insert(fx.id);
+                else deferred_blueprints_ = true;
                 continue;
             }
             // One its blueprint leaves out at this fidelity: Moho makes it
@@ -471,7 +479,8 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
     const Vector3 up{v[1], v[5], v[9]};
 
     if (last_tick_ && cur->tick < *last_tick_) clear(); // a new game
-    if (!last_tick_ || cur->tick != *last_tick_)
+    if (!last_tick_ || cur->tick != *last_tick_ ||
+        (deferred_blueprints_ && RenderScriptScope::allowed()))
         advance(view, eye, frustum, blueprints, L, terrain);
 
     // The render clock: the entity is drawn between its last two ticks.

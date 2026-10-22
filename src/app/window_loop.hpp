@@ -37,6 +37,7 @@ namespace osc::app {
 class App::Window {
 public:
     explicit Window(App& app);
+    ~Window();
 
     /// The window, its frames until one ends the run, and what the run's
     /// checks say. A value ends the run.
@@ -227,6 +228,9 @@ private:
     /// at, the tick count when last collected, and the peers its lockstep
     /// rounds dropped (let go at the collect).
     std::unique_ptr<SimThread> sim_thread;
+    std::optional<renderer::BuildGhost> cached_ghost;
+    bool root_resize_pending = false;
+    std::optional<bool> tracking_notice;
     u32 job_tick0 = 0;
     /// --save-at's ticks in this window: the next to save at (an index)
     size_t next_save = 0;

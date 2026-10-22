@@ -20,8 +20,8 @@ Where the scripts leave Moho's rules unclear, they come from the decompiled engi
 
 | Metric | Value |
 | --- | --- |
-| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,719<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan, MSVC and macOS. |
-| Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->279<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below; two save/load flows run on FAF's data instead, where FAF's client is installed. |
+| Unit tests (Catch2) | <!-- metric:unit_test_cases -->1,748<!-- /metric --> test cases in a Linux build (Windows leaves out a few POSIX-only ones). CI runs them on GCC, Clang, ASan, MSVC and macOS. |
+| Data-backed gate on retail (`ctest -L gate`) | <!-- metric:gate_tests -->281<!-- /metric --> tests, each a mode of `osc_integration` playing retail's scripts and data (one per system: `--missile-test`, `--footfall-test`, `--selection-render-test`...), plus the flows below; two save/load flows run on FAF's data instead, where FAF's client is installed. |
 
 
 

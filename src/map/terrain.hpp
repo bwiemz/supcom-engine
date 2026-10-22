@@ -82,6 +82,9 @@ public:
     const std::vector<Flattening>& flattenings() const { return flattenings_; }
     void set_flattenings(std::vector<Flattening> flattenings);
     u32 flattenings_resets() const { return flattenings_resets_; }
+    /// Publish the source's mutable heights into an independently owned
+    /// render terrain. Called only while the simulation is settled.
+    void copy_deformations_from(const Terrain& source);
     u32 map_width() const { return heightmap_.map_width(); }
     u32 map_height() const { return heightmap_.map_height(); }
 

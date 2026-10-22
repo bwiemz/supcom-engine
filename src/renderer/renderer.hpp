@@ -142,6 +142,7 @@ public:
     void forget_ui_controls() {
         ui_dispatch_.forget_controls();
         movie_textures_.forget();
+        cached_world_shapes_.clear();
     }
     /// The UI's input, as the window's callbacks feed it (a scripted test
     /// clicks through it as a player would).
@@ -283,6 +284,8 @@ public:
     /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
     /// M212f).
     f32 terrain_time() const { return terrain_time_.value(); }
+    /// The published terrain used by rendering, independent of sim writes.
+    const map::Terrain* rendered_terrain() const { return terrain_; }
     /// The shoreline's wave generators (tests read them; M213c).
     const WaveSystem& wave_system() const { return wave_system_; }
     /// The beams drawn last frame (tests read them; M214a).
@@ -600,6 +603,7 @@ public:
 private:
     /// The frame's step: the one run_ui_frame took, else the clock's.
     f32 take_frame_dt();
+    bool scripts_suspended_ = false;
     bool ui_ran_early_ = false; ///< run_ui_frame ran this frame
     f32 early_dt_ = 0.0f;       ///< the step it took
 
@@ -1204,8 +1208,11 @@ private:
     EmitterBlueprintCache emitter_bp_cache_;
     /// The map build_scene drew (its water, for particles; M214c).
     const map::Terrain* terrain_ = nullptr;
+    const map::Terrain* terrain_source_ = nullptr; ///< read only on settled frames
+    std::unique_ptr<map::Terrain> terrain_snapshot_;
     BeamRenderer beam_renderer_;
     CommandGraphRenderer command_graph_renderer_;
+    std::unordered_map<const ui::WorldView*, std::vector<ShapeQuad>> cached_world_shapes_;
     WorldShapes world_shapes_;          ///< FAF's world drawing, this frame
     WorldQuadBatch world_shapes_batch_; ///< and drawn
     bool ui_keys_blocked_ = false;

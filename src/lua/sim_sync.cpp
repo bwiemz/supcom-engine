@@ -77,7 +77,7 @@ void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
     int requested = 0;
     const bool from_sim = take_focus_request(sim_L, requested);
     const bool from_ui = ui_L ? take_focus_request(ui_L, requested)
-                             : take_focus_request(sim_L, requested, kTransferredFocusKey);
+                              : take_focus_request(sim_L, requested, kTransferredFocusKey);
     if (!from_sim && !from_ui) return;
 
     const int old = registry_int(ui_L ? ui_L : sim_L, "__osc_focus_army", 0);

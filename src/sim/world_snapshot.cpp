@@ -466,7 +466,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
                 r.snap_serial = e.snap_serial();
                 if (e.is_projectile()) {
                     const auto& p = static_cast<const Projectile&>(e);
-                    if (p.impact_waiting()) r.step_scale = p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
+                    if (p.impact_waiting())
+                        r.step_scale = p.impact_interpolation > 0.001f
+                                           ? 1.0f / p.impact_interpolation
+                                           : 1000.0f;
                     if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
                         r.launched = true;
                         r.launch_position = p.launch_position;
@@ -517,7 +520,6 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
                     // state, never the engine's (M215b).
                     r.shield_on = s.is_on || !e.mesh_override().empty();
                     r.shield_size = s.size;
-
                 }
             }
         });
@@ -715,7 +717,6 @@ void WorldHistory::stage_events(const SimState& sim) {
     for (const auto& r : sim.sound_requests())
         staged_events_.sounds.push_back(
             {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater, r.entity_id});
-
 }
 
 bool WorldHistory::publish() {

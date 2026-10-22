@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "renderer/render_scripts.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "core/cursor.hpp"
 #include "core/fullscreen.hpp"
@@ -1619,6 +1620,8 @@ void Renderer::clear_scene() {
     runtime_decals_.clear();
     emitter_bp_cache_.clear();
     terrain_ = nullptr;
+    terrain_source_ = nullptr;
+    terrain_snapshot_.reset();
     height_bounds_.reset();
     shadow_camera_valid_ = false;
     beam_bp_cache_.clear();
@@ -1685,7 +1688,10 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     emitter_bp_cache_.set_vfs(vfs);
     beam_bp_cache_.set_vfs(vfs);
     trail_bp_cache_.set_vfs(vfs);
-    terrain_ = terrain; // the water particles snap to (M214c)
+    terrain_source_ = terrain;
+    terrain_snapshot_ = terrain ? std::make_unique<map::Terrain>(*terrain) : nullptr;
+    terrain_ = terrain_snapshot_.get();
+    terrain = terrain_; // every render subsystem uses owned heights
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");
         return;
@@ -2097,6 +2103,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                       const BuildGhost* ghost, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
+    const RenderScriptScope scripts(!scripts_suspended_);
+    if (!scripts_suspended_ && terrain_source_ && terrain_snapshot_ &&
+        (terrain_source_->flattenings_resets() != terrain_->flattenings_resets() ||
+         terrain_source_->flattenings().size() != terrain_->flattenings().size())) {
+        terrain_snapshot_->copy_deformations_from(*terrain_source_);
+    }
     const std::vector<SceneView> views = drawn_views();
     split_ = views.size() > 1;
     for (const SceneView& v : views) {
@@ -2211,7 +2223,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             });
     }
 
-    const f32 ticks = view.cur() ? static_cast<f32>(view.cur()->tick) + view.alpha() : 0.0f;
+    const f32 ticks = static_cast<f32>(view.time());
     record_view(fi, vp, frustum, ticks, false);
     std::vector<ScreenLayers> layers{{view_area_, overlay_renderer_.drawn()}};
 
@@ -2275,7 +2287,7 @@ void Renderer::record_view(u32 fi, const std::array<f32, 16>& vp, const Frustum&
     record_shadow_pass(fi, vp);
 
     // ==================== NORMALS ====================
-    collect_frame_decals(frustum, view.cur() ? static_cast<f32>(view.time()) : 0.0f);
+    collect_frame_decals(frustum, ticks);
     gpu_queries_.mark(cmd_, GpuFrameQueries::Pass::Normals);
 
     record_normal_pass(fi, vp);
@@ -3107,71 +3119,75 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
 
 void Renderer::update_world_shapes(lua_State* L, const sim::FrameView& frame,
                                    const Frustum& frustum, const BuildGhost* ghost, u32 fi) {
-    // The world's size of one of the UI's points at a spot: the LOD metric
-    // (the view's width at its depth) over the view's width in points
-    sim::Vector3 eye;
-    view_camera_->eye_position(eye.x, eye.y, eye.z);
-    sim::Vector3 forward{view_camera_->focus_x() - eye.x, view_camera_->focus_y() - eye.y,
-                         view_camera_->focus_z() - eye.z};
-    const f32 length =
-        std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
-    if (length > 0.0f) forward = {forward.x / length, forward.y / length, forward.z / length};
-    const f32 fov = view_camera_->fov();
-    const f32 width = view_points()[0] > 0 ? static_cast<f32>(view_points()[0]) : 1.0f;
-    world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
-        return lod_metric(p, eye, forward, fov) / width;
-    });
+    if (!scripts_suspended_) {
+        // The world's size of one of the UI's points at a spot: the LOD metric
+        // (the view's width at its depth) over the view's width in points
+        sim::Vector3 eye;
+        view_camera_->eye_position(eye.x, eye.y, eye.z);
+        sim::Vector3 forward{view_camera_->focus_x() - eye.x, view_camera_->focus_y() - eye.y,
+                             view_camera_->focus_z() - eye.z};
+        const f32 length =
+            std::sqrt(forward.x * forward.x + forward.y * forward.y + forward.z * forward.z);
+        if (length > 0.0f) forward = {forward.x / length, forward.y / length, forward.z / length};
+        const f32 fov = view_camera_->fov();
+        const f32 width = view_points()[0] > 0 ? static_cast<f32>(view_points()[0]) : 1.0f;
+        world_shapes_.begin([eye, forward, fov, width](const sim::Vector3& p) {
+            return lod_metric(p, eye, forward, fov) / width;
+        });
 
-    // Placing a structure: its pad and the pads of the structures standing or
-    // under way, outlined on the ground, those in view (build_outlines)
-    if (ghost) {
-        for (const PadOutline& o : build_outlines(structure_pads(frame, &recon_), *ghost)) {
-            const f32 cx = (o.site.x0 + o.site.x1) * 0.5f;
-            const f32 cz = (o.site.z0 + o.site.z1) * 0.5f;
-            const f32 reach = std::max(o.site.x1 - o.site.x0, o.site.z1 - o.site.z0);
-            if (!frustum.is_sphere_visible(cx, o.y, cz, reach)) continue;
-            world_shapes_.box({o.site.x0, o.y, o.site.z0}, o.site.x1 - o.site.x0,
-                              o.site.z1 - o.site.z0, o.color, 0.0f);
-        }
-    }
-
-    const ui::WorldView* view = view_world_view_;
-    if (!view && L) {
-        lua_pushstring(L, "__osc_world_view");
-        lua_rawget(L, LUA_REGISTRYINDEX);
-        view = static_cast<const ui::WorldView*>(lua_touserdata(L, -1));
-        lua_pop(L, 1);
-    }
-    if (view && view->custom_render() && view->lua_table_ref() >= 0) {
-        const int top = lua_gettop(L);
-        lua_rawgeti(L, LUA_REGISTRYINDEX, view->lua_table_ref());
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "OnRenderWorld");
-            lua_gettable(L, -2);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, -2);
-                lua_pushnumber(L, static_cast<lua_Number>(frame_dt_));
-                lua_pushstring(L, kWorldShapesKey);
-                lua_pushlightuserdata(L, &world_shapes_);
-                lua_rawset(L, LUA_REGISTRYINDEX);
-                if (lua_pcall(L, 2, 0, 0) != 0) {
-                    spdlog::warn("OnRenderWorld: {}",
-                                 lua_isstring(L, -1) ? lua_tostring(L, -1) : "(error)");
-                }
-                lua_pushstring(L, kWorldShapesKey);
-                lua_pushnil(L);
-                lua_rawset(L, LUA_REGISTRYINDEX);
+        // Placing a structure: its pad and the pads of the structures standing or
+        // under way, outlined on the ground, those in view (build_outlines)
+        if (ghost) {
+            for (const PadOutline& o : build_outlines(structure_pads(frame, &recon_), *ghost)) {
+                const f32 cx = (o.site.x0 + o.site.x1) * 0.5f;
+                const f32 cz = (o.site.z0 + o.site.z1) * 0.5f;
+                const f32 reach = std::max(o.site.x1 - o.site.x0, o.site.z1 - o.site.z0);
+                if (!frustum.is_sphere_visible(cx, o.y, cz, reach)) continue;
+                world_shapes_.box({o.site.x0, o.y, o.site.z0}, o.site.x1 - o.site.x0,
+                                  o.site.z1 - o.site.z0, o.color, 0.0f);
             }
         }
-        lua_settop(L, top);
+
+        const ui::WorldView* view = view_world_view_;
+        if (!view && L) {
+            lua_pushstring(L, "__osc_world_view");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            view = static_cast<const ui::WorldView*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+        }
+        if (view && view->custom_render() && view->lua_table_ref() >= 0) {
+            const int top = lua_gettop(L);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, view->lua_table_ref());
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "OnRenderWorld");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2);
+                    lua_pushnumber(L, static_cast<lua_Number>(frame_dt_));
+                    lua_pushstring(L, kWorldShapesKey);
+                    lua_pushlightuserdata(L, &world_shapes_);
+                    lua_rawset(L, LUA_REGISTRYINDEX);
+                    if (lua_pcall(L, 2, 0, 0) != 0) {
+                        spdlog::warn("OnRenderWorld: {}",
+                                     lua_isstring(L, -1) ? lua_tostring(L, -1) : "(error)");
+                    }
+                    lua_pushstring(L, kWorldShapesKey);
+                    lua_pushnil(L);
+                    lua_rawset(L, LUA_REGISTRYINDEX);
+                }
+            }
+            lua_settop(L, top);
+        }
+
+        cached_world_shapes_[view_world_view_] = world_shapes_.quads();
     }
 
     // Each a quad of the batch: white (FromSolidColor 0xFFFFFFFF) times its
     // colour, as two triangles
     std::vector<WorldQuadBatch::Quad> quads;
-    quads.reserve(world_shapes_.quads().size());
+    quads.reserve(cached_world_shapes_[view_world_view_].size());
     VkDescriptorSet white = texture_cache_.fallback_descriptor();
-    for (const ShapeQuad& s : world_shapes_.quads()) {
+    for (const ShapeQuad& s : cached_world_shapes_[view_world_view_]) {
         const std::array<f32, 4> c = {static_cast<f32>((s.color >> 16) & 0xFFu) / 255.0f,
                                       static_cast<f32>((s.color >> 8) & 0xFFu) / 255.0f,
                                       static_cast<f32>(s.color & 0xFFu) / 255.0f,
@@ -3199,12 +3215,14 @@ f32 Renderer::take_frame_dt() {
 }
 
 void Renderer::skip_ui_frame() {
+    scripts_suspended_ = true;
     ui_ran_early_ = false;
     early_dt_ = take_frame_dt();
     ui_ran_early_ = true;
 }
 
 void Renderer::run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world) {
+    scripts_suspended_ = false;
     ui_ran_early_ = false;
     early_dt_ = take_frame_dt();
     ui_ran_early_ = true;
@@ -3214,7 +3232,6 @@ void Renderer::run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bo
         ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(early_dt_));
     }
     ui_dispatch_.dispatch_events(L, *ui_registry);
-
 }
 
 void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const Frustum& frustum,
@@ -3251,12 +3268,16 @@ void Renderer::update_frame_scene(u32 fi, const std::array<f32, 16>& vp, const F
     // The order marks, aged by the frame (Moho's UpdateCommandFeedbackBlips)
     feedback_blips_.update(frame_dt_);
 
-    world_meshes_ = ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
-    border_meshes_ = map_border_meshes(L);
+    if (!scripts_suspended_) {
+        world_meshes_ =
+            ui_registry ? shown_world_meshes(*ui_registry) : std::vector<WorldMeshDraw>{};
+        border_meshes_ = map_border_meshes(L);
+    }
     update_view_units(fi, frustum, view, ghost, L, selected_ids);
 
     // Update UI quads (walk control tree, read LazyVar positions)
-    if (ui_registry) {
+    if (ui_registry && scripts_suspended_) ui_renderer_.reuse_frame();
+    if (ui_registry && !scripts_suspended_) {
         PROFILE_ZONE("Render::ui_update");
         const f32 dt = frame_dt_;
         total_time_ += dt;

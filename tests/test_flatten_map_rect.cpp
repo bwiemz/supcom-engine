@@ -275,3 +275,20 @@ TEST_CASE("Ground alone changes the sync checksum, in its domain, and a load res
     REQUIRE(err.empty());
     CHECK(c.sim.checksum_parts().terrain == saved_terrain);
 }
+
+TEST_CASE("Published terrain changes remain independent until the next settled copy", "[terrain]") {
+    auto source = slope();
+    osc::map::Terrain published = *source;
+    REQUIRE(source->flatten(10, 10, 2, 2, 4));
+    CHECK(published.get_terrain_height(11, 11) == 11);
+    CHECK(published.flattenings().empty());
+    published.copy_deformations_from(*source);
+    CHECK(published.get_terrain_height(11, 11) == 4);
+    CHECK(published.flattenings().size() == 1);
+    source->set_flattenings({});
+    CHECK(published.get_terrain_height(11, 11) == 4);
+    published.copy_deformations_from(*source);
+    CHECK(published.get_terrain_height(11, 11) == 11);
+    CHECK(published.flattenings().empty());
+    CHECK(published.flattenings_resets() == source->flattenings_resets());
+}

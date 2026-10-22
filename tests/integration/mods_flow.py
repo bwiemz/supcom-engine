@@ -70,15 +70,15 @@ def write_mods(documents: Path) -> None:
     game = mods / "OscModsFlowGame"
     (game / "hook/lua").mkdir(parents=True)
     (game / "units/uel0001").mkdir(parents=True)
-    (game / "mod_info.lua").write_text(
+    _ = (game / "mod_info.lua").write_text(
         f'name = "OSC mods flow: game"\nuid = "{GAME_MOD}"\nversion = 1\n'
-        'description = "A test game mod"\nauthor = "OpenSupCom"\nui_only = false\n'
+        + 'description = "A test game mod"\nauthor = "OpenSupCom"\nui_only = false\n'
     )
-    (game / "hook/lua/simInit.lua").write_text(probe("game:sim"))
-    (game / "hook/lua/userInit.lua").write_text(probe("game:user"))
+    _ = (game / "hook/lua/simInit.lua").write_text(probe("game:sim"))
+    _ = (game / "hook/lua/userInit.lua").write_text(probe("game:user"))
     # Named as the ACU's own file, so Blueprints.lua gives it the ACU's id;
     # Merge keeps the rest of the ACU.
-    (game / "units/uel0001/uel0001_unit.bp").write_text(
+    _ = (game / "units/uel0001/uel0001_unit.bp").write_text(
         "UnitBlueprint {\n    Merge = true,\n    General = { UnitName = 'ModsFlow' },\n}\n"
     )
 
@@ -87,7 +87,7 @@ def write_mods(documents: Path) -> None:
         ui.writestr(
             "mod_info.lua",
             f'name = "OSC mods flow: UI"\nuid = "{UI_MOD}"\nversion = 1\n'
-            'description = "A test UI mod"\nauthor = "OpenSupCom"\nui_only = true\n',
+            + 'description = "A test UI mod"\nauthor = "OpenSupCom"\nui_only = true\n',
         )
         ui.writestr("hook/lua/userInit.lua", probe("ui:user"))
         ui.writestr("hook/lua/UserSync.lua", probe("ui:sync"))
@@ -127,7 +127,7 @@ def check(output: str, run_name: str, want: Expected) -> list[str]:
         if got.get("mass") != str(2 * ACU_MASS) or got.get("energy") != str(2 * ACU_ENERGY):
             problems.append(
                 f"{state}: the ACU makes {got.get('mass')} mass and {got.get('energy')} energy,"
-                f" expected Resource Rich's {2 * ACU_MASS} and {2 * ACU_ENERGY}"
+                + f" expected Resource Rich's {2 * ACU_MASS} and {2 * ACU_ENERGY}"
             )
         if got.get("name") != want.name:
             problems.append(f"{state}: the ACU's UnitName is {got.get('name')}, not {want.name}")
@@ -146,7 +146,7 @@ def check(output: str, run_name: str, want: Expected) -> list[str]:
             if probes.count("ui:sync") != want.user_sync_runs:
                 problems.append(
                     f"ui: UserSync.lua's hook ran {probes.count('ui:sync')} times,"
-                    f" not {want.user_sync_runs}"
+                    + f" not {want.user_sync_runs}"
                 )
             selected = ",".join(want.selected)
             if got.get("selected") != selected:
@@ -204,12 +204,12 @@ def main(argv: list[str]) -> int:
         documents = Path(tmp) / "Documents"
         write_mods(documents)
         prefs = Path(tmp) / "Game.prefs"
-        prefs.write_text(
+        _ = prefs.write_text(
             "active_mods = {\n"
-            f"    ['{RESOURCE_RICH}'] = true,\n"
-            f"    ['{GAME_MOD}'] = true,\n"
-            f"    ['{UI_MOD}'] = true,\n"
-            "}\n"
+            + f"    ['{RESOURCE_RICH}'] = true,\n"
+            + f"    ['{GAME_MOD}'] = true,\n"
+            + f"    ['{UI_MOD}'] = true,\n"
+            + "}\n"
         )
         env = {**os.environ, "XDG_DOCUMENTS_DIR": str(documents)}
         user = Path(tmp) / "user"
@@ -235,9 +235,13 @@ def main(argv: list[str]) -> int:
                 problems.append("game: the kept recording is not the game's")
             stats = kept[0].with_suffix(".jsonl")
             lines = stats.read_text().splitlines() if stats.exists() else []
-            kinds = [line.split('"record":"')[1].split('"')[0] for line in lines if '"record":"' in line]
+            kinds = [
+                line.split('"record":"')[1].split('"')[0] for line in lines if '"record":"' in line
+            ]
             if not kinds or kinds[0] != "match" or kinds[-1] != "end":
-                problems.append(f"game: its statistics are not a match to its end: {kinds[:3]}..{kinds[-1:]}")
+                problems.append(
+                    f"game: its statistics are not a match to its end: {kinds[:3]}..{kinds[-1:]}"
+                )
         if not recording.exists():
             problems.append("game: left no recording")
         else:
@@ -267,7 +271,7 @@ def main(argv: list[str]) -> int:
                 problems.append(f"watched: failed, exit {watch.returncode}")
 
         # Nothing selected: the player picks in the lobby's mod manager
-        prefs.write_text("")
+        _ = prefs.write_text("")
         lobby = run(
             [
                 exe,

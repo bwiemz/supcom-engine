@@ -46,6 +46,12 @@ void Terrain::set_flattenings(std::vector<Flattening> flattenings) {
     }
 }
 
+void Terrain::copy_deformations_from(const Terrain& source) {
+    heightmap_ = source.heightmap_;
+    flattenings_ = source.flattenings_;
+    flattenings_resets_ = source.flattenings_resets_;
+}
+
 f32 Terrain::water_ratio() const {
     // Moho's CalculateMapWaterRatio: with W heightfield vertices across, the
     // columns 8, 16, ... up to 8 * (((W - 1) >> 3) - 2), likewise the rows.

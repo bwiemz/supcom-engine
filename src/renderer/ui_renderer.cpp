@@ -821,6 +821,12 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
                          return a.depth < b.depth;
                      });
 
+    reuse_frame();
+}
+
+void UIRenderer::reuse_frame() {
+    groups_.clear();
+    if (quads_.empty() || !instance_mapped_[fi_]) return;
     // Upload instances and build draw groups (batch by consecutive same texture)
     auto* dst = static_cast<UIInstance*>(instance_mapped_[fi_]);
     u32 count = static_cast<u32>(quads_.size());

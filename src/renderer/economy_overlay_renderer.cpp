@@ -1,4 +1,5 @@
 #include "renderer/economy_overlay_renderer.hpp"
+#include "renderer/render_scripts.hpp"
 
 #include "core/color.hpp"
 #include "renderer/camera.hpp"
@@ -91,6 +92,7 @@ void EconomyOverlayRenderer::destroy(VkDevice /*device*/, VmaAllocator allocator
 }
 
 void EconomyOverlayRenderer::load_params(lua_State* L, TextureCache& tex_cache) {
+    if (!RenderScriptScope::allowed()) return;
     params_loaded_ = true;
     params_ = Params{};
     if (!L) {

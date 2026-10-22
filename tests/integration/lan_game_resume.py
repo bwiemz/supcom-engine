@@ -28,7 +28,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from lan_game import SKIPPED, report, wait_for
+# CTest executes this file directly, so sibling modules are on sys.path.
+from lan_game import SKIPPED, report, wait_for  # pyright: ignore[reportImplicitRelativeImport]
 
 SAVE = "resumetest"
 CHECKSUM = re.compile(r"\[lan-game\] checksum at tick (\d+): ([0-9a-f]{8})")

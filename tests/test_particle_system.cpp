@@ -13,6 +13,7 @@
 #include "renderer/effect_blueprint_file.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/particle_system.hpp"
+#include "renderer/render_scripts.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "sim/emitter_params.hpp"
@@ -113,6 +114,18 @@ TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their
         for (const auto& d : ps.drawn()) n += d.effect_id == id ? 1 : 0;
         return n;
     };
+    // A newly published effect first encountered by a busy draw must be
+    // retried, rather than remembered as an unknown blueprint forever.
+    osc::sim::WorldSnapshot busy_tick = ticks[0];
+    // One warm effect still advances exactly once on this tick.
+    REQUIRE(cache.get("/effects/emitters/steady_emit.bp", lua.raw()));
+    {
+        const osc::renderer::RenderScriptScope busy(false);
+        ps.update(osc::sim::FrameView(&busy_tick, &busy_tick, 1.0f), camera, nullptr, cache,
+                  lua.raw(), nullptr);
+        CHECK(count(1) == 2);
+        CHECK(count(2) == 0);
+    }
     std::vector<size_t> steady;
     std::vector<size_t> pulse;
     for (size_t t = 0; t < ticks.size(); ++t) {

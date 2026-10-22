@@ -189,6 +189,7 @@ private:
     std::vector<Particle> particles_;
     std::vector<Particle> added_; ///< waves, born at the next update
     std::optional<u32> last_tick_;
+    bool deferred_blueprints_ = false; ///< retry cold effects even while paused
     u64 random_state_ = 0x2545F4914F6CDD1Dull;
     std::vector<ParticleInstance> instances_;
     std::vector<Group> groups_;

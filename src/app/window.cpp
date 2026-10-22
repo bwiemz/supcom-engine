@@ -41,6 +41,13 @@ App::Window::Window(App& app)
     }
 }
 
+App::Window::~Window() {
+    // Join before any members captured by a job are destroyed, including on exceptions.
+    sim_thread.reset();
+    if (sim_state) sim_state->set_ticking_elsewhere(false);
+    lua::watch_lua_state(nullptr, {});
+}
+
 std::optional<int> App::Window::run() {
     // The render benchmark's frames are 1920x1080 (M223b); captures keep
     // their 1600x900.
@@ -447,11 +454,7 @@ std::optional<int> App::Window::start_flows() {
         scripted_mouse.emplace(opt.mouse);
         renderer.set_scripted_pointer(scripted_mouse->pointer());
     }
-    renderer.camera().set_tracking_listener([this](bool tracking) {
-        if (sim_state) {
-            osc::core::call_on_track_unit(ui_lua_state.raw(), tracking);
-        }
-    });
+    renderer.camera().set_tracking_listener([this](bool tracking) { tracking_notice = tracking; });
     return std::nullopt;
 }
 
@@ -471,7 +474,6 @@ bool App::Window::played_to_the_end() const {
     if (settled_tick() >= opt.play_until_tick) return true;
     // (the live sim read only between its ticks)
     return !(sim_thread && sim_thread->busy()) && sim_state->game_ended();
-
 }
 
 std::optional<int> App::Window::finish() {
@@ -636,7 +638,6 @@ bool App::Window::fast_match_in_game() const {
 
 bool App::Window::fast_match_done() const {
     return opt.fast_match_ticks > 0 && sim_state && settled_tick() >= opt.fast_match_ticks;
-
 }
 
 std::optional<int> App::Window::run_without_renderer() {
