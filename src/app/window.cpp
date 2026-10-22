@@ -593,8 +593,7 @@ bool App::Window::fast_match_in_game() const {
 }
 
 bool App::Window::fast_match_done() const {
-    return opt.fast_match_ticks > 0 && sim_state &&
-           sim_state->tick_count() >= opt.fast_match_ticks;
+    return opt.fast_match_ticks > 0 && sim_state && sim_state->tick_count() >= opt.fast_match_ticks;
 }
 
 std::optional<int> App::Window::run_without_renderer() {

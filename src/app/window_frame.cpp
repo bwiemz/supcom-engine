@@ -125,7 +125,8 @@ double App::Window::begin_frame() {
 }
 
 bool App::Window::fixed_step() const {
-    return !screenshot_path.empty() || render_bench || opt.scripted_window || opt.fast_match_ticks > 0;
+    return !screenshot_path.empty() || render_bench || opt.scripted_window ||
+           opt.fast_match_ticks > 0;
 }
 
 void App::Window::update_audio(double dt) {

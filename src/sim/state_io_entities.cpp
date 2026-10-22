@@ -212,7 +212,8 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     // cell_link_: its order alone (seq); its cells follow from its committed transform, and mark
     // is a gather's own
     w.u64v(e.cell_link_.seq);
-    w.str(e.mesh_override_.str()); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
+    w.str(e.mesh_override_
+              .str()); // (mesh_changes_ isn't: the renderer's, whose meshes a load remakes)
 
     w.b(e.unselectable_);
     w.b(e.is_wreckage_);

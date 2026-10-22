@@ -409,15 +409,14 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.fast_match_ticks = static_cast<osc::u32>(
         std::strtoul(parse_string_arg(argc, argv, "--fast-match", "0").c_str(), nullptr, 10));
     o.silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-                       !parse_string_arg(argc, argv, "--golden", "").empty() ||
-                       o.scripted_window || o.fast_match_ticks > 0;
+                       !parse_string_arg(argc, argv, "--golden", "").empty() || o.scripted_window ||
+                       o.fast_match_ticks > 0;
     // --seed N: the game's random seed (weapon spread, scripts' Random and
     // math.random). Runs that must repeat default to a fixed one.
     o.seed_arg = parse_string_arg(argc, argv, "--seed", "");
     o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
     o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
-                    parse_string_arg(argc, argv, "--golden", "").empty() &&
-                    o.fast_match_ticks == 0;
+                    parse_string_arg(argc, argv, "--golden", "").empty() && o.fast_match_ticks == 0;
     // --load <file>: a saved game. A headless run (--ticks, --ai-skirmish)
     // catches it up and plays on; else the window opens it.
     o.load_path = parse_string_arg(argc, argv, "--load", "");
