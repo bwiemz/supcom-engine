@@ -15,6 +15,7 @@
 #include "sim/lockstep_session.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/replay.hpp"
+#include "sim/sim_snapshot.hpp"
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
@@ -951,11 +952,12 @@ TEST_CASE("A resumed lobby retains saved source ids for continued whole-game rep
           "[lobby][lua][replay][resume]") {
     MpGuard guard;
     const auto setup = [](World& w) {
+        w.sim.set_seed(1);
         w.sim.add_army("ARMY_1", "ARMY_1");
         w.sim.add_army("ARMY_2", "ARMY_2");
         REQUIRE(w.run(R"(
             ScenarioInfo = {Options = {Timeouts = 3}, ArmySetup = {
-                ARMY_1 = {PlayerName = 'Alice'}, ARMY_2 = {PlayerName = 'Host'}}}
+                ARMY_1 = {Human = true}, ARMY_2 = {Human = true}}}
         )"));
         w.sim.set_source_army(0, 0);
         w.sim.set_source_army(1, 1);
@@ -976,14 +978,32 @@ TEST_CASE("A resumed lobby retains saved source ids for continued whole-game rep
         }
         return ids;
     };
-    World w;
-    const auto ids = setup(w);
-    w.sim.set_recording(true);
+    World original;
+    const auto ids = setup(original);
+    osc::lua::mp_begin_lobby_game(
+        std::make_unique<osc::sim::LobbyGameTransport>(
+            std::make_unique<osc::sim::LobbyNet>("Host", 1), osc::lua::net_lobby_clock_ms),
+        1, {0, 1, -1}, {{42, "Alice"}, {10, "Host"}, {30, "Observer"}}, 1);
+    REQUIRE(osc::lua::mp_attach_session(original.sim));
+    original.sim.command_scheduler().set_lockstep(false);
+    original.sim.set_pause_timeouts(0, 1);
+    original.sim.set_pause_timeouts(1, 2);
+    original.sim.set_recording(true);
     osc::sim::UnitCommand move;
     move.type = osc::sim::CommandType::Move;
     move.target_pos = {40, 0, 20};
-    w.sim.schedule_command(0, {ids[0]}, move, true);
-    for (int i = 0; i < 4; ++i) w.sim.tick();
+    original.sim.schedule_command(0, {ids[0]}, move, true);
+    for (int i = 0; i < 4; ++i) original.sim.tick();
+    std::vector<osc::u8> snapshot;
+    lua_settop(original.state.raw(), 0);
+    const std::string saved_error = osc::sim::save_snapshot(original.sim, snapshot);
+    INFO(saved_error);
+    REQUIRE(saved_error.empty());
+    World w;
+    setup(w);
+    lua_settop(w.state.raw(), 0);
+    REQUIRE(osc::sim::load_snapshot(w.sim, snapshot).empty());
+    w.sim.adopt_history(original.sim.recorded_replay());
     // The new lobby numbers the host first, the observer next, Alice last.
     std::vector<osc::lua::SessionClient> clients{{10, "Host"}, {30, "Observer"}, {42, "Alice"}};
     std::vector<osc::i32> armies{0, -1, 1};

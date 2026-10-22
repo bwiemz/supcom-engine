@@ -2,7 +2,6 @@
 
 #include "lua/session_clients.hpp"
 #include "sim/lobby_net.hpp"
-#include "sim/army_brain.hpp"
 #include "sim/lockstep_session.hpp"
 #include "sim/net_transport.hpp"
 #include "sim/sim_state.hpp"
@@ -150,27 +149,32 @@ void mp_set_save_handler(MpSaveHandler handler) {
 }
 
 namespace {
-/// The player who played `army` in the game `sim` runs: its
-/// ScenarioInfo.ArmySetup entry's PlayerName ("" if none).
-std::string player_of(const osc::sim::SimState& sim, const std::string& army) {
+// Host metadata: persisted with the Lua heap, never exposed as gameplay
+// ArmySetup fields (main does not record player names in GameSetup).
+constexpr const char* kSourceNames = "__osc_network_source_names";
+
+void remember_players(osc::sim::SimState& sim, const std::vector<SessionClient>& clients) {
+    lua_State* L = sim.lua_state();
+    if (!L) return;
+    lua_pushstring(L, kSourceNames);
+    lua_newtable(L);
+    for (size_t source = 0; source < clients.size(); ++source) {
+        lua_pushstring(L, clients[source].name.c_str());
+        lua_rawseti(L, -2, static_cast<int>(source + 1));
+    }
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+std::string player_of(const osc::sim::SimState& sim, u32 source) {
     lua_State* L = sim.lua_state();
     if (!L) return {};
     const int top = lua_gettop(L);
     std::string name;
-    lua_pushstring(L, "ScenarioInfo");
-    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, kSourceNames);
+    lua_rawget(L, LUA_REGISTRYINDEX);
     if (lua_istable(L, -1)) {
-        lua_pushstring(L, "ArmySetup");
-        lua_gettable(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, army.c_str());
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "PlayerName");
-                lua_gettable(L, -2);
-                if (lua_type(L, -1) == LUA_TSTRING) name = lua_tostring(L, -1);
-            }
-        }
+        lua_rawgeti(L, -1, static_cast<int>(source + 1));
+        if (lua_type(L, -1) == LUA_TSTRING) name = lua_tostring(L, -1);
     }
     lua_settop(L, top);
     return name;
@@ -205,8 +209,7 @@ bool mp_attach_session(osc::sim::SimState& sim) {
             if (army < 0) continue;
             if (source != humans || source >= clients.size())
                 return refuse("all original players must return in a supported source layout");
-            const auto* brain = sim.get_army(army);
-            const std::string name = brain ? player_of(sim, brain->name()) : std::string();
+            const std::string name = player_of(sim, source);
             if (name.empty()) return refuse("a saved player has no name");
             size_t match = s.clients.size();
             for (size_t now = 0; now < s.clients.size(); ++now) {
@@ -240,6 +243,7 @@ bool mp_attach_session(osc::sim::SimState& sim) {
         for (u32 source = 0; source < humans; ++source)
             s.army_sources[static_cast<size_t>(s.source_armies[source])] = static_cast<i32>(source);
     }
+    if (sim.beat_count() == 0) remember_players(sim, s.clients);
     s.session = std::make_unique<osc::sim::LockstepSession>(sim, *s.lobby_transport, s.local_source,
                                                             s.all_sources);
     // Each source plays its army (the focus army it starts with). What it may
