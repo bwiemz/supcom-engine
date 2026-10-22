@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -64,4 +65,27 @@ TEST_CASE("Two threads' for_each calls take turns", "[pool]") {
     add();
     other.join();
     CHECK(sum == 2L * 50 * (199L * 200 / 2));
+}
+
+TEST_CASE("A throwing pool chunk finishes the job before propagating, and the pool stays usable",
+          "[pool][exceptions]") {
+    auto& pool = WorkerPool::instance();
+    std::atomic<int> chunks{0};
+    CHECK_THROWS_AS(pool.for_each(64, 1,
+                                  [&](size_t begin, size_t) {
+                                      ++chunks;
+                                      if (begin == 0) throw std::runtime_error("chunk failed");
+                                  }),
+                    std::runtime_error);
+    CHECK(chunks == 64);
+    std::atomic<int> after{0};
+    pool.for_each(64, 1, [&](size_t begin, size_t end) { after += static_cast<int>(end - begin); });
+    CHECK(after == 64);
+    pool.set_enabled(false);
+    CHECK_THROWS_AS(
+        pool.for_each(64, 1, [](size_t, size_t) { throw std::runtime_error("inline failed"); }),
+        std::runtime_error);
+    pool.set_enabled(true);
+    pool.for_each(64, 1, [&](size_t begin, size_t end) { after += static_cast<int>(end - begin); });
+    CHECK(after == 128);
 }

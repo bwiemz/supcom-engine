@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -22,10 +23,17 @@ struct Job {
     size_t chunks = 0;
     std::atomic<size_t> next{0};
     std::atomic<size_t> done{0};
+    std::exception_ptr failure; // under Impl::m; rethrown after every chunk completes
 };
 
 /// Whether this thread is running a chunk (a for_each inside one runs inline).
 thread_local bool g_in_chunk = false;
+
+struct InChunk {
+    bool outer = g_in_chunk;
+    InChunk() { g_in_chunk = true; }
+    ~InChunk() { g_in_chunk = outer; }
+};
 
 } // namespace
 
@@ -39,19 +47,31 @@ struct WorkerPool::Impl {
     bool stop = false;
     std::atomic<bool> enabled{true};
 
+    ~Impl() {
+        {
+            const std::lock_guard lock(m);
+            stop = true;
+        }
+        work.notify_all();
+        for (auto& thread : threads) thread.join();
+    }
+
     void run(Job& j) {
-        const bool outer = g_in_chunk;
-        g_in_chunk = true;
+        const InChunk guard;
         for (;;) {
             const size_t begin = j.next.fetch_add(j.grain);
             if (begin >= j.count) break;
-            (*j.fn)(begin, std::min(begin + j.grain, j.count));
+            try {
+                (*j.fn)(begin, std::min(begin + j.grain, j.count));
+            } catch (...) {
+                const std::lock_guard lock(m);
+                if (!j.failure) j.failure = std::current_exception();
+            }
             if (j.done.fetch_add(1) + 1 == j.chunks) {
                 const std::lock_guard<std::mutex> lock(m);
                 finished.notify_all();
             }
         }
-        g_in_chunk = outer;
     }
 
     void worker() {
@@ -73,16 +93,15 @@ struct WorkerPool::Impl {
 WorkerPool::WorkerPool() : impl_(new Impl) {
     const u32 hardware = std::max(1u, std::thread::hardware_concurrency());
     const u32 count = hardware > 2 ? hardware - 2 : 0;
-    for (u32 i = 0; i < count; ++i) impl_->threads.emplace_back([this] { impl_->worker(); });
+    try {
+        for (u32 i = 0; i < count; ++i) impl_->threads.emplace_back([this] { impl_->worker(); });
+    } catch (...) {
+        delete impl_; // join any workers already started before construction failed
+        throw;
+    }
 }
 
 WorkerPool::~WorkerPool() {
-    {
-        const std::lock_guard<std::mutex> lock(impl_->m);
-        impl_->stop = true;
-    }
-    impl_->work.notify_all();
-    for (auto& t : impl_->threads) t.join();
     delete impl_;
 }
 
@@ -103,6 +122,7 @@ void WorkerPool::for_each(size_t count, size_t grain, const Range& fn) {
     if (count == 0) return;
     grain = std::max<size_t>(grain, 1);
     if (!impl_->enabled || impl_->threads.empty() || g_in_chunk || count <= grain) {
+        const InChunk guard;
         fn(0, count);
         return;
     }
@@ -122,6 +142,7 @@ void WorkerPool::for_each(size_t count, size_t grain, const Range& fn) {
     std::unique_lock<std::mutex> lock(impl_->m);
     impl_->finished.wait(lock, [&] { return job->done.load() == job->chunks; });
     impl_->job.reset();
+    if (job->failure) std::rethrow_exception(job->failure);
 }
 
 } // namespace osc
