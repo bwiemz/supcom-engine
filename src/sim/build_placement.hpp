@@ -147,6 +147,10 @@ private:
     bool terrain_allows(const StructureSite& site, u8 layers) const;
     bool in_playable(const StructureSite& site) const;
     bool on_deposit(const PlacementRules& r, f32 x, f32 z) const;
+    /// A deposit under `skirt` (Moho's CSimResources::AreaHasDeposit: a
+    /// deposit's cells grown by half a cell for mass, a cell and a half for
+    /// a hydrocarbon). Only an extractor or a hydrocarbon plant goes there.
+    bool deposit_under(const StructureSite& skirt) const;
 
     /// The army's pending build orders.
     const std::vector<StructureSite>& reserved() const;

@@ -173,6 +173,33 @@ TEST_CASE("placement: extractors need a free deposit", "[placement]") {
     CHECK_FALSE(after.can_build("mex", 30.0f, 40.0f)); // deposit taken
 }
 
+TEST_CASE("placement: nothing but an extractor stands on a deposit, as in Moho", "[placement]") {
+    // Moho's OCCUPY_Check: a structure without a deposit restriction is
+    // refused where its skirt meets a deposit's cells grown by half a cell
+    // (mass) or a cell and a half (hydrocarbon). Ryan, 2026-10-17: a light
+    // artillery built on a mass point.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    osc::sim::ResourceDeposit mass;
+    mass.x = 30.5f; // cell 30..31, grown to 29.5..31.5
+    mass.z = 40.5f;
+    sim.add_resource_deposit(mass);
+    osc::sim::ResourceDeposit hydro;
+    hydro.x = 10.5f; // cells 9..12 (size 3), grown to 7.5..13.5
+    hydro.z = 10.5f;
+    hydro.size = 3.0f;
+    hydro.type = osc::sim::ResourceDeposit::Hydrocarbon;
+    sim.add_resource_deposit(hydro);
+
+    StructurePlacement p(sim, 0, rules_for);
+    CHECK_FALSE(p.can_build("pgen", 30.5f, 40.5f)); // on it
+    CHECK_FALSE(p.can_build("pgen", 32.0f, 40.5f)); // skirt 31..33 over 31.5
+    CHECK(p.can_build("pgen", 32.5f, 40.5f));       // skirt 31.5..33.5: beside it
+    CHECK_FALSE(p.can_build("pgen", 14.0f, 10.5f)); // skirt 13..15 over 13.5
+    CHECK(p.can_build("pgen", 14.5f, 10.5f));       // beside the hydrocarbon's margin
+}
+
 TEST_CASE("placement: an extractor goes on its deposit's own cell", "[placement]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);

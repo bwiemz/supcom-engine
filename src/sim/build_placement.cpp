@@ -241,6 +241,9 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
     }
     const StructureSite site = StructureSite::of(r, x, z);
     if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
+    // Moho's OCCUPY_Check: anything else keeps its skirt off every deposit.
+    if (r.deposit == PlacementRules::Deposit::None && !r.mobile && deposit_under(site))
+        return false;
     for (const auto& pending : reserved())
         if (pending.overlaps(site)) return false;
     return !structure_overlaps(sim_.entity_registry(), site);
@@ -334,6 +337,22 @@ bool StructurePlacement::on_deposit(const PlacementRules& r, f32 x, f32 z) const
         if (d.type == want && std::abs(d.x - x) < 0.5f && std::abs(d.z - z) < 0.5f) {
             return true;
         }
+    }
+    return false;
+}
+
+bool StructurePlacement::deposit_under(const StructureSite& skirt) const {
+    for (const auto& d : sim_.resource_deposits()) {
+        // Its cells as Moho keeps them (BuildRectFromPointAndSize).
+        const auto size = static_cast<i32>(d.size);
+        const auto gx0 = static_cast<i32>(d.x - static_cast<f32>(size) * 0.5f);
+        const auto gz0 = static_cast<i32>(d.z - static_cast<f32>(size) * 0.5f);
+        const f32 pad = d.type == ResourceDeposit::Mass ? 0.5f : 1.5f;
+        const f32 x0 = static_cast<f32>(gx0) - pad;
+        const f32 z0 = static_cast<f32>(gz0) - pad;
+        const f32 x1 = static_cast<f32>(gx0 + size) + pad;
+        const f32 z1 = static_cast<f32>(gz0 + size) + pad;
+        if (x1 > skirt.x0 && skirt.x1 > x0 && z1 > skirt.z0 && skirt.z1 > z0) return true;
     }
     return false;
 }
