@@ -737,6 +737,45 @@ TEST_CASE("A resource a Lua thread gives is income at the next economy, stored t
     CHECK(w.number("income") == Catch::Approx(650.0));
 }
 
+TEST_CASE("SetArmyEconomy is income at the next economy, stored through it, as GiveResource",
+          "[tick-phases]") {
+    struct Case {
+        double mass, energy;
+        const char* calls;
+        double income_mass, income_energy;
+    };
+    const Case c = GENERATE(
+        Case{300.0, 2000.0, "SetArmyEconomy('ARMY_1', 100, 1000)", 100.0, 1000.0},
+        Case{300.0, 2000.0, "SetArmyEconomy('ARMY_1', 10, 100)", 10.0, 100.0},
+        Case{300.0, 2000.0, "SetArmyEconomy('ARMY_1', -50, -500)", -50.0, -500.0},
+        Case{300.0, 2000.0, "SetArmyEconomy('ARMY_1', 100, 1000) SetArmyEconomy('ARMY_1', 50, 500)",
+             150.0, 1500.0},
+        Case{650.0, 4000.0, "SetArmyEconomy('ARMY_1', 100, 1000)", 100.0, 1000.0});
+    Phases w;
+    w.brain("brain", 0);
+    w.sim.get_army(0)->set_extra_storage(650.0, 4000.0);
+    w.sim.get_army(0)->set_stored_resources(c.mass, c.energy);
+    w.sim.tick();
+    REQUIRE(w.run(std::string("called = 0 ForkThread(function()"
+                              "   called = GetGameTick() ") +
+                  c.calls +
+                  "   nowM = brain:GetEconomyStored('MASS') nowE = brain:GetEconomyStored('ENERGY')"
+                  "   WaitTicks(1)"
+                  "   incM = brain:GetEconomyIncome('MASS') incE = brain:GetEconomyIncome('ENERGY')"
+                  "   stM = brain:GetEconomyStored('MASS') stE = brain:GetEconomyStored('ENERGY')"
+                  " end)"));
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("called") > 0);
+    CHECK(w.number("nowM") == Catch::Approx(c.mass));
+    CHECK(w.number("nowE") == Catch::Approx(c.energy));
+    CHECK(w.number("incM") == Catch::Approx(c.income_mass));
+    CHECK(w.number("incE") == Catch::Approx(c.income_energy));
+    CHECK(w.number("stM") == Catch::Approx(std::clamp(c.mass + c.income_mass, 0.0, 650.0)));
+    CHECK(w.number("stE") == Catch::Approx(std::clamp(c.energy + c.income_energy, 0.0, 4000.0)));
+}
+
 TEST_CASE("An army's overflow reaches a higher-index ally that tick, a lower-index one the next",
           "[tick-phases]") {
     const int giver = GENERATE(0, 1);
