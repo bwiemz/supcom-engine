@@ -24,7 +24,9 @@ chunks write disjoint world records and join before publication. Visibility
 retains main's serial callback order. A drawing clock follows published
 sim time with a buffered delay, including when a job produces several ticks.
 
-`--no-sim-thread`, catch-up and ordinary profiling use serial simulation.
+`--no-sim-thread`, catch-up, fixed-frame captures and ordinary profiling use
+serial simulation. Fast matches collect each job before their next fixed frame. Scripted network
+flows retain threading to exercise the real session path.
 `--profile-frames` keeps threading enabled and profiles frame work. Thread
 ownership checks at Lua API boundaries catch accidental sim-state access
 from the drawing thread in test and benchmark runs.

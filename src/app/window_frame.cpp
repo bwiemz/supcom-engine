@@ -538,7 +538,12 @@ void App::Window::advance_sim(double dt) {
 bool App::Window::sim_threaded() const {
     // (--profile times the sim's zones on this thread; --profile-frames
     // leaves it on its own)
+    // Fixed-frame captures must not accrue extra sim time from busy draws.
+    // Fast matches collect each job; scripted network flows exercise the
+    // real threaded session path and synchronize their ticks over lockstep.
+    const bool network_flow = opt.lan_game_test() || opt.gpgnet_scripted;
     return sim_thread && sim_state && !catch_up && !tests &&
+           (!fixed_step() || opt.fast_match_ticks > 0 || network_flow) &&
            (!osc::Profiler::instance().enabled() || opt.profile_frames);
 }
 
