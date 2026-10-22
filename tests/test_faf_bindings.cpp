@@ -4,6 +4,7 @@
 // reads.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -16,6 +17,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/pose.hpp"
+#include "sim/platoon.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -389,4 +391,61 @@ TEST_CASE("The Cursor stats hold the ground under the cursor", "[faf][stats]") {
     )");
     INFO(error);
     CHECK(error.empty());
+}
+
+TEST_CASE("Attack vectors score the candidate's units within 32, by cost or nonzero count",
+          "[ai][attack-vectors]") {
+    const bool energy_value = GENERATE(false, true);
+    World w;
+    osc::map::Heightmap heights(256, 256, 1.0f, std::vector<osc::u16>(257 * 257, 0));
+    w.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(heights), 0.0f, false));
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    w.sim.set_fog_of_war("none");
+    w.sim.set_victory_condition("sandbox");
+    REQUIRE(run(w.sim_lua, energy_value
+                               ? "__blueprints = {cheap = {Economy = {BuildCostMass = 10}},"
+                                 " valuable = {Economy = {BuildCostEnergy = 100}}}"
+                               : "__blueprints = {cheap = {Economy = {BuildCostMass = 10}},"
+                                 " valuable = {Economy = {BuildCostMass = 100}}}")
+                .empty());
+    const auto enemy = [&](const char* blueprint, float x) {
+        auto unit = std::make_unique<osc::sim::Unit>();
+        unit->set_blueprint_id(blueprint);
+        unit->set_army(1);
+        unit->set_position({x, 0, 10});
+        w.sim.entity_registry().register_entity(std::move(unit));
+    };
+    enemy("cheap", 15);
+    enemy("cheap", 16);
+    enemy("valuable", 105);
+    for (int tick = 0; tick < 12; ++tick) w.sim.tick();
+    auto* brain = w.sim.get_army(0);
+    brain->set_current_enemy_index(1);
+    // The squad is near the cheap pair. The valuable singleton is farther;
+    // the third candidate has no defenders and must not win LeastDefended.
+    brain->set_attack_vectors(
+        {{{10, 0, 10}, {5, 0, 0}}, {{100, 0, 10}, {5, 0, 0}}, {{200, 0, 10}, {5, 0, 0}}});
+    auto* platoon = brain->create_platoon("Attackers");
+    platoon->add_unit(w.id);
+    platoon->set_unit_squad(w.id, "Attack");
+    lua_State* L = w.sim_lua.raw();
+    const auto expose = [&](const char* name, void* object) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, object);
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    expose("brain", brain);
+    expose("platoon", platoon);
+    for (const char* comparison : {"HighestValue", "LeastDefended"}) {
+        const std::string code =
+            std::string("local v = moho.aibrain_methods.PickBestAttackVector(brain, platoon,") +
+            " 'Attack', 'Enemy', '" + comparison +
+            "', {__name = 'ALLUNITS'}) assert(v and v.px == 100, v and v.px or 'nil')";
+        const auto result = w.sim_lua.do_string(code);
+        INFO(comparison);
+        INFO((result.ok() ? std::string() : result.error().message));
+        CHECK(result.ok());
+    }
 }

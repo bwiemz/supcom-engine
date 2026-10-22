@@ -1519,9 +1519,10 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             lua_pop(L, 1);
             if (sim_for_stat) {
                 if (auto* brain = sim_for_stat->get_army(target_unit->army())) {
-                    brain->record_unit_built(target_unit->blueprint_id(),
-                                             target_unit->build_cost_mass(),
-                                             target_unit->build_cost_energy());
+                    // Its own blueprint's cost: build_cost_mass() is what a
+                    // builder is building, not what the unit cost
+                    const auto cost = blueprint_build_economy(L, target_unit->blueprint_id());
+                    brain->record_unit_built(target_unit->blueprint_id(), cost.mass, cost.energy);
                 }
             }
 

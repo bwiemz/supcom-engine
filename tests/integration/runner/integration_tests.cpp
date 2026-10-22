@@ -1847,6 +1847,14 @@ void test_capture(TestContext& ctx) {
         osc::test_status::fail("[FAIL] the power generator was never finished");
         return;
     }
+    // What it cost is counted as built (it was read from the builder's
+    // current build, which ends with it: 0 for every unit)
+    lua("Test 0: its army counts the power generator's cost as built", R"(
+        local cost = __blueprints['ueb1101'].Economy.BuildCostMass
+        local built = GetArmyBrain('ARMY_1'):GetArmyStat('Units_MassValue_Built', 0).Value
+        if not cost or cost <= 0 then error('no cost to count') end
+        if built < cost then error('built mass ' .. tostring(built) .. ' < ' .. tostring(cost)) end
+    )");
     if (!lua("Test 1: given to ARMY_2, a new power generator of ARMY_2 takes its place, hurt as it "
              "was",
              R"(
