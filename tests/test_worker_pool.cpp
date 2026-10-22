@@ -3,6 +3,7 @@
 // are.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "core/worker_pool.hpp"
 
@@ -44,12 +45,21 @@ TEST_CASE("A slot per index gives the same results however the work is shared", 
 
 TEST_CASE("A for_each inside a for_each's work runs on its caller", "[pool]") {
     auto& pool = WorkerPool::instance();
+    pool.set_enabled(GENERATE(false, true));
     std::atomic<int> inner{0};
-    pool.for_each(8, 1, [&](size_t, size_t) {
-        pool.for_each(10, 1,
-                      [&](size_t begin, size_t end) { inner += static_cast<int>(end - begin); });
+    std::atomic<bool> inner_on_caller{true};
+    pool.for_each(8, 1, [&](size_t begin, size_t end) {
+        const auto caller = std::this_thread::get_id();
+        for (size_t i = begin; i < end; ++i) {
+            pool.for_each(10, 1, [&](size_t first, size_t last) {
+                if (std::this_thread::get_id() != caller) inner_on_caller = false;
+                inner += static_cast<int>(last - first);
+            });
+        }
     });
     CHECK(inner == 80);
+    CHECK(inner_on_caller);
+    pool.set_enabled(true);
 }
 
 TEST_CASE("Two threads' for_each calls take turns", "[pool]") {
@@ -70,14 +80,15 @@ TEST_CASE("Two threads' for_each calls take turns", "[pool]") {
 TEST_CASE("A throwing pool chunk finishes the job before propagating, and the pool stays usable",
           "[pool][exceptions]") {
     auto& pool = WorkerPool::instance();
-    std::atomic<int> chunks{0};
+    pool.set_enabled(GENERATE(false, true));
+    std::atomic<int> attempted{0};
     CHECK_THROWS_AS(pool.for_each(64, 1,
-                                  [&](size_t begin, size_t) {
-                                      ++chunks;
+                                  [&](size_t begin, size_t end) {
+                                      attempted += static_cast<int>(end - begin);
                                       if (begin == 0) throw std::runtime_error("chunk failed");
                                   }),
                     std::runtime_error);
-    CHECK(chunks == 64);
+    CHECK(attempted == 64);
     std::atomic<int> after{0};
     pool.for_each(64, 1, [&](size_t begin, size_t end) { after += static_cast<int>(end - begin); });
     CHECK(after == 64);
