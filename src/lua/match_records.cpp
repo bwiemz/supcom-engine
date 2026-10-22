@@ -252,9 +252,9 @@ int l_GetMatchRecord(lua_State* L) {
     return 1;
 }
 
-/// WopcMarkMoment([note]) -- the player marks this moment of the game (a
+/// MarkPerformanceMoment([note]) -- the player marks this moment of the game (a
 /// lag, say) in its match record, for whoever reads it after.
-int l_WopcMarkMoment(lua_State* L) {
+int l_MarkPerformanceMoment(lua_State* L) {
     pending_marks().emplace_back(luaL_optstring(L, 1, ""));
     return 0;
 }
@@ -268,7 +268,7 @@ std::vector<std::string>& pending_marks() {
 
 void register_match_record_bindings(LuaState& state) {
     state.register_function("GetMatchRecord", l_GetMatchRecord);
-    state.register_function("WopcMarkMoment", l_WopcMarkMoment);
+    state.register_function("MarkPerformanceMoment", l_MarkPerformanceMoment);
 }
 
 } // namespace osc::lua

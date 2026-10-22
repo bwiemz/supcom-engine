@@ -270,3 +270,12 @@ TEST_CASE("How a game ran, and the moments its player marked, are kept and read 
 
     std::filesystem::remove(path);
 }
+
+TEST_CASE("UI performance marks are queued for the next match sample", "[telemetry][lua]") {
+    osc::lua::pending_marks().clear();
+    osc::lua::LuaState state;
+    osc::lua::register_match_record_bindings(state);
+    REQUIRE(state.do_string("MarkPerformanceMoment('slow battle') MarkPerformanceMoment()"));
+    CHECK(osc::lua::pending_marks() == std::vector<std::string>{"slow battle", ""});
+    osc::lua::pending_marks().clear();
+}

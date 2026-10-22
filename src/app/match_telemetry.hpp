@@ -35,7 +35,7 @@
 // call out where it lagged): a `perf` record every ten seconds of a drawn
 // game (PerfSample: its frames, how evenly the world was drawn, its ticks'
 // wall time, the speed asked and got, the units), and a `player_mark` event
-// when the player marks a moment (WopcMarkMoment, with a note).
+// when the player marks a moment (MarkPerformanceMoment, with a note).
 
 #include "core/types.hpp"
 

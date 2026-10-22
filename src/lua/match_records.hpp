@@ -36,11 +36,11 @@ inline constexpr size_t kMaxNotable = 1000;
 /// no match. See GetMatchRecord above for what a summary leaves out.
 std::optional<nlohmann::json> read_match_record(const std::filesystem::path& path, bool summary);
 
-/// GetMatchRecord and WopcMarkMoment, for the UI state (needs its special
+/// GetMatchRecord and MarkPerformanceMoment, for the UI state (needs its special
 /// files registered).
 void register_match_record_bindings(LuaState& state);
 
-/// The moments the player marked (WopcMarkMoment(note)) since the window
+/// The moments the player marked (MarkPerformanceMoment(note)) since the window
 /// last wrote them into the match record, each its note.
 std::vector<std::string>& pending_marks();
 
