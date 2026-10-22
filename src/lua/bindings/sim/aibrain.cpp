@@ -567,11 +567,7 @@ static int brain_GetArmyStat(lua_State* L) {
         return 1;
     }
     const char* stat_name = luaL_checkstring(L, 2);
-    f64 def_val = 0;
-    if (lua_isnumber(L, 3)) {
-        def_val = lua_tonumber(L, 3);
-    }
-    f64 val = brain->get_stat(stat_name, def_val);
+    f64 val = brain->make_stat(stat_name);
     lua_newtable(L);
     lua_pushstring(L, "Value"); lua_pushnumber(L, val); lua_rawset(L, -3);
     return 1;
@@ -586,33 +582,52 @@ static int brain_SetArmyStat(lua_State* L) {
     return 0;
 }
 
-// GetBlueprintStat(self, statName, category) -> number: the stat over the
-// blueprints in the category (retail's score splits kills, builds and losses
-// into land, air, naval, structures, commanders and experimentals). A plain
-// number, unlike GetArmyStat's {Value = n}.
+static bool blueprint_in(lua_State* L, const blueprints::BlueprintStore& store,
+                         const blueprints::BlueprintEntry& entry, const CategoryMatcher& category) {
+    store.push_lua_table(entry, L);
+    std::unordered_set<std::string> cats;
+    sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+    lua_pop(L, 1);
+    return category.matches(cats);
+}
+
+// Moho's CAiBrain::GetBlueprintStat: SumCategory, 0 for a stat without per-blueprint counts
 static int brain_GetBlueprintStat(lua_State* L) {
     auto* brain = check_brain(L);
     if (!brain) { lua_pushnumber(L, 0); return 1; }
     const char* stat_name = luaL_checkstring(L, 2);
     const auto* per_bp = brain->blueprint_stats(stat_name);
-    auto* store = LuaState::get_blueprint_store(L);
-    if (!lua_istable(L, 3) || !per_bp || !store) {
-        lua_pushnumber(L, lua_istable(L, 3) && per_bp ? 0.0 : brain->get_stat(stat_name, 0.0));
-        return 1;
-    }
+    auto* sim = get_sim(L);
+    const auto* store = sim ? sim->blueprint_store() : nullptr;
     f64 total = 0.0;
-    const CategoryMatcher category(L, 3);
-    for (const auto& [bp_id, value] : *per_bp) {
-        auto* entry = store->find(bp_id);
-        if (!entry) continue;
-        store->push_lua_table(*entry, L);
-        std::unordered_set<std::string> cats;
-        sim::collect_blueprint_categories(L, lua_gettop(L), cats);
-        lua_pop(L, 1);
-        if (category.matches(cats)) total += value;
+    if (per_bp && store && lua_istable(L, 3)) {
+        const CategoryMatcher category(L, 3);
+        for (const auto& [bp_id, value] : *per_bp) {
+            const auto* entry = store->find(bp_id);
+            if (entry && blueprint_in(L, *store, *entry, category)) {
+                total += value;
+            }
+        }
     }
     lua_pushnumber(L, total);
     return 1;
+}
+
+// The unit blueprints in the category at `idx`, as Moho's EntityCategorySet holds them
+static std::set<std::string> unit_blueprints_in(lua_State* L, int idx) {
+    std::set<std::string> ids;
+    auto* sim = get_sim(L);
+    const auto* store = sim ? sim->blueprint_store() : nullptr;
+    if (!store) {
+        return ids;
+    }
+    const CategoryMatcher category(L, idx);
+    for (const auto* entry : store->get_all(blueprints::BlueprintType::Unit)) {
+        if (blueprint_in(L, *store, *entry, category)) {
+            ids.insert(entry->id);
+        }
+    }
+    return ids;
 }
 
 static int brain_GetEconomyOverTime(lua_State* L) {
@@ -2254,15 +2269,18 @@ static int brain_SetArmyStatsTrigger(lua_State* L) {
     if (!brain) {
         return 0;
     }
+    const char* stat = luaL_checkstring(L, 2);
     sim::StatTrigger t;
-    t.stat = luaL_checkstring(L, 2);
+    t.stat = stat;
     t.name = luaL_checkstring(L, 3);
     t.compare = luaL_checkstring(L, 4);
     t.value = luaL_checknumber(L, 5);
-    if (!lua_isnoneornil(L, 6)) {
-        t.category = "category";
+    if (lua_istable(L, 6)) {
+        t.blueprints = unit_blueprints_in(L, 6);
     }
-    brain->add_stat_trigger(std::move(t));
+    if (!brain->add_stat_trigger(std::move(t))) {
+        spdlog::warn("ArmyStatItem {} does not exist.", stat);
+    }
     return 0;
 }
 

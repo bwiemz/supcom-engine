@@ -1512,19 +1512,6 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             spdlog::info("finish_build: entity #{} completed building target #{}", entity_id(),
                          target_id);
 
-            // A unit built by its army (Moho's Units_History)
-            lua_pushstring(L, "osc_sim_state");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            auto* sim_for_stat = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
-            if (sim_for_stat) {
-                if (auto* brain = sim_for_stat->get_army(target_unit->army())) {
-                    brain->record_unit_built(target_unit->blueprint_id(),
-                                             target_unit->build_cost_mass(),
-                                             target_unit->build_cost_energy());
-                }
-            }
-
             // Call target:OnStopBeingBuilt(builder, layer)
             if (target->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
@@ -1554,6 +1541,16 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // Re-validate target after OnStopBeingBuilt callback
         // (Lua callback may have destroyed the entity)
         target = registry.find(target_id);
+
+        lua_pushstring(L, "osc_sim_state");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* sim_for_stat = static_cast<sim::SimState*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        auto* brain = sim_for_stat && target ? sim_for_stat->get_army(target->army()) : nullptr;
+        if (brain && target->is_unit()) {
+            const BuildEconomy cost = blueprint_build_economy(L, target->blueprint_id());
+            brain->record_unit_built(*static_cast<Unit*>(target), cost.mass, cost.energy);
+        }
 
         // The completed structure now blocks paths until it is removed
         // (after re-validation — only if target survived OnStopBeingBuilt)

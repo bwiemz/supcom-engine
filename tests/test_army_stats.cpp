@@ -22,6 +22,9 @@ extern "C" {
 
 #include <cmath>
 #include <memory>
+#include <optional>
+#include <set>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -61,8 +64,14 @@ TEST_CASE("Army stats use Moho's names and meanings", "[army][stats]") {
     // Retail's score (aibrain.lua) reads these: Units_Killed is the army's
     // *losses*, Enemies_Killed its kills, Units_History what it built.
     osc::sim::ArmyBrain brain;
-    brain.record_unit_built("uel0101", 52.0, 260.0);
-    brain.record_unit_built("uel0101", 52.0, 260.0);
+    osc::sim::Unit scout;
+    scout.set_blueprint_id("uel0101");
+    scout.set_is_being_built(true);
+    brain.record_unit_made(scout);
+    brain.record_unit_made(scout);
+    scout.set_is_being_built(false);
+    brain.record_unit_built(scout, 52.0, 260.0);
+    brain.record_unit_built(scout, 52.0, 260.0);
     brain.record_unit_lost("uel0101", 52.0, 260.0);
     brain.record_enemy_killed("url0001", 18000.0, 5000000.0, /*commander=*/true);
     brain.record_enemy_killed("url0106", 30.0, 150.0, false);
@@ -216,10 +225,10 @@ TEST_CASE("A stats trigger fires once, when all its conditions hold", "[army][st
     osc::sim::ArmyBrain brain;
     brain.set_stat("Units_Active", 3);
     brain.set_stat("Economy_Ratio_Mass", 0.05);
-    brain.add_stat_trigger({"Economy_Ratio_Mass", "Low", "LessThan", 0.1, ""});
-    brain.add_stat_trigger({"Units_Active", "Both", "GreaterThanOrEqual", 3, ""});
-    brain.add_stat_trigger({"Economy_Ratio_Mass", "Both", "GreaterThan", 0.5, ""});
-    brain.add_stat_trigger({"Units_Active", "Cat", "GreaterThan", 0, "category"});
+    brain.add_stat_trigger({"Economy_Ratio_Mass", "Low", "LessThan", 0.1, std::nullopt});
+    brain.add_stat_trigger({"Units_Active", "Both", "GreaterThanOrEqual", 3, std::nullopt});
+    brain.add_stat_trigger({"Economy_Ratio_Mass", "Both", "GreaterThan", 0.5, std::nullopt});
+    brain.add_stat_trigger({"Units_Active", "Cat", "GreaterThan", 0, std::set<std::string>{}});
 
     CHECK(brain.take_fired_triggers() == std::vector<std::string>{"Low"});
     CHECK(brain.take_fired_triggers().empty());
@@ -228,7 +237,7 @@ TEST_CASE("A stats trigger fires once, when all its conditions hold", "[army][st
     CHECK(brain.take_fired_triggers() == std::vector<std::string>{"Both"});
 
     brain.remove_stat_trigger("Units_Active", "Cat");
-    brain.add_stat_trigger({"Units_Active", "Equal3", "Equal", 3, ""});
+    brain.add_stat_trigger({"Units_Active", "Equal3", "Equal", 3, std::nullopt});
     CHECK(brain.take_fired_triggers() == std::vector<std::string>{"Equal3"});
 }
 

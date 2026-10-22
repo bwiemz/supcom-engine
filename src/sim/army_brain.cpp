@@ -108,6 +108,14 @@ f64 ArmyBrain::get_economy_stored(const std::string& resource_type) const {
     return 0.0;
 }
 
+bool ArmyBrain::add_stat_trigger(StatTrigger t) {
+    if (!stats_.contains(t.stat)) {
+        return false;
+    }
+    stat_triggers_.push_back(std::move(t));
+    return true;
+}
+
 void ArmyBrain::remove_stat_trigger(const std::string& stat, const std::string& name) {
     std::erase_if(stat_triggers_,
                   [&](const StatTrigger& t) { return t.stat == stat && t.name == name; });
@@ -115,10 +123,7 @@ void ArmyBrain::remove_stat_trigger(const std::string& stat, const std::string& 
 
 std::vector<std::string> ArmyBrain::take_fired_triggers() {
     const auto holds = [&](const StatTrigger& t) {
-        if (!t.category.empty()) {
-            return false;
-        }
-        const f64 v = get_stat(t.stat);
+        const f64 v = t.blueprints ? blueprint_stat(t.stat, *t.blueprints) : get_stat(t.stat);
         if (t.compare == "LessThan") {
             return v < t.value;
         }
@@ -250,7 +255,6 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     f64 held_mass = 0.0;
     f64 held_energy = 0.0;
 
-    u32 active_units = 0;
     // Each unit's one request, as Moho's (its consumption and any upkeep set
     // through the engine's own maintenance fields): granted once the shares
     // are known
@@ -262,7 +266,6 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     f64 refund_mass = 0.0, refund_energy = 0.0;
     registry.for_each_unit([&](Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
-        ++active_units;
         auto& unit = static_cast<Unit&>(e);
         auto& econ = unit.economy();
         const bool upkeep = econ.maintenance_active && econ.energy_maintenance_override > 0.0;
@@ -413,14 +416,58 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     stats_["Economy_AccumExcess_Energy"] += excess_energy - shared_energy;
     stats_["Economy_Ratio_Mass"] = get_economy_stored_ratio("MASS");
     stats_["Economy_Ratio_Energy"] = get_economy_stored_ratio("ENERGY");
-    stats_["Units_Active"] = static_cast<f64>(active_units);
 }
 
-void ArmyBrain::record_unit_built(const std::string& bp_id, f64 mass, f64 energy) {
-    stats_["Units_History"] += 1.0;
-    blueprint_stats_["Units_History"][bp_id] += 1.0;
+void ArmyBrain::add_blueprint_stat(const std::string& stat, const std::string& bp_id, f64 delta) {
+    stats_.try_emplace(stat, 0.0);
+    blueprint_stats_[stat][bp_id] += delta;
+}
+
+void ArmyBrain::count_ready(const std::string& bp_id) {
+    for (const char* stat : {"Units_Active", "Units_History"}) {
+        stats_[stat] += 1.0;
+        add_blueprint_stat(stat, bp_id, 1.0);
+    }
+}
+
+f64 ArmyBrain::blueprint_stat(const std::string& stat,
+                              const std::set<std::string>& blueprints) const {
+    f64 total = 0.0;
+    if (const auto* lanes = blueprint_stats(stat)) {
+        for (const auto& [bp_id, value] : *lanes) {
+            if (blueprints.contains(bp_id)) {
+                total += value;
+            }
+        }
+    }
+    return total;
+}
+
+void ArmyBrain::record_unit_made(const Unit& unit) {
+    if (unit.is_being_built()) {
+        add_blueprint_stat("Units_BeingBuilt", unit.blueprint_id(), 1.0);
+    } else if (unit.cap_cost() > 0.0f) {
+        count_ready(unit.blueprint_id());
+    }
+}
+
+void ArmyBrain::record_unit_built(const Unit& unit, f64 mass, f64 energy) {
+    if (unit.cap_cost() <= 0.0f) {
+        return;
+    }
+    count_ready(unit.blueprint_id());
     stats_["Units_MassValue_Built"] += mass;
     stats_["Units_EnergyValue_Built"] += energy;
+    add_blueprint_stat("Units_BeingBuilt", unit.blueprint_id(), -1.0);
+}
+
+void ArmyBrain::record_unit_removed(const Unit& unit) {
+    if (unit.is_being_built()) {
+        add_blueprint_stat("Units_BeingBuilt", unit.blueprint_id(), -1.0);
+    } else if (unit.cap_cost() > 0.0f) {
+        stats_["Units_Active"] -= 1.0;
+        add_blueprint_stat("Units_Active", unit.blueprint_id(), -1.0);
+    }
 }
 
 void ArmyBrain::record_unit_lost(const std::string& bp_id, f64 mass, f64 energy) {
