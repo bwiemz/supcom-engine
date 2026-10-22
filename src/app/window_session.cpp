@@ -189,6 +189,16 @@ void App::Window::handle_launch() {
                                              osc::lua::mp_net_state().local_army());
                 }
 
+                if (!osc::lua::mp_net_state().resume_error.empty()) {
+                    lua_pushstring(uiL, "__osc_front_end_notice");
+                    lua_pushstring(uiL, osc::lua::mp_net_state().resume_error.c_str());
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    lua_pushstring(uiL, "__osc_return_to_lobby");
+                    lua_pushboolean(uiL, 1);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    return;
+                }
+
                 // Re-install instrument harness on new sim VM (M166)
                 if (instrument_harness && sim_lua_state) {
                     instrument_harness->install_panic_handler(sim_lua_state->raw());

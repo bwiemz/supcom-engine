@@ -14,6 +14,7 @@ extern "C" {
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cctype>
 #include <map>
 #include <string>
@@ -33,6 +34,7 @@ void MpNetState::reset() {
     army_sources.clear();
     clients.clear();
     transport_ready = false;
+    resume_error.clear();
 }
 
 osc::i32 MpNetState::army_of(osc::u32 source) const {
@@ -178,54 +180,65 @@ std::string player_of(const osc::sim::SimState& sim, const std::string& army) {
 bool mp_attach_session(osc::sim::SimState& sim) {
     auto& s = mp_net_state();
     if (!s.transport_ready || !s.lobby_transport) return false;
-    // A resumed game (OE-128): each player plays the army their name played
-    // in it, whatever slot the new lobby seated them in (its spawn was drawn
-    // again); an observer stays one
-    if (sim.tick_count() > 0) {
-        for (size_t source = 0; source < s.clients.size() && source < s.source_armies.size();
-             ++source) {
-            if (s.source_armies[source] < 0) continue;
-            bool found = false;
-            for (size_t a = 0; a < sim.army_count() && !found; ++a) {
-                const osc::sim::ArmyBrain* brain = sim.army_at(a);
-                if (brain && player_of(sim, brain->name()) == s.clients[source].name) {
-                    s.source_armies[source] = static_cast<osc::i32>(a);
-                    found = true;
-                }
-            }
-            if (!found)
-                spdlog::warn("[mp] resumed game: no army played as '{}'; it keeps slot army {}",
-                             s.clients[source].name, s.source_armies[source]);
+    // Keep the saved source ids, so commands recorded after resuming still
+    // replay under the original setup's authority. The transport carries
+    // opaque messages; clients and their lobby UIDs can be reordered here.
+    if (sim.beat_count() > 0) {
+        const auto refuse = [&](const std::string& why) {
+            s.resume_error = "Cannot resume this network save: " + why;
+            spdlog::error("{}", s.resume_error);
+            return false;
+        };
+        if (s.clients.size() != sim.source_armies().size())
+            return refuse("the saved number of players and observers must return");
+        u32 expected_source = 0;
+        for (const auto& [source, army] : sim.source_armies()) {
+            (void)army;
+            if (source != expected_source++) return refuse("unsupported saved source layout");
         }
-        // The armies' command sources it saved are numbered as its first
-        // lobby numbered its players, which the new draw may not: each saved
-        // source becomes the one now playing the army it played (one no
-        // player plays now goes)
-        if (sim.command_sources_known()) {
-            std::map<osc::u32, osc::u32> renumbered;
-            for (size_t a = 0; a < sim.army_count(); ++a)
-                for (const osc::u32 saved : sim.army_command_sources(static_cast<osc::i32>(a))) {
-                    const osc::i32 played = sim.army_of_source(saved);
-                    for (osc::u32 now = 0; now < s.source_armies.size(); ++now)
-                        if (played >= 0 && s.source_armies[now] == played) renumbered[saved] = now;
-                }
-            for (size_t a = 0; a < sim.army_count(); ++a) {
-                const auto army = static_cast<osc::i32>(a);
-                const std::vector<osc::u32> saved = sim.army_command_sources(army);
-                for (const osc::u32 source : saved) sim.set_command_source(army, source, false);
-                for (const osc::u32 source : saved)
-                    if (const auto it = renumbered.find(source); it != renumbered.end())
-                        sim.set_command_source(army, it->second, true);
-            }
-        }
-        s.army_sources.assign(s.army_sources.size(), -1);
-        for (osc::u32 source = 0; source < s.source_armies.size(); ++source) {
-            const osc::i32 army = s.source_armies[source];
+        std::vector<SessionClient> clients(s.clients.size());
+        std::vector<i32> armies(s.clients.size(), -1);
+        std::vector<bool> assigned(s.clients.size(), false);
+        std::vector<u32> mapped(s.clients.size(), 0);
+        size_t humans = 0;
+        for (const auto& [source, army] : sim.source_armies()) {
             if (army < 0) continue;
-            if (static_cast<size_t>(army) >= s.army_sources.size())
-                s.army_sources.resize(static_cast<size_t>(army) + 1, -1);
-            s.army_sources[static_cast<size_t>(army)] = static_cast<osc::i32>(source);
+            if (source != humans || source >= clients.size())
+                return refuse("all original players must return in a supported source layout");
+            const auto* brain = sim.get_army(army);
+            const std::string name = brain ? player_of(sim, brain->name()) : std::string();
+            if (name.empty()) return refuse("a saved player has no name");
+            size_t match = s.clients.size();
+            for (size_t now = 0; now < s.clients.size(); ++now) {
+                if (s.clients[now].name != name) continue;
+                if (match != s.clients.size()) return refuse("player names must be unique");
+                match = now;
+            }
+            if (match == s.clients.size() || assigned[match])
+                return refuse("every original player must return with a unique name");
+            assigned[match] = true;
+            mapped[match] = source;
+            clients[source] = s.clients[match];
+            armies[source] = army;
+            ++humans;
         }
+        if (humans == 0) return refuse("the saved player mapping is missing");
+        size_t observer = humans;
+        for (size_t now = 0; now < s.clients.size(); ++now) {
+            if (assigned[now]) continue;
+            if (s.army_of(static_cast<u32>(now)) >= 0)
+                return refuse("additional participants must join as observers");
+            clients[observer] = s.clients[now];
+            mapped[now] = static_cast<u32>(observer++);
+        }
+        s.local_source = mapped[s.local_source];
+        for (u32& source : s.all_sources) source = mapped[source];
+        std::sort(s.all_sources.begin(), s.all_sources.end());
+        s.clients = std::move(clients);
+        s.source_armies = std::move(armies);
+        s.army_sources.assign(sim.army_count(), -1);
+        for (u32 source = 0; source < humans; ++source)
+            s.army_sources[static_cast<size_t>(s.source_armies[source])] = static_cast<i32>(source);
     }
     s.session = std::make_unique<osc::sim::LockstepSession>(sim, *s.lobby_transport, s.local_source,
                                                             s.all_sources);
@@ -242,8 +255,10 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     // Each source's pause timeouts, as Moho's: a player the game's Timeouts
     // ('0', '3', '-1': unlimited), an observer none
     const osc::i32 timeouts = game_timeouts(sim);
-    for (const osc::u32 source : s.all_sources)
-        sim.set_pause_timeouts(source, s.army_of(source) >= 0 ? timeouts : 0);
+    if (sim.beat_count() == 0) {
+        for (const osc::u32 source : s.all_sources)
+            sim.set_pause_timeouts(source, s.army_of(source) >= 0 ? timeouts : 0);
+    } // a resume keeps the timeouts each player has left
     sim.set_source_army(s.local_source, s.local_army());
     auto* session = s.session.get();
     set_game_speed(sim, *session);

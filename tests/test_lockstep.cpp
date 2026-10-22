@@ -4,6 +4,7 @@
 // headlessly (no sockets, no game data).
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "lua/gpgnet_session.hpp"
 #include "lua/lua_state.hpp"
@@ -1176,6 +1177,7 @@ TEST_CASE("At speed, the lead cap and the drop timeout keep their times (M218i)"
 TEST_CASE("A network game every player saved resumes from each one's copy as if never stopped "
           "(OE-128)",
           "[lockstep][save]") {
+    const bool held_beats = GENERATE(false, true);
     osc::lua::LuaState la, lb;
     SimState a(la.raw(), nullptr);
     SimState b(lb.raw(), nullptr);
@@ -1212,6 +1214,15 @@ TEST_CASE("A network game every player saved resumes from each one's copy as if 
         orders(a, sa);
         round(sa, sb);
     }
+    if (held_beats) {
+        sa.request_pause();
+        for (int r = 0; r < 8; ++r) round(sa, sb);
+        REQUIRE(a.paused());
+        REQUIRE(a.beat_count() > a.tick_count());
+        sb.request_resume();
+        for (int r = 0; r < 8; ++r) round(sa, sb);
+        REQUIRE_FALSE(a.paused());
+    }
     osc::sim::SimCallbackEntry save;
     save.func_name = osc::sim::kSaveGameCallback;
     save.args["Name"] = std::string("evening");
@@ -1240,8 +1251,8 @@ TEST_CASE("A network game every player saved resumes from each one's copy as if 
     LoopbackTransport tb2(hub2, hub2.add_endpoint());
     LockstepSession sa2(a2, ta2, 0, {0, 1});
     LockstepSession sb2(b2, tb2, 1, {0, 1});
-    CHECK(sa2.current_frame() == saved_at + 1);
-    while (a2.tick_count() < 40) {
+    CHECK(sa2.current_frame() == a2.beat_count() + 1);
+    for (int r = 0; r < 100 && a2.tick_count() < 40; ++r) {
         orders(a2, sa2);
         round(sa2, sb2);
     }

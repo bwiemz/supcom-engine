@@ -385,6 +385,7 @@ public:
     /// focus army it starts with. What it may command is the armies' command
     /// sources (below).
     void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+    const std::map<u32, i32>& source_armies() const { return source_armies_; }
 
     // --- Command sources (Moho's SSTIArmyVariableData::mValidCommandSources) ---
     /// The game numbers its command sources: from now on an army takes
@@ -425,7 +426,6 @@ public:
     /// may read the live sim (the UI reads its last published snapshot).
     void set_ticking_elsewhere(bool on) { ticking_elsewhere_ = on; }
     bool ticking_elsewhere() const { return ticking_elsewhere_; }
-
 
 
     // --- The game's pause (M218f), as Moho's sim takes it ---

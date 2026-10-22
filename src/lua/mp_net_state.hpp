@@ -31,6 +31,7 @@ struct MpNetState {
     std::vector<osc::u32> all_sources;
     osc::u64 seed = 0xC0FFEE1234567890ull;              ///< the sim's seed (the host's hosted time)
     std::unique_ptr<osc::sim::LockstepSession> session; ///< built at game launch
+    std::string resume_error;
     bool transport_ready = false; ///< a lobby's game awaits its launch, or plays
     /// The lobby's connections, carrying the lockstep; source s plays army
     /// source_armies[s] (-1: an observer's).
