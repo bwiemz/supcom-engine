@@ -14,6 +14,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 namespace osc::test {
@@ -48,6 +49,11 @@ void test_gpu_pass_timing(TestContext& ctx) {
     std::vector<u16> heights(static_cast<size_t>(kSize + 1) * (kSize + 1), 5 * 128);
     map::Terrain ground(map::Heightmap(kSize, kSize, 1.0f / 128.0f, std::move(heights)), 10.0f,
                         true);
+    // A synthetic terrain needs strata too: they allocate its texture descriptors.
+    std::vector<map::StratumInfo> strata(10);
+    for (auto& stratum : strata) stratum.albedo_scale = stratum.normal_scale = 4.0f;
+    strata[0].albedo_path = "/env/evergreen2/layers/eg_gravel005_albedo.dds";
+    ground.set_strata(std::move(strata), {}, {});
     (void)shots.shoot(ground, kSize * 0.5f, kSize * 0.5f, 80.0f, false);
 
     using Frame = renderer::GpuFrameQueries::Frame;
