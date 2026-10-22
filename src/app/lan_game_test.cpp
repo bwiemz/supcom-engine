@@ -262,7 +262,7 @@ void LanGameTest::check_save(lua::LuaState& ui, const sim::SimState& sim) {
         sim::SavedGame save;
         if (lua::read_saved_game(path, save) != sim::SaveLoadError::None)
             fail("no copy of the saved game here: " + path.string());
-        else spdlog::info("[lan-game] this side's copy of '{}': tick {}", save_as_, save.tick);
+        else spdlog::info("[lan-game] this side's copy of '{}': tick {}", save_as_, save.beat);
     }
     // The resumed game took up where the save was, not at its start
     if (!resume_.empty() && (!first_tick_ || *first_tick_ < kSaveTick))
@@ -445,13 +445,13 @@ void LanGameTest::lobby_frame(lua::LuaState& ui) {
             lua_pushstring(L, "__osc_lan_resume");
             lua_pushstring(L, resume_.c_str());
             lua_rawset(L, LUA_GLOBALSINDEX);
-            lua_pushstring(L, "__osc_lan_resume_tick");
-            lua_pushnumber(L, save.tick);
+            lua_pushstring(L, "__osc_lan_resume_beat");
+            lua_pushnumber(L, save.beat);
             lua_rawset(L, LUA_GLOBALSINDEX);
             if (auto r = ui.do_string(R"(
                     local info = __osc_upvalue(import('/lua/ui/lobby/lobby.lua').IsLocallyOwned, 'gameInfo')
                     info.GameOptions.ResumeSave = __osc_lan_resume
-                    info.GameOptions.ResumeTick = __osc_lan_resume_tick
+                    info.GameOptions.ResumeBeat = __osc_lan_resume_beat
                 )");
                 !r) {
                 fail("choosing the saved game: " + r.error().message);

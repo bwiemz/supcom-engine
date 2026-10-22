@@ -728,10 +728,10 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
     }
     // The scenario: GameOptions.ScenarioFile. A saved network game resumed
     // (OE-128): GameOptions.ResumeSave names the save every player took,
-    // ResumeTick the tick it was taken on; each player plays their own copy.
+    // ResumeBeat the tick it was taken on; each player plays their own copy.
     std::string scenario;
     std::string resume;
-    u32 resume_tick = 0;
+    u32 resume_beat = 0;
     lua_pushstring(L, "GameOptions");
     lua_gettable(L, 2);
     if (lua_istable(L, -1)) {
@@ -743,15 +743,15 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
         lua_gettable(L, -2);
         if (lua_type(L, -1) == LUA_TSTRING) resume = lua_tostring(L, -1);
         lua_pop(L, 1);
-        lua_pushstring(L, "ResumeTick");
+        lua_pushstring(L, "ResumeBeat");
         lua_gettable(L, -2);
-        if (lua_isnumber(L, -1)) resume_tick = static_cast<u32>(lua_tonumber(L, -1));
+        if (lua_isnumber(L, -1)) resume_beat = static_cast<u32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
     sim::SavedGame resumed;
     if (!resume.empty()) {
-        if (std::string why = check_network_save(L, resume, resume_tick, resumed); !why.empty()) {
+        if (std::string why = check_network_save(L, resume, resume_beat, resumed); !why.empty()) {
             spdlog::warn("lobby LaunchGame: can't resume: {}", why);
             return fail("MissingSave");
         }
@@ -810,7 +810,7 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
     // resumed game: from this player's copy of its save)
     if (!resume.empty()) {
         lua_pop(L, 1); // LaunchSinglePlayerSession
-        spdlog::info("lobby LaunchGame: resuming '{}' at tick {}", resume, resume_tick);
+        spdlog::info("lobby LaunchGame: resuming '{}' at tick {}", resume, resume_beat);
         launch_network_save(L, resume, scenario);
     } else {
         lua_pushvalue(L, 2);

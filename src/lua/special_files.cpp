@@ -224,15 +224,15 @@ fs::path network_save_path(const SpecialFiles& files, std::string profile,
     return files.path(*type, profile, name);
 }
 
-std::string check_network_save(lua_State* L, const std::string& name, u32 tick,
+std::string check_network_save(lua_State* L, const std::string& name, u32 beat,
                                sim::SavedGame& out) {
     const fs::path path = network_save_path(L, name);
     if (path.empty()) return "'" + name + "' isn't a saved game's name";
     if (read_saved_game(path, out) != sim::SaveLoadError::None)
         return "this player has no saved game '" + name + "' (" + path.string() + ")";
-    if (out.tick != tick)
-        return "this player's '" + name + "' was saved at tick " + std::to_string(out.tick) +
-               ", not " + std::to_string(tick);
+    if (out.beat != beat)
+        return "this player's '" + name + "' was saved at beat " + std::to_string(out.beat) +
+               ", not " + std::to_string(beat);
     return {};
 }
 
@@ -316,53 +316,6 @@ int l_InternalSaveGame(lua_State* L) {
         lua_pop(L, 1);
     }
     return 0;
-}
-
-/// GetSavedGameInfo(profile, base) -> {Name, Tick, Scenario, Players} or nil:
-/// what a saved game is, for a lobby resuming one (OE-128). Players: each
-/// army's lobby slot, as the lobby's own table (PlayerName, Human, Faction,
-/// Team...), in army order; Humans: how many people played it.
-int l_GetSavedGameInfo(lua_State* L) {
-    const SpecialFiles* files = get_special_files(L);
-    const SpecialFiles::Type* type = SpecialFiles::find_type("SaveGame");
-    const fs::path path = files && type
-                              ? files->path(*type, luaL_checkstring(L, 1), luaL_checkstring(L, 2))
-                              : fs::path();
-    sim::SavedGame save;
-    if (path.empty() || read_saved_game(path, save) != sim::SaveLoadError::None) {
-        lua_pushnil(L);
-        return 1;
-    }
-    lua_newtable(L);
-    const int info = lua_gettop(L);
-    lua_pushstring(L, "Name");
-    lua_pushstring(L, save.name.c_str());
-    lua_rawset(L, info);
-    lua_pushstring(L, "Tick");
-    lua_pushnumber(L, save.tick);
-    lua_rawset(L, info);
-    lua_pushstring(L, "Scenario");
-    lua_pushstring(L, save.game.setup.scenario.c_str());
-    lua_rawset(L, info);
-    lua_pushstring(L, "Players");
-    lua_newtable(L);
-    int humans = 0;
-    int n = 0;
-    for (const sim::ArmySlotConfig& slot : save.game.setup.slots) {
-        humans += slot.human ? 1 : 0;
-        if (slot.player_options.empty() || !sim::push_lua_bytes(L, slot.player_options)) {
-            lua_newtable(L);
-            lua_pushstring(L, "Human");
-            lua_pushboolean(L, slot.human ? 1 : 0);
-            lua_rawset(L, -3);
-        }
-        lua_rawseti(L, -2, ++n);
-    }
-    lua_rawset(L, info);
-    lua_pushstring(L, "Humans");
-    lua_pushnumber(L, humans);
-    lua_rawset(L, info);
-    return 1;
 }
 
 /// LoadSavedGame(file) -> worked, error, detail. `error` is how retail's
@@ -627,7 +580,6 @@ void register_special_file_bindings(LuaState& state, SpecialFiles* files) {
     state.register_function("LaunchReplaySession", l_LaunchReplaySession);
     state.register_function("InternalSaveGame", l_InternalSaveGame);
     state.register_function("LoadSavedGame", l_LoadSavedGame);
-    state.register_function("GetSavedGameInfo", l_GetSavedGameInfo);
 }
 
 } // namespace osc::lua

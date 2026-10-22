@@ -122,7 +122,7 @@ std::filesystem::path network_save_path(const SpecialFiles& files, std::string p
 /// A network game resumed from its save (OE-128): this player's copy of
 /// `name`, saved on `tick`, which the lobby's launch then plays. Empty when
 /// it's here and whole, else why not.
-std::string check_network_save(lua_State* L, const std::string& name, u32 tick,
+std::string check_network_save(lua_State* L, const std::string& name, u32 beat,
                                sim::SavedGame& out);
 /// Launch the game from this player's copy of `name` (check_network_save).
 void launch_network_save(lua_State* L, const std::string& name, const std::string& scenario);

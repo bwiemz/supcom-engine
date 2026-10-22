@@ -282,40 +282,16 @@ TEST_CASE("A saved network game is found as a lobby resuming it asks (OE-128)",
     osc::lua::register_special_file_bindings(lua, &files);
     lua_State* L = lua.raw();
 
-    // Two players' slots, as the lobby's own tables
     osc::sim::SavedGame save;
     save.name = "evening";
     save.build = osc::sim::build_id();
     save.game = playable_replay();
-    save.game.final_tick = 1200;
-    save.tick = save.game.final_tick;
-    for (const char* who : {"Ana", "Ben"}) {
-        REQUIRE(
-            run(lua, (std::string("__slot = {PlayerName = '") + who + "', Human = true}").c_str())
-                .empty());
-        lua_pushstring(L, "__slot");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        osc::sim::ArmySlotConfig slot;
-        slot.configured = true;
-        slot.player_options = *osc::sim::lua_to_bytes(L, -1);
-        lua_pop(L, 1);
-        save.game.setup.slots.push_back(slot);
-    }
+    save.game.final_beat = 1200;
+    save.beat = save.game.final_beat;
     // A player with no profile chosen keeps them under "multiplayer"
     const fs::path path = osc::lua::network_save_path(L, "evening");
     CHECK(path == files.path(*SpecialFiles::find_type("SaveGame"), "multiplayer", "evening"));
     REQUIRE(osc::lua::write_saved_game(save, path));
-
-    CHECK(run(lua, R"(
-        local info = GetSavedGameInfo('multiplayer', 'evening')
-        assert(info, 'no info')
-        assert(info.Name == 'evening' and info.Tick == 1200, 'name and tick')
-        assert(info.Scenario == '/maps/SCMP_009/SCMP_009_scenario.lua', 'scenario')
-        assert(info.Humans == 2, 'humans: ' .. tostring(info.Humans))
-        assert(info.Players[1].PlayerName == 'Ana' and info.Players[2].PlayerName == 'Ben', 'players')
-        assert(GetSavedGameInfo('multiplayer', 'missing') == nil, 'a missing save')
-    )")
-              .empty());
 
     // The resume's check: this save, from that tick
     osc::sim::SavedGame found;

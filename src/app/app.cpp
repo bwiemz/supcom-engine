@@ -207,7 +207,7 @@ void App::save_network_game(sim::SimState& sim, const std::string& name) {
         (void)special_files->sign_snapshot(save);
         worked = lua::write_saved_game(save, path);
         if (worked)
-            spdlog::info("Network game saved as '{}' at tick {}: {}", name, save.tick,
+            spdlog::info("Network game saved as '{}' at tick {}: {}", name, save.beat,
                          path.string());
     }
     const std::lock_guard<std::mutex> lock(network_saves_mutex);
