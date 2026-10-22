@@ -55,6 +55,7 @@ struct ResourceState {
     f64 income = 0.0;
     f64 requested = 0.0;
     f64 stored = 0.0;
+    f64 reclaimed = 0.0; ///< reclaim's total (Moho's mTotals.mReclaimed)
     f64 max_storage = 200.0;
 };
 
@@ -149,6 +150,17 @@ public:
     void count_storage(f64 held_mass, f64 held_energy) {
         economy_.mass.max_storage = std::max(0.0, extra_storage_mass_ + held_mass);
         economy_.energy.max_storage = std::max(0.0, extra_storage_energy_ + held_energy);
+    }
+    /// Units' production and an ally's overflow: also Moho's mPendingResources (Economy_Trend_*).
+    void bank_pending(f64 mass, f64 energy) {
+        bank(mass, energy);
+        pending_mass_ += mass;
+        pending_energy_ += energy;
+    }
+    void bank_reclaim(f64 mass, f64 energy) {
+        bank(mass, energy);
+        reclaim_mass_ += mass;
+        reclaim_energy_ += energy;
     }
     void update_unit_cap_stats(const EntityRegistry& registry);
     /// A request beyond its units' own, per second, for the next
@@ -340,6 +352,10 @@ private:
     f64 handicap_ = 0.0;
     f64 extra_storage_mass_ = 0.0; // GiveStorage's pair
     f64 extra_storage_energy_ = 0.0;
+    f64 pending_mass_ = 0.0;
+    f64 pending_energy_ = 0.0;
+    f64 reclaim_mass_ = 0.0;
+    f64 reclaim_energy_ = 0.0;
     f64 bank_mass_ = 0.0;
     f64 bank_energy_ = 0.0;
 
