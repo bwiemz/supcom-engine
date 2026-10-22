@@ -145,7 +145,7 @@ public:
 
     /// End timing the current zone.
     void pop_zone() {
-        if (!enabled_ || stack_depth_ == 0 || std::this_thread::get_id() != owner_) return;
+        if (!enabled_ || std::this_thread::get_id() != owner_ || stack_depth_ == 0) return;
 
         stack_depth_--;
         auto& entry = stack_[stack_depth_];

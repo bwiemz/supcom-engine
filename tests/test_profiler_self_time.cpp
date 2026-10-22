@@ -6,6 +6,7 @@
 
 #include "core/profiler.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -55,4 +56,27 @@ TEST_CASE("A zone's self time leaves out the zones within it", "[profiler]") {
     CHECK(outer->total_self_us >= 3'500.0);
     CHECK(outer->total_self_us < 8'000.0);
     CHECK(inner->total_us >= 11'500.0);
+}
+
+TEST_CASE("Off-thread profiler zones do not disturb the owner's stack", "[profiler][thread]") {
+    auto& p = osc::Profiler::instance();
+    const bool was = p.enabled();
+    p.set_enabled(true);
+    std::atomic<bool> stop{false};
+    std::thread other([&] {
+        while (!stop.load()) {
+            PROFILE_ZONE("ThreadTest::foreign");
+        }
+    });
+    for (int frame = 0; frame < 100; ++frame) {
+        p.begin_frame();
+        { PROFILE_ZONE("ThreadTest::owner"); }
+        p.end_frame();
+    }
+    stop = true;
+    other.join();
+    p.set_enabled(was);
+    CHECK(zone("ThreadTest::foreign") == nullptr);
+    REQUIRE(zone("ThreadTest::owner"));
+    CHECK(zone("ThreadTest::owner")->total_calls == 100);
 }
