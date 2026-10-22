@@ -18,16 +18,26 @@ namespace {
 /// Moho's army statistics a sample carries, by their own names (retail's
 /// score screen reads the same ones).
 constexpr std::array kStats = {
-    "Economy_TotalProduced_Mass",  "Economy_TotalProduced_Energy",
-    "Economy_TotalConsumed_Mass",  "Economy_TotalConsumed_Energy",
-    "Economy_Income_Mass",         "Economy_Income_Energy",
-    "Economy_Output_Mass",         "Economy_Output_Energy",
-    "Economy_AccumExcess_Mass",    "Economy_AccumExcess_Energy",
-    "Units_Active",                "Units_History",
-    "Units_Killed",                "Units_MassValue_Built",
-    "Units_MassValue_Lost",        "Units_EnergyValue_Built",
-    "Units_EnergyValue_Lost",      "Enemies_Killed",
-    "Enemies_MassValue_Destroyed", "Enemies_EnergyValue_Destroyed",
+    "Economy_TotalProduced_Mass",
+    "Economy_TotalProduced_Energy",
+    "Economy_TotalConsumed_Mass",
+    "Economy_TotalConsumed_Energy",
+    "Economy_Income_Mass",
+    "Economy_Income_Energy",
+    "Economy_Output_Mass",
+    "Economy_Output_Energy",
+    "Economy_AccumExcess_Mass",
+    "Economy_AccumExcess_Energy",
+    "Units_Active",
+    "Units_History",
+    "Units_Killed",
+    "Units_MassValue_Built",
+    "Units_MassValue_Lost",
+    "Units_EnergyValue_Built",
+    "Units_EnergyValue_Lost",
+    "Enemies_Killed",
+    "Enemies_MassValue_Destroyed",
+    "Enemies_EnergyValue_Destroyed",
     "Enemies_Commanders_Destroyed",
 };
 
@@ -49,7 +59,9 @@ MatchTelemetry::MatchTelemetry(const std::string& path)
     if (!out_.is_open()) spdlog::warn("--match-telemetry: cannot write {}", path);
 }
 
-MatchTelemetry::~MatchTelemetry() { finish(nullptr, "closed"); }
+MatchTelemetry::~MatchTelemetry() {
+    finish(nullptr, "closed");
+}
 
 void MatchTelemetry::write_match(const sim::SimState& sim) {
     nlohmann::json armies = nlohmann::json::array();
@@ -104,9 +116,9 @@ std::vector<Makeup> makeups(const sim::SimState& sim) {
             else ++m.land;
         }
         const auto& econ = unit.economy();
-        m.mass[3] += econ.reclaim_mass;
-        m.energy[3] += econ.reclaim_energy;
-        if (!econ.production_active || unit.is_being_built()) return;
+        m.mass[3] += econ.reclaimed_mass;
+        m.energy[3] += econ.reclaimed_energy;
+        if (unit.is_being_built()) return;
         const bool commander = unit.has_category("COMMAND");
         const bool fabricator = unit.has_category("MASSFABRICATION");
         const int mass_from = commander                             ? 2
@@ -117,8 +129,8 @@ std::vector<Makeup> makeups(const sim::SimState& sim) {
                                 : unit.has_category("ENERGYPRODUCTION") ? 0
                                 : fabricator                            ? 1
                                                                         : 4;
-        m.mass[mass_from] += econ.production_mass;
-        m.energy[energy_from] += econ.production_energy;
+        m.mass[mass_from] += econ.produced_mass;
+        m.energy[energy_from] += econ.produced_energy;
     });
     return out;
 }
@@ -301,13 +313,12 @@ void MatchTelemetry::finish(const sim::SimState* sim, const std::string& ended) 
     if (!out_.is_open() || finished_) return;
     finished_ = true;
     if (sim && started_ && sim->tick_count() != last_sample_tick_) write_samples(*sim);
-    const f64 wall =
-        std::chrono::duration<f64>(Clock::now() - created_).count();
+    const f64 wall = std::chrono::duration<f64>(Clock::now() - created_).count();
     out_ << nlohmann::json{{"record", "end"},
                            {"ended", sim && sim->game_ended() ? "victory" : ended},
                            {"last_tick", last_tick_},
-                           {"game_seconds", static_cast<f64>(last_tick_) *
-                                                sim::SimState::SECONDS_PER_TICK},
+                           {"game_seconds",
+                            static_cast<f64>(last_tick_) * sim::SimState::SECONDS_PER_TICK},
                            {"wall_seconds", wall},
                            {"tick_wall_ms_mean",
                             tick_wall_count_ ? tick_wall_ms_total_ / tick_wall_count_ : 0.0},

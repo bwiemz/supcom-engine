@@ -188,3 +188,33 @@ TEST_CASE("A kept match record is read back for the game's match history", "[tel
     CHECK_FALSE(osc::lua::read_match_record(path.string() + ".none", false));
     std::filesystem::remove(path);
 }
+
+TEST_CASE("Match income sources retain banked output after rate changes", "[telemetry][banked]") {
+    const auto path = std::filesystem::temp_directory_path() / "osc_match_banked_test.jsonl";
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    auto* producer = add_unit(sim, 0, "ueb1103");
+    producer->add_category("MASSEXTRACTION");
+    auto& econ = producer->economy();
+    econ.production_active = true;
+    econ.production_mass = 2;
+    econ.production_energy = 4;
+    sim.tick();
+    REQUIRE(econ.produced_mass == 2);
+    REQUIRE(econ.produced_energy == 4);
+    econ.production_mass = 99;
+    econ.production_energy = 199;
+    econ.reclaim_mass = 20; // configured work has not banked anything
+    {
+        osc::app::MatchTelemetry telemetry(path.string());
+        telemetry.after_tick(sim);
+        telemetry.finish(&sim, "ticks");
+    }
+    const auto samples = records(path, "sample");
+    REQUIRE_FALSE(samples.empty());
+    CHECK(samples.back()["mass_from"]["extractors"].get<double>() == 2);
+    CHECK(samples.back()["energy_from"]["other"].get<double>() == 4);
+    CHECK(samples.back()["mass_from"]["reclaim"].get<double>() == 0);
+    std::filesystem::remove(path);
+}
