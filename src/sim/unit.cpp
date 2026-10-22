@@ -928,17 +928,10 @@ void Unit::tick_commands(f64 dt, SimContext& ctx) {
     }
 
     // Its work goes at what its consumption request was granted last tick
-    // (Moho's ResourceConsumed); a capture asks through a request of its own,
-    // granted this tick
+    // (Moho's ResourceConsumed)
     f32 econ_eff = static_cast<f32>(economy_.resource_consumed);
     // (A unit of no army has no economy to ask: it works in full.)
     if (!ctx.sim || !ctx.sim->get_army(army())) econ_eff = 1.0f;
-    if (economy_.capture_energy > 0.0) {
-        econ_eff = 1.0f;
-        if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES)
-            econ_eff = static_cast<f32>(
-                ctx.army_grants[static_cast<u32>(army())].of(0.0, economy_.capture_energy));
-    }
 
     // Assisting a silo is renewed each tick (see Guard); one that isn't ends
     // below.
@@ -1248,14 +1241,12 @@ void Unit::tick_silo(f64 dt, SimContext& ctx) {
     if (is_being_built() || !(silo_building() || !silo_orders_.empty() || auto_mode_)) {
         return;
     }
-    // A missile asks through a request of its own (Moho's CAiSiloBuildImpl), granted this tick.
-    f32 silo_eff = 1.0f;
-    if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES && ctx.sim &&
-        ctx.sim->get_army(army())) {
-        silo_eff = static_cast<f32>(
-            ctx.army_grants[static_cast<u32>(army())].of(economy_.silo_mass, economy_.silo_energy));
-    }
-    update_silo(dt, silo_eff, ctx.L);
+    // A missile asks through a request of its own (Moho's CAiSiloBuildImpl).
+    update_silo(dt, take_grant(economy_.silo_request, ctx) ? 1.0f : 0.0f, ctx.L);
+}
+
+bool Unit::take_grant(EconRequest& request, const SimContext& ctx) const {
+    return !ctx.sim || !ctx.sim->get_army(army()) || request.take();
 }
 
 void Unit::tick_upkeep(f64 dt, SimContext& ctx) {
@@ -2214,6 +2205,8 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
     work_progress_ = 0.0f;
 
     economy_.capture_energy = capture_energy_cost_ / capture_time_;
+    economy_.capture_request = {};
+    economy_.capture_request.ask(0.0, economy_.capture_energy * SimState::SECONDS_PER_TICK);
 
     spdlog::info("start_capture: entity #{} capturing #{} "
                  "(BuildTime={:.0f} BuildRate={:.1f} captureTime={:.1f}s energy={:.0f})",

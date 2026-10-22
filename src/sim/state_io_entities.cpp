@@ -1156,6 +1156,9 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.f64v(ec.dock_repair_mass);
     w.f64v(ec.dock_repair_energy);
     w.f64v(ec.capture_energy);
+    for (const EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
+        save(w, *q);
+    }
     w.f64v(ec.granted);
     w.f64v(ec.resource_consumed);
     w.f64v(ec.granted_mass);
@@ -1561,6 +1564,9 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     ec.dock_repair_mass = r.f64v();
     ec.dock_repair_energy = r.f64v();
     ec.capture_energy = r.f64v();
+    for (EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
+        load(r, *q);
+    }
     ec.granted = r.f64v();
     ec.resource_consumed = r.f64v();
     ec.granted_mass = r.f64v();

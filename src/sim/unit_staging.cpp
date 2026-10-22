@@ -577,15 +577,9 @@ bool Unit::tick_fuel(f64 dt, SimContext& ctx, Unit* platform) {
     if (needs_repair) {
         // Moho asks the army for the platform's RepairConsume* and heals
         // RefuelingRepairAmount / 10 whenever the request is met: each tick
-        // the economy can afford it, the first tick only asking. Here the
-        // ask runs per second, and the heal goes at the army's efficiency.
-        if (dock_repair_asked_) {
-            f32 eff = 1.0f;
-            if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES) {
-                eff = static_cast<f32>(ctx.army_grants[static_cast<u32>(army())].of(
-                    economy_.dock_repair_mass, economy_.dock_repair_energy));
-            }
-            set_health(std::min(max_health(), health() + pad.repair_amount * kFuelTickScale * eff));
+        // the economy can afford it, the first tick only asking.
+        if (dock_repair_asked_ && take_grant(economy_.dock_repair_request, ctx)) {
+            set_health(std::min(max_health(), health() + pad.repair_amount * kFuelTickScale));
         }
         refuel_started_ = true;
         dock_repair_asked_ = true;

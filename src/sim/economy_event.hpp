@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/econ_request.hpp"
 #include "sim/waitable.hpp"
 
 #include <algorithm>
@@ -10,50 +11,42 @@
 namespace osc::sim {
 
 /// A resource drain that completes once it has drawn its whole cost (M206d).
-/// It asks its unit's army for its cost spread over its duration, and moves
-/// on as the economy grants it: a stall slows it. Used by teleports and by
-/// weapons with EnergyRequired (OverCharge).
+/// It asks its unit's army for its cost spread over its duration's whole
+/// ticks, and moves on a tick each time its request is granted whole. Used by
+/// teleports and by weapons with EnergyRequired (OverCharge).
 /// Pattern: CreateEconomyEvent → WaitFor → RemoveEconomyEvent
 class EconomyEvent : public Waitable {
     friend struct StateIO; // snapshots (state_io.hpp)
 public:
     EconomyEvent(u32 unit_id, f64 mass_drain, f64 energy_drain, f64 duration)
-        : unit_id_(unit_id)
-        , total_mass_(mass_drain)
-        , total_energy_(energy_drain)
-        , duration_(duration)
-    {}
+        : unit_id_(unit_id), total_mass_(mass_drain), total_energy_(energy_drain),
+          duration_(duration),
+          ticks_(std::max(1, static_cast<i32>(static_cast<f32>(duration) * 10.0f))),
+          remaining_(ticks_) {
+        // As misc/CEconomyEvent.cpp's constructor: the cost times 1/ticks, in floats.
+        const f32 scale = 1.0f / static_cast<f32>(ticks_);
+        request_.requested = {static_cast<f32>(mass_drain) * scale,
+                              static_cast<f32>(energy_drain) * scale};
+    }
 
-    bool is_done() const override { return done_; }
+    bool is_done() const override { return remaining_ == 0; }
     bool is_cancelled() const override { return cancelled_; }
 
     u32 unit_id() const { return unit_id_; }
     f64 total_mass() const { return total_mass_; }
     f64 total_energy() const { return total_energy_; }
     f64 duration() const { return duration_; }
-    f64 elapsed() const { return elapsed_; }
 
-    bool active() const { return !done_ && !cancelled_; }
+    bool active() const { return !is_done() && !cancelled_; }
     /// How far it is: 0 to 1.
-    f64 progress() const { return progress_; }
-    /// What it asks for per second: its cost over its duration (a tick at
-    /// least).
-    f64 mass_per_second() const { return total_mass_ / span(); }
-    f64 energy_per_second() const { return total_energy_ / span(); }
-    /// Move it on by `dt` seconds at the economy's `efficiency` (1: all it
-    /// asked was granted). Done when its whole cost has been drawn.
-    void advance(f64 dt, f64 efficiency) {
-        if (!active()) return;
-        elapsed_ += dt;
-        progress_ = std::min(1.0, progress_ + dt / span() * efficiency);
-        if (progress_ >= 1.0 - 1e-9) { // ten 0.1 s steps sum just short of 1
-            progress_ = 1.0;
-            done_ = true;
+    f32 progress() const { return 1.0f - static_cast<f32>(remaining_) / static_cast<f32>(ticks_); }
+    EconRequest& request() { return request_; }
+    const EconRequest& request() const { return request_; }
+    void step() {
+        if (active()) {
+            --remaining_;
         }
     }
-    /// Its request was counted in this tick's economy: it may move on.
-    bool counted() const { return counted_; }
-    void set_counted(bool v) { counted_ = v; }
 
     void cancel() { cancelled_ = true; }
 
@@ -67,17 +60,14 @@ public:
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 private:
-    f64 span() const { return std::max(duration_, 0.1); }
-
     u32 unit_id_ = 0;
     f64 total_mass_ = 0.0;
     f64 total_energy_ = 0.0;
     f64 duration_ = 0.0;
-    f64 elapsed_ = 0.0;
-    f64 progress_ = 0.0;
-    bool done_ = false;
+    i32 ticks_ = 1;
+    i32 remaining_ = 1;
+    EconRequest request_;
     bool cancelled_ = false;
-    bool counted_ = false;
     int lua_table_ref_ = -2; // LUA_NOREF
     int callback_ref_ = -2;  // LUA_NOREF
 };

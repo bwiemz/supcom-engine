@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/econ_request.hpp"
 #include "sim/entity.hpp"
 #include "sim/influence_map.hpp"
 #include "sim/path_search.hpp"
@@ -151,16 +152,9 @@ public:
         economy_.energy.max_storage = std::max(0.0, extra_storage_energy_ + held_energy);
     }
     void update_unit_cap_stats(const EntityRegistry& registry);
-    /// A request beyond its units' own, per second, for the next
-    /// update_economy only: its economy events' (M206d).
-    void add_event_request(f64 mass, f64 energy) {
-        event_mass_ += mass;
-        event_energy_ += energy;
-        if (mass > 0.0 && energy > 0.0) {
-            event_dual_mass_ += mass;
-            event_dual_energy_ += energy;
-        }
-    }
+    /// A request beyond its units' own, for the next update_economy only: an
+    /// economy event's (M206d).
+    void add_request(EconRequest& request) { requests_.push_back(&request); }
 
     /// aibrain:GiveStorage: the army's one extra storage pair, on top of what
     /// its units provide (Moho's CSimArmyEconomyInfo storageDelta). Each call
@@ -329,10 +323,7 @@ private:
 
     EconomyState economy_;
     f64 mass_efficiency_ = 1.0;
-    f64 event_mass_ = 0.0; // add_event_request, spent by update_economy
-    f64 event_energy_ = 0.0;
-    f64 event_dual_mass_ = 0.0; // the part of them wanting both resources
-    f64 event_dual_energy_ = 0.0;
+    std::vector<EconRequest*> requests_;
     GrantRatios grant_ratios_;
     f64 energy_efficiency_ = 1.0;
     i32 unit_cap_ = 1000;

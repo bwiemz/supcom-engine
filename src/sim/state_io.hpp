@@ -28,6 +28,7 @@ namespace osc::sim {
 
 class ArmyBrain;
 class CategoryExpr;
+struct EconRequest;
 class EconomyEventRegistry;
 class EntityRegistry;
 class IEffect;
@@ -228,6 +229,8 @@ struct StateIO {
     static void load(StateReader& r, InfluenceMap& m);
     static void save(StateWriter& w, const IEffectRegistry& fx);
     static void load(StateReader& r, IEffectRegistry& fx);
+    static void save(StateWriter& w, const EconRequest& q);
+    static void load(StateReader& r, EconRequest& q);
     static void save(StateWriter& w, const EconomyEventRegistry& ev);
     static void load(StateReader& r, EconomyEventRegistry& ev);
     static void save(StateWriter& w, const ThreadManager& t);
