@@ -8,6 +8,7 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <unordered_map>
 #include <map>
@@ -76,13 +77,16 @@ void hook(lua_State* L, lua_Debug* ar) {
         time_binding(L, ar);
         return;
     }
-    if (ar->event != LUA_HOOKCOUNT || !lua_getinfo(L, "Sn", ar)) return;
+    // OSC_LUA_PROFILE_LINES: by the line running, not the function it is in
+    static const bool by_line = std::getenv("OSC_LUA_PROFILE_LINES") != nullptr;
+    if (ar->event != LUA_HOOKCOUNT || !lua_getinfo(L, by_line ? "Snl" : "Sn", ar)) return;
     Samples& s = samples();
     ++s.total;
-    Function& f = s.functions[{ar->source, ar->linedefined}];
+    const int line = by_line ? ar->currentline : ar->linedefined;
+    Function& f = s.functions[{ar->source, line}];
     if (f.where.empty()) {
-        f.where = std::string(ar->short_src) + ":" + std::to_string(ar->linedefined);
-        if (ar->name) f.where += std::string(" (") + ar->name + ")";
+        f.where = std::string(ar->short_src) + ":" + std::to_string(line);
+        if (ar->name && !by_line) f.where += std::string(" (") + ar->name + ")";
     }
     ++f.samples;
 }
