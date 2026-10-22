@@ -184,7 +184,6 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             )");
             !s)
             fail("saving: " + s.error().message);
-
     }
     // --lan-game-quit-at: the joiner leaves here; the host plays on
     const bool resumed = saw_pause_ && number_global(ui.raw(), "__osc_lan_resumed") >= 1;

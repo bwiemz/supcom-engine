@@ -104,9 +104,9 @@ private:
     u32 self_destruct_at_ = 0; ///< the joiner self-destructs then (0: never)
     u32 self_destructed_ = 0;  ///< the joiner's commander, once it self-destructs
     bool self_destruct_failed_ = false;
-    std::string save_as_;      ///< the host saves the game as this (none: no save)
-    bool save_sent_ = false;   ///< it asked to
-    std::string resume_;       ///< the host's lobby resumes this saved game (none: new)
+    std::string save_as_;           ///< the host saves the game as this (none: no save)
+    bool save_sent_ = false;        ///< it asked to
+    std::string resume_;            ///< the host's lobby resumes this saved game (none: new)
     std::optional<u32> first_tick_; ///< the first tick seen in the game
 
     u32 frames_ = 0;

@@ -818,7 +818,6 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
             spdlog::warn("lobby LaunchGame: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         }
-
     }
     // Last: the scripts tear their lobby down here (retail's destroys this
     // object), so nothing after may touch it

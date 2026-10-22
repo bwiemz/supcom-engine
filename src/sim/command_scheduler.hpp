@@ -134,7 +134,7 @@ public:
     /// the next frame, the orders given in the last moment before the save
     /// lost.
     void forget_network_state() {
-        by_tick_.clear();
+        by_beat_.clear();
         confirmed_frame_.clear();
         sources_.clear();
     }
