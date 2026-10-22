@@ -43,7 +43,7 @@ bool App::Window::frame() {
 
     // The ticks the last frame started on the sim thread, done (OE-134):
     // from here until this frame starts its own, nothing else runs the sim
-    osc::u32 beat_tick0 = collect_sim();
+    collect_sim();
     world_interp.staged = threaded;
     sim_held = sim_state && (sim_state->paused() || sim_state->game_over());
     if (tracking_notice && sim_state) {
@@ -73,7 +73,7 @@ bool App::Window::frame() {
     // thread as the frame draws (start_sim)
     if (!threaded) {
         PROFILE_ZONE("Frame::sim");
-        beat_tick0 = sim_state ? sim_state->tick_count() : 0;
+        const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
         const auto ticks_started = std::chrono::steady_clock::now();
         advance_sim(session_dt);
         collected_tick = sim_state ? sim_state->tick_count() : 0;
