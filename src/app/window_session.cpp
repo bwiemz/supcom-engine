@@ -82,6 +82,8 @@ void App::Window::handle_launch() {
                              : launch_save ? " (saved game)"
                                            : "");
                 save_last_game(); // the game being left, if any
+                perf_stretch.clear();
+                game_frames.last_drawn = game_frames.last_pace = -1.0;
                 active_playback.reset();
                 catch_up.reset();
                 restored_at.reset();
@@ -244,6 +246,8 @@ void App::Window::handle_return_to_lobby() {
             // sim it references is destroyed.
             osc::lua::mp_teardown();
             save_last_game();
+            perf_stretch.clear();
+            game_frames.last_drawn = game_frames.last_pace = -1.0;
             active_playback.reset();
             catch_up.reset();
 

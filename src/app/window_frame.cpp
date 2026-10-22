@@ -256,7 +256,8 @@ void App::Window::write_perf_sample() {
     osc::app::PerfSample p;
     p.wall_seconds = s.wall_s;
     p.tick = tick;
-    p.ticks = tick > s.tick0 ? tick - s.tick0 : 0;
+    // Count the work timed in this interval, including a game loaded at a later tick.
+    p.ticks = s.ticks_timed;
     p.speed = game_state_mgr.speed();
     p.frames = static_cast<u32>(s.frame_ms.size());
     double total = 0;
@@ -275,7 +276,7 @@ void App::Window::write_perf_sample() {
     p.entities = static_cast<u32>(world.entities.size());
     for (const auto& e : world.entities) p.units += e.is_unit ? 1 : 0;
     app.telemetry->write_perf(p);
-    s.clear(tick);
+    s.clear();
 }
 
 void App::Window::note_drawn_time(const sim::FrameView& view) {

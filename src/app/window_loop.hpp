@@ -264,17 +264,13 @@ private:
     /// covers (write_perf_sample), with the ticks' own run time.
     struct PerfStretch {
         double wall_s = 0;
-        u32 tick0 = 0;
         std::vector<float> frame_ms;
         u32 over_33 = 0, held = 0;
         double pace_change = 0;
         u32 paces = 0;
         double tick_ms = 0, tick_ms_worst = 0;
         u32 ticks_timed = 0;
-        void clear(u32 tick) {
-            *this = PerfStretch{};
-            tick0 = tick;
-        }
+        void clear() { *this = PerfStretch{}; }
     } perf_stretch;
     /// A sim job's run time and ticks (the sim thread's, read once collected).
     double job_ms = 0;
