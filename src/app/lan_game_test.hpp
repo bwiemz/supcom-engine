@@ -101,6 +101,7 @@ private:
     std::string address_;
     u16 port_;
     u32 quit_at_ = 0; ///< the joiner leaves at this tick (0: it plays on)
+    std::optional<u32> end_beat_; // replay checksum index for kEndTick
     u32 self_destruct_at_ = 0; ///< the joiner self-destructs then (0: never)
     u32 self_destructed_ = 0;  ///< the joiner's commander, once it self-destructs
     bool self_destruct_failed_ = false;

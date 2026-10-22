@@ -156,6 +156,9 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         lobby_frame(ui);
         return;
     }
+    // (the beats this frame ran past kEndTick were ticks)
+    if (!end_beat_ && sim->tick_count() >= kEndTick)
+        end_beat_ = sim->beat_count() - (sim->tick_count() - kEndTick);
     if (!first_tick_) first_tick_ = sim->tick_count();
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
     if (!host_ && self_destruct_at_ > 0 && self_destructed_ == 0 && !self_destruct_failed_ &&
@@ -251,10 +254,10 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
 void LanGameTest::check_save(lua::LuaState& ui, const sim::SimState& sim) {
     // Where the game arrived, for the two runs to compare
     const auto& replay = sim.recorded_replay();
-    if (kEndTick >= replay.checksum_from &&
-        kEndTick - replay.checksum_from < replay.checksums.size())
+    if (end_beat_ && *end_beat_ >= replay.checksum_from &&
+        *end_beat_ - replay.checksum_from < replay.checksums.size())
         spdlog::info("[lan-game] checksum at tick {}: {:08x}", kEndTick,
-                     replay.checksums[kEndTick - replay.checksum_from]);
+                     replay.checksums[*end_beat_ - replay.checksum_from]);
     else fail(fmt::format("no checksum recorded for tick {}", kEndTick));
     // Each side's own copy of the host's save
     if (!save_as_.empty()) {

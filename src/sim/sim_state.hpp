@@ -957,8 +957,8 @@ public:
     }
     /// Whether army `army`'s weapons may pick unit `u` (Moho's
     /// Unit::UpdateBlipsInRange keeps only what the army's recon database
-    /// has a blip of): it senses it, by any sense, its allies' included, as
-    /// of the last visibility pass; or `u` is a structure it has seen. With
+    /// has a blip of): it senses it now, by any sense, its allies' included;
+    /// or `u` is a structure it has seen. With
     /// the fog off every unit is known.
     bool weapons_know(const Unit& u, u32 army) const;
 
