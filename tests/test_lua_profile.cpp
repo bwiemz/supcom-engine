@@ -40,3 +40,27 @@ TEST_CASE("The Lua profile counts the functions that run the most", "[lua][profi
     CHECK(found);
     lua_close(L);
 }
+
+TEST_CASE("Lua profile source names survive replacing the script state",
+          "[lua][profile][lifetime]") {
+    const char* code = "local n = 0 for i = 1, 10000 do n = n + i end";
+    for (int index = 0; index < 32; ++index) {
+        lua_State* L = lua_open();
+        REQUIRE(L);
+        osc::sim::lua_profile::attach(L);
+        const std::string source = "=replacement_" + std::to_string(100 + index);
+        REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), source.c_str()) == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+        lua_close(L);
+    }
+    const auto counts = osc::sim::lua_profile::top(10000);
+    for (int index = 0; index < 32; ++index) {
+        const std::string source = "replacement_" + std::to_string(100 + index) + ":0";
+        bool found = false;
+        for (const auto& [where, n] : counts) {
+            if (where == source) found = n > 0;
+        }
+        INFO(source);
+        CHECK(found);
+    }
+}

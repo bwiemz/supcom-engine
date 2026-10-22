@@ -23,10 +23,9 @@ struct Function {
 };
 
 struct Samples {
-    // Keyed by the source string's address (Lua keeps one copy of each
-    // string) and the line the function starts on: no string is made per
-    // sample.
-    std::map<std::pair<const char*, int>, Function> functions;
+    // Own the source: Lua can collect a chunk or close its whole state
+    // while these process-wide samples remain.
+    std::map<std::pair<std::string, int>, Function> functions;
     uint64_t total = 0;
 };
 
