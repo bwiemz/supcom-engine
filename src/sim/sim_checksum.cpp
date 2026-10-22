@@ -332,6 +332,17 @@ void mix_unit_work(Fnv& units, const Unit& u) {
         units.mix_f32(static_cast<f32>(econ.reclaimed_mass));
         units.mix_f32(static_cast<f32>(econ.reclaimed_energy));
     }
+    if (econ.spent_mass != 0 || econ.spent_energy != 0) {
+        units.mix(0x5350454eu); // "SPEN"
+        units.mix_f32(static_cast<f32>(econ.spent_mass));
+        units.mix_f32(static_cast<f32>(econ.spent_energy));
+    }
+    if (const EconValue& held = econ.consumption_request.granted;
+        held.mass != 0 || held.energy != 0) {
+        units.mix(0x47524e54u); // "GRNT"
+        units.mix_f32(held.mass);
+        units.mix_f32(held.energy);
+    }
     // Docked at a staging platform (M206r), only then: its tank and its
     // repair's ask.
     if (u.refuel_started() || econ.dock_repair_energy != 0 || econ.dock_repair_mass != 0) {

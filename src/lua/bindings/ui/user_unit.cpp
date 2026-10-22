@@ -297,9 +297,10 @@ int uu_GetEconData(lua_State* L) {
     const auto* r = record(L);
     lua_newtable(L);
     if (!r) return 1;
+    // Whole units a second, as the original game's UserUnit:GetEconData reports them.
     const auto set = [&](const char* key, f32 value) {
         lua_pushstring(L, key);
-        lua_pushnumber(L, value);
+        lua_pushnumber(L, static_cast<int>(value));
         lua_rawset(L, -3);
     };
     set("massProduced", r->mass_produced);

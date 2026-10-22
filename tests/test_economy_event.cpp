@@ -210,6 +210,32 @@ TEST_CASE("An economy event takes its duration's whole ticks, a tick at least, a
     lua_settop(L, 0);
 }
 
+TEST_CASE("A unit's consumed rate is what it spent in the tick, as Moho's GetEconData reports it",
+          "[economy_event][economy]") {
+    enum class Spender { Request, Event };
+    const auto [spender, share] = GENERATE(table<Spender, double>({{Spender::Request, 1.0},
+                                                                   {Spender::Request, 0.5},
+                                                                   {Spender::Request, 0.0},
+                                                                   {Spender::Event, 1.0},
+                                                                   {Spender::Event, 0.0}}));
+    CAPTURE(static_cast<int>(spender), share);
+    Armies a;
+    Unit* source = a.add(20.0f, 20.0f);
+    source->economy().production_energy = 20.0 * share;
+    source->economy().production_active = true;
+    Unit* spending = a.add(10.0f, 10.0f);
+    if (spender == Spender::Request) {
+        spending->economy().consumption_energy = 20.0;
+        spending->economy().consumption_active = true;
+    } else {
+        a.sim.economy_events().create(spending->entity_id(), 0.0, 200.0, 10.0);
+    }
+    for (int i = 0; i < 5; ++i) {
+        a.sim.tick();
+    }
+    CHECK(spending->economy().energy_consumed() == Approx(20.0 * share).margin(1e-6));
+}
+
 TEST_CASE("An economy event asks for a tick's share of its cost and moves on a tick a step",
           "[economy_event]") {
     EconomyEvent evt(1, 50.0, 1000.0, 1.0);
@@ -228,7 +254,7 @@ TEST_CASE("An economy event asks for a tick's share of its cost and moves on a t
 TEST_CASE("A request's grants close on its cost a share of the shortfall at a time, reaching it "
           "only from half a share",
           "[economy_event][economy]") {
-    const double share = GENERATE(1.0, 0.9, 0.6, 0.4, 0.25);
+    const float share = GENERATE(1.0f, 0.9f, 0.6f, 0.4f, 0.25f);
     CAPTURE(share);
     osc::sim::EconRequest q;
     q.ask(0.5, 12.0);
@@ -239,9 +265,9 @@ TEST_CASE("A request's grants close on its cost a share of the shortfall at a ti
             ++taken;
         }
     }
-    if (share == 1.0) {
+    if (share == 1.0f) {
         CHECK(taken == 200);
-    } else if (share > 0.5) {
+    } else if (share > 0.5f) {
         CHECK(taken > 0);
         CHECK(taken < 50);
     } else {

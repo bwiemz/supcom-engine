@@ -531,3 +531,7 @@ its `SetResourceSharing` is off, an equal cut of what is left to each ally with 
 *Economy events all-or-nothing: done (2026-10-21) — fix/econ-all-or-nothing-2: a silo's missile, a capture, a repair at
 a staging platform and an economy event each hold a request whose grants add up, as Moho's `CEconRequest`, and move on
 a tick only once they cover its cost; an event takes its duration's whole ticks, a tick at least.*
+
+*Grants as amounts: done (2026-10-22) — fix/econ-grant-amount: a unit's consumption request keeps what it was granted, as
+Moho's `CEconRequest`, works at `LimitingRate` and withdraws it, gives its grant to the army's income when it stops; the
+army pools what its requests are short of in floats; `GetEconData` reports what a unit spent.*
