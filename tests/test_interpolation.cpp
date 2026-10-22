@@ -966,3 +966,36 @@ TEST_CASE("A player's order not yet run has its id, and is taken off by it", "[i
     REQUIRE(left.size() == 1);
     CHECK(left[0].target_pos.x == 30.0f);
 }
+
+TEST_CASE("Reused captures clear projectile launch and impact state", "[interp][snapshot][reuse]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.tick();
+    auto projectile = std::make_unique<osc::sim::Projectile>();
+    projectile->launch_tick = sim.tick_count();
+    projectile->launch_position = {99, 0, 0};
+    projectile->impact_interpolation = 0.25f;
+    auto* p = projectile.get();
+    const auto id = sim.entity_registry().register_entity(std::move(projectile));
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.find(id));
+    CHECK(snap.find(id)->launched);
+    CHECK(snap.find(id)->step_scale == 4.0f);
+    p->launch_tick = 0;
+    p->impact_interpolation = -1.0f;
+    osc::sim::capture_world(sim, snap);
+    CHECK_FALSE(snap.find(id)->launched);
+    CHECK(snap.find(id)->step_scale == 1.0f);
+    // A different kind takes the same vector slot, after a launch/impact.
+    p->launch_tick = sim.tick_count();
+    p->impact_interpolation = 0.5f;
+    osc::sim::capture_world(sim, snap);
+    sim.entity_registry().unregister_entity(id);
+    auto prop = std::make_unique<osc::sim::Prop>();
+    const auto prop_id = sim.entity_registry().register_entity(std::move(prop));
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.find(prop_id));
+    CHECK_FALSE(snap.find(prop_id)->launched);
+    CHECK(snap.find(prop_id)->step_scale == 1.0f);
+}

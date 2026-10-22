@@ -418,13 +418,11 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     size_t entities = 0;
     sim.entity_registry().for_each([&](const Entity& e) {
         if (e.destroyed()) return;
-        // A record that held neither a unit nor a shield holds only what
-        // every entity's sets below, and a pose: for another such entity
-        // (most are props) clearing the pose does, not a whole new record.
-        const bool plain = !e.is_unit() && !e.is_shield();
+        // Only prop-to-prop reuse: projectiles have conditional launch and impact
+        // fields that must be reset. A prop needs only its pose cleared.
+        const bool plain = e.is_prop();
         EntityRecord* slot = nullptr;
-        if (entities < out.entities.size() && plain && !out.entities[entities].is_unit &&
-            !out.entities[entities].is_shield) {
+        if (entities < out.entities.size() && plain && out.entities[entities].is_prop) {
             slot = &out.entities[entities++];
             slot->bone_offset = 0;
             slot->bone_count = 0;
