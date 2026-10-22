@@ -488,7 +488,6 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     const f32 max_turn = omega * step;
     const f32 turn = std::clamp(err, -max_turn, max_turn);
     heading = wrap_angle(heading + turn);
-    err -= turn;
     const Unit::MotionTurn turning = std::abs(turn) < 1e-3f ? Unit::MotionTurn::Straight
                                      : std::abs(turn) >= max_turn * 0.99f
                                          ? Unit::MotionTurn::SharpTurn
