@@ -1176,6 +1176,18 @@ void Unit::decay(lua_State* L) {
     }
 }
 
+void Unit::materialize(f32 step) {
+    if (step == 0.0f) {
+        return;
+    }
+    if (is_being_built()) {
+        const f32 health_ratio = max_health() > 0.0f ? health() / max_health() : 0.0f;
+        const f32 progressed = std::clamp(fraction_complete() + step, 0.0f, 1.0f);
+        set_fraction_complete(std::max(health_ratio, progressed));
+    }
+    set_health(std::min(max_health(), health() + max_health() * step));
+}
+
 bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
 
@@ -1457,7 +1469,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
                           map::PathfindingGrid* grid, f32 efficiency, bool* built) {
     if (built) *built = false;
     auto* target = registry.find(build_target_id_);
-    if (!target || target->destroyed()) {
+    if (!target || target->destroyed() || !target->is_unit()) {
         fail_build(registry, L);
         return false;
     }
@@ -1486,13 +1498,10 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
-    f32 new_frac = std::min(1.0f, target->fraction_complete() +
-                            progress_rate * static_cast<f32>(dt) * efficiency);
-    target->set_fraction_complete(new_frac);
-    target->set_health(new_frac * target->max_health());
-    work_progress_ = new_frac;
+    static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
+    work_progress_ = target->fraction_complete();
 
-    if (new_frac >= 1.0f) {
+    if (work_progress_ >= 1.0f) {
         if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false; // command done
@@ -1713,8 +1722,7 @@ void Unit::release_build(lua_State* L, EntityRegistry& registry) {
 bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
                                   f32 efficiency) {
     auto* target = registry.find(build_target_id_);
-    if (!target || target->destroyed())
-        return false;
+    if (!target || target->destroyed() || !target->is_unit()) return false;
 
     if (build_time_ <= 0) return false;
 
@@ -1727,13 +1735,10 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
-    f32 new_frac = std::min(1.0f,
-        target->fraction_complete() + progress_rate * static_cast<f32>(dt) * efficiency);
-    target->set_fraction_complete(new_frac);
-    target->set_health(new_frac * target->max_health());
-    work_progress_ = new_frac;
+    static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
+    work_progress_ = target->fraction_complete();
 
-    return new_frac < 1.0f;
+    return work_progress_ < 1.0f;
 }
 
 void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
