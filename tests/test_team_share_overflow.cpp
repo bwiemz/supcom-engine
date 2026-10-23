@@ -109,6 +109,19 @@ TEST_CASE("Each ally is offered an equal cut of what is still unplaced, up to it
     CHECK_THAT(w.mass(2), WithinAbs(90.0, 1e-6));
 }
 
+TEST_CASE("Each ally's cut is worked in floats, as Moho's economy shares it", "[shareoverflow]") {
+    // A third of 100 in floats is 33.333336; the two allies after it share
+    // the 66.666664 left, 33.333332 each
+    Armies w(4);
+    for (int a = 1; a < 4; ++a) {
+        w.sim.set_alliance(0, a, Alliance::Ally);
+    }
+    w.overflow();
+    CHECK(w.army(1).economy().mass.stored == 33.333336f);
+    CHECK(w.army(2).economy().mass.stored == 33.333332f);
+    CHECK(w.army(3).economy().mass.stored == 33.333332f);
+}
+
 TEST_CASE("An ally with room in neither resource is offered no cut", "[shareoverflow]") {
     const bool energy_room = GENERATE(true, false);
     CAPTURE(energy_room);

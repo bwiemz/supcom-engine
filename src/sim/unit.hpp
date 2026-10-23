@@ -1585,6 +1585,10 @@ private:
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
     void decay(lua_State* L);
+    /// Moho's Unit::Materialize: `step` more of it built, its health with it.
+    /// Unfinished, it first comes level with its health (which starts at 1, so
+    /// a step smaller than that hit point's share lifts it to the share).
+    void materialize(f32 step);
 
     // The order handlers (unit_orders.cpp), one per kind of order.
     OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);

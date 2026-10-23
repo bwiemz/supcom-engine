@@ -38,8 +38,8 @@ void mix_army(Fnv& armies, const ArmyBrain& a) {
     armies.mix(static_cast<u64>(a.state()));
     const auto& econ = a.economy();
     for (const auto* res : {&econ.mass, &econ.energy}) {
-        armies.mix_f32(static_cast<f32>(res->stored));
-        armies.mix_f32(static_cast<f32>(res->max_storage));
+        armies.mix_f32(res->stored);
+        armies.mix_f32(res->max_storage);
         armies.mix_f32(static_cast<f32>(res->income));
         armies.mix_f32(static_cast<f32>(res->requested));
     }

@@ -85,17 +85,17 @@ template <typename Map> Map load_u32_str(StateReader& r) {
 void save_resource(StateWriter& w, const ResourceState& s) {
     w.f64v(s.income);
     w.f64v(s.requested);
-    w.f64v(s.stored);
+    w.f32v(s.stored);
     w.f64v(s.reclaimed);
-    w.f64v(s.max_storage);
+    w.f32v(s.max_storage);
 }
 ResourceState load_resource(StateReader& r) {
     ResourceState s;
     s.income = r.f64v();
     s.requested = r.f64v();
-    s.stored = r.f64v();
+    s.stored = r.f32v();
     s.reclaimed = r.f64v();
-    s.max_storage = r.f64v();
+    s.max_storage = r.f32v();
     return s;
 }
 

@@ -49,11 +49,12 @@ bool turn_off_maintained_shield(Unit& unit, const EntityRegistry& registry) {
     return true;
 }
 
-// The share loop of Moho's ProcessArmyEconomy (sim/CEconomy.cpp)
-std::pair<f64, f64> share_overflow(const std::vector<ArmyBrain*>& allies, f64 dt, f64 mass,
-                                   f64 energy) {
-    if (mass <= 0.0 && energy <= 0.0) {
-        return {0.0, 0.0};
+// The share loop of Moho's ProcessArmyEconomy (sim/CEconomy.cpp), in floats: each ally
+// is offered an equal cut of what is still unplaced, up to its room. Returns what was
+// shared; `excess` keeps what no ally took.
+EconValue share_overflow(const std::vector<ArmyBrain*>& allies, f64 dt, EconValue& excess) {
+    if (excess.mass <= 0.0f && excess.energy <= 0.0f) {
+        return {};
     }
     std::vector<ArmyBrain*> takers;
     for (ArmyBrain* ally : allies) {
@@ -62,21 +63,23 @@ std::pair<f64, f64> share_overflow(const std::vector<ArmyBrain*>& allies, f64 dt
             takers.push_back(ally);
         }
     }
-    f64 shared_mass = 0.0;
-    f64 shared_energy = 0.0;
+    const auto cut = [](f32 offer, const ResourceState& r) {
+        const f32 room = r.max_storage - r.stored;
+        return room < 0.0f ? 0.0f : std::min(offer, room);
+    };
+    EconValue shared;
     for (size_t i = 0; i < takers.size(); ++i) {
-        const f64 fraction = 1.0 / static_cast<f64>(takers.size() - i);
+        const f32 fraction = 1.0f / static_cast<f32>(takers.size() - i);
         const EconomyState& e = takers[i]->economy();
-        const f64 m = std::min(mass * fraction, std::max(0.0, e.mass.max_storage - e.mass.stored));
-        const f64 en =
-            std::min(energy * fraction, std::max(0.0, e.energy.max_storage - e.energy.stored));
-        takers[i]->bank_pending(m / dt, en / dt);
-        mass -= m;
-        energy -= en;
-        shared_mass += m;
-        shared_energy += en;
+        const EconValue share{cut(excess.mass * fraction, e.mass),
+                              cut(excess.energy * fraction, e.energy)};
+        takers[i]->bank_pending(share.mass / dt, share.energy / dt);
+        excess.mass = std::max(0.0f, excess.mass - share.mass);
+        excess.energy = std::max(0.0f, excess.energy - share.energy);
+        shared.mass += share.mass;
+        shared.energy += share.energy;
     }
-    return {shared_mass, shared_energy};
+    return shared;
 }
 
 } // namespace
@@ -86,8 +89,8 @@ bool ArmyBrain::is_defeated() const {
 }
 
 void ArmyBrain::set_stored_resources(f64 mass, f64 energy) {
-    economy_.mass.stored = mass;
-    economy_.energy.stored = energy;
+    economy_.mass.stored = static_cast<f32>(mass);
+    economy_.energy.stored = static_cast<f32>(energy);
 }
 
 f64 ArmyBrain::get_economy_income(const std::string& resource_type) const {
@@ -304,11 +307,10 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     count_storage(held_mass, held_energy);
 
     // ProcessArmyEconomy: what the army holds this tick against what is
-    // asked. Both classes' demand bounds the pooled ratio, energy first; the
-    // resource that bounds it last is the limiting one.
-    const f64 mass_avail = mass_income * dt + economy_.mass.stored;
-    const f64 energy_avail = energy_income * dt + economy_.energy.stored;
-    const EconValue avail{static_cast<f32>(mass_avail), static_cast<f32>(energy_avail)};
+    // asked, in floats. Both classes' demand bounds the pooled ratio, energy
+    // first; the resource that bounds it last is the limiting one.
+    const EconValue avail{economy_.mass.stored + static_cast<f32>(mass_income * dt),
+                          economy_.energy.stored + static_cast<f32>(energy_income * dt)};
     GrantRatios g;
     if (demand.energy * g.dual > avail.energy) {
         g.dual = avail.energy / demand.energy;
@@ -327,22 +329,23 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
         g.single = left / single_needed;
     }
     grant_ratios_ = g;
+    // Each grant comes off what is left in turn, never below 0
     EconValue consumed;
+    EconValue left_over = avail;
     for (EconRequest* r : requests) {
         const EconValue short_of = r->outstanding();
         const EconValue given = r->grant(g.of(short_of.mass, short_of.energy));
         consumed.mass += given.mass;
         consumed.energy += given.energy;
+        left_over.mass = std::max(0.0f, left_over.mass - given.mass);
+        left_over.energy = std::max(0.0f, left_over.energy - given.energy);
     }
-    const f64 mass_raw = mass_avail - consumed.mass;
-    const f64 energy_raw = energy_avail - consumed.energy;
-    const f64 excess_mass = std::max(0.0, mass_raw - economy_.mass.max_storage);
-    const f64 excess_energy = std::max(0.0, energy_raw - economy_.energy.max_storage);
-    const auto [shared_mass, shared_energy] =
-        resource_sharing_ ? share_overflow(allies, dt, excess_mass, excess_energy)
-                          : std::pair<f64, f64>{0.0, 0.0};
-    economy_.mass.stored = std::clamp(mass_raw, 0.0, economy_.mass.max_storage);
-    economy_.energy.stored = std::clamp(energy_raw, 0.0, economy_.energy.max_storage);
+    EconValue excess{std::max(0.0f, left_over.mass - economy_.mass.max_storage),
+                     std::max(0.0f, left_over.energy - economy_.energy.max_storage)};
+    const EconValue shared = resource_sharing_ ? share_overflow(allies, dt, excess) : EconValue{};
+    economy_.mass.stored = std::max(0.0f, std::min(left_over.mass, economy_.mass.max_storage));
+    economy_.energy.stored =
+        std::max(0.0f, std::min(left_over.energy, economy_.energy.max_storage));
     // What Moho reports used (mLastUseActual): each class at its own ratio
     const f32 mass_used = dual.mass * g.dual + single.mass * g.single;
     const f32 energy_used = dual.energy * g.dual + single.energy * g.single;
@@ -378,10 +381,10 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     stats_["Economy_Income_Energy"] = energy_income * dt;
     stats_["Economy_Output_Mass"] = consumed.mass;
     stats_["Economy_Output_Energy"] = consumed.energy;
-    stats_["Economy_Shared_Mass"] += shared_mass;
-    stats_["Economy_Shared_Energy"] += shared_energy;
-    stats_["Economy_AccumExcess_Mass"] += excess_mass - shared_mass;
-    stats_["Economy_AccumExcess_Energy"] += excess_energy - shared_energy;
+    stats_["Economy_Shared_Mass"] += shared.mass;
+    stats_["Economy_Shared_Energy"] += shared.energy;
+    stats_["Economy_AccumExcess_Mass"] += excess.mass;
+    stats_["Economy_AccumExcess_Energy"] += excess.energy;
     stats_["Economy_Ratio_Mass"] = get_economy_stored_ratio("MASS");
     stats_["Economy_Ratio_Energy"] = get_economy_stored_ratio("ENERGY");
     stats_["Economy_Stored_Mass"] = economy_.mass.stored;
@@ -389,9 +392,9 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     stats_["Economy_MaxStorage_Mass"] = economy_.mass.max_storage;
     stats_["Economy_MaxStorage_Energy"] = economy_.energy.max_storage;
     f64& peak_mass = stats_["Economy_PeakStorage_Mass"];
-    peak_mass = std::max(peak_mass, economy_.mass.max_storage);
+    peak_mass = std::max(peak_mass, static_cast<f64>(economy_.mass.max_storage));
     f64& peak_energy = stats_["Economy_PeakStorage_Energy"];
-    peak_energy = std::max(peak_energy, economy_.energy.max_storage);
+    peak_energy = std::max(peak_energy, static_cast<f64>(economy_.energy.max_storage));
     stats_["Economy_Reclaimed_Mass"] = economy_.mass.reclaimed;
     stats_["Economy_Reclaimed_Energy"] = economy_.energy.reclaimed;
     stats_["Economy_Trend_Mass"] = pending_mass - economy_.mass.requested;

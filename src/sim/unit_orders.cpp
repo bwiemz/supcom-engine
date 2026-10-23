@@ -127,17 +127,6 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
     return costs;
 }
 
-/// Moho's Unit::Materialize.
-void materialize(Unit& target, f32 step) {
-    if (target.is_being_built()) {
-        const f32 health_ratio =
-            target.max_health() > 0.0f ? target.health() / target.max_health() : 0.0f;
-        const f32 progressed = std::clamp(target.fraction_complete() + step, 0.0f, 1.0f);
-        target.set_fraction_complete(std::max(health_ratio, progressed));
-    }
-    target.set_health(std::min(target.max_health(), target.health() + target.max_health() * step));
-}
-
 } // namespace
 
 u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
@@ -953,7 +942,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             return OrderStep::Next;
         auto* built = registry.find(build_target_id_);
         if (bonus > 0.0f && built && !built->destroyed() && built->is_unit()) {
-            materialize(static_cast<Unit&>(*built), bonus);
+            static_cast<Unit*>(built)->materialize(bonus);
         }
     }
     // Phase 3: Progress the build
@@ -2885,8 +2874,7 @@ void Unit::donate_sacrifice(Unit& target, lua_State* L) {
                       blueprint_economy_number(L, target.blueprint_id(), "BuildCostMass", 0.0f)),
         cost_fraction(energy,
                       blueprint_economy_number(L, target.blueprint_id(), "BuildCostEnergy", 0.0f)));
-    if (step == 0.0f) return;
-    materialize(target, step);
+    target.materialize(step);
 }
 
 namespace {
