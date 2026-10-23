@@ -223,6 +223,7 @@ struct WorldInterp {
     osc::sim::WorldHistory history;
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
+    osc::lua::SyncQueue sync;
 
     /// The ticks run on the sim's own thread (OE-134): each one's events
     /// are kept aside (WorldHistory::stage_events), the world as the job's
@@ -235,10 +236,11 @@ struct WorldInterp {
         history.clear();
         clock.reset();
         one_tick_next = true;
+        sync.clear();
         sim.set_beat_observer([this, ui](const osc::sim::SimState& s) {
             if (staged) {
                 history.stage_events(s);
-                if (ui) osc::lua::queue_sync(s.lua_state(), nullptr);
+                if (ui) sync.queue(s.lua_state(), nullptr);
 
                 return;
             }
@@ -246,7 +248,7 @@ struct WorldInterp {
             history.capture(s);
             note_published();
             if (ui) {
-                osc::lua::queue_sync(s.lua_state(), ui->raw());
+                sync.queue(s.lua_state(), ui->raw());
             }
         });
     }

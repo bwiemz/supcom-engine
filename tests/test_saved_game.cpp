@@ -5,6 +5,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "lua/session_clients.hpp"
+#include "lua/sim_sync.hpp"
 #include "sim/build_info.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
@@ -478,4 +479,57 @@ TEST_CASE("A game saved on pause loads unpaused, as retail's, and replays as it 
     }
     CHECK(c.tick_count() == 10);
     CHECK_FALSE(c.paused());
+}
+
+TEST_CASE("A save holds none of the Sync its user side hasn't had", "[savegame][sync]") {
+    const auto run = [](lua_State* L, const char* code) {
+        REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "code") == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    };
+    const auto boot = [&](lua_State* L, SimState& sim, osc::lua::SyncQueue& sync) {
+        run(L, "function ResetSyncTable() Sync = {} end ResetSyncTable()");
+        setup(sim);
+        sim.set_beat_observer([&sync](const SimState& s) {
+            lua_State* SL = s.lua_state();
+            lua_pushstring(SL, "Sync");
+            lua_rawget(SL, LUA_GLOBALSINDEX);
+            lua_pushstring(SL, "Beat");
+            lua_pushnumber(SL, s.beat_count());
+            lua_rawset(SL, -3);
+            lua_pop(SL, 1);
+            sync.queue(SL, nullptr);
+        });
+    };
+    const auto delivered = [&](osc::lua::SyncQueue& sync, lua_State* sim_L) {
+        LuaGuard ui;
+        run(ui.L, "seen = '' function OnSync() seen = seen .. Sync.Beat .. ',' end");
+        while (sync.pending()) {
+            sync.deliver(sim_L, ui.L);
+        }
+        lua_pushstring(ui.L, "seen");
+        lua_rawget(ui.L, LUA_GLOBALSINDEX);
+        std::string seen = lua_tostring(ui.L, -1);
+        lua_pop(ui.L, 1);
+        return seen;
+    };
+
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    osc::lua::SyncQueue sync_a;
+    boot(ga.L, a, sync_a);
+    a.set_recording(true);
+    for (int i = 0; i < 3; ++i) {
+        a.tick();
+    }
+    const SavedGame save = osc::sim::save_game(a, "three beats queued");
+    REQUIRE_FALSE(save.snapshot.empty());
+    CHECK(delivered(sync_a, ga.L) == "1,2,3,");
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    osc::lua::SyncQueue sync_b;
+    boot(gb.L, b, sync_b);
+    REQUIRE(osc::sim::load_snapshot(b, save.snapshot).empty());
+    b.tick();
+    CHECK(delivered(sync_b, gb.L) == "4,");
 }

@@ -386,8 +386,11 @@ void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
 /// focus changes, OnSync), then the game UI's beat functions.
-void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL) {
-    if (sim_lua) osc::lua::sync_beat(sim_lua->raw(), uiL);
+void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL,
+                osc::lua::SyncQueue& sync) {
+    if (sim_lua) {
+        sync.deliver(sim_lua->raw(), uiL);
+    }
     lua_pushstring(uiL, "__osc_factory_queue");
     lua_rawget(uiL, LUA_REGISTRYINDEX);
     auto* queue = static_cast<osc::lua::FactoryQueueDisplay*>(lua_touserdata(uiL, -1));
@@ -424,7 +427,8 @@ void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr
 /// campaign's interface stays up for its intro's NIS to hide, a skirmish's
 /// hides until the loading screen's fade slides it in.
 void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld, bool is_replay,
-                     osc::lua::LuaState* sim_lua, osc::sim::SimState* sim) {
+                     osc::lua::LuaState* sim_lua, osc::sim::SimState* sim,
+                     osc::lua::SyncQueue& sync) {
     constexpr std::string_view kClearRoot = "GetFrame(0):Destroy()";
     if (luaL_loadbuffer(uiL, kClearRoot.data(), kClearRoot.size(), "clear root frame") != 0 ||
         lua_pcall(uiL, 0, 0, 0) != 0) {
@@ -432,7 +436,7 @@ void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld, bool is_replay
         lua_pop(uiL, 1);
     }
     osc::core::call_start_game_ui(uiL);
-    world_beat(sim_lua, sim, uiL);
+    world_beat(sim_lua, sim, uiL, sync);
     wld.stop_loading_dialog(uiL);
     wld.create_game_interface(uiL, is_replay);
 }
