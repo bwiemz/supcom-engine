@@ -1462,13 +1462,20 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
         return false;
     }
 
+    // A helper with no build rate does none of the work, so it leaves the
+    // completion to a builder that does, and holds as a paused one would.
+    const bool idle_helper = build_rate_ <= 0 && build_repairs_ && build_time_ > 0;
+
     // Guard: if an assister already pushed fraction to 1.0 this tick
     if (target->fraction_complete() >= 1.0f) {
+        if (idle_helper && target->is_unit() && static_cast<Unit*>(target)->is_being_built()) {
+            return true;
+        }
         if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false;
     }
-    if (paused_) {
+    if (paused_ || idle_helper) {
         work_progress_ = target->fraction_complete();
         return true;
     }
@@ -1709,13 +1716,12 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
     if (!target || target->destroyed())
         return false;
 
-    if (build_time_ <= 0 || build_rate_ <= 0)
-        return false;
+    if (build_time_ <= 0) return false;
 
     if (target->fraction_complete() >= 1.0f)
         return false;
 
-    if (paused_) {
+    if (paused_ || build_rate_ <= 0) {
         work_progress_ = target->fraction_complete();
         return true;
     }
@@ -2048,7 +2054,6 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         !target_unit->shield_needs_repair(registry, L)) {
         return false;
     }
-    if (build_rate_ <= 0) return false;
 
     // Its blueprint's BuildTime/BuildCostMass/BuildCostEnergy
     const BuildEconomy costs = blueprint_build_economy(L, target_unit->unit_id());
@@ -2116,7 +2121,7 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
         return false;
     }
 
-    if (repair_build_time_ <= 0 || build_rate_ <= 0) {
+    if (repair_build_time_ <= 0) {
         stop_repairing(L, registry);
         return false;
     }

@@ -1551,6 +1551,10 @@ private:
     /// off (the navigator keeps a throttled request without retrying it).
     /// True until the unit gets there.
     bool approach_update(SimContext& ctx);
+    /// Where work on `site` (a skirt of the given size) is done from: the
+    /// place nearest the site clear of its skirt grown by a cell, else the
+    /// point toward the unit where its own cell clears it.
+    Vector3 build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const;
     /// An order that walked toward its target lets the navigator go when it
     /// ends before it got there (its target gone, taken or whole): Moho's
     /// task ends its move with it, so the unit isn't left Moving.

@@ -212,3 +212,44 @@ Asked on 2026-10-20: the original once each, with `/synclog`; the engine with th
 | `cone` | 11 resolutions: within the cone exactly when the unit is in the other's forward cone (dot 0.707; borderline crossings at 0.70 are not) | the same test | faf-re's decompile reads the cone the other way round. Where each unit then drives fits the binary's step aside in 6 of 8 (a slow unit turning and one backing aside). Overtaking is the path navigator's: the faster unit's target cell moves 4 aside on the order's third tick. |
 | `corner` | from 0.002 below the wall's end it moves 0.02 by tick 9, then stands still; its order ends on tick 40. From 0.3 below or more it drives out. | stands still from the start; its order ends on tick 33. From 0.3 and 0.5 below it drives out on the original's line to the thousandth; toward the goal further north, within 0.35 of it. Before, a bounced unit could work itself free of such a place, or rock in it with its order (`test_moho_pathing`). | A refused step leaves the unit where it was (`CalcMoveCommon`), so its navigator sees it still and gives the move up after 30 ticks. |
 | `crowdgap` | all 20 arrive, by tick 300, every one by the gap; no two nearer than 0.76 | all 20 (also with the synthetic tank's physics given to the Striker, a blueprint hook not kept); 15 by the gap and 5 round the wall's end, two within 0.39 (main: 16 and 4, 0.29) | All arrive, as the original's: `data.crowdgap-test` holds it. The detours and the near passes are a gap of the engine's crowd, on main as well. |
+
+**`guardassist/`** asks, tick by tick, how an engineer guarding a T1 land factory helps it build. It runs `economy`'s stalled setup (the store emptied, and a Monkeylord's upkeep beside it, so the factory crawls and the help can be seen) and two scenes in turn, each cleaned up after:
+- **far**: the factory at (300, 790) building two Strikers, and the engineer ordered to guard it from (306, 808), 18 south of it and out of reach, so it walks up;
+- **near**: a factory at (340, 790) and the engineer already in reach of its skirt, at (332, 790): west of it, off the side its units roll out of.
+
+Every tick from the order, t=0 to 330, it logs a row for each scene:
+- the engineer's position, its distance to the factory's skirt (`gap`, a rectangle from the factory's blueprint) and to the unit under construction (`ugap`);
+- its unit states (`Moving`, `Guarding`, `Building`, `Repairing` and others, joined by `+`, or `idle`);
+- its focus and the factory's, named `<blueprint>#<k>` in the order the probe first sees them, because entity ids differ between the games;
+- its and the factory's work progress, and the army's energy and mass requested.
+
+It also logs the engineer's `OnStartBuild`, `OnStopBuild`, `OnStartRepair` and `OnStopRepair`, as they run, wrapped on that engineer alone (only those the scripts define). Its `t` is the loop index of a `WaitTicks(1)` loop, since the original's sim has no `GetGameTick`. It is done at `PROBE assist done`.
+
+Asked on 2026-10-22: the original twice, the two runs matching; the engine on main c9055933 and with the guard's walk to its build place.
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `guardassist` far, the walk | moves from tick 1; its move ends on tick 82, entering the cell (306, 796) it coasts out of to (306.47, 796.73); Guarding from then | moved to (303.3, 801.9), 14 from the factory's centre, where its reach met the skirt; now its move ends on tick 78 at (305.50, 796.54) | Moho's guard hands a factory's build to a repair task, which sends the engineer to the cell nearest the factory clear of its skirt grown by a cell (`PrepareMove(1, site, skirt)`) and begins when that move ends. |
+| `guardassist` far, the help | `OnStartBuild` on tick 89, focus from tick 90, never dropped to tick 330 | `OnStartBuild` on tick 41, then 101 stops and 101 more starts, the focus gone every second tick; now one start, on tick 82, focus from 83, held to 330 | From its place the unit under construction is within twice the engineer's reach (`ugap` 9.10 in the original). |
+| `guardassist` near | stands 4.0 from the skirt, within its `MaxBuildDistance`, and still walks 2.3 to the cell (334, 790); its move ends on tick 20; `OnStartBuild` on tick 26, focus from 27 | never moved; `OnStartBuild` on tick 7; now its move ends on tick 20, `OnStartBuild` on tick 28, focus from 29 | The walk comes first within reach as well. The place is clear of the skirt only with its centre snapped to the footprint's cells, (340.5, 790.5) for the factory spawned at (340, 790). |
+| `guardassist` still apart | `idle` on tick 0, `Moving+Guarding` from tick 1; `GuardBusy` from the tick after the move ends; `OnStartBuild` 7 (far) and 6 (near) ticks after it | `Guarding` on tick 0, no `GuardBusy`; 4 (far) and 8 (near) ticks after the move | The engine derives `Guarding` from the order queue for every order, `GuardBusy` it does not have, and its builder arm aims for a time of its own; the cell where a tie in distance goes (306 against 305, 790 against 789) is the higher in the original and the lower here. |
+| `guardassist` factory progress | 0.003 on tick 3, 0.007 on tick 10, 0.018 on tick 30 | 0.001, 0.004, 0.015 | After the first tick both add 0.0005 a tick (the stalled economy); the original's first tick adds about 0.003 more. `economy` shows it in its stalled scene, 0.017 against 0.014 on tick 30, not in its alone scene. |
+
+**`buildbots/`** asks, tick by tick, what Moho does with a helper whose `BuildRate` is 0: the Cybran build bot, `ura0001`, which a Cybran engineer's scripts spawn and order to guard the unit it builds (`SpawnBuildBots`). Resources are ample, and eight scenes run in turn at (300, 790), each cleaned up after:
+- **cybran**: a Cybran T1 engineer builds a power generator; its scripts spawn the bot;
+- **frame**: a UEF T1 engineer builds a power generator, and a bot the probe made is ordered to guard the frame once it stands;
+- **builder**: the same, the bot ordered to guard the engineer;
+- **control**: the same, a UEF T1 engineer in the bot's place;
+- **repair**, **reclaim**: a bot ordered to repair a power generator at half health, or to reclaim one;
+- **guarded**: a bot ordered to guard a power generator at half health;
+- **silo**: a bot ordered to guard a tactical missile launcher building a missile.
+
+Every tick from the order (t=0 to 360 for the builds, 120 for the others) it logs the builder's state and progress, the work's fraction and health, and the first bot's state, focus, progress and position. It logs the bots' `OnStartBuild` (with its order), `OnStopBuild`, `OnStartReclaim`, `OnStopReclaim` and their build effects as they run, wrapped on the scene's own bots alone, since the other armies' Cybran builders spawn bots too. It is done at `PROBE bots done`.
+
+Asked on 2026-10-23: the original twice, the two runs matching; the engine on this branch's base and with a helper's build rate setting its pace only.
+
+| Probe | The original | The engine | So |
+|---|---|---|---|
+| `buildbots` frame, builder, cybran | `OnStartBuild(frame, 'Repair')` 7, 13 and 6 ticks after the order or the bot's spawn; `Guarding+Repairing+GuardBusy`, focus on the frame, progress the frame's; `OnStopBuild` at completion (frame, builder) | no callback: the guard only followed; now `OnStartBuild` 1, 7 and 0 ticks after, held to completion, then `OnStopBuild` (frame, builder) | A helper's build rate sets its pace, not whether it helps. The frame grows at the engineer's rate alone in both games, done on tick 258. |
+| `buildbots` repair, guarded, silo | `OnStartBuild(unit, 'Repair')` on tick 1 (repair) and 7 (guards), `Repairing`, held to tick 120; health unchanged, the missile at the launcher's own pace (0.0033 a tick) | refused; now on tick 1 for all three, held, adding nothing | The same rule for a repair and for a silo's missile. |
+| `buildbots` still apart | the bot helping the engineer names its order `Repair`; the control engineer `MobileBuild`. The bot's guard of the frame ends at completion (`idle`); its guard of the engineer goes on. The bot in `cybran` hears `OnStopBuild` before its builder's scripts destroy it. A repairing bot's progress is the unit's health (0.500). A zero-rate reclaim starts (`OnStartReclaim`, `Reclaiming`) and takes nothing. | `MobileBuild` for both; both guards go on; no `OnStopBuild`, the bot destroyed first; progress 0; the reclaim refused | Left for later, with the guard's start latency (`guardassist`). The Cybran engineer reclaims a tree on its site before it builds (ticks 3 to 39); the engine builds at once. |
