@@ -1500,10 +1500,12 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
 
     if (success && target_id != 0) {
         auto* target = registry.find(target_id);
+        Unit* completed_here = nullptr;
         // Completed once: another builder (or a repairer) may have finished
         // it already this tick.
         if (target && target->is_unit() && static_cast<Unit*>(target)->is_being_built()) {
             auto* target_unit = static_cast<Unit*>(target);
+            completed_here = target_unit;
             target_unit->set_is_being_built(false);
             target_unit->set_unit_state("BeingUpgraded", false);
             target_unit->set_fraction_complete(1.0f);
@@ -1511,19 +1513,6 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
 
             spdlog::info("finish_build: entity #{} completed building target #{}", entity_id(),
                          target_id);
-
-            // A unit built by its army (Moho's Units_History)
-            lua_pushstring(L, "osc_sim_state");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            auto* sim_for_stat = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
-            if (sim_for_stat) {
-                if (auto* brain = sim_for_stat->get_army(target_unit->army())) {
-                    brain->record_unit_built(target_unit->blueprint_id(),
-                                             target_unit->build_cost_mass(),
-                                             target_unit->build_cost_energy());
-                }
-            }
 
             // Call target:OnStopBeingBuilt(builder, layer)
             if (target->lua_table_ref() >= 0) {
@@ -1554,6 +1543,21 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // Re-validate target after OnStopBeingBuilt callback
         // (Lua callback may have destroyed the entity)
         target = registry.find(target_id);
+
+        lua_pushstring(L, "osc_sim_state");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* sim_for_stat = static_cast<sim::SimState*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        // Count only this completion, even if its callback removed or replaced
+        // the unit. The registry retains its memory until the tick ends; its
+        // removal and completion must both contribute to the army's counts.
+        auto* brain = sim_for_stat && completed_here
+                          ? sim_for_stat->get_army(completed_here->army())
+                          : nullptr;
+        if (brain) {
+            const BuildEconomy cost = blueprint_build_economy(L, completed_here->blueprint_id());
+            brain->record_unit_built(*completed_here, cost.mass, cost.energy);
+        }
 
         // The completed structure now blocks paths until it is removed
         // (after re-validation — only if target survived OnStopBeingBuilt)

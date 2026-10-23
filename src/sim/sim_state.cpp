@@ -315,9 +315,14 @@ void SimState::detach_all_units(Unit& transport, bool destroy_some) {
 }
 
 void SimState::record_unit_death(Unit& unit) {
+    // Moho's Unit::Kill: the blueprint's cost, the part built of it while being built
+    const BuildEconomy cost =
+        L_ ? blueprint_build_economy(L_, unit.blueprint_id()) : BuildEconomy{};
+    const f64 built = unit.is_being_built() ? unit.fraction_complete() : 1.0;
+    const f64 mass = cost.mass * built;
+    const f64 energy = cost.energy * built;
     if (auto* brain = get_army(unit.army())) {
-        brain->record_unit_lost(unit.blueprint_id(), unit.build_cost_mass(),
-                                unit.build_cost_energy());
+        brain->record_unit_lost(unit.blueprint_id(), mass, energy);
     }
     if (!unit.damage_contributions().empty()) {
         i32 killer_army = -1;
@@ -333,8 +338,8 @@ void SimState::record_unit_death(Unit& unit) {
         }
         if (killer_army >= 0 && killer_army != unit.army()) {
             if (auto* killer = get_army(killer_army)) {
-                killer->record_enemy_killed(unit.blueprint_id(), unit.build_cost_mass(),
-                                            unit.build_cost_energy(), unit.has_category("COMMAND"));
+                killer->record_enemy_killed(unit.blueprint_id(), mass, energy,
+                                            unit.has_category("COMMAND"));
             }
         }
     }
@@ -365,6 +370,9 @@ void SimState::on_entity_unregistered(Entity& entity) {
     // Its manipulators and weapons go with it; their Lua tables are detached.
     if (entity.is_unit()) {
         auto& unit = static_cast<Unit&>(entity);
+        if (auto* brain = get_army(unit.army())) {
+            brain->record_unit_removed(unit);
+        }
         unit.release_manipulators(L_);
         unit.release_weapon_scripts(L_);
         unit.end_script_task(L_); // its OnDestroy, the unit still in reach (M206w)

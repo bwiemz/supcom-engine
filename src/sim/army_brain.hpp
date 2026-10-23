@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -18,6 +19,7 @@
 namespace osc::sim {
 
 class EntityRegistry;
+class Unit;
 
 enum class Alliance : i32 {
     Enemy = 0,
@@ -71,7 +73,8 @@ struct StatTrigger {
     std::string name;
     std::string compare; ///< LessThan, LessThanOrEqual, GreaterThan, GreaterThanOrEqual, Equal
     f64 value = 0.0;
-    std::string category; ///< a category's count: not counted yet, so never holds
+    /// Its category's unit blueprints, if it has one: then it holds the stat summed over them
+    std::optional<std::set<std::string>> blueprints;
 };
 
 class ArmyBrain {
@@ -268,27 +271,36 @@ public:
     }
     void add_stat(const std::string& key, f64 delta) { stats_[key] += delta; }
 
-    void add_stat_trigger(StatTrigger t) { stat_triggers_.push_back(std::move(t)); }
+    /// GetArmyStat's: the stat, made at 0 (whatever its default) if the army has none yet
+    f64 make_stat(const std::string& key) { return stats_[key]; }
+
+    /// A condition on a stat the army doesn't have is dropped (Moho's
+    /// CArmyStats::SetArmyStatsTrigger): false.
+    bool add_stat_trigger(StatTrigger t);
     void remove_stat_trigger(const std::string& stat, const std::string& name);
     /// The triggers whose conditions all hold, in the order first set, each
     /// taken off: Moho's fire once (retail's scripts set them again)
     std::vector<std::string> take_fired_triggers();
 
     // Moho's army stats, under retail's names (aibrain.lua reads them for
-    // the score). Units_Killed is this army's *losses* and Enemies_Killed its
-    // kills; Units_History counts units built. The *Value_* stats sum those
-    // units' build costs. Each count is also kept per blueprint, for
-    // GetBlueprintStat(stat, category).
-    void record_unit_built(const std::string& bp_id, f64 mass, f64 energy);
+    // the score), written where Moho's Unit writes them (faf-re
+    // unit/core/Unit.cpp). Units_Killed is this army's *losses* and
+    // Enemies_Killed its kills; Units_History counts units made ready. The
+    // *Value_* stats sum those units' blueprint costs. The counts are also
+    // kept per blueprint, for GetBlueprintStat and a trigger's category.
+    void record_unit_made(const Unit& unit);
+    void record_unit_built(const Unit& unit, f64 mass, f64 energy);
+    void record_unit_removed(const Unit& unit);
     void record_unit_lost(const std::string& bp_id, f64 mass, f64 energy);
     void record_enemy_killed(const std::string& bp_id, f64 mass, f64 energy, bool commander);
-    /// A counted stat by blueprint (blueprint id -> value), or nullptr.
     /// Per-blueprint values of a stat, by blueprint id (a sum over them is
-    /// then the same on every platform).
+    /// then the same on every platform), or nullptr.
     const std::map<std::string, f64>* blueprint_stats(const std::string& stat) const {
         auto it = blueprint_stats_.find(stat);
         return it == blueprint_stats_.end() ? nullptr : &it->second;
     }
+    /// A stat summed over these blueprints (Moho's CArmyStatItem::SumCategory)
+    f64 blueprint_stat(const std::string& stat, const std::set<std::string>& blueprints) const;
 
     // --- Build restrictions (per-army) ---
     void add_build_restriction(const std::vector<std::string>& blueprint_ids) {
@@ -357,6 +369,9 @@ private:
     std::set<std::string> restricted_blueprints_;
     std::unordered_map<std::string, f64> stats_;
     std::unordered_map<std::string, std::map<std::string, f64>> blueprint_stats_;
+
+    void add_blueprint_stat(const std::string& stat, const std::string& bp_id, f64 delta);
+    void count_ready(const std::string& bp_id);
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;

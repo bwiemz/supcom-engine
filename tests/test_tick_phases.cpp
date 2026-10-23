@@ -35,6 +35,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -534,7 +535,9 @@ TEST_CASE("A stats trigger that holds from the start fires on tick 11, in its ar
                   "   fired = GetGameTick()"
                   "   ForkThread(function() forked = GetGameTick() end)"
                   " end"));
-    w.sim.get_army(0)->add_stat_trigger({"Economy_Ratio_Mass", "Low", "LessThan", 0.1, ""});
+    w.sim.get_army(0)->make_stat("Economy_Ratio_Mass");
+    w.sim.get_army(0)->add_stat_trigger(
+        {"Economy_Ratio_Mass", "Low", "LessThan", 0.1, std::nullopt});
     for (int t = 0; t < 15; ++t) {
         w.sim.tick();
     }
@@ -551,7 +554,8 @@ TEST_CASE("The unit-cap stats are counted after their army's triggers", "[tick-p
         w.sim.tick();
     }
     const double before = w.sim.get_army(0)->get_stat("UnitCap_Current");
-    w.sim.get_army(0)->add_stat_trigger({"UnitCap_Current", "More", "GreaterThan", before, ""});
+    w.sim.get_army(0)->add_stat_trigger(
+        {"UnitCap_Current", "More", "GreaterThan", before, std::nullopt});
     REQUIRE(
         w.run("ForkThread(function() made = GetGameTick() CreateUnit('tank', 1, 50, 10, 50) end)"));
     for (int t = 0; t < 5; ++t) {

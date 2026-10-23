@@ -205,6 +205,15 @@ static bool blueprint_initial_auto_mode(lua_State* L, const blueprints::Blueprin
     return on;
 }
 
+/// Moho's Unit, made: its army's unit stats (faf-re unit/core/Unit.cpp:13160-13195)
+static void count_made(sim::SimState& sim, u32 id) {
+    auto* e = sim.entity_registry().find(id);
+    auto* brain = e ? sim.get_army(e->army()) : nullptr;
+    if (brain && e->is_unit()) {
+        brain->record_unit_made(*static_cast<sim::Unit*>(e));
+    }
+}
+
 /// Moho's Unit, as it is made: SetAutoMode(AI.InitialAutoMode) just before
 /// OnPreCreate, which tells the script OnAutoModeOn or OnAutoModeOff either
 /// way (Unit::SetAutoMode always does). `tbl` is the unit's table.
@@ -579,6 +588,7 @@ static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_
             unit_ptr->fire_adjacency_callbacks(sim.entity_registry(), L);
         }
     }
+    count_made(sim, id);
 
     // Auto-add fully-built units to their army's ArmyPool platoon.
     // In the original GPG engine, every completed unit is in ArmyPool by default;
@@ -695,6 +705,9 @@ static int l_create_building_unit(lua_State* L) {
         }
     } else {
         lua_pop(L, 1);
+    }
+    if (auto* sim = get_sim(L)) {
+        count_made(*sim, id);
     }
 
     // Do NOT call OnStopBeingBuilt — that happens when construction finishes

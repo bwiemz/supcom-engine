@@ -309,7 +309,13 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
         w.str(t.name);
         w.str(t.compare);
         w.f64v(t.value);
-        w.str(t.category);
+        w.b(t.blueprints.has_value());
+        if (t.blueprints) {
+            w.size(t.blueprints->size());
+            for (const auto& id : *t.blueprints) {
+                w.str(id);
+            }
+        }
     }
     w.size(a.platoons_.size());
     for (const auto& p : a.platoons_) save(w, *p);
@@ -395,7 +401,13 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
         t.name = r.str();
         t.compare = r.str();
         t.value = r.f64v();
-        t.category = r.str();
+        if (r.b()) {
+            t.blueprints.emplace();
+            const size_t ids = r.size(4);
+            for (size_t k = 0; k < ids && r.ok(); ++k) {
+                t.blueprints->insert(r.str());
+            }
+        }
         a.stat_triggers_.push_back(std::move(t));
     }
     a.platoons_.clear();
