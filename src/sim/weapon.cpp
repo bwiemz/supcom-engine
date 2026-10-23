@@ -606,12 +606,12 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // attacker's desired target out of reach too, so it is kept through the
     // runs' loops.
     const u32 ordered = attack_order_target(owner);
-    // A target this weapon can no longer shoot is dropped at once.
+    // Remove vanished targets before following an order or reading their priority.
+    // Range and recon are checked on TargetCheckInterval, like acquisition.
     if (target_entity_id != 0) {
         const Entity* target = registry.find(target_entity_id);
-        const bool in_reach = !(flier && target_entity_id == ordered);
-        if (!target || !can_target(owner, *target, sim, in_reach) ||
-            (target_entity_id != ordered && !known_to_army(owner, *target, sim)))
+        if (!target || target->destroyed() ||
+            (target_entity_id == ordered && !can_target(owner, *target, sim, !flier)))
             target_entity_id = 0;
     }
 
@@ -640,8 +640,14 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     target_check_clock = target_check_period > 0 ? target_check_period - 1 : 0;
     int current_priority = -1;
     if (target_entity_id != 0) {
-        if (!always_recheck_target) return;
-        current_priority = priority_of(*registry.find(target_entity_id));
+        const Entity& target = *registry.find(target_entity_id);
+        if (!can_target(owner, target, sim) ||
+            (always_recheck_target && !known_to_army(owner, target, sim)))
+            target_entity_id = 0;
+        else {
+            if (!always_recheck_target) return;
+            current_priority = priority_of(target);
+        }
     }
 
     // Best: the earliest priority, then the nearest, then the lowest id

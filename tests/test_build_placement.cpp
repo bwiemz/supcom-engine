@@ -222,6 +222,24 @@ TEST_CASE("placement: an extractor goes on its deposit's own cell", "[placement]
     CHECK_FALSE(p.can_build("mex", 29.5f, 39.5f));
 }
 
+TEST_CASE("placement: an off-half-cell deposit rounds its refused ring with its extractor",
+          "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    std::vector<osc::u16> heights(1025 * 1025, 1000);
+    osc::map::Heightmap hm(1024, 1024, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    sim.build_pathfinding_grid();
+    osc::sim::ResourceDeposit mass;
+    mass.x = 876.499f; // X1MP_009 Mass 88: corner 875.999 rounds to cell 876.
+    mass.z = 281.5f;
+    sim.add_resource_deposit(mass);
+    StructurePlacement p(sim, 0, rules_for);
+    CHECK_FALSE(p.can_build("pgen", 877.5f, 281.5f));
+    CHECK(p.can_build("pgen", 874.5f, 281.5f));
+    CHECK(p.can_build("pgen", 878.5f, 281.5f));
+}
+
 TEST_CASE("placement: a structure's skirt is its pad", "[placement]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);

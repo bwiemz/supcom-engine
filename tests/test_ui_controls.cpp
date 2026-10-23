@@ -665,7 +665,7 @@ TEST_CASE("The mouse entering or leaving a control is told up its parents until 
     CHECK(f.check("whos('MouseExit') == 'label,button' and whos('MouseEnter') == 'button'"));
 }
 
-TEST_CASE("A control made under a still mouse is told the mouse is over it, as Moho's",
+TEST_CASE("A rebuilt control hears MouseEnter on the next mouse event, as Moho's",
           "[ui][lua][input]") {
     // A factory's build menu rebuilds after a click; its new button under the
     // unmoved mouse never heard MouseEnter, so Button ignored the next click
@@ -678,8 +678,8 @@ TEST_CASE("A control made under a still mouse is told the mouse is over it, as M
 
     f.run("handled = {} old:Destroy() "
           "new = box('new', GetFrame(0), 0, 0, 100, 100, 1) new.eats = true");
-    f.deliver(); // a frame with no input
-    CHECK(f.check("whos('MouseEnter') == 'new'"));
+    for (int frame = 0; frame < 60; ++frame) f.deliver(); // no input
+    CHECK(f.check("whos('MouseEnter') == ''"));
 
     // Made and pressed in one batch: the press finds it told first
     f.run("handled = {} new:Destroy() "

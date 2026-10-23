@@ -1,6 +1,6 @@
 // A weapon picks only what its army knows (SimState::weapons_know; Moho's
 // Unit::UpdateBlipsInRange keeps the enemies the army holds a blip of): a
-// unit it senses now, or a structure it has seen. With the fog off, every
+// unit in its last ReconTick, or a structure it has seen. With the fog off, every
 // unit.
 
 #include <catch2/catch_test_macros.hpp>
@@ -115,4 +115,42 @@ TEST_CASE("With the fog off every unit is known, as in Moho", "[weapon][intel]")
     Scene s("none", "RULEUMT_Land");
     s.ticks(35);
     CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
+}
+
+TEST_CASE("Weapon checks follow the army's published recon at every recon phase",
+          "[weapon][intel]") {
+    for (int phase = 0; phase < 4; ++phase) {
+        CAPTURE(phase);
+        Scene s("explored", "RULEUMT_Land");
+        s.sim.add_army("ARMY_3", "ARMY_3");
+        s.sim.add_army("ARMY_4", "ARMY_4");
+        s.weapon->target_check_period = 3;
+        s.ticks(8 + phase);
+        s.sim.add_temp_vision(0, 74.0f, 64.0f, 5.0f, 0.9f);
+        osc::u32 expected = 0;
+        for (int tick = 0; tick < 24; ++tick) {
+            CAPTURE(tick);
+            const auto* recon = s.sim.entity_recon(s.enemy->entity_id());
+            const bool known = recon && (*recon)[0].any();
+            if (s.weapon->target_check_clock == 0) expected = known ? s.enemy->entity_id() : 0;
+            s.ticks(1);
+            CHECK(s.weapon->target_entity_id == expected);
+        }
+    }
+}
+
+TEST_CASE("A held target leaving range waits for the weapon's next target check",
+          "[weapon][intel]") {
+    for (const bool recheck : {false, true}) {
+        Scene s("none", "RULEUMT_Land");
+        s.weapon->always_recheck_target = recheck;
+        s.ticks(1);
+        REQUIRE(s.weapon->target_entity_id == s.enemy->entity_id());
+        s.weapon->target_check_clock = 2;
+        s.enemy->set_position({100.0f, 8.3f, 64.0f});
+        s.ticks(2);
+        CHECK(s.weapon->target_entity_id == s.enemy->entity_id());
+        s.ticks(1);
+        CHECK(s.weapon->target_entity_id == 0);
+    }
 }

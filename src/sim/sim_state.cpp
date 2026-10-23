@@ -2844,10 +2844,8 @@ u8 SimState::recon_detect(const Entity& e, const Vector3& pos, u32 viewer, u32 s
 
 bool SimState::weapons_know(const Unit& u, u32 army) const {
     if (!intel_grids_ || !intel_grids_->fog_of_war() || army >= MAX_VIS_ARMIES) return true;
-    // What the army senses now, asked as the weapon looks: the recon kept per
-    // army is refreshed one army a tick (ReconTick), and a weapon looking
-    // between two of its army's would act on what it sensed ticks ago.
-    if (recon_detect(u, u.position(), army, intel_sharers(army)) != 0) return true;
+    // Weapons use the army's published blips, refreshed by its ReconTick.
+    if (const auto* recon = entity_recon(u.entity_id()); recon && (*recon)[army].any()) return true;
     // A building once seen stays known (its blip outlives the sighting).
     return !u.is_mobile() && ever_in_sight(u.entity_id(), army);
 }

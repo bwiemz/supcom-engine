@@ -739,6 +739,7 @@ TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
     auto weapon = std::make_unique<osc::sim::Weapon>();
     weapon->max_range = 100.0f;
     weapon->damage = 10.0f;
+    weapon->target_check_period = 1; // exercise the next scheduled target check
     weapon->fire_clock = 100;
     auto* weapon_ptr = weapon.get();
     owner->add_weapon(std::move(weapon));

@@ -131,12 +131,6 @@ private:
     /// Make `target` the control the mouse is over, telling the old one
     /// MouseExit and the new one MouseEnter if it changed.
     void set_hover(lua_State* L, UIControl* target, const UIEvent& at);
-    /// Each frame, with the mouse still, as Moho's UI manager does: a control
-    /// made, moved or destroyed under it changes which it is over (a build
-    /// menu that rebuilds after a click: its new button never heard
-    /// MouseEnter, so Button ignored the next click, 2026-10-15).  Not while
-    /// a dragger or a scrollbar thumb has the mouse.
-    void refresh_hover(lua_State* L, UIControlRegistry& registry);
     /// A key or character for a focused Edit taking input: Moho's CMauiEdit
     /// edits its text and calls its On* methods. False: not the Edit's.
     bool edit_event(lua_State* L, UIControlRegistry& registry, UIControl* edit, const UIEvent& ev);
@@ -164,7 +158,6 @@ private:
     std::vector<UIEvent> pending_events_;
     f64 mouse_x_ = 0;
     f64 mouse_y_ = 0;
-    bool mouse_seen_ = false; ///< the cursor has reported a position
     u8 buttons_down_ = 0; ///< kMouseLeft... held now
     /// The last press, which the next may make a double-click
     f64 last_press_time_ = -1.0;

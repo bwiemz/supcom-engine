@@ -171,6 +171,10 @@ void queue_sync(lua_State* sim_L, lua_State* ui_L) {
 
 void prepare_threaded_sync(lua_State* sim_L, lua_State* ui_L) {
     if (!sim_L || !ui_L) return;
+    // Replay UI starts as observer. Transfer its current focus as well as the
+    // request, while both states belong to the main thread, so the first beat
+    // reports the same old focus as serial Sync.
+    set_registry_int(sim_L, "__osc_focus_army", registry_int(ui_L, "__osc_focus_army", 0));
     int requested = 0;
     if (take_focus_request(ui_L, requested))
         set_registry_int(sim_L, kTransferredFocusKey, requested);

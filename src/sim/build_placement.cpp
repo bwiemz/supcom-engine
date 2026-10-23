@@ -345,8 +345,8 @@ bool StructurePlacement::deposit_under(const StructureSite& skirt) const {
     for (const auto& d : sim_.resource_deposits()) {
         // Its cells as Moho keeps them (BuildRectFromPointAndSize).
         const auto size = static_cast<i32>(d.size);
-        const auto gx0 = static_cast<i32>(d.x - static_cast<f32>(size) * 0.5f);
-        const auto gz0 = static_cast<i32>(d.z - static_cast<f32>(size) * 0.5f);
+        const auto gx0 = static_cast<i32>(std::nearbyint(d.x - static_cast<f32>(size) * 0.5f));
+        const auto gz0 = static_cast<i32>(std::nearbyint(d.z - static_cast<f32>(size) * 0.5f));
         const f32 pad = d.type == ResourceDeposit::Mass ? 0.5f : 1.5f;
         const f32 x0 = static_cast<f32>(gx0) - pad;
         const f32 z0 = static_cast<f32>(gz0) - pad;

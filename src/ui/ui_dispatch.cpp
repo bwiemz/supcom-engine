@@ -128,7 +128,6 @@ void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods, f64 now) {
 void UIDispatch::on_cursor_pos(f64 x, f64 y) {
     mouse_x_ = x;
     mouse_y_ = y;
-    mouse_seen_ = true;
     UIEvent e;
     e.type = UIEventType::MOUSE_MOTION;
     e.mouse_x = x;
@@ -566,23 +565,7 @@ void UIDispatch::set_hover(lua_State* L, UIControl* target, const UIEvent& at) {
     hover_control_ = target;
 }
 
-void UIDispatch::refresh_hover(lua_State* L, UIControlRegistry& registry) {
-    if (!mouse_seen_ || thumb_drag_) return;
-    lua_pushstring(L, "__osc_active_dragger");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const bool dragging = lua_istable(L, -1);
-    lua_pop(L, 1);
-    if (dragging) return;
-    UIEvent at;
-    at.type = UIEventType::MOUSE_MOTION;
-    at.mouse_x = mouse_x_;
-    at.mouse_y = mouse_y_;
-    at.buttons = buttons_down_;
-    set_hover(L, mouse_target(L, registry, mouse_x_, mouse_y_), at);
-}
-
 void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
-    refresh_hover(L, registry);
     if (pending_events_.empty()) return;
 
     // Swap events into a local copy before processing.  Lua pcall during
