@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <string>
+#include <thread>
 
 using osc::lua::LuaState;
 
@@ -131,4 +132,63 @@ TEST_CASE("sync_beat carries Sync to the user state, then resets it", "[lua][syn
     CHECK(global_number(U, "seen_score") == 0.0);
     run(ui, "cleared = (Sync.Tag == nil and Sync.FocusArmyChanged == nil) and 1 or 0");
     CHECK(global_number(U, "cleared") == 1.0);
+}
+
+TEST_CASE("Threaded Sync queues each beat without touching UI focus until delivery",
+          "[lua][sync][thread]") {
+    LuaState sim;
+    LuaState ui;
+    run(sim, "function ResetSyncTable() Sync = {} end ResetSyncTable() "
+             "function NoteFocusArmyChanged(new, old) noted = new end");
+    run(ui, "Sync = {} seen = 0 function OnSync() seen = seen + 1 end");
+    osc::lua::set_focus_army(sim.raw(), ui.raw(), 0);
+    const auto request = [](lua_State* L, int army) {
+        lua_pushstring(L, osc::lua::kFocusArmyRequestKey);
+        lua_pushnumber(L, army);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    };
+    request(sim.raw(), 1);
+    request(ui.raw(), 2); // UI wins a simultaneous sim request
+    osc::lua::prepare_threaded_sync(sim.raw(), ui.raw());
+    std::thread worker([&] {
+        osc::lua::queue_sync(sim.raw(), nullptr);
+        request(sim.raw(), -1); // a second beat changes to observer
+        osc::lua::queue_sync(sim.raw(), nullptr);
+    });
+    worker.join();
+    CHECK(osc::lua::focus_army(ui.raw()) == 0);
+    REQUIRE(osc::lua::sync_pending(sim.raw()));
+    osc::lua::sync_beat(sim.raw(), ui.raw());
+    CHECK(osc::lua::focus_army(ui.raw()) == 2);
+    CHECK(global_number(ui.raw(), "seen") == 1);
+    osc::lua::sync_beat(sim.raw(), ui.raw());
+    CHECK(osc::lua::focus_army(ui.raw()) == -1);
+    CHECK(global_number(ui.raw(), "seen") == 2);
+    CHECK_FALSE(osc::lua::sync_pending(sim.raw()));
+}
+
+TEST_CASE("A threaded replay's first focus request uses the UI observer as its old focus",
+          "[lua][sync][thread]") {
+    for (const int army : {0, 1}) {
+        LuaState sim;
+        LuaState ui;
+        run(sim, "function ResetSyncTable() Sync = {} end ResetSyncTable() "
+                 "function NoteFocusArmyChanged(new, old) noted_new = new noted_old = old end");
+        run(ui, "Sync = {} function OnSync() end");
+        osc::lua::set_focus_army(sim.raw(), ui.raw(), 0);
+        lua_pushstring(ui.raw(), "__osc_focus_army");
+        lua_pushnumber(ui.raw(), -1);
+        lua_rawset(ui.raw(), LUA_REGISTRYINDEX);
+        lua_pushstring(ui.raw(), osc::lua::kFocusArmyRequestKey);
+        lua_pushnumber(ui.raw(), army);
+        lua_rawset(ui.raw(), LUA_REGISTRYINDEX);
+        osc::lua::prepare_threaded_sync(sim.raw(), ui.raw());
+        std::thread worker([&] { osc::lua::queue_sync(sim.raw(), nullptr); });
+        worker.join();
+        CHECK(osc::lua::focus_army(ui.raw()) == -1);
+        CHECK(global_number(sim.raw(), "noted_old") == -1);
+        CHECK(global_number(sim.raw(), "noted_new") == army + 1);
+        osc::lua::sync_beat(sim.raw(), ui.raw());
+        CHECK(osc::lua::focus_army(ui.raw()) == army);
+    }
 }

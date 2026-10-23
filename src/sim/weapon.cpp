@@ -103,6 +103,13 @@ bool is_weapon_targetable(const Unit& owner, const Entity& target, const SimStat
     return true;
 }
 
+/// Whether `owner`'s army knows `target` (SimState::weapons_know): a unit
+/// it senses, or a structure it has seen. A projectile is a weapon's to see.
+bool known_to_army(const Unit& owner, const Entity& target, const SimState* sim) {
+    if (!sim || !target.is_unit() || owner.army() < 0) return true;
+    return sim->weapons_know(static_cast<const Unit&>(target), static_cast<u32>(owner.army()));
+}
+
 bool is_underwater(const std::string& layer) {
     return layer == "Sub" || layer == "Seabed";
 }
@@ -599,11 +606,13 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     // attacker's desired target out of reach too, so it is kept through the
     // runs' loops.
     const u32 ordered = attack_order_target(owner);
-    // A target this weapon can no longer shoot is dropped at once.
+    // Remove vanished targets before following an order or reading their priority.
+    // Range and recon are checked on TargetCheckInterval, like acquisition.
     if (target_entity_id != 0) {
         const Entity* target = registry.find(target_entity_id);
-        const bool in_reach = !(flier && target_entity_id == ordered);
-        if (!target || !can_target(owner, *target, sim, in_reach)) target_entity_id = 0;
+        if (!target || target->destroyed() ||
+            (target_entity_id == ordered && !can_target(owner, *target, sim, !flier)))
+            target_entity_id = 0;
     }
 
     // An attack order's target comes first, for every weapon that can hit
@@ -631,8 +640,14 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
     target_check_clock = target_check_period > 0 ? target_check_period - 1 : 0;
     int current_priority = -1;
     if (target_entity_id != 0) {
-        if (!always_recheck_target) return;
-        current_priority = priority_of(*registry.find(target_entity_id));
+        const Entity& target = *registry.find(target_entity_id);
+        if (!can_target(owner, target, sim) ||
+            (always_recheck_target && !known_to_army(owner, target, sim)))
+            target_entity_id = 0;
+        else {
+            if (!always_recheck_target) return;
+            current_priority = priority_of(target);
+        }
     }
 
     // Best: the earliest priority, then the nearest, then the lowest id
@@ -650,6 +665,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry, const SimSt
         if (e->is_unit() && static_cast<const Unit&>(*e).has_category(kBenign)) {
             continue;
         }
+        if (!known_to_army(owner, *e, sim)) continue;
         // A missile already held by as many weapons as it wants shooting at
         // it (a nuke's DesiredShooterCap is 1) is left to them.
         if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;

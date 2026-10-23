@@ -146,6 +146,7 @@ private:
     std::unordered_set<std::string> names_; ///< blueprint paths the segments point at
     std::vector<Segment> segments_;
     std::optional<u32> last_tick_;
+    bool deferred_blueprints_ = false; ///< retry cold effects even while paused
     std::vector<Group> groups_;
     std::vector<Drawn> drawn_;
 };

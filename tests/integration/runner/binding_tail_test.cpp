@@ -209,7 +209,8 @@ void test_binding_tail(TestContext& ctx) {
 
     // PickBestAttackVector over ARMY_2's structures (the generators among
     // them): one of the vectors, the closest no farther than the furthest;
-    // HighestValue with nothing to value falls back on Closest.
+    // HighestValue one of them too (it values units by what they cost: it
+    // once read a builder's current build, and valued every area at 0).
     check("PickBestAttackVector", R"(
         local brain = ArmyBrains[1]
         local enemy = brain:GetCurrentEnemy()
@@ -238,9 +239,7 @@ void test_binding_tail(TestContext& ctx) {
             return x * x + z * z
         end
         if d(closest) > d(furthest) then error('closest is farther than furthest') end
-        if not valued or valued.px ~= closest.px or valued.pz ~= closest.pz then
-            error('nothing valued did not fall back on closest')
-        end
+        if not valued or not listed(valued) then error('no valued vector, or one not listed') end
         if guard then error('a vector for an empty squad') end
         if bad then error('an unknown compare type taken') end
     )");

@@ -40,11 +40,22 @@ public:
 
     /// One tick's time.
     void record(Clock::duration tick);
+    /// `ticks` ticks run together in `ms` (a frame's, or a sim job's): each
+    /// counted at their mean.
+    void record_ms(double ms, size_t ticks);
+    /// The units alive as a tick ran: their mean over the run is what a
+    /// cost per unit divides by.
+    void note_units(size_t units);
+    /// What the run is (a Performance Lab scenario's name), and the tick it
+    /// started from (a saved game's).
+    void set_scenario(std::string name, size_t start_tick);
 
     /// Write the report: the ticks' figures, overall and for each 1,000
     /// ticks, and the ten slowest ticks; the load time; the game's checksum
     /// and entity and unit counts at the end; peak memory; and the build.
-    /// False if it can't be written.
+    /// Under --profile also the profile: each zone's time and its own (less
+    /// the zones within it), the Lua functions that ran the most, and the
+    /// engine functions the scripts called. False if it can't be written.
     bool write(const sim::SimState& sim) const;
 
     [[nodiscard]] const std::vector<double>& tick_ms() const { return tick_ms_; }
@@ -54,6 +65,10 @@ private:
     Clock::time_point created_;
     Clock::time_point first_tick_{};
     std::vector<double> tick_ms_;
+    std::string scenario_;
+    size_t start_tick_ = 0;
+    double unit_ticks_ = 0; ///< units summed over the ticks noted
+    size_t unit_notes_ = 0;
 };
 
 } // namespace osc::app

@@ -4,6 +4,7 @@
 // reads.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -16,6 +17,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/pose.hpp"
+#include "sim/platoon.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -261,6 +263,48 @@ TEST_CASE("A sim unit's queue gives each order's place, target and build", "[faf
     CHECK(error.empty());
 }
 
+TEST_CASE("A repairer's focus unit is what it repairs", "[faf][repair]") {
+    // Moho's repair task focuses its target: FAF's UpdateConsumptionValues
+    // prices the repair by it, and without it switches the repair's
+    // consumption off, so it mends nothing
+    World w;
+    auto damaged = std::make_unique<osc::sim::Unit>();
+    damaged->set_army(0);
+    damaged->set_unit_id("ueb1101");
+    damaged->set_position({8, 0, 5});
+    damaged->set_max_health(600.0f);
+    damaged->set_health(120.0f);
+    const osc::u32 damaged_id = w.sim.entity_registry().register_entity(std::move(damaged));
+    lua_State* S = w.sim_lua.raw();
+    for (const auto& [name, id] : {std::pair{"unit", w.id}, std::pair{"damaged", damaged_id}}) {
+        lua_newtable(S);
+        lua_pushstring(S, "_c_object");
+        lua_pushlightuserdata(S, w.sim.entity_registry().find(id));
+        lua_rawset(S, -3);
+        lua_pushvalue(S, -1);
+        w.sim.entity_registry().find(id)->set_lua_table_ref(luaL_ref(S, LUA_REGISTRYINDEX));
+        lua_setglobal(S, name);
+    }
+    REQUIRE(run(w.sim_lua, R"(
+        __blueprints = {ueb1101 = {Economy = {BuildTime = 125, BuildCostMass = 75, BuildCostEnergy = 750}}}
+    )")
+                .empty());
+    CHECK(run(w.sim_lua, R"(
+        if moho.unit_methods.GetFocusUnit(unit) ~= nil then error('a focus before the repair') end
+    )")
+              .empty());
+    w.unit().set_build_rate(10.0f);
+    osc::sim::UnitCommand repair;
+    repair.type = CommandType::Repair;
+    repair.target_id = damaged_id;
+    REQUIRE(w.unit().start_repair(repair, w.sim.entity_registry(), S));
+    const std::string error = run(w.sim_lua, R"(
+        if moho.unit_methods.GetFocusUnit(unit) ~= damaged then error('the repair has no focus') end
+    )");
+    INFO(error);
+    CHECK(error.empty());
+}
+
 TEST_CASE("GetDepositsAroundPoint lists the map's deposits about a point", "[faf][deposits]") {
     World w;
     const std::string in_sim = run(w.sim_lua, kDepositChecks);
@@ -389,4 +433,61 @@ TEST_CASE("The Cursor stats hold the ground under the cursor", "[faf][stats]") {
     )");
     INFO(error);
     CHECK(error.empty());
+}
+
+TEST_CASE("Attack vectors score the candidate's units within 32, by cost or nonzero count",
+          "[ai][attack-vectors]") {
+    const bool energy_value = GENERATE(false, true);
+    World w;
+    osc::map::Heightmap heights(256, 256, 1.0f, std::vector<osc::u16>(257 * 257, 0));
+    w.sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(heights), 0.0f, false));
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    w.sim.set_fog_of_war("none");
+    w.sim.set_victory_condition("sandbox");
+    REQUIRE(run(w.sim_lua, energy_value
+                               ? "__blueprints = {cheap = {Economy = {BuildCostMass = 10}},"
+                                 " valuable = {Economy = {BuildCostEnergy = 100}}}"
+                               : "__blueprints = {cheap = {Economy = {BuildCostMass = 10}},"
+                                 " valuable = {Economy = {BuildCostMass = 100}}}")
+                .empty());
+    const auto enemy = [&](const char* blueprint, float x) {
+        auto unit = std::make_unique<osc::sim::Unit>();
+        unit->set_blueprint_id(blueprint);
+        unit->set_army(1);
+        unit->set_position({x, 0, 10});
+        w.sim.entity_registry().register_entity(std::move(unit));
+    };
+    enemy("cheap", 15);
+    enemy("cheap", 16);
+    enemy("valuable", 105);
+    for (int tick = 0; tick < 12; ++tick) w.sim.tick();
+    auto* brain = w.sim.get_army(0);
+    brain->set_current_enemy_index(1);
+    // The squad is near the cheap pair. The valuable singleton is farther;
+    // the third candidate has no defenders and must not win LeastDefended.
+    brain->set_attack_vectors(
+        {{{10, 0, 10}, {5, 0, 0}}, {{100, 0, 10}, {5, 0, 0}}, {{200, 0, 10}, {5, 0, 0}}});
+    auto* platoon = brain->create_platoon("Attackers");
+    platoon->add_unit(w.id);
+    platoon->set_unit_squad(w.id, "Attack");
+    lua_State* L = w.sim_lua.raw();
+    const auto expose = [&](const char* name, void* object) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, object);
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    expose("brain", brain);
+    expose("platoon", platoon);
+    for (const char* comparison : {"HighestValue", "LeastDefended"}) {
+        const std::string code =
+            std::string("local v = moho.aibrain_methods.PickBestAttackVector(brain, platoon,") +
+            " 'Attack', 'Enemy', '" + comparison +
+            "', {__name = 'ALLUNITS'}) assert(v and v.px == 100, v and v.px or 'nil')";
+        const auto result = w.sim_lua.do_string(code);
+        INFO(comparison);
+        INFO((result.ok() ? std::string() : result.error().message));
+        CHECK(result.ok());
+    }
 }

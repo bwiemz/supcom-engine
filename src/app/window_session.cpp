@@ -30,6 +30,7 @@ void App::Window::handle_launch() {
         lua_rawget(uiL, LUA_REGISTRYINDEX);
         if (lua_toboolean(uiL, -1)) {
             lua_pop(uiL, 1);
+            quiesce_sim(); // the game being left finishes its tick first
 
             // Clear the flag
             lua_pushstring(uiL, "__osc_launch_requested");
@@ -81,6 +82,8 @@ void App::Window::handle_launch() {
                              : launch_save ? " (saved game)"
                                            : "");
                 save_last_game(); // the game being left, if any
+                perf_stretch.clear();
+                game_frames.last_drawn = game_frames.last_pace = -1.0;
                 active_playback.reset();
                 catch_up.reset();
                 restored_at.reset();
@@ -139,6 +142,19 @@ void App::Window::handle_launch() {
                     // queued), so it saves again whole.
                     std::string why;
                     const Restore result = restore_save(*launch_save, why);
+                    if (result != Restore::Done && osc::lua::mp_net_state().transport_ready) {
+                        // A network game resumes only from each player's
+                        // own restored copy (OE-128): no catching up alone
+                        spdlog::error("Saved game '{}': can't resume the network game ({})",
+                                      launch_save->name, why);
+                        lua_pushstring(uiL, "__osc_front_end_notice");
+                        lua_pushstring(uiL, ("The saved game couldn't be resumed: " + why).c_str());
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        lua_pushstring(uiL, "__osc_return_to_lobby");
+                        lua_pushboolean(uiL, 1);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        return;
+                    }
                     if (result == Restore::Failed) {
                         spdlog::warn("Saved game '{}': not restored ({}); catching up",
                                      launch_save->name, why);
@@ -160,12 +176,29 @@ void App::Window::handle_launch() {
                 // transport (HostGame/JoinGame), build the lockstep
                 // session over it now that the game's sim exists.
                 // No-op in single-player.
+                // Each player's copy of a save the players agree to
+                // (OE-128), as this player's profile keeps its saves
+                app.network_profile = osc::lua::current_profile(uiL);
+                osc::lua::mp_set_save_handler(
+                    [this](osc::sim::SimState& sim, const std::string& name) {
+                        app.save_network_game(sim, name);
+                    });
                 if (sim_state && !active_playback && osc::lua::mp_attach_session(*sim_state)) {
                     // Each peer plays its own source's army, and
                     // sees the world through its intel (M215a); an
                     // observer, all of it.
                     osc::lua::set_focus_army(sim_lua_state ? sim_lua_state->raw() : nullptr, uiL,
                                              osc::lua::mp_net_state().local_army());
+                }
+
+                if (!osc::lua::mp_net_state().resume_error.empty()) {
+                    lua_pushstring(uiL, "__osc_front_end_notice");
+                    lua_pushstring(uiL, osc::lua::mp_net_state().resume_error.c_str());
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    lua_pushstring(uiL, "__osc_return_to_lobby");
+                    lua_pushboolean(uiL, 1);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    return;
                 }
 
                 // Re-install instrument harness on new sim VM (M166)
@@ -199,6 +232,7 @@ void App::Window::handle_return_to_lobby() {
         lua_rawget(uiL, LUA_REGISTRYINDEX);
         if (lua_toboolean(uiL, -1)) {
             lua_pop(uiL, 1);
+            quiesce_sim(); // the game being left finishes its tick first
 
             // Clear the flag
             lua_pushstring(uiL, "__osc_return_to_lobby");
@@ -212,6 +246,8 @@ void App::Window::handle_return_to_lobby() {
             // sim it references is destroyed.
             osc::lua::mp_teardown();
             save_last_game();
+            perf_stretch.clear();
+            game_frames.last_drawn = game_frames.last_pace = -1.0;
             active_playback.reset();
             catch_up.reset();
 

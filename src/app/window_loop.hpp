@@ -13,6 +13,7 @@
 #include "app/self_destruct_flow_test.hpp"
 #include "app/render_bench.hpp"
 #include "app/scripted_mouse.hpp"
+#include "app/sim_thread.hpp"
 #include "app/ui_clicks.hpp"
 #include "app/window_mode.hpp"
 #include "app/world_sounds.hpp"
@@ -24,6 +25,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,6 +37,7 @@ namespace osc::app {
 class App::Window {
 public:
     explicit Window(App& app);
+    ~Window();
 
     /// The window, its frames until one ends the run, and what the run's
     /// checks say. A value ends the run.
@@ -67,6 +70,20 @@ private:
     /// The profiler's frame, a resized root frame, and this frame's time.
     double begin_frame();
     bool fixed_step() const;
+    /// A frame while the sim's ticks still run on its thread (a game sped
+    /// past what its sim keeps up with): the window's input and the camera,
+    /// and the world drawn from its last published ticks; nothing that
+    /// reads the live sim or runs the UI's scripts.
+    void draw_while_ticking(double dt, std::chrono::high_resolution_clock::time_point started);
+    /// The frame's time, counted in the game's frame statistics.
+    void count_game_frame();
+    /// --play-until-tick: the game reached its tick, or was won.
+    bool played_to_the_end() const;
+    /// The drawn game time's step this frame, in game_frames.
+    void note_drawn_time(const sim::FrameView& view);
+    /// --play-for: the rest of a 60 Hz frame, waited out.
+    void pace_play_for(std::chrono::high_resolution_clock::time_point started) const;
+
     /// The camera as the sound's listener.
     void update_audio(double dt);
     /// The world's sounds for this frame: the ticks' one-shots and the
@@ -74,8 +91,25 @@ private:
     void update_world_sounds();
     void count_fps(double dt);
     /// The sim's ticks for this frame: a loaded game catching up, a
-    /// lockstep game's rounds, or the local clock's.
+    /// lockstep game's rounds, or the local clock's (on this thread).
     void advance_sim(double dt);
+    /// Whether this frame's ticks run on the sim's own thread (OE-134): not
+    /// under --profile (its profiler is the main thread's), with a test
+    /// harness (it reads the sim as frames are drawn), while a loaded game
+    /// catches up, or with --no-sim-thread.
+    bool sim_threaded() const;
+    /// The ticks the last frame started on the sim thread, done: their
+    /// world published, the clock told, dropped peers let go. The tick count
+    /// the job began at (the beats' base); with none, the sim's tick.
+    u32 collect_sim();
+    /// This frame's ticks, as advance_sim decides them, started on the sim
+    /// thread: the frame draws while they run.
+    void start_sim(double dt);
+    /// No tick running: the one in flight waited for and published (before
+    /// a game is left, replaced or the window closes).
+    void quiesce_sim();
+    /// The sim's tick count, as of the last tick collected while one runs.
+    u32 settled_tick() const;
     /// The sim's beat to the user side, once a tick (paused too).
     void run_beats();
     /// The scripted flows' frame: replay, LAN, GPGNet, mods, load.
@@ -88,7 +122,10 @@ private:
     /// and orders.
     void update_input(double dt, const sim::FrameView& frame_view);
     /// This frame drawn, and captured when it is the capture's.
-    void render(const sim::FrameView& frame_view);
+    /// `before_draw(drawn)` runs once what reads the live sim is done, right
+    /// before the draw (it starts the sim thread's ticks), told whether this
+    /// frame is drawn at all.
+    void render(const sim::FrameView& frame_view, const std::function<void(bool)>& before_draw);
     void update_title(double dt);
 
     // window_session.cpp: the UI's requests between games.
@@ -119,6 +156,15 @@ private:
     }
 
     static constexpr double kScreenshotFrameDt = 1.0 / 60.0;
+    /// --fast-match draws one frame in this many while the game plays: the
+    /// renderer keeps taking the sim's events, and the run spends its time
+    /// on the sim.
+    static constexpr osc::u32 kFastMatchDrawEvery = 50;
+    /// --fast-match: in the game (a tick a frame), and done (its ticks run).
+    bool fast_match_in_game() const;
+    bool fast_match_done() const;
+    osc::u32 fast_match_frames = 0;
+    osc::u32 fast_match_drawn = 0;
     /// Scripted windowed runs (a test mode's, --replay-flow-test): four
     /// frames per sim tick, on a fixed clock.
     static constexpr double kInterpFrameDt = sim::SimState::SECONDS_PER_TICK / 4.0;
@@ -178,6 +224,62 @@ private:
     /// SimCallback queue (UI→Sim bridge, M138a)
     osc::sim::SimCallbackQueue sim_callback_queue;
     double sim_accumulator = 0.0;
+    /// The sim's own thread (OE-134), and its job's state: the tick it began
+    /// at, the tick count when last collected, and the peers its lockstep
+    /// rounds dropped (let go at the collect).
+    std::unique_ptr<SimThread> sim_thread;
+    std::optional<renderer::BuildGhost> cached_ghost;
+    bool root_resize_pending = false;
+    std::optional<bool> tracking_notice;
+    u32 job_tick0 = 0;
+    /// --save-at's ticks in this window: the next to save at (an index)
+    size_t next_save = 0;
+    /// Whether a tick now would pass the next --save-at tick: the ticks stop
+    /// there, for the save to be the game at that tick.
+    bool at_save_tick() const;
+    /// Save the game after each --save-at tick reached (the sim not running).
+    void write_due_saves();
+    /// The game paused by its players, or over, as the last frame that
+    /// collected the sim found it: its beats run at the tick rate and its
+    /// drawn time stands (held_dt).
+    bool sim_held = false;
+
+    u32 collected_tick = 0;
+    std::vector<u32> job_dropped;
+    /// The frames' wall times while a game plays: how many, their sum, the
+    /// worst, and those over 20, 33 and 50 ms (at 60 fps: one frame dropped,
+    /// two, three).
+    struct FrameTimes {
+        u64 frames = 0;
+        double total_ms = 0, worst_ms = 0;
+        u64 over_20 = 0, over_33 = 0, over_50 = 0;
+        double in_game_s = 0; ///< for --play-for
+        /// The drawn game time (note_drawn_time): frames it stood still
+        /// while the game ran, and its pace's change from frame to frame,
+        /// summed over the frames counted.
+        u64 held = 0;
+        double uneven = 0, expected = 0, last_drawn = -1.0, last_pace = -1.0;
+    } game_frames;
+    /// The same over the stretch the match record's next `perf` record
+    /// covers (write_perf_sample), with the ticks' own run time.
+    struct PerfStretch {
+        double wall_s = 0;
+        std::vector<float> frame_ms;
+        u32 over_33 = 0, held = 0;
+        double pace_change = 0;
+        u32 paces = 0;
+        double tick_ms = 0, tick_ms_worst = 0;
+        u32 ticks_timed = 0;
+        void clear() { *this = PerfStretch{}; }
+    } perf_stretch;
+    /// A sim job's run time and ticks (the sim thread's, read once collected).
+    double job_ms = 0;
+    u32 job_ticks = 0;
+    /// The ticks' run time, into perf_stretch: `ticks` run in `ms`.
+    void time_ticks(double ms, u32 ticks);
+    /// Every ten seconds of a game's frames, a `perf` record in the match
+    /// record; and the moments the player marked.
+    void write_perf_sample();
     /// The last frames' times (Moho's RollingFrameRates), whose median the
     /// session runs on: begin_frame's session_dt. The engine loads a game
     /// before its first frame, where Moho's loading screen runs frames, so the
@@ -192,6 +294,10 @@ private:
     /// This frame's time, unclamped, for the UI's clock (CurrentTime and
     /// WaitSeconds), which is Moho's system timer: a hitch counts in full.
     double wall_dt = 0.0;
+    /// The frame's time the drawn world moves on by: the wall's, not the
+    /// session's median (units then keep pace with the screen), a hitch's
+    /// held to a quarter second; a capture's fixed step (its frames repeat).
+    double drawn_dt() const;
     /// The entities whose loops the frame's sound plays (update_world_sounds).
     EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched

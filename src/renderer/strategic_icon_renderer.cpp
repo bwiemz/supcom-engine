@@ -1,4 +1,5 @@
 #include "renderer/strategic_icon_renderer.hpp"
+#include "renderer/render_scripts.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "renderer/vk_cmd.hpp"
 #include "renderer/army_colors.hpp"
@@ -428,7 +429,7 @@ const std::string& StrategicIconRenderer::underlay_texture(const std::string& na
 }
 
 void StrategicIconRenderer::load_generic_icons(lua_State* L) {
-    if (generic_loaded_) return;
+    if (generic_loaded_ || !RenderScriptScope::allowed()) return;
     generic_loaded_ = true;
     // strategicIcons.lua's own paths, should the import fail.
     generic_structure_ = std::string(kIconDirectory) + "icon_structure_generic_rest.dds";

@@ -255,7 +255,8 @@ public:
     bool is_unit() const override { return true; }
 
     const std::string& unit_id() const { return unit_id_; }
-    void set_unit_id(const std::string& id) { unit_id_ = id; }
+    InternedString interned_unit_id() const { return unit_id_; }
+    void set_unit_id(std::string_view id) { unit_id_ = InternedString(id); }
 
     i32 weapon_count() const {
         return static_cast<i32>(weapons_.size());
@@ -1792,7 +1793,7 @@ private:
     /// Wait at a beacon until a ferry takes the unit, then board it.
     OrderStep order_wait_for_ferry(UnitCommand& cmd, SimContext& ctx);
 
-    std::string unit_id_;
+    InternedString unit_id_;
     std::string armor_type_ = "Default";
     f32 build_rate_ = 1.0f;
     f32 cap_cost_ = 1.0f;           // Moho's RUnitBlueprint default

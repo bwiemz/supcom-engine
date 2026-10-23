@@ -4,14 +4,16 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include "core/fixed_step.hpp"
+#include "core/interned_string.hpp"
 #include "core/tick_clock.hpp"
+#include "core/worker_pool.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -22,7 +24,13 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <fmt/format.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -76,44 +84,160 @@ std::array<osc::f32, 16> filled(osc::f32 v) {
 
 // --- TickClock ---------------------------------------------------------------
 
-TEST_CASE("TickClock tracks the fixed-step accumulator at a steady cadence", "[interp][clock]") {
+namespace {
+
+/// A game played at `speed` and 60 fps against the clock: each frame owes
+/// the sim its time, and a job of the ticks owed runs on the sim thread for
+/// `job_frames(n)` frames (n counting jobs), published as it ends. Returns
+/// how the drawn time went once settled: frames it stood still in, and its
+/// step's worst stray from the frame's time at the game's speed.
+struct Drawn {
+    int held = 0;
+    double worst_stray = 0.0;
+    double behind = 0.0; ///< the newest tick less the drawn time, at the end
+};
+
+template <typename JobFrames> Drawn play(double speed, JobFrames job_frames, int frames = 600) {
     TickClock clock(kTick);
-    double acc = 0.0;
-    for (int frame = 0; frame < 100; ++frame) {
-        const double dt = 0.016;
-        clock.advance(dt);
-        const int ticks = osc::consume_fixed_steps(acc, dt, kTick, 8);
-        for (int t = 0; t < ticks; ++t) clock.on_tick();
-        CHECK(clock.alpha() == Approx(acc / kTick).margin(1e-9));
+    const double frame = speed / 60.0;
+    double owed = 0.0;
+    int job_frames_left = 0;
+    int job_ticks = 0;
+    int jobs = 0;
+    std::array<double, 3> kept{0.0, 0.0, 0.0}; // older, previous, newest
+    clock.published(0.0, 0.0, 1.0);
+    Drawn out;
+    double last = 0.0;
+    for (int f = 0; f < frames; ++f) {
+        clock.advance(frame);
+        owed += frame;
+        const bool job_running = job_frames_left > 0;
+        if (job_running) --job_frames_left;
+        if (job_running && job_frames_left == 0) {
+            kept = {kept[1], kept[2], kept[2] + job_ticks};
+            clock.published(kept[2], kept[0], job_ticks);
+        }
+        if (job_frames_left == 0) {
+            job_ticks = static_cast<int>(owed / kTick);
+            owed -= job_ticks * kTick;
+            job_frames_left = job_ticks > 0 ? job_frames(jobs++) : 0;
+        }
+        const double drawn = clock.drawn();
+        CHECK(drawn >= kept[0]); // always between two published ticks
+        CHECK(drawn <= kept[2]);
+        if (f >= frames / 4) { // settled
+            out.held += drawn <= last ? 1 : 0;
+            out.worst_stray = std::max(out.worst_stray, std::abs(drawn - last - frame / kTick));
+        }
+        last = drawn;
+        out.behind = kept[2] - drawn;
     }
+    return out;
 }
 
-TEST_CASE("TickClock holds at the newest tick through a stall and recovers",
+} // namespace
+
+TEST_CASE("TickClock draws one tick a publish evenly, about half a tick behind",
           "[interp][clock]") {
+    // Normal speed: a tick every six frames, the drawn time between the
+    // last two as Moho draws them
+    const Drawn d = play(1.0, [](int) { return 1; });
+    CHECK(d.held == 0);
+    CHECK(d.worst_stray < 0.02);
+    CHECK(d.behind <= 1.0);
+}
+
+TEST_CASE("TickClock draws a sped-up game's jobs of ticks on evenly, never standing still",
+          "[interp][clock]") {
+    // 4x: each frame owes two thirds of a tick, run as jobs of three frames
+    // (two ticks each). Drawn up to the newest at the game's speed, it
+    // stood still a frame in three, then leapt.
+    const Drawn even = play(4.0, [](int) { return 3; });
+    CHECK(even.held == 0);
+    CHECK(even.worst_stray < 0.1);
+    // And jobs of one frame and two in turn (one tick, then two, as the
+    // engine's own trace showed): still no frame standing still
+    const Drawn uneven = play(4.0, [](int n) { return 1 + n % 2; });
+    CHECK(uneven.held == 0);
+    CHECK(uneven.worst_stray < 0.25);
+}
+
+TEST_CASE("TickClock slows to the pace of a sim that can't keep up, never standing still",
+          "[interp][clock]") {
+    // Asked 4x, a late game's sim makes 1x: a job of the ticks owed (at
+    // most 8, the rest let go, as the engine does) takes four frames a
+    // tick. Held to half the asked pace at the slowest, the drawn time ran
+    // into the newest tick and stood (WOPC's long run, 2026-10-19: 45% of
+    // frames held from 35 minutes on).
     TickClock clock(kTick);
-    clock.advance(0.05);
-    CHECK(clock.alpha() == Approx(0.5));
+    const double frame = 4.0 / 60.0;
+    double owed = 0.0;
+    int job_frames_left = 0;
+    int job_ticks = 0;
+    std::array<double, 3> kept{0.0, 0.0, 0.0};
+    clock.published(0.0, 0.0, 1.0);
+    double last = 0.0;
+    double last_step = -1.0;
+    int held = 0;
+    double worst_change = 0.0;
+    for (int f = 0; f < 2400; ++f) {
+        clock.advance(frame);
+        owed += frame;
+        const bool job_running = job_frames_left > 0;
+        if (job_running) --job_frames_left;
+        if (job_running && job_frames_left == 0) {
+            kept = {kept[1], kept[2], kept[2] + job_ticks};
+            clock.published(kept[2], kept[0], job_ticks);
+        }
+        if (job_frames_left == 0) {
+            job_ticks = std::min(static_cast<int>(owed / kTick), 8);
+            if (job_ticks > 0) owed = 0.0; // what the job doesn't take is let go
+            job_frames_left = job_ticks * 4;
+        }
+        const double drawn = clock.drawn();
+        if (f >= 1200) { // settled
+            const double step = drawn - last;
+            held += step <= 0.0 ? 1 : 0;
+            if (last_step >= 0.0) worst_change = std::max(worst_change, std::abs(step - last_step));
+            last_step = step;
+        }
+        last = drawn;
+    }
+    CHECK(held == 0);
+    CHECK(worst_change < 0.05); // a quarter tick a frame, steady
+}
 
-    // "Waiting for players": a second passes and no tick arrives.
+TEST_CASE("TickClock holds at the newest tick through a stall and recovers", "[interp][clock]") {
+    TickClock clock(kTick);
+    clock.published(10.0, 9.0, 1.0);
+    // "Waiting for players": a second passes and no tick arrives
     for (int i = 0; i < 60; ++i) clock.advance(1.0 / 60.0);
-    CHECK(clock.alpha() == Approx(1.0));
-
-    // The next tick lands; the one after it starts interpolating again.
-    clock.on_tick();
-    clock.advance(0.02);
-    CHECK(clock.alpha() == Approx(1.0));
-    clock.on_tick();
-    CHECK(clock.alpha() == Approx(0.2));
+    CHECK(clock.drawn() == Approx(10.0));
+    // The ticks come again: the drawn time goes on, faster for a while,
+    // until it is back behind the newest
+    double t = 10.0;
+    for (int i = 0; i < 120; ++i) {
+        clock.advance(1.0 / 60.0);
+        if (i % 6 == 5) {
+            t += 1.0;
+            clock.published(t, t - 2.0, 1.0);
+        }
+    }
+    CHECK(clock.drawn() < t);
+    CHECK(clock.drawn() > t - 1.5);
 }
 
 TEST_CASE("TickClock stays put while paused and resets on a new session", "[interp][clock]") {
     TickClock clock(kTick);
+    clock.published(5.0, 3.0, 1.0);
     clock.advance(0.03);
-    const float paused_alpha = clock.alpha();
-    // Paused frames don't advance the clock.
-    CHECK(clock.alpha() == paused_alpha);
+    // Paused frames don't advance the clock
+    const double paused = clock.drawn();
+    CHECK(clock.drawn() == paused);
     clock.reset();
-    CHECK(clock.alpha() == 0.0f);
+    CHECK(clock.drawn() == 0.0);
+    clock.advance(0.05); // nothing published yet: nothing to draw between
+    CHECK(clock.drawn() == 0.0);
 }
 
 // --- capture_world -----------------------------------------------------------
@@ -170,6 +294,38 @@ TEST_CASE("WorldHistory keeps the last two ticks and follows the sim's ticks",
     history.clear();
     CHECK(history.ticks_captured() == 0);
     CHECK(history.cur().entities.empty());
+}
+
+TEST_CASE("A capture staged on the sim thread shows only once published (OE-134)",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
+    sim.tick(); // tick 1, published at once
+    sim.tick(); // tick 2
+
+    // The sim thread's next two ticks: staged, the frame's two untouched
+    sim.set_beat_observer([&](const SimState& s) { history.capture_staged(s); });
+    entity(sim, id).set_position({5, 0, 5});
+    sim.tick();
+    sim.tick();
+    CHECK(history.prev().tick == 1);
+    CHECK(history.cur().tick == 2);
+    CHECK(history.cur().find(id)->position.x == 1.0f);
+    CHECK(history.ticks_captured() == 2);
+
+    // Published between frames: the newest is current, the last current
+    // previous, and each record knows its previous self
+    CHECK(history.publish());
+    CHECK(history.older().tick == 1); // kept, for a frame drawn behind
+    CHECK(history.prev().tick == 2);
+    CHECK(history.cur().tick == 4);
+    CHECK(history.cur().find(id)->position.x == 5.0f);
+    CHECK(history.cur().previous_serial == history.prev().serial);
+    CHECK(history.ticks_captured() == 3);
+    CHECK_FALSE(history.publish()); // nothing new
 }
 
 // --- FrameView ---------------------------------------------------------------
@@ -335,6 +491,88 @@ TEST_CASE("FrameView pairs records through the history's index as a search would
     CHECK(indexed.position(*indexed.find(moving)).x == Approx(5.0f));
     CHECK(indexed.position(*indexed.find(warped)).x == Approx(500.0f));
     CHECK(indexed.position(*indexed.find(fresh)).x == Approx(50.0f));
+}
+
+TEST_CASE("A capture's record reused for another entity keeps nothing of the last one's",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::u32 builder = spawn_at(sim, {1, 0, 1});
+    Unit& u = unit(sim, builder);
+    u.set_unit_id("uel0105");
+    u.set_blueprint_id("uel0105");
+    u.set_custom_name("Bob");
+    u.set_vet_level(3);
+    u.set_build_target_id(77);
+    u.animated_bone_matrices().assign(2, filled(1.0f));
+    auto rock = std::make_unique<Entity>();
+    rock->set_position({9, 0, 9});
+    rock->set_blueprint_id("/env/common/props/rocks/rock01_prop.bp");
+    const osc::u32 prop = sim.entity_registry().register_entity(std::move(rock));
+
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 2);
+    CHECK(snap.entities[0].custom_name == "Bob");
+    CHECK(snap.entities[0].build_target_id == 77);
+
+    // The builder goes: the rock takes its record, which must hold no unit's
+    entity(sim, builder).mark_destroyed();
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 1);
+    const auto& r = snap.entities[0];
+    CHECK(r.id == prop);
+    CHECK_FALSE(r.is_unit);
+    CHECK(r.blueprint_id == "/env/common/props/rocks/rock01_prop.bp");
+    CHECK(r.unit_id.empty());
+    CHECK(r.custom_name.empty());
+    CHECK(r.vet_level == 0);
+    CHECK(r.build_target_id == 0);
+    CHECK(r.bone_count == 0);
+    CHECK(r.position.x == 9.0f);
+}
+
+TEST_CASE("A prop's record reused for another prop keeps no pose of the last one's",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto wreck = std::make_unique<osc::sim::Prop>();
+    wreck->set_blueprint_id("/env/wrecks/uel0101_wreck.bp");
+    wreck->pose.assign(2, filled(3.0f)); // the pose its unit died in
+    const osc::u32 posed = sim.entity_registry().register_entity(std::move(wreck));
+    auto tree = std::make_unique<osc::sim::Prop>();
+    tree->set_blueprint_id("/env/evergreen/props/trees/pine06_prop.bp");
+    tree->set_position({4, 0, 4});
+    const osc::u32 plain = sim.entity_registry().register_entity(std::move(tree));
+
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 2);
+    CHECK(snap.entities[0].bone_count == 2);
+
+    // The wreck goes: the tree takes its record
+    entity(sim, posed).mark_destroyed();
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.entities.size() == 1);
+    const auto& r = snap.entities[0];
+    CHECK(r.id == plain);
+    CHECK(r.is_prop);
+    CHECK(r.bone_count == 0);
+    CHECK(r.bone_offset == 0);
+    CHECK(r.blueprint_id == "/env/evergreen/props/trees/pine06_prop.bp");
+    CHECK(r.position.x == 4.0f);
+}
+
+TEST_CASE("An interned string is one copy per text", "[interp][snapshot]") {
+    const osc::InternedString a("uel0105");
+    const osc::InternedString b(std::string("uel") + "0105");
+    CHECK(a == b);
+    CHECK(&a.str() == &b.str()); // the same copy
+    CHECK(a == "uel0105");
+    CHECK_FALSE(a == osc::InternedString("uel0106"));
+    CHECK(osc::InternedString().empty());
+    CHECK(&osc::InternedString("").str() == &osc::InternedString().str()); // one empty
+    CHECK(fmt::format("{}", a) == "uel0105");
 }
 
 TEST_CASE("An entity counts its mesh override's changes", "[interp][snapshot]") {
@@ -687,6 +925,93 @@ TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][s
     CHECK(history.events().deaths.empty());
 }
 
+TEST_CASE("A capture shared over the worker pool is the one a walk in id order makes",
+          "[interp][snapshot][pool]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    // Enough units for many chunks, each with orders and a weapon (lists the
+    // records point into), between props with poses
+    for (int i = 0; i < 3000; ++i) {
+        const osc::u32 id =
+            spawn_at(sim, {static_cast<float>(i % 200), 0, static_cast<float>(i) / 200.0f});
+        auto& u = unit(sim, id);
+        for (int c = 0; c < i % 4; ++c) {
+            osc::sim::UnitCommand move;
+            move.type = osc::sim::CommandType::Move;
+            move.target_pos = {static_cast<float>(c), 0, static_cast<float>(i)};
+            u.push_command(move, false);
+        }
+        if (i % 7 == 0) {
+            auto prop = std::make_unique<osc::sim::Prop>();
+            prop->pose.assign(static_cast<size_t>(1 + i % 3), osc::sim::BoneMatrix{});
+            sim.entity_registry().register_entity(std::move(prop));
+        }
+    }
+    const auto capture = [&](bool pool) {
+        osc::WorkerPool::instance().set_enabled(pool);
+        WorldSnapshot snap;
+        osc::sim::capture_world(sim, snap, -1);
+        osc::WorkerPool::instance().set_enabled(true);
+        return snap;
+    };
+    const WorldSnapshot shared = capture(true);
+    const WorldSnapshot alone = capture(false);
+    REQUIRE(shared.entities.size() == alone.entities.size());
+    for (size_t i = 0; i < alone.entities.size(); ++i) {
+        const auto& a = shared.entities[i];
+        const auto& b = alone.entities[i];
+        const bool same =
+            a.id == b.id && a.position.x == b.position.x && a.is_unit == b.is_unit &&
+            a.command_offset == b.command_offset && a.command_count == b.command_count &&
+            a.rally_offset == b.rally_offset && a.bone_offset == b.bone_offset &&
+            a.bone_count == b.bone_count && a.weapon_range_offset == b.weapon_range_offset &&
+            a.intel_offset == b.intel_offset && a.adjacent_offset == b.adjacent_offset;
+        CHECK(same);
+        if (!same) break;
+    }
+    CHECK(shared.commands.size() == alone.commands.size());
+    CHECK(shared.bones.size() == alone.bones.size());
+    for (size_t i = 0; i < alone.commands.size(); ++i) {
+        CHECK(shared.commands[i].target_pos.z == alone.commands[i].target_pos.z);
+        if (shared.commands[i].target_pos.z != alone.commands[i].target_pos.z) break;
+    }
+    // And a record finds its own orders
+    const auto& last = alone.entities.back();
+    CHECK(last.command_offset + last.command_count <= alone.commands.size());
+}
+
+TEST_CASE("A job of several ticks is captured once, with every tick's events",
+          "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    sim.set_beat_observer([&](const SimState& s) { history.capture(s); });
+    sim.tick(); // tick 1
+
+    // The sim thread's job of three ticks: each tick's events kept, the
+    // world captured once, as the last left it
+    sim.set_beat_observer([&](const SimState& s) { history.stage_events(s); });
+    for (int t = 0; t < 3; ++t) {
+        sim.add_death_event(static_cast<osc::f32>(t), 0, 0, 1, 0);
+        entity(sim, id).set_position({static_cast<osc::f32>(t + 2), 0, 1});
+        sim.tick();
+    }
+    history.stage_world(sim);
+    REQUIRE(history.publish());
+    CHECK(history.prev().tick == 1);
+    CHECK(history.cur().tick == 4);
+    CHECK(history.cur().find(id)->position.x == 4.0f);
+    CHECK(history.cur().previous_serial == history.prev().serial);
+    REQUIRE(history.events().deaths.size() == 3);
+    CHECK(history.events().deaths[2].x == 2.0f);
+
+    // Drawn halfway across the job, it is halfway across its three ticks
+    const FrameView view(&history.prev(), &history.cur(), 0.5f);
+    CHECK(view.time() == Approx(3.5));
+    CHECK(view.position(*history.cur().find(id)).x == Approx(2.5f));
+}
+
 TEST_CASE("A light reaches the renderer where its entity was and with its particle textures",
           "[interp][snapshot][lua]") {
     osc::lua::LuaState lua;
@@ -878,4 +1203,37 @@ TEST_CASE("A player's order not yet run has its id, and is taken off by it", "[i
     const auto left = history.cur().orders_of(*history.cur().find(id));
     REQUIRE(left.size() == 1);
     CHECK(left[0].target_pos.x == 30.0f);
+}
+
+TEST_CASE("Reused captures clear projectile launch and impact state", "[interp][snapshot][reuse]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.tick();
+    auto projectile = std::make_unique<osc::sim::Projectile>();
+    projectile->launch_tick = sim.tick_count();
+    projectile->launch_position = {99, 0, 0};
+    projectile->impact_interpolation = 0.25f;
+    auto* p = projectile.get();
+    const auto id = sim.entity_registry().register_entity(std::move(projectile));
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.find(id));
+    CHECK(snap.find(id)->launched);
+    CHECK(snap.find(id)->step_scale == 4.0f);
+    p->launch_tick = 0;
+    p->impact_interpolation = -1.0f;
+    osc::sim::capture_world(sim, snap);
+    CHECK_FALSE(snap.find(id)->launched);
+    CHECK(snap.find(id)->step_scale == 1.0f);
+    // A different kind takes the same vector slot, after a launch/impact.
+    p->launch_tick = sim.tick_count();
+    p->impact_interpolation = 0.5f;
+    osc::sim::capture_world(sim, snap);
+    sim.entity_registry().unregister_entity(id);
+    auto prop = std::make_unique<osc::sim::Prop>();
+    const auto prop_id = sim.entity_registry().register_entity(std::move(prop));
+    osc::sim::capture_world(sim, snap);
+    REQUIRE(snap.find(prop_id));
+    CHECK_FALSE(snap.find(prop_id)->launched);
+    CHECK(snap.find(prop_id)->step_scale == 1.0f);
 }

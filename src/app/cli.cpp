@@ -10,6 +10,8 @@
 #include "platform/game_install.hpp"
 
 #include <algorithm>
+#include <charconv>
+
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -55,6 +57,12 @@ void print_usage() {
               << "  --faf-data <path>  Path to FAF data directory\n"
               << "  --print-install    Show which FA install would be used and exit\n"
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
+              << "  --match-telemetry <file>  Write the match's statistics (each army's\n"
+              << "                     economy, units and kills every 30 game seconds)\n"
+              << "                     as JSON Lines\n"
+              << "  --fast-match <ticks>  Play a game started as a player's is (/hostgame,\n"
+              << "                     the lobby) offscreen and unpaced: a sim tick a\n"
+              << "                     frame, few frames drawn; exit after that many ticks\n"
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
               << "  --camera <x>,<z>,<zoom> Initial camera target and zoom\n"
               << "  --capture-scale <s> Capture as a display at scale s draws it: the UI\n"
@@ -121,8 +129,11 @@ void print_usage() {
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops), and one\n"
               << "                     more just before --save-at's save\n"
-              << "  --bench <file>     With --ticks or --ai-skirmish: write each tick's time\n"
-              << "                     and the game's checksum as JSON (tools/bench.py)\n"
+              << "  --bench <file>     With --ticks, --ai-skirmish or --fast-match: write\n"
+              << "                     each tick's time and the game's checksum as JSON\n"
+              << "                     (tools/bench.py); with --profile, the profile too\n"
+              << "                     (each zone's own time, Lua functions, engine calls)\n"
+              << "  --bench-scenario <name>  The --bench run's scenario, named in its report\n"
               << "  --render-bench <file>  With --load: render a scene of the saved game\n"
               << "                     offscreen at 1920x1080 and write its frames' figures\n"
               << "                     as JSON (M223b; tools/bench.py)\n"
@@ -132,6 +143,12 @@ void print_usage() {
               << "  --gpu-passes       With --render-bench: also time each pass on the GPU\n"
               << "                     (the timestamps between passes add to the frame's time)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
+              << "  --profile-frames   Profile the frames, the sim left on its own thread\n"
+              << "  --no-sim-thread    Run the sim's ticks on the main thread (OE-134)\n"
+              << "  --no-workers       The sim's work on its own thread alone, not the worker pool\n"
+              << "  --play-for <secs>  Close after this long in a game; log its frame times\n"
+              << "  --play-rate <n>    ...played at game speed n (Moho's sim rate: 10 is 10x)\n"
+              << "  --play-until-tick <n>  ...and closed at game tick n, or when the game is won\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --log <file>       Write the log there (default: a player's game logs to\n"
               << "                     the user's state folder, anything else to ./opensupcom.log)\n"
@@ -300,6 +317,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
     o.load_by_replay = parse_flag(argc, argv, "--load-by-replay");
     o.bench_report = parse_string_arg(argc, argv, "--bench", "");
+    o.bench_scenario = parse_string_arg(argc, argv, "--bench-scenario", "");
     o.render_bench_report = parse_string_arg(argc, argv, "--render-bench", "");
     o.render_scene = parse_string_arg(argc, argv, "--render-scene", "battle");
     o.gpu_passes = parse_flag(argc, argv, "--gpu-passes");
@@ -360,6 +378,18 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         !port.empty() && port.size() <= 5 &&
         port.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_port = static_cast<u16>(std::clamp(std::stoi(port), 1, 65535));
+    o.lan_game_save = parse_string_arg(argc, argv, "--lan-game-save", "");
+    o.lan_game_resume = parse_string_arg(argc, argv, "--lan-game-resume", "");
+    o.sim_thread = !parse_flag(argc, argv, "--no-sim-thread");
+    o.workers = !parse_flag(argc, argv, "--no-workers");
+    o.play_for = std::strtod(parse_string_arg(argc, argv, "--play-for", "0").c_str(), nullptr);
+    {
+        const std::string rate = parse_string_arg(argc, argv, "--play-rate", "0");
+        std::from_chars(rate.data(), rate.data() + rate.size(), o.play_rate);
+        const std::string until = parse_string_arg(argc, argv, "--play-until-tick", "0");
+        std::from_chars(until.data(), until.data() + until.size(), o.play_until_tick);
+    }
+
     // --lan-game-quit-at <tick>: the joiner leaves the game then (M218e)
     if (const auto quit = parse_string_arg(argc, argv, "--lan-game-quit-at", "");
         !quit.empty() && quit.size() <= 6 &&
@@ -381,6 +411,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
     o.profile_enabled = parse_flag(argc, argv, "--profile");
+    o.profile_frames = parse_flag(argc, argv, "--profile-frames");
+    if (o.profile_frames) o.profile_enabled = true;
     o.ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
     o.instrument = parse_flag(argc, argv, "--instrument");
     o.builder_debug = parse_flag(argc, argv, "--builder-debug");
@@ -398,14 +430,19 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.any_test = request.headless || o.ai_skirmish;
     o.headless = (o.tick_count > 0) || o.any_test || o.replay_to_play.has_value();
 
+    o.match_telemetry_path = parse_string_arg(argc, argv, "--match-telemetry", "");
+    // --fast-match <ticks>: a player's game, offscreen and as fast as it goes
+    o.fast_match_ticks = static_cast<osc::u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--fast-match", "0").c_str(), nullptr, 10));
     o.silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-                       !parse_string_arg(argc, argv, "--golden", "").empty() || o.scripted_window;
+                       !parse_string_arg(argc, argv, "--golden", "").empty() || o.scripted_window ||
+                       o.fast_match_ticks > 0;
     // --seed N: the game's random seed (weapon spread, scripts' Random and
     // math.random). Runs that must repeat default to a fixed one.
     o.seed_arg = parse_string_arg(argc, argv, "--seed", "");
     o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
     o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
-                    parse_string_arg(argc, argv, "--golden", "").empty();
+                    parse_string_arg(argc, argv, "--golden", "").empty() && o.fast_match_ticks == 0;
     // --load <file>: a saved game. A headless run (--ticks, --ai-skirmish)
     // catches it up and plays on; else the window opens it.
     o.load_path = parse_string_arg(argc, argv, "--load", "");
@@ -421,11 +458,23 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         std::strtoul(parse_string_arg(argc, argv, "--post-load-at", "0").c_str(), nullptr, 10));
     // --save <file> --save-at <tick>: save the game after that tick.
     o.save_path = parse_string_arg(argc, argv, "--save", "");
-    o.save_at = static_cast<u32>(
-        std::strtoul(parse_string_arg(argc, argv, "--save-at", "0").c_str(), nullptr, 10));
-    if (!o.save_path.empty() && (o.save_at == 0 || !o.headless)) {
+    {
+        const std::string at = parse_string_arg(argc, argv, "--save-at", "0");
+        for (size_t from = 0; from <= at.size();) {
+            const size_t comma = std::min(at.find(',', from), at.size());
+            const auto tick =
+                static_cast<u32>(std::strtoul(at.substr(from, comma - from).c_str(), nullptr, 10));
+            if (tick > 0) o.save_ticks.push_back(tick);
+            from = comma + 1;
+        }
+        std::sort(o.save_ticks.begin(), o.save_ticks.end());
+        o.save_at = o.save_ticks.empty() ? 0 : o.save_ticks.front();
+    }
+    const bool windowed_run = o.fast_match_ticks > 0 || o.play_for > 0;
+    if (!o.save_path.empty() && (o.save_at == 0 || (!o.headless && !windowed_run))) {
         // A headless run saves after a tick: its checks run after each one.
-        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks or --ai-skirmish");
+        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks, --ai-skirmish, "
+                      "--fast-match or --play-for");
         return std::nullopt;
     }
     return o;

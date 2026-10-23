@@ -1,4 +1,5 @@
 #include "renderer/command_graph_renderer.hpp"
+#include "renderer/render_scripts.hpp"
 #include "renderer/vk_cmd.hpp"
 
 #include "blueprints/blueprint_store.hpp"
@@ -602,6 +603,7 @@ const std::array<f32, 6>& CommandGraphRenderer::pad_of(const std::string& bp, lu
 }
 
 const CommandGraphStyle* CommandGraphRenderer::style(sim::CommandType type, lua_State* L) {
+    if (!styles_read_ && !RenderScriptScope::allowed()) return nullptr;
     if (!styles_read_ && L) {
         styles_read_ = true;
         const int top = lua_gettop(L);

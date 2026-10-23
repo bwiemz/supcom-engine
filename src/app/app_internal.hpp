@@ -6,6 +6,7 @@
 #include "app/app.hpp"
 #include "app/bench.hpp"
 #include "app/window_commands.hpp"
+#include "app/match_telemetry.hpp"
 #include "app/support.hpp"
 #include "app/scripted_mouse.hpp"
 #include "app/ui_clicks.hpp"
@@ -36,10 +37,12 @@
 #include "ui/wld_ui_provider.hpp"
 #include "vfs/virtual_file_system.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -70,16 +73,30 @@ struct Options {
     std::string load_path;
     std::string save_path; ///< --save <file>: the game, saved at --save-at's tick
     u32 save_at = 0;       ///< --save-at <tick>
+    /// --save-at <tick,tick,...> in a windowed game (--fast-match, --play-for):
+    /// the game saved after each, `{tick}` in --save's path naming it (the
+    /// Performance Lab's scenarios: a match at 20, 40 and 60 minutes)
+    std::vector<u32> save_ticks;
     /// --post-load-at <tick>: the game schedules a post-load after that tick
     /// (after a save there), as a load at it would -- the save/load oracle's
     /// like for like (docs/plans/2026-10-05-campaign-saves-design.md).
     u32 post_load_at = 0;
     bool scripted_orders = false;
-    std::string bench_report; ///< --bench <file>: the headless run's tick times (M223)
+    std::string bench_report; ///< --bench <file>: the run's tick times (M223), and its profile
+    /// --bench-scenario <name>: what the --bench run is (a Performance Lab
+    /// scenario's name), for its report
+    std::string bench_scenario;
+    /// --match-telemetry <file>: the match's statistics, as JSON Lines
+    std::string match_telemetry_path;
     /// --render-bench <file> (M223b): a saved game's scene rendered, its
     /// frames' figures written; --render-scene, --render-frames, --render-warmup,
     /// --gpu-passes.
     std::string render_bench_report;
+    /// --fast-match <ticks>: the windowed loop offscreen and unpaced, for a
+    /// game started as a player's is (a launcher's /hostgame, retail's
+    /// lobby): once in the game, a sim tick each frame and a frame drawn
+    /// now and then, until the sim has run this many ticks. 0: off.
+    u32 fast_match_ticks = 0;
     std::string render_scene = "battle";
     u32 render_frames = 600;
     u32 render_warmup = 120;
@@ -102,6 +119,22 @@ struct Options {
     u16 lan_game_port = 47624;
     u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
     u32 lan_game_self_destruct_at = 0; ///< --lan-game-self-destruct-at: the joiner's Ctrl-K
+    std::string lan_game_save;
+    std::string lan_game_resume;
+
+    bool sim_thread = true; ///< --no-sim-thread: ticks on the main thread (OE-134)
+    bool workers = true;    ///< --no-workers: no worker pool (core/worker_pool.hpp)
+    /// --play-for <seconds>: a game played offscreen for this long, its
+    /// frames paced as a 60 Hz display's are (the rest of each frame waited
+    /// out, as a present waits for the display), and their times logged:
+    /// how often the sim's ticks hold a frame back (OE-134). 0: none.
+    double play_for = 0;
+    /// --play-rate: the game speed --play-for plays at (Moho's sim rate, 0 normal)
+    int play_rate = 0;
+    /// --play-until-tick: --play-for closes at this game tick, or when the
+    /// game is won (a long match's whole run, for its performance). 0: none.
+    unsigned play_until_tick = 0;
+
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
     /// link to, instead of the front end (M220a).
@@ -115,6 +148,8 @@ struct Options {
     bool legacy_hud = false;
     bool no_decals = false;
     bool profile_enabled = false;
+    /// --profile-frames: the frames' zones only, the sim on its own thread
+    bool profile_frames = false;
     bool ai_skirmish = false;
     bool instrument = false;
     bool builder_debug = false;
@@ -189,23 +224,66 @@ struct WorldInterp {
     osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
     bool one_tick_next = true;
 
-    /// Follow a new sim's beats from its first one, each beat's Sync queued
-    /// for the user state when there is one. Must outlive `sim`.
+    /// The ticks run on the sim's own thread (OE-134): each one's events
+    /// are kept aside (WorldHistory::stage_events), the world as the job's
+    /// last tick left it captured (stage_world, by the job), and published
+    /// between frames (publish). Set only while no tick runs.
+
+    bool staged = false;
+    /// Capture on the sim owner; UI Sync delivery runs after collection.
     void attach(osc::sim::SimState& sim, osc::lua::LuaState* ui = nullptr) {
         history.clear();
         clock.reset();
         one_tick_next = true;
         sim.set_beat_observer([this, ui](const osc::sim::SimState& s) {
+            if (staged) {
+                history.stage_events(s);
+                if (ui) osc::lua::queue_sync(s.lua_state(), nullptr);
+
+                return;
+            }
+
             history.capture(s);
-            clock.on_tick();
+            note_published();
             if (ui) {
                 osc::lua::queue_sync(s.lua_state(), ui->raw());
             }
         });
     }
 
+    /// The sim thread's job done: the world its last tick left published.
+    void publish() {
+        if (history.publish()) note_published();
+    }
+
+    /// The clock told of the newest tick, how far on it is from the one
+    /// before, and how far back the history reaches.
+    void note_published() {
+        const auto& prev = history.prev();
+        const auto& cur = history.cur();
+        const auto& older = history.older();
+        const double span = prev.serial != 0 && cur.tick > prev.tick ? cur.tick - prev.tick : 1.0;
+        const double oldest = older.serial != 0  ? older.tick
+                              : prev.serial != 0 ? prev.tick
+                                                 : cur.tick;
+        clock.published(cur.tick, oldest, span);
+    }
+
+    /// The two published ticks the drawn time falls between, and how far.
     osc::sim::FrameView view() const {
-        return {&history.prev(), &history.cur(), clock.alpha()};
+        const auto& older = history.older();
+        const auto& prev = history.prev();
+        const auto& cur = history.cur();
+        const double at = clock.drawn();
+        const auto between = [at](const osc::sim::WorldSnapshot& a,
+                                  const osc::sim::WorldSnapshot& b) {
+            const double alpha = (at - a.tick) / static_cast<double>(b.tick - a.tick);
+            return osc::sim::FrameView(&a, &b, static_cast<float>(std::clamp(alpha, 0.0, 1.0)));
+        };
+        if (older.serial != 0 && prev.serial != 0 && at < prev.tick && prev.tick > older.tick)
+            return between(older, prev);
+        if (prev.serial != 0 && cur.tick > prev.tick) return between(prev, cur);
+        return {&prev, &cur, 1.0f};
     }
 };
 
@@ -302,10 +380,35 @@ private:
     };
     Restore restore_save(const sim::SavedGame& save, std::string& why);
 
+    /// This player's copy of a network game's save every player agreed to
+    /// (OE-128), signed as their own, in their current profile's saves; the
+    /// UI hears of it (OnNetworkGameSaved(name, worked), when it has one).
+    void save_network_game(sim::SimState& sim, const std::string& name);
+    /// Tell the UI of the network saves written since (between frames).
+    void deliver_network_save_notices();
+    /// The profile whose saves a network game's go in: the UI's when the
+    /// game began (the sim's thread can't ask it).
+    std::string network_profile;
+    std::mutex network_saves_mutex;
+    std::vector<std::pair<std::string, bool>> network_save_notices; ///< name, worked
+
     /// FA's LastGame: the game just left, as recorded, in the current
     /// profile's replays -- when a new game starts, on the way back to the
     /// lobby, and at exit. Interactive games only; a replay isn't recorded.
     void save_last_game();
+    /// A player's game is kept: its recording, and its statistics as it
+    /// plays (MatchTelemetry), under a name of its own beside LastGame --
+    /// `<when it ended> <its map>.oscreplay` and `.jsonl` -- so that the
+    /// game before last is still there to be watched again and studied.
+    /// begin: opens the statistics of the game now starting, unless the run
+    /// was given a file for them (--match-telemetry). Each frame may call it.
+    void begin_match_record();
+    /// Where the current profile keeps a recording called `base`; empty if
+    /// its name can't be a folder's.
+    std::filesystem::path recording_path(const std::string& base) const;
+    /// Whether `telemetry` is a kept game's (begin_match_record's), to be
+    /// closed and filed with its recording.
+    bool match_record_open_ = false;
 
     int argc;
     char** argv;
@@ -337,6 +440,8 @@ private:
     bool save_written = false; ///< --save's file, once written
     /// --bench: each headless tick's time, from the run's start (M223).
     std::optional<BenchRecorder> bench;
+    /// --match-telemetry: the armies' statistics as the match plays.
+    std::optional<MatchTelemetry> telemetry;
     /// --record: the last game's replay is written as the run ends, however
     /// it ends (the normal end writes it before logging shuts down).
     struct RecordingWriter {

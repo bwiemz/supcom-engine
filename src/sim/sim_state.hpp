@@ -16,6 +16,7 @@
 #include "sim/unit_blocking.hpp"
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iosfwd>
 #include <map>
@@ -380,6 +381,7 @@ public:
     /// focus army it starts with. What it may command is the armies' command
     /// sources (below).
     void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+    const std::map<u32, i32>& source_armies() const { return source_armies_; }
 
     // --- Command sources (Moho's SSTIArmyVariableData::mValidCommandSources) ---
     /// The game numbers its command sources: from now on an army takes
@@ -415,6 +417,12 @@ public:
     bool cheats_enabled();
     /// Whether cheats are on, unlogged (the user session's copy of it).
     bool cheats_option() const { return cheats_enabled_; }
+    // --- The sim's own thread (OE-134) ---
+    /// A tick runs on the sim's thread: until it is collected, nothing else
+    /// may read the live sim (the UI reads its last published snapshot).
+    void set_ticking_elsewhere(bool on) { ticking_elsewhere_ = on; }
+    bool ticking_elsewhere() const { return ticking_elsewhere_; }
+
 
     // --- The game's pause (M218f), as Moho's sim takes it ---
     /// `source` asks to pause, in a beat every peer shares: taken unless
@@ -425,6 +433,16 @@ public:
     void resume(u32 source);
     /// Paused, the beat that applies it runs its tick.
     void single_step(u32 source);
+    // --- A network game's save (OE-128) ---
+    /// A save was asked for (kSaveGameCallback) in this tick: the game is
+    /// saved as `name` once it ends (LockstepSession takes it).
+    void request_save(std::string name) { save_request_ = std::move(name); }
+    std::optional<std::string> take_save_request() {
+        std::optional<std::string> out = std::move(save_request_);
+        save_request_.reset();
+        return out;
+    }
+
     /// Paused: the source that paused (-1: not paused).
     i32 paused_by() const { return paused_by_; }
     bool paused() const { return paused_by_ >= 0; }
@@ -933,6 +951,12 @@ public:
         const auto it = los_ever_.find(id);
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
     }
+    /// Whether army `army`'s weapons may pick unit `u` (Moho's
+    /// Unit::UpdateBlipsInRange keeps only what the army's recon database
+    /// has a blip of): it senses it now, by any sense, its allies' included;
+    /// or `u` is a structure it has seen. With
+    /// the fog off every unit is known.
+    bool weapons_know(const Unit& u, u32 army) const;
 
     /// FlushIntelInRect(x0, z0, x1, z1): every army forgets its blips of
     /// units within the rect (edges in), as Moho's
@@ -1159,6 +1183,9 @@ private:
     u32 tick_count_ = 0;
     u32 beat_count_ = 0;
     u32 post_loads_run_ = 0; ///< the host's count (post_loads_run), not game state
+    /// A save asked for in this tick (request_save): taken between ticks.
+    std::optional<std::string> save_request_;
+    std::atomic<bool> ticking_elsewhere_{false}; ///< the host's (set_ticking_elsewhere)
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;

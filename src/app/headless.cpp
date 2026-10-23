@@ -4,6 +4,7 @@
 #include "app/app_internal.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
+#include "sim/lua_profile.hpp"
 #include "core/test_status.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
@@ -64,6 +65,7 @@ void App::tick_headless() {
     const auto start = BenchRecorder::Clock::now();
     sim_state->tick();
     if (bench) bench->record(BenchRecorder::Clock::now() - start);
+    if (telemetry) telemetry->after_tick(*sim_state);
 }
 
 int App::run_headless() {
@@ -183,6 +185,8 @@ int App::run_headless() {
                      sim_state->game_time());
     }
 
+    if (telemetry) telemetry->finish(sim_state.get(), "ticks");
+
     // --bench's report (M223)
     if (bench && sim_state) {
         if (bench->tick_ms().empty())
@@ -195,6 +199,8 @@ int App::run_headless() {
     // Print profiling summary if enabled
     if (opt.profile_enabled) {
         osc::Profiler::instance().log_summary();
+        osc::Profiler::instance().log_totals();
+        osc::sim::lua_profile::log_report(40);
     }
 
     if (!opt.save_path.empty() && !save_written) {

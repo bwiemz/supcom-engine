@@ -332,7 +332,10 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
             // IAiCommandDispatchImpl::Execute starts no command while its unit is attached.
-            if (parent_entity_id() != 0) {
+            // FAF's external factory (a carrier's, a Fatboy's: EXTERNALFACTORYUNIT, a
+            // category retail never uses) builds while attached, as FAF's engine lets it.
+            static const CategoryName kExternalFactory{"EXTERNALFACTORYUNIT"};
+            if (parent_entity_id() != 0 && !has_category(kExternalFactory)) {
                 return true;
             }
             // Its scripts may change the queue, or kill the unit: look again.

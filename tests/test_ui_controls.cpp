@@ -665,6 +665,31 @@ TEST_CASE("The mouse entering or leaving a control is told up its parents until 
     CHECK(f.check("whos('MouseExit') == 'label,button' and whos('MouseEnter') == 'button'"));
 }
 
+TEST_CASE("A rebuilt control hears MouseEnter on the next mouse event, as Moho's",
+          "[ui][lua][input]") {
+    // A factory's build menu rebuilds after a click; its new button under the
+    // unmoved mouse never heard MouseEnter, so Button ignored the next click
+    // (Ryan, 2026-10-15: queuing engineers took several clicks)
+    InputFixture f;
+    f.run("old = box('old', GetFrame(0), 0, 0, 100, 100, 1) old.eats = true");
+    f.dispatch.on_cursor_pos(50, 50);
+    f.deliver();
+    CHECK(f.check("whos('MouseEnter') == 'old'"));
+
+    f.run("handled = {} old:Destroy() "
+          "new = box('new', GetFrame(0), 0, 0, 100, 100, 1) new.eats = true");
+    for (int frame = 0; frame < 60; ++frame) f.deliver(); // no input
+    CHECK(f.check("whos('MouseEnter') == ''"));
+
+    // Made and pressed in one batch: the press finds it told first
+    f.run("handled = {} new:Destroy() "
+          "newer = box('newer', GetFrame(0), 0, 0, 100, 100, 1) newer.eats = true");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("of_type('MouseEnter')[1].who == 'newer' "
+                  "and whos('ButtonPress') == 'newer'"));
+}
+
 TEST_CASE("DisableHitTest(true) lets the mouse through a control's children too",
           "[ui][lua][input]") {
     InputFixture f;

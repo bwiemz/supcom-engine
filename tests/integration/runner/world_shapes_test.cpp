@@ -142,6 +142,46 @@ void test_world_shapes(TestContext& ctx) {
                         "blue",
                         ring, line, inside, edges));
 
+    // A sim job may overlap busy draws: both frame slots must reuse the
+    // prepared UI and custom geometry without evaluating even a dirty LazyVar.
+    const auto counter = [&](const char* key) {
+        lua_pushstring(L, key);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const int value = static_cast<int>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return value;
+    };
+    const int settled_calls = counter("__osc_shapes_calls");
+    t.check(
+        static_cast<bool>(ctx.lua_state.do_string("do local v = rawget(_G, '__osc_shapes_view')\n"
+                                                  "v.Width:Set(function()\n"
+                                                  "    rawset(_G, '__osc_shapes_layout', "
+                                                  "(rawget(_G, '__osc_shapes_layout') or 0) + 1)\n"
+                                                  "    return GetFrame(0).Width() end) end\n")),
+        "a dirty layout callback is queued for the next settled frame");
+    for (int slot = 0; slot < 2; ++slot) {
+        r.skip_ui_frame();
+        const ImageRGBA8 busy = shots.grab();
+        t.check(!busy.pixels.empty() && counter("__osc_shapes_calls") == settled_calls &&
+                    counter("__osc_shapes_layout") == 0,
+                fmt::format("busy frame slot {} draws without Lua callbacks", slot));
+        const auto point = screen_of(r, {x + 30.0f, y, z});
+        bool red = false;
+        if (point && !busy.pixels.empty()) {
+            const u32 px = static_cast<u32>((*point)[0]);
+            const u32 py = static_cast<u32>((*point)[1]);
+            if (px < busy.width && py < busy.height) {
+                const size_t i = (static_cast<size_t>(py) * busy.width + px) * 4;
+                red = busy.pixels[i] >= 247 && busy.pixels[i + 1] <= 8 && busy.pixels[i + 2] <= 8;
+            }
+        }
+        t.check(red, "the busy draw retains the prepared custom line");
+    }
+    r.run_ui_frame(L, registry, true);
+    (void)shots.grab();
+    t.check(counter("__osc_shapes_calls") > settled_calls && counter("__osc_shapes_layout") > 0,
+            "custom rendering and dirty layout resume after the sim settles");
+
     // Off, OnRenderWorld isn't called, and nothing is drawn
     lua_pushstring(L, "__osc_shapes_calls");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -199,6 +239,23 @@ void test_world_shapes(TestContext& ctx) {
             fmt::format("a line thinner than two of the UI's points is two points wide, as wide "
                         "in the world at a display scale of 2 as at 1: {:.4f} and {:.4f}",
                         thin_retina, thin));
+
+    // Rendering owns its terrain as well as its world records: supported
+    // sim-side FlattenMapRect edits must not leak into a busy draw.
+    const f32 published_height = r.rendered_terrain()->get_terrain_height(x, z);
+    t.check(r.rendered_terrain() != terrain, "rendering owns an independent terrain");
+    const auto changed = ctx.sim.terrain()->flatten(
+        static_cast<i32>(x) - 2, static_cast<i32>(z) - 2, 4, 4, published_height + 10.0f);
+    t.check(changed.has_value(), "the sim changes terrain after the last publication");
+    r.skip_ui_frame();
+    (void)shots.grab();
+    t.check(r.rendered_terrain()->get_terrain_height(x, z) == published_height,
+            "a busy draw retains its published terrain heights");
+    r.run_ui_frame(L, registry, true);
+    (void)shots.grab();
+    t.check(r.rendered_terrain()->get_terrain_height(x, z) ==
+                ctx.sim.terrain()->get_terrain_height(x, z),
+            "the next settled draw publishes terrain deformations");
 
     lua_pushstring(L, core::kWorldUiActiveKey);
     lua_pushnil(L);

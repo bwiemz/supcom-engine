@@ -3,11 +3,14 @@
 // App::Window's (step 2c, window_frame.cpp and window_session.cpp).
 
 #include "core/profiler.hpp"
+#include "sim/lua_profile.hpp"
 #include "app/window_loop.hpp"
 #include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "app/window_commands.hpp"
+#include "lua/lua_thread_check.hpp"
 #include "lua/mp_net_state.hpp"
+#include "core/test_status.hpp"
 #include "platform/paths.hpp"
 #include "sim/formation.hpp"
 #include "sim/lockstep_session.hpp"
@@ -27,7 +30,23 @@ std::optional<int> App::run_window() {
 App::Window::Window(App& app)
     : app(app), offscreen_capture(!parse_string_arg(argc, argv, "--screenshot", "").empty() ||
                                   !parse_string_arg(argc, argv, "--golden", "").empty() ||
-                                  !opt.render_bench_report.empty() || opt.scripted_window) {}
+                                  !opt.render_bench_report.empty() || opt.scripted_window ||
+                                  opt.fast_match_ticks > 0 || opt.play_for > 0) {
+    // The sim's own thread (OE-134), unless asked not to; the runs that
+    // test the game check no other thread touches the sim's Lua meanwhile
+    if (opt.sim_thread) {
+        sim_thread = std::make_unique<SimThread>();
+        if (opt.lan_game_test() || opt.fast_match_ticks > 0 || opt.play_for > 0)
+            lua::install_lua_thread_check();
+    }
+}
+
+App::Window::~Window() {
+    // Join before any members captured by a job are destroyed, including on exceptions.
+    sim_thread.reset();
+    if (sim_state) sim_state->set_ticking_elsewhere(false);
+    lua::watch_lua_state(nullptr, {});
+}
 
 std::optional<int> App::Window::run() {
     // The render benchmark's frames are 1920x1080 (M223b); captures keep
@@ -215,6 +234,12 @@ std::optional<int> App::Window::set_up() {
         osc::Profiler::instance().set_enabled(true);
         renderer.set_profile_overlay_hidden(true);
     }
+    if (opt.fast_match_ticks > 0) {
+        // A fixed clock, no player at the camera, and no wait for a display
+        renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
+        renderer.camera().set_input_enabled(false);
+        renderer.set_vsync(false);
+    }
     if (!screenshot_path.empty()) {
         renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
         // Golden images must not depend on where the mouse happens to be.
@@ -382,6 +407,9 @@ std::optional<int> App::Window::start_flows() {
         lan_game.emplace(opt.lan_game_host,
                          opt.lan_game_join.empty() ? "127.0.0.1" : opt.lan_game_join,
                          opt.lan_game_port, opt.lan_game_quit_at, opt.lan_game_self_destruct_at);
+        lan_game->save_as(opt.lan_game_save);
+        lan_game->resume(opt.lan_game_resume);
+
         if (!lan_game->start(ui_lua_state)) {
             lan_game->finish(nullptr);
             return finish_test_run("lan-game-test");
@@ -426,24 +454,45 @@ std::optional<int> App::Window::start_flows() {
         scripted_mouse.emplace(opt.mouse);
         renderer.set_scripted_pointer(scripted_mouse->pointer());
     }
-    renderer.camera().set_tracking_listener([this](bool tracking) {
-        if (sim_state) {
-            osc::core::call_on_track_unit(ui_lua_state.raw(), tracking);
-        }
-    });
+    renderer.camera().set_tracking_listener([this](bool tracking) { tracking_notice = tracking; });
     return std::nullopt;
 }
 
 bool App::Window::running() const {
-    return !renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
+    return !renderer.should_close() && !screenshot_done && !fast_match_done() &&
+           !(tests && tests->frames_done()) &&
            !(render_bench && (render_bench->done() || render_bench->gave_up())) &&
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
            !(self_destruct_flow && self_destruct_flow->done()) &&
-           !(campaign_flow && campaign_flow->done());
+           !(campaign_flow && campaign_flow->done()) &&
+           !(opt.play_for > 0 && game_frames.in_game_s >= opt.play_for) && !played_to_the_end();
+}
+
+bool App::Window::played_to_the_end() const {
+    if (opt.play_for <= 0 || opt.play_until_tick == 0 || !sim_state) return false;
+    if (settled_tick() >= opt.play_until_tick) return true;
+    // (the live sim read only between its ticks)
+    return !(sim_thread && sim_thread->busy()) && sim_state->game_ended();
 }
 
 std::optional<int> App::Window::finish() {
+    quiesce_sim(); // the last frame's ticks, before anything reads the game
+    if (const u64 off = lua::lua_thread_violations(); off > 0)
+        osc::test_status::fail("[FAIL] the sim's Lua was used off its thread {} times while it "
+                               "ticked (OE-134)",
+                               off);
+    if (game_frames.frames > 0)
+        spdlog::info("Frames in the game: {}, mean {:.1f} ms, over 20 ms: {}, over 33 ms: {}, "
+                     "over 50 ms: {}, worst {:.1f} ms (sim thread: {}); drawn time held {} "
+                     "frames, pace changing {:.0f}% a frame",
+                     game_frames.frames, game_frames.total_ms / game_frames.frames,
+                     game_frames.over_20, game_frames.over_33, game_frames.over_50,
+                     game_frames.worst_ms, sim_thread ? "on" : "off", game_frames.held,
+                     game_frames.expected > 0 ? 100.0 * game_frames.uneven / game_frames.expected
+                                              : 0.0);
+    if (app.telemetry)
+        app.telemetry->finish(sim_state.get(), fast_match_done() ? "ticks" : "closed");
     // The render benchmark's report, while the renderer and the game are up
     if (render_bench) {
         const bool complete = render_bench->done() && sim_state;
@@ -558,7 +607,37 @@ std::optional<int> App::Window::finish() {
         return pass ? 0 : 1;
     }
     if (!screenshot_path.empty()) return screenshot_ok ? 0 : 1;
+    if (opt.fast_match_ticks > 0) {
+        if (!fast_match_done()) {
+            spdlog::error("--fast-match: the run ended at tick {}, before tick {}",
+                          sim_state ? sim_state->tick_count() : 0, opt.fast_match_ticks);
+            return 1;
+        }
+        spdlog::info("Fast match: {} ticks ({:.1f}s game time) in {} frames, {} drawn",
+                     sim_state->tick_count(), sim_state->game_time(), fast_match_frames,
+                     fast_match_drawn);
+        if (app.bench) {
+            if (app.bench->write(*sim_state))
+                spdlog::info("Bench report: {} ({} ticks)", opt.bench_report,
+                             app.bench->tick_ms().size());
+            else spdlog::error("--bench: cannot write {}", opt.bench_report);
+        }
+        if (opt.profile_enabled) {
+            osc::Profiler::instance().log_totals();
+            osc::sim::lua_profile::log_report(40);
+        }
+        return 0;
+    }
     return std::nullopt;
+}
+
+bool App::Window::fast_match_in_game() const {
+    return opt.fast_match_ticks > 0 && sim_state &&
+           game_state_mgr.current() == osc::GameState::GAME;
+}
+
+bool App::Window::fast_match_done() const {
+    return opt.fast_match_ticks > 0 && sim_state && settled_tick() >= opt.fast_match_ticks;
 }
 
 std::optional<int> App::Window::run_without_renderer() {

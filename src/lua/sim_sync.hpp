@@ -29,6 +29,9 @@ using core::copy_lua_value;
 ///  2. the sim's Sync table joins the queue of beats' tables;
 ///  3. the sim's ResetSyncTable() starts the next beat's table.
 void queue_sync(lua_State* sim_L, lua_State* ui_L);
+/// Between jobs, transfer UI focus requests to the sim owner. queue_sync
+/// may then receive a null ui_L and touch only the sim state.
+void prepare_threaded_sync(lua_State* sim_L, lua_State* ui_L);
 /// Whether a beat's Sync waits for sync_beat.
 bool sync_pending(lua_State* sim_L);
 

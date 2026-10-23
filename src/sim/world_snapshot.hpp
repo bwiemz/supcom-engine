@@ -1,12 +1,14 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "core/interned_string.hpp"
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/resource_deposit.hpp"
 #include "sim/unit_command.hpp"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <span>
@@ -84,17 +86,28 @@ struct EntityRecord {
     bool is_wreckage = false;
 
     i32 army = -1;
-    std::string blueprint_id;
-    std::string mesh_override;
+    /// Who is shown it (Moho's SetVizToFocusPlayer, ...Allies, ...Enemies,
+    /// ...Neutrals): a VizMode each, two bits apiece in that order; Intel
+    /// for all by default.
+    u8 viz = kVizDefault;
+    static constexpr u8 kVizDefault = 0x55;
+    /// The VizMode for its own army's player (0), allies (1), enemies (2),
+    /// neutrals (3).
+    VizMode viz_to(int relation) const {
+        return static_cast<VizMode>((viz >> (relation * 2)) & 3u);
+    }
+    // (interned: a record is plain memory, copied whole each tick)
+    InternedString blueprint_id;
+    InternedString mesh_override;
     u32 mesh_changes = 0; ///< Entity::mesh_changes
     f32 scale_x = 1, scale_y = 1, scale_z = 1;
     f32 fraction_complete = 1;
     f32 health = 0, max_health = 0;
 
     // Units
-    std::string unit_id;
-    std::string custom_name;
-    std::string strategic_underlay; ///< Unit:SetStrategicUnderlay's icon name
+    InternedString unit_id;
+    InternedString custom_name;
+    InternedString strategic_underlay; ///< Unit:SetStrategicUnderlay's icon name
     IconClass icon = IconClass::Generic;
     f32 footprint_size_x = 1;
     f32 footprint_size_z = 1;
@@ -388,11 +401,28 @@ struct WorldEvents {
     }
 };
 
-/// The last two captured beats, and the events not yet shown.
+/// The last three published ticks, and the events not yet shown. A frame
+/// draws between two of them (TickClock: a sped-up game is drawn a little
+/// behind the newest, to have ticks ahead to go on into).
+
 class WorldHistory {
 public:
-    /// The previous current becomes previous; `sim` is captured as current.
+    /// The previous current becomes previous; `sim` is captured as current
+    /// (capture_staged, then publish).
     void capture(const SimState& sim);
+    /// The sim thread's half (OE-134): `sim`, as its tick left it, captured
+    /// aside with its events, where the frame being drawn doesn't read. A
+    /// later capture before the publish replaces it.
+    void capture_staged(const SimState& sim);
+    /// capture_staged in its two parts. A job of several ticks keeps each
+    /// tick's events (the sim forgets them) but needs the world only as its
+    /// last tick left it: no frame sees the others.
+    void stage_events(const SimState& sim);
+    void stage_world(const SimState& sim);
+    /// The main thread's half, between ticks: the staged capture becomes
+    /// current (the current previous) and its events the renderer's. False
+    /// when nothing was staged.
+    bool publish();
     /// Whose sight the captures carry: the army the player watches. Given
     /// the sim, a new army's sight is taken into the newest capture at once,
     /// not at the next tick.
@@ -402,18 +432,27 @@ public:
     /// Forget everything (a new session).
     void clear();
 
-    const WorldSnapshot& prev() const { return snaps_[1 - cur_]; }
+    const WorldSnapshot& older() const { return snaps_[older_]; }
+    const WorldSnapshot& prev() const { return snaps_[prev_]; }
     const WorldSnapshot& cur() const { return snaps_[cur_]; }
     u32 ticks_captured() const { return captured_; }
     /// The renderer takes these (and clears them) as it shows them.
     WorldEvents& events() { return events_; }
 
 private:
-    std::array<WorldSnapshot, 2> snaps_;
+    /// The older, the previous, the current and the staged capture (a
+    /// rotation of the four: the sim thread writes the staged one while a
+    /// frame reads the others).
+    std::array<WorldSnapshot, 4> snaps_;
+    int older_ = 3;
+    int prev_ = 1;
     int cur_ = 0;
+    int staged_ = 2;
+    bool staged_ready_ = false;
     u32 captured_ = 0;
-    i32 sight_army_ = -1;
+    std::atomic<i32> sight_army_{-1}; ///< (set between ticks, read by the sim thread)
     WorldEvents events_;
+    WorldEvents staged_events_;
 };
 
 /// What one frame draws: the last two beats and how far between them the
@@ -430,6 +469,10 @@ public:
         : prev_(prev), cur_(cur), alpha_(alpha) {}
 
     f32 alpha() const { return alpha_; }
+    /// The game time drawn, in ticks, a tick on from the tick it is drawn
+    /// past (cur's tick + alpha when the two are a tick apart): it runs on
+    /// evenly when they are several apart.
+    f64 time() const;
     const WorldSnapshot* prev() const { return prev_; }
     const WorldSnapshot* cur() const { return cur_; }
 

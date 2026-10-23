@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace osc {
@@ -22,6 +23,13 @@ struct ProfileZoneStats {
     f64 max_us = 0;         // max over window
     u32 call_count = 0;     // calls this frame
     u32 depth = 0;          // nesting depth (for display indentation)
+    // Since enabling: what a whole run's report sums
+    f64 total_us = 0;
+    f64 total_self_us = 0; // of total_us, outside the zones within it
+    u64 total_calls = 0;
+    f64 worst_frame_us = 0; // the most this zone took in one frame
+    u64 worst_frame = 0;    // which frame that was (counting from 1)
+    u64 slow_frames = 0;    // frames it took over kSlowFrameUs in
 };
 
 /// Lightweight performance profiler with scoped timers and per-zone stats.
@@ -37,13 +45,21 @@ class Profiler {
 public:
     static constexpr u32 HISTORY_SIZE = 120;  // ~2 seconds at 60fps
     static constexpr u32 MAX_ZONES = 64;
+    /// A frame slower than this is a hitch at 60 fps (two frames' time).
+    static constexpr f64 kSlowFrameUs = 33'000;
 
     static Profiler& instance() {
         static Profiler s_instance;
         return s_instance;
     }
 
-    void set_enabled(bool e) { enabled_ = e; }
+    /// Its zones are the enabling thread's (the main one): a zone another
+    /// thread runs (the sim's, OE-134) isn't counted, as it would race on
+    /// the frame's samples.
+    void set_enabled(bool e) {
+        enabled_ = e;
+        owner_ = std::this_thread::get_id();
+    }
     bool enabled() const { return enabled_; }
 
     /// Call at the start of each frame to reset per-frame accumulators.
@@ -63,6 +79,10 @@ public:
         if (frame_start_valid_) {
             f64 frame_us = to_us(frame_end - frame_start_);
             frame_time_history_[history_index_] = frame_us;
+            total_frame_us_ += frame_us;
+            worst_frame_us_ = std::max(worst_frame_us_, frame_us);
+            if (frame_us > kSlowFrameUs) slow_frames_++;
+            timed_frames_++;
         }
         frame_start_ = frame_end;
         frame_start_valid_ = true;
@@ -78,6 +98,14 @@ public:
             zone.depth = sample.depth;
             zone.last_us = sample.elapsed_us;
             zone.call_count = sample.call_count;
+            zone.total_us += sample.elapsed_us;
+            zone.total_self_us += sample.self_us;
+            zone.total_calls += sample.call_count;
+            if (sample.elapsed_us > zone.worst_frame_us) {
+                zone.worst_frame_us = sample.elapsed_us;
+                zone.worst_frame = frame_count_;
+            }
+            if (sample.elapsed_us > kSlowFrameUs) zone.slow_frames++;
 
             // Update history ring buffer
             auto& hist = zone_history_[idx];
@@ -107,32 +135,38 @@ public:
 
     /// Start timing a named zone (typically called via PROFILE_ZONE macro).
     void push_zone(const char* name) {
-        if (!enabled_) return;
+        if (!enabled_ || std::this_thread::get_id() != owner_) return;
         if (stack_depth_ >= MAX_STACK) return;
 
-        stack_[stack_depth_] = {name, clock::now(), depth_};
+        stack_[stack_depth_] = {name, clock::now(), depth_, 0.0};
         stack_depth_++;
         depth_++;
     }
 
     /// End timing the current zone.
     void pop_zone() {
-        if (!enabled_ || stack_depth_ == 0) return;
+        if (!enabled_ || std::this_thread::get_id() != owner_ || stack_depth_ == 0) return;
 
         stack_depth_--;
         auto& entry = stack_[stack_depth_];
         f64 elapsed = to_us(clock::now() - entry.start);
         depth_ = entry.depth;
+        // Its own time: less what the zones within it took (self time, what
+        // a ranking of costs sums without counting a nested zone twice)
+        const f64 self = elapsed - entry.child_us;
+        if (stack_depth_ > 0) stack_[stack_depth_ - 1].child_us += elapsed;
 
         // Accumulate into frame zones
         i32 fz = find_frame_zone(entry.name);
         if (fz >= 0) {
             frame_zones_[fz].elapsed_us += elapsed;
+            frame_zones_[fz].self_us += self;
             frame_zones_[fz].call_count++;
         } else if (frame_zone_count_ < MAX_ZONES) {
             auto& z = frame_zones_[frame_zone_count_++];
             z.name = entry.name;
             z.elapsed_us = elapsed;
+            z.self_us = self;
             z.call_count = 1;
             z.depth = entry.depth;
         }
@@ -147,6 +181,10 @@ public:
         return i >= 0 ? frame_zones_[i].elapsed_us : 0.0;
     }
     u32 zone_count() const { return persistent_zone_count_; }
+    /// The run's frames since enabling, their time, and the worst of them.
+    u64 timed_frames() const { return timed_frames_; }
+    f64 total_frame_us() const { return total_frame_us_; }
+    f64 worst_frame_us() const { return worst_frame_us_; }
 
     /// Get frame time history (for sparkline graph).
     const f64* frame_time_history() const { return frame_time_history_; }
@@ -187,6 +225,29 @@ public:
         spdlog::info("===================================");
     }
 
+    /// Print the whole run's totals to spdlog, the costliest zone first: where
+    /// a match's time went, and each zone's worst frame (what a stutter is).
+    void log_totals() const {
+        if (persistent_zone_count_ == 0 || timed_frames_ == 0) return;
+        std::vector<u32> order(persistent_zone_count_);
+        for (u32 i = 0; i < persistent_zone_count_; ++i) order[i] = i;
+        std::sort(order.begin(), order.end(),
+                  [this](u32 a, u32 b) { return zones_[a].total_us > zones_[b].total_us; });
+        spdlog::info("=== Profile totals: {} frames, {:.1f} s, mean {:.2f} ms, worst {:.1f} ms, "
+                     "{} over {:.0f} ms ===",
+                     timed_frames_, total_frame_us_ / 1e6, total_frame_us_ / timed_frames_ / 1e3,
+                     worst_frame_us_ / 1e3, slow_frames_, kSlowFrameUs / 1e3);
+        spdlog::info("  {:<28s} {:>9s} {:>6s} {:>10s} {:>9s} {:>10s} {:>8s} {:>6s}", "Zone",
+                     "Total s", "%", "Calls", "ms/frame", "Worst ms", "at frame", "slow");
+        for (const u32 i : order) {
+            const auto& z = zones_[i];
+            spdlog::info("  {:<28s} {:>9.2f} {:>5.1f}% {:>10} {:>9.3f} {:>10.2f} {:>8} {:>6}",
+                         z.name, z.total_us / 1e6, 100.0 * z.total_us / total_frame_us_,
+                         z.total_calls, z.total_us / timed_frames_ / 1e3, z.worst_frame_us / 1e3,
+                         z.worst_frame, z.slow_frames);
+        }
+    }
+
 private:
     using clock = std::chrono::high_resolution_clock;
     using time_point = clock::time_point;
@@ -199,11 +260,13 @@ private:
         const char* name;
         time_point start;
         u32 depth;
+        f64 child_us; ///< what the zones within it have taken so far
     };
 
     struct FrameZone {
         const char* name = "";
         f64 elapsed_us = 0;
+        f64 self_us = 0;
         u32 call_count = 0;
         u32 depth = 0;
     };
@@ -211,6 +274,7 @@ private:
     static constexpr u32 MAX_STACK = 16;
 
     bool enabled_ = false;
+    std::thread::id owner_;
     u32 depth_ = 0;
     u32 stack_depth_ = 0;
     StackEntry stack_[MAX_STACK] = {};
@@ -231,6 +295,10 @@ private:
 
     time_point frame_start_;
     bool frame_start_valid_ = false;
+    f64 total_frame_us_ = 0;
+    f64 worst_frame_us_ = 0;
+    u64 timed_frames_ = 0;
+    u64 slow_frames_ = 0;
 
     i32 find_frame_zone(const char* name) const {
         for (u32 i = 0; i < frame_zone_count_; ++i) {

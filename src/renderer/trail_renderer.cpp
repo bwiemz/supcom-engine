@@ -1,4 +1,5 @@
 #include "renderer/trail_renderer.hpp"
+#include "renderer/render_scripts.hpp"
 #include "renderer/vk_cmd.hpp"
 
 #include "renderer/camera.hpp"
@@ -234,17 +235,23 @@ void TrailRenderer::advance(const sim::FrameView& view, const Vector3& eye, cons
                             TrailBlueprintCache& blueprints, lua_State* L, const ReconView* recon) {
     const sim::WorldSnapshot& snap = *view.cur();
     const u32 tick = snap.tick;
-    const u32 steps = last_tick_ ? tick - *last_tick_ : 1;
+    const bool same_tick = last_tick_ && tick == *last_tick_;
+    const u32 steps = last_tick_ ? std::max(tick - *last_tick_, 1u) : 1;
+    deferred_blueprints_ = false;
     std::unordered_set<u32> live;
     for (const sim::EffectRecord& fx : snap.effects) {
         if (fx.type != sim::EffectType::TRAIL_EMITTER) continue;
         live.insert(fx.id);
         if (!fx.anchored || unknown_.count(fx.id) || unmade_.count(fx.id)) continue;
         auto it = emitters_.find(fx.id);
+        // A settled retry hydrates only deferred emitters. Existing ones
+        // already processed this tick, including their emission clocks.
+        if (same_tick && it != emitters_.end()) continue;
         if (it == emitters_.end()) {
             const TrailBlueprintData* bp = blueprints.get(fx.blueprint_path, L);
             if (!bp) {
-                unknown_.insert(fx.id);
+                if (RenderScriptScope::allowed()) unknown_.insert(fx.id);
+                else deferred_blueprints_ = true;
                 continue;
             }
             if (!fidelity_allows(bp->fidelity, fidelity_)) { // as the particles'
@@ -309,10 +316,12 @@ void TrailRenderer::update(const sim::FrameView& view, const Camera& camera, con
     if (const f32 len = length(forward); len > 1e-6f) forward = scale(forward, 1.0f / len);
 
     if (last_tick_ && cur->tick < *last_tick_) clear(); // a new game
-    if (!last_tick_ || cur->tick != *last_tick_) advance(view, eye, frustum, blueprints, L, recon);
+    if (!last_tick_ || cur->tick != *last_tick_ ||
+        (deferred_blueprints_ && RenderScriptScope::allowed()))
+        advance(view, eye, frustum, blueprints, L, recon);
 
     // The render clock: the entity is drawn between its last two ticks.
-    const f64 now = static_cast<f64>(cur->tick) + static_cast<f64>(view.alpha());
+    const f64 now = view.time();
     // Segments spent (both ends a TrailLength old) go.
     std::erase_if(segments_, [now](const Segment& s) {
         return now >= static_cast<f64>(std::max(s.start_born, s.end_born)) +
@@ -428,6 +437,7 @@ void TrailRenderer::clear() {
     segments_.clear();
     names_.clear();
     last_tick_.reset();
+    deferred_blueprints_ = false;
     groups_.clear();
     drawn_.clear();
 }

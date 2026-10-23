@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -34,12 +35,14 @@ struct PatrolBox {
                std::fabs(p.y - center.y) <= 100.0f;
     }
 
-    /// Every entity in the box's bounds, in id order.
-    std::vector<u32> collect(const EntityRegistry& registry) const {
+    /// Each live entity in the box's bounds (the units alone if
+    /// `units_only`), in no fixed order.
+    template <typename F>
+    void for_each(const EntityRegistry& registry, bool units_only, F&& fn) const {
         const f32 reach_x = std::fabs(along_z) * half_width + std::fabs(along_x) * half_length;
         const f32 reach_z = std::fabs(along_x) * half_width + std::fabs(along_z) * half_length;
-        return registry.collect_in_rect(center.x - reach_x, center.z - reach_z, center.x + reach_x,
-                                        center.z + reach_z);
+        registry.for_each_in_rect(center.x - reach_x, center.z - reach_z, center.x + reach_x,
+                                  center.z + reach_z, units_only, std::forward<F>(fn));
     }
     /// The live units in its bounds, in id order (from the grid of units).
     std::vector<Entity*> units(const EntityRegistry& registry) const {
@@ -223,62 +226,67 @@ Entity* Unit::find_patrol_work(const UnitCommand& cmd, SimContext& ctx) {
     const bool mass_full = brain && nearly_full(brain->economy().mass);
     const bool reclaims = has_category(kReclaim);
     const PatrolBox box = patrol_box(*this, cmd);
+    // The nearest (weighted), ties to the lowest id: Moho's walk in id order
+    // keeps the first nearest. The box's entities come in any order, with no
+    // list made of them (a long leg's box holds thousands of props); one
+    // that reclaims nothing needs only the units.
     Entity* best = nullptr;
     f32 best_dist2 = 0;
-    for (const u32 id : box.collect(ctx.registry)) {
-        Entity* e = ctx.registry.find(id);
-        if (!e || e->destroyed() || !box.contains(e->position())) {
-            continue;
+    box.for_each(ctx.registry, !reclaims, [&](Entity& entity) {
+        Entity* e = &entity;
+        const u32 id = e->entity_id();
+        if (!box.contains(e->position())) {
+            return;
         }
         f32 weight = 1.0f;
         if (!e->is_unit() || static_cast<const Unit&>(*e).is_dying()) {
             if (!e->is_prop() || !reclaims) {
-                continue;
+                return;
             }
             const auto& prop = static_cast<const Prop&>(*e);
             if (!prop.reclaimable_category) {
-                continue;
+                return;
             }
             if ((energy_full || mass_full) && (energy_full || prop.reclaim_energy_max <= 0) &&
                 (mass_full || prop.reclaim_mass_max <= 0)) {
-                continue;
+                return;
             }
             const auto& claimed = cmd.patrol_claimed;
             if (std::find(claimed.begin(), claimed.end(), id) != claimed.end()) {
-                continue;
+                return;
             }
         } else {
             const auto& other = static_cast<const Unit&>(*e);
             if (&other == this || other.velocity().x != 0 || other.velocity().y != 0 ||
                 other.velocity().z != 0 || other.is_air_unit() ||
                 sim->is_neutral(army(), other.army())) {
-                continue;
+                return;
             }
             if (sim->is_enemy(army(), other.army())) {
                 if (!other.has_category(kReclaimable)) {
-                    continue;
+                    return;
                 }
                 weight = 0.5f;
             } else {
                 if (!energy_full || !mass_full || other.health() >= other.max_health() * 0.9f ||
                     other.has_unit_state("BeingReclaimed")) {
-                    continue;
+                    return;
                 }
                 weight = 2.0f;
             }
         }
         if (off_map(*sim, e->position(), 1.0f) || outside_no_rush(*sim, brain, e->position())) {
-            continue;
+            return;
         }
         const f32 dx = position().x - e->position().x;
         const f32 dy = position().y - e->position().y;
         const f32 dz = position().z - e->position().z;
         const f32 dist2 = (dx * dx + dy * dy + dz * dz) * weight;
-        if (!best || dist2 < best_dist2) {
+        if (!best || dist2 < best_dist2 || (dist2 == best_dist2 && id < best->entity_id())) {
             best = e;
             best_dist2 = dist2;
         }
-    }
+    });
     return best;
 }
 

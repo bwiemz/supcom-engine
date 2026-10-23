@@ -27,6 +27,15 @@
 #include "lvm.h"
 
 
+/* OpenSupCom (OE-134): see lstate.h's lua_lock */
+void (*osc_lua_lock_check)(lua_State *L) = 0;
+
+/* The global state `L` belongs to: one per lua_open, shared by its threads. */
+void *osc_lua_global (lua_State *L) {
+  return G(L);
+}
+
+
 const char lua_ident[] =
   "$Lua: " LUA_VERSION " " LUA_COPYRIGHT " $\n"
   "$Authors: " LUA_AUTHORS " $\n"

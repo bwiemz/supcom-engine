@@ -2431,8 +2431,10 @@ std::vector<const sim::Unit*> units_around(const sim::SimState& sim, i32 army,
 // x, z)`, if given, agrees). Closest and Furthest rank them from the squad
 // with no category; given one they take the first (Moho looks for a unit
 // of the army outside the category it gathered by, and so finds none).
-// HighestValue and LeastDefended score what stands about the squad --
-// every vector alike -- and fall back on Closest when that is nothing.
+// HighestValue and LeastDefended score units within 32 of each candidate,
+// choosing the greatest cost or smallest nonzero count, respectively
+// (faf-re CAiBrain.cpp, 4070e8c6, lines 1954-2005). Both fall back on
+// Closest when no candidate has units.
 // Nil with no current enemy, no such squad, or no vector.
 static int brain_PickBestAttackVector(lua_State* L) {
     const int n = lua_gettop(L);
@@ -2534,12 +2536,16 @@ static int brain_PickBestAttackVector(lua_State* L) {
         lua_pop(L, 1);
         return yes;
     };
-    const auto value_about = [&](f32 reach) {
-        const auto units = units_around(*sim, brain->index(), category, centre, reach,
+    const auto value_about = [&](const sim::Vector3& at) {
+        const auto units = units_around(*sim, brain->index(), category, at, 32.0f,
                                         static_cast<Alliance>(alliance));
         f32 sum = 0;
-        for (const sim::Unit* u : units)
-            sum += static_cast<f32>(u->build_cost_mass() + u->build_cost_energy());
+        for (const sim::Unit* u : units) {
+            // What each unit cost (its blueprint's); build_cost_mass() is
+            // what a builder is building, so every area was worth nothing
+            const auto cost = sim::blueprint_build_economy(L, u->blueprint_id());
+            sum += static_cast<f32>(cost.mass + cost.energy);
+        }
         return std::pair<f32, f32>{sum, static_cast<f32>(units.size())};
     };
 
@@ -2560,14 +2566,15 @@ static int brain_PickBestAttackVector(lua_State* L) {
                        (how == Compare::Closest ? score < best_score : score > best_score);
                 break;
             case Compare::HighestValue:
-                score = value_about(0.0f).first;
+                score = value_about(at).first;
                 keep = score > best_score || best_score < 0.0f ||
                        (best && score == best_score &&
                         dist_sq(best->position, centre) > dist_sq(at, centre));
                 break;
             case Compare::LeastDefended:
-                score = value_about(32.0f).second;
-                keep = score > best_score || best_score < 0.0f;
+                score = value_about(at).second;
+                keep = ((best_score > score || best_score == 0.0f) && score > 0.0f) ||
+                       best_score < 0.0f;
                 break;
             }
             if (keep) {

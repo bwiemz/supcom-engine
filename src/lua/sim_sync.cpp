@@ -55,31 +55,34 @@ void set_registry_int(lua_State* L, const char* key, int v) {
 lua_Number to_lua_army(int army) { return army >= 0 ? army + 1 : -1; }
 
 /// Take (and clear) a focus request pending in `L`'s registry.
-bool take_focus_request(lua_State* L, int& requested) {
-    lua_pushstring(L, kFocusArmyRequestKey);
+bool take_focus_request(lua_State* L, int& requested, const char* key = kFocusArmyRequestKey) {
+    lua_pushstring(L, key);
     lua_rawget(L, LUA_REGISTRYINDEX);
     const bool pending = lua_isnumber(L, -1) != 0;
     if (pending) requested = static_cast<int>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     if (pending) {
-        lua_pushstring(L, kFocusArmyRequestKey);
+        lua_pushstring(L, key);
         lua_pushnil(L);
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     return pending;
 }
 
+constexpr const char* kTransferredFocusKey = "__osc_transferred_ui_focus";
+
 void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
     // The sim's (FAF's SetFocusArmy), then the UI's: both set the driver's
     // pending focus in Moho, the later winning
     int requested = 0;
     const bool from_sim = take_focus_request(sim_L, requested);
-    const bool from_ui = take_focus_request(ui_L, requested);
+    const bool from_ui = ui_L ? take_focus_request(ui_L, requested)
+                              : take_focus_request(sim_L, requested, kTransferredFocusKey);
     if (!from_sim && !from_ui) return;
 
-    const int old = registry_int(ui_L, "__osc_focus_army", 0);
+    const int old = registry_int(ui_L ? ui_L : sim_L, "__osc_focus_army", 0);
     if (requested == old) return;
-    set_registry_int(ui_L, "__osc_focus_army", requested);
+    if (ui_L) set_registry_int(ui_L, "__osc_focus_army", requested);
     set_registry_int(sim_L, "__osc_focus_army", requested);
 
     lua_pushnumber(sim_L, to_lua_army(requested));
@@ -153,7 +156,7 @@ void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army) {
 }
 
 void queue_sync(lua_State* sim_L, lua_State* ui_L) {
-    if (!sim_L || !ui_L) {
+    if (!sim_L) {
         return;
     }
     apply_focus_request(sim_L, ui_L);
@@ -164,6 +167,17 @@ void queue_sync(lua_State* sim_L, lua_State* ui_L) {
     set_packet_index(sim_L, packets, "last", last);
     lua_pop(sim_L, 1);
     call_global(sim_L, "ResetSyncTable", 0);
+}
+
+void prepare_threaded_sync(lua_State* sim_L, lua_State* ui_L) {
+    if (!sim_L || !ui_L) return;
+    // Replay UI starts as observer. Transfer its current focus as well as the
+    // request, while both states belong to the main thread, so the first beat
+    // reports the same old focus as serial Sync.
+    set_registry_int(sim_L, "__osc_focus_army", registry_int(ui_L, "__osc_focus_army", 0));
+    int requested = 0;
+    if (take_focus_request(ui_L, requested))
+        set_registry_int(sim_L, kTransferredFocusKey, requested);
 }
 
 bool sync_pending(lua_State* sim_L) {
@@ -188,6 +202,21 @@ void sync_beat(lua_State* sim_L, lua_State* ui_L) {
         apply_focus_request(sim_L, ui_L);
         push_sim_sync(sim_L);
     }
+
+    // A worker applies focus changes in the sim only. Publish the matching
+    // UI focus with this beat's Sync, after the worker has been collected.
+    lua_pushstring(sim_L, "FocusArmyChanged");
+    lua_rawget(sim_L, -2);
+    if (lua_istable(sim_L, -1)) {
+        lua_pushstring(sim_L, "new");
+        lua_rawget(sim_L, -2);
+        if (lua_isnumber(sim_L, -1)) {
+            const int army = static_cast<int>(lua_tonumber(sim_L, -1));
+            set_registry_int(ui_L, "__osc_focus_army", army > 0 ? army - 1 : -1);
+        }
+        lua_pop(sim_L, 1);
+    }
+    lua_pop(sim_L, 1);
 
     // PreviousSync = Sync; Sync = copy of the beat's
     lua_pushstring(ui_L, "PreviousSync");

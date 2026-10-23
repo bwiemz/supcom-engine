@@ -9,6 +9,7 @@
 #include "sim/prop.hpp"
 #include "sim/unit.hpp"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <vector>
@@ -187,6 +188,16 @@ TEST_CASE("units_in_radius and units_in_rect are collect_in_radius's and collect
             for (const Entity* e : reg.units_in_rect(x0, z0, x1, z1)) got.push_back(e->entity_id());
             INFO("rect " << x0 << "," << z0 << " to " << x1 << "," << z1);
             CHECK(got == expected);
+            // for_each_in_rect: the same entities, each once, in any order
+            const auto visited = [&](bool units_only) {
+                std::vector<osc::u32> ids;
+                reg.for_each_in_rect(x0, z0, x1, z1, units_only,
+                                     [&](Entity& e) { ids.push_back(e.entity_id()); });
+                std::sort(ids.begin(), ids.end());
+                return ids;
+            };
+            CHECK(visited(true) == expected);
+            CHECK(visited(false) == reg.collect_in_rect(x0, z0, x1, z1));
         }
     };
     const auto fill = [](EntityRegistry& reg) {

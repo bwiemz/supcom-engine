@@ -14,6 +14,11 @@
 #include "sim/lobby_net.hpp"
 #include "sim/lockstep_session.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/replay.hpp"
+#include "sim/sim_snapshot.hpp"
+#include "sim/unit.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/shield.hpp"
 #include "ui/ui_control.hpp"
 
 extern "C" {
@@ -941,4 +946,128 @@ TEST_CASE("A matchmaking client's EjectPlayer ejects the client with that uid (M
     CHECK(osc::lua::eject_session_uid(42) == osc::lua::EjectByUid::Ejected);
     // This client reports Alice's source dropped, as EjectSessionClient does
     CHECK(osc::lua::mp_net_state().session->ejectors(1) == std::vector<osc::u32>{0});
+}
+
+TEST_CASE("A resumed lobby retains saved source ids for continued whole-game replays",
+          "[lobby][lua][replay][resume]") {
+    MpGuard guard;
+    const auto setup = [](World& w) {
+        w.sim.set_seed(1);
+        w.sim.add_army("ARMY_1", "ARMY_1");
+        w.sim.add_army("ARMY_2", "ARMY_2");
+        REQUIRE(w.run(R"(
+            ScenarioInfo = {Options = {Timeouts = 3}, ArmySetup = {
+                ARMY_1 = {Human = true}, ARMY_2 = {Human = true}}}
+        )"));
+        w.sim.set_source_army(0, 0);
+        w.sim.set_source_army(1, 1);
+        w.sim.set_source_army(2, -1);   // the original observer
+        w.sim.set_pause_timeouts(0, 1); // some timeouts were already used
+        w.sim.set_pause_timeouts(1, 2);
+        w.sim.set_pause_timeouts(2, 0);
+        w.sim.begin_command_sources();
+        w.sim.set_command_source(0, 0, true);
+        w.sim.set_command_source(1, 1, true);
+        w.sim.set_pause_holds(true);
+        std::vector<osc::u32> ids;
+        for (osc::i32 army = 0; army < 2; ++army) {
+            auto unit = std::make_unique<osc::sim::Unit>();
+            unit->set_army(army);
+            unit->set_max_speed(6.0f);
+            ids.push_back(w.sim.entity_registry().register_entity(std::move(unit)));
+        }
+        return ids;
+    };
+    World original;
+    const auto ids = setup(original);
+    osc::lua::mp_begin_lobby_game(
+        std::make_unique<osc::sim::LobbyGameTransport>(
+            std::make_unique<osc::sim::LobbyNet>("Host", 1), osc::lua::net_lobby_clock_ms),
+        1, {0, 1, -1}, {{42, "Alice"}, {10, "Host"}, {30, "Observer"}}, 1);
+    REQUIRE(osc::lua::mp_attach_session(original.sim));
+    original.sim.command_scheduler().set_lockstep(false);
+    original.sim.set_pause_timeouts(0, 1);
+    original.sim.set_pause_timeouts(1, 2);
+    original.sim.set_recording(true);
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {40, 0, 20};
+    original.sim.schedule_command(0, {ids[0]}, move, true);
+    for (int i = 0; i < 4; ++i) original.sim.tick();
+    std::vector<osc::u8> snapshot;
+    lua_settop(original.state.raw(), 0);
+    const std::string saved_error = osc::sim::save_snapshot(original.sim, snapshot);
+    INFO(saved_error);
+    REQUIRE(saved_error.empty());
+    World w;
+    setup(w);
+    lua_settop(w.state.raw(), 0);
+    REQUIRE(osc::sim::load_snapshot(w.sim, snapshot).empty());
+    w.sim.adopt_history(original.sim.recorded_replay());
+    // The new lobby numbers the host first, the observer next, Alice last.
+    std::vector<osc::lua::SessionClient> clients{{10, "Host"}, {30, "Observer"}, {42, "Alice"}};
+    std::vector<osc::i32> armies{0, -1, 1};
+    bool refused = false;
+    SECTION("reordered lobby") {}
+    SECTION("a new observer would change the recorded source layout") {
+        clients.push_back({55, "NewObserver"});
+        armies.push_back(-1);
+        refused = true;
+    }
+    SECTION("all original players must return") {
+        clients[2].name = "SomeoneElse";
+        refused = true;
+    }
+    SECTION("duplicate player names are ambiguous") {
+        clients[1].name = "Alice";
+        refused = true;
+    }
+    osc::lua::mp_begin_lobby_game(
+        std::make_unique<osc::sim::LobbyGameTransport>(
+            std::make_unique<osc::sim::LobbyNet>("Host", 1), osc::lua::net_lobby_clock_ms),
+        0, armies, clients, 1);
+    const bool attached = osc::lua::mp_attach_session(w.sim);
+    const auto& mp = osc::lua::mp_net_state();
+    if (refused) {
+        CHECK_FALSE(attached);
+        CHECK_FALSE(mp.active());
+        CHECK_FALSE(mp.resume_error.empty());
+        return;
+    }
+    REQUIRE(attached);
+    CHECK(mp.local_source == 1);
+    CHECK(mp.all_sources == std::vector<osc::u32>{0, 1, 2});
+    REQUIRE(mp.clients.size() == 3);
+    CHECK(mp.clients[0].uid == 42);
+    CHECK(mp.clients[1].uid == 10);
+    CHECK(mp.clients[2].uid == 30);
+    CHECK(mp.army_of(0) == 0);
+    CHECK(mp.army_of(1) == 1);
+    CHECK(mp.army_of(2) == -1);
+    CHECK(mp.source_of_army(0) == 0);
+    CHECK(mp.source_of_army(1) == 1);
+    CHECK(w.sim.army_command_sources(0) == std::vector<osc::u32>{0});
+    CHECK(w.sim.army_command_sources(1) == std::vector<osc::u32>{1});
+    CHECK(w.sim.pause_timeouts(0) == 1);
+    CHECK(w.sim.pause_timeouts(1) == 2);
+    CHECK(w.sim.pause_timeouts(2) == 0);
+    // Exercise command authority after attach, then play the entire history
+    // from its original source mapping. Lockstep transport gating is tested
+    // separately; here the scheduler runs without waiting on remote peers.
+    w.sim.command_scheduler().set_lockstep(false);
+    move.target_pos = {-20, 0, 40};
+    w.sim.schedule_command(mp.local_source, {ids[1]}, move, true);
+    for (int i = 0; i < 8; ++i) w.sim.tick();
+    const auto& history = w.sim.recorded_replay();
+    REQUIRE(history.commands.size() == 2);
+    CHECK(history.commands.back().source == 1);
+    World replayed;
+    setup(replayed);
+    osc::sim::ReplayPlayback playback(history);
+    playback.start(replayed.sim);
+    while (!playback.finished(replayed.sim)) {
+        replayed.sim.tick();
+        REQUIRE(playback.check(replayed.sim));
+    }
+    CHECK(replayed.sim.compute_sync_checksum() == w.sim.compute_sync_checksum());
 }

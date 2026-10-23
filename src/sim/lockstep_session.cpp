@@ -16,7 +16,8 @@ namespace osc::sim {
 
 LockstepSession::LockstepSession(SimState& sim, INetTransport& transport, u32 local_source,
                                  const std::vector<u32>& all_sources)
-    : sim_(sim), transport_(transport), local_source_(local_source), all_sources_(all_sources) {
+    : sim_(sim), transport_(transport), local_source_(local_source), all_sources_(all_sources),
+      next_frame_(sim.beat_count() + 1) {
     if (std::find(all_sources_.begin(), all_sources_.end(), local_source) == all_sources_.end())
         all_sources_.push_back(local_source);
     std::sort(all_sources_.begin(), all_sources_.end());
@@ -256,6 +257,8 @@ void LockstepSession::receive_and_advance() {
     while (sim_.command_scheduler().ready_to_run(sim_.beat_count() + 1)) {
         sim_.tick();
         record_local_checksum(sim_.beat_count(), sim_.beat_checksum().values());
+        // A save every player agreed to, as the tick it ran in left the game
+        if (auto save = sim_.take_save_request(); save && save_handler_) save_handler_(*save);
     }
 }
 

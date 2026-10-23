@@ -142,6 +142,7 @@ public:
     void forget_ui_controls() {
         ui_dispatch_.forget_controls();
         movie_textures_.forget();
+        cached_world_shapes_.clear();
     }
     /// The UI's input, as the window's callbacks feed it (a scripted test
     /// clicks through it as a player would).
@@ -165,6 +166,17 @@ public:
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during the loading screen and front end, when there is no world.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
+    /// The UI's frame ahead of the draw (OE-134): its controls' frame
+    /// callbacks, its events and (`world`: with a world drawn) its
+    /// animations, which run its scripts, and they may read the live sim:
+    /// run while no tick runs on the sim's thread. The frame's step is taken
+    /// here; the next render or render_ui_only draws with it and doesn't run
+    /// them again.
+    void run_ui_frame(lua_State* L, ui::UIControlRegistry* ui_registry, bool world);
+    /// A frame drawn while the sim's ticks run (its UI scripts may read the
+    /// live sim): the frame's step is taken, and its UI frame callbacks,
+    /// events and animations wait for the next frame that runs them.
+    void skip_ui_frame();
 
     /// An order's feedback blip from the UI (AddCommandFeedbackBlip), made
     /// at the newest game tick and shown for its duration.
@@ -272,6 +284,8 @@ public:
     /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
     /// M212f).
     f32 terrain_time() const { return terrain_time_.value(); }
+    /// The published terrain used by rendering, independent of sim writes.
+    const map::Terrain* rendered_terrain() const { return terrain_; }
     /// The shoreline's wave generators (tests read them; M213c).
     const WaveSystem& wave_system() const { return wave_system_; }
     /// The beams drawn last frame (tests read them; M214a).
@@ -587,6 +601,13 @@ public:
     const std::string& device_name() const { return device_name_; }
 
 private:
+    /// The frame's step: the one run_ui_frame took, else the clock's.
+    f32 take_frame_dt();
+    bool scripts_suspended_ = false;
+    bool ui_ran_early_ = false; ///< run_ui_frame ran this frame
+    f32 early_dt_ = 0.0f;       ///< the step it took
+
+
     static VkBool32 VKAPI_CALL vulkan_debug_callback(
         VkDebugUtilsMessageSeverityFlagBitsEXT severity,
         VkDebugUtilsMessageTypeFlagsEXT type,
@@ -1187,8 +1208,11 @@ private:
     EmitterBlueprintCache emitter_bp_cache_;
     /// The map build_scene drew (its water, for particles; M214c).
     const map::Terrain* terrain_ = nullptr;
+    const map::Terrain* terrain_source_ = nullptr; ///< read only on settled frames
+    std::unique_ptr<map::Terrain> terrain_snapshot_;
     BeamRenderer beam_renderer_;
     CommandGraphRenderer command_graph_renderer_;
+    std::unordered_map<const ui::WorldView*, std::vector<ShapeQuad>> cached_world_shapes_;
     WorldShapes world_shapes_;          ///< FAF's world drawing, this frame
     WorldQuadBatch world_shapes_batch_; ///< and drawn
     bool ui_keys_blocked_ = false;

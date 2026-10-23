@@ -2,8 +2,10 @@
 
 #include "lua/lobby_wire.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/special_files.hpp"
 #include "sim/lan_discovery.hpp"
 #include "sim/lobby_net.hpp"
+#include "sim/saved_game.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -724,8 +726,12 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
         spdlog::warn("lobby LaunchGame: not in a lobby, or no config");
         return fail("");
     }
-    // The scenario: GameOptions.ScenarioFile
+    // The scenario: GameOptions.ScenarioFile. A saved network game resumed
+    // (OE-128): GameOptions.ResumeSave names the save every player took,
+    // ResumeBeat the tick it was taken on; each player plays their own copy.
     std::string scenario;
+    std::string resume;
+    u32 resume_beat = 0;
     lua_pushstring(L, "GameOptions");
     lua_gettable(L, 2);
     if (lua_istable(L, -1)) {
@@ -733,8 +739,24 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
         lua_gettable(L, -2);
         if (lua_type(L, -1) == LUA_TSTRING) scenario = lua_tostring(L, -1);
         lua_pop(L, 1);
+        lua_pushstring(L, "ResumeSave");
+        lua_gettable(L, -2);
+        if (lua_type(L, -1) == LUA_TSTRING) resume = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "ResumeBeat");
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1)) resume_beat = static_cast<u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
     }
     lua_pop(L, 1);
+    sim::SavedGame resumed;
+    if (!resume.empty()) {
+        if (std::string why = check_network_save(L, resume, resume_beat, resumed); !why.empty()) {
+            spdlog::warn("lobby LaunchGame: can't resume: {}", why);
+            return fail("MissingSave");
+        }
+        scenario = resumed.game.setup.scenario;
+    }
     if (scenario.empty()) {
         spdlog::warn("lobby LaunchGame: the config names no GameOptions.ScenarioFile");
         return fail("");
@@ -784,11 +806,18 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
     mp_begin_lobby_game(
         std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), local,
         sources.armies, std::move(clients), seed, sources.army_sources);
-    // The session, as single-player's starts: the frame loop loads it
-    lua_pushvalue(L, 2);
-    if (lua_pcall(L, 1, 0, 0) != 0) {
-        spdlog::warn("lobby LaunchGame: {}", lua_tostring(L, -1));
-        lua_pop(L, 1);
+    // The session, as single-player's starts: the frame loop loads it (a
+    // resumed game: from this player's copy of its save)
+    if (!resume.empty()) {
+        lua_pop(L, 1); // LaunchSinglePlayerSession
+        spdlog::info("lobby LaunchGame: resuming '{}' at tick {}", resume, resume_beat);
+        launch_network_save(L, resume, scenario);
+    } else {
+        lua_pushvalue(L, 2);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("lobby LaunchGame: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
     }
     // Last: the scripts tear their lobby down here (retail's destroys this
     // object), so nothing after may touch it

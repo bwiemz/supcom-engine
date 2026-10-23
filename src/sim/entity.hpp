@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "core/interned_string.hpp"
 #include "core/dmath.hpp"
 
 #include <algorithm>
@@ -236,7 +237,9 @@ public:
     void set_script_owns_death() { script_owns_death_ = true; }
 
     const std::string& blueprint_id() const { return blueprint_id_; }
-    void set_blueprint_id(const std::string& id) { blueprint_id_ = id; }
+    /// The same, interned: what the world snapshot copies.
+    InternedString interned_blueprint_id() const { return blueprint_id_; }
+    void set_blueprint_id(std::string_view id) { blueprint_id_ = InternedString(id); }
 
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
@@ -280,7 +283,8 @@ public:
     void set_reclaimable(bool b) { reclaimable_ = b; }
 
     const std::string& custom_name() const { return custom_name_; }
-    void set_custom_name(const std::string& name) { custom_name_ = name; }
+    InternedString interned_custom_name() const { return custom_name_; }
+    void set_custom_name(std::string_view name) { custom_name_ = InternedString(name); }
     u32 ui_refresh_requests() const { return ui_refresh_requests_; }
     void request_ui_refresh() { ++ui_refresh_requests_; }
 
@@ -288,7 +292,10 @@ public:
     /// an icon's name under the strategic icons' directory, drawn beneath
     /// the unit's icon (the objectives' rings); empty for none.
     const std::string& strategic_underlay() const { return strategic_underlay_; }
-    void set_strategic_underlay(std::string name) { strategic_underlay_ = std::move(name); }
+    InternedString interned_strategic_underlay() const { return strategic_underlay_; }
+    void set_strategic_underlay(std::string_view name) {
+        strategic_underlay_ = InternedString(name);
+    }
 
     f32 scale_x() const { return scale_x_; }
     f32 scale_y() const { return scale_y_; }
@@ -330,9 +337,10 @@ public:
 
     // Mesh override (runtime mesh switching via SetMesh)
     const std::string& mesh_override() const { return mesh_override_; }
-    void set_mesh_override(const std::string& path) {
-        if (path == mesh_override_) return;
-        mesh_override_ = path;
+    InternedString interned_mesh_override() const { return mesh_override_; }
+    void set_mesh_override(std::string_view path) {
+        if (mesh_override_ == path) return;
+        mesh_override_ = InternedString(path);
         ++mesh_changes_;
     }
     /// Counts its mesh overrides' changes: the renderer remakes a mesh
@@ -468,15 +476,15 @@ private:
     f32 footprint_size_x_ = 0;
     f32 footprint_size_z_ = 0;
     bool destroyed_ = false;
-    std::string blueprint_id_;
+    InternedString blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF
     std::vector<AmbientSound> ambient_sounds_;
     const BoneData* bone_data_ = nullptr; // shared per-blueprint, not owned
     bool do_not_target_ = false;
     bool reclaimable_ = true;
-    std::string custom_name_;
+    InternedString custom_name_;
     u32 ui_refresh_requests_ = 0;
-    std::string strategic_underlay_;
+    InternedString strategic_underlay_;
     f32 scale_x_ = 1.0f;
     f32 scale_y_ = 1.0f;
     f32 scale_z_ = 1.0f;
@@ -487,7 +495,7 @@ private:
     CollisionShape collision_shape_;
     f32 shape_reach_ = 0; ///< collision_reach(collision_shape_)
     CollisionShape default_collision_shape_;
-    std::string mesh_override_;
+    InternedString mesh_override_;
     u32 mesh_changes_ = 0;
     bool unselectable_ = false;
     bool is_wreckage_ = false;

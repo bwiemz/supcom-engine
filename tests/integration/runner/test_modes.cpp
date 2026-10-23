@@ -289,6 +289,7 @@ constexpr Mode kModesAfter[] = {
     {"--deposit-test", test_deposits, false},
     {"--beam-test", test_beams, false},
     {"--shield-render-test", test_shield_render, false},
+    {"--viz-render-test", test_viz_render, false},
     {"--mesh-capacity-test", test_mesh_capacity, false},
     {"--vet-adj-render-test", test_vet_adj_render, false},
     {"--intel-overlay-test", test_intel_overlay, false},

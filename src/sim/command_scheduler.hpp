@@ -127,6 +127,18 @@ public:
         return out;
     }
 
+    /// A network game resumed from its save (each player restores their own
+    /// copy, OE-128): every order pending and every confirmation goes. Each
+    /// copy was taken as its player's frames stood when the agreed tick ran,
+    /// so what lay past it differs between players; they agree again from
+    /// the next frame, the orders given in the last moment before the save
+    /// lost.
+    void forget_network_state() {
+        by_beat_.clear();
+        confirmed_frame_.clear();
+        sources_.clear();
+    }
+
     void set_lockstep(bool on) { lockstep_ = on; }
     bool lockstep() const { return lockstep_; }
 

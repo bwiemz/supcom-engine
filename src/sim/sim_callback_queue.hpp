@@ -64,6 +64,11 @@ inline constexpr const char* kRemoveCommandCallback = "__osc_RemoveCommand";
 /// `Command` of the named units (unit_ids) made a patrol (`Type`).
 inline constexpr const char* kSetCommandTypeCallback = "__osc_SetCommandType";
 
+/// Func name of a network game's save (OE-128; Args Name): every player
+/// saves the game, each their own copy, after the tick it runs on. Only a
+/// network game sends it (a single-player save is written at once).
+inline constexpr const char* kSaveGameCallback = "__osc_SaveGame";
+
 /// The engine's own callbacks start with this; a script may not issue one.
 inline constexpr const char* kEngineCallbackPrefix = "__osc_";
 

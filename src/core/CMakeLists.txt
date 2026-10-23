@@ -12,6 +12,8 @@ add_library(osc_core STATIC
     utf8.cpp
     version.cpp
     sha256.cpp
+    interned_string.cpp
+    worker_pool.cpp
 )
 add_library(osc::core ALIAS osc_core)
 
@@ -22,6 +24,9 @@ target_link_libraries(osc_core
 )
 
 target_link_libraries(osc_core PRIVATE osc::warnings)
+# The worker pool's threads
+find_package(Threads REQUIRED)
+target_link_libraries(osc_core PRIVATE Threads::Threads)
 
 # stb single-header libraries (PNG I/O for screenshots / golden images)
 target_include_directories(osc_core PRIVATE ${CMAKE_SOURCE_DIR}/third_party)

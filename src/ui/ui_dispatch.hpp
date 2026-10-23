@@ -123,6 +123,14 @@ private:
     bool fire_handle_event(lua_State* L, UIControl* ctrl, const UIEvent& ev);
     /// HandleEvent up from a control until one consumes it (CMauiControl::PostEvent)
     void post_event(lua_State* L, UIControl* ctrl, const UIEvent& ev);
+    /// The root frame's control, or null.
+    UIControl* root_frame(lua_State* L);
+    /// The control under the mouse at (x, y): under the top input capture,
+    /// if any, or the capture itself where none of its children is.
+    UIControl* mouse_target(lua_State* L, UIControlRegistry& registry, f64 x, f64 y);
+    /// Make `target` the control the mouse is over, telling the old one
+    /// MouseExit and the new one MouseEnter if it changed.
+    void set_hover(lua_State* L, UIControl* target, const UIEvent& at);
     /// A key or character for a focused Edit taking input: Moho's CMauiEdit
     /// edits its text and calls its On* methods. False: not the Edit's.
     bool edit_event(lua_State* L, UIControlRegistry& registry, UIControl* edit, const UIEvent& ev);

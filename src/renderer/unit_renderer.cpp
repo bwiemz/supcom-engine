@@ -312,7 +312,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
     f32 eye_z = 0;
     if (camera) camera->eye_position(eye_x, eye_y, eye_z);
     const u32 now = view.cur() ? view.cur()->tick : 0;
-    shader_time_ = std::fmod(static_cast<f32>(now) + view.alpha(), kShaderTimeWrap);
+    shader_time_ = static_cast<f32>(std::fmod(view.time(), static_cast<f64>(kShaderTimeWrap)));
     // One entity's mesh instance (or cube): the world's, then the player's
     // remembered structures gone from it unseen (MaybeDead; M215d).
     const auto draw = [&](const sim::EntityRecord& entity) {
@@ -335,6 +335,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         }
         // Outside the playable rect when the scripts last synced it.
         if (playable_rect_ && playable_rect_->hides(entity.id)) return;
+        // What its script hides from the player (SetVizTo...('Never')).
+        if (recon_ ? recon_->viz_never(entity) : entity.viz_to(0) == sim::VizMode::NEVER) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view): its blueprint never changes, its

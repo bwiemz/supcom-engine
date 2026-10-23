@@ -6,6 +6,7 @@
 #include "platform/paths.hpp"
 #include "platform/secrets.hpp"
 #include "sim/build_info.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
 #include "sim/sim_state.hpp"
@@ -197,6 +198,50 @@ void request_launch(lua_State* L, const char* key, const char* file, const std::
     lua_rawset(L, LUA_REGISTRYINDEX);
 }
 
+} // namespace
+
+std::string current_profile(lua_State* L) {
+    static const char kProfile[] = "return import('/lua/user/prefs.lua').GetCurrentProfile().Name";
+    const int top = lua_gettop(L);
+    std::string out;
+    if (luaL_loadbuffer(L, kProfile, sizeof(kProfile) - 1, "=profile") == 0 &&
+        lua_pcall(L, 0, 1, 0) == 0 && lua_type(L, -1) == LUA_TSTRING)
+        out = lua_tostring(L, -1);
+    lua_settop(L, top);
+    return out;
+}
+
+fs::path network_save_path(lua_State* L, const std::string& name) {
+    const SpecialFiles* files = get_special_files(L);
+    return files ? network_save_path(*files, current_profile(L), name) : fs::path();
+}
+
+fs::path network_save_path(const SpecialFiles& files, std::string profile,
+                           const std::string& name) {
+    const SpecialFiles::Type* type = SpecialFiles::find_type("SaveGame");
+    if (!type || !SpecialFiles::plain_name(name)) return {};
+    if (!SpecialFiles::plain_name(profile)) profile = "multiplayer";
+    return files.path(*type, profile, name);
+}
+
+std::string check_network_save(lua_State* L, const std::string& name, u32 beat,
+                               sim::SavedGame& out) {
+    const fs::path path = network_save_path(L, name);
+    if (path.empty()) return "'" + name + "' isn't a saved game's name";
+    if (read_saved_game(path, out) != sim::SaveLoadError::None)
+        return "this player has no saved game '" + name + "' (" + path.string() + ")";
+    if (out.beat != beat)
+        return "this player's '" + name + "' was saved at beat " + std::to_string(out.beat) +
+               ", not " + std::to_string(beat);
+    return {};
+}
+
+void launch_network_save(lua_State* L, const std::string& name, const std::string& scenario) {
+    request_launch(L, "__osc_launch_save", network_save_path(L, name).string().c_str(), scenario);
+}
+
+namespace {
+
 /// CopyCurrentReplay(profile, base) -- save the game being played, as
 /// recorded so far, under that name.
 int l_CopyCurrentReplay(lua_State* L) {
@@ -228,8 +273,10 @@ int l_LaunchReplaySession(lua_State* L) {
 /// InternalSaveGame(file, name, callback) -- save the game being played as
 /// `file`, then callback(worked, errmsg). Moho calls back once its sim
 /// reaches the end of a tick; the UI runs between ticks, so the engine
-/// saves at once. Single-player games only, as retail's UI offers it, and
-/// only into the SaveGame folder (the file GetSpecialFiles' folder names).
+/// saves at once. Only into the SaveGame folder (the file GetSpecialFiles'
+/// folder names). A network game (OE-128) is saved by every player, each
+/// their own copy under the file's base name, after the tick every player
+/// runs the save on (kSaveGameCallback): the callback says it is under way.
 int l_InternalSaveGame(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
     const char* name = luaL_checkstring(L, 2);
@@ -237,7 +284,6 @@ int l_InternalSaveGame(lua_State* L) {
     auto* sim = sim_of(L); // a save's snapshot walks its Lua state
     const char* refused = nullptr;
     if (!sim || !sim->recording()) refused = "No session to save!";
-    else if (mp_net_state().active()) refused = "A multiplayer game can't be saved.";
     else if (sim->resuming()) refused = "The game is still loading.";
     else if (sim->playback()) refused = "A replay can't be saved.";
     else if (!files || (!files->holds(*SpecialFiles::find_type("SaveGame"), file) &&
@@ -247,6 +293,15 @@ int l_InternalSaveGame(lua_State* L) {
     const char* errmsg = refused;
     if (refused) {
         spdlog::warn("InternalSaveGame({}): {}", file, refused);
+    } else if (mp_net_state().active()) {
+        sim::SimCallbackEntry save;
+        save.func_name = sim::kSaveGameCallback;
+        save.args["Name"] = fs::path(file).stem().string();
+        sim->submit_callback(std::move(save));
+        worked = true;
+        errmsg = name;
+        spdlog::info("InternalSaveGame: every player saves '{}' at the next tick",
+                     fs::path(file).stem().string());
     } else {
         sim::SavedGame save = sim::save_game(*sim, name);
         (void)files->sign_snapshot(save);

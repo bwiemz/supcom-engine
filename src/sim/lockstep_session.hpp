@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -30,8 +31,19 @@ class ByteReader;
 /// a divergence between clients is detected (desynced()).
 class LockstepSession {
 public:
+    /// A sim past tick 0 is a saved game each player restored (OE-128): the
+    /// session takes up at its next tick, its scheduler's network state
+    /// forgotten as the restore left it (CommandScheduler::
+    /// forget_network_state).
     LockstepSession(SimState& sim, INetTransport& transport, u32 local_source,
                     const std::vector<u32>& all_sources);
+
+    /// What saves the game when every player has agreed to (a
+    /// kSaveGameCallback ran): called between ticks, after the tick it ran
+    /// in, with the save's name. Each player writes their own copy.
+    void set_save_handler(std::function<void(const std::string&)> handler) {
+        save_handler_ = std::move(handler);
+    }
 
     /// Queue a local order for the frame currently being entered. It is applied
     /// to the local sim immediately (scheduled) and broadcast on the next
@@ -158,6 +170,7 @@ private:
     std::unordered_map<u32, std::map<u32, std::vector<ScheduledCommand>>> recent_frames_;
     std::map<u32, DropVote> drop_votes_;       // sources being dropped, by source
     u32 next_frame_ = 1;                       // frame currently accepting input
+    std::function<void(const std::string&)> save_handler_;
     std::vector<ScheduledCommand> pending_;      // local commands for next_frame_
     using Parts = std::array<u64, SimState::ChecksumParts::kCount>;
     std::unordered_map<u32, Parts> my_checksums_; // beat -> local checksum, by domain

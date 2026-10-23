@@ -21,6 +21,16 @@
 // With `quit_at` (M218e) the joiner leaves the game at that tick: the host
 // must drop it by the lockstep's agreement, defeat its army, show and close
 // retail's disconnect dialog without a script error, and play on alone.
+//
+// A network game saved and resumed (OE-128), in two runs on the same user
+// folders. With `save_as` the host saves the game under that name at
+// kSaveTick, through the in-game save (InternalSaveGame): each side must
+// end with its own copy. With `resume` the host's lobby launches that save
+// (GameOptions.ResumeSave, ResumeTick from its own copy): both must take up
+// past tick 0 and play to kEndTick in step, without the first run's pause,
+// chat and speed change. Both runs log their checksum at kEndTick, which
+// must be the same (the players give no orders, so the resumed game must
+// arrive where the saved one did).
 
 #include "core/types.hpp"
 
@@ -42,6 +52,8 @@ public:
     /// before the other has had its last frame) the one they stop at.
     static constexpr u32 kCheckTick = 100;
     static constexpr u32 kEndTick = 150;
+    /// The tick the host saves on (save_as): before the check's pause.
+    static constexpr u32 kSaveTick = 60;
 
     /// `address` and `port`: the host's lobby (the host listens on `port`).
     LanGameTest(bool host, std::string address, u16 port, u32 quit_at = 0,
@@ -50,6 +62,12 @@ public:
     /// With the front end up: open retail's lobby (the host hosts at once;
     /// the other joins once the host listens). False (reported) on a script
     /// error.
+    /// --lan-game-save <name>: the host saves the game as `name` at kSaveTick.
+    void save_as(std::string name) { save_as_ = std::move(name); }
+    /// --lan-game-resume <name>: the host's lobby launches that saved game.
+    void resume(std::string name) { resume_ = std::move(name); }
+
+
     bool start(lua::LuaState& ui);
     /// Each frame: in the lobby, ready this player's slot and (the host)
     /// press Launch once everyone is ready; in the game, check at kCheckTick.
@@ -74,15 +92,24 @@ private:
     /// Whether retail's disconnect dialog is open (its file-local `parent`).
     bool disconnect_dialog_open(lua::LuaState& ui);
     void check_chat(lua::LuaState& ui);
+    /// The checksum at kEndTick logged; this side's copy of a save, and a
+    /// resumed game's start, checked.
+    void check_save(lua::LuaState& ui, const sim::SimState& sim);
     void fail(std::string why);
 
     bool host_;
     std::string address_;
     u16 port_;
     u32 quit_at_ = 0; ///< the joiner leaves at this tick (0: it plays on)
+    std::optional<u32> end_beat_; // replay checksum index for kEndTick
     u32 self_destruct_at_ = 0; ///< the joiner self-destructs then (0: never)
     u32 self_destructed_ = 0;  ///< the joiner's commander, once it self-destructs
     bool self_destruct_failed_ = false;
+    std::string save_as_;           ///< the host saves the game as this (none: no save)
+    bool save_sent_ = false;        ///< it asked to
+    std::string resume_;            ///< the host's lobby resumes this saved game (none: new)
+    std::optional<u32> first_tick_; ///< the first tick seen in the game
+
     u32 frames_ = 0;
     bool joined_ = false;           ///< the joiner's JoinGame went out
     bool listening_ = false;        ///< the game's chat is heard

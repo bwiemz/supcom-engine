@@ -33,11 +33,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import subprocess
 import sys
 import tempfile
 import zlib
 from pathlib import Path
+from typing import cast
 
 TIMEOUT_SECONDS = 900
 SKIPPED = 77
@@ -92,7 +94,55 @@ def main(argv: list[str]) -> int:
         key = (user_dir / KEY_FILE).read_bytes()
         _ = (damaged_dir / KEY_FILE).write_bytes(key)
         _ = damaged.write_bytes(damage_snapshot(again.read_bytes(), key))
-        return run_flow(exe, damaged_dir, must_say="not restored")
+        if run_flow(exe, damaged_dir, must_say="not restored") != 0:
+            return 1
+        return check_performance(exe, user_dir, save, SAVE_AT)
+
+
+def check_performance(exe: Path, user_dir: Path, save: Path, saved_tick: int) -> int:
+    """Loaded games count only ticks played in each performance interval."""
+    for mode, flags in (("threaded", []), ("serial", ["--no-sim-thread"])):
+        telemetry = user_dir / f"loaded-perf-{mode}.jsonl"
+        game = subprocess.run(
+            [
+                str(exe),
+                "--user-dir",
+                str(user_dir),
+                "--load",
+                str(save),
+                "--fast-match",
+                str(saved_tick + 250),
+                "--match-telemetry",
+                str(telemetry),
+                *flags,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS,
+            check=False,
+        )
+        if game.returncode != 0 or f"restored at tick {saved_tick} " not in game.stdout:
+            print(f"FAIL: loaded perf {mode}: save did not restore, exit {game.returncode}")
+            print((game.stdout + game.stderr)[-2000:])
+            return 1
+        previous = saved_tick
+        samples = 0
+        for line in telemetry.read_text().splitlines():
+            # MatchTelemetry writes a JSON object per line; validate the fields below.
+            record = cast(dict[str, object], json.loads(line))
+            if record.get("record") != "perf":
+                continue
+            tick, ticks = record.get("tick"), record.get("ticks")
+            if not isinstance(tick, int) or ticks != tick - previous:
+                print(f"FAIL: loaded perf {mode}: {record}, interval began at {previous}")
+                return 1
+            previous = tick
+            samples += 1
+        if samples < 2:
+            print(f"FAIL: loaded perf {mode}: only {samples} performance samples")
+            return 1
+        print(f"PASS: loaded perf {mode}: {samples} intervals count only their advancing ticks")
+    return 0
 
 
 KEY_FILE = "opensupcom-snapshot.key"

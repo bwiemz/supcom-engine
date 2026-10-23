@@ -79,6 +79,9 @@ public:
                 f32 mouse_x = 0, f32 mouse_y = 0,
                 const WorldViewPainter& minimap = {});
 
+    /// Upload the previously prepared quads for this frame slot, without evaluating Lua.
+    void reuse_frame();
+
     /// Advance playing bitmap animations by delta_time seconds.
     void advance_animations(lua_State* L, const ui::UIControlRegistry& registry,
                             f32 delta_time);

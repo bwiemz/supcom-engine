@@ -4,8 +4,10 @@
 // headlessly (no sockets, no game data).
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "lua/gpgnet_session.hpp"
+#include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lockstep_session.hpp"
@@ -14,6 +16,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/state_io.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 
@@ -1169,4 +1172,93 @@ TEST_CASE("At speed, the lead cap and the drop timeout keep their times (M218i)"
             CHECK(rounds == timeout + 1);
         }
     }
+}
+
+TEST_CASE("A network game every player saved resumes from each one's copy as if never stopped "
+          "(OE-128)",
+          "[lockstep][save]") {
+    const bool held_beats = GENERATE(false, true);
+    osc::lua::LuaState la, lb;
+    SimState a(la.raw(), nullptr);
+    SimState b(lb.raw(), nullptr);
+    const osc::u32 ida = spawn_mover(a, 5.0f);
+    spawn_mover(b, 5.0f);
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
+    std::vector<osc::u8> copy_a, copy_b;
+    osc::u32 saved_at = 0;
+    sa.set_save_handler([&](const std::string& name) {
+        CHECK(name == "evening");
+        copy_a = osc::sim::save_sim_state(a);
+        saved_at = a.tick_count();
+    });
+    sb.set_save_handler([&](const std::string&) {
+        copy_b = osc::sim::save_sim_state(b);
+        CHECK(b.tick_count() == saved_at); // the same tick on every peer
+    });
+    const auto round = [](LockstepSession& s1, LockstepSession& s2) {
+        s1.send_frame();
+        s2.send_frame();
+        s1.receive_and_advance();
+        s2.receive_and_advance();
+    };
+    // Each run gets the same orders at the same ticks
+    const auto orders = [&](SimState& sim, LockstepSession& s) {
+        if (sim.tick_count() == 0) s.submit_local({ida}, move_to(500.0f, 0.0f), true);
+        if (sim.tick_count() == 25) s.submit_local({ida}, move_to(-200.0f, 40.0f), true);
+    };
+    while (a.tick_count() < 10) {
+        orders(a, sa);
+        round(sa, sb);
+    }
+    if (held_beats) {
+        sa.request_pause();
+        for (int r = 0; r < 8; ++r) round(sa, sb);
+        REQUIRE(a.paused());
+        REQUIRE(a.beat_count() > a.tick_count());
+        sb.request_resume();
+        for (int r = 0; r < 8; ++r) round(sa, sb);
+        REQUIRE_FALSE(a.paused());
+    }
+    osc::sim::SimCallbackEntry save;
+    save.func_name = osc::sim::kSaveGameCallback;
+    save.args["Name"] = std::string("evening");
+    sb.submit_local_callback(std::move(save)); // either player may save
+    // The game plays on, never stopped: what the resumed one must match
+    while (a.tick_count() < 40) {
+        orders(a, sa);
+        round(sa, sb);
+    }
+    REQUIRE(saved_at > 10);
+    REQUIRE_FALSE(copy_a.empty());
+    REQUIRE_FALSE(copy_b.empty());
+
+    // Each player restores their own copy, as a resumed game's launch does,
+    // and the two meet over a new connection
+    osc::lua::LuaState la2, lb2;
+    SimState a2(la2.raw(), nullptr);
+    SimState b2(lb2.raw(), nullptr);
+    REQUIRE(osc::sim::load_sim_state(a2, copy_a).empty());
+    REQUIRE(osc::sim::load_sim_state(b2, copy_b).empty());
+    a2.command_scheduler().forget_network_state();
+    b2.command_scheduler().forget_network_state();
+    REQUIRE(a2.tick_count() == saved_at);
+    LoopbackHub hub2;
+    LoopbackTransport ta2(hub2, hub2.add_endpoint());
+    LoopbackTransport tb2(hub2, hub2.add_endpoint());
+    LockstepSession sa2(a2, ta2, 0, {0, 1});
+    LockstepSession sb2(b2, tb2, 1, {0, 1});
+    CHECK(sa2.current_frame() == a2.beat_count() + 1);
+    for (int r = 0; r < 100 && a2.tick_count() < 40; ++r) {
+        orders(a2, sa2);
+        round(sa2, sb2);
+    }
+    CHECK(b2.tick_count() == 40);
+    CHECK(a2.compute_sync_checksum() == a.compute_sync_checksum());
+    CHECK(b2.compute_sync_checksum() == a.compute_sync_checksum());
+    CHECK_FALSE(sa2.desynced());
+    CHECK_FALSE(sb2.desynced());
 }

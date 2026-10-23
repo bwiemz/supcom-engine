@@ -1,5 +1,6 @@
 #include "sim/sim_state.hpp"
 #include "sim/fnv.hpp"
+#include "sim/lua_profile.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -1853,6 +1854,7 @@ void SimState::enforce_no_rush() {
 
 void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
+    if (L_ && Profiler::instance().enabled()) lua_profile::attach(L_);
     ++beat_count_;
     if (rng_trace_) {
         const bool on = tick_count_ + 1 >= rng_trace_from_ && tick_count_ + 1 <= rng_trace_to_;
@@ -2844,6 +2846,14 @@ u8 SimState::recon_detect(const Entity& e, const Vector3& pos, u32 viewer, u32 s
     const bool below = layer == "Seabed" || layer == "Sub";
     const bool sonar = below || layer == "Water";
     return recon_counters(pos, viewer, recon_senses(pos, sharers, below, sonar), &unit);
+}
+
+bool SimState::weapons_know(const Unit& u, u32 army) const {
+    if (!intel_grids_ || !intel_grids_->fog_of_war() || army >= MAX_VIS_ARMIES) return true;
+    // Weapons use the army's published blips, refreshed by its ReconTick.
+    if (const auto* recon = entity_recon(u.entity_id()); recon && (*recon)[army].any()) return true;
+    // A building once seen stays known (its blip outlives the sighting).
+    return !u.is_mobile() && ever_in_sight(u.entity_id(), army);
 }
 
 u8 SimState::recon_of(const Entity& e, const Vector3& pos, u32 viewer) const {

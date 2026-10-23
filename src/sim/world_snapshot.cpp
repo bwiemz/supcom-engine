@@ -1,5 +1,7 @@
 #include "sim/world_snapshot.hpp"
 
+#include "core/worker_pool.hpp"
+#include "core/profiler.hpp"
 #include "map/intel_grid.hpp"
 
 #include "sim/army_brain.hpp"
@@ -16,6 +18,8 @@
 #include <cassert>
 #include <cmath>
 #include <functional>
+#include <iterator>
+#include <type_traits>
 
 namespace osc::sim {
 
@@ -171,6 +175,24 @@ void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
     }
 }
 
+/// `r` as a new record. An entity's is plain memory (its names interned),
+/// so this is a copy; an effect's keeps its strings' buffers (an empty
+/// string assigned keeps its own) rather than allocating them again.
+static_assert(std::is_trivially_copyable_v<EntityRecord>, "a record is copied whole each tick");
+
+template <class Record> void recycle(Record& r) {
+    static const Record kBlank{};
+    r = kBlank;
+}
+
+/// The next record of `records` to fill: a recycled one while there are
+/// some, else a new one. `used` counts those handed out.
+template <class Record> Record& next_record(std::vector<Record>& records, size_t& used) {
+    if (used == records.size()) records.emplace_back();
+    else recycle(records[used]);
+    return records[used++];
+}
+
 CommandRecord command_record(const UnitCommand& c, bool pending) {
     return {c.type,       c.target_id,
             c.target_pos, c.type == CommandType::BuildMobile ? c.blueprint_id : std::string(),
@@ -178,13 +200,25 @@ CommandRecord command_record(const UnitCommand& c, bool pending) {
             c.command_id, static_cast<u8>(moho_command_number(c))};
 }
 
-void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
-    r.unit_id = u.unit_id();
+/// What records point into (offset and count): one chunk of records' own,
+/// joined into the snapshot's in order after (capture_world).
+struct SideLists {
+    size_t begin = 0, end = 0; ///< the records that filled them
+    decltype(WorldSnapshot::bones) bones;
+    decltype(WorldSnapshot::commands) commands;
+    decltype(WorldSnapshot::intel) intel;
+    decltype(WorldSnapshot::weapon_ranges) weapon_ranges;
+    decltype(WorldSnapshot::adjacent) adjacent;
+};
+
+void capture_unit(const Unit& u, EntityRecord& r, SideLists& out) {
+    r.unit_id = u.interned_unit_id();
     r.icon = icon_class(u);
     r.is_mobile = u.is_mobile();
     r.footprint_size_x = u.footprint_size_x();
     r.footprint_size_z = u.footprint_size_z();
-    r.is_structure = u.has_category("STRUCTURE");
+    static const CategoryName kStructure{"STRUCTURE"};
+    r.is_structure = u.has_category(kStructure);
     r.skirt_size_x = u.skirt_size_x();
     r.skirt_size_z = u.skirt_size_z();
     r.skirt_offset_x = u.skirt_offset_x();
@@ -382,89 +416,157 @@ void capture_sight(const SimState& sim, i32 army, SightMap& out) {
 
 void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     out.tick = sim.tick_count();
-    out.entities.clear();
     out.bones.clear();
     out.commands.clear();
     out.intel.clear();
     out.weapon_ranges.clear();
     out.adjacent.clear();
-    out.effects.clear();
     out.armies.clear();
     out.fake_blips.clear();
     capture_fake_blips(sim, out);
     out.deposits.assign(sim.resource_deposits().begin(), sim.resource_deposits().end());
 
+    // The records are kept from capture to capture and rewritten in place:
+    // made anew, with their strings, they took a third of an eight-AI
+    // match's tick. Each is filled on the worker pool (it reads the sim
+    // only), a chunk of them with lists of their own that are joined in
+    // order after, so the snapshot is the one a walk in id order makes.
+    std::vector<const Entity*> live;
+    live.reserve(out.entities.size() + 64);
     sim.entity_registry().for_each([&](const Entity& e) {
-        if (e.destroyed()) return;
-        EntityRecord& r = out.entities.emplace_back();
-        r.id = e.entity_id();
-        r.position = e.position();
-        r.orientation = e.orientation();
-        r.beam_end = e.beam_endpoint();
-        r.snap_serial = e.snap_serial();
-        if (e.is_projectile()) {
-            const auto& p = static_cast<const Projectile&>(e);
-            if (p.impact_waiting()) {
-                r.step_scale =
-                    p.impact_interpolation > 0.001f ? 1.0f / p.impact_interpolation : 1000.0f;
-            }
-            if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
-                r.launched = true;
-                r.launch_position = p.launch_position;
-                r.launch_orientation = p.launch_orientation;
-            }
-        }
-        r.scroll_start = e.scroll_start();
-        r.scroll_end = e.scroll_end();
-        r.is_unit = e.is_unit();
-        r.is_prop = e.is_prop();
-        r.is_projectile = e.is_projectile();
-        r.is_shield = e.is_shield();
-        r.is_collision_beam = e.is_collision_beam();
-        r.beam_enabled = e.beam_enabled();
-        r.is_wreckage = e.is_wreckage();
-        r.army = e.army();
-        r.blueprint_id = e.blueprint_id();
-        r.mesh_override = e.mesh_override();
-        r.mesh_changes = e.mesh_changes();
-        r.scale_x = e.scale_x();
-        r.scale_y = e.scale_y();
-        r.scale_z = e.scale_z();
-        r.fraction_complete = e.fraction_complete();
-        r.health = e.health();
-        r.max_health = e.max_health();
-        r.custom_name = e.custom_name();
-        r.strategic_underlay = e.strategic_underlay();
-        if (e.is_unit()) {
-            capture_unit(static_cast<const Unit&>(e), r, out);
-            capture_recon(sim, static_cast<const Unit&>(e), r);
-        }
-        if (e.is_prop()) {
-            const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
-            if (!pose.empty()) {
-                r.bone_offset = static_cast<u32>(out.bones.size());
-                r.bone_count = static_cast<u32>(pose.size());
-                out.bones.insert(out.bones.end(), pose.begin(), pose.end());
-            }
-        }
-        if (e.is_shield()) {
-            const auto& s = static_cast<const Shield&>(e);
-            r.shield_owner_id = s.owner_id;
-            // Retail's shield is up while it has its mesh (shield.lua's
-            // CreateShieldMesh and RemoveShield); its TurnOn is a script
-            // state, never the engine's (M215b).
-            r.shield_on = s.is_on || !e.mesh_override().empty();
-            r.shield_size = s.size;
-        }
+        if (!e.destroyed()) live.push_back(&e);
     });
+    const size_t old_size = out.entities.size();
+    out.entities.resize(live.size());
+    constexpr size_t kChunk = 256;
+    std::vector<SideLists> sides((live.size() + kChunk - 1) / kChunk);
+    {
+        PROFILE_ZONE("Capture::entities");
+        WorkerPool::instance().for_each(live.size(), kChunk, [&](size_t begin, size_t end) {
+            SideLists& side = sides[begin / kChunk];
+            side.begin = begin;
+            side.end = end;
+            for (size_t i = begin; i < end; ++i) {
+                const Entity& e = *live[i];
+                // A record that held neither a unit nor a shield holds only what
+                // every entity's sets below, and a pose: for another such entity
+                // (most are props) clearing the pose does, not a whole new record.
+                const bool plain = e.is_prop();
+                EntityRecord& r = out.entities[i];
+                if (i < old_size && plain && r.is_prop) {
+                    r.bone_offset = 0;
+                    r.bone_count = 0;
+                } else {
+                    recycle(r);
+                }
+                r.id = e.entity_id();
+                r.position = e.position();
+                r.orientation = e.orientation();
+                r.beam_end = e.beam_endpoint();
+                r.snap_serial = e.snap_serial();
+                if (e.is_projectile()) {
+                    const auto& p = static_cast<const Projectile&>(e);
+                    if (p.impact_waiting())
+                        r.step_scale = p.impact_interpolation > 0.001f
+                                           ? 1.0f / p.impact_interpolation
+                                           : 1000.0f;
+                    if (p.launch_tick != 0 && p.launch_tick == sim.tick_count()) {
+                        r.launched = true;
+                        r.launch_position = p.launch_position;
+                        r.launch_orientation = p.launch_orientation;
+                    }
+                }
+                r.scroll_start = e.scroll_start();
+                r.scroll_end = e.scroll_end();
+                r.is_unit = e.is_unit();
+                r.is_prop = e.is_prop();
+                r.is_projectile = e.is_projectile();
+                r.is_shield = e.is_shield();
+                r.is_collision_beam = e.is_collision_beam();
+                r.beam_enabled = e.beam_enabled();
+                r.is_wreckage = e.is_wreckage();
+                r.army = e.army();
+                r.blueprint_id = e.interned_blueprint_id();
+                r.mesh_override = e.interned_mesh_override();
+                r.mesh_changes = e.mesh_changes();
+                r.viz = static_cast<u8>(
+                    static_cast<u8>(e.viz_focus_player()) | static_cast<u8>(e.viz_allies()) << 2 |
+                    static_cast<u8>(e.viz_enemies()) << 4 | static_cast<u8>(e.viz_neutrals()) << 6);
+                r.scale_x = e.scale_x();
+                r.scale_y = e.scale_y();
+                r.scale_z = e.scale_z();
+                r.fraction_complete = e.fraction_complete();
+                r.health = e.health();
+                r.max_health = e.max_health();
+                r.custom_name = e.interned_custom_name();
+                r.strategic_underlay = e.interned_strategic_underlay();
+                if (e.is_unit()) {
+                    capture_unit(static_cast<const Unit&>(e), r, side);
+                    capture_recon(sim, static_cast<const Unit&>(e), r);
+                }
+                if (e.is_prop()) {
+                    const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
+                    if (!pose.empty()) {
+                        r.bone_offset = static_cast<u32>(side.bones.size());
+                        r.bone_count = static_cast<u32>(pose.size());
+                        side.bones.insert(side.bones.end(), pose.begin(), pose.end());
+                    }
+                }
+                if (e.is_shield()) {
+                    const auto& s = static_cast<const Shield&>(e);
+                    r.shield_owner_id = s.owner_id;
+                    // Retail's shield is up while it has its mesh (shield.lua's
+                    // CreateShieldMesh and RemoveShield); its TurnOn is a script
+                    // state, never the engine's (M215b).
+                    r.shield_on = s.is_on || !e.mesh_override().empty();
+                    r.shield_size = s.size;
+                }
+            }
+        });
+    }
+    // The chunks' lists joined in order, each record's offsets moved on by
+    // what came before its chunk
+    {
+        PROFILE_ZONE("Capture::join");
+        for (size_t c = 0; c < sides.size(); ++c) {
+            SideLists& side = sides[c];
+            const auto bones = static_cast<u32>(out.bones.size());
+            const auto commands = static_cast<u32>(out.commands.size());
+            const auto intel = static_cast<u32>(out.intel.size());
+            const auto weapon_ranges = static_cast<u32>(out.weapon_ranges.size());
+            const auto adjacent = static_cast<u32>(out.adjacent.size());
+            for (size_t i = side.begin; i < side.end; ++i) {
+                EntityRecord& r = out.entities[i];
+                if (r.bone_count > 0) r.bone_offset += bones;
+                if (r.is_unit) {
+                    r.command_offset += commands;
+                    r.rally_offset += commands;
+                    r.intel_offset += intel;
+                    r.weapon_range_offset += weapon_ranges;
+                    r.adjacent_offset += adjacent;
+                }
+            }
+            const auto append = [](auto& to, auto& from) {
+                to.insert(to.end(), std::make_move_iterator(from.begin()),
+                          std::make_move_iterator(from.end()));
+            };
+            append(out.bones, side.bones);
+            append(out.commands, side.commands);
+            append(out.intel, side.intel);
+            append(out.weapon_ranges, side.weapon_ranges);
+            append(out.adjacent, side.adjacent);
+        }
+    }
     // The registry walks in id order, which find()'s binary search relies on.
     assert(
         std::is_sorted(out.entities.begin(), out.entities.end(),
                        [](const EntityRecord& a, const EntityRecord& b) { return a.id < b.id; }));
 
+    size_t effects = 0;
+    PROFILE_ZONE("Capture::effects");
     for (const auto& fx : sim.effect_registry().all()) {
         if (!fx || fx->destroyed()) continue;
-        EffectRecord& r = out.effects.emplace_back();
+        EffectRecord& r = next_record(out.effects, effects);
         r.id = fx->id();
         r.type = fx->type();
         r.blueprint_path = fx->blueprint_path();
@@ -486,14 +588,15 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         r.light_lifetime = fx->light_duration();
         r.glow_texture = fx->glow_texture();
         r.ramp_texture = fx->ramp_texture();
-        r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
-        r.length = static_cast<f32>(fx->get_param("LENGTH"));
+        r.thickness = static_cast<f32>(fx->thickness());
+        r.length = static_cast<f32>(fx->length());
         r.decal = fx->decal();
         r.seen_by = fx->seen_by();
         capture_beam(sim, *fx, r);
         capture_anchor(sim, *fx, r);
         capture_frame(sim, *fx, r);
     }
+    out.effects.resize(effects);
 
     for (size_t i = 0; i < sim.army_count(); ++i) {
         ArmyRecord& a = out.armies.emplace_back();
@@ -524,7 +627,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
         a.start_z = brain->start_position().z;
     }
 
-    capture_sight(sim, sight_army, out.sight);
+    {
+        PROFILE_ZONE("Capture::sight");
+        capture_sight(sim, sight_army, out.sight);
+    }
     out.player_result = sim.player_result();
     out.no_rush_radius = sim.no_rush_active() ? sim.no_rush_radius() : 0.0f;
     capture_pending(sim, out);
@@ -562,13 +668,24 @@ std::vector<std::string> world_blueprints(const SimState& sim) {
 }
 
 void WorldHistory::capture(const SimState& sim) {
-    cur_ = 1 - cur_;
-    WorldSnapshot& now = snaps_[cur_];
-    capture_world(sim, now, sight_army_);
-    static u64 next_serial = 0;
+    capture_staged(sim);
+    publish();
+}
+
+void WorldHistory::capture_staged(const SimState& sim) {
+    stage_world(sim);
+    stage_events(sim);
+}
+
+void WorldHistory::stage_world(const SimState& sim) {
+    WorldSnapshot& now = snaps_[staged_];
+    capture_world(sim, now, sight_army_.load());
+    static std::atomic<u64> next_serial{0};
     now.serial = ++next_serial;
-    // Each entity's record in the capture before (both ascending by id).
-    const WorldSnapshot& before = snaps_[1 - cur_];
+    // Each entity's record in the capture it will follow (both ascending by
+    // id): the current one, which becomes the previous when this is published.
+    const WorldSnapshot& before = snaps_[cur_];
+    PROFILE_ZONE("Capture::previous");
     now.previous.assign(now.entities.size(), WorldSnapshot::kNoPrevious);
     now.previous_serial = 0;
     if (captured_ > 0 && before.serial != 0) {
@@ -582,27 +699,56 @@ void WorldHistory::capture(const SimState& sim) {
         }
         now.previous_serial = before.serial;
     }
-    ++captured_;
+    staged_ready_ = true;
+}
+
+void WorldHistory::stage_events(const SimState& sim) {
     // The sim forgets its events once the tick is over: keep them until
     // the renderer shows them.
     for (const auto& d : sim.death_events())
-        events_.deaths.push_back({d.x, d.y, d.z, d.scale, d.army});
+        staged_events_.deaths.push_back({d.x, d.y, d.z, d.scale, d.army});
     for (const auto& s : sim.camera_shake_events())
-        events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
+        staged_events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
     for (const auto& f : sim.camera_follow_events()) {
-        events_.camera_follows.push_back({f.source, f.projectile, f.timeout});
+        staged_events_.camera_follows.push_back({f.source, f.projectile, f.timeout});
     }
     for (const auto& f : sim.intel_flush_events())
-        events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
+        staged_events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
     for (const auto& r : sim.sound_requests())
-        events_.sounds.push_back(
+        staged_events_.sounds.push_back(
             {sim.tick_count(), r.bank, r.cue, r.lod_cutoff, r.pos, r.underwater, r.entity_id});
+}
+
+bool WorldHistory::publish() {
+    if (!staged_ready_) return false;
+    const int freed = older_;
+    older_ = prev_;
+    prev_ = cur_;
+    cur_ = staged_;
+    staged_ = freed;
+    staged_ready_ = false;
+    ++captured_;
+    const auto take = [](auto& to, auto& from) {
+        to.insert(to.end(), std::make_move_iterator(from.begin()),
+                  std::make_move_iterator(from.end()));
+        from.clear();
+    };
+    take(events_.deaths, staged_events_.deaths);
+    take(events_.shakes, staged_events_.shakes);
+    take(events_.camera_follows, staged_events_.camera_follows);
+    take(events_.intel_flushes, staged_events_.intel_flushes);
+    take(events_.sounds, staged_events_.sounds);
+    return true;
 }
 
 void WorldHistory::set_sight_army(i32 army, const SimState* sim) {
     if (army == sight_army_) return;
     sight_army_ = army;
-    if (sim && captured_ > 0) capture_sight(*sim, army, snaps_[cur_].sight);
+    // (The previous too: a frame drawn behind the newest draws from it.)
+    if (sim && captured_ > 0) {
+        capture_sight(*sim, army, snaps_[cur_].sight);
+        if (captured_ > 1) snaps_[prev_].sight = snaps_[cur_].sight;
+    }
 }
 
 void WorldHistory::refresh_pending(const SimState& sim) {
@@ -617,7 +763,9 @@ void WorldHistory::refresh_pending(const SimState& sim) {
 void WorldHistory::clear() {
     for (auto& s : snaps_) s.clear();
     captured_ = 0;
+    staged_ready_ = false;
     events_.clear();
+    staged_events_.clear();
 }
 
 FrameView::Pair FrameView::lookup(u32 id) const {
@@ -648,7 +796,16 @@ FrameView::Pair FrameView::pair_for(const EntityRecord& e) const {
     return {from, &e};
 }
 
+f64 FrameView::time() const {
+    if (!cur_) return 0.0;
+    if (!prev_ || prev_->serial == 0 || prev_->tick >= cur_->tick)
+        return static_cast<f64>(cur_->tick) + static_cast<f64>(alpha_);
+    return static_cast<f64>(prev_->tick) + 1.0 +
+           static_cast<f64>(alpha_) * static_cast<f64>(cur_->tick - prev_->tick);
+}
+
 // UserEntity::GetInterpolatedTransform: last to current by clamp(mCurImpactValue * alpha).
+
 Vector3 FrameView::position(const EntityRecord& e) const {
     const Pair p = pair_for(e);
     const f32 a = std::clamp(alpha_ * e.step_scale, 0.0f, 1.0f);

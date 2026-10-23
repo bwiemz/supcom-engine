@@ -115,6 +115,40 @@ public:
     /// units_in_radius, whose pointers' lifetime they share).
     std::vector<Entity*> units_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
 
+    /// Every live entity within an axis-aligned rectangle (collect_in_rect's
+    /// entities), each once but in no fixed order, with no list made: for a
+    /// question whose answer doesn't depend on the order (a nearest one with
+    /// ties broken by id). `units_only` visits the grid of units alone.
+    template <typename F>
+    void for_each_in_rect(f32 x0, f32 z0, f32 x1, f32 z1, bool units_only, F&& fn) const {
+        if (x0 > x1) std::swap(x0, x1);
+        if (z0 > z1) std::swap(z0, z1);
+        const auto within = [&](const Entity& e) { return live_within(e, x0, z0, x1, z1); };
+        if (!grid_initialized_) {
+            const auto visit = [&](Entity& e) {
+                if (within(e)) fn(e);
+            };
+            if (units_only) for_each_unit(visit);
+            else for_each(visit);
+            return;
+        }
+        i32 cx_min, cz_min, cx_max, cz_max;
+        world_to_cell(x0, z0, cx_min, cz_min);
+        world_to_cell(x1, z1, cx_max, cz_max);
+        for (i32 cz = cz_min; cz <= cz_max; ++cz) {
+            for (i32 cx = cx_min; cx <= cx_max; ++cx) {
+                const size_t cell = cell_index(cx, cz);
+                if (units_only) {
+                    for (const UnitRef& unit : unit_cells_[cell])
+                        if (within(*unit.entity)) fn(*unit.entity);
+                } else {
+                    for (const u32 id : grid_cells_[cell])
+                        if (Entity* e = find(id); e && within(*e)) fn(*e);
+                }
+            }
+        }
+    }
+
     /// Shapes reaching this far from their entity are found by the grid;
     /// larger ones (shields, experimentals) are kept on their own list.
     static constexpr f32 COLLIDER_REACH = 8.0f;
@@ -216,6 +250,9 @@ private:
     SimRandom default_random_;
     SimRandom* sim_random_ = &default_random_;
     const u32* tick_ = nullptr;
+
+    /// Not destroyed, and in [x0, x1] x [z0, z1] (for_each_in_rect).
+    static bool live_within(const Entity& e, f32 x0, f32 z0, f32 x1, f32 z1);
 
     // Spatial hash grid
     bool grid_initialized_ = false;

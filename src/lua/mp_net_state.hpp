@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,6 +31,7 @@ struct MpNetState {
     std::vector<osc::u32> all_sources;
     osc::u64 seed = 0xC0FFEE1234567890ull;              ///< the sim's seed (the host's hosted time)
     std::unique_ptr<osc::sim::LockstepSession> session; ///< built at game launch
+    std::string resume_error;
     bool transport_ready = false; ///< a lobby's game awaits its launch, or plays
     /// The lobby's connections, carrying the lockstep; source s plays army
     /// source_armies[s] (-1: an observer's).
@@ -69,9 +71,15 @@ void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport
 
 // At game launch: if a lobby's game is ready, build the LockstepSession over
 // its connections, install SimState's command sink, and seed the sim (making
-// it multiplayer). No-op in single-player. Returns true if a session was
-// attached.
+// it multiplayer). A resumed game (a sim past tick 0, restored from its save,
+// OE-128) keeps its own seed. No-op in single-player. Returns true if a
+// session was attached.
 bool mp_attach_session(osc::sim::SimState& sim);
+
+// What writes this player's copy of a network game's save (OE-128): the app's,
+// set once. The session calls it when a save every player agreed to comes due.
+using MpSaveHandler = std::function<void(osc::sim::SimState&, const std::string& name)>;
+void mp_set_save_handler(MpSaveHandler handler);
 
 // A lobby's game dropped `source` (a timeout or an eject): the host closes
 // its connection, as Moho closes an ejected client's (M218e).

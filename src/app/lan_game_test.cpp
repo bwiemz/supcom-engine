@@ -5,8 +5,10 @@
 #include "lua/lua_state.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/special_files.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/lockstep_session.hpp"
+#include "sim/saved_game.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/socket_platform.hpp"
 #include "sim/unit.hpp"
@@ -154,6 +156,10 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         lobby_frame(ui);
         return;
     }
+    // (the beats this frame ran past kEndTick were ticks)
+    if (!end_beat_ && sim->tick_count() >= kEndTick)
+        end_beat_ = sim->beat_count() - (sim->tick_count() - kEndTick);
+    if (!first_tick_) first_tick_ = sim->tick_count();
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
     if (!host_ && self_destruct_at_ > 0 && self_destructed_ == 0 && !self_destruct_failed_ &&
         sim->tick_count() >= self_destruct_at_) {
@@ -164,6 +170,23 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         else
             spdlog::info("[lan-game] the joiner's commander {} self-destructs at tick {}",
                          self_destructed_, sim->tick_count());
+    }
+    // --lan-game-save: the host saves the game, as the in-game save does
+    if (host_ && !save_as_.empty() && !save_sent_ && sim->tick_count() >= kSaveTick) {
+        save_sent_ = true;
+        lua_pushstring(ui.raw(), "__osc_lan_save");
+        lua_pushstring(ui.raw(), save_as_.c_str());
+        lua_rawset(ui.raw(), LUA_GLOBALSINDEX);
+        spdlog::info("[lan-game] the host saves the game as '{}' at tick {}", save_as_,
+                     sim->tick_count());
+        if (auto s = ui.do_string(R"(
+                InternalSaveGame(GetSpecialFilePath('test', __osc_lan_save, 'SaveGame'),
+                                 __osc_lan_save, function(worked, err)
+                    assert(worked, 'InternalSaveGame: ' .. tostring(err))
+                end)
+            )");
+            !s)
+            fail("saving: " + s.error().message);
     }
     // --lan-game-quit-at: the joiner leaves here; the host plays on
     const bool resumed = saw_pause_ && number_global(ui.raw(), "__osc_lan_resumed") >= 1;
@@ -177,7 +200,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         return;
     }
     if (host_ && quit_at_ > 0 && checked_at_ && disconnect_dialog_open(ui)) dialog_seen_ = true;
-    if (checked_at_) pause_frame(ui, *sim);
+    if (checked_at_ && resume_.empty()) pause_frame(ui, *sim);
     if (!checked_at_ && sim->tick_count() >= kCheckTick) {
         check(ui, *sim);
         checked_at_ = frames_;
@@ -218,11 +241,35 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             if (!dialog_seen_) fail("retail's disconnect dialog never opened");
             if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
         }
-        check_chat(ui);
-        check_pause(ui);
-        check_speed(ui);
+        if (resume_.empty()) {
+            check_chat(ui);
+            check_pause(ui);
+            check_speed(ui);
+        }
+        check_save(ui, *sim);
         done_ = true;
     }
+}
+
+void LanGameTest::check_save(lua::LuaState& ui, const sim::SimState& sim) {
+    // Where the game arrived, for the two runs to compare
+    const auto& replay = sim.recorded_replay();
+    if (end_beat_ && *end_beat_ >= replay.checksum_from &&
+        *end_beat_ - replay.checksum_from < replay.checksums.size())
+        spdlog::info("[lan-game] checksum at tick {}: {:08x}", kEndTick,
+                     replay.checksums[*end_beat_ - replay.checksum_from]);
+    else fail(fmt::format("no checksum recorded for tick {}", kEndTick));
+    // Each side's own copy of the host's save
+    if (!save_as_.empty()) {
+        const auto path = lua::network_save_path(ui.raw(), save_as_);
+        sim::SavedGame save;
+        if (lua::read_saved_game(path, save) != sim::SaveLoadError::None)
+            fail("no copy of the saved game here: " + path.string());
+        else spdlog::info("[lan-game] this side's copy of '{}': tick {}", save_as_, save.beat);
+    }
+    // The resumed game took up where the save was, not at its start
+    if (!resume_.empty() && (!first_tick_ || *first_tick_ < kSaveTick))
+        fail(fmt::format("the resumed game began at tick {}", first_tick_ ? *first_tick_ : 0));
 }
 
 void LanGameTest::check_pause(lua::LuaState& ui) {
@@ -388,6 +435,33 @@ void LanGameTest::lobby_frame(lua::LuaState& ui) {
         (last_press_ == 0 || frames_ - last_press_ > kPressInterval)) {
         last_press_ = frames_;
         spdlog::info("[lan-game] everyone is ready: Launch");
+        if (!resume_.empty()) {
+            // The saved game, as a host resuming one picks it: the save's
+            // name and tick, from the host's own copy
+            sim::SavedGame save;
+            if (lua::read_saved_game(lua::network_save_path(L, resume_), save) !=
+                sim::SaveLoadError::None) {
+                fail("the host has no saved game '" + resume_ + "'");
+                done_ = true;
+                return;
+            }
+            lua_pushstring(L, "__osc_lan_resume");
+            lua_pushstring(L, resume_.c_str());
+            lua_rawset(L, LUA_GLOBALSINDEX);
+            lua_pushstring(L, "__osc_lan_resume_beat");
+            lua_pushnumber(L, save.beat);
+            lua_rawset(L, LUA_GLOBALSINDEX);
+            if (auto r = ui.do_string(R"(
+                    local info = __osc_upvalue(import('/lua/ui/lobby/lobby.lua').IsLocallyOwned, 'gameInfo')
+                    info.GameOptions.ResumeSave = __osc_lan_resume
+                    info.GameOptions.ResumeBeat = __osc_lan_resume_beat
+                )");
+                !r) {
+                fail("choosing the saved game: " + r.error().message);
+                done_ = true;
+                return;
+            }
+        }
         if (auto p = ui.do_string(kPressLaunch); !p) {
             fail("pressing Launch: " + p.error().message);
             done_ = true;
@@ -434,6 +508,9 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     lua_pushstring(L, "__osc_lan_me");
     lua_pushstring(L, host_ ? "LanHost" : "LanJoiner");
     lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "__osc_lan_resuming");
+    lua_pushboolean(L, resume_.empty() ? 0 : 1);
+    lua_rawset(L, LUA_GLOBALSINDEX);
     auto session = ui.do_string(R"(
         assert(SessionIsMultiplayer(), 'not a network game')
         local clients = GetSessionClients()
@@ -457,7 +534,7 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
         local a, b = armies[1].authorizedCommandSources[1], armies[2].authorizedCommandSources[1]
         assert(a and b and a ~= b and a >= 1 and a <= 2 and b >= 1 and b <= 2, 'the armies\' sources')
         assert(armies[GetFocusArmy()].authorizedCommandSources[1] == mine, 'this player\'s army')
-        if __osc_lan_me == 'LanHost' then
+        if __osc_lan_me == 'LanHost' and not __osc_lan_resuming then
             SessionRequestPause()
             SessionSendChatMessage({LanGameTest = true, text = 'glhf'})
         end

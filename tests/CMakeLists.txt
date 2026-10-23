@@ -21,6 +21,9 @@ add_executable(osc_tests
     test_pose.cpp
     test_prop_collision.cpp
     test_prop_fall.cpp
+    test_sim_thread.cpp
+    test_worker_pool.cpp
+    test_lua_profile.cpp
     test_image.cpp
     test_navigation_throttle.cpp
     test_build_placement.cpp
@@ -29,6 +32,7 @@ add_executable(osc_tests
     test_guard.cpp
     test_ground_attack.cpp
     test_primary_weapon_target.cpp
+    test_weapon_intel.cpp
     test_command_feedback.cpp
     test_map_border.cpp
     test_minimap_meshes.cpp
@@ -72,6 +76,9 @@ add_executable(osc_tests
     test_order_editing.cpp
     test_user_unit.cpp
     test_faf_bindings.cpp
+    test_external_factory.cpp
+    test_profiler_self_time.cpp
+    test_game_state_setup_ui.cpp
     test_transport_unload.cpp
     test_special_files.cpp
     test_binding_coverage.cpp
@@ -152,6 +159,7 @@ add_executable(osc_tests
     test_smoke_harness.cpp
     test_army_stats.cpp
     test_unit_stats.cpp
+    test_match_telemetry.cpp
     test_unfinished_units.cpp
     test_air_combat.cpp
     test_victory.cpp

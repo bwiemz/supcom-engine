@@ -95,6 +95,12 @@ public:
     void set_instruction_budget(i32 budget) { instruction_budget_ = budget; }
 
 private:
+    /// A resume slower than this is logged under --profile (a hitch at
+    /// 60 fps).
+    static constexpr double kSlowResumeMs = 30.0;
+    /// Where coroutine `co` is: its top four frames, file:line (name).
+    static std::string where_in(lua_State* co);
+
     lua_State* L_;
     std::vector<ThreadEntry> threads_;
     std::vector<ThreadEntry> pending_threads_; // buffered during resume_all

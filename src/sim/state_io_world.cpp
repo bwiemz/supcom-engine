@@ -239,6 +239,8 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.str(a.name_);
     w.str(a.nickname_);
     w.i32v(a.faction_);
+    // ai_personality_ isn't saved: it is only the match record's (which AI
+    // played the army), and a loaded game is started from its setup again
     w.b(a.use_whole_map_);
     w.b(a.is_human_);
     w.b(a.is_civilian_);
@@ -511,6 +513,8 @@ void StateIO::load(StateReader& r, IEffectRegistry& fx) {
         e->destroyed_ = r.b();
         e->lua_table_ref_ = r.i32v();
         e->params_ = load_str_f64<std::unordered_map<std::string, f64>>(r);
+        e->thickness_ = e->get_param("THICKNESS");
+        e->length_ = e->get_param("LENGTH");
         for (f32& v : e->emitter_params_) v = r.f32v();
         e->emitter_params_set_ = r.u32v();
         e->curve_ops_.resize(r.size(10));

@@ -7,6 +7,9 @@
 #include "core/fixed_step.hpp"
 #include "core/fullscreen.hpp"
 #include "core/profiler.hpp"
+#include "core/test_status.hpp"
+#include "lua/lua_thread_check.hpp"
+#include "lua/match_records.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/moho_bindings.hpp"
@@ -17,27 +20,83 @@
 #include "sim/lockstep_session.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <string>
 #include <vector>
 
 namespace osc::app {
 
 bool App::Window::frame() {
+    const auto frame_started = std::chrono::high_resolution_clock::now();
     const double dt = begin_frame();
+
+    // The ticks the last frame started on the sim thread still running (a
+    // game sped up past what its sim keeps up with): this frame draws and
+    // doesn't wait for them, so the game slows and the frame rate holds.
+    // (A --fast-match wants its sim's speed alone, and waits.)
+    const bool threaded = sim_threaded();
+    if (threaded && sim_thread->busy() && !sim_thread->done() && !fast_match_in_game()) {
+        draw_while_ticking(dt, frame_started);
+        return true;
+    }
+
+    // The ticks the last frame started on the sim thread, done (OE-134):
+    // from here until this frame starts its own, nothing else runs the sim
+    collect_sim();
+    world_interp.staged = threaded;
+    sim_held = sim_state && (sim_state->paused() || sim_state->game_over());
+    if (tracking_notice && sim_state) {
+        osc::core::call_on_track_unit(ui_lua_state.raw(), *tracking_notice);
+        tracking_notice.reset();
+    }
+    if (opt.play_for > 0 && game_state_mgr.current() == osc::GameState::GAME) {
+        // --play-rate: a hosted game's speed is its lockstep's
+        if (auto* session = osc::lua::mp_net_state().session.get()) {
+            if (session->speed() != opt.play_rate) session->set_speed_option(opt.play_rate, true);
+        } else if (game_state_mgr.sim_rate() != opt.play_rate) {
+            game_state_mgr.set_sim_rate(opt.play_rate);
+        }
+    }
 
     update_audio(dt);
 
     count_fps(dt);
+    count_game_frame();
 
     // Pause, game speed and Escape come from retail's key map
     // (Pause, NumPlus/NumMinus/NumStar, Esc): see UIDispatch.
 
     note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
-    // Fixed-timestep sim ticking (scaled by sim_speed)
-    advance_sim(session_dt);
+    // Fixed-timestep sim ticking (scaled by sim_speed), here, or on the sim
+    // thread as the frame draws (start_sim)
+    if (!threaded) {
+        PROFILE_ZONE("Frame::sim");
+        const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
+        const auto ticks_started = std::chrono::steady_clock::now();
+        advance_sim(session_dt);
+        collected_tick = sim_state ? sim_state->tick_count() : 0;
+        if (collected_tick > beat_tick0)
+            time_ticks(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                 ticks_started)
+                           .count(),
+                       collected_tick - beat_tick0);
+    }
+    app.deliver_network_save_notices(); // a network save the ticks wrote
+    write_due_saves();
 
-    run_beats();
+    app.begin_match_record();
+    if (app.telemetry && sim_state) {
+        PROFILE_ZONE("Frame::telemetry");
+        app.telemetry->after_tick(*sim_state);
+    }
+
+    {
+        PROFILE_ZONE("Frame::beats");
+        run_beats();
+    }
+
     finish_world_ui_after_post_load();
 
     // Process SimCallbacks from UI (M138a)
@@ -45,19 +104,47 @@ bool App::Window::frame() {
 
     run_flows();
 
-    update_ui(dt);
+    {
+        PROFILE_ZONE("Frame::ui");
+        update_ui(dt);
+    }
 
     if (sim_state) {
         world_interp.history.refresh_pending(*sim_state);
     }
-    // This frame's world, between the last two ticks: what is
-    // drawn and what clicks pick.
+    // The drawn time moves on by this frame (before the view it draws:
+    // moved on as its ticks start, after, the frame that collects a job
+    // drew where the last one did)
+    if (threaded && sim_state && !game_state_mgr.paused() && !game_state_mgr.sim_stopped())
+        if (!sim_held) world_interp.clock.advance(drawn_dt() * game_state_mgr.speed());
+    // This frame's world, between two published ticks: what is drawn and
+    // what clicks pick.
     const osc::sim::FrameView frame_view = world_interp.view();
-    update_input(dt, frame_view);
-    render(frame_view);
+    {
+        PROFILE_ZONE("Frame::input");
+        update_input(dt, frame_view);
+    }
     update_title(dt);
+    {
+        PROFILE_ZONE("Frame::render");
+        render(frame_view, [&](bool drawn) {
+            if (!threaded) return;
+            // The UI's frame callbacks and events run their scripts, which
+            // may read the live sim: here, before its tick starts, not in
+            // the draw
+            if (drawn)
+                renderer.run_ui_frame(ui_lua_state.raw(), &ui_registry, sim_state != nullptr);
+            // Every Lua-backed renderer preparation finishes before the next job.
+        });
+    }
 
-    if (exit_requested()) return false;
+    if (threaded) start_sim(session_dt);
+    pace_play_for(frame_started);
+
+    if (exit_requested()) {
+        quiesce_sim();
+        return false;
+    }
     handle_launch();
     handle_return_to_lobby();
 
@@ -65,15 +152,186 @@ bool App::Window::frame() {
     return true;
 }
 
+void App::Window::draw_while_ticking(double dt,
+                                     std::chrono::high_resolution_clock::time_point started) {
+    count_fps(dt);
+    count_game_frame();
+    // The window's events (its callbacks only queue the UI's, for the next
+    // full frame) and the camera's keys and mouse
+    renderer.poll_events(dt);
+    // The world moves on between the ticks it has (held at the newest), and
+    // the game's time owed to the sim: the next ticks started make it up, as
+    // many as consume_fixed_steps lets a frame start (the rest is let go: the
+    // game slows to what its sim keeps up with)
+    if (!sim_held) world_interp.clock.advance(drawn_dt() * game_state_mgr.speed());
+    // (at most a frame's worth of ticks: a network game's rounds take what
+    // is owed without a limit of their own)
+    if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped())
+        sim_accumulator = std::min(sim_accumulator + (sim_held ? dt : dt * game_state_mgr.speed()),
+                                   8 * osc::sim::SimState::SECONDS_PER_TICK);
+    {
+        PROFILE_ZONE("Frame::render");
+        render(world_interp.view(), [this](bool) { renderer.skip_ui_frame(); });
+    }
+    pace_play_for(started);
+    osc::Profiler::instance().end_frame();
+}
+
+void App::Window::count_game_frame() {
+    if (!sim_state || game_state_mgr.current() != osc::GameState::GAME) return;
+    // (the live sim's tick count is the sim thread's while it ticks: the
+    // collected one is the frame's)
+    if (settled_tick() == 0) return;
+    const double ms = wall_dt * 1000.0;
+    ++game_frames.frames;
+    game_frames.total_ms += ms;
+    game_frames.worst_ms = std::max(game_frames.worst_ms, ms);
+    game_frames.over_20 += ms > 20.0 ? 1 : 0;
+    game_frames.over_33 += ms > 33.0 ? 1 : 0;
+    game_frames.over_50 += ms > 50.0 ? 1 : 0;
+    game_frames.in_game_s += wall_dt;
+    perf_stretch.frame_ms.push_back(static_cast<float>(ms));
+    perf_stretch.over_33 += ms > 33.0 ? 1 : 0;
+    perf_stretch.wall_s += wall_dt;
+    write_perf_sample();
+}
+
+bool App::Window::at_save_tick() const {
+    return next_save < opt.save_ticks.size() &&
+           sim_state->tick_count() >= opt.save_ticks[next_save];
+}
+
+void App::Window::write_due_saves() {
+    if (opt.save_path.empty() || !sim_state) return;
+    while (next_save < opt.save_ticks.size() &&
+           sim_state->tick_count() >= opt.save_ticks[next_save]) {
+        const osc::u32 tick = opt.save_ticks[next_save++];
+        if (sim_state->tick_count() != tick) continue; // (passed: a load began later)
+        std::string path = opt.save_path;
+        if (const auto at = path.find("{tick}"); at != std::string::npos)
+            path.replace(at, 6, std::to_string(tick));
+        const auto start = std::chrono::steady_clock::now();
+        auto save = osc::sim::save_game(*sim_state, fmt::format("tick {}", tick));
+        if (app.special_files) (void)app.special_files->sign_snapshot(save);
+        if (osc::lua::write_saved_game(save, path))
+            spdlog::info(
+                "Saved game: {} at tick {}, written in {:.0f} ms", path, tick,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                    .count());
+        else osc::test_status::fail("[FAIL] saved game: cannot write {}", path);
+    }
+}
+
+void App::Window::time_ticks(double ms, u32 ticks) {
+    if (ticks == 0) return;
+    // --bench: the ticks' time, and the units they ran (a cost per unit's
+    // divisor); read here, the sim not running
+    if (app.bench && sim_state) {
+        if (app.bench->tick_ms().empty())
+            app.bench->set_scenario(opt.bench_scenario, sim_state->tick_count() - ticks);
+        app.bench->record_ms(ms, ticks);
+        size_t units = 0;
+        sim_state->entity_registry().for_each_unit([&](const osc::sim::Entity& e) {
+            if (!e.destroyed()) ++units;
+        });
+        app.bench->note_units(units);
+    }
+    perf_stretch.tick_ms += ms;
+    perf_stretch.ticks_timed += ticks;
+    perf_stretch.tick_ms_worst = std::max(perf_stretch.tick_ms_worst, ms / ticks);
+    job_ms = 0;
+    job_ticks = 0;
+}
+
+void App::Window::write_perf_sample() {
+    if (!app.telemetry) {
+        osc::lua::pending_marks().clear();
+        return;
+    }
+    const osc::u32 tick = settled_tick();
+    for (const std::string& note : osc::lua::pending_marks()) app.telemetry->write_mark(tick, note);
+    osc::lua::pending_marks().clear();
+    PerfStretch& s = perf_stretch;
+    if (s.wall_s < 10.0 || s.frame_ms.empty()) return;
+    osc::app::PerfSample p;
+    p.wall_seconds = s.wall_s;
+    p.tick = tick;
+    // Count the work timed in this interval, including a game loaded at a later tick.
+    p.ticks = s.ticks_timed;
+    p.speed = game_state_mgr.speed();
+    p.frames = static_cast<u32>(s.frame_ms.size());
+    double total = 0;
+    for (const float ms : s.frame_ms) total += ms;
+    p.frame_ms_mean = total / p.frames;
+    std::sort(s.frame_ms.begin(), s.frame_ms.end());
+    p.frame_ms_p95 = s.frame_ms[std::min(s.frame_ms.size() - 1, s.frame_ms.size() * 95 / 100)];
+    p.frame_ms_worst = s.frame_ms.back();
+    p.frames_over_33 = s.over_33;
+    p.held = s.held;
+    p.pace_change = s.paces > 0 ? s.pace_change / s.paces : 0.0;
+    p.tick_ms_mean = s.ticks_timed > 0 ? s.tick_ms / s.ticks_timed : 0.0;
+    p.tick_ms_worst = s.tick_ms_worst;
+    // From the published world: the live one may be ticking on its thread
+    const auto& world = world_interp.history.cur();
+    p.entities = static_cast<u32>(world.entities.size());
+    for (const auto& e : world.entities) p.units += e.is_unit ? 1 : 0;
+    app.telemetry->write_perf(p);
+    s.clear();
+}
+
+void App::Window::note_drawn_time(const sim::FrameView& view) {
+    // How evenly the drawn game time runs. A frame it stands still in while
+    // the game runs is a held frame (units stop); and its pace, the step
+    // over the frame's time at the game's speed, changing from one frame
+    // to the next is units lurching (a steady pace a little off the
+    // game's speed is not seen).
+    const bool running = sim_state && game_state_mgr.current() == osc::GameState::GAME &&
+                         !game_state_mgr.paused() && !game_state_mgr.sim_stopped() &&
+                         view.cur() != nullptr && settled_tick() > 0;
+    const double drawn = view.time();
+    if (running && game_frames.last_drawn >= 0.0) {
+        const double step = drawn - game_frames.last_drawn;
+        const double expected =
+            wall_dt * game_state_mgr.speed() / osc::sim::SimState::SECONDS_PER_TICK;
+        game_frames.held += step <= 0.0 ? 1 : 0;
+        perf_stretch.held += step <= 0.0 ? 1 : 0;
+        if (expected > 0.0) {
+            const double pace = step / expected;
+            if (game_frames.last_pace >= 0.0) {
+                game_frames.uneven += std::abs(pace - game_frames.last_pace);
+                game_frames.expected += 1.0;
+                perf_stretch.pace_change += std::abs(pace - game_frames.last_pace);
+                ++perf_stretch.paces;
+            }
+            game_frames.last_pace = pace;
+        }
+    }
+    if (!running) game_frames.last_pace = -1.0;
+    game_frames.last_drawn = running ? drawn : -1.0;
+}
+
+void App::Window::pace_play_for(std::chrono::high_resolution_clock::time_point started) const {
+    // --play-for: the rest of a 60 Hz display's frame, waited out as a
+    // present would wait for it (the sim thread's tick runs meanwhile)
+    // (Windows sleeps in its timer's steps, about 15.6 ms: the last of the
+    // wait is spun, so the frame ends on time)
+    if (opt.play_for <= 0) return;
+    const auto frame_end = started + std::chrono::microseconds(16667);
+    while (std::chrono::high_resolution_clock::now() < frame_end) std::this_thread::yield();
+}
+
 double App::Window::begin_frame() {
     osc::Profiler::instance().begin_frame();
     // A resized window: the UI's root frame follows it (M217h)
-    if (renderer.take_resized()) {
+    root_resize_pending = renderer.take_resized() || root_resize_pending;
+    const bool sim_busy = sim_thread && sim_thread->busy();
+    if (root_resize_pending && !sim_busy) {
+        root_resize_pending = false;
         root_width = renderer.ui_width();
         root_height = renderer.ui_height();
         size_root_frame(ui_lua_state.raw(), root_width, root_height);
     }
-    if (osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
+    if (!sim_busy && osc::core::kNativeFullscreen && !offscreen_capture && !adapter_overridden &&
         renderer.fullscreen() != shown_fullscreen) {
         shown_fullscreen = renderer.fullscreen();
         keep_adapter_option(ui_lua_state.raw(), prefs, shown_fullscreen);
@@ -83,6 +341,10 @@ double App::Window::begin_frame() {
     prev_time = now;
     if (!screenshot_path.empty() || render_bench) dt = kScreenshotFrameDt;
     if (opt.scripted_window) dt = kInterpFrameDt;
+    // --fast-match: the front end and the load on the capture clock (their
+    // scripts wait on it), then a sim tick each frame.
+    if (opt.fast_match_ticks > 0)
+        dt = fast_match_in_game() ? osc::sim::SimState::SECONDS_PER_TICK : kScreenshotFrameDt;
     // The session runs on the median of the last frame times (Moho's
     // CScApp::Main and RollingFrameRates), or on a fixed step as Moho's
     // /framerate gives one: a slow frame adds only a usual frame's time to
@@ -90,15 +352,22 @@ double App::Window::begin_frame() {
     // UI's WaitSeconds keeps. (Retail's commander is selected at the start
     // only if that leaves the UI's tick short of the warp's unselectable 30.)
     frame_times.push(dt);
-    session_dt = fixed_step() ? dt : frame_times.median();
+    session_dt = (fixed_step() || opt.fast_match_ticks > 0) ? dt : frame_times.median();
     wall_dt = dt;
+
     // Clamp dt to avoid spiral of death
     if (dt > 0.25) dt = 0.25;
     return dt;
 }
 
+double App::Window::drawn_dt() const {
+    if (fixed_step() || opt.fast_match_ticks > 0) return session_dt;
+    return std::min(wall_dt, 0.25);
+}
+
 bool App::Window::fixed_step() const {
-    return !screenshot_path.empty() || render_bench || opt.scripted_window;
+    return !screenshot_path.empty() || render_bench || opt.scripted_window ||
+           opt.fast_match_ticks > 0;
 }
 
 void App::Window::update_audio(double dt) {
@@ -188,8 +457,9 @@ void App::Window::advance_sim(double dt) {
         const bool held = sim_state->paused() || sim_state->game_over();
         const double sim_dt = held ? dt : dt * game_state_mgr.speed();
         if (!held) {
-            world_interp.clock.advance(sim_dt);
+            if (!sim_held) world_interp.clock.advance(drawn_dt() * game_state_mgr.speed());
         }
+
         if (catch_up) {
             // A loaded game catches up to its saved tick as fast as
             // the sim runs, a frame's budget of ticks at a time: the
@@ -252,6 +522,7 @@ void App::Window::advance_sim(double dt) {
                 if (active_playback && active_playback->finished(*sim_state)) {
                     break;
                 }
+                if (at_save_tick()) break;
                 sim_state->tick();
                 if (active_playback) {
                     const bool diverged = active_playback->diverged_at() != 0;
@@ -263,6 +534,114 @@ void App::Window::advance_sim(double dt) {
             }
         }
     }
+}
+
+bool App::Window::sim_threaded() const {
+    // (--profile times the sim's zones on this thread; --profile-frames
+    // leaves it on its own)
+    // Fixed-frame captures must not accrue extra sim time from busy draws.
+    // Fast matches collect each job; scripted network flows exercise the
+    // real threaded session path and synchronize their ticks over lockstep.
+    const bool network_flow = opt.lan_game_test() || opt.gpgnet_scripted;
+    return sim_thread && sim_state && !catch_up && !tests &&
+           (!fixed_step() || opt.fast_match_ticks > 0 || network_flow) &&
+           (!osc::Profiler::instance().enabled() || opt.profile_frames);
+}
+
+osc::u32 App::Window::collect_sim() {
+    if (!sim_thread || !sim_thread->busy()) return sim_state ? sim_state->tick_count() : 0;
+    sim_thread->wait();
+    osc::lua::watch_lua_state(sim_lua_state ? sim_lua_state->raw() : nullptr, {}); // ours again
+    if (sim_state) sim_state->set_ticking_elsewhere(false);
+    world_interp.publish();
+    collected_tick = sim_state ? sim_state->tick_count() : 0;
+    time_ticks(job_ms, job_ticks);
+    // A timed-out peer, defeated by the lockstep's agreement, is let go
+    for (const osc::u32 src : job_dropped) {
+        spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
+        osc::lua::mp_disconnect_source(src); // M218e
+    }
+    job_dropped.clear();
+    return job_tick0;
+}
+
+void App::Window::quiesce_sim() {
+    if (sim_thread && sim_thread->busy()) collect_sim();
+}
+
+osc::u32 App::Window::settled_tick() const {
+    if (sim_thread && sim_thread->busy()) return collected_tick;
+    return sim_state ? sim_state->tick_count() : 0;
+}
+
+void App::Window::start_sim(double dt) {
+    if (game_state_mgr.paused() || game_state_mgr.sim_stopped() || !sim_state) {
+        world_interp.one_tick_next = true;
+        return;
+    }
+    // (a --fast-match's last tick is its last: none past it)
+    if (opt.fast_match_ticks > 0 && sim_state->tick_count() >= opt.fast_match_ticks) return;
+    job_tick0 = sim_state->tick_count();
+    lua::prepare_threaded_sync(sim_lua_state ? sim_lua_state->raw() : nullptr, ui_lua_state.raw());
+    sim_held = sim_state->paused() || sim_state->game_over();
+    const double sim_dt = sim_held ? dt : dt * game_state_mgr.speed();
+    if (fixed_step()) world_interp.one_tick_next = false;
+    if (osc::lua::mp_net_state().active()) {
+        // A lockstep game's rounds, as advance_sim paces them
+        auto* session = osc::lua::mp_net_state().session.get();
+        if (game_state_mgr.sim_rate() != session->speed())
+            game_state_mgr.set_sim_rate(session->speed());
+        const int rounds = osc::session_ticks(sim_accumulator, world_interp.one_tick_next, sim_dt,
+                                              sim::SimState::SECONDS_PER_TICK, 4);
+        if (rounds == 0) return;
+        osc::lua::watch_lua_state(sim_lua_state ? sim_lua_state->raw() : nullptr, sim_thread->id());
+        sim_state->set_ticking_elsewhere(true);
+        sim_thread->start([this, session, rounds] {
+            const auto started = std::chrono::steady_clock::now();
+            const osc::u32 tick0 = sim_state->tick_count();
+            for (int r = 0; r < rounds; ++r) {
+                session->send_frame();
+                session->receive_and_advance();
+                for (const osc::u32 src : session->take_dropped()) job_dropped.push_back(src);
+            }
+            world_interp.history.stage_world(*sim_state);
+            job_ticks = sim_state->tick_count() - tick0;
+            job_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                               started)
+                         .count();
+        });
+        return;
+    }
+    const int ticks = osc::session_ticks(sim_accumulator, world_interp.one_tick_next, sim_dt,
+                                         osc::sim::SimState::SECONDS_PER_TICK, 8);
+    if (ticks == 0) return;
+    osc::lua::watch_lua_state(sim_lua_state ? sim_lua_state->raw() : nullptr, sim_thread->id());
+    sim_state->set_ticking_elsewhere(true);
+    sim_thread->start([this, ticks] {
+        const auto started = std::chrono::steady_clock::now();
+        const osc::u32 tick0 = sim_state->tick_count();
+        for (int t = 0; t < ticks; ++t) {
+            // A replay plays to its end, then holds there.
+            if (active_playback && active_playback->finished(*sim_state)) break;
+            if (opt.fast_match_ticks > 0 && sim_state->tick_count() >= opt.fast_match_ticks) break;
+            if (at_save_tick()) break;
+            sim_state->tick();
+            if (active_playback) {
+                const bool diverged = active_playback->diverged_at() != 0;
+                if (!active_playback->check(*sim_state) && !diverged) {
+                    spdlog::warn("Replay: diverged from the recording at tick {}",
+                                 active_playback->diverged_at());
+                }
+            }
+        }
+        // The world is captured once, as the job's last tick left it (each
+        // tick's events as it ran): no frame sees the ticks between
+        world_interp.history.stage_world(*sim_state);
+        job_ticks = sim_state->tick_count() - tick0;
+        job_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+                .count();
+    });
 }
 
 void App::Window::finish_world_ui_after_post_load() {
@@ -467,7 +846,16 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
     }
 }
 
-void App::Window::render(const sim::FrameView& frame_view) {
+void App::Window::render(const sim::FrameView& frame_view,
+                         const std::function<void(bool)>& before_draw) {
+    if (fast_match_in_game()) {
+        if (fast_match_frames++ % kFastMatchDrawEvery != 0) {
+            before_draw(false);
+            return;
+        }
+        ++fast_match_drawn;
+    }
+    note_drawn_time(frame_view);
     const auto& sel = input_handler.selected();
     // The render benchmark waits for its save to load, front end included
     if (render_bench && !(sim_state && game_state_mgr.current() == osc::GameState::GAME))
@@ -485,7 +873,9 @@ void App::Window::render(const sim::FrameView& frame_view) {
         }
     }
     if (sim_state) {
-        const auto ghost = input_handler.build_ghost(renderer, *sim_state);
+        const bool busy = sim_thread && sim_thread->busy();
+        if (!busy) cached_ghost = input_handler.build_ghost(renderer, *sim_state);
+        const auto& ghost = cached_ghost;
         // The render benchmark's scene, once the loaded game is in (M223b)
         RenderBench* bench = render_bench && game_state_mgr.current() == osc::GameState::GAME
                                  ? render_bench.get()
@@ -494,11 +884,13 @@ void App::Window::render(const sim::FrameView& frame_view) {
         const auto render_start = std::chrono::steady_clock::now();
         renderer.set_selection_marks(input_handler.hovered(), input_handler.drag_box());
         renderer.set_command_highlight(input_handler.hovered_command());
-        renderer.set_formation_ghosts(input_handler.formation_ghosts(*sim_state));
+        if (!busy) renderer.set_formation_ghosts(input_handler.formation_ghosts(*sim_state));
         const auto drag = input_handler.order_drag();
         renderer.set_command_preview(drag ? drag->command_id : 0,
                                      drag ? drag->at : osc::sim::Vector3{}, !drag || drag->valid,
                                      drag && drag->held);
+        // (from here the draw reads only the snapshots and what was set above)
+        before_draw(true);
         renderer.render(frame_view, world_interp.history.events(), ghost ? &*ghost : nullptr,
                         ui_lua_state.raw(), &ui_registry, sel.empty() ? nullptr : &sel);
         if (bench)
@@ -511,6 +903,7 @@ void App::Window::render(const sim::FrameView& frame_view) {
         }
     } else {
         // No sim state (front-end/lobby) — render UI only
+        before_draw(true);
         renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
     }
 }

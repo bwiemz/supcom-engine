@@ -4,6 +4,7 @@
 add_library(osc_app STATIC
     app.cpp
     bench.cpp
+    match_telemetry.cpp
     render_bench.cpp
     boot.cpp
     cli.cpp
@@ -22,6 +23,7 @@ add_library(osc_app STATIC
     window.cpp
     window_commands.cpp
     window_frame.cpp
+    sim_thread.cpp
     window_load_flow.cpp
     window_session.cpp
     window_mode.cpp

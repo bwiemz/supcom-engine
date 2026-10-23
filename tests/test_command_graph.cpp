@@ -500,7 +500,7 @@ TEST_CASE("A structure standing on its site is started for every builder ordered
     factory.army = 0;
     factory.is_unit = true;
     factory.is_being_built = true;
-    factory.blueprint_id = "ueb0101";
+    factory.blueprint_id = osc::InternedString("ueb0101");
     factory.position = {20, 0, 20};
     osc::sim::EntityRecord walking;
     walking.id = 2;
