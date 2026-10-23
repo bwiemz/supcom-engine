@@ -3,6 +3,7 @@
 #include "blueprints/footprint.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/category_set.hpp"
+#include "sim/econ_request.hpp"
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
 #include "sim/pose.hpp"
@@ -88,6 +89,9 @@ struct UnitEconomy {
     f64 dock_repair_energy = 0.0;
     /// Moho's CUnitCaptureTask asks through a request of its own, apart from the unit's.
     f64 capture_energy = 0.0;
+    EconRequest silo_request;
+    EconRequest dock_repair_request;
+    EconRequest capture_request;
     /// The share of its consumption request the economy granted this tick,
     /// and the share its work goes at (Moho's ResourceConsumed, what
     /// GetResourceConsumed answers): last tick's grant, so a request made in
@@ -1561,6 +1565,7 @@ private:
     bool motion_tick(f64 dt, SimContext& ctx);
     void take_step(f64 dt, SimContext& ctx);
     void tick_silo(f64 dt, SimContext& ctx);
+    bool take_grant(EconRequest& request, const SimContext& ctx) const;
     void tick_upkeep(f64 dt, SimContext& ctx);
     void end_silo_assist(lua_State* L, EntityRegistry& registry);
     void tend_unfinished(SimContext& ctx);
@@ -1631,7 +1636,7 @@ private:
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep reclaim_work(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
-    OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// A repair of a unit under construction (Moho's repair task builds it):
     /// it builds alongside any builder, and completes it if it gets there
     /// first.

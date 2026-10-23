@@ -248,10 +248,7 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     save_resource(w, a.economy_.mass);
     save_resource(w, a.economy_.energy);
     w.f64v(a.mass_efficiency_);
-    w.f64v(a.event_mass_);
-    w.f64v(a.event_energy_);
-    w.f64v(a.event_dual_mass_);
-    w.f64v(a.event_dual_energy_);
+    // requests_: empty between ticks
     w.f64v(a.grant_ratios_.dual);
     w.f64v(a.grant_ratios_.single);
     w.b(a.grant_ratios_.mass_limits);
@@ -344,10 +341,6 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.economy_.mass = load_resource(r);
     a.economy_.energy = load_resource(r);
     a.mass_efficiency_ = r.f64v();
-    a.event_mass_ = r.f64v();
-    a.event_energy_ = r.f64v();
-    a.event_dual_mass_ = r.f64v();
-    a.event_dual_energy_ = r.f64v();
     a.grant_ratios_.dual = r.f64v();
     a.grant_ratios_.single = r.f64v();
     a.grant_ratios_.mass_limits = r.b();
@@ -565,6 +558,20 @@ void StateIO::load(StateReader& r, IEffectRegistry& fx) {
 
 // ------------------------------------------------------- Economy events
 
+void StateIO::save(StateWriter& w, const EconRequest& q) {
+    w.f32v(q.requested.mass);
+    w.f32v(q.requested.energy);
+    w.f32v(q.granted.mass);
+    w.f32v(q.granted.energy);
+}
+
+void StateIO::load(StateReader& r, EconRequest& q) {
+    q.requested.mass = r.f32v();
+    q.requested.energy = r.f32v();
+    q.granted.mass = r.f32v();
+    q.granted.energy = r.f32v();
+}
+
 void StateIO::save(StateWriter& w, const EconomyEventRegistry& ev) {
     w.tag("ECEV");
     w.size(ev.events_.size());
@@ -575,11 +582,10 @@ void StateIO::save(StateWriter& w, const EconomyEventRegistry& ev) {
         w.f64v(e->total_mass_);
         w.f64v(e->total_energy_);
         w.f64v(e->duration_);
-        w.f64v(e->elapsed_);
-        w.f64v(e->progress_);
-        w.b(e->done_);
+        // ticks_: from the duration
+        w.i32v(e->remaining_);
+        save(w, e->request_);
         w.b(e->cancelled_);
-        w.b(e->counted_);
         w.i32v(e->lua_table_ref_);
         w.i32v(e->callback_ref_);
     }
@@ -599,11 +605,9 @@ void StateIO::load(StateReader& r, EconomyEventRegistry& ev) {
         auto e = std::make_unique<EconomyEvent>(unit, mass, energy, duration);
         e->waiting_thread_ref_ = waiting_ref;
         e->waiting_thread_serial_ = waiting_serial;
-        e->elapsed_ = r.f64v();
-        e->progress_ = r.f64v();
-        e->done_ = r.b();
+        e->remaining_ = r.i32v();
+        load(r, e->request_);
         e->cancelled_ = r.b();
-        e->counted_ = r.b();
         e->lua_table_ref_ = r.i32v();
         e->callback_ref_ = r.i32v();
         ev.events_.push_back(std::move(e));

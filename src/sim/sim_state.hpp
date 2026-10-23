@@ -117,7 +117,6 @@ struct CameraFollowEvent {
     f32 timeout = 1.0f;
 };
 
-/// Per-army resource efficiency (pre-computed per tick).
 /// Cached blip data for dead-reckoning (last-known position when entity
 /// leaves intel coverage, or entity destroyed while previously seen).
 struct BlipSnapshot {
@@ -135,9 +134,6 @@ struct SimContext {
     const map::Pathfinder* pathfinder;
     map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
     SimState* sim;
-    static constexpr u32 MAX_EFFICIENCY_ARMIES = 16;
-    /// Each army's grants this tick (its economy's last update)
-    std::array<GrantRatios, MAX_EFFICIENCY_ARMIES> army_grants;
 };
 
 class SimState {

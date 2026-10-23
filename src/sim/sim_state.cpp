@@ -2145,8 +2145,8 @@ void SimState::sweep_ferry_beacons() {
 }
 
 void SimState::request_economy_events(size_t index) {
-    // Each event asks its unit's army for its cost over its duration; one
-    // whose unit is gone is cancelled.
+    // Each event asks its unit's army for a tick's cost; one whose unit is
+    // gone is cancelled.
     economy_events_.for_each([&](EconomyEvent& evt) {
         if (!evt.active() || evt.unit_id() == 0) {
             return;
@@ -2159,8 +2159,7 @@ void SimState::request_economy_events(size_t index) {
         if (unit->army() != static_cast<i32>(index)) {
             return;
         }
-        armies_[index]->add_event_request(evt.mass_per_second(), evt.energy_per_second());
-        evt.set_counted(true);
+        armies_[index]->add_request(evt.request());
     });
 }
 
@@ -2168,15 +2167,16 @@ void SimState::step_economy_events(const Unit& unit) {
     const auto first = std::lower_bound(
         stepping_events_.begin(), stepping_events_.end(), unit.entity_id(),
         [](const std::pair<u32, EconomyEvent*>& p, u32 id) { return p.first < id; });
-    const ArmyBrain* brain = get_army(unit.army());
     for (auto it = first; it != stepping_events_.end() && it->first == unit.entity_id(); ++it) {
         EconomyEvent& evt = *it->second;
         if (!evt.active()) {
             continue;
         }
-        const f64 efficiency =
-            brain ? brain->grant_ratios().of(evt.mass_per_second(), evt.energy_per_second()) : 1.0;
-        evt.advance(SECONDS_PER_TICK, efficiency);
+        // Like unit task requests, an event without an army works in full.
+        if (get_army(unit.army()) && !evt.request().take()) {
+            continue;
+        }
+        evt.step();
         if (evt.callback_ref() < 0 || unit.lua_table_ref() < 0) {
             continue;
         }
@@ -2205,8 +2205,8 @@ void SimState::step_economy_events(const Unit& unit) {
 void SimState::tick_economy_events() {
     // An event with no unit runs on time alone.
     economy_events_.for_each([&](EconomyEvent& evt) {
-        if (evt.active() && evt.unit_id() == 0) {
-            evt.advance(SECONDS_PER_TICK, 1.0);
+        if (evt.unit_id() == 0) {
+            evt.step();
         }
     });
     // Wake threads waiting on completed/cancelled events
@@ -2234,12 +2234,7 @@ void SimState::tick_economy_events() {
 }
 
 SimContext SimState::sim_context() {
-    SimContext ctx{
-        entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this, {}};
-    for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
-        ctx.army_grants[i] = armies_[i]->grant_ratios();
-    }
-    return ctx;
+    return {entity_registry_, L_, terrain_.get(), pathfinder_.get(), pathfinding_grid_.get(), this};
 }
 
 void SimState::tick_armies() {
@@ -2325,11 +2320,8 @@ void SimState::update_entities() {
 
     stepping_events_.clear();
     economy_events_.for_each([&](EconomyEvent& evt) {
-        if (evt.counted()) {
-            evt.set_counted(false);
-            if (evt.active()) {
-                stepping_events_.emplace_back(evt.unit_id(), &evt);
-            }
+        if (evt.active() && evt.unit_id() != 0) {
+            stepping_events_.emplace_back(evt.unit_id(), &evt);
         }
     });
     std::stable_sort(stepping_events_.begin(), stepping_events_.end(),

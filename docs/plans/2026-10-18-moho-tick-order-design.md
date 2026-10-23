@@ -527,3 +527,7 @@ its request's grant (Moho's `LimitingRate`), unless its blueprint is a `NaturalP
 
 *Overflow sharing done (2026-10-21) — fix/econ-overflow-default-2: an army shares its overflow with its allies unless
 its `SetResourceSharing` is off, an equal cut of what is left to each ally with room, as Moho's `ProcessArmyEconomy`.*
+
+*Economy events all-or-nothing: done (2026-10-21) — fix/econ-all-or-nothing-2: a silo's missile, a capture, a repair at
+a staging platform and an economy event each hold a request whose grants add up, as Moho's `CEconRequest`, and move on
+a tick only once they cover its cost; an event takes its duration's whole ticks, a tick at least.*

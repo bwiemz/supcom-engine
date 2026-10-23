@@ -267,6 +267,14 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
         f64 mass, energy;
     };
     std::vector<Requester> requesters;
+    std::vector<EconRequest*> requests;
+    const auto pool = [&](EconRequest& r) {
+        const EconValue short_of = r.outstanding();
+        if (short_of.mass > 0.0f || short_of.energy > 0.0f) {
+            request(short_of.mass / dt, short_of.energy / dt);
+            requests.push_back(&r);
+        }
+    };
     f64 refund_mass = 0.0, refund_energy = 0.0;
     registry.for_each_unit([&](Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
@@ -295,19 +303,20 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
         if (econ.consumption_active) request(econ.consumption_mass, econ.consumption_energy);
         // A silo's missile under way (M206), a repair on a staging platform
         // (M206r), a capture
-        request(econ.silo_mass, econ.silo_energy);
-        request(econ.dock_repair_mass, econ.dock_repair_energy);
-        request(0.0, econ.capture_energy);
+        econ.silo_request.ask(econ.silo_mass * dt, econ.silo_energy * dt);
+        econ.dock_repair_request.ask(econ.dock_repair_mass * dt, econ.dock_repair_energy * dt);
+        econ.capture_request.ask(0.0, econ.capture_energy * dt);
+        pool(econ.silo_request);
+        pool(econ.dock_repair_request);
+        pool(econ.capture_request);
         if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0)
             request(0.0, econ.energy_maintenance_override);
     });
 
     // Its economy events' requests (M206d).
-    dual_mass += event_dual_mass_;
-    dual_energy += event_dual_energy_;
-    single_mass += event_mass_ - event_dual_mass_;
-    single_energy += event_energy_ - event_dual_energy_;
-    event_mass_ = event_energy_ = event_dual_mass_ = event_dual_energy_ = 0.0;
+    for (EconRequest* r : std::exchange(requests_, {})) {
+        pool(*r);
+    }
     const f64 mass_consumption = dual_mass + single_mass;
     const f64 energy_consumption = dual_energy + single_energy;
 
@@ -349,6 +358,10 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
                                                  : mass_avail - dual_mass * dt * g.dual);
     if (single_needed * g.single > left) g.single = left / single_needed;
     grant_ratios_ = g;
+    for (EconRequest* r : requests) {
+        const EconValue short_of = r->outstanding();
+        r->grant(g.of(short_of.mass, short_of.energy));
+    }
     // A request asking nothing is met in full (CEconRequest::LimitingRate)
     for (const Requester& r : requesters) {
         r.econ->granted = r.mass > 0.0 || r.energy > 0.0 ? g.of(r.mass, r.energy) : 1.0;
