@@ -358,6 +358,13 @@ public:
     /// game builds its interface once its own has (the window's wait).
     u32 post_loads_run() const { return post_loads_run_; }
     void note_post_load() { ++post_loads_run_; }
+    /// A loaded game's post-load, in the next beat; the game is unpaused, as retail loads a
+    /// save made on pause.
+    void schedule_post_load();
+    void end_pause() {
+        paused_by_ = -1;
+        single_step_ = false;
+    }
     f64 game_time() const { return game_time_; }
 
     // --- Command scheduling (deterministic / lockstep-ready) ---

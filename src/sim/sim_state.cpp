@@ -1092,6 +1092,13 @@ void SimState::submit_callback(SimCallbackEntry callback) {
     else schedule_callback(0, std::move(callback));
 }
 
+void SimState::schedule_post_load() {
+    end_pause();
+    SimCallbackEntry entry;
+    entry.func_name = kPostLoadCallback;
+    submit_callback(std::move(entry));
+}
+
 namespace {
 
 /// A silo build order (IssueSiloBuildNuke/Tactical) goes to the unit's silo,
