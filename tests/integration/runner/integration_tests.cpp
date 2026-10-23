@@ -7466,7 +7466,9 @@ void test_targeting(TestContext& ctx) {
     }
     if (auto* seabed = unit_of("__osc_seabed_id")) seabed->set_layer("Seabed");
 
-    ticks(8);
+    // Weapons take what ARMY_1's ReconTick (one tick in 8 here) has a blip of,
+    // on their next check (the tanks' every 5 ticks).
+    ticks(13);
     lua_check("Test 1: a farther TECH1 MOBILE unit beats a nearer structure", R"(
         if __osc_target(__osc_tank) ~= __osc_foe then error('target is not the enemy tank') end
     )");
