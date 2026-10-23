@@ -1,5 +1,6 @@
 add_library(osc_renderer STATIC
     renderer.cpp
+    window.cpp
     terrain_mesh.cpp
     unit_renderer.cpp
     water_renderer.cpp

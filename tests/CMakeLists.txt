@@ -201,6 +201,7 @@ add_executable(osc_tests
     test_sim_rand.cpp
     test_video_decoder.cpp
     test_vulkan_layer.cpp
+    test_window_system.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
