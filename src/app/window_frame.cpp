@@ -582,7 +582,8 @@ void App::Window::start_sim(double dt) {
     // (a --fast-match's last tick is its last: none past it)
     if (opt.fast_match_ticks > 0 && sim_state->tick_count() >= opt.fast_match_ticks) return;
     job_tick0 = sim_state->tick_count();
-    lua::prepare_threaded_sync(sim_lua_state ? sim_lua_state->raw() : nullptr, ui_lua_state.raw());
+    world_interp.sync.prepare_threaded(sim_lua_state ? sim_lua_state->raw() : nullptr,
+                                       ui_lua_state.raw());
     sim_held = sim_state->paused() || sim_state->game_over();
     const double sim_dt = sim_held ? dt : dt * game_state_mgr.speed();
     if (fixed_step()) world_interp.one_tick_next = false;
@@ -649,14 +650,14 @@ void App::Window::finish_world_ui_after_post_load() {
     if (sim_state->post_loads_run() <= *world_ui_after_post_load) return;
     world_ui_after_post_load.reset();
     finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value(),
-                    sim_lua_state.get(), sim_state.get());
+                    sim_lua_state.get(), sim_state.get(), world_interp.sync);
 }
 
 void App::Window::run_beats() {
     // CWldSession::DoBeat: each of the sim's beats reaches the user side with its own Sync.
     if (sim_state && sim_lua_state) {
-        while (osc::lua::sync_pending(sim_lua_state->raw())) {
-            world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
+        while (world_interp.sync.pending()) {
+            world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), world_interp.sync);
         }
     }
 }

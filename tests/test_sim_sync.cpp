@@ -73,7 +73,7 @@ TEST_CASE("copy_lua_value deep-copies plain data between states", "[lua][sync]")
     }
 }
 
-TEST_CASE("sync_beat carries Sync to the user state, then resets it", "[lua][sync]") {
+TEST_CASE("A delivered beat carries Sync to the user state, then resets it", "[lua][sync]") {
     LuaState sim;
     LuaState ui;
     run(sim, R"(
@@ -107,7 +107,8 @@ TEST_CASE("sync_beat carries Sync to the user state, then resets it", "[lua][syn
     lua_pushnumber(U, -1);
     lua_rawset(U, LUA_REGISTRYINDEX);
 
-    osc::lua::sync_beat(sim.raw(), U);
+    osc::lua::SyncQueue sync;
+    sync.deliver(sim.raw(), U);
 
     CHECK(global_number(U, "seen_score") == 250.0);
     run(ui, "tag_ok = (seen_tag == 'beat1' and prev_tag == 'before') and 1 or 0");
@@ -128,7 +129,7 @@ TEST_CASE("sync_beat carries Sync to the user state, then resets it", "[lua][syn
     lua_pop(U, 1);
 
     // The sim's table was reset: the next beat carries nothing old.
-    osc::lua::sync_beat(sim.raw(), U);
+    sync.deliver(sim.raw(), U);
     CHECK(global_number(U, "seen_score") == 0.0);
     run(ui, "cleared = (Sync.Tag == nil and Sync.FocusArmyChanged == nil) and 1 or 0");
     CHECK(global_number(U, "cleared") == 1.0);
@@ -149,22 +150,23 @@ TEST_CASE("Threaded Sync queues each beat without touching UI focus until delive
     };
     request(sim.raw(), 1);
     request(ui.raw(), 2); // UI wins a simultaneous sim request
-    osc::lua::prepare_threaded_sync(sim.raw(), ui.raw());
+    osc::lua::SyncQueue sync;
+    sync.prepare_threaded(sim.raw(), ui.raw());
     std::thread worker([&] {
-        osc::lua::queue_sync(sim.raw(), nullptr);
+        sync.queue(sim.raw(), nullptr);
         request(sim.raw(), -1); // a second beat changes to observer
-        osc::lua::queue_sync(sim.raw(), nullptr);
+        sync.queue(sim.raw(), nullptr);
     });
     worker.join();
     CHECK(osc::lua::focus_army(ui.raw()) == 0);
-    REQUIRE(osc::lua::sync_pending(sim.raw()));
-    osc::lua::sync_beat(sim.raw(), ui.raw());
+    REQUIRE(sync.pending());
+    sync.deliver(sim.raw(), ui.raw());
     CHECK(osc::lua::focus_army(ui.raw()) == 2);
     CHECK(global_number(ui.raw(), "seen") == 1);
-    osc::lua::sync_beat(sim.raw(), ui.raw());
+    sync.deliver(sim.raw(), ui.raw());
     CHECK(osc::lua::focus_army(ui.raw()) == -1);
     CHECK(global_number(ui.raw(), "seen") == 2);
-    CHECK_FALSE(osc::lua::sync_pending(sim.raw()));
+    CHECK_FALSE(sync.pending());
 }
 
 TEST_CASE("A threaded replay's first focus request uses the UI observer as its old focus",
@@ -182,13 +184,28 @@ TEST_CASE("A threaded replay's first focus request uses the UI observer as its o
         lua_pushstring(ui.raw(), osc::lua::kFocusArmyRequestKey);
         lua_pushnumber(ui.raw(), army);
         lua_rawset(ui.raw(), LUA_REGISTRYINDEX);
-        osc::lua::prepare_threaded_sync(sim.raw(), ui.raw());
-        std::thread worker([&] { osc::lua::queue_sync(sim.raw(), nullptr); });
+        osc::lua::SyncQueue sync;
+        sync.prepare_threaded(sim.raw(), ui.raw());
+        std::thread worker([&] { sync.queue(sim.raw(), nullptr); });
         worker.join();
         CHECK(osc::lua::focus_army(ui.raw()) == -1);
         CHECK(global_number(sim.raw(), "noted_old") == -1);
         CHECK(global_number(sim.raw(), "noted_new") == army + 1);
-        osc::lua::sync_beat(sim.raw(), ui.raw());
+        sync.deliver(sim.raw(), ui.raw());
         CHECK(osc::lua::focus_army(ui.raw()) == army);
     }
+}
+
+TEST_CASE("A beat's Sync is the table as its beat left it", "[lua][sync]") {
+    LuaState sim;
+    LuaState ui;
+    run(sim, "function ResetSyncTable() Sync = {} end ResetSyncTable() "
+             "Sync.Tag = 'beat1' kept = Sync");
+    run(ui, "Sync = {} seen = '' function OnSync() seen = Sync.Tag end");
+    osc::lua::SyncQueue sync;
+    sync.queue(sim.raw(), nullptr);
+    run(sim, "kept.Tag = 'later'");
+    sync.deliver(sim.raw(), ui.raw());
+    run(ui, "as_queued = seen == 'beat1' and 1 or 0");
+    CHECK(global_number(ui.raw(), "as_queued") == 1.0);
 }

@@ -95,9 +95,10 @@ void run_command_sources_test(app::Engine& e) {
     lua::LuaState& sim_lua = *e.sim_lua_state;
     uL = e.ui_lua_state.raw();
     lua_State* sL = sim_lua.raw();
+    lua::SyncQueue sync;
     const auto beat = [&](int ticks) {
         for (int i = 0; i < ticks; ++i) sim.tick();
-        lua::sync_beat(sL, uL);
+        sync.deliver(sL, uL);
     };
     const auto end_source = [&](u32 source) {
         sim::SimCallbackEntry gone;

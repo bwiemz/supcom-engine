@@ -5,6 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <optional>
 #include <string>
 
 extern "C" {
@@ -69,15 +70,19 @@ bool take_focus_request(lua_State* L, int& requested, const char* key = kFocusAr
     return pending;
 }
 
-constexpr const char* kTransferredFocusKey = "__osc_transferred_ui_focus";
-
-void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
+void apply_focus_request(lua_State* sim_L, lua_State* ui_L, std::optional<int>& ui_request) {
     // The sim's (FAF's SetFocusArmy), then the UI's: both set the driver's
     // pending focus in Moho, the later winning
     int requested = 0;
     const bool from_sim = take_focus_request(sim_L, requested);
-    const bool from_ui = ui_L ? take_focus_request(ui_L, requested)
-                              : take_focus_request(sim_L, requested, kTransferredFocusKey);
+    bool from_ui = false;
+    if (ui_L) {
+        from_ui = take_focus_request(ui_L, requested);
+    } else if (ui_request) {
+        requested = *ui_request;
+        ui_request.reset();
+        from_ui = true;
+    }
     if (!from_sim && !from_ui) return;
 
     const int old = registry_int(ui_L ? ui_L : sim_L, "__osc_focus_army", 0);
@@ -105,36 +110,6 @@ void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
     lua_pop(sim_L, 1);
 }
 
-constexpr const char* kSyncPacketsKey = "__osc_sync_packets";
-
-/// The sim state's queue of beats' Sync tables, [first..last].
-int push_packets(lua_State* sim_L) {
-    lua_pushstring(sim_L, kSyncPacketsKey);
-    lua_rawget(sim_L, LUA_REGISTRYINDEX);
-    if (!lua_istable(sim_L, -1)) {
-        lua_pop(sim_L, 1);
-        lua_newtable(sim_L);
-        lua_pushstring(sim_L, kSyncPacketsKey);
-        lua_pushvalue(sim_L, -2);
-        lua_rawset(sim_L, LUA_REGISTRYINDEX);
-    }
-    return lua_gettop(sim_L);
-}
-
-int packet_index(lua_State* sim_L, int packets, const char* end, int fallback) {
-    lua_pushstring(sim_L, end);
-    lua_rawget(sim_L, packets);
-    const int v = lua_isnumber(sim_L, -1) ? static_cast<int>(lua_tonumber(sim_L, -1)) : fallback;
-    lua_pop(sim_L, 1);
-    return v;
-}
-
-void set_packet_index(lua_State* sim_L, int packets, const char* end, int v) {
-    lua_pushstring(sim_L, end);
-    lua_pushnumber(sim_L, v);
-    lua_rawset(sim_L, packets);
-}
-
 void push_sim_sync(lua_State* sim_L) {
     lua_pushstring(sim_L, "Sync");
     lua_rawget(sim_L, LUA_GLOBALSINDEX);
@@ -155,68 +130,67 @@ void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army) {
     if (ui_L) set_registry_int(ui_L, "__osc_focus_army", army);
 }
 
-void queue_sync(lua_State* sim_L, lua_State* ui_L) {
+SyncQueue::SyncQueue() : packets_state_(lua_open()) {}
+
+SyncQueue::~SyncQueue() {
+    lua_close(packets_state_);
+}
+
+void SyncQueue::queue(lua_State* sim_L, lua_State* ui_L) {
     if (!sim_L) {
         return;
     }
-    apply_focus_request(sim_L, ui_L);
-    const int packets = push_packets(sim_L);
-    const int last = packet_index(sim_L, packets, "last", 0) + 1;
+    apply_focus_request(sim_L, ui_L, ui_request_);
     push_sim_sync(sim_L);
-    lua_rawseti(sim_L, packets, last);
-    set_packet_index(sim_L, packets, "last", last);
+    copy_lua_value(sim_L, -1, packets_state_);
     lua_pop(sim_L, 1);
+    packets_.push_back(luaL_ref(packets_state_, LUA_REGISTRYINDEX));
     call_global(sim_L, "ResetSyncTable", 0);
 }
 
-void prepare_threaded_sync(lua_State* sim_L, lua_State* ui_L) {
-    if (!sim_L || !ui_L) return;
+void SyncQueue::prepare_threaded(lua_State* sim_L, lua_State* ui_L) {
+    if (!sim_L || !ui_L) {
+        return;
+    }
     // Replay UI starts as observer. Transfer its current focus as well as the
     // request, while both states belong to the main thread, so the first beat
     // reports the same old focus as serial Sync.
     set_registry_int(sim_L, "__osc_focus_army", registry_int(ui_L, "__osc_focus_army", 0));
     int requested = 0;
-    if (take_focus_request(ui_L, requested))
-        set_registry_int(sim_L, kTransferredFocusKey, requested);
+    if (take_focus_request(ui_L, requested)) {
+        ui_request_ = requested;
+    }
 }
 
-bool sync_pending(lua_State* sim_L) {
-    const int packets = push_packets(sim_L);
-    const bool pending =
-        packet_index(sim_L, packets, "first", 1) <= packet_index(sim_L, packets, "last", 0);
-    lua_pop(sim_L, 1);
-    return pending;
-}
-
-void sync_beat(lua_State* sim_L, lua_State* ui_L) {
-    if (!sim_L || !ui_L) return;
-    const int packets = push_packets(sim_L);
-    const int first = packet_index(sim_L, packets, "first", 1);
-    const bool queued = first <= packet_index(sim_L, packets, "last", 0);
+void SyncQueue::deliver(lua_State* sim_L, lua_State* ui_L) {
+    if (!sim_L || !ui_L) {
+        return;
+    }
+    const bool queued = !packets_.empty();
+    lua_State* from = queued ? packets_state_ : sim_L;
     if (queued) {
-        lua_rawgeti(sim_L, packets, first);
-        lua_pushnil(sim_L);
-        lua_rawseti(sim_L, packets, first);
-        set_packet_index(sim_L, packets, "first", first + 1);
+        lua_rawgeti(packets_state_, LUA_REGISTRYINDEX, packets_.front());
+        luaL_unref(packets_state_, LUA_REGISTRYINDEX, packets_.front());
+        packets_.pop_front();
     } else {
-        apply_focus_request(sim_L, ui_L);
+        apply_focus_request(sim_L, ui_L, ui_request_);
         push_sim_sync(sim_L);
     }
 
     // A worker applies focus changes in the sim only. Publish the matching
     // UI focus with this beat's Sync, after the worker has been collected.
-    lua_pushstring(sim_L, "FocusArmyChanged");
-    lua_rawget(sim_L, -2);
-    if (lua_istable(sim_L, -1)) {
-        lua_pushstring(sim_L, "new");
-        lua_rawget(sim_L, -2);
-        if (lua_isnumber(sim_L, -1)) {
-            const int army = static_cast<int>(lua_tonumber(sim_L, -1));
+    lua_pushstring(from, "FocusArmyChanged");
+    lua_rawget(from, -2);
+    if (lua_istable(from, -1)) {
+        lua_pushstring(from, "new");
+        lua_rawget(from, -2);
+        if (lua_isnumber(from, -1)) {
+            const int army = static_cast<int>(lua_tonumber(from, -1));
             set_registry_int(ui_L, "__osc_focus_army", army > 0 ? army - 1 : -1);
         }
-        lua_pop(sim_L, 1);
+        lua_pop(from, 1);
     }
-    lua_pop(sim_L, 1);
+    lua_pop(from, 1);
 
     // PreviousSync = Sync; Sync = copy of the beat's
     lua_pushstring(ui_L, "PreviousSync");
@@ -224,14 +198,22 @@ void sync_beat(lua_State* sim_L, lua_State* ui_L) {
     lua_rawget(ui_L, LUA_GLOBALSINDEX);
     lua_rawset(ui_L, LUA_GLOBALSINDEX);
     lua_pushstring(ui_L, "Sync");
-    copy_lua_value(sim_L, -1, ui_L);
+    copy_lua_value(from, -1, ui_L);
     lua_rawset(ui_L, LUA_GLOBALSINDEX);
-    lua_pop(sim_L, 2);
+    lua_pop(from, 1);
 
     if (!queued) {
         call_global(sim_L, "ResetSyncTable", 0);
     }
     call_global(ui_L, "OnSync", 0);
+}
+
+void SyncQueue::clear() {
+    for (const int ref : packets_) {
+        luaL_unref(packets_state_, LUA_REGISTRYINDEX, ref);
+    }
+    packets_.clear();
+    ui_request_.reset();
 }
 
 } // namespace osc::lua

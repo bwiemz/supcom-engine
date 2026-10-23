@@ -1043,9 +1043,10 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
         }
 
         // FA's game interface, as the windowed launch builds it
+        osc::lua::SyncQueue sync;
         begin_world_ui(ui_lua_state.raw(), wld_provider);
         finish_world_ui(ui_lua_state.raw(), wld_provider, false, sim_lua_state.get(),
-                        sim_state.get());
+                        sim_state.get(), sync);
 
         // Fire OnFirstUpdate once
         osc::core::call_on_first_update(ui_lua_state.raw());
@@ -1053,7 +1054,7 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
         for (int t = 0; t < 3000; t++) {
             if (sim_state) {
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync);
             }
             if ((t + 1) % 10 == 0) {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
@@ -1332,11 +1333,12 @@ void IntegrationModes::headless(Engine& e) {
             }
         };
         // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
+        osc::lua::SyncQueue sync;
         auto play = [&](int ticks) {
             for (int t = 0; t < ticks; ++t) {
                 submit_sim_callbacks(test_callbacks, *sim_state);
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw(), sync);
                 note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);
                 pump(6);
             }

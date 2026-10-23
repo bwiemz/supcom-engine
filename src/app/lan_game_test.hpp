@@ -30,7 +30,8 @@
 // past tick 0 and play to kEndTick in step, without the first run's pause,
 // chat and speed change. Both runs log their checksum at kEndTick, which
 // must be the same (the players give no orders, so the resumed game must
-// arrive where the saved one did).
+// arrive where the saved one did). The host pings in the saved beat: the
+// resumed game's interface must hear nothing of it.
 
 #include "core/types.hpp"
 
@@ -95,6 +96,7 @@ private:
     /// The checksum at kEndTick logged; this side's copy of a save, and a
     /// resumed game's start, checked.
     void check_save(lua::LuaState& ui, const sim::SimState& sim);
+    void check_no_saved_sync(lua::LuaState& ui);
     void fail(std::string why);
 
     bool host_;
@@ -107,6 +109,7 @@ private:
     bool self_destruct_failed_ = false;
     std::string save_as_;           ///< the host saves the game as this (none: no save)
     bool save_sent_ = false;        ///< it asked to
+    bool pinged_ = false;           ///< the host's ping in the saved beat went
     std::string resume_;            ///< the host's lobby resumes this saved game (none: new)
     std::optional<u32> first_tick_; ///< the first tick seen in the game
 
