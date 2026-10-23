@@ -830,6 +830,13 @@ static i32 attach_bone_index(const sim::Entity* parent, lua_State* L, int arg) {
     return resolve_bone_index(parent, L, arg);
 }
 
+// Moho's Unit::AttachTo and Unit::DetachFrom.
+static void set_attached(sim::Entity& e, bool attached) {
+    if (e.is_unit() && static_cast<sim::Unit&>(e).is_mobile()) {
+        static_cast<sim::Unit&>(e).set_unit_state("Attached", attached);
+    }
+}
+
 static int entity_AttachTo(lua_State* L) {
     auto* self = check_entity(L); if (!self) return 0;
     auto* parent = check_entity_arg(L, 2); if (!parent) return 0;
@@ -844,6 +851,7 @@ static int entity_AttachTo(lua_State* L) {
     }
     self->set_parent(parent->entity_id(), bone);
     parent->add_child(self->entity_id(), bone);
+    set_attached(*self, true);
     return 0;
 }
 
@@ -862,6 +870,7 @@ static int entity_AttachBoneTo(lua_State* L) {
     }
     self->set_parent(parent->entity_id(), parent_bone, self_bone);
     parent->add_child(self->entity_id(), parent_bone);
+    set_attached(*self, true);
     return 0;
 }
 
@@ -916,6 +925,7 @@ static int entity_DetachFrom(lua_State* L) {
             if (parent) parent->remove_child(self->entity_id());
         }
         self->clear_parent();
+        set_attached(*self, false);
         released(*self, L);
     }
     return 0;
@@ -939,6 +949,7 @@ static int entity_DetachAll(lua_State* L) {
         auto* child = sim->entity_registry().find(c.entity_id);
         if (child) {
             child->clear_parent();
+            set_attached(*child, false);
             released(*child, L);
         }
         self->remove_child(c.entity_id);
