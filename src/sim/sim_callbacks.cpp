@@ -345,6 +345,7 @@ namespace {
 /// the playable area, then the global OnPostLoad(); a script error in
 /// either is logged, as Moho's Warnf.
 void post_load(SimState& sim, lua_State* L) {
+    sim.end_pause();
     sim.note_post_load();
     const auto call = [&](const char* what, int args) {
         if (lua_pcall(L, args, 0, 0) != 0) {
