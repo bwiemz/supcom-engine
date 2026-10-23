@@ -299,6 +299,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
         std::vector<MeshInstance> instances;
         std::vector<InstanceBones> bones;
         u32 bones_per_instance = 0; // the most any of its instances has
+        u32 first_entity = 0;
     };
     // Opaque instances (0), then blended ones (1): a build technique's or a
     // build effect's, which blend by their own alpha with pipelines of their
@@ -463,6 +464,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
             const bool reflected = entity.is_unit && !entity.is_wreckage && !remembered;
             auto& gd =
                 mesh_groups[is_blended_technique(gpu->technique) ? 1 : 0][reflected ? 1 : 0][gpu];
+            if (gd.instances.empty()) gd.first_entity = entity.id;
             gd.instances.push_back(inst);
 
             // Track bone data for this instance (a prop has a pose only when
@@ -530,8 +532,17 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 
     mesh_groups_.clear();
     for (int fading = 0; fading < 2; ++fading)
-        for (int reflected = 0; reflected < 2; ++reflected)
-            for (auto& [gpu, gd] : mesh_groups[fading][reflected]) {
+        for (int reflected = 0; reflected < 2; ++reflected) {
+            auto& groups = mesh_groups[fading][reflected];
+            std::vector<const GPUMesh*> ordered;
+            ordered.reserve(groups.size());
+            for (const auto& [gpu, gd] : groups) ordered.push_back(gpu);
+            // Equal SortOrder groups follow entity order, independent of GPU addresses.
+            std::sort(ordered.begin(), ordered.end(), [&](const GPUMesh* a, const GPUMesh* b) {
+                return groups.at(a).first_entity < groups.at(b).first_entity;
+            });
+            for (const auto* gpu : ordered) {
+                auto& gd = groups.at(gpu);
                 const u32 count =
                     std::min(static_cast<u32>(gd.instances.size()), max_instances - offset);
                 std::memcpy(mesh_instances + offset, gd.instances.data(),
@@ -635,6 +646,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache, lua
 
                 offset += count;
             }
+        }
     // Moho draws its mesh batches by their blueprint's SortOrder, smallest
     // first (MeshBatchKeyLess; M211k): a shield's impacts (500), its fill
     // (999), then the shield (1000). Stable: the opaque groups still come

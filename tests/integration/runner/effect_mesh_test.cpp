@@ -39,6 +39,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -733,6 +734,58 @@ void test_effect_meshes(TestContext& ctx) {
             side_draws > 0,
             fmt::format("Test 12: seen from close by its side, the dome draws ({} NukeUEF draws)",
                         side_draws));
+    }
+
+    // Equal SortOrder ties follow the first entity, for both GPU address orders.
+    {
+        Look cloud;
+        cloud.shader = "Cloud";
+        const std::string first_bp = fmt::format("{}/{}_plate", kRoot, kPlateBlueprints[next_bp]);
+        stand(cloud, 1.0f, 440.0f, 440.0f);
+        t.check(
+            static_cast<bool>(ctx.lua_state.do_string("__osc_order_first = __osc_last_plate\n")),
+            "entity order: keep the first entity");
+        cloud.albedo = "albedo_cube.dds";
+        const std::string second_bp = fmt::format("{}/{}_plate", kRoot, kPlateBlueprints[next_bp]);
+        stand(cloud, 1.0f, 448.0f, 440.0f);
+        t.check(
+            static_cast<bool>(ctx.lua_state.do_string("__osc_order_second = __osc_last_plate\n")),
+            "entity order: keep the second entity");
+        (void)frame(444.0f, 440.0f);
+        std::array<const renderer::GPUMesh*, 2> meshes{};
+        for (const auto& group : r.unit_renderer().mesh_groups()) {
+            const auto& instance = r.unit_renderer().mesh_instances()[group.instance_offset];
+            if (instance.model[12] == 440.0f) meshes[0] = group.mesh;
+            if (instance.model[12] == 448.0f) meshes[1] = group.mesh;
+        }
+        t.check(meshes[0] && meshes[1], "entity order: two distinct translucent mesh groups");
+        if (meshes[0] && meshes[1]) {
+            t.check(meshes[0] != meshes[1] && meshes[0]->sort_order == meshes[1]->sort_order,
+                    "entity order: distinct GPU meshes have equal SortOrder");
+            const bool first_lower = std::less<const renderer::GPUMesh*>{}(meshes[0], meshes[1]);
+            for (bool reverse : {false, true}) {
+                const auto changed = ctx.lua_state.do_string(
+                    fmt::format("__osc_order_first:SetMesh('{}', true)\n"
+                                "__osc_order_second:SetMesh('{}', true)\n",
+                                reverse ? second_bp : first_bp, reverse ? first_bp : second_bp));
+                t.check(static_cast<bool>(changed), "entity order: assign the mesh pair");
+                ctx.sim.tick();
+                (void)frame(444.0f, 440.0f);
+                std::vector<f32> positions;
+                for (const auto& group : r.unit_renderer().mesh_groups()) {
+                    if (group.mesh != meshes[0] && group.mesh != meshes[1]) continue;
+                    positions.push_back(
+                        r.unit_renderer().mesh_instances()[group.instance_offset].model[12]);
+                }
+                t.check(positions == std::vector<f32>{440.0f, 448.0f},
+                        fmt::format("entity order: equal SortOrder draws first entity first "
+                                    "({} GPU address first)",
+                                    first_lower != reverse ? "lower" : "higher") +
+                            fmt::format("; {} groups, x = {} then {}", positions.size(),
+                                        positions.empty() ? -1.0f : positions[0],
+                                        positions.size() < 2 ? -1.0f : positions[1]));
+            }
+        }
     }
 
     spdlog::info("Effect mesh test: {}/{} passed", t.pass, t.pass + t.fail);
