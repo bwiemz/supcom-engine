@@ -1406,6 +1406,30 @@ TEST_CASE("A unit's request keeps what it was granted, and works at the share of
     }
 }
 
+TEST_CASE("An army's store is a float, as Moho's economy holds it", "[economy]") {
+    // The original game's stallstart probe (2026-10-23, "midbuild"): a
+    // factory asking 4 mass and 19 energy a second beside a Monkeylord's 250
+    // energy upkeep, on 20 energy and 1 mass a second, 277 energy stored.
+    // The store runs dry on the twelfth tick, granting 0.189592 of what was
+    // asked, and the mass store reads 647.50 five ticks later. A double
+    // store gave 0.189591 and 647.51.
+    Economy e(1.0, 20.0);
+    e.brain.set_stored_resources(650.5, 277.0);
+    e.builder->economy().consumption_active = true;
+    e.builder->economy().consumption_mass = 4.0;
+    e.builder->economy().consumption_energy = 19.0;
+    e.upkeep->economy().maintenance_active = true;
+    e.upkeep->economy().energy_maintenance_override = 250.0;
+    for (int tick = 0; tick < 12; ++tick) {
+        economy_tick(e.brain, e.registry, 0.1);
+    }
+    CHECK(e.brain.grant_ratios().dual == Catch::Approx(0.1895923).epsilon(0).margin(3e-7));
+    for (int tick = 0; tick < 4; ++tick) {
+        economy_tick(e.brain, e.registry, 0.1);
+    }
+    CHECK(e.brain.economy().mass.stored == Catch::Approx(647.50).epsilon(0).margin(0.005));
+}
+
 TEST_CASE("An army sums what its requests are short of in floats, as Moho's economy does",
           "[economy]") {
     const float short_of = GENERATE(6e-8f, 1e-6f);
