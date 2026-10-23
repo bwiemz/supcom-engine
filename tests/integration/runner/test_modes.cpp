@@ -18,6 +18,7 @@
 #include "command_sources_test.hpp"
 #include "edit_text_test.hpp"
 #include "hidpi_test.hpp"
+#include "unitview_sweep_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -309,7 +310,7 @@ constexpr const char* kOwnModes[] = {
     "--session-command-test", "--keyboard-test",        "--camera-moves-test", "--window-test",
     "--options-test",         "--lan-screen-test",      "--edit-text-test",    "--focus-army-test",
     "--combo-click-test",     "--command-sources-test", "--world-views-test",  "--hidpi-test",
-    "--dispatch-matrix-test",
+    "--dispatch-matrix-test", "--unitview-sweep-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -490,6 +491,8 @@ void IntegrationModes::print_usage() const {
               << "  --window-test      The window's side of FA's video options (M217h)\n"
               << "  --options-test     FA's options through the console's variables (M217i)\n"
               << "  --world-views-test The main world views over the UI, one and split\n"
+              << "  --unitview-sweep-test Every unit's build button hovered: the unit view's\n"
+              << "                     detail and the rollover, with fixtures/armament_detail.prefs\n"
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
@@ -555,7 +558,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
                        has("--session-command-test") || has("--keyboard-test") ||
                        has("--camera-moves-test") || has("--window-test") ||
-                       has("--options-test") || has("--world-views-test") || has("--hidpi-test");
+                       has("--options-test") || has("--world-views-test") || has("--hidpi-test") ||
+                       has("--unitview-sweep-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -1295,6 +1299,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool options_test = has("--options-test");
     const bool world_views_test = has("--world-views-test");
     const bool hidpi_test = has("--hidpi-test");
+    const bool unitview_sweep_test = has("--unitview-sweep-test");
     const bool dualstate_test = has("--dualstate-test");
     const bool construction_test = has("--construction-test");
     const bool phase2_test = has("--phase2-test");
@@ -1302,7 +1307,8 @@ void IntegrationModes::headless(Engine& e) {
     const bool phase4_test = has("--phase4-test");
     const bool phase5_test = has("--phase5-test");
     if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test ||
-         camera_moves_test || window_test || options_test || world_views_test || hidpi_test) &&
+         camera_moves_test || window_test || options_test || world_views_test || hidpi_test ||
+         unitview_sweep_test) &&
         !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
@@ -1393,6 +1399,7 @@ void IntegrationModes::headless(Engine& e) {
         if (victory_test) {
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }
+        if (unitview_sweep_test) osc::test::test_unitview_sweep(ui_test_ctx, pump, play);
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);

@@ -1,0 +1,15 @@
+-- A player profile with FAF's armament detail on (gui_render_armament_detail):
+-- the unit view's detail then lists each weapon's ranges as a build button is
+-- hovered. Retail has no such option and ignores it.
+profile = {
+    current = 1,
+    profiles = {
+        [1] = {
+            Name = "Player",
+            MenuTutorialPrompt = true,
+            options = {
+                gui_render_armament_detail = 1,
+            },
+        },
+    },
+}
