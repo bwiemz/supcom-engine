@@ -3942,14 +3942,16 @@ static int l_SetArmyOutOfGame(lua_State* L) {
     return 0;
 }
 
+// Moho's cfunc_SetArmyEconomyL banks both amounts, as GiveResource: income at the next economy.
 static int l_SetArmyEconomy(lua_State* L) {
     auto* sim = get_sim(L);
     i32 army = resolve_army(L, 1, sim);
     f64 mass = luaL_checknumber(L, 2);
     f64 energy = luaL_checknumber(L, 3);
-    if (sim) {
-        auto* brain = sim->get_army(army);
-        if (brain) brain->set_stored_resources(mass, energy);
+    auto* brain = sim ? sim->get_army(army) : nullptr;
+    if (brain) {
+        brain->bank(mass / sim::SimState::SECONDS_PER_TICK,
+                    energy / sim::SimState::SECONDS_PER_TICK);
     }
     return 0;
 }
