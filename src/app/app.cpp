@@ -239,9 +239,7 @@ void App::deliver_network_save_notices() {
 }
 
 void App::post_load() {
-    sim::SimCallbackEntry entry;
-    entry.func_name = sim::kPostLoadCallback;
-    sim_state->submit_callback(std::move(entry));
+    sim_state->schedule_post_load();
     if (world_ui_after_post_load) world_ui_after_post_load = sim_state->post_loads_run();
     spdlog::info("Saved game: its post-load follows tick {}", sim_state->tick_count());
 }
