@@ -187,9 +187,14 @@ static int weapon_SetTargetEntity(lua_State* L) {
     auto* w = check_weapon(L);
     if (!w) return 0;
     auto* target = check_entity(L, 2);
+    auto* sim = get_sim(L);
+    if (target && !target->destroyed() && !w->can_attack(*target, sim)) {
+        return 0;
+    }
     w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : 0);
-    if (auto* sim = get_sim(L); sim && w->aim_spot_target != w->target_entity_id)
+    if (sim && w->aim_spot_target != w->target_entity_id) {
         w->pick_aim_spot(sim->entity_registry(), sim);
+    }
     return 0;
 }
 
