@@ -797,7 +797,7 @@ public:
     // Economy event registry
     EconomyEventRegistry& economy_events() { return economy_events_; }
     /// Moho's CEconomyEvent::ProcessTick, in its unit's stage-A step.
-    void step_economy_events(const Unit& unit);
+    void step_economy_events(Unit& unit);
 
     // Resource deposits
     void add_resource_deposit(const ResourceDeposit& d) { resource_deposits_.push_back(d); }

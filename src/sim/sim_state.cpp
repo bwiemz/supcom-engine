@@ -1911,6 +1911,8 @@ void SimState::advance_tick() {
             economy.produced_energy = 0;
             economy.reclaimed_mass = 0;
             economy.reclaimed_energy = 0;
+            economy.spent_mass = 0;
+            economy.spent_energy = 0;
         }
     });
     // Each army's tick begins by destroying its spent platoons (Moho's CArmyImpl::OnTick).
@@ -2163,7 +2165,7 @@ void SimState::request_economy_events(size_t index) {
     });
 }
 
-void SimState::step_economy_events(const Unit& unit) {
+void SimState::step_economy_events(Unit& unit) {
     const auto first = std::lower_bound(
         stepping_events_.begin(), stepping_events_.end(), unit.entity_id(),
         [](const std::pair<u32, EconomyEvent*>& p, u32 id) { return p.first < id; });
@@ -2173,8 +2175,12 @@ void SimState::step_economy_events(const Unit& unit) {
             continue;
         }
         // Like unit task requests, an event without an army works in full.
-        if (get_army(unit.army()) && !evt.request().take()) {
-            continue;
+        if (get_army(unit.army())) {
+            const std::optional<EconValue> taken = evt.request().take();
+            if (!taken) {
+                continue;
+            }
+            unit.economy().spend(*taken, SECONDS_PER_TICK);
         }
         evt.step();
         if (evt.callback_ref() < 0 || unit.lua_table_ref() < 0) {

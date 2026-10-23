@@ -354,7 +354,7 @@ TEST_CASE("GetEconData reports the production and reclaim banked this tick",
     econ.consumption_active = true;
     econ.consumption_energy = 10;
     econ.natural_producer = natural;
-    econ.granted = grant;
+    econ.consumption_request.granted.energy = static_cast<osc::f32>(grant);
     econ.reclaim_mass = 2;
     econ.reclaim_energy = 6;
     u.bank_reclaim(w.sim.get_army(0));
@@ -367,7 +367,7 @@ TEST_CASE("GetEconData reports the production and reclaim banked this tick",
     econ.production_mass = 1000;
     econ.production_energy = 2000;
     econ.consumption_active = false;
-    econ.granted = 1;
+    econ.consumption_request.granted.energy = 1.0f;
     econ.reclaim_mass = 50;
     econ.reclaim_energy = 60;
     osc::sim::WorldSnapshot snapshot;
@@ -406,6 +406,31 @@ TEST_CASE("GetEconData reports the production and reclaim banked this tick",
     CHECK(stopped->energy_produced == 0);
 }
 
+TEST_CASE("GetEconData reports whole units a second, as the original game's UI does",
+          "[userunit][economy]") {
+    const double rate = GENERATE(0.96, 1.44, 9.6);
+    CAPTURE(rate);
+    UiWorld w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    auto& econ = w.unit().economy();
+    econ.spent_mass = rate;
+    econ.spent_energy = rate * 10.0;
+    econ.produced_mass = rate;
+    econ.produced_energy = rate * 10.0;
+    econ.consumption_mass = rate;
+    econ.consumption_energy = rate * 10.0;
+    auto result = w.ui.do_string("local e = units[1]:GetEconData(); return e.massConsumed, "
+                                 "e.energyConsumed, e.massProduced, e.energyProduced, "
+                                 "e.massRequested, e.energyRequested");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = w.ui.raw();
+    for (int i = -6; i <= -1; ++i) {
+        const double asked = (-i % 2 == 0) ? rate : rate * 10.0;
+        CHECK(lua_tonumber(L, i) == static_cast<int>(static_cast<osc::f32>(asked)));
+    }
+}
+
 TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     UiWorld w;
     auto& u = w.unit();
@@ -428,7 +453,7 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     u.economy().consumption_mass = 1;
     u.economy().consumption_energy = 5;
     w.sim.add_army("ARMY_1", "ARMY_1");
-    u.economy().granted = 1;
+    u.economy().consumption_request.granted = {0.1f, 0.5f};
     u.manage_resources(w.sim.get_army(0));
     // Another unit: this one's creator, the focus of its build, and the one
     // it guards.

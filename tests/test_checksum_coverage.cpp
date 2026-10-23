@@ -142,6 +142,10 @@ TEST_CASE("State that decides a unit's next move changes the sync checksum, in i
             {"banked energy production", "units", [&] { u.economy().produced_energy = 5; }},
             {"banked mass reclaim", "units", [&] { u.economy().reclaimed_mass = 2; }},
             {"banked energy reclaim", "units", [&] { u.economy().reclaimed_energy = 6; }},
+            {"mass spent", "units", [&] { u.economy().spent_mass = 1; }},
+            {"energy spent", "units", [&] { u.economy().spent_energy = 5; }},
+            {"a consumption grant held", "units",
+             [&] { u.economy().consumption_request.granted.energy = 0.5f; }},
             {"unit state", "units", [&] { u.set_unit_state("Busy", true); }},
             {"busy", "units", [&] { u.set_busy(true); }},
             {"blocked command queue", "units", [&] { u.set_block_command_queue(true); }},
@@ -440,7 +444,7 @@ TEST_CASE("Banked production and reclaim reports survive a snapshot",
     econ.production_energy = 20;
     econ.consumption_active = true;
     econ.consumption_energy = 10;
-    econ.granted = 0.25;
+    econ.consumption_request.granted.energy = 0.25f;
     econ.reclaim_mass = 2;
     econ.reclaim_energy = 6;
     u.bank_reclaim(a.get_army(0));

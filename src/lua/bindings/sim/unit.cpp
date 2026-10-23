@@ -972,7 +972,8 @@ static int unit_SetConsumptionActive(lua_State* L) {
     if (!u) return 0;
     const bool on = lua_toboolean(L, 2) != 0;
     auto& econ = u->economy();
-    econ.consumption_active = on;
+    auto* sim = get_sim(L);
+    u->set_consumption_active(on, sim ? sim->get_army(u->army()) : nullptr);
     const bool was = econ.script_consumption_active;
     econ.script_consumption_active = on;
     if (was != on) u->call_lua_method(L, on ? "OnConsumptionActive" : "OnConsumptionInActive");

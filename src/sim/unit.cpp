@@ -982,17 +982,33 @@ void Unit::update(f64 dt, SimContext& ctx) {
 }
 
 void Unit::manage_resources(ArmyBrain* army) {
-    const bool upkeep = economy_.maintenance_active && economy_.energy_maintenance_override > 0.0;
-    const bool asking = economy_.consumption_active || upkeep;
-    economy_.resource_consumed = asking ? economy_.granted : 0.0;
+    constexpr f64 dt = SimState::SECONDS_PER_TICK;
+    economy_.ask_consumption(dt);
+    EconRequest& request = economy_.consumption_request;
+    const f32 rate = request.limiting_rate();
+    const bool asking = economy_.asking();
+    economy_.resource_consumed = asking ? rate : 0.0;
+    if (asking) {
+        economy_.spend(
+            request.withdraw({request.requested.mass * rate, request.requested.energy * rate}), dt);
+    }
     holds_storage_ = producing();
     economy_.produced_mass = 0;
     economy_.produced_energy = 0;
     if (holds_storage_ && army) {
-        const f64 rate = asking && !economy_.natural_producer ? economy_.granted : 1.0;
-        economy_.produced_mass = economy_.production_mass * rate;
-        economy_.produced_energy = economy_.production_energy * rate;
+        const f64 share = economy_.natural_producer ? 1.0 : rate;
+        economy_.produced_mass = economy_.production_mass * share;
+        economy_.produced_energy = economy_.production_energy * share;
         army->bank_pending(economy_.produced_mass, economy_.produced_energy);
+    }
+}
+
+void Unit::set_consumption_active(bool on, ArmyBrain* army) {
+    economy_.consumption_active = on;
+    const EconValue& held = economy_.consumption_request.granted;
+    if (!on && army && (held.mass > 0.0f || held.energy > 0.0f)) {
+        constexpr f64 dt = SimState::SECONDS_PER_TICK;
+        army->bank(held.mass / dt, held.energy / dt);
     }
 }
 
@@ -1245,8 +1261,15 @@ void Unit::tick_silo(f64 dt, SimContext& ctx) {
     update_silo(dt, take_grant(economy_.silo_request, ctx) ? 1.0f : 0.0f, ctx.L);
 }
 
-bool Unit::take_grant(EconRequest& request, const SimContext& ctx) const {
-    return !ctx.sim || !ctx.sim->get_army(army()) || request.take();
+bool Unit::take_grant(EconRequest& request, const SimContext& ctx) {
+    if (!ctx.sim || !ctx.sim->get_army(army())) {
+        return true;
+    }
+    const std::optional<EconValue> taken = request.take();
+    if (taken) {
+        economy_.spend(*taken, SimState::SECONDS_PER_TICK);
+    }
+    return taken.has_value();
 }
 
 void Unit::tick_upkeep(f64 dt, SimContext& ctx) {

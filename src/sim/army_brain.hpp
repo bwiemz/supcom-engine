@@ -43,13 +43,15 @@ enum class BrainState : i32 {
 /// first class left. Requests wanting both resources set `dual`, bounded by
 /// the scarcer one, so a build starved of energy takes as little mass.
 struct GrantRatios {
-    f64 dual = 1.0;
-    f64 single = 1.0;
+    f32 dual = 1.0f;
+    f32 single = 1.0f;
     bool mass_limits = false; ///< mass ran short (else energy, Moho's first lane)
-    /// The share granted a request of `mass` and `energy` a second. One
-    /// asking nothing yet (an order's first tick) is taken to want both.
-    f64 of(f64 mass, f64 energy) const {
-        if (mass <= 0.0 && energy <= 0.0) return dual;
+    /// The share granted a request of `mass` and `energy`. One asking
+    /// nothing is taken to want both.
+    f32 of(f64 mass, f64 energy) const {
+        if (mass <= 0.0 && energy <= 0.0) {
+            return dual;
+        }
         return (mass_limits ? mass : energy) > 0.0 ? dual : single;
     }
 };

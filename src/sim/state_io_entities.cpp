@@ -1159,10 +1159,10 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     for (const EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
         save(w, *q);
     }
-    w.f64v(ec.granted);
+    save(w, ec.consumption_request);
     w.f64v(ec.resource_consumed);
-    w.f64v(ec.granted_mass);
-    w.f64v(ec.granted_energy);
+    w.f64v(ec.spent_mass);
+    w.f64v(ec.spent_energy);
     save_strings(w, u.categories_);
     // category_bits_: interned from categories_ (the ids are this process's)
     w.size(u.command_queue_.size());
@@ -1567,10 +1567,10 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     for (EconRequest* q : {&ec.silo_request, &ec.dock_repair_request, &ec.capture_request}) {
         load(r, *q);
     }
-    ec.granted = r.f64v();
+    load(r, ec.consumption_request);
     ec.resource_consumed = r.f64v();
-    ec.granted_mass = r.f64v();
-    ec.granted_energy = r.f64v();
+    ec.spent_mass = r.f64v();
+    ec.spent_energy = r.f64v();
     u.categories_ = load_strings<std::unordered_set<std::string>>(r);
     u.category_bits_ = {};
     for (const std::string& c : u.categories_) u.category_bits_.set(CategoryIds::intern(c));

@@ -1922,13 +1922,15 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("shieldRatio", static_cast<lua_Number>(unit->shield_ratio()));
     set_num("fuelRatio", static_cast<lua_Number>(unit->fuel_ratio()));
 
+    // Moho's rollover reports whole units a second (an int cast of each).
     const auto& econ = unit->economy();
-    set_num("massProduced", static_cast<lua_Number>(econ.mass_produced()));
-    set_num("massConsumed", static_cast<lua_Number>(econ.mass_consumed()));
-    set_num("energyProduced", static_cast<lua_Number>(econ.energy_produced()));
-    set_num("energyConsumed", static_cast<lua_Number>(econ.energy_consumed()));
-    set_num("massRequested", static_cast<lua_Number>(econ.mass_requested()));
-    set_num("energyRequested", static_cast<lua_Number>(econ.energy_requested()));
+    const auto whole = [](f64 v) { return static_cast<lua_Number>(static_cast<int>(v)); };
+    set_num("massProduced", whole(econ.mass_produced()));
+    set_num("massConsumed", whole(econ.mass_consumed()));
+    set_num("energyProduced", whole(econ.energy_produced()));
+    set_num("energyConsumed", whole(econ.energy_consumed()));
+    set_num("massRequested", whole(econ.mass_requested()));
+    set_num("energyRequested", whole(econ.energy_requested()));
 
     set_num("tacticalSiloStorageCount", static_cast<lua_Number>(unit->silo_ammo(false)));
     set_num("tacticalSiloMaxStorageCount", static_cast<lua_Number>(unit->silo_max_storage(false)));

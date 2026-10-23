@@ -701,6 +701,34 @@ TEST_CASE("An economy event a Lua thread makes takes its first step in its unit'
     CHECK(w.number("waited") == w.number("made") + 2);
 }
 
+TEST_CASE("Each SetConsumptionActive(false) a Lua thread calls banks the request's grant as the "
+          "next tick's income",
+          "[tick-phases]") {
+    const int calls = GENERATE(1, 2);
+    CAPTURE(calls);
+    Phases w;
+    w.brain("brain", 0);
+    osc::sim::ArmyBrain& army = *w.sim.get_army(0);
+    army.set_extra_storage(0.0, 1000.0);
+    army.set_stored_resources(0.0, 1000.0);
+    Unit& u = w.make("u", "tank", 1, 100.0f, 100.0f);
+    u.economy().consumption_energy = 20.0;
+    u.economy().consumption_active = true;
+    w.sim.tick();
+    REQUIRE(w.run("calls = " + std::to_string(calls) +
+                  " stopped = 0 ForkThread(function()"
+                  "   WaitTicks(2)"
+                  "   for i = 1, calls do u:SetConsumptionActive(false) end"
+                  "   stopped = GetGameTick() WaitTicks(1)"
+                  "   income = brain:GetEconomyIncome('ENERGY')"
+                  " end)"));
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("stopped") > 0);
+    CHECK(w.number("income") == Catch::Approx(2.0 * calls));
+}
+
 TEST_CASE("Reclaim is banked in the order phase", "[tick-phases]") {
     Phases w;
     w.brain("brain", 0);

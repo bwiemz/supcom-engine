@@ -229,7 +229,8 @@ TEST_CASE("GetRolloverInfo reports banked production and reclaim after a stall",
     economy.production_energy = 20.0;
     economy.production_active = true;
     economy.consumption_active = true;
-    economy.granted = 0.25;
+    economy.consumption_energy = 10.0;
+    economy.consumption_request.granted.energy = 0.25f;
     economy.reclaim_mass = 2.0;
     economy.reclaim_energy = 6.0;
     producer->bank_reclaim(w.sim.get_army(0));
@@ -240,4 +241,29 @@ TEST_CASE("GetRolloverInfo reports banked production and reclaim after a stall",
     input.set_selected({producer->entity_id()});
     CHECK(w.check("local e = GetRolloverInfo() assert(e.massProduced == 3, e.massProduced)"
                   " assert(e.energyProduced == 11, e.energyProduced)"));
+}
+
+TEST_CASE("GetRolloverInfo reports whole units a second, as Moho's does", "[ui][economy]") {
+    KillWorld w;
+    osc::lua::register_user_bindings(w.state);
+    osc::renderer::InputHandler input;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_input_handler");
+    lua_pushlightuserdata(L, &input);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    REQUIRE(w.check("worker = CreateUnit('tank', 1, 0, 0, 0)"));
+    auto* worker = w.unit("worker");
+    REQUIRE(worker);
+    auto& economy = worker->economy();
+    economy.spent_mass = 1.44;
+    economy.spent_energy = 14.4;
+    economy.produced_mass = 0.96;
+    economy.produced_energy = 9.6;
+    economy.consumption_mass = 2.5;
+    economy.consumption_energy = 30.75;
+    input.set_selected({worker->entity_id()});
+    CHECK(w.check("local e = GetRolloverInfo()"
+                  " assert(e.massConsumed == 1 and e.energyConsumed == 14, e.energyConsumed)"
+                  " assert(e.massProduced == 0 and e.energyProduced == 9, e.energyProduced)"
+                  " assert(e.massRequested == 2 and e.energyRequested == 30, e.energyRequested)"));
 }
