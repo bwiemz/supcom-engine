@@ -106,4 +106,15 @@ CartographicMeshPasses cartographic_mesh_passes(CartographicTechnique technique)
     return p;
 }
 
+const char*
+cartographic_pipeline_role(VkPipeline pipeline,
+                           const std::array<VkPipeline, kCartographicMeshStates>& pipelines) {
+    static constexpr std::array<const char*, kCartographicMeshStates> roles = {
+        "cartographic:UnitColour", "cartographic:UnitGlow", "cartographic:Opaque",
+        "cartographic:OpaqueAlpha", "cartographic:Shield"};
+    for (size_t i = 0; i < pipelines.size(); ++i)
+        if (pipeline == pipelines[i]) return roles[i];
+    return "unknown";
+}
+
 } // namespace osc::renderer

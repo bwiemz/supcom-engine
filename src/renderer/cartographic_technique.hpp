@@ -8,6 +8,8 @@
 
 #include "core/types.hpp"
 
+#include <vulkan/vulkan.h>
+
 #include <array>
 #include <string>
 
@@ -50,5 +52,10 @@ struct CartographicMeshPasses {
                                                   CartographicMeshState::Opaque};
 };
 CartographicMeshPasses cartographic_mesh_passes(CartographicTechnique technique);
+
+/// The role of the pipeline actually selected for a cartographic draw.
+const char*
+cartographic_pipeline_role(VkPipeline pipeline,
+                           const std::array<VkPipeline, kCartographicMeshStates>& pipelines);
 
 } // namespace osc::renderer

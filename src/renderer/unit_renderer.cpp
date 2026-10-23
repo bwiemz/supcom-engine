@@ -814,6 +814,12 @@ void UnitRenderer::dump(std::ostream& out) const {
                 for (u32 k = 0; k < g.bones_per_instance * 16; ++k) pose += fmt::format("{:.4f},", b[k]);
                 line += fmt::format(" | bones {} {:016x}", g.bones_per_instance, fnv(pose));
             }
+            if (!g.dump_dispatch.empty()) {
+                line += fmt::format(" | instance={}", i);
+                auto dispatch = g.dump_dispatch;
+                std::sort(dispatch.begin(), dispatch.end());
+                for (const auto& decision : dispatch) line += " | " + decision;
+            }
             lines.push_back(std::move(line));
         }
     }

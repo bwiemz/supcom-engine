@@ -32,6 +32,7 @@ public:
         VkDescriptorSet bones = VK_NULL_HANDLE;           ///< the frame's bone SSBO
         VkDescriptorSet albedo_fallback = VK_NULL_HANDLE; ///< for a mesh without one
         u32 lane = 0;                                     ///< the lane by graphics fidelity (M211n)
+        bool capture_dispatch = false;                    ///< requested render dump
         bool strategic = false;                           ///< icons replace the meshes and cubes
     };
     /// The terrain (R its depth over 128, G 1), then the meshes and the

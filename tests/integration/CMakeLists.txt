@@ -34,6 +34,7 @@ add_executable(osc_integration
     runner/bloom_test.cpp
     runner/build_shader_test.cpp
     runner/effect_mesh_test.cpp
+    runner/dispatch_matrix_test.cpp
     runner/skinning_test.cpp
     runner/prop_material_test.cpp
     runner/clipped_shadow_test.cpp

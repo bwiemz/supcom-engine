@@ -20,6 +20,48 @@ extern "C" {
 
 namespace osc::renderer {
 
+const char* mesh_technique_name(MeshTechnique technique) {
+    switch (technique) {
+    case MeshTechnique::Unit: return "Unit";
+    case MeshTechnique::Aeon: return "Aeon";
+    case MeshTechnique::Insect: return "Insect";
+    case MeshTechnique::Metal: return "Metal";
+    case MeshTechnique::Seraphim: return "Seraphim";
+    case MeshTechnique::UEFBuild: return "UEFBuild";
+    case MeshTechnique::AeonBuild: return "AeonBuild";
+    case MeshTechnique::CybranBuild: return "CybranBuild";
+    case MeshTechnique::SeraphimBuild: return "SeraphimBuild";
+    case MeshTechnique::NormalMappedAlpha: return "NormalMappedAlpha";
+    case MeshTechnique::NormalMappedGlow: return "NormalMappedGlow";
+    case MeshTechnique::AlphaFade: return "AlphaFade";
+    case MeshTechnique::UEFBuildCube: return "UEFBuildCube";
+    case MeshTechnique::AeonBuildPuddle: return "AeonBuildPuddle";
+    case MeshTechnique::BlackenedNormalMappedAlpha: return "BlackenedNormalMappedAlpha";
+    case MeshTechnique::VertexNormal: return "VertexNormal";
+    case MeshTechnique::NormalMappedTerrain: return "NormalMappedTerrain";
+    case MeshTechnique::UndulatingNormalMappedAlpha: return "UndulatingNormalMappedAlpha";
+    case MeshTechnique::ShieldUEF: return "ShieldUEF";
+    case MeshTechnique::ShieldCybran: return "ShieldCybran";
+    case MeshTechnique::ShieldAeon: return "ShieldAeon";
+    case MeshTechnique::ShieldSeraphim: return "ShieldSeraphim";
+    case MeshTechnique::ShieldFill: return "ShieldFill";
+    case MeshTechnique::ShieldImpact: return "ShieldImpact";
+    case MeshTechnique::CybranShieldImpact: return "CybranShieldImpact";
+    case MeshTechnique::PhaseShield: return "PhaseShield";
+    case MeshTechnique::SeraphimPersonalShield: return "SeraphimPersonalShield";
+    case MeshTechnique::UnitPlace: return "UnitPlace";
+    case MeshTechnique::CommandFeedback: return "CommandFeedback";
+    case MeshTechnique::CommandFeedback2: return "CommandFeedback2";
+    case MeshTechnique::RallyPoint: return "RallyPoint";
+    case MeshTechnique::MapImager: return "MapImager";
+    case MeshTechnique::Effect: return "Effect";
+    case MeshTechnique::Cloud: return "Cloud";
+    case MeshTechnique::OuterCloud: return "OuterCloud";
+    case MeshTechnique::NukeUEF: return "NukeUEF";
+    }
+    return "Unknown";
+}
+
 namespace {
 /// The mesh's cartographic technique at each fidelity, by its resolved shader.
 void set_cartographic(GPUMesh& mesh, const std::string& shader) {

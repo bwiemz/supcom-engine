@@ -53,6 +53,7 @@ extern "C" {
 
 #include <cstdio>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -308,6 +309,7 @@ constexpr const char* kOwnModes[] = {
     "--session-command-test", "--keyboard-test",        "--camera-moves-test", "--window-test",
     "--options-test",         "--lan-screen-test",      "--edit-text-test",    "--focus-army-test",
     "--combo-click-test",     "--command-sources-test", "--world-views-test",  "--hidpi-test",
+    "--dispatch-matrix-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -394,6 +396,7 @@ void IntegrationModes::print_usage() const {
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
               << "  --bloom-test       FA's bloom, from the glow in the frame's alpha\n"
               << "  --build-shader-test FA's build shaders, on units under construction\n"
+              << "  --dispatch-matrix-test All mesh techniques, lanes and views (OSC_DISPATCH_MATRIX file)\n"
               << "  --effect-mesh-test FA's effect meshes (builds, the nuke), shader names, burnt trees\n"
               << "  --skinning-test    Rigid skinning and hidden bones\n"
               << "  --prop-material-test The props' own techniques\n"
@@ -796,6 +799,7 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
 }
 
 void IntegrationModes::frame_view(Engine& e, app::Frame& frame) {
+    if (!render_dump_path_.empty()) frame.renderer.set_record_dispatch(true);
     if (mouse_scene_ && !mouse_scene_spawned_ && e.sim_state->tick_count() >= 1) {
         mouse_scene_spawned_ = true;
         if (!run_sim_lua(e, R"(
@@ -821,7 +825,14 @@ void IntegrationModes::frame_rendered(Engine& e, app::Frame& frame) {
     render_dump_->on_frame(
         *e.sim_state, [&](const char* code) { return run_sim_lua(e, code); },
         [&](const std::vector<u32>& ids) { frame.input.set_selected({ids.begin(), ids.end()}); },
-        [&](std::ostream& out) { frame.renderer.dump_frame(out); });
+        [&](std::ostream& out) {
+            std::ostringstream dump;
+            frame.renderer.dump_frame(dump);
+            const std::string text = dump.str();
+            if (text.find("technique=") == std::string::npos)
+                osc::test_status::fail("[FAIL] render-dump: no mesh dispatch records");
+            out << text;
+        });
 }
 
 bool IntegrationModes::frames_done() const {
@@ -1265,6 +1276,7 @@ void IntegrationModes::headless(Engine& e) {
     register_test_helpers(sim_lua_state->raw(), sim_state->moho_pathing());
     const bool have_map = !e.map_path.empty();
 
+    if (has("--dispatch-matrix-test") && have_map) test_dispatch_matrix(test_ctx, ui_test_ctx);
     for (const Mode& m : kModesBefore)
         if (has(m.flag) && have_map) m.run(m.ui ? ui_test_ctx : test_ctx);
     const auto& map_path = e.map_path;

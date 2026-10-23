@@ -162,6 +162,8 @@ public:
     /// quads, emitter origins -- as sorted text lines, so two runs (or two
     /// implementations) can be compared exactly.
     void dump_frame(std::ostream& out) const;
+    /// Opt in before drawing to include mesh dispatch decisions in frame dumps.
+    void set_record_dispatch(bool record);
 
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during the loading screen and front end, when there is no world.
@@ -1007,6 +1009,10 @@ private:
     std::string system_cursor_key_; ///< the one set now ("" none)
     bool system_cursor_set_ = false;
     bool offscreen_ = false;
+    bool record_dispatch_ = false;
+    std::vector<std::string> dump_views_;
+    void clear_dispatch();
+    void capture_view_dispatch(u32 view);
     vfs::VirtualFileSystem* vfs_ = nullptr; ///< where the cursor's images are read
     WaterRenderer water_renderer_;
     SkyRenderer sky_renderer_; // the map's sky dome (M210b)
@@ -1264,11 +1270,13 @@ private:
     /// End the scene pass open, copy the frame (copy_refraction), and go on
     /// drawing in `next`, one of the scene's passes that load (M214d).
     void copy_and_continue(VkCommandBuffer cmd, VkRenderPass next);
+    /// The role of the pipeline actually selected for a world mesh draw.
+    const char* mesh_pipeline_role(VkPipeline pipeline) const;
     /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
     /// before and after the water, or the units in its reflection.
-    /// Moho's mesh stages: before the water (All on a map without one),
-    /// after it, into its reflection, and after the effects above it, the
-    /// shields' (M211k).
+    /// Moho's mesh stages: before the water, after it, into its reflection,
+    /// and after the effects above it, the shields' (M211k). Dry maps use
+    /// the same stages.
     enum class MeshPass { All, BeforeWater, AfterWater, Reflection, AfterEffects };
     /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
     /// (for the reflection, already mirrored).

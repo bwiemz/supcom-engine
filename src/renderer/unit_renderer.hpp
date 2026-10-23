@@ -99,6 +99,8 @@ struct MeshDrawGroup {
     /// a unit's mesh instance reflected, and clears any other entity's.
     bool reflected = false;
     bool ghost = false;
+    // Explicit dump recording collects decisions at the draw sites.
+    mutable std::vector<std::string> dump_dispatch;
 };
 
 inline MeshTechnique drawn_technique(const MeshDrawGroup& group) {

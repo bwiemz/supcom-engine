@@ -45,6 +45,7 @@ extern "C" {
 #include <cstring>
 #include <filesystem>
 #include <ostream>
+#include <sstream>
 #include <unordered_map>
 
 /// Log a Vulkan/VMA error with file and line context.
@@ -1011,6 +1012,7 @@ void Renderer::record_shadow_pass(u32 fi, const std::array<f32, 16>& view_proj) 
         casters.bones = bone_ds_[fi];
         casters.albedo_fallback = texture_cache_.fallback_descriptor();
         casters.lane = static_cast<u32>(fidelity());
+        casters.capture_dispatch = record_dispatch_;
         casters.strategic = strategic_icon_renderer_.is_strategic_zoom();
         shadow_casters_.record(cmd_, light_vp, casters);
     }
@@ -1569,6 +1571,7 @@ void Renderer::inject_map_border(lua_State* L, const std::vector<std::string>& m
 }
 
 void Renderer::clear_scene() {
+    clear_dispatch();
     vkDeviceWaitIdle(device_);
     feedback_blips_.clear();         // the old world's order marks
     range_blueprints_.clear();       // read again from the next UI state
@@ -2201,6 +2204,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     cartographic_view_.reset(); // until a minimap view draws it
     update_frame_scene(fi, vp, frustum, view, events, ghost, L, ui_registry, selected_ids);
 
+    if (record_dispatch_) clear_dispatch();
     // Record command buffer
     begin_commands(fi);
     gpu_queries_.begin(cmd_, fi, frame_sequence_ + 1);
@@ -2225,6 +2229,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     const f32 ticks = static_cast<f32>(view.time());
     record_view(fi, vp, frustum, ticks, false);
+    capture_view_dispatch(0);
     std::vector<ScreenLayers> layers{{view_area_, overlay_renderer_.drawn()}};
 
     // Each view draws through its own camera (CUIWorldView::GetCamera)
@@ -2236,6 +2241,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         update_view_units(other, frustum2, view, ghost, L, selected_ids);
         update_view_effects(other, vp2, frustum2, view, events, ghost, L, selected_ids, false);
         record_view(other, vp2, frustum2, ticks, true);
+        capture_view_dispatch(1);
         layers.push_back({view_area_, overlay_renderer_.drawn()});
         set_frame_slot(fi);
         use_view(views.front());
@@ -2578,6 +2584,33 @@ Renderer::VramUsage Renderer::vram_usage() const {
     return usage;
 }
 
+static void clear_group_dispatch(const UnitRenderer& units) {
+    for (const auto& group : units.mesh_groups()) group.dump_dispatch.clear();
+}
+
+void Renderer::clear_dispatch() {
+    dump_views_.clear();
+    clear_group_dispatch(unit_renderer_);
+    clear_group_dispatch(minimap_units_);
+}
+
+void Renderer::set_record_dispatch(bool record) {
+    record_dispatch_ = record;
+    if (!record) clear_dispatch();
+}
+
+void Renderer::capture_view_dispatch(u32 view) {
+    if (!record_dispatch_) return;
+    // The next view replaces the groups; capture while their buffer slot still agrees.
+    std::ostringstream dump;
+    unit_renderer_.dump(dump);
+    std::istringstream input(dump.str());
+    std::string captured;
+    for (std::string line; std::getline(input, line);)
+        captured += fmt::format("{} | view={}\n", line, view);
+    dump_views_.push_back(std::move(captured));
+}
+
 void Renderer::dump_frame(std::ostream& out) const {
     auto quad_line = [](const UIInstance& q) {
         return fmt::format("{:.3f} {:.3f} {:.3f} {:.3f} | {:.4f} {:.4f} {:.4f} {:.4f} | "
@@ -2604,7 +2637,16 @@ void Renderer::dump_frame(std::ostream& out) const {
     };
 
     out << "[units]\n";
-    unit_renderer_.dump(out);
+    if (record_dispatch_) {
+        for (const auto& view : dump_views_) out << view;
+    } else unit_renderer_.dump(out);
+    if (minimap_meshes_gathered_) {
+        out << "[minimap-units]\n";
+        std::ostringstream dump;
+        minimap_units_.dump(dump);
+        std::istringstream input(dump.str());
+        for (std::string line; std::getline(input, line);) out << line << " | view=minimap\n";
+    }
     section("overlay", quads(overlay_renderer_.quads()));
     {
         // Each icon with its texture, in draw order: the order is Moho's
@@ -2668,6 +2710,22 @@ void Renderer::dump_frame(std::ostream& out) const {
                                        e.seen ? "seen" : "unseen"));
     }
     section("emitters", std::move(emitters));
+}
+
+const char* Renderer::mesh_pipeline_role(VkPipeline pipeline) const {
+    if (pipeline == mesh_pipeline_) return "mesh";
+    if (pipeline == mesh_fade_pipeline_) return "fade";
+    if (pipeline == mesh_overlay_pipeline_) return "overlay";
+    if (pipeline == mesh_cube_pipeline_) return "cube";
+    if (pipeline == mesh_outer_cloud_pipeline_) return "outer_cloud";
+    if (pipeline == mesh_feedback_pipeline_) return "feedback";
+    if (pipeline == mesh_glow_pipeline_) return "glow";
+    static constexpr std::array<const char*, 6> shields = {
+        "shield:Blend",   "shield:BlendUnculled", "shield:AddRGB",
+        "shield:AddRGBA", "shield:Fill",          "shield:BlendDepthWrite"};
+    for (size_t i = 0; i < shield_pipelines_.size(); ++i)
+        if (pipeline == shield_pipelines_[i]) return shields[i];
+    return "unknown";
 }
 
 void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp,
@@ -2737,6 +2795,7 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
     }
 
     VkPipeline bound = mesh_pipeline_;
+    u32 draw_order = 0;
     for (auto& group : unit_renderer_.mesh_groups()) {
         if (!group.mesh || group.instance_count == 0) continue;
         // Moho's buckets (M213b): a technique's render stage puts it
@@ -2867,6 +2926,23 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                 sizeof(mesh_pc), &mesh_pc);
             vkc::draw_indexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
+            if (record_dispatch_) {
+                const char* stage_name = "all";
+                switch (stage) {
+                case MeshPass::All: break;
+                case MeshPass::BeforeWater: stage_name = "pre-water"; break;
+                case MeshPass::AfterWater: stage_name = "post-water"; break;
+                case MeshPass::AfterEffects: stage_name = "post-effect"; break;
+                case MeshPass::Reflection: stage_name = "reflection"; break;
+                }
+                group.dump_dispatch.push_back(fmt::format(
+                    "technique={} stage={} pass={} pipeline={} drawn={} lane={} shader_id={} "
+                    "shadow={} bucket={} order={}",
+                    mesh_technique_name(technique), stage_name, mesh_pc.pass,
+                    mesh_pipeline_role(passes[pass]), mesh_technique_name(drawn), mesh_pc.lane,
+                    mesh_pc.technique, mesh_pc.shadow_mode, group.fading ? "fading" : "opaque",
+                    draw_order++));
+            }
             if (stage != MeshPass::Reflection && mesh_pc.technique < mesh_draws_.size())
                 ++mesh_draws_[mesh_pc.technique];
         }
@@ -2949,6 +3025,7 @@ void Renderer::draw_cartographic_groups(
     vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0,
                               static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
     VkPipeline bound = VK_NULL_HANDLE;
+    u32 draw_order = 0;
     const int lane = std::clamp(fidelity(), 0, 2);
     for (const auto& group : units.mesh_groups()) {
         if (!group.mesh || group.instance_count == 0) continue;
@@ -2957,7 +3034,19 @@ void Renderer::draw_cartographic_groups(
             group.ghost ? cartographic_technique("UnitPlace", lane)
                         : group.mesh->cartographic[static_cast<size_t>(lane)];
         const CartographicMeshPasses passes = cartographic_mesh_passes(technique);
-        if (passes.count == 0) continue;
+        static constexpr std::array<const char*, 7> names = {
+            "None", "Unit", "Feature", "Feedback", "Place", "Build", "Shield"};
+        const char* stage =
+            &units == &minimap_units_ ? "cartographic-minimap" : "cartographic-main";
+        if (passes.count == 0) {
+            if (record_dispatch_)
+                group.dump_dispatch.push_back(
+                    fmt::format("technique={} stage={} pass=none pipeline=none drawn=None lane={} "
+                                "shader_id=none bucket={} order=none",
+                                mesh_technique_name(drawn_technique(group)), stage, lane,
+                                group.fading ? "fading" : "opaque"));
+            continue;
+        }
         VkDescriptorSet albedo = group.texture_ds ? group.texture_ds : fallback;
         vkc::bind_descriptor_sets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &albedo, 0,
                                   nullptr);
@@ -2980,6 +3069,15 @@ void Renderer::draw_cartographic_groups(
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                 sizeof(push), &push);
             vkc::draw_indexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
+            if (record_dispatch_) {
+                group.dump_dispatch.push_back(
+                    fmt::format("technique={} stage={} pass={} pipeline={} drawn={} lane={} "
+                                "shader_id={} bucket={} order={}",
+                                mesh_technique_name(drawn_technique(group)), stage, push.pass,
+                                cartographic_pipeline_role(pipeline, pipelines),
+                                names[static_cast<size_t>(technique)], lane, push.technique,
+                                group.fading ? "fading" : "opaque", draw_order++));
+            }
             ++draws[static_cast<u32>(technique)];
         }
     }
@@ -4773,6 +4871,7 @@ Renderer::capture_cartographic(const map::Terrain& terrain, const CartographicRe
     }
     CartographicRenderer::Meshes draw_meshes_into;
     if (with_meshes) {
+        if (record_dispatch_) clear_group_dispatch(minimap_units_);
         // The last frame's gather, from its slot's instances and bones
         draw_meshes_into = [&](VkCommandBuffer c, const f32* vp) {
             draw_minimap_meshes(c, minimap_fi_, vp);

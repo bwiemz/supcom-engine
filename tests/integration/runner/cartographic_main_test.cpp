@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -97,6 +98,7 @@ void test_cartographic_main(TestContext& ctx) {
         return;
     }
     renderer::Renderer& r = shots.renderer();
+    r.set_record_dispatch(true);
     r.init_ui_caches(&ctx.vfs);
     const u32 errors_before = renderer::Renderer::validation_error_count();
     renderer::Camera& cam = r.camera();
@@ -353,6 +355,13 @@ void test_cartographic_main(TestContext& ctx) {
     {
         using CT = renderer::CartographicTechnique;
         const u32 unit = r.cartographic_mesh_draws(CT::Unit);
+        std::ostringstream dump;
+        r.dump_frame(dump);
+        for (const char* fact :
+             {"stage=cartographic-main pass=0 pipeline=cartographic:UnitColour drawn=Unit lane=2",
+              "stage=cartographic-main pass=1 pipeline=cartographic:UnitGlow drawn=Unit lane=2"})
+            t.check(dump.str().find(fact) != std::string::npos,
+                    std::string("dispatch dump: ") + fact);
         t.check(unit >= 2 && unit % 2 == 0,
                 fmt::format("its meshes: the commander's CartographicUnit, both passes ({} "
                             "draws), the props' CartographicFeature ({})",
@@ -393,6 +402,18 @@ void test_cartographic_main(TestContext& ctx) {
     t.check(kept * 100 >= near_world.rgba.size() * 90,
             fmt::format("the world is drawn as it was ({} of {} channels)", kept,
                         near_world.rgba.size()));
+
+    (void)ctx.lua_state.do_string("MapBorderAdd('/meshes/game/map-border_squ_uef_mesh')\n");
+    (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", true));
+    (void)scene();
+    {
+        std::ostringstream dump;
+        r.dump_frame(dump);
+        const char* fact =
+            "technique=MapImager stage=cartographic-main pass=none pipeline=none drawn=None lane=2";
+        t.check(dump.str().find(fact) != std::string::npos, std::string("dispatch dump: ") + fact);
+    }
+    (void)ctx.lua_state.do_string("MapBorderClear()\n");
 
     // A new main view's camera starts in perspective (its Register then
     // restores a saved mode)

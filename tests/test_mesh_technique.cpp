@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "renderer/mesh_cache.hpp"
+#include "renderer/cartographic_technique.hpp"
 #include "renderer/unit_renderer.hpp"
 
 #include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <fstream>
 #include <memory>
 #include <set>
@@ -305,4 +307,30 @@ TEST_CASE("mesh_technique: every retail ShaderName has a technique, or is listed
         INFO(name << " resolves to " << resolved);
         CHECK(mesh_technique(resolved) != MeshTechnique::Unit);
     }
+}
+
+TEST_CASE("mesh technique dump names round trip", "[renderer][mesh]") {
+    // Build ghosts select UnitPlace internally; ShaderName still falls back to Unit.
+    constexpr std::array engine_internal = {MeshTechnique::UnitPlace};
+    for (const auto technique : engine_internal)
+        CHECK(mesh_technique(mesh_technique_name(technique)) == MeshTechnique::Unit);
+    for (osc::u32 id = 0; id <= static_cast<osc::u32>(MeshTechnique::NukeUEF); ++id) {
+        const auto technique = static_cast<MeshTechnique>(id);
+        if (std::find(engine_internal.begin(), engine_internal.end(), technique) !=
+            engine_internal.end())
+            continue;
+        INFO(mesh_technique_name(technique));
+        CHECK(mesh_technique(mesh_technique_name(technique)) == technique);
+    }
+}
+
+TEST_CASE("cartographic dispatch reports the selected pipeline handle", "[renderer][mesh]") {
+    const std::array<VkPipeline, kCartographicMeshStates> pipelines = {
+        reinterpret_cast<VkPipeline>(1), reinterpret_cast<VkPipeline>(2),
+        reinterpret_cast<VkPipeline>(3), reinterpret_cast<VkPipeline>(4),
+        reinterpret_cast<VkPipeline>(5)};
+    CHECK(std::string(cartographic_pipeline_role(pipelines[0], pipelines)) ==
+          "cartographic:UnitColour");
+    CHECK(std::string(cartographic_pipeline_role(pipelines[4], pipelines)) ==
+          "cartographic:Shield");
 }

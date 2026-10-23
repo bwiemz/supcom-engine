@@ -33,6 +33,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -150,6 +151,7 @@ void test_minimap_meshes(TestContext& ctx) {
         return;
     }
     renderer::Renderer& r = shots.renderer();
+    r.set_record_dispatch(true);
     r.init_ui_caches(&ctx.vfs);
     const u32 errors_before = renderer::Renderer::validation_error_count();
     const auto map_w = static_cast<f32>(terrain->map_width());
@@ -232,6 +234,15 @@ void test_minimap_meshes(TestContext& ctx) {
     t.check(r.minimap_mesh_draws(renderer::CartographicTechnique::Unit) > 0,
             fmt::format("in their cartographic technique (CartographicUnit passes: {})",
                         r.minimap_mesh_draws(renderer::CartographicTechnique::Unit)));
+    {
+        std::ostringstream dump;
+        r.dump_frame(dump);
+        t.check(dump.str().find("[minimap-units]") != std::string::npos &&
+                    dump.str().find("stage=cartographic-minimap pass=0 "
+                                    "pipeline=cartographic:UnitColour drawn=Unit lane=2") !=
+                        std::string::npos,
+                "dispatch dump: minimap CartographicUnit pass and lane");
+    }
     // Into the minimap's output, after Stage 1: each commander's pixels
     // change where its mesh draws (the capture at a pixel a unit)
     std::vector<u32> commanders;
@@ -239,7 +250,22 @@ void test_minimap_meshes(TestContext& ctx) {
         if (const u32 id = army_acu_id(ctx.sim, army)) commanders.push_back(id);
     }
     const renderer::CartographicRenderer::View big{1024, 1024, 0.0f, 0.0f, map_w, map_h};
+    const auto minimap_records = [&] {
+        std::ostringstream out;
+        r.dump_frame(out);
+        const std::string dump = out.str();
+        size_t count = 0;
+        for (size_t at = dump.find("stage=cartographic-minimap "); at != std::string::npos;
+             at = dump.find("stage=cartographic-minimap ", at + 1))
+            ++count;
+        return count;
+    };
+    const size_t records_before = minimap_records();
     const auto with = r.capture_cartographic(*terrain, big, nullptr, true);
+    t.check(records_before > 0 && minimap_records() == records_before,
+            fmt::format("a capture between frames leaves each minimap dispatch record once "
+                        "({} before, {} after)",
+                        records_before, minimap_records()));
     const auto without = r.capture_cartographic(*terrain, big, nullptr, false);
     u32 marked = 0;
     if (with && without) {

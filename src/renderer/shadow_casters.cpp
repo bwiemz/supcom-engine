@@ -190,6 +190,7 @@ void ShadowCasters::record(VkCommandBuffer cmd, const std::array<f32, 16>& light
         spc.time = units.shader_time();
         spc.lane = frame.lane;
 
+        u32 draw_order = 0;
         for (const auto& group : units.mesh_groups()) {
             if (!group.mesh || group.instance_count == 0) continue;
             // Only a technique with a depth stage casts a shadow.
@@ -215,6 +216,15 @@ void ShadowCasters::record(VkCommandBuffer cmd, const std::array<f32, 16>& light
             vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, buf_offsets);
             vkCmdBindIndexBuffer(cmd, group.mesh->index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkc::draw_indexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
+            if (frame.capture_dispatch) {
+                group.dump_dispatch.push_back(fmt::format(
+                    "technique={} stage=shadow pass=0 pipeline=shadow drawn={} lane={} "
+                    "shader_id={} "
+                    "bucket={} order={}",
+                    mesh_technique_name(drawn_technique(group)),
+                    mesh_technique_name(static_cast<MeshTechnique>(spc.technique)), spc.lane,
+                    spc.technique, group.fading ? "fading" : "opaque", draw_order++));
+            }
         }
     }
 

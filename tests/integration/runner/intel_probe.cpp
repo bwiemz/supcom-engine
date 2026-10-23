@@ -51,7 +51,7 @@ Frame drawn(renderer::Renderer& r) {
             for (f32& v : m) model >> v;
             d.x = m[12];
             d.z = m[14];
-            if (parts.size() >= 4) d.pose = parts[3];
+            if (parts.size() >= 4 && parts[3].rfind("bones ", 0) == 0) d.pose = parts[3];
             frame.meshes.push_back(std::move(d));
         } else if ((section == "[icons]" && parts.size() == 4) ||
                    (parts.size() == 3 && (section == "[overlay]" || section == "[minimap-hud]"))) {

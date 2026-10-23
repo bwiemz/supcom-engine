@@ -77,6 +77,9 @@ enum class MeshTechnique : u32 {
     NukeUEF = 35,    ///< NukeHeadPS: the UEF nuke's dome; blended, alpha-tested
 };
 
+/// Stable names for render dumps.
+const char* mesh_technique_name(MeshTechnique technique);
+
 /// The order marks' techniques, drawn by the feedback pipeline.
 inline bool is_feedback_technique(MeshTechnique t) {
     return t == MeshTechnique::CommandFeedback || t == MeshTechnique::CommandFeedback2 ||

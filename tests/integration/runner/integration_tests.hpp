@@ -107,6 +107,9 @@ void test_bloom(TestContext& ctx);
 void test_build_shaders(TestContext& ctx);
 /// --effect-mesh-test (M211g), in effect_mesh_test.cpp.
 void test_effect_meshes(TestContext& ctx);
+
+/// --dispatch-matrix-test: every mesh technique, fidelity and view.
+void test_dispatch_matrix(TestContext& ctx, TestContext& ui);
 /// --skinning-test (M211h), in skinning_test.cpp.
 void test_skinning(TestContext& ctx);
 /// --prop-material-test (M211i), in prop_material_test.cpp.

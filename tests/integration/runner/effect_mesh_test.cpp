@@ -180,6 +180,12 @@ void test_effect_meshes(TestContext& ctx) {
         return shots.shoot_frame(ground, x, z, distance);
     };
     const auto at = [&](f32 x, f32 z) { return middle(frame(x, z)); };
+    const auto dispatch = [&](const std::string& fact) {
+        std::ostringstream dump;
+        r.dump_frame(dump);
+        const bool found = dump.str().find(fact) != std::string::npos;
+        t.check(found, "dispatch dump: " + fact);
+    };
 
     r.camera().set_pitch(kPitch);
     const Rgb sky = at(400.0f, 400.0f);
@@ -238,6 +244,14 @@ void test_effect_meshes(TestContext& ctx) {
         (void)frame(seen_x / n, seen_z / n);
         std::ostringstream dump;
         r.dump_frame(dump);
+        t.check(dump.str().find("technique=") == std::string::npos,
+                "dispatch recording is off by default for offscreen captures");
+        r.set_record_dispatch(true);
+        (void)frame(seen_x / n, seen_z / n);
+        dispatch("technique=UEFBuild stage=pre-water pass=0 pipeline=fade "
+                 "drawn=UEFBuild lane=2");
+        dispatch("technique=UEFBuild stage=pre-water pass=1 pipeline=overlay "
+                 "drawn=UEFBuild lane=2");
         std::istringstream lines(dump.str());
         int effect_lines = 0;
         int white_lines = 0;
@@ -443,6 +457,8 @@ void test_effect_meshes(TestContext& ctx) {
         const Rgb early = at(120.0f, 160.0f);
         to_phase(20, 2);
         const Rgb later = at(120.0f, 160.0f);
+        dispatch("technique=UEFBuildCube stage=pre-water pass=0 pipeline=cube "
+                 "drawn=UEFBuildCube lane=0");
         video = as_was;
         const Rgb expected_built = over(sky, albedo, a);
         const Rgb expected = over(sky, over(albedo, Rgb{0, 0, 1}, 0.65f), 0.5f * a);
@@ -507,6 +523,8 @@ void test_effect_meshes(TestContext& ctx) {
         const Rgb thin = over(sky_lit, head, 64.0f / 255.0f * noise[1]);
         const Rgb dome_fresh = at_lit(100.0f, 220.0f);
         const Rgb faint_fresh = at_lit(130.0f, 220.0f);
+        dispatch("technique=NukeUEF stage=post-water pass=0 pipeline=fade "
+                 "drawn=NukeUEF lane=2");
         for (int i = 0; i < 25; ++i) ctx.sim.tick();
         const Rgb dome_later = at_lit(100.0f, 220.0f);
         const Rgb faint_later = at_lit(130.0f, 220.0f);
@@ -554,6 +572,9 @@ void test_effect_meshes(TestContext& ctx) {
         const Rgb alone = at_lit(160.0f, 220.0f);
         const Rgb above = at_lit(190.0f, 220.0f);
         const Rgb level = at_lit(310.0f, 220.0f);
+        dispatch("technique=OuterCloud stage=post-water pass=0 pipeline=outer_cloud "
+                 "drawn=OuterCloud lane=2");
+        dispatch("technique=Unit stage=pre-water pass=0 pipeline=mesh drawn=Unit lane=2");
         const Rgb lit_unit = scaled(green, 0.72f);
         for (int i = 0; i < 199; ++i) ctx.sim.tick();
         const Rgb faded = at_lit(160.0f, 220.0f); // 200 ticks old: half faded
@@ -735,6 +756,31 @@ void test_effect_meshes(TestContext& ctx) {
             fmt::format("Test 12: seen from close by its side, the dome draws ({} NukeUEF draws)",
                         side_draws));
     }
+
+    // The dump sees actual shadow draws, with terrain in view.
+    {
+        stand(Look{}, 1.0f, 32.0f, 32.0f);
+        Look cube;
+        cube.shader = "UEFBuildCube";
+        stand(cube, 1.0f, 40.0f, 32.0f);
+        (void)frame(36.0f, 32.0f);
+        dispatch("technique=Unit stage=shadow pass=0 pipeline=shadow drawn=Unit lane=2");
+        Look shield;
+        shield.shader = "SeraphimPersonalShield";
+        stand(shield, 1.0f, 48.0f, 32.0f);
+        r.video_options().graphics_fidelity = 1;
+        (void)frame(48.0f, 32.0f);
+        dispatch("pass=0 pipeline=mesh drawn=Seraphim lane=0");
+        dispatch("pass=1 pipeline=shield:BlendDepthWrite drawn=PhaseShield lane=0");
+        r.video_options().graphics_fidelity = 2;
+    }
+
+    r.set_record_dispatch(false);
+    (void)frame(36.0f, 32.0f);
+    std::ostringstream unrecorded;
+    r.dump_frame(unrecorded);
+    t.check(unrecorded.str().find("technique=") == std::string::npos,
+            "disabling dispatch recording leaves no records in the next frame");
 
     // Equal SortOrder ties follow the first entity, for both GPU address orders.
     {
