@@ -159,7 +159,12 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
     // (the beats this frame ran past kEndTick were ticks)
     if (!end_beat_ && sim->tick_count() >= kEndTick)
         end_beat_ = sim->beat_count() - (sim->tick_count() - kEndTick);
-    if (!first_tick_) first_tick_ = sim->tick_count();
+    if (!first_tick_) {
+        first_tick_ = sim->tick_count();
+        if (host_ && !resume_.empty()) {
+            check_no_saved_sync(ui);
+        }
+    }
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
     if (!host_ && self_destruct_at_ > 0 && self_destructed_ == 0 && !self_destruct_failed_ &&
         sim->tick_count() >= self_destruct_at_) {
@@ -172,7 +177,18 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
                          self_destructed_, sim->tick_count());
     }
     // --lan-game-save: the host saves the game, as the in-game save does
-    if (host_ && !save_as_.empty() && !save_sent_ && sim->tick_count() >= kSaveTick) {
+    if (host_ && !save_as_.empty() && !save_sent_ && sim->tick_count() >= kSaveTick && !pinged_) {
+        // (a SimCallback reaches the lockstep a frame after it is made, the save at once)
+        pinged_ = true;
+        if (auto p = ui.do_string(R"(
+                SimCallback({Func = 'SpawnPing', Args = table.merged(
+                    {Owner = GetFocusArmy() - 1, Type = 'alert', Location = {256, 30, 256}},
+                    import('/lua/ui/game/ping.lua').PingTypes.alert)})
+            )");
+            !p) {
+            fail("pinging: " + p.error().message);
+        }
+    } else if (host_ && !save_as_.empty() && !save_sent_ && pinged_) {
         save_sent_ = true;
         lua_pushstring(ui.raw(), "__osc_lan_save");
         lua_pushstring(ui.raw(), save_as_.c_str());
@@ -270,6 +286,20 @@ void LanGameTest::check_save(lua::LuaState& ui, const sim::SimState& sim) {
     // The resumed game took up where the save was, not at its start
     if (!resume_.empty() && (!first_tick_ || *first_tick_ < kSaveTick))
         fail(fmt::format("the resumed game began at tick {}", first_tick_ ? *first_tick_ : 0));
+}
+
+void LanGameTest::check_no_saved_sync(lua::LuaState& ui) {
+    auto r = ui.do_string(R"(
+        __osc_lan_saved_sync = 0
+        for _, sync in {Sync, PreviousSync} do
+            if type(sync) == 'table' and sync.Ping then __osc_lan_saved_sync = 1 end
+        end
+    )");
+    if (!r) {
+        fail("reading the interface's Sync: " + r.error().message);
+    } else if (number_global(ui.raw(), "__osc_lan_saved_sync") != 0) {
+        fail("the resumed game's interface was given the saved game's last Sync (the host's ping)");
+    }
 }
 
 void LanGameTest::check_pause(lua::LuaState& ui) {

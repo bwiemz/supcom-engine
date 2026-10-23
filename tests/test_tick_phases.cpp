@@ -2190,12 +2190,13 @@ TEST_CASE("Two beats in a frame give the user two Sync tables", "[tick-phases][b
     REQUIRE(ui.do_string("seen = ''"
                          " function OnSync() seen = seen .. tostring(Sync.Tick) .. ',' end")
                 .ok());
+    osc::lua::SyncQueue sync;
     w.sim.set_beat_observer(
-        [&](const osc::sim::SimState& s) { osc::lua::queue_sync(s.lua_state(), ui.raw()); });
+        [&](const osc::sim::SimState& s) { sync.queue(s.lua_state(), ui.raw()); });
     w.sim.tick();
     w.sim.tick();
     for (int b = 0; b < 2; ++b) {
-        osc::lua::sync_beat(w.state.raw(), ui.raw());
+        sync.deliver(w.state.raw(), ui.raw());
     }
     lua_State* U = ui.raw();
     lua_getglobal(U, "seen");

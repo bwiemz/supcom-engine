@@ -2568,7 +2568,7 @@ void request_focus_army(lua_State* L, int army) {
 } // namespace
 
 /// SetFocusArmy(army) -- 1-based, -1 = observer. During a world session it
-/// is a request the next sim beat applies (sync_beat), as Moho's session
+/// is a request the next sim beat applies (SyncQueue), as Moho's session
 /// does, so the sim and the UI's OnSync see the change together -- if the
 /// player may watch that army (request_focus_army); with no session there
 /// is nothing to wait for, so it applies at once.
