@@ -107,10 +107,6 @@ ImageRGBA8 OffscreenShots::grab(const std::unordered_set<u32>* selected,
     return shot;
 }
 
-OffscreenShots::~OffscreenShots() {
-    if (ok_) renderer_.shutdown();
-}
-
 Pixels OffscreenShots::shoot(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
                              bool with_world) {
     if (!ok_) return {};

@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-struct GLFWwindow;
 struct lua_State;
 
 namespace osc::ui {
@@ -58,12 +57,9 @@ constexpr u8 kMouseMiddle = 2;
 constexpr u8 kMouseRight = 4;
 
 /// Manages GLFW input → UI event dispatch.
-/// Install callbacks, buffer events, dispatch to Lua HandleEvent.
+/// Buffer events, dispatch to Lua HandleEvent.
 class UIDispatch {
 public:
-    /// Install GLFW key/mouse/char callbacks on the window.
-    void install_callbacks(GLFWwindow* window);
-
     /// Dispatch all buffered events to Lua UI controls.
     /// Called once per frame from the main loop.
     void dispatch_events(lua_State* L, UIControlRegistry& registry);
@@ -71,7 +67,7 @@ public:
     /// Call OnFrame on all controls with NeedsFrameUpdate.
     void update_controls(lua_State* L, UIControlRegistry& registry, f64 dt);
 
-    // GLFW callback receivers (public so static callbacks can access)
+    // GLFW input events: a window's callbacks, and tests, call these
     void on_key(i32 key, i32 action, i32 mods);
     /// A press of the same button within kDoubleClickSeconds and
     /// kDoubleClickPixels of the last, not itself one, is a double-click
