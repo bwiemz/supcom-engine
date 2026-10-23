@@ -20,12 +20,14 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -127,6 +129,122 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
         economy_tick(brain, registry, 0.1); // 40 s
     }
     CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
+}
+
+TEST_CASE("The economy sets the stored, storage and peak storage stats each tick",
+          "[army][stats][economy]") {
+    const bool mass = GENERATE(true, false);
+    const auto [first, second] =
+        GENERATE(std::pair{500.0, 100.0}, std::pair{100.0, 800.0}, std::pair{300.0, 300.0});
+    const std::string lane = mass ? "Mass" : "Energy";
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto store = std::make_unique<osc::sim::Unit>();
+    store->set_army(0);
+    store->economy().production_active = true;
+    (mass ? store->economy().production_mass : store->economy().production_energy) = 30.0;
+    double& storage = mass ? store->economy().storage_mass : store->economy().storage_energy;
+    storage = first;
+    registry.register_entity(std::move(store));
+
+    for (int i = 0; i < 10; ++i) {
+        economy_tick(brain, registry, 0.1);
+    }
+    CHECK(brain.get_stat("Economy_Stored_" + lane) == Catch::Approx(30.0));
+    CHECK(brain.get_stat("Economy_MaxStorage_" + lane) == first);
+    CHECK(brain.get_stat("Economy_PeakStorage_" + lane) == first);
+
+    storage = second;
+    for (int i = 0; i < 400; ++i) {
+        economy_tick(brain, registry, 0.1);
+    }
+    CHECK(brain.get_stat("Economy_Stored_" + lane) == second);
+    CHECK(brain.get_stat("Economy_MaxStorage_" + lane) == second);
+    CHECK(brain.get_stat("Economy_PeakStorage_" + lane) == std::max(first, second));
+}
+
+TEST_CASE("Economy_Reclaimed totals what reclaim brought in, and nothing else",
+          "[army][stats][economy]") {
+    const bool mass = GENERATE(true, false);
+    const double rate = GENERATE(0.0, 3.0, 25.0);
+    const std::string lane = mass ? "Mass" : "Energy";
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto engineer = std::make_unique<osc::sim::Unit>();
+    engineer->set_army(0);
+    engineer->economy().production_active = true;
+    engineer->economy().production_mass = 1.0;
+    engineer->economy().production_energy = 20.0;
+    (mass ? engineer->economy().reclaim_mass : engineer->economy().reclaim_energy) = rate;
+    auto* e = engineer.get();
+    registry.register_entity(std::move(engineer));
+
+    for (int i = 0; i < 10; ++i) {
+        brain.bank(5.0, 50.0);
+        economy_tick(brain, registry, 0.1);
+    }
+    CHECK(brain.get_stat("Economy_Reclaimed_" + lane) == Catch::Approx(rate).margin(1e-9));
+    CHECK(brain.get_stat(mass ? "Economy_Reclaimed_Energy" : "Economy_Reclaimed_Mass") == 0.0);
+
+    e->stop_reclaiming();
+    for (int i = 0; i < 10; ++i) {
+        economy_tick(brain, registry, 0.1);
+    }
+    CHECK(brain.get_stat("Economy_Reclaimed_" + lane) == Catch::Approx(rate).margin(1e-9));
+}
+
+TEST_CASE("Economy_Trend is what the units produce less what the army asks, a second",
+          "[army][stats][economy]") {
+    const bool mass = GENERATE(true, false);
+    const auto [produced, asked] =
+        GENERATE(std::pair{10.0, 4.0}, std::pair{2.0, 9.0}, std::pair{0.0, 0.0});
+    const std::string lane = mass ? "Mass" : "Energy";
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto unit = std::make_unique<osc::sim::Unit>();
+    unit->set_army(0);
+    unit->economy().production_active = true;
+    unit->economy().consumption_active = true;
+    (mass ? unit->economy().production_mass : unit->economy().production_energy) = produced;
+    (mass ? unit->economy().consumption_mass : unit->economy().consumption_energy) = asked;
+    (mass ? unit->economy().reclaim_mass : unit->economy().reclaim_energy) = 7.0;
+    registry.register_entity(std::move(unit));
+
+    for (int i = 0; i < 5; ++i) {
+        brain.bank(30.0, 300.0);
+        economy_tick(brain, registry, 0.1);
+    }
+    CHECK(brain.get_stat("Economy_Trend_" + lane) == Catch::Approx(produced - asked).margin(1e-9));
+}
+
+TEST_CASE("Economy_TotalProduced sums each tick's Economy_Income, whatever its sign",
+          "[army][stats][economy]") {
+    const double given = GENERATE(-30.0, -10.0, 0.0, 20.0);
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    auto producer = std::make_unique<osc::sim::Unit>();
+    producer->set_army(0);
+    producer->economy().production_active = true;
+    producer->economy().production_mass = 10.0;
+    producer->economy().production_energy = 10.0;
+    registry.register_entity(std::move(producer));
+
+    double incomes_mass = 0.0;
+    double incomes_energy = 0.0;
+    for (int i = 0; i < 10; ++i) {
+        brain.bank(given, given);
+        economy_tick(brain, registry, 0.1);
+        incomes_mass += brain.get_stat("Economy_Income_Mass");
+        incomes_energy += brain.get_stat("Economy_Income_Energy");
+    }
+    CHECK(incomes_mass == Catch::Approx(10.0 + given).margin(1e-9));
+    CHECK(brain.get_stat("Economy_TotalProduced_Mass") == Catch::Approx(incomes_mass).margin(1e-9));
+    CHECK(brain.get_stat("Economy_TotalProduced_Energy") ==
+          Catch::Approx(incomes_energy).margin(1e-9));
 }
 
 TEST_CASE("A paused unit keeps producing, and its army pays what the unit asks",

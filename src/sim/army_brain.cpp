@@ -70,7 +70,7 @@ std::pair<f64, f64> share_overflow(const std::vector<ArmyBrain*>& allies, f64 dt
         const f64 m = std::min(mass * fraction, std::max(0.0, e.mass.max_storage - e.mass.stored));
         const f64 en =
             std::min(energy * fraction, std::max(0.0, e.energy.max_storage - e.energy.stored));
-        takers[i]->bank(m / dt, en / dt);
+        takers[i]->bank_pending(m / dt, en / dt);
         mass -= m;
         energy -= en;
         shared_mass += m;
@@ -236,6 +236,10 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
                                const std::vector<ArmyBrain*>& allies) {
     f64 mass_income = std::exchange(bank_mass_, 0.0);
     f64 energy_income = std::exchange(bank_energy_, 0.0);
+    const f64 pending_mass = std::exchange(pending_mass_, 0.0);
+    const f64 pending_energy = std::exchange(pending_energy_, 0.0);
+    economy_.mass.reclaimed += std::exchange(reclaim_mass_, 0.0) * dt;
+    economy_.energy.reclaimed += std::exchange(reclaim_energy_, 0.0) * dt;
     // Moho's two classes of request (ProcessArmyEconomy): those that want
     // both resources, and those that want one
     f64 dual_mass = 0.0, dual_energy = 0.0, single_mass = 0.0, single_energy = 0.0;
@@ -398,12 +402,8 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     // Moho's economy stats (the score reads them): totals produced and spent,
     // this tick's income and spending (Moho's are a tick's amounts, like its
     // other economy figures), and what full storage wasted.
-    if (economy_.mass.income > 0) {
-        stats_["Economy_TotalProduced_Mass"] += economy_.mass.income * dt;
-    }
-    if (economy_.energy.income > 0) {
-        stats_["Economy_TotalProduced_Energy"] += economy_.energy.income * dt;
-    }
+    stats_["Economy_TotalProduced_Mass"] += economy_.mass.income * dt;
+    stats_["Economy_TotalProduced_Energy"] += economy_.energy.income * dt;
     stats_["Economy_TotalConsumed_Mass"] += mass_consumed;
     stats_["Economy_TotalConsumed_Energy"] += energy_consumed;
     stats_["Economy_Income_Mass"] = mass_income * dt;
@@ -416,6 +416,18 @@ void ArmyBrain::update_economy(EntityRegistry& registry, f64 dt,
     stats_["Economy_AccumExcess_Energy"] += excess_energy - shared_energy;
     stats_["Economy_Ratio_Mass"] = get_economy_stored_ratio("MASS");
     stats_["Economy_Ratio_Energy"] = get_economy_stored_ratio("ENERGY");
+    stats_["Economy_Stored_Mass"] = economy_.mass.stored;
+    stats_["Economy_Stored_Energy"] = economy_.energy.stored;
+    stats_["Economy_MaxStorage_Mass"] = economy_.mass.max_storage;
+    stats_["Economy_MaxStorage_Energy"] = economy_.energy.max_storage;
+    f64& peak_mass = stats_["Economy_PeakStorage_Mass"];
+    peak_mass = std::max(peak_mass, economy_.mass.max_storage);
+    f64& peak_energy = stats_["Economy_PeakStorage_Energy"];
+    peak_energy = std::max(peak_energy, economy_.energy.max_storage);
+    stats_["Economy_Reclaimed_Mass"] = economy_.mass.reclaimed;
+    stats_["Economy_Reclaimed_Energy"] = economy_.energy.reclaimed;
+    stats_["Economy_Trend_Mass"] = pending_mass - mass_consumption;
+    stats_["Economy_Trend_Energy"] = pending_energy - energy_consumption;
 }
 
 void ArmyBrain::add_blueprint_stat(const std::string& stat, const std::string& bp_id, f64 delta) {

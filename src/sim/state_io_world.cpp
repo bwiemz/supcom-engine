@@ -86,6 +86,7 @@ void save_resource(StateWriter& w, const ResourceState& s) {
     w.f64v(s.income);
     w.f64v(s.requested);
     w.f64v(s.stored);
+    w.f64v(s.reclaimed);
     w.f64v(s.max_storage);
 }
 ResourceState load_resource(StateReader& r) {
@@ -93,6 +94,7 @@ ResourceState load_resource(StateReader& r) {
     s.income = r.f64v();
     s.requested = r.f64v();
     s.stored = r.f64v();
+    s.reclaimed = r.f64v();
     s.max_storage = r.f64v();
     return s;
 }
@@ -259,6 +261,10 @@ void StateIO::save(StateWriter& w, const ArmyBrain& a, const SimState& sim) {
     w.f64v(a.handicap_);
     w.f64v(a.extra_storage_mass_);
     w.f64v(a.extra_storage_energy_);
+    w.f64v(a.pending_mass_);
+    w.f64v(a.pending_energy_);
+    w.f64v(a.reclaim_mass_);
+    w.f64v(a.reclaim_energy_);
     w.f64v(a.bank_mass_);
     w.f64v(a.bank_energy_);
     {
@@ -351,6 +357,10 @@ void StateIO::load(StateReader& r, ArmyBrain& a, SimState& sim) {
     a.handicap_ = r.f64v();
     a.extra_storage_mass_ = r.f64v();
     a.extra_storage_energy_ = r.f64v();
+    a.pending_mass_ = r.f64v();
+    a.pending_energy_ = r.f64v();
+    a.reclaim_mass_ = r.f64v();
+    a.reclaim_energy_ = r.f64v();
     a.bank_mass_ = r.f64v();
     a.bank_energy_ = r.f64v();
     a.alliances_.clear();

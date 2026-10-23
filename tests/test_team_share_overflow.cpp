@@ -80,6 +80,24 @@ TEST_CASE("An army's overflow goes to an ally with room unless its sharing is of
                WithinAbs(sharing ? 0.0 : 100.0, 1e-6));
 }
 
+TEST_CASE("An ally's cut is in the receiver's Economy_Trend, beside its own production",
+          "[shareoverflow]") {
+    const bool sharing = GENERATE(true, false);
+    const double produced = GENERATE(0.0, 30.0);
+    CAPTURE(sharing, produced);
+    Armies w(2);
+    w.sim.set_alliance(0, 1, Alliance::Ally);
+    w.army(0).set_resource_sharing(sharing);
+    auto u = std::make_unique<Unit>();
+    u->set_army(1);
+    u->economy().production_active = true;
+    u->economy().production_mass = produced;
+    w.sim.entity_registry().register_entity(std::move(u));
+    w.overflow();
+    CHECK_THAT(w.army(1).get_stat("Economy_Trend_Mass"),
+               WithinAbs(produced + (sharing ? 1000.0 : 0.0), 1e-6));
+}
+
 TEST_CASE("Each ally is offered an equal cut of what is still unplaced, up to its room",
           "[shareoverflow]") {
     Armies w(3);
