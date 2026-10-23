@@ -3767,7 +3767,7 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
     // (LowFidelityTerrain, M212h), else the map's own shader (Medium and
     // High alike)
     const bool low_terrain = fidelity() == 0 && terrain_low_pipeline_;
-    if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
+    if (terrain_mesh_.index_count() > 0 && terrain_pipeline_ && terrain_tex_ds_) {
         vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                            low_terrain ? terrain_low_pipeline_ : terrain_pipeline_);
 
@@ -3792,10 +3792,8 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
                             sizeof(tpc), &tpc);
 
         // Bind terrain texture descriptor set (set=0)
-        if (terrain_tex_ds_) {
-            vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 0, 1,
-                                      &terrain_tex_ds_, 0, nullptr);
-        }
+        vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 0, 1,
+                                  &terrain_tex_ds_, 0, nullptr);
         // Bind shadow descriptor set (set=1)
         if (shadow_ds_[fi]) {
             vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 1, 1,
