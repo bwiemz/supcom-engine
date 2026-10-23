@@ -425,6 +425,50 @@ TEST_CASE("A unit attached to another starts no order until it is let go", "[tic
     CHECK(tank.command_queue().front().begun);
 }
 
+TEST_CASE("An attached unit that moves starts no order; an attached structure starts its build",
+          "[tick-phases]") {
+    const bool mobile = GENERATE(false, true);
+    const bool attached = GENERATE(false, true);
+    Phases w;
+    w.make("host", "tank", 1, 100.0f, 100.0f);
+    Unit& rider = w.make("rider", mobile ? "tank" : "fac", 1, 60.0f, 60.0f);
+    rider.economy().production_mass = 100.0;
+    rider.economy().production_energy = 100.0;
+    rider.economy().production_active = true;
+    REQUIRE(w.run("started = 0 function rider:OnStartBuild(u, order) started = GetGameTick() end"));
+    if (attached) {
+        REQUIRE(w.run("EM.AttachTo(rider, host, -1)"));
+    }
+    REQUIRE(w.run("state = tostring(rider:IsUnitState('Attached'))"));
+    CHECK(w.text("state") == (mobile && attached ? "true" : "false"));
+    UnitCommand order;
+    if (mobile) {
+        rider.set_max_speed(5.0f);
+        order.type = CommandType::Move;
+        order.target_pos = {90.0f, 10.0f, 60.0f};
+    } else {
+        order.type = CommandType::BuildFactory;
+        order.blueprint_id = "t1";
+    }
+    rider.push_command(order, false);
+    const auto started = [&] {
+        if (mobile) {
+            return !rider.command_queue().empty() && rider.command_queue().front().begun;
+        }
+        return w.number("started") > 0;
+    };
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    CHECK(started() == !(mobile && attached));
+    if (attached) {
+        REQUIRE(w.run("EM.DetachFrom(rider) state = tostring(rider:IsUnitState('Attached'))"));
+        CHECK(w.text("state") == "false");
+        w.sim.tick();
+        CHECK(started());
+    }
+}
+
 namespace {
 
 osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in) {
