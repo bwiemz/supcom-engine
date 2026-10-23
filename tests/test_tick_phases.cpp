@@ -2231,3 +2231,28 @@ TEST_CASE("Production reports reset before tick threads and survive paused beats
     CHECK(producer.economy().mass_produced() == 0.0);
     CHECK(producer.economy().energy_produced() == 5.0);
 }
+
+TEST_CASE("A weapon holds a target off its layers till its next check, not firing at it",
+          "[tick-phases]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    const Unit& rival = w.make("rival", "tank", 2, 115.0f, 100.0f);
+    REQUIRE(w.run("fired = 0 gun = {OnFire = function() fired = fired + 1 end}"));
+    Weapon& gun = w.arm(tank, "gun");
+    gun.rate_of_fire = 10.0f;
+    for (int t = 0; t < 5 && w.number("fired") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("fired") > 0);
+    REQUIRE(gun.target_entity_id == rival.entity_id());
+
+    gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    gun.target_check_period = 1000;
+    gun.target_check_clock = 1000;
+    const f32 fired = w.number("fired");
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    CHECK(gun.target_entity_id == rival.entity_id());
+    CHECK(w.number("fired") == fired);
+}

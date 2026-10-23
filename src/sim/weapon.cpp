@@ -323,6 +323,12 @@ void Weapon::fire_step(Unit& owner, EntityRegistry& registry, lua_State* L, cons
         owner.fire_state() == 1) {
         return;
     }
+    if (target_entity_id != 0) {
+        const Entity* target = registry.find(target_entity_id);
+        if (!target || !can_attack(*target, sim)) {
+            return;
+        }
+    }
     if (L && fires_through_script()) {
         fire_scripted(owner, registry, L, sim);
         return;
@@ -481,8 +487,14 @@ bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* s
     if (target.do_not_target() || target.army() < 0) return false;
     if (sim ? !sim->is_enemy(owner.army(), target.army()) : target.army() == owner.army())
         return false;
+    if (target.is_unit() && !is_weapon_targetable(owner, target, sim)) {
+        return false;
+    }
+    return can_attack(target, sim);
+}
+
+bool Weapon::can_attack(const Entity& target, const SimState* sim) const {
     if (target.is_unit()) {
-        if (!is_weapon_targetable(owner, target, sim)) return false;
         const auto& unit = static_cast<const Unit&>(target);
         if (fire_target_layer_caps != 0xFF &&
             !(layer_to_bit(unit.layer()) & fire_target_layer_caps))
@@ -497,7 +509,7 @@ bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* s
                                                  above_water_targets_only, unused))
                 return false;
         }
-    } else {
+    } else if (target.is_projectile()) {
         // A projectile in flight is on the Air layer, or Water below the
         // surface.
         const auto& proj = static_cast<const Projectile&>(target);
@@ -506,6 +518,8 @@ bool Weapon::can_pick(const Unit& owner, const Entity& target, const SimState* s
             !(layer_to_bit(proj.layer()) & fire_target_layer_caps))
             return false;
         if (above_water_targets_only && proj.in_water) return false;
+    } else {
+        return false;
     }
     const auto& categories = target_categories(target);
     return (restrict_only_allow.empty() || restrict_only_allow.matches(categories)) &&
