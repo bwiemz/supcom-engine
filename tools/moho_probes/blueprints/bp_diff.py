@@ -1,6 +1,6 @@
 """Compares the original's unit blueprints, from a /synclog beat 0, with the engine's.
 
-    python bp_diff.py beat00000.log opensupcom.log
+    python bp_diff.py beat00000.log opensupcom.log [src/blueprints/moho_reflected_fields.cpp]
 
 The engine's log is a run with this folder's init_probes.lua, whose hook logs each blueprint's
 fields as `PROBE bp <id> <path>=<value>`.
@@ -8,6 +8,10 @@ fields as `PROBE bp <id> <path>=<value>`.
 The original's beat 0 holds every blueprint as Moho filled it in, its defaults included. The
 engine's are as its scripts see them. Only fields both have are compared: Moho's C++-only fields
 never reach the scripts. Prints, per field, how many units differ and a few of them.
+
+Given the engine's table of reflected fields, each field a .bp leaves out is tagged [filled] or
+[unfilled] (one the table leaves out on purpose). A [filled] one is still missing on the engine's
+side: a bug in the table's layer.
 """
 
 import re
@@ -56,6 +60,46 @@ def parse_engine(path: str) -> dict[str, dict[str, str]]:
     return units
 
 
+ROW = re.compile(r'\b(?:num|flag|text|list|min_max)\(\s*"([\w.]*)",\s*"(\w+)"')
+UNFILLED_ROW = re.compile(r'\{\s*"([\w.]*)",\s*"(\w+)",')
+
+
+def table_of(source: str, name: str) -> str:
+    """The body of the C++ array `name` in `source`, or ''."""
+    at = source.find(f"{name}[] = {{")
+    return source[at : source.find("};", at)] if at >= 0 else ""
+
+
+def reflected_fields(path: str) -> tuple[set[str], set[str]]:
+    """The unit and weapon fields the engine fills, and those it leaves unfilled, as paths the
+    synclog's keys take with their indices removed (`Weapon[].MinRadius`)."""
+    with open(path, encoding="utf-8") as f:
+        source = f.read()
+
+    def paths(body: str, row: re.Pattern[str], prefix: str) -> set[str]:
+        return {
+            ".".join(p for p in (prefix, m.group(1), m.group(2)) if p) for m in row.finditer(body)
+        }
+
+    filled = paths(table_of(source, "kUnitFields"), ROW, "")
+    filled |= paths(table_of(source, "kWeaponFields"), ROW, "Weapon[]")
+    unfilled = paths(table_of(source, "kUnitUnfilled"), UNFILLED_ROW, "")
+    return filled, unfilled
+
+
+def tag_of(key: str, filled: set[str], unfilled: set[str]) -> str:
+    # A list's or a {Min, Max}'s entries are its field's.
+    parts = key.split(".")
+    for n in range(len(parts), 0, -1):
+        path_ = ".".join(parts[:n])
+        for candidate in (path_, path_.removesuffix("[]")):
+            if candidate in filled:
+                return "  [filled]"
+            if candidate in unfilled:
+                return "  [unfilled]"
+    return ""
+
+
 def same(a: str, b: str) -> bool:
     # beat 0 prints Moho's bools as true/false; the .bp's scripts hold 1/0.
     bools = {"true": "1", "false": "0"}
@@ -69,6 +113,9 @@ def same(a: str, b: str) -> bool:
 def main() -> int:
     retail = parse_synclog(sys.argv[1])
     engine = parse_engine(sys.argv[2])
+    filled, unfilled = (
+        reflected_fields(sys.argv[3]) if len(sys.argv) > 3 else (set[str](), set[str]())
+    )
     common = sorted(retail.keys() & engine.keys())
     print(f"units: original {len(retail)}, engine {len(engine)}, both {len(common)}")
     only = sorted(retail.keys() - engine.keys())
@@ -93,10 +140,15 @@ def main() -> int:
         for key in retail[uid].keys() - engine[uid].keys():
             omitted[INDEX.sub("[]", key)][retail[uid][key]] += 1
     print("\nleft out of the .bp, Moho's value (units holding it / units leaving it out):")
+    still_filled = 0
     for key, values in sorted(omitted.items()):
         value, count = max(values.items(), key=lambda kv: kv[1])
-        print(f"  {key} = {value}  ({count}/{sum(values.values())})")
-    return 1 if diffs else 0
+        tag = tag_of(key, filled, unfilled)
+        still_filled += tag == "  [filled]"
+        print(f"  {key} = {value}  ({count}/{sum(values.values())}){tag}")
+    if still_filled:
+        print(f"{still_filled} field(s) the engine fills are still missing from its blueprints")
+    return 1 if diffs or still_filled else 0
 
 
 if __name__ == "__main__":

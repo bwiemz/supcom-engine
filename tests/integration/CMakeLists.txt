@@ -24,6 +24,7 @@ add_executable(osc_integration
     runner/window_test.cpp
     runner/options_test.cpp
     runner/world_views_test.cpp
+    runner/unitview_sweep_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
     runner/strata_test.cpp
@@ -218,6 +219,15 @@ set_tests_properties(data.minimap.hidpi-test PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)
+# Every unit's build button hovered, the armament detail on (FAF's run is
+# data.unitview-sweep_faf)
+add_test(NAME data.unitview-sweep-test
+         COMMAND osc_integration --map ${OSC_TEST_MAP} --unitview-sweep-test
+                 --prefs ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/armament_detail.prefs)
+set_tests_properties(data.unitview-sweep-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 
 # M196: the same game, played twice as two processes (every address
 # different), stays identical tick for tick -- nothing depends on hash
@@ -386,6 +396,23 @@ if(Python3_Interpreter_FOUND)
                          "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
     endif()
     set_tests_properties(data.command_sources_faf PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # Every unit's build button hovered under FAF's scripts, the armament
+    # detail on: the unit view reads the blueprint fields Moho's write-back
+    # fills (the retail run is data.unitview-sweep-test).
+    if(_osc_faf_data)
+        add_test(NAME data.unitview-sweep_faf
+                 COMMAND osc_integration --faf-data "${_osc_faf_data}" --map ${OSC_TEST_MAP}
+                         --unitview-sweep-test
+                         --prefs ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/armament_detail.prefs)
+    else()
+        add_test(NAME data.unitview-sweep_faf
+                 COMMAND ${Python3_EXECUTABLE} -c
+                         "print('no FAF data (OSC_FAF_DATA): skipped'); raise SystemExit(77)")
+    endif()
+    set_tests_properties(data.unitview-sweep_faf PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)

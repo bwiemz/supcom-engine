@@ -2,6 +2,7 @@ add_library(osc_blueprints STATIC
     blueprint_store.cpp
     blueprint_loader.cpp
     footprint.cpp
+    moho_reflected_fields.cpp
 )
 add_library(osc::blueprints ALIAS osc_blueprints)
 

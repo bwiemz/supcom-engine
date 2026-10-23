@@ -104,10 +104,15 @@ def words_in_literals(text: str) -> set[str]:
     return found
 
 
+# Names a field to write its Moho default back to the blueprint's table,
+# which isn't the engine acting on it.
+NOT_READERS = {"moho_reflected_fields.cpp"}
+
+
 def literals(root: Path) -> set[str]:
     found: set[str] = set()
     for f in sorted((root / "src").rglob("*")):
-        if f.suffix in (".cpp", ".hpp", ".h", ".cc"):
+        if f.suffix in (".cpp", ".hpp", ".h", ".cc") and f.name not in NOT_READERS:
             found.update(words_in_literals(f.read_text(errors="ignore")))
     return found
 

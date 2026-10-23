@@ -5,8 +5,12 @@ CatchUpAcc
 DirectionX
 DirectionY
 DirectionZ
+DirectionXRange
+DirectionYRange
+DirectionZRange
 GroundCollisionOffset
 IgnoreIfDisabled
+InitialSpeedRange
 LAYER_Air
 LayerTransitionDuration
 MaxBounceCount

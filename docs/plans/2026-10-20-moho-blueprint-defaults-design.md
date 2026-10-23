@@ -56,6 +56,10 @@ The blueprint tables the scripts see are left as the `.bp` gives them: Moho's de
 its C++ copy, which is what beat 0 prints, so `bp_diff.py` lists the footprint and skirt fields however
 the engine's units hold them.
 
+*Corrected 2026-10-23:* Moho merges its copy back into the table as it registers the blueprint, so the
+scripts do see the defaults and derived values. The engine now fills them the same way
+(`2026-10-23-moho-blueprint-reflection-design.md`).
+
 ## 4. Tests
 
 - `test_favors_water.cpp`: an unset `BackUpDistance` is three times the unit's length; an unset

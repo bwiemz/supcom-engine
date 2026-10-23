@@ -181,10 +181,11 @@ Asked on 2026-10-15 and 2026-10-20: the original three times (`drive`, once with
 **`blueprints/`** compares every unit blueprint with the original's. Run with `/synclog <dir>`, the original writes a file a beat, and its hooks set `sim_KeepAllLogFiles` from the interface so that it keeps them (without it Moho deletes each beat's file unless that beat went out of sync). Beat 0's file holds every blueprint as Moho filled it in, after its constructors and `OnInitBlueprint`: the defaults a `.bp` leaves out included. On the engine, its other hook logs each blueprint as the scripts see it, a `PROBE bp <id> <path>=<value>` line a field; a few ticks are enough. Then:
 
 ```sh
-python tools/moho_probes/blueprints/bp_diff.py <dir>/<date>/beat00000.log opensupcom.log
+python tools/moho_probes/blueprints/bp_diff.py <dir>/<date>/beat00000.log opensupcom.log \
+    src/blueprints/moho_reflected_fields.cpp
 ```
 
-It lists, per field, the units whose values differ, then each field the `.bp` files leave out with the value Moho gives it, for the engine's code to supply. Beat 0 prints Moho's C++ copy, whose footprint and skirt are derived (its footprint class's), while the scripts' tables keep the `.bp`'s; those fields are listed however the engine's units hold them.
+It lists, per field, the units whose values differ, then each field the `.bp` files leave out with the value Moho gives it, for the engine's code to supply. With the third argument, each of those is tagged `[filled]` or `[unfilled]` by the engine's table of reflected fields (`docs/plans/2026-10-23-moho-blueprint-reflection-design.md`); a `[filled]` one still missing is a bug in that table's layer. Beat 0 prints Moho's C++ copy, whose footprint and skirt are derived (its footprint class's), while the scripts' tables keep the `.bp`'s; those fields are listed however the engine's units hold them.
 
 Asked on 2026-10-15: the original once; the engine on main 9f454781. 383 of 48,722 fields the two share differed (nearly all the footprint and skirt), and six defaults were not Moho's. `docs/plans/2026-10-20-moho-blueprint-defaults-design.md` ports four of them.
 
