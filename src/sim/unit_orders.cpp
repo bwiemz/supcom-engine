@@ -1424,7 +1424,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
             stop_assisting(ctx.L, &registry);
         }
         const BuildEconomy costs = blueprint_build_economy(ctx.L, target.unit_id());
-        if (costs.time <= 0 || build_rate_ <= 0) return done();
+        if (costs.time <= 0) return done();
         const Vector3 at = target.position();
         aim_builder_arms(&at, ctx.L);
         if (destroyed() || !in_registry()) {
@@ -1787,12 +1787,14 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // Who helps (Moho's guard dispatches repair and reclaim tasks): a
     // unit that repairs helps builds, silos and repairs; one that
     // reclaims, reclaims. Others (a tank guarding an engineer, a
-    // factory assisting a factory) only follow.
+    // factory assisting a factory) only follow. A BuildRate sets the pace
+    // of that help, not whether it is given: Moho's build bots (BuildRate 0)
+    // take up their builder's build and add nothing to it.
     // A REBUILDER doesn't take up a live unit it guards (Moho's
     // RefreshGuardedUnitFromTarget), so it helps none of its work: a support
     // commander guarding a factory doesn't build with it (probed
     // 2026-10-13, `scu-assist`). It still repairs it.
-    const bool repairs = has_category("REPAIR") && build_rate_ > 0;
+    const bool repairs = has_category("REPAIR");
     const auto needs_repair = [&] {
         return target_unit->health() < target_unit->max_health() ||
                target_unit->shield_needs_repair(registry, L);
@@ -2004,7 +2006,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
-        // Auto-repair: if target is damaged and we have build_rate
+        // Auto-repair: if target is damaged
         if (repairs && needs_repair()) {
             working = true;
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
