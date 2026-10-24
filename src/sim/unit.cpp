@@ -544,7 +544,8 @@ void Unit::begin_dying() {
     if (is_air_unit()) {
         crashing_ = true;
         crash_velocity_y_ = 0;
-        crash_spin_rate_ = (static_cast<f32>(entity_id() % 100) / 100.0f - 0.5f) * 4.0f;
+        crash_spin_rate_ =
+            (static_cast<f32>(EntityRegistry::moho_id(entity_id()) % 100) / 100.0f - 0.5f) * 4.0f;
     }
 }
 
@@ -1225,19 +1226,29 @@ bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     if (!drove_ && !is_air_unit()) {
         const Vector3 was = pending_position();
         const Quaternion facing = pending_orientation();
-        coast(dt, ctx.terrain);
+        const bool moho = ctx.sim && ctx.sim->moho_pathing();
+        if (moho) coast_moho(ctx.terrain);
+        else coast(dt, ctx.terrain);
         // With Moho's pathing, a unit stopping is braked by its motion
         // (CUnitMotion::Stop, then CalcMoveCommon), which puts a step onto
-        // ground it won't fit back, as the drive does: it stops there.
+        // ground it won't fit back, as the drive does: it stops there, and
+        // is pushed back toward where it was.
         const Vector3& now = pending_position();
-        if (ctx.sim && ctx.sim->moho_pathing() &&
-            ctx.sim->footprint_fits_at(footprint(), now.x, now.z) == 0 &&
+        if (moho && ctx.sim->footprint_fits_at(footprint(), now.x, now.z) == 0 &&
             ctx.sim->footprint_fits_at(footprint(), was.x, was.z) != 0) {
+            Vector3 back{was.x - now.x, 0, was.z - now.z};
             set_position(was);
             set_orientation(facing);
             ground_speed_ = 0;
+            motion_velocity_ = {};
+            const f32 len = std::sqrt(back.x * back.x + back.z * back.z);
+            if (!pushed_ && len > 0) {
+                const f32 scale = nav_speed() * 0.010000001f / len;
+                add_impulse({back.x * scale, 0, back.z * scale}, false);
+            }
         }
     }
+    surface_collision_ = false; // CalcMoveLand has met what it touched
 
     // A sub dives or surfaces, moving or not (M206o).
     tick_dive(ctx.terrain, L);
@@ -3253,6 +3264,61 @@ f32 Unit::separation_radius() const {
     case CollisionShapeType::NONE: break;
     }
     return 0;
+}
+
+void Unit::add_impulse(const Vector3& impulse, bool moving) {
+    if (is_dying() || is_being_built_ || is_air_unit()) return;
+    if (moving) in_state_transition_ = true;
+    motion_velocity_ = {impulse.x + motion_velocity_.x * 0.5f,
+                        impulse.y + motion_velocity_.y * 0.5f,
+                        impulse.z + motion_velocity_.z * 0.5f};
+    // mFormationTopSpeed * 0.2, against a tick's step, as the binary compares them.
+    const f32 most = nav_speed() * 0.2f;
+    const Vector3& v = motion_velocity_;
+    const f32 speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (speed > most && speed > 0) {
+        const f32 scale = most / speed;
+        motion_velocity_ = {v.x * scale, v.y * scale, v.z * scale};
+    }
+    surface_collision_ = true;
+    pushed_ = true;
+}
+
+void Unit::coast_moho(const map::Terrain* terrain) {
+    target_speed_ = 0;
+    if (immobile_ || parent_entity_id() != 0) {
+        ground_speed_ = 0;
+        motion_velocity_ = {};
+        return;
+    }
+    Vector3 v = motion_velocity_;
+    if (v.x * v.x + v.y * v.y + v.z * v.z < 0.000001f && !turned_in_place_) {
+        motion_velocity_ = {};
+        ground_speed_ = 0;
+        return;
+    }
+    const f32 rate = drive_.max_brake > 0 ? drive_.max_brake : drive_.max_accel;
+    const f32 brake = rate * accel_mult_ * 0.0099999998f;
+    // Its velocity damped to 0.8, and braked against by up to its brake.
+    Vector3 against{-v.x, -v.y, -v.z};
+    const f32 len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (len > brake && len > 0) {
+        const f32 scale = brake / len;
+        against = {against.x * scale, against.y * scale, against.z * scale};
+    }
+    v = {against.x + v.x * 0.80000001f, against.y + v.y * 0.80000001f,
+         against.z + v.z * 0.80000001f};
+    motion_velocity_ = v;
+    Vector3 p = pending_position();
+    p.x += v.x;
+    p.z += v.z;
+    const f32 heading = quat_yaw(pending_orientation());
+    ground_speed_ = (v.x * osc::dmath::sin(heading) + v.z * osc::dmath::cos(heading)) * 10.0f;
+    if (terrain) {
+        stand_on_ground(terrain, p, pending_orientation());
+    } else {
+        set_position(p);
+    }
 }
 
 void Unit::coast(f64 dt, const map::Terrain* terrain) {

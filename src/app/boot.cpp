@@ -112,6 +112,14 @@ std::optional<int> App::boot_engine() {
             g_rng_trace_to = static_cast<osc::u32>(std::stoul(range.substr(dash + 1)));
         }
     }
+    if (const auto log = parse_string_arg(argc, argv, "--steer-log", ""); !log.empty()) {
+        steer_log.open(log, std::ios::trunc);
+        if (!steer_log) {
+            spdlog::error("--steer-log: cannot write {}", log);
+            return 1;
+        }
+        g_steer_log = &steer_log;
+    }
     g_moho_pathing = parse_flag(argc, argv, "--moho-pathing");
     if (g_moho_pathing) spdlog::info("Moho pathing on (--moho-pathing)");
     g_moho_random = parse_flag(argc, argv, "--moho-random");
@@ -153,6 +161,7 @@ std::optional<int> App::boot_game() {
         sim_state->set_checksum_trace(g_checksum_trace);
         sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
         sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
+        sim_state->set_steer_log(g_steer_log);
         sim_state->set_moho_pathing(game_setup.moho_pathing);
         sim_state->set_moho_random(game_setup.moho_random);
         sim_state->set_faf_exe(!config.faf_data_path.empty());

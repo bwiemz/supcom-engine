@@ -55,6 +55,7 @@ class PathListener;
 class PathNavigator;
 class PathQueue;
 class PathSearch;
+class Spline;
 class Traveler;
 } // namespace path
 
@@ -201,6 +202,8 @@ struct StateIO {
     static void save(StateWriter& w, const path::PathNavigator& n);
     static void load(StateReader& r, path::PathNavigator& n, SimState& sim, i32 army);
     static void save(StateWriter& w, const path::PathSearch& s);
+    static void save(StateWriter& w, const path::Spline& s);
+    static void load(StateReader& r, path::Spline& s);
     static void load(StateReader& r, path::PathSearch& s);
     static void save(StateWriter& w, const path::PathQueue& q, const SimState& sim);
     static void load(StateReader& r, path::PathQueue& q, SimState& sim);

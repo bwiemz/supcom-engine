@@ -66,6 +66,10 @@ osc::u32 g_entity_trace_to = 0xFFFFFFFFu;
 /// --rng-trace <file> [--rng-trace-ticks <from>-<to>]: every random draw and
 /// the script that made it (see SimState::set_rng_trace).
 std::ofstream* g_rng_trace = nullptr;
+
+/// --steer-log <file>: every ground unit's steering decisions (see
+/// SimState::set_steer_log).
+std::ofstream* g_steer_log = nullptr;
 osc::u32 g_rng_trace_from = 0;
 osc::u32 g_rng_trace_to = 0xFFFFFFFFu;
 

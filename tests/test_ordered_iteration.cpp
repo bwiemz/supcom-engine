@@ -35,20 +35,24 @@ std::vector<osc::u32> walk(const EntityRegistry& reg) {
 
 } // namespace
 
-TEST_CASE("for_each visits entities in id order", "[determinism]") {
+TEST_CASE("for_each visits entities in the order they were made", "[determinism]") {
     EntityRegistry reg;
     std::vector<osc::u32> ids;
-    ids.reserve(200);
+    ids.reserve(260);
     for (int i = 0; i < 200; ++i) ids.push_back(add(reg));
     // Remove a scattering, as deaths and expiring projectiles do.
-    for (size_t i = 0; i < ids.size(); i += 3) reg.unregister_entity(ids[i]);
-    for (int i = 0; i < 50; ++i) add(reg);
+    std::vector<osc::u32> live;
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (i % 3 == 0) reg.unregister_entity(ids[i]);
+        else live.push_back(ids[i]);
+    }
+    for (int i = 0; i < 50; ++i) live.push_back(add(reg));
     reg.collect_garbage();
-    for (int i = 0; i < 10; ++i) add(reg);
+    for (int i = 0; i < 10; ++i) live.push_back(add(reg));
 
-    const auto seen = walk(reg);
-    REQUIRE(seen.size() == reg.count());
-    for (size_t i = 1; i < seen.size(); ++i) CHECK(seen[i - 1] < seen[i]);
+    // Moho's ids aren't made in order (a family and army in their high bits), so
+    // the walk keeps the making order, as the engine's walks always had it.
+    CHECK(walk(reg) == live);
 }
 
 TEST_CASE("for_each tolerates the walk creating and removing entities", "[determinism]") {

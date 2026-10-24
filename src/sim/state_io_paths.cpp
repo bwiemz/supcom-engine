@@ -11,6 +11,7 @@
 #include "sim/path_finder.hpp"
 #include "sim/path_navigator.hpp"
 #include "sim/path_search.hpp"
+#include "sim/path_spline.hpp"
 #include "sim/path_tables.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/state_io.hpp"
@@ -177,6 +178,34 @@ void StateIO::load(StateReader& r, path::PathFinder& f, const SimState& sim,
 }
 
 // ---------------------------------------------------------- PathNavigator
+
+void StateIO::save(StateWriter& w, const path::Spline& s) {
+    w.size(s.nodes_.size());
+    for (const path::Node& n : s.nodes_) {
+        w.vec3(n.position);
+        w.vec3(n.direction);
+    }
+    w.u64v(s.current_);
+    w.u8v(static_cast<u8>(s.type_));
+    w.vec3(s.cont_position_);
+    w.vec3(s.cont_direction_);
+    w.vec3(s.cont_velocity_);
+    w.u8v(static_cast<u8>(s.cont_state_));
+}
+
+void StateIO::load(StateReader& r, path::Spline& s) {
+    s.nodes_.resize(r.size(24));
+    for (path::Node& n : s.nodes_) {
+        n.position = r.vec3();
+        n.direction = r.vec3();
+    }
+    s.current_ = static_cast<size_t>(r.u64v());
+    s.type_ = static_cast<path::PathType>(r.u8v());
+    s.cont_position_ = r.vec3();
+    s.cont_direction_ = r.vec3();
+    s.cont_velocity_ = r.vec3();
+    s.cont_state_ = static_cast<path::PointState>(r.u8v());
+}
 
 void StateIO::save(StateWriter& w, const path::PathNavigator& n) {
     // queue_: its unit's army's, set again on a load

@@ -97,7 +97,8 @@ TEST_CASE("Two boxes meet along their least overlap, the normal toward the shape
 TEST_CASE("A moving unit's box calls a prop's OnCollision on the ticks its id matches mod 5",
           "[collision][lua]") {
     Scene scene(1, 1);
-    const u32 id = scene.unit->entity_id();
+    // Moho's id, the engine's less one (EntityRegistry::moho_id).
+    const u32 id = osc::sim::EntityRegistry::moho_id(scene.unit->entity_id());
     CHECK(scene.calls_after(id + 1, 4) == 0);
     CHECK(scene.calls_after(id + 5, 1) == 1);
     CHECK(scene.lua

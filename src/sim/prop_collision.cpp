@@ -55,7 +55,8 @@ void call_on_collision(lua_State* L, Prop& prop, const Unit& unit, const BoxCont
 } // namespace
 
 void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 tick) {
-    if (!L || unit.entity_id() % 5 != tick % 5 || !(unit.size_x() * unit.size_z() > 0.2f)) {
+    if (!L || EntityRegistry::moho_id(unit.entity_id()) % 5 != tick % 5 ||
+        !(unit.size_x() * unit.size_z() > 0.2f)) {
         return;
     }
     const Vector3& v = unit.velocity();

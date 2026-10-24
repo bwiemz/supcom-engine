@@ -1,6 +1,6 @@
 """Compares the drive grid probe's two logs, the original's and the engine's.
 
-    python drive_diff.py retail.log opensupcom.log
+    python drive_diff.py retail.log opensupcom.log [--trace]
 
 For each unit and leg it measures: the tick its turn starts and the tick it starts to move, its
 top speed, the tick its order ends, how far from the goal it comes to rest, how far it coasts
@@ -8,6 +8,9 @@ after its order ends, and whether it backs up. It prints, per measure, how many 
 beyond a small tolerance, those units grouped by the blueprint fields their drive reads
 (MotionType, RotateOnSpot, whether TurnRadius and BackUpDistance are given), and the worst
 few. Exit 1 if any differ.
+
+With --trace it compares the paths tick by tick instead: per leg, the largest distance between
+the original's unit and the engine's at the same tick, and how those spread over all legs.
 """
 
 import math
@@ -87,6 +90,29 @@ def differs(name: str, a: float, b: float) -> bool:
     return abs(a - b) > tol
 
 
+def trace_gap(r: Samples, e: Samples) -> float:
+    at = {t: (x, z) for t, x, z, _, _ in e}
+    return max(
+        (math.hypot(x - at[t][0], z - at[t][1]) for t, x, z, _, _ in r if t in at), default=0.0
+    )
+
+
+def trace(r_runs: dict[tuple[str, int], Samples], e_runs: dict[tuple[str, int], Samples]) -> int:
+    keys = sorted(r_runs.keys() & e_runs.keys())
+    gaps = sorted((trace_gap(r_runs[k], e_runs[k]), k) for k in keys)
+    if not gaps:
+        return 1
+    print(f"legs: {len(gaps)}; largest gap from the original along each leg:")
+    for share in (0.5, 0.75, 0.9, 1.0):
+        gap, _ = gaps[min(len(gaps) - 1, int(share * len(gaps)))]
+        print(f"  {int(share * 100):3d}% of legs within {gap:.3f}")
+    for limit in (0.01, 0.05, 0.1, 0.5):
+        print(f"  within {limit}: {sum(g <= limit for g, _ in gaps)}")
+    for gap, (uid, leg) in gaps[-8:][::-1]:
+        print(f"    {uid} L{leg}: {gap:.3f}")
+    return 0
+
+
 def group_of(tr: dict[str, str]) -> str:
     def given(key: str) -> str:
         return "set" if float(tr.get(key, "-1")) >= 0 else "unset"
@@ -98,8 +124,11 @@ def group_of(tr: dict[str, str]) -> str:
 
 
 def main() -> int:
-    r_runs, r_lanes, traits = parse(sys.argv[1])
-    e_runs, e_lanes, _ = parse(sys.argv[2])
+    args = [a for a in sys.argv[1:] if a != "--trace"]
+    r_runs, r_lanes, traits = parse(args[0])
+    e_runs, e_lanes, _ = parse(args[1])
+    if "--trace" in sys.argv:
+        return trace(r_runs, e_runs)
     keys = sorted(r_runs.keys() & e_runs.keys())
     print(f"runs: original {len(r_runs)}, engine {len(e_runs)}, both {len(keys)}")
     diffs: dict[str, list[tuple[float, str, int, float, float]]] = defaultdict(list)

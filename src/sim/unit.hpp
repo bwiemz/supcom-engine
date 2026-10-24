@@ -501,6 +501,8 @@ public:
         /// TurnFacingRate, radians per second: how fast a hover's body turns
         /// to its work (none without one, as Moho's)
         f32 turn_facing_rate = 0;
+        /// MaxSteerForce: the slide across its heading it keeps (0: MaxAcceleration)
+        f32 max_steer_force = 0;
     };
     const Drive& drive() const { return drive_; }
     void set_drive(const Drive& d) { drive_ = d; }
@@ -512,6 +514,27 @@ public:
     /// Pushed aside by a neighbour in the last separation pass (M203b).
     bool jostled() const { return jostled_; }
     void set_jostled(bool j) { jostled_ = j; }
+    // Moho's CUnitMotion on the ground, with Moho pathing.
+    /// mVelocity: its step last tick, as its motion keeps it.
+    const Vector3& motion_velocity() const { return motion_velocity_; }
+    void set_motion_velocity(const Vector3& v) { motion_velocity_ = v; }
+    /// mIsBeingPushed: knocked off its spline, it coasts till slow.
+    bool pushed() const { return pushed_; }
+    void set_pushed(bool p) { pushed_ = p; }
+    /// mInStateTransition: pushed while on its spline; its way is asked afresh after.
+    bool in_state_transition() const { return in_state_transition_; }
+    void set_in_state_transition(bool t) { in_state_transition_ = t; }
+    /// mProcessSurfaceCollision: it meets what it touches this tick, moving or not.
+    bool surface_collision() const { return surface_collision_; }
+    void set_surface_collision(bool c) { surface_collision_ = c; }
+    /// CUnitMotion::AddImpulse on the ground (0x006B8AC0): its velocity takes `impulse`
+    /// and half what it had, held to a fifth of its top speed a tick, and it is pushed.
+    /// `moving`: it had a spline node to stand on (CUnitMotion::IsMoving).
+    void add_impulse(const Vector3& impulse, bool moving);
+    /// CalcMoveCommon with no spline node, on its velocity vector: damped to 0.8 and
+    /// braked; under 0.001 a tick it stops.
+    void coast_moho(const map::Terrain* terrain);
+
     /// What the navigator drove it at this tick: the speed, the speed it was
     /// steering for (0 braking to a stop), its top speed, and how it turned.
     void note_drive(f32 speed, f32 target, f32 top, MotionTurn turn) {
@@ -872,6 +895,9 @@ public:
     f32 speed_mult() const { return speed_mult_; }
     void set_speed_mult(f32 m) { speed_mult_ = m; }
     f32 effective_speed() const { return max_speed_ * speed_mult_; }
+    /// The speed it was last told to drive at: its own, or its formation's (Moho's
+    /// mInfoCache.mFormationTopSpeed); its own before it is told.
+    f32 nav_speed() const { return nav_speed_ > 0 ? nav_speed_ : effective_speed(); }
 
     // Movement multipliers
     f32 accel_mult() const { return accel_mult_; }
@@ -1979,6 +2005,10 @@ private:
     // a transport picks up its largest units first.
     f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
     f32 average_density_ = 0.49f;
+    Vector3 motion_velocity_{};        ///< CUnitMotion's mVelocity, a tick's step
+    bool pushed_ = false;              ///< mIsBeingPushed
+    bool in_state_transition_ = false; ///< mInStateTransition
+    bool surface_collision_ = false;   ///< mProcessSurfaceCollision
     /// Give up slots whose unit is no longer aboard (it died, was taken off
     /// the cargo list, or left), as Moho's TransportUnreserveUnattachedSpots.
     void release_stale_slots(const EntityRegistry& registry);

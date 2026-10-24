@@ -436,6 +436,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
     sim.entity_registry().for_each([&](const Entity& e) {
         if (!e.destroyed()) live.push_back(&e);
     });
+    // The registry walks in the order entities were made, and Moho's ids
+    // aren't made in order.
+    std::sort(live.begin(), live.end(),
+              [](const Entity* a, const Entity* b) { return a->entity_id() < b->entity_id(); });
     const size_t old_size = out.entities.size();
     out.entities.resize(live.size());
     constexpr size_t kChunk = 256;
@@ -557,7 +561,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out, i32 sight_army) {
             append(out.adjacent, side.adjacent);
         }
     }
-    // The registry walks in id order, which find()'s binary search relies on.
+    // In id order, which find()'s binary search relies on.
     assert(
         std::is_sorted(out.entities.begin(), out.entities.end(),
                        [](const EntityRecord& a, const EntityRecord& b) { return a.id < b.id; }));

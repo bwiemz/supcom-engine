@@ -248,14 +248,14 @@ private:
     // Per-frame draw groups (rebuilt each frame)
     std::vector<MeshDrawGroup> mesh_groups_;
     /// Each entity's LOD reach, for an update at a fixed metric, by entity
-    /// id: the registry's ids run from 1 and are never reused, so a table,
-    /// each read at the entity's mesh_changes (a SetMesh reads it again).
+    /// id (Moho's ids are sparse, a pool per family in their high bits), each
+    /// read at the entity's mesh_changes (a SetMesh reads it again).
     /// A whole map's props then cost a look each, not a blueprint lookup.
     struct CachedReach {
         u32 mesh_changes = 0;
         f32 reach = -1.0f; ///< below 0: not read
     };
-    std::vector<CachedReach> reaches_;
+    std::unordered_map<u32, CachedReach> reaches_;
 
     sim::GameColors game_colors_;
     const ReconView* recon_ = nullptr;
