@@ -309,9 +309,9 @@ static int brain_TakeResource(lua_State* L) {
         lua_pushnumber(L, 0);
         return 1;
     }
-    const f64 taken = request > store->stored ? store->stored : request;
-    const f64 left = store->stored - taken;
-    store->stored = left > 0.0 ? left : 0.0;
+    const f32 taken = request > store->stored ? store->stored : static_cast<f32>(request);
+    const f32 left = store->stored - taken;
+    store->stored = left > 0.0f ? left : 0.0f;
     lua_pushnumber(L, taken);
     return 1;
 }

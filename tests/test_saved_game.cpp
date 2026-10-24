@@ -2,21 +2,28 @@
 // to the saved tick before the player takes over.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
+#include "lua/session_clients.hpp"
+#include "lua/sim_sync.hpp"
 #include "sim/build_info.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_snapshot.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
+#include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -367,4 +374,162 @@ TEST_CASE("Only its own installation's snapshot is trusted", "[savegame]") {
     CHECK_FALSE(osc::sim::snapshot_signed(relabelled, mine));
     loaded.snapshot[loaded.snapshot.size() / 2] ^= 1; // changed after signing
     CHECK_FALSE(osc::sim::snapshot_signed(loaded, mine));
+}
+
+namespace {
+
+struct PauseHeard {
+    LuaGuard ui;
+    explicit PauseHeard(SimState& sim) {
+        lua_pushstring(ui.L, "osc_sim_state");
+        lua_pushlightuserdata(ui.L, &sim);
+        lua_rawset(ui.L, LUA_REGISTRYINDEX);
+        const char* hooks = "pauses, resumes = 0, 0 "
+                            "function OnPause() pauses = pauses + 1 end "
+                            "function OnResume() resumes = resumes + 1 end";
+        REQUIRE(luaL_loadbuffer(ui.L, hooks, std::strlen(hooks), "hooks") == 0);
+        REQUIRE(lua_pcall(ui.L, 0, 0, 0) == 0);
+    }
+    int count(const char* name) const {
+        lua_pushstring(ui.L, name);
+        lua_rawget(ui.L, LUA_GLOBALSINDEX);
+        const int n = static_cast<int>(lua_tonumber(ui.L, -1));
+        lua_pop(ui.L, 1);
+        return n;
+    }
+    bool session_paused() const {
+        bool paused = true;
+        REQUIRE(osc::lua::session_is_paused(ui.L, paused));
+        return paused;
+    }
+    void frame() const { osc::lua::pump_pause_state(ui.L); }
+};
+
+} // namespace
+
+TEST_CASE("A game saved on pause loads unpaused, as retail's, and replays as it played",
+          "[savegame][pause]") {
+    const osc::u32 source = GENERATE(0u, 1u);
+    const bool from_snapshot = GENERATE(true, false);
+    const auto boot = [](SimState& sim) {
+        sim.set_seed(31);
+        auto ids = setup(sim);
+        sim.set_pause_timeouts(0, 3);
+        sim.set_pause_timeouts(1, 3);
+        return ids;
+    };
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    const auto ids = boot(a);
+    a.set_recording(true);
+    for (int i = 0; i < 5; ++i) {
+        a.tick();
+    }
+    osc::sim::SimCallbackEntry pause;
+    pause.func_name = osc::sim::kRequestPauseCallback;
+    a.schedule_callback(source, std::move(pause));
+    for (int i = 0; i < 4; ++i) {
+        a.tick();
+    }
+    REQUIRE(a.paused_by() == static_cast<osc::i32>(source));
+    REQUIRE(a.tick_count() == 5);
+    const SavedGame save = osc::sim::save_game(a, "paused");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    REQUIRE(boot(b) == ids);
+    b.set_recording(true);
+    if (from_snapshot) {
+        REQUIRE(osc::sim::load_snapshot(b, save.snapshot).empty());
+        b.adopt_history(save.game);
+    } else {
+        osc::sim::ReplayPlayback catch_up(save.game);
+        catch_up.resume(b);
+        while (b.resuming()) {
+            b.tick();
+            REQUIRE(catch_up.check(b));
+        }
+    }
+    REQUIRE(b.beat_count() == a.beat_count());
+    PauseHeard ui(b);
+    b.schedule_post_load();
+    CHECK_FALSE(b.paused());
+    CHECK_FALSE(ui.session_paused());
+    for (int i = 0; i < 5; ++i) {
+        ui.frame();
+        b.tick();
+    }
+    ui.frame();
+    CHECK(b.tick_count() == 10);
+    CHECK(ui.count("pauses") == 0);
+    CHECK(ui.count("resumes") == 0);
+    CHECK(b.pause_timeouts(source) == 2);
+
+    const SavedGame again = osc::sim::save_game(b, "again");
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    REQUIRE(boot(c) == ids);
+    c.set_recording(true);
+    osc::sim::ReplayPlayback replay(again.game);
+    replay.resume(c);
+    while (c.resuming()) {
+        c.tick();
+        REQUIRE(replay.check(c));
+    }
+    CHECK(c.tick_count() == 10);
+    CHECK_FALSE(c.paused());
+}
+
+TEST_CASE("A save holds none of the Sync its user side hasn't had", "[savegame][sync]") {
+    const auto run = [](lua_State* L, const char* code) {
+        REQUIRE(luaL_loadbuffer(L, code, std::strlen(code), "code") == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+    };
+    const auto boot = [&](lua_State* L, SimState& sim, osc::lua::SyncQueue& sync) {
+        run(L, "function ResetSyncTable() Sync = {} end ResetSyncTable()");
+        setup(sim);
+        sim.set_beat_observer([&sync](const SimState& s) {
+            lua_State* SL = s.lua_state();
+            lua_pushstring(SL, "Sync");
+            lua_rawget(SL, LUA_GLOBALSINDEX);
+            lua_pushstring(SL, "Beat");
+            lua_pushnumber(SL, s.beat_count());
+            lua_rawset(SL, -3);
+            lua_pop(SL, 1);
+            sync.queue(SL, nullptr);
+        });
+    };
+    const auto delivered = [&](osc::lua::SyncQueue& sync, lua_State* sim_L) {
+        LuaGuard ui;
+        run(ui.L, "seen = '' function OnSync() seen = seen .. Sync.Beat .. ',' end");
+        while (sync.pending()) {
+            sync.deliver(sim_L, ui.L);
+        }
+        lua_pushstring(ui.L, "seen");
+        lua_rawget(ui.L, LUA_GLOBALSINDEX);
+        std::string seen = lua_tostring(ui.L, -1);
+        lua_pop(ui.L, 1);
+        return seen;
+    };
+
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    osc::lua::SyncQueue sync_a;
+    boot(ga.L, a, sync_a);
+    a.set_recording(true);
+    for (int i = 0; i < 3; ++i) {
+        a.tick();
+    }
+    const SavedGame save = osc::sim::save_game(a, "three beats queued");
+    REQUIRE_FALSE(save.snapshot.empty());
+    CHECK(delivered(sync_a, ga.L) == "1,2,3,");
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    osc::lua::SyncQueue sync_b;
+    boot(gb.L, b, sync_b);
+    REQUIRE(osc::sim::load_snapshot(b, save.snapshot).empty());
+    b.tick();
+    CHECK(delivered(sync_b, gb.L) == "4,");
 }

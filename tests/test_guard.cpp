@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/footprint.hpp"
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
@@ -363,4 +364,159 @@ TEST_CASE("Engineers assisting a shield generator regenerate its bubble while it
     const f32 before = bubble->health();
     sim.tick();
     CHECK(std::abs(bubble->health() - before - 0.5f) < 1e-3f);
+}
+
+namespace {
+
+struct FactoryAtWork {
+    Unit* factory;
+    Unit* unit;
+};
+
+Unit* build_unit(SimState& sim, Unit& factory, f32 x, f32 z) {
+    Unit* unit = still(sim, 0, x, z);
+    unit->set_is_being_built(true);
+    unit->set_fraction_complete(0.1f);
+    unit->set_health(0.1f * unit->max_health());
+    factory.set_build_target_id(unit->entity_id());
+    return unit;
+}
+
+FactoryAtWork factory_at_work(SimState& sim, f32 x, f32 z, f32 unit_x, f32 unit_z) {
+    Unit* factory = still(sim, 0, x, z);
+    factory->add_category("FACTORY");
+    factory->set_footprint_size(5.0f, 5.0f);
+    factory->set_skirt(8.0f, 8.0f, 0.0f, 0.0f);
+    factory->set_build_time(100000.0);
+    return {factory, build_unit(sim, *factory, unit_x, unit_z)};
+}
+
+Unit* engineer_of(SimState& sim, f32 x, f32 z) {
+    Unit* eng = walker(sim, 0, x, z, 1.9f);
+    eng->set_footprint_size(1.0f, 1.0f);
+    osc::blueprints::UnitFootprints footprints;
+    footprints.main.size_x = 1;
+    footprints.main.size_z = 1;
+    footprints.main.caps = osc::blueprints::occupancy::kLand;
+    eng->set_footprints(footprints);
+    eng->add_category("ENGINEER");
+    eng->add_category("REPAIR");
+    eng->set_build_rate(5.0f);
+    eng->set_max_build_distance(5.0f);
+    return eng;
+}
+
+} // namespace
+
+TEST_CASE("A guarding engineer walks to its build place before it helps a factory, even within "
+          "reach",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    // The factory's skirt is 8 across, [56.5, 64.5] by [46.5, 54.5]; the engineer
+    // stands 4 from it, within its MaxBuildDistance of 5.
+    const auto [factory, unit] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 60.5f);
+    Unit* eng = engineer_of(sim, 52.5f, 50.5f);
+    eng->push_command(guard(factory, 1), true);
+
+    sim.tick();
+    const osc::sim::Vector3 place = eng->navigator().goal();
+    const f32 cell_x = std::floor(place.x);
+    const f32 cell_z = std::floor(place.z);
+    INFO("place " << place.x << "," << place.z);
+    CHECK((cell_x + 1.0f < 55.5f || cell_x > 65.5f || cell_z + 1.0f < 45.5f || cell_z > 55.5f));
+
+    int started = -1;
+    for (int t = 0; t < 120 && started < 0; ++t) {
+        sim.tick();
+        if (eng->is_moving()) CHECK_FALSE(eng->is_building());
+        if (eng->is_building()) started = t;
+    }
+    REQUIRE(started >= 0);
+    CHECK(std::hypot(eng->position().x - place.x, eng->position().z - place.z) < 1.5f);
+}
+
+TEST_CASE("A guarding engineer that walked up to a factory goes on helping on every tick",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    // From its build place the unit under construction is within twice the engineer's reach;
+    // from where its reach first met the skirt (14 from the factory's centre) it is not.
+    const auto [factory, unit] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 47.5f);
+    Unit* eng = engineer_of(sim, 60.5f, 80.5f);
+    eng->push_command(guard(factory, 1), true);
+
+    int started = -1;
+    for (int t = 0; t < 200 && started < 0; ++t) {
+        sim.tick();
+        if (eng->is_building()) started = t;
+    }
+    REQUIRE(started >= 0);
+    CHECK(eng->build_target_id() == unit->entity_id());
+    for (int t = 0; t < 100; ++t) {
+        sim.tick();
+        REQUIRE(eng->is_building());
+    }
+    CHECK(unit->fraction_complete() > 0.1f);
+}
+
+TEST_CASE("A guarding engineer keeps chasing a mobile factory, never a place it has left",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    const auto [factory, unit] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 47.5f);
+    factory->set_motion_type("RULEUMT_Land");
+    Unit* eng = engineer_of(sim, 60.5f, 80.5f);
+    eng->push_command(guard(factory, 1), true);
+
+    for (int t = 0; t < 100; ++t) {
+        factory->set_position({factory->position().x + 0.2f, 0.0f, factory->position().z});
+        unit->set_position({unit->position().x + 0.2f, 0.0f, unit->position().z});
+        sim.tick();
+        const auto goal = eng->navigator().goal();
+        INFO("tick " << t << " goal " << goal.x << "," << goal.z << " factory "
+                     << factory->position().x);
+        REQUIRE(std::hypot(goal.x - factory->position().x, goal.z - factory->position().z) < 8.0f);
+    }
+    CHECK(factory->position().x > 79.0f);
+    CHECK(eng->position().x > 65.0f);
+}
+
+TEST_CASE("A guarding engineer displaced between a factory's builds walks back to the build place "
+          "for the next",
+          "[guard][assist]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    flat(sim);
+    const auto [factory, first] = factory_at_work(sim, 60.5f, 50.5f, 60.5f, 47.5f);
+    Unit* eng = engineer_of(sim, 60.5f, 80.5f);
+    eng->push_command(guard(factory, 1), true);
+
+    sim.tick();
+    const osc::sim::Vector3 place = eng->navigator().goal();
+    for (int t = 0; t < 200 && !eng->is_building(); ++t) sim.tick();
+    REQUIRE(eng->is_building());
+
+    factory->set_build_target_id(0);
+    first->set_is_being_built(false);
+    sim.tick();
+    REQUIRE_FALSE(eng->is_building());
+
+    eng->set_position({60.5f, 0.0f, 80.5f});
+    const Unit* second = build_unit(sim, *factory, 60.5f, 47.5f);
+    int started = -1;
+    for (int t = 0; t < 200 && started < 0; ++t) {
+        sim.tick();
+        if (eng->is_building()) started = t;
+    }
+    REQUIRE(started >= 0);
+    CHECK(eng->build_target_id() == second->entity_id());
+    CHECK(std::hypot(eng->position().x - place.x, eng->position().z - place.z) < 1.5f);
+    for (int t = 0; t < 100; ++t) {
+        sim.tick();
+        REQUIRE(eng->is_building());
+    }
 }

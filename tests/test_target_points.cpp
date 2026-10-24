@@ -299,3 +299,33 @@ TEST_CASE("TransferTarget gives the second weapon the first's target; SetTargetE
     CHECK(to.has_ground_target);
     CHECK(same(to.ground_target, {4, 0, 4}));
 }
+
+TEST_CASE("SetTargetEntity takes only a target on the weapon's layers", "[targetpoints][lua]") {
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_sim_bindings(lua, sim);
+    osc::lua::register_moho_bindings(lua, sim);
+    two_armies(sim);
+    const u32 target = add_unit(sim, 1, {0, 0, 10}, nullptr);
+    Weapon gun;
+    lua_State* L = lua.raw();
+    const auto handle = [&](const char* name, void* object) {
+        lua_newtable(L);
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, object);
+        lua_rawset(L, -3);
+        lua_setglobal(L, name);
+    };
+    handle("gun", &gun);
+    handle("target", sim.entity_registry().find(target));
+
+    gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Sub");
+    REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
+    CHECK(gun.target_entity_id == 0);
+    gun.fire_target_layer_caps = osc::sim::parse_layer_caps("None");
+    REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
+    CHECK(gun.target_entity_id == 0);
+    gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Land");
+    REQUIRE(lua.do_string("moho.weapon_methods.SetTargetEntity(gun, target)").ok());
+    CHECK(gun.target_entity_id == target);
+}

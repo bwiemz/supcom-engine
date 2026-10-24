@@ -59,9 +59,9 @@ struct GrantRatios {
 struct ResourceState {
     f64 income = 0.0;
     f64 requested = 0.0;
-    f64 stored = 0.0;
+    f32 stored = 0.0f;   ///< a float, as Moho's mTotals.mStored
     f64 reclaimed = 0.0; ///< reclaim's total (Moho's mTotals.mReclaimed)
-    f64 max_storage = 200.0;
+    f32 max_storage = 200.0f;
 };
 
 struct EconomyState {
@@ -158,8 +158,10 @@ public:
         bank_energy_ += energy;
     }
     void count_storage(f64 held_mass, f64 held_energy) {
-        economy_.mass.max_storage = std::max(0.0, extra_storage_mass_ + held_mass);
-        economy_.energy.max_storage = std::max(0.0, extra_storage_energy_ + held_energy);
+        economy_.mass.max_storage =
+            static_cast<f32>(std::max(0.0, extra_storage_mass_ + held_mass));
+        economy_.energy.max_storage =
+            static_cast<f32>(std::max(0.0, extra_storage_energy_ + held_energy));
     }
     /// Units' production and an ally's overflow: also Moho's mPendingResources (Economy_Trend_*).
     void bank_pending(f64 mass, f64 energy) {
@@ -186,8 +188,8 @@ public:
     /// units' part every tick; applied to max_storage at once too, so a
     /// GiveResource in the same script call can fill it.
     void set_extra_storage(f64 mass, f64 energy) {
-        economy_.mass.max_storage += mass - extra_storage_mass_;
-        economy_.energy.max_storage += energy - extra_storage_energy_;
+        economy_.mass.max_storage += static_cast<f32>(mass - extra_storage_mass_);
+        economy_.energy.max_storage += static_cast<f32>(energy - extra_storage_energy_);
         extra_storage_mass_ = mass;
         extra_storage_energy_ = energy;
     }

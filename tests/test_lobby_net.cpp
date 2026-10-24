@@ -369,14 +369,20 @@ TEST_CASE("Three sims play in lockstep over the lobby's connections (M218c)", "[
     REQUIRE(host->host(0, 99));
     auto one = std::make_unique<LobbyNet>("One", 8);
     auto two = std::make_unique<LobbyNet>("Two", 8);
+    // The host gives uids in the order joins reach it, so one joins before two starts
+    const auto poll_until = [&](const std::function<bool()>& done) {
+        const osc::i64 deadline = now_ms() + 2000;
+        while (now_ms() < deadline && !done()) {
+            for (LobbyNet* n : {host.get(), one.get(), two.get()}) n->poll(now_ms());
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return done();
+    };
     REQUIRE(one->join("127.0.0.1", host->port()));
+    REQUIRE(poll_until([&] { return one->joined() && host->peers().size() == 1; }));
     REQUIRE(two->join("127.0.0.1", host->port()));
-    const osc::i64 deadline = now_ms() + 2000;
-    while (now_ms() < deadline && !(one->joined() && two->joined() && host->peers().size() == 2)) {
-        for (LobbyNet* n : {host.get(), one.get(), two.get()}) n->poll(now_ms());
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    REQUIRE((one->joined() && two->joined()));
+    REQUIRE(poll_until([&] { return two->joined() && host->peers().size() == 2; }));
+    REQUIRE(one->local_uid() == 1);
     REQUIRE(two->local_uid() == 2);
 
     // The launch: each side's connections go to its game

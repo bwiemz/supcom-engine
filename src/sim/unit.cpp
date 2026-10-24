@@ -1176,6 +1176,18 @@ void Unit::decay(lua_State* L) {
     }
 }
 
+void Unit::materialize(f32 step) {
+    if (step == 0.0f) {
+        return;
+    }
+    if (is_being_built()) {
+        const f32 health_ratio = max_health() > 0.0f ? health() / max_health() : 0.0f;
+        const f32 progressed = std::clamp(fraction_complete() + step, 0.0f, 1.0f);
+        set_fraction_complete(std::max(health_ratio, progressed));
+    }
+    set_health(std::min(max_health(), health() + max_health() * step));
+}
+
 bool Unit::motion_tick(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
 
@@ -1457,18 +1469,25 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
                           map::PathfindingGrid* grid, f32 efficiency, bool* built) {
     if (built) *built = false;
     auto* target = registry.find(build_target_id_);
-    if (!target || target->destroyed()) {
+    if (!target || target->destroyed() || !target->is_unit()) {
         fail_build(registry, L);
         return false;
     }
 
+    // A helper with no build rate does none of the work, so it leaves the
+    // completion to a builder that does, and holds as a paused one would.
+    const bool idle_helper = build_rate_ <= 0 && build_repairs_ && build_time_ > 0;
+
     // Guard: if an assister already pushed fraction to 1.0 this tick
     if (target->fraction_complete() >= 1.0f) {
+        if (idle_helper && target->is_unit() && static_cast<Unit*>(target)->is_being_built()) {
+            return true;
+        }
         if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false;
     }
-    if (paused_) {
+    if (paused_ || idle_helper) {
         work_progress_ = target->fraction_complete();
         return true;
     }
@@ -1479,13 +1498,10 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
-    f32 new_frac = std::min(1.0f, target->fraction_complete() +
-                            progress_rate * static_cast<f32>(dt) * efficiency);
-    target->set_fraction_complete(new_frac);
-    target->set_health(new_frac * target->max_health());
-    work_progress_ = new_frac;
+    static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
+    work_progress_ = target->fraction_complete();
 
-    if (new_frac >= 1.0f) {
+    if (work_progress_ >= 1.0f) {
         if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false; // command done
@@ -1706,28 +1722,23 @@ void Unit::release_build(lua_State* L, EntityRegistry& registry) {
 bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
                                   f32 efficiency) {
     auto* target = registry.find(build_target_id_);
-    if (!target || target->destroyed())
-        return false;
+    if (!target || target->destroyed() || !target->is_unit()) return false;
 
-    if (build_time_ <= 0 || build_rate_ <= 0)
-        return false;
+    if (build_time_ <= 0) return false;
 
     if (target->fraction_complete() >= 1.0f)
         return false;
 
-    if (paused_) {
+    if (paused_ || build_rate_ <= 0) {
         work_progress_ = target->fraction_complete();
         return true;
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
-    f32 new_frac = std::min(1.0f,
-        target->fraction_complete() + progress_rate * static_cast<f32>(dt) * efficiency);
-    target->set_fraction_complete(new_frac);
-    target->set_health(new_frac * target->max_health());
-    work_progress_ = new_frac;
+    static_cast<Unit*>(target)->materialize(progress_rate * static_cast<f32>(dt) * efficiency);
+    work_progress_ = target->fraction_complete();
 
-    return new_frac < 1.0f;
+    return work_progress_ < 1.0f;
 }
 
 void Unit::begin_reclaim(u32 target_id, lua_State* L, EntityRegistry& registry) {
@@ -2048,7 +2059,6 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
         !target_unit->shield_needs_repair(registry, L)) {
         return false;
     }
-    if (build_rate_ <= 0) return false;
 
     // Its blueprint's BuildTime/BuildCostMass/BuildCostEnergy
     const BuildEconomy costs = blueprint_build_economy(L, target_unit->unit_id());
@@ -2116,7 +2126,7 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
         return false;
     }
 
-    if (repair_build_time_ <= 0 || build_rate_ <= 0) {
+    if (repair_build_time_ <= 0) {
         stop_repairing(L, registry);
         return false;
     }

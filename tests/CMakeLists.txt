@@ -172,6 +172,7 @@ add_executable(osc_tests
     test_front_end_data.cpp
     test_projectile_defaults.cpp
     test_blueprint_defaults.cpp
+    test_moho_reflected_fields.cpp
     test_command_handles.cpp
     test_url_bindings.cpp
     test_script_object.cpp
@@ -201,6 +202,7 @@ add_executable(osc_tests
     test_sim_rand.cpp
     test_video_decoder.cpp
     test_vulkan_layer.cpp
+    test_window_system.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

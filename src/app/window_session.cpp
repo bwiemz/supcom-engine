@@ -215,7 +215,7 @@ void App::Window::handle_launch() {
                 if (!loading_save || !sim_state) {
                     world_ui_after_post_load.reset(); // a load left before its post-load
                     finish_world_ui(ui_lua_state.raw(), wld_provider, active_playback.has_value(),
-                                    sim_lua_state.get(), sim_state.get());
+                                    sim_lua_state.get(), sim_state.get(), world_interp.sync);
                 }
             }
         } else {

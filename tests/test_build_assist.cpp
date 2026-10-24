@@ -590,3 +590,169 @@ TEST_CASE("A repairer's focus is the unit it repairs, and nothing once it is don
     w.sim.tick();
     CHECK(eng->focus_id() == 0);
 }
+
+TEST_CASE("A helper with no build rate takes up the build it guards and adds no work",
+          "[build][assist][guard]") {
+    // Moho's build bots (ura0001, BuildRate 0): the build is their parent's,
+    // their own start and stop show it (probed 2026-10-23, `buildbots`).
+    AssistSim w;
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* bot = w.engineer("bot", 14.0f);
+    bot->set_build_rate(0.0f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    // The original's guard of the frame ends with it, one of its builder goes
+    // on; the engine keeps both (as the test of a guard's help above pins).
+    bool guards_builder = false;
+    SECTION("guarding the unit under construction") {
+        bot->push_command(order(CommandType::Guard, *w.site, 2), true);
+    }
+    SECTION("guarding its builder") {
+        bot->push_command(order(CommandType::Guard, *eng, 2), true);
+        guards_builder = true;
+    }
+    for (int tick = 0; tick < 20 && !bot->is_building(); ++tick) {
+        w.sim.tick();
+    }
+    REQUIRE(bot->is_building());
+    CHECK(bot->build_target_id() == w.site->entity_id());
+    CHECK(w.log().find("bot start Repair") != std::string::npos);
+    CHECK(bot->economy().consumption_mass == 0);
+    CHECK(bot->economy().consumption_energy == 0);
+
+    // The engineer's rate alone: 10 of a BuildTime of 100 a second
+    const osc::f32 before = w.site->fraction_complete();
+    w.sim.tick();
+    CHECK(w.site->fraction_complete() - before == Catch::Approx(0.01f).margin(1e-5f));
+    CHECK(bot->work_progress() == Catch::Approx(w.site->fraction_complete()).margin(0.011f));
+
+    for (int tick = 0; tick < 150 && w.site->is_being_built(); ++tick) {
+        w.sim.tick();
+        if (w.site->is_being_built()) CHECK(bot->is_building());
+    }
+    REQUIRE_FALSE(w.site->is_being_built());
+    w.sim.tick();
+    CHECK(w.log().find("bot stop") != std::string::npos);
+    CHECK_FALSE(bot->is_building());
+    if (guards_builder) {
+        REQUIRE(bot->command_queue().size() == 1);
+        CHECK(bot->command_queue().front().type == CommandType::Guard);
+    }
+}
+
+TEST_CASE("A helper with no build rate leaves the build's completion to a builder that works on it",
+          "[build][assist][guard]") {
+    AssistSim w;
+    const std::string code = R"(
+        function hear_built(site)
+            site.OnStopBeingBuilt = function(self, builder)
+                table.insert(log, 'built by ' .. tostring(builder and builder.name))
+            end
+        end
+    )";
+    REQUIRE(luaL_loadbuffer(w.L, code.c_str(), code.size(), "built") == 0);
+    REQUIRE(lua_pcall(w.L, 0, 0, 0) == 0);
+    lua_getglobal(w.L, "hear_built");
+    lua_rawgeti(w.L, LUA_REGISTRYINDEX, w.site->lua_table_ref());
+    REQUIRE(lua_pcall(w.L, 1, 0, 0) == 0);
+    // The bot ticks first; the helper, last, brings the build to 1 after the
+    // engineer's turn, so the next tick the bot is first to see it done.
+    Unit* bot = w.engineer("bot", 14.0f);
+    bot->set_build_rate(0.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    Unit* helper = w.engineer("helper", 18.0f);
+    bot->push_command(order(CommandType::Guard, *w.site, 1), true);
+    eng->push_command(order(CommandType::Repair, *w.site, 2), true);
+    helper->push_command(order(CommandType::Guard, *eng, 3), true);
+    for (int tick = 0; tick < 20 && !(bot->is_building() && helper->is_building()); ++tick) {
+        w.sim.tick();
+    }
+    REQUIRE(bot->is_building());
+    REQUIRE(helper->is_building());
+    w.log();
+    w.site->set_fraction_complete(0.985f);
+    w.sim.tick();
+    REQUIRE(w.site->fraction_complete() >= 1.0f);
+    REQUIRE(w.site->is_being_built());
+    w.sim.tick();
+    CHECK_FALSE(w.site->is_being_built());
+    CHECK(w.log().find("built by eng") != std::string::npos);
+}
+
+TEST_CASE("A repairer with no build rate takes up a damaged unit's repair and heals nothing",
+          "[build][assist][repair]") {
+    AssistSim w;
+    w.site->set_is_being_built(false);
+    w.site->set_fraction_complete(1.0f);
+    w.site->set_health(50.0f);
+    Unit* bot = w.engineer("bot", 16.0f);
+    bot->set_build_rate(0.0f);
+    bot->push_command(order(CommandType::Repair, *w.site, 1), true);
+    for (int tick = 0; tick < 3 && !bot->is_repairing(); ++tick) {
+        w.sim.tick();
+    }
+    REQUIRE(bot->is_repairing());
+    CHECK(w.log() == "bot arm,bot start Repair");
+    for (int tick = 0; tick < 30; ++tick) {
+        w.sim.tick();
+        CHECK(bot->is_repairing());
+    }
+    CHECK(w.site->health() == 50.0f);
+    CHECK(bot->focus_id() == w.site->entity_id());
+    CHECK(bot->command_queue().size() == 1);
+}
+
+TEST_CASE("Each build step brings a unit under construction level with its health first, so a "
+          "fresh frame's first hit point counts",
+          "[build][assist]") {
+    AssistSim w;
+    w.site->set_health(1.0f);
+    w.site->set_fraction_complete(0.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    const auto first_steps = [&](osc::f32 rate) {
+        eng->set_build_rate(rate);
+        eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+        for (int i = 0; i < 5 && w.site->fraction_complete() == 0.0f; ++i) {
+            w.sim.tick();
+        }
+    };
+    SECTION("a step smaller than that hit point's share of 100 lifts it to the share") {
+        first_steps(0.5f); // 0.0005 a step against 0.01
+        CHECK(w.site->fraction_complete() == Catch::Approx(0.01f));
+        CHECK(w.site->health() == Catch::Approx(1.05f));
+        w.sim.tick();
+        CHECK(w.site->fraction_complete() == Catch::Approx(0.0105f));
+        CHECK(w.site->health() == Catch::Approx(1.1f));
+    }
+    SECTION("a larger step adds to the fraction, the health a hit point ahead") {
+        first_steps(20.0f); // 0.02 a step
+        CHECK(w.site->fraction_complete() == Catch::Approx(0.02f));
+        CHECK(w.site->health() == Catch::Approx(3.0f));
+        w.sim.tick();
+        CHECK(w.site->fraction_complete() == Catch::Approx(0.04f));
+        CHECK(w.site->health() == Catch::Approx(5.0f));
+    }
+    CHECK(eng->work_progress() == w.site->fraction_complete());
+}
+
+TEST_CASE("A slow helper's step brings the unit it helps build level with its health",
+          "[build][assist][guard]") {
+    AssistSim w;
+    w.site->set_health(1.0f);
+    w.site->set_fraction_complete(0.0f);
+    Unit* eng = w.engineer("eng", 16.0f);
+    eng->set_build_rate(20.0f);
+    Unit* helper = w.engineer("helper", 14.0f);
+    helper->set_build_rate(0.5f);
+    eng->push_command(order(CommandType::Repair, *w.site, 1), true);
+    helper->push_command(order(CommandType::Guard, *eng, 2), true);
+    for (int i = 0; i < 10 && !helper->is_building(); ++i) {
+        w.sim.tick();
+    }
+    REQUIRE(helper->is_building());
+    w.sim.tick();
+    w.sim.tick();
+    // The helper's step of 0.0005 is the last one in front of its health
+    CHECK(w.site->health() ==
+          Catch::Approx(w.site->max_health() * w.site->fraction_complete() + 0.05f));
+    CHECK(helper->work_progress() == w.site->fraction_complete());
+}

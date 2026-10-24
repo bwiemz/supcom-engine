@@ -43,31 +43,6 @@ void report_ui_callback_error(const std::string& what) {
 
 namespace osc::ui {
 
-// File-static pointer for safe GLFW callback routing without conflicting
-// with Renderer's glfwSetWindowUserPointer.
-static UIDispatch* s_dispatch = nullptr;
-
-void UIDispatch::install_callbacks(GLFWwindow* window) {
-    s_dispatch = this;
-    glfwSetKeyCallback(window, [](GLFWwindow*, int key, int /*scancode*/,
-                                   int action, int mods) {
-        if (s_dispatch) s_dispatch->on_key(key, action, mods);
-    });
-    glfwSetMouseButtonCallback(window, [](GLFWwindow*, int button,
-                                           int action, int mods) {
-        if (s_dispatch) s_dispatch->on_mouse_button(button, action, mods);
-    });
-    glfwSetCursorPosCallback(window, [](GLFWwindow*, double x, double y) {
-        if (s_dispatch) {
-            s_dispatch->on_cursor_pos(x, y);
-        }
-    });
-    glfwSetCharCallback(window, [](GLFWwindow*, unsigned int cp) {
-        if (s_dispatch) s_dispatch->on_char(cp);
-    });
-    spdlog::debug("UIDispatch: installed GLFW callbacks via static pointer");
-}
-
 void UIDispatch::on_key(i32 key, i32 action, i32 mods) {
     UIEvent e;
     e.type = (action == GLFW_RELEASE) ? UIEventType::KEY_UP

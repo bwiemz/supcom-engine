@@ -58,7 +58,6 @@ public:
     static constexpr f32 kPitch = 0.87f;
 
     explicit OffscreenShots(TestContext& ctx, f32 scale = 1.0f);
-    ~OffscreenShots();
     OffscreenShots(const OffscreenShots&) = delete;
     OffscreenShots& operator=(const OffscreenShots&) = delete;
 

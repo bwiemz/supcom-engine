@@ -405,8 +405,7 @@ void StorageManipulator::tick(f32 /*dt*/) {
     f32 full = 0;
     if (auto* army = sim_ ? sim_->get_army(owner_->army()) : nullptr) {
         const auto& res = mass_ ? army->economy().mass : army->economy().energy;
-        if (res.max_storage > 0)
-            full = static_cast<f32>(res.stored) / static_cast<f32>(res.max_storage);
+        if (res.max_storage > 0) full = res.stored / res.max_storage;
     }
     const f32 empty = 1.0f - full;
     const Vector3 target{empty_.x * empty + full_.x * full, empty_.y * empty + full_.y * full,

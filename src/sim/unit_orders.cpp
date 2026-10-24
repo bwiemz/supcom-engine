@@ -127,17 +127,6 @@ ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& ta
     return costs;
 }
 
-/// Moho's Unit::Materialize.
-void materialize(Unit& target, f32 step) {
-    if (target.is_being_built()) {
-        const f32 health_ratio =
-            target.max_health() > 0.0f ? target.health() / target.max_health() : 0.0f;
-        const f32 progressed = std::clamp(target.fraction_complete() + step, 0.0f, 1.0f);
-        target.set_fraction_complete(std::max(health_ratio, progressed));
-    }
-    target.set_health(std::min(target.max_health(), target.health() + target.max_health() * step));
-}
-
 } // namespace
 
 u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
@@ -306,6 +295,26 @@ bool Unit::approach_update(SimContext& ctx) {
     return nav_update();
 }
 
+Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const {
+    // Moho's mobile build task and its repair task for a factory's build: the
+    // place nearest the site, looked for a cell at a time, clear of the site's
+    // skirt grown by a cell all round (Unit::PrepareMove(1, site, skirt), faf-re
+    // CUnitMobileBuildTask.cpp): stopped anywhere in that cell, the builder is
+    // off the site, though another skirt hem it in.
+    const f32 half_x = skirt_x * 0.5f + 1;
+    const f32 half_z = skirt_z * 0.5f + 1;
+    Vector3 goal = approach_point(*this, site, half_x, half_z);
+    if (ctx.sim && ctx.terrain) {
+        Vector3 place = site;
+        const MoveExclusion skirt{site.x - half_x, site.z - half_z, site.x + half_x,
+                                  site.z + half_z};
+        if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()),
+                         place, 1, &skirt))
+            goal = place;
+    }
+    return goal;
+}
+
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
@@ -331,11 +340,8 @@ bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
         // allocated until the beat ends, see EntityRegistry::collect_garbage).
         if (destroyed() || !in_registry()) return false;
         if (!command_queue_.front().begun) {
-            // IAiCommandDispatchImpl::Execute starts no command while its unit is attached.
-            // FAF's external factory (a carrier's, a Fatboy's: EXTERNALFACTORYUNIT, a
-            // category retail never uses) builds while attached, as FAF's engine lets it.
-            static const CategoryName kExternalFactory{"EXTERNALFACTORYUNIT"};
-            if (parent_entity_id() != 0 && !has_category(kExternalFactory)) {
+            // Moho's IAiCommandDispatchImpl::Execute, on UNITSTATE_Attached.
+            if (parent_entity_id() != 0 && is_mobile()) {
                 return true;
             }
             // Its scripts may change the queue, or kill the unit: look again.
@@ -864,21 +870,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 return OrderStep::Next;
             }
             cmd.approached = true;
-            // Moho's CUnitMobileBuildTask: the place nearest the site, looked
-            // for a cell at a time, clear of the site's skirt grown by a cell
-            // all round (Unit::PrepareMove(1, site, skirt), faf-re
-            // CUnitMobileBuildTask.cpp): stopped anywhere in that cell, the
-            // builder is off the site, though another skirt hem it in.
-            Vector3 goal = approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1);
-            if (ctx.sim && ctx.terrain) {
-                Vector3 site = cmd.target_pos;
-                const MoveExclusion skirt{site.x - half_x - 1.0f, site.z - half_z - 1.0f,
-                                          site.x + half_x + 1.0f, site.z + half_z + 1.0f};
-                if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(),
-                                 ctx.sim->move_bounds(army()), site, 1, &skirt))
-                    goal = site;
-            }
-            set_path_goal(goal, ctx);
+            set_path_goal(build_place(cmd.target_pos, cmd.site_skirt_x, cmd.site_skirt_z, ctx),
+                          ctx);
         }
         // The task's first tick checks the site and sends the builder; it
         // aims from the next (Moho's TASKSTATE_Preparing returns 1).
@@ -953,7 +946,7 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
             return OrderStep::Next;
         auto* built = registry.find(build_target_id_);
         if (bonus > 0.0f && built && !built->destroyed() && built->is_unit()) {
-            materialize(static_cast<Unit&>(*built), bonus);
+            static_cast<Unit*>(built)->materialize(bonus);
         }
     }
     // Phase 3: Progress the build
@@ -1420,7 +1413,7 @@ OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& 
             stop_assisting(ctx.L, &registry);
         }
         const BuildEconomy costs = blueprint_build_economy(ctx.L, target.unit_id());
-        if (costs.time <= 0 || build_rate_ <= 0) return done();
+        if (costs.time <= 0) return done();
         const Vector3 at = target.position();
         aim_builder_arms(&at, ctx.L);
         if (destroyed() || !in_registry()) {
@@ -1783,12 +1776,14 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // Who helps (Moho's guard dispatches repair and reclaim tasks): a
     // unit that repairs helps builds, silos and repairs; one that
     // reclaims, reclaims. Others (a tank guarding an engineer, a
-    // factory assisting a factory) only follow.
+    // factory assisting a factory) only follow. A BuildRate sets the pace
+    // of that help, not whether it is given: Moho's build bots (BuildRate 0)
+    // take up their builder's build and add nothing to it.
     // A REBUILDER doesn't take up a live unit it guards (Moho's
     // RefreshGuardedUnitFromTarget), so it helps none of its work: a support
     // commander guarding a factory doesn't build with it (probed
     // 2026-10-13, `scu-assist`). It still repairs it.
-    const bool repairs = has_category("REPAIR") && build_rate_ > 0;
+    const bool repairs = has_category("REPAIR");
     const auto needs_repair = [&] {
         return target_unit->health() < target_unit->max_health() ||
                target_unit->shield_needs_repair(registry, L);
@@ -1811,6 +1806,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     const Entity* guarded_build = repairs && !rebuilder && target_unit->is_building()
                                       ? registry.find(target_unit->build_target_id())
                                       : nullptr;
+    if (!guarded_build || guarded_build->destroyed()) {
+        cmd.approached = false;
+        cmd.prepared = false;
+    }
     const Entity* guarded_reclaim = reclaims && target_unit->is_reclaiming()
                                         ? registry.find(target_unit->reclaim_target_id())
                                         : nullptr;
@@ -1818,9 +1817,30 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         working = true;
         u32 target_build_id = target_unit->build_target_id();
         const bool helping = build_target_id_ == target_build_id;
-        const Entity& reach =
-            !helping && target_unit->has_category("FACTORY") ? *target_unit : *guarded_build;
-        if (!within_reach(reach, true, helping)) {
+        const bool factory_build = !helping && target_unit->has_category("FACTORY");
+        const Entity& reach = factory_build ? *target_unit : *guarded_build;
+        // Moho's repair task for a structure factory's build sends its helper
+        // to the build place first, within reach or not, and begins when the
+        // move ends. A mobile factory moves, so its helper keeps chasing it.
+        bool walking = false;
+        if (factory_build && !target_unit->is_mobile() && effective_speed() > 0 &&
+            !(flies_winged_on_guard(*this) && ctx.sim)) {
+            if (!cmd.approached) {
+                cmd.approached = true;
+                cmd.prepared = true;
+                Vector3 site = target_unit->position();
+                snap_structure_center(site.x, site.z, target_unit->footprint_size_x(),
+                                      target_unit->footprint_size_z());
+                set_path_goal(build_place(site, target_unit->skirt_size_x(),
+                                          target_unit->skirt_size_z(), ctx),
+                              ctx);
+            }
+            if (cmd.prepared) {
+                walking = approach_update(ctx);
+                cmd.prepared = walking;
+            }
+        }
+        if (walking || !within_reach(reach, true, helping)) {
             if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         } else {
             if (build_target_id_ != target_build_id) {
@@ -1975,7 +1995,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         if (is_reclaiming()) stop_reclaiming(ctx.L, &ctx.registry);
 
-        // Auto-repair: if target is damaged and we have build_rate
+        // Auto-repair: if target is damaged
         if (repairs && needs_repair()) {
             working = true;
             if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
@@ -2885,8 +2905,7 @@ void Unit::donate_sacrifice(Unit& target, lua_State* L) {
                       blueprint_economy_number(L, target.blueprint_id(), "BuildCostMass", 0.0f)),
         cost_fraction(energy,
                       blueprint_economy_number(L, target.blueprint_id(), "BuildCostEnergy", 0.0f)));
-    if (step == 0.0f) return;
-    materialize(target, step);
+    target.materialize(step);
 }
 
 namespace {

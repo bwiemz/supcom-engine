@@ -24,6 +24,7 @@ extern "C" {
 #include "sim/world_snapshot.hpp"
 #include "map/terrain.hpp"
 #include "renderer/terrain_normal_maps.hpp"
+#include "renderer/window.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/decal_math.hpp"
 #include "renderer/map_border.hpp"
@@ -123,14 +124,6 @@ MeshVertexInput mesh_vertex_input() {
 }
 } // namespace
 
-// GLFW scroll callback — forward to Renderer via user pointer
-static void glfw_scroll_callback(GLFWwindow* window, double /*xoffset*/,
-                                 double yoffset) {
-    auto* renderer =
-        static_cast<Renderer*>(glfwGetWindowUserPointer(window));
-    if (renderer) renderer->on_scroll(yoffset);
-}
-
 void Renderer::on_scroll(f64 y_offset) {
     // A wheel notch over the world zooms about the cursor (CUIWorldView's
     // HandleEvent): the pivot, then CameraZoom, of the view under it
@@ -153,15 +146,22 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     offscreen_ = offscreen;
     if (!create_window(width, height, title, offscreen)) return false;
 
+    const auto close_window = [this] {
+        if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+        window_.reset();
+        return false;
+    };
+
     vkb::Instance vkb_inst;
-    if (!create_instance(offscreen, vkb_inst)) return false;
+    if (!create_instance(offscreen, vkb_inst)) return close_window();
 
-    if (!create_surface(offscreen)) return false;
+    if (!create_surface(offscreen)) return close_window();
 
-    if (!create_logical_device(vkb_inst)) return false;
+    if (!create_logical_device(vkb_inst)) return close_window();
 
     // Swapchain
-    if (!create_swapchain(width, height)) return false;
+    if (!create_swapchain(width, height)) return close_window();
 
     // Depth image, with a stencil for the range overlays' volumes (FA's
     // D24S8): the first of these the device can attach
@@ -209,45 +209,16 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 }
 
 bool Renderer::create_window(u32 width, u32 height, const std::string& title, bool offscreen) {
-    // GLFW
-    if (!glfwInit()) {
-        spdlog::error("Failed to initialize GLFW");
-        return false;
-    }
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
-    // Offscreen keeps a hidden window (input and timing code expect one) but
-    // never shows it: GLFW's show waits for the compositor to map the window.
-    glfwWindowHint(GLFW_VISIBLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
-    // An offscreen capture is its size in pixels, unscaled on a Retina display
-    glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, offscreen ? GLFW_FALSE : GLFW_TRUE);
     if (offscreen) {
         width = static_cast<u32>(std::lround(static_cast<f32>(width) * offscreen_scale_));
         height = static_cast<u32>(std::lround(static_cast<f32>(height) * offscreen_scale_));
     }
-    window_ = glfwCreateWindow(static_cast<int>(width),
-                               static_cast<int>(height),
-                               title.c_str(), nullptr, nullptr);
-    if (!window_) {
-        spdlog::error("Failed to create GLFW window");
-        glfwTerminate();
-        return false;
-    }
-    // An offscreen capture is the size asked for, whatever the screen's:
-    // Windows keeps a window within the screens' height unless its own
-    // limits allow more (a 2x capture of a laptop's frame outgrows a 1440p
-    // screen). The limit is a Vulkan image's usual largest, so a test that
-    // resizes the window later can still grow it.
-    if (offscreen) {
-        constexpr int kLargestImage = 16384;
-        glfwSetWindowSizeLimits(window_, GLFW_DONT_CARE, GLFW_DONT_CARE, kLargestImage,
-                                kLargestImage);
-        glfwSetWindowSize(window_, static_cast<int>(width), static_cast<int>(height));
-    }
+    window_ =
+        open_window(static_cast<int>(width), static_cast<int>(height), title.c_str(), offscreen);
+    if (!window_) return false;
     // The system's cursor stays hidden until FA's cursor is made it
     // (update_system_cursor); offscreen, the engine draws FA's
-    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    glfwSetInputMode(window_.get(), GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     window_width_ = width;
     window_height_ = height;
     camera_.set_viewport(static_cast<f32>(width), static_cast<f32>(height));
@@ -262,15 +233,32 @@ bool Renderer::create_window(u32 width, u32 height, const std::string& title, bo
         return true;
     });
 
-    glfwSetWindowUserPointer(window_, this);
-    glfwSetScrollCallback(window_, glfw_scroll_callback);
+    glfwSetWindowUserPointer(window_.get(), this);
+    glfwSetScrollCallback(window_.get(), [](GLFWwindow* w, double, double y_offset) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w))) r->on_scroll(y_offset);
+    });
+    glfwSetKeyCallback(window_.get(), [](GLFWwindow* w, int key, int, int action, int mods) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
+            r->ui_dispatch_.on_key(key, action, mods);
+    });
+    glfwSetMouseButtonCallback(window_.get(), [](GLFWwindow* w, int button, int action, int mods) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
+            r->ui_dispatch_.on_mouse_button(button, action, mods);
+    });
+    glfwSetCursorPosCallback(window_.get(), [](GLFWwindow* w, double x, double y) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
+            r->ui_dispatch_.on_cursor_pos(x, y);
+    });
+    glfwSetCharCallback(window_.get(), [](GLFWwindow* w, unsigned int codepoint) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
+            r->ui_dispatch_.on_char(codepoint);
+    });
     // A resize rebuilds the swapchain before the next frame (M217h): Wayland
     // and some drivers never report the old one out of date
-    glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int, int) {
+    glfwSetFramebufferSizeCallback(window_.get(), [](GLFWwindow* w, int, int) {
         if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
             r->on_framebuffer_resized();
     });
-    ui_dispatch_.install_callbacks(window_);
     return true;
 }
 
@@ -359,8 +347,6 @@ bool Renderer::create_instance(bool offscreen, vkb::Instance& vkb_inst) {
     if (!inst_ret) {
         spdlog::error("Failed to create Vulkan instance: {}",
                       inst_ret.error().message());
-        glfwDestroyWindow(window_);
-        glfwTerminate();
         return false;
     }
 
@@ -384,7 +370,7 @@ bool Renderer::create_surface(bool offscreen) {
             return false;
         }
         spdlog::info("Rendering offscreen (headless surface)");
-    } else if (glfwCreateWindowSurface(instance_, window_, nullptr, &surface_) !=
+    } else if (glfwCreateWindowSurface(instance_, window_.get(), nullptr, &surface_) !=
                VK_SUCCESS) {
         spdlog::error("Failed to create window surface");
         return false;
@@ -3767,7 +3753,7 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
     // (LowFidelityTerrain, M212h), else the map's own shader (Medium and
     // High alike)
     const bool low_terrain = fidelity() == 0 && terrain_low_pipeline_;
-    if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
+    if (terrain_mesh_.index_count() > 0 && terrain_pipeline_ && terrain_tex_ds_) {
         vkc::bind_pipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                            low_terrain ? terrain_low_pipeline_ : terrain_pipeline_);
 
@@ -3792,10 +3778,8 @@ void Renderer::record_main_pass(u32 fi, const std::array<f32, 16>& vp, bool afte
                             sizeof(tpc), &tpc);
 
         // Bind terrain texture descriptor set (set=0)
-        if (terrain_tex_ds_) {
-            vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 0, 1,
-                                      &terrain_tex_ds_, 0, nullptr);
-        }
+        vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 0, 1,
+                                  &terrain_tex_ds_, 0, nullptr);
         // Bind shadow descriptor set (set=1)
         if (shadow_ds_[fi]) {
             vkc::bind_descriptor_sets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_layout_, 1, 1,
@@ -4202,16 +4186,16 @@ void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {
 }
 
 bool Renderer::should_close() const {
-    return window_ && glfwWindowShouldClose(window_);
+    return window_ && glfwWindowShouldClose(window_.get());
 }
 
 bool Renderer::iconified() const {
-    return window_ && glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
+    return window_ && glfwGetWindowAttrib(window_.get(), GLFW_ICONIFIED) != 0;
 }
 
 void Renderer::keep_open() {
     if (window_) {
-        glfwSetWindowShouldClose(window_, GLFW_FALSE);
+        glfwSetWindowShouldClose(window_.get(), GLFW_FALSE);
     }
 }
 
@@ -4233,16 +4217,16 @@ bool Renderer::is_key_pressed(int glfw_key) const {
         default: break;
         }
     }
-    return window_ && glfwGetKey(window_, glfw_key) == GLFW_PRESS;
+    return window_ && glfwGetKey(window_.get(), glfw_key) == GLFW_PRESS;
 }
 
 void Renderer::set_window_title(const char* title) {
-    if (window_) glfwSetWindowTitle(window_, title);
+    if (window_) glfwSetWindowTitle(window_.get(), title);
 }
 
 bool Renderer::copy_to_clipboard(const std::string& text) {
     if (!window_ || offscreen_) return false;
-    glfwSetClipboardString(window_, text.c_str());
+    glfwSetClipboardString(window_.get(), text.c_str());
     return true;
 }
 
@@ -4255,7 +4239,7 @@ void Renderer::ui_mouse_position(f64& x, f64& y) const {
     x = 0;
     y = 0;
     if (window_) {
-        glfwGetCursorPos(window_, &x, &y);
+        glfwGetCursorPos(window_.get(), &x, &y);
     }
 }
 
@@ -4275,8 +4259,8 @@ void Renderer::refresh_ui_scale() {
     int wh = 0;
     int fw = 0;
     int fh = 0;
-    glfwGetWindowSize(window_, &ww, &wh);
-    glfwGetFramebufferSize(window_, &fw, &fh);
+    glfwGetWindowSize(window_.get(), &ww, &wh);
+    glfwGetFramebufferSize(window_.get(), &fw, &fh);
     ui_scale_ = core::content_scale(ww, fw);
 }
 
@@ -4290,7 +4274,8 @@ void Renderer::set_fullscreen(u32 width, u32 height, u32 rate) {
     }
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
     if (!monitor) return;
-    glfwSetWindowMonitor(window_, monitor, 0, 0, static_cast<int>(width), static_cast<int>(height),
+    glfwSetWindowMonitor(window_.get(), monitor, 0, 0, static_cast<int>(width),
+                         static_cast<int>(height),
                          rate > 0 ? static_cast<int>(rate) : GLFW_DONT_CARE);
 }
 
@@ -4310,10 +4295,10 @@ void Renderer::set_windowed(u32 width, u32 height, std::optional<std::array<i32,
 void Renderer::settle_native_fullscreen() {
 #ifdef __APPLE__
     const auto step = core::native_fullscreen_step(
-        native_fullscreen_request_, platform::native_fullscreen(window_),
-        platform::native_fullscreen_moving(window_), windowed_pending_.has_value());
+        native_fullscreen_request_, platform::native_fullscreen(window_.get()),
+        platform::native_fullscreen_moving(window_.get()), windowed_pending_.has_value());
     if (step.toggle) {
-        platform::toggle_native_fullscreen(window_);
+        platform::toggle_native_fullscreen(window_.get());
     }
     if (step.settled) {
         native_fullscreen_request_.reset();
@@ -4334,28 +4319,28 @@ void Renderer::apply_windowed(const WindowedPlace& place) {
     if (place.position) {
         x = (*place.position)[0];
         y = (*place.position)[1];
-    } else if (glfwGetWindowMonitor(window_)) {
+    } else if (glfwGetWindowMonitor(window_.get())) {
         // Out of full screen with no place: the middle of the display
         if (const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor())) {
             x = std::max(0, (mode->width - static_cast<int>(width)) / 2);
             y = std::max(0, (mode->height - static_cast<int>(height)) / 2);
         }
     } else {
-        glfwGetWindowPos(window_, &x, &y);
+        glfwGetWindowPos(window_.get(), &x, &y);
     }
-    if (glfwGetWindowAttrib(window_, GLFW_MAXIMIZED)) glfwRestoreWindow(window_);
-    glfwSetWindowMonitor(window_, nullptr, x, y, static_cast<int>(width), static_cast<int>(height),
-                         GLFW_DONT_CARE);
-    glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_TRUE);
-    if (place.maximized) glfwMaximizeWindow(window_);
+    if (glfwGetWindowAttrib(window_.get(), GLFW_MAXIMIZED)) glfwRestoreWindow(window_.get());
+    glfwSetWindowMonitor(window_.get(), nullptr, x, y, static_cast<int>(width),
+                         static_cast<int>(height), GLFW_DONT_CARE);
+    glfwSetWindowAttrib(window_.get(), GLFW_DECORATED, GLFW_TRUE);
+    if (place.maximized) glfwMaximizeWindow(window_.get());
 }
 
 bool Renderer::fullscreen() const {
 #ifdef __APPLE__
-    return window_ && (windowed_pending_ ||
-                       native_fullscreen_request_.value_or(platform::native_fullscreen(window_)));
+    return window_ && (windowed_pending_ || native_fullscreen_request_.value_or(
+                                                platform::native_fullscreen(window_.get())));
 #else
-    return window_ && glfwGetWindowMonitor(window_) != nullptr;
+    return window_ && glfwGetWindowMonitor(window_.get()) != nullptr;
 #endif
 }
 
@@ -4377,11 +4362,11 @@ std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
     WindowGeometry g;
     int w = 0;
     int h = 0;
-    glfwGetWindowPos(window_, &g.x, &g.y);
-    glfwGetWindowSize(window_, &w, &h);
+    glfwGetWindowPos(window_.get(), &g.x, &g.y);
+    glfwGetWindowSize(window_.get(), &w, &h);
     g.width = static_cast<u32>(std::max(w, 0));
     g.height = static_cast<u32>(std::max(h, 0));
-    g.maximized = glfwGetWindowAttrib(window_, GLFW_MAXIMIZED) != 0;
+    g.maximized = glfwGetWindowAttrib(window_.get(), GLFW_MAXIMIZED) != 0;
     return g;
 }
 
@@ -4391,7 +4376,7 @@ void Renderer::set_cursor_clip(bool on) {
     // engine draws FA's
     cursor_clipped_ = on && window_ && !fullscreen();
     if (window_)
-        glfwSetInputMode(window_, GLFW_CURSOR,
+        glfwSetInputMode(window_.get(), GLFW_CURSOR,
                          cursor_clipped_      ? GLFW_CURSOR_CAPTURED
                          : system_cursor_set_ ? GLFW_CURSOR_NORMAL
                                               : GLFW_CURSOR_HIDDEN);
@@ -4443,12 +4428,12 @@ void Renderer::update_system_cursor(lua_State* L) {
     system_cursor_set_ = made != nullptr;
     // Without one (none set, or its image not to be made), the engine draws it
     ui_renderer_.set_draw_cursor(!system_cursor_set_);
-    if (made) glfwSetCursor(window_, made);
+    if (made) glfwSetCursor(window_.get(), made);
     set_cursor_clip(cursor_clipped_);
 }
 
 bool Renderer::system_cursor_shown() const {
-    return window_ && glfwGetInputMode(window_, GLFW_CURSOR) == GLFW_CURSOR_NORMAL;
+    return window_ && glfwGetInputMode(window_.get(), GLFW_CURSOR) == GLFW_CURSOR_NORMAL;
 }
 
 void Renderer::set_vsync(bool on) {
@@ -4462,7 +4447,7 @@ bool Renderer::is_mouse_pressed(int glfw_button) const {
         return glfw_button >= 0 && glfw_button < 32 &&
                (scripted_pointer_->buttons & (1u << glfw_button)) != 0;
     }
-    return window_ && glfwGetMouseButton(window_, glfw_button) == GLFW_PRESS;
+    return window_ && glfwGetMouseButton(window_.get(), glfw_button) == GLFW_PRESS;
 }
 
 void Renderer::poll_events(f64 dt) {
@@ -4477,12 +4462,12 @@ void Renderer::poll_events(f64 dt) {
         camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
         // Its clocks: the system's, and the game's
         camera_.set_clocks(glfwGetTime(), camera_game_time_);
-        camera_.update(window_, dt);
+        camera_.update(window_.get(), dt);
         return;
     }
     // Each view's camera takes the mouse over it; only the one that GetsGlobalCameraCommands
     // takes the keys' and the screen edges' pans and spins (CUIWorldView::Frame)
-    const CameraInput in = camera_.read_input(window_);
+    const CameraInput in = camera_.read_input(window_.get());
     for (const SceneView& v : views) {
         Camera& c = *v.camera;
         if (&c != &camera_) {
@@ -4991,7 +4976,7 @@ void Renderer::recreate_swapchain() {
     // draw to: keep the old swapchain and try again on a later frame,
     // without waiting here -- the game runs on while minimized.
     int w = 0, h = 0;
-    glfwGetFramebufferSize(window_, &w, &h);
+    glfwGetFramebufferSize(window_.get(), &w, &h);
     if (w == 0 || h == 0) {
         swapchain_stale_ = true;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -5223,8 +5208,7 @@ void Renderer::shutdown() {
     for (auto& [key, cursor] : system_cursors_)
         if (cursor) glfwDestroyCursor(cursor);
     system_cursors_.clear();
-    glfwDestroyWindow(window_);
-    glfwTerminate();
+    window_.reset();
 
     initialized_ = false;
     spdlog::info("Renderer shut down");

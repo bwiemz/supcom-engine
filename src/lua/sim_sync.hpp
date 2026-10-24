@@ -2,6 +2,9 @@
 
 #include "core/lua_copy.hpp"
 
+#include <deque>
+#include <optional>
+
 struct lua_State;
 
 namespace osc::lua {
@@ -22,24 +25,30 @@ void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army);
 /// Plain-data deep copy between states (see core/lua_copy.hpp).
 using core::copy_lua_value;
 
-/// The sim's half of a Moho beat on the sim -> user channel (Sim::Sync), after each beat:
-///  1. apply a pending focus-army request: both states' focus army change,
-///     the sim's NoteFocusArmyChanged(new, old) runs and Sync.FocusArmyChanged
-///     is set (1-based armies, -1 = observer);
-///  2. the sim's Sync table joins the queue of beats' tables;
-///  3. the sim's ResetSyncTable() starts the next beat's table.
-void queue_sync(lua_State* sim_L, lua_State* ui_L);
-/// Between jobs, transfer UI focus requests to the sim owner. queue_sync
-/// may then receive a null ui_L and touch only the sim state.
-void prepare_threaded_sync(lua_State* sim_L, lua_State* ui_L);
-/// Whether a beat's Sync waits for sync_beat.
-bool sync_pending(lua_State* sim_L);
+/// The sim -> user channel's beats (Moho's mSyncDataQueue): each beat's Sync table, copied out
+/// of the sim state as the beat ends, waits here for the user side; a save holds none of them.
+class SyncQueue {
+public:
+    SyncQueue();
+    ~SyncQueue();
+    SyncQueue(const SyncQueue&) = delete;
+    SyncQueue& operator=(const SyncQueue&) = delete;
 
-/// The user's half (CWldSession::DoBeat): the oldest queued beat's Sync
-/// becomes the user state's Sync, the previous one kept as PreviousSync, and
-/// the user state's OnSync() reacts (/lua/UserSync.lua plus hooks). With none
-/// queued, queue_sync's steps run first on the sim's Sync now.
-/// Script errors are logged and count as failures in test modes.
-void sync_beat(lua_State* sim_L, lua_State* ui_L);
+    /// Moho's Sim::Sync, after each beat: the pending focus request applied, a copy of the
+    /// sim's Sync queued, ResetSyncTable(). A null ui_L leaves the UI state alone.
+    void queue(lua_State* sim_L, lua_State* ui_L);
+    /// Between jobs, take the UI's focus request for the sim thread's next queue().
+    void prepare_threaded(lua_State* sim_L, lua_State* ui_L);
+    bool pending() const { return !packets_.empty(); }
+    /// Moho's CWldSession::DoBeat: the oldest queued Sync becomes the user state's, then its
+    /// OnSync(); with none queued, queue's steps run on the sim's Sync now.
+    void deliver(lua_State* sim_L, lua_State* ui_L);
+    void clear();
+
+private:
+    lua_State* packets_state_ = nullptr;
+    std::deque<int> packets_;
+    std::optional<int> ui_request_;
+};
 
 } // namespace osc::lua

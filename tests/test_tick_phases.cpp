@@ -425,6 +425,50 @@ TEST_CASE("A unit attached to another starts no order until it is let go", "[tic
     CHECK(tank.command_queue().front().begun);
 }
 
+TEST_CASE("An attached unit that moves starts no order; an attached structure starts its build",
+          "[tick-phases]") {
+    const bool mobile = GENERATE(false, true);
+    const bool attached = GENERATE(false, true);
+    Phases w;
+    w.make("host", "tank", 1, 100.0f, 100.0f);
+    Unit& rider = w.make("rider", mobile ? "tank" : "fac", 1, 60.0f, 60.0f);
+    rider.economy().production_mass = 100.0;
+    rider.economy().production_energy = 100.0;
+    rider.economy().production_active = true;
+    REQUIRE(w.run("started = 0 function rider:OnStartBuild(u, order) started = GetGameTick() end"));
+    if (attached) {
+        REQUIRE(w.run("EM.AttachTo(rider, host, -1)"));
+    }
+    REQUIRE(w.run("state = tostring(rider:IsUnitState('Attached'))"));
+    CHECK(w.text("state") == (mobile && attached ? "true" : "false"));
+    UnitCommand order;
+    if (mobile) {
+        rider.set_max_speed(5.0f);
+        order.type = CommandType::Move;
+        order.target_pos = {90.0f, 10.0f, 60.0f};
+    } else {
+        order.type = CommandType::BuildFactory;
+        order.blueprint_id = "t1";
+    }
+    rider.push_command(order, false);
+    const auto started = [&] {
+        if (mobile) {
+            return !rider.command_queue().empty() && rider.command_queue().front().begun;
+        }
+        return w.number("started") > 0;
+    };
+    for (int t = 0; t < 3; ++t) {
+        w.sim.tick();
+    }
+    CHECK(started() == !(mobile && attached));
+    if (attached) {
+        REQUIRE(w.run("EM.DetachFrom(rider) state = tostring(rider:IsUnitState('Attached'))"));
+        CHECK(w.text("state") == "false");
+        w.sim.tick();
+        CHECK(started());
+    }
+}
+
 namespace {
 
 osc::u32 seabed_tick(f32 stun_seconds, osc::u32 stun_tick, osc::u32* stunned_in) {
@@ -2190,12 +2234,13 @@ TEST_CASE("Two beats in a frame give the user two Sync tables", "[tick-phases][b
     REQUIRE(ui.do_string("seen = ''"
                          " function OnSync() seen = seen .. tostring(Sync.Tick) .. ',' end")
                 .ok());
+    osc::lua::SyncQueue sync;
     w.sim.set_beat_observer(
-        [&](const osc::sim::SimState& s) { osc::lua::queue_sync(s.lua_state(), ui.raw()); });
+        [&](const osc::sim::SimState& s) { sync.queue(s.lua_state(), ui.raw()); });
     w.sim.tick();
     w.sim.tick();
     for (int b = 0; b < 2; ++b) {
-        osc::lua::sync_beat(w.state.raw(), ui.raw());
+        sync.deliver(w.state.raw(), ui.raw());
     }
     lua_State* U = ui.raw();
     lua_getglobal(U, "seen");
@@ -2230,4 +2275,29 @@ TEST_CASE("Production reports reset before tick threads and survive paused beats
     CHECK(w.number("seen_energy") == 0.0f);
     CHECK(producer.economy().mass_produced() == 0.0);
     CHECK(producer.economy().energy_produced() == 5.0);
+}
+
+TEST_CASE("A weapon holds a target off its layers till its next check, not firing at it",
+          "[tick-phases]") {
+    Phases w;
+    Unit& tank = w.make("tank", "tank", 1, 100.0f, 100.0f);
+    const Unit& rival = w.make("rival", "tank", 2, 115.0f, 100.0f);
+    REQUIRE(w.run("fired = 0 gun = {OnFire = function() fired = fired + 1 end}"));
+    Weapon& gun = w.arm(tank, "gun");
+    gun.rate_of_fire = 10.0f;
+    for (int t = 0; t < 5 && w.number("fired") == 0; ++t) {
+        w.sim.tick();
+    }
+    REQUIRE(w.number("fired") > 0);
+    REQUIRE(gun.target_entity_id == rival.entity_id());
+
+    gun.fire_target_layer_caps = osc::sim::parse_layer_caps("Air");
+    gun.target_check_period = 1000;
+    gun.target_check_clock = 1000;
+    const f32 fired = w.number("fired");
+    for (int t = 0; t < 5; ++t) {
+        w.sim.tick();
+    }
+    CHECK(gun.target_entity_id == rival.entity_id());
+    CHECK(w.number("fired") == fired);
 }

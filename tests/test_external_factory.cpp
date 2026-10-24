@@ -1,6 +1,4 @@
-// An attached unit starts no command (Moho's IAiCommandDispatchImpl::Execute),
-// but FAF's external factory (EXTERNALFACTORYUNIT: a carrier's, a Fatboy's,
-// attached to its unit) does: its builds are how those units build.
+// FAF's external factory, a copy of zxa0002 (RULEUMT_None), builds while attached to its unit.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -45,7 +43,10 @@ struct Scene {
         sim.set_victory_condition("sandbox");
         host = add(64.0f);
         rider = add(64.0f);
-        if (external_factory) rider->add_category("EXTERNALFACTORYUNIT");
+        if (external_factory) {
+            rider->add_category("EXTERNALFACTORYUNIT");
+            rider->set_motion_type("RULEUMT_None");
+        }
         rider->set_parent(host->entity_id(), -1);
         UnitCommand move;
         move.type = CommandType::Move;
