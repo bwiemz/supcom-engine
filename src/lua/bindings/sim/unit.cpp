@@ -29,6 +29,7 @@
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/script_class.hpp"
+#include "sim/script_warning.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
@@ -847,7 +848,8 @@ static int unit_GetWeapon(lua_State* L) {
     // Class: the unit's weapon class for this label (unit:GetWeaponClass,
     // i.e. its Weapons table entry or the base /lua/sim/Weapon.lua Weapon),
     // with `unit` set as Weapon.__init does. A classed weapon fires through
-    // its script (Weapon::fires_through_script).
+    // its script (Weapon::fires_through_script). A script error is logged, as
+    // Moho's GetWeaponClass does (faf-re CScriptObject.cpp, 0x006DD430).
     const int wtable = lua_gettop(L);
     bool classed = false;
     if (unit->lua_table_ref() >= 0) {
@@ -858,7 +860,9 @@ static int unit_GetWeapon(lua_State* L) {
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, utable);
             lua_pushstring(L, weapon->label.c_str());
-            if (lua_pcall(L, 2, 1, 0) == 0 && lua_istable(L, -1)) {
+            if (lua_pcall(L, 2, 1, 0) != 0) {
+                sim::log_script_warning(unit, "GetWeaponClass", lua_tostring(L, -1));
+            } else if (lua_istable(L, -1)) {
                 lua_setmetatable(L, wtable);
                 lua_pushstring(L, "unit");
                 lua_pushvalue(L, utable);

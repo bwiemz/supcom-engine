@@ -14,6 +14,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/prop.hpp"
+#include "sim/script_warning.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -4529,7 +4530,8 @@ void call_with_weapon(lua_State* L, const Unit& unit, const char* method, const 
 }
 
 /// self:method() on the unit's script as a number: `fallback` when it has no
-/// such method or it fails.
+/// such method, answers no number or fails (its error logged, as Moho's
+/// RunScript logs it).
 f64 script_number(lua_State* L, const Unit& unit, const char* method, f64 fallback) {
     if (!L || unit.lua_table_ref() < 0) return fallback;
     const int top = lua_gettop(L);
@@ -4540,8 +4542,8 @@ f64 script_number(lua_State* L, const Unit& unit, const char* method, f64 fallba
     f64 value = fallback;
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, self);
-        if (lua_pcall(L, 1, 1, 0) == 0 && lua_type(L, -1) == LUA_TNUMBER)
-            value = lua_tonumber(L, -1);
+        if (lua_pcall(L, 1, 1, 0) != 0) log_script_warning(&unit, method, lua_tostring(L, -1));
+        else if (lua_type(L, -1) == LUA_TNUMBER) value = lua_tonumber(L, -1);
     }
     lua_settop(L, top);
     return value;

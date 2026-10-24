@@ -81,6 +81,7 @@ add_executable(osc_tests
     test_game_state_setup_ui.cpp
     test_transport_unload.cpp
     test_special_files.cpp
+    test_script_errors.cpp
     test_binding_coverage.cpp
     test_lua_persist.cpp
     test_lua_state.cpp

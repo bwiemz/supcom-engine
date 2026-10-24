@@ -2234,7 +2234,11 @@ void start_command_mode(lua_State* L, const std::vector<std::string>& args) {
     const int top = lua_gettop(L);
     std::string active_mode, active_name;
     if (push_module_function(L, "/lua/ui/game/commandmode.lua", "GetCommandMode")) {
-        if (lua_pcall(L, 0, 1, 0) == 0 && lua_istable(L, -1)) {
+        if (lua_pcall(L, 0, 1, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            spdlog::warn("Error running '/lua/ui/game/commandmode.lua:GetCommandMode': {}",
+                         err ? err : "(unknown error)");
+        } else if (lua_istable(L, -1)) {
             lua_rawgeti(L, -1, 1);
             if (lua_type(L, -1) == LUA_TSTRING) active_mode = lua_tostring(L, -1);
             lua_pop(L, 1);

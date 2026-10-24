@@ -205,9 +205,15 @@ std::string current_profile(lua_State* L) {
     static const char kProfile[] = "return import('/lua/user/prefs.lua').GetCurrentProfile().Name";
     const int top = lua_gettop(L);
     std::string out;
-    if (luaL_loadbuffer(L, kProfile, sizeof(kProfile) - 1, "=profile") == 0 &&
-        lua_pcall(L, 0, 1, 0) == 0 && lua_type(L, -1) == LUA_TSTRING)
-        out = lua_tostring(L, -1);
+    if (luaL_loadbuffer(L, kProfile, sizeof(kProfile) - 1, "=profile") == 0) {
+        if (lua_pcall(L, 0, 1, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            spdlog::warn("Error running '/lua/user/prefs.lua:GetCurrentProfile': {}",
+                         err ? err : "(unknown error)");
+        } else if (lua_type(L, -1) == LUA_TSTRING) {
+            out = lua_tostring(L, -1);
+        }
+    }
     lua_settop(L, top);
     return out;
 }

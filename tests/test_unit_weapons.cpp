@@ -4,6 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "log_capture.hpp"
+
 #include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -104,4 +106,35 @@ TEST_CASE("A weapon blueprint's TargetCheckInterval left out is Moho's 3 seconds
     REQUIRE(weapons.size() == 3);
     CHECK(weapons[0]->target_check_period == 30);
     CHECK(weapons[1]->target_check_period == 5);
+}
+
+TEST_CASE("A unit's GetWeaponClass that raises is reported as a script warning", "[weapons]") {
+    WeaponWorld w;
+    lua_State* L = w.state.raw();
+    REQUIRE(w.check(R"(
+        Raising = setmetatable({GetWeaponClass = function(self, label)
+            error('boom ' .. label)
+        end}, {__index = Plain})
+        Raising.__index = Raising
+    )"));
+    lua_pushstring(L, "__osc_unit_script_classes");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "real");
+    lua_getglobal(L, "Raising");
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+
+    // Moho's GetWeaponClass logs the script's error (LogScriptWarning), once
+    // for each weapon made; the weapon keeps the engine's methods
+    osc::test::LogCapture log;
+    REQUIRE(w.check("real = CreateUnit('real', 1, 0, 0, 0)"));
+    CHECK(w.check(R"(
+        assert(real:GetWeapon(1) == real:GetWeapon(1))
+        assert(real:GetWeapon(1):GetBlueprint().Label == 'Gun')
+    )"));
+    CHECK(log.count("Error running GetWeaponClass script in Entity real at ") == 3);
+    for (const char* label : {"Gun", "Laser", "DeathWeapon"}) {
+        CAPTURE(label);
+        CHECK(log.count(std::string("boom ") + label) == 1);
+    }
 }

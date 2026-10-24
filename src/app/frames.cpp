@@ -144,7 +144,11 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
 static std::function<std::string(const osc::sim::Vector3&)> script_order_at(lua_State* uiL) {
     std::string mode_data;
     osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
-    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) == 0 && lua_istable(uiL, -1)) {
+    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) != 0) {
+        const char* err = lua_tostring(uiL, -1);
+        spdlog::warn("Error running '{}:GetCommandMode': {}", kCommandModeModule,
+                     err ? err : "(unknown error)");
+    } else if (lua_istable(uiL, -1)) {
         lua_rawgeti(uiL, -1, 2);
         if (lua_istable(uiL, -1))
             if (auto bytes = osc::sim::lua_to_bytes(uiL, -1)) mode_data = std::move(*bytes);
