@@ -78,6 +78,7 @@ add_executable(osc_tests
     test_user_unit.cpp
     test_faf_bindings.cpp
     test_external_factory.cpp
+    test_damage_callbacks.cpp
     test_profiler_self_time.cpp
     test_game_state_setup_ui.cpp
     test_transport_unload.cpp
