@@ -310,7 +310,9 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
 
     // 19. Transition to GAME (skip if caller already handles transitions)
     if (game_state_mgr.current() != osc::GameState::LOADING) {
-        // Headless/smoke-test path: do full transition
+        // Headless/smoke-test path: do full transition (its SetupUI the
+        // game's UI state's)
+        osc::set_ui_state(osc::UIState::Game);
         game_state_mgr.transition_to(osc::GameState::LOADING, uiL);
     }
     game_state_mgr.transition_to(osc::GameState::GAME, nullptr); // nullptr = skip SetupUI

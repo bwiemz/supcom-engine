@@ -1611,10 +1611,12 @@ static void run_ui_chunk(lua_State* L, const char* code, const char* what) {
 }
 
 /// EngineStartFrontEndUI(): Moho's UI_StartFrontEnd, in this Lua state (the
-/// splash screen leaves through it). The input capture and the dragger let
-/// go and the root frame is emptied, as Moho's new frames start, then
-/// uimain.lua's StartFrontEndUI shows the main menu.
+/// splash screen leaves through it). The UI state becomes the front end's,
+/// the input capture and the dragger let go and the root frame is emptied,
+/// as Moho's new frames start, then uimain.lua's StartFrontEndUI shows the
+/// main menu.
 static int l_EngineStartFrontEndUI(lua_State* L) {
+    osc::set_ui_state(osc::UIState::FrontEnd);
     if (auto* reg = get_ui_registry(L)) reg->clear_input_capture();
     lua_pushstring(L, "__osc_active_dragger");
     lua_pushnil(L);
@@ -3501,19 +3503,17 @@ static int l_RemoveBeatFunction(lua_State* L) {
 
 // Engine state query bindings (M144c)
 
-/// GetCurrentUIState() → "front-end" | "game" | "score" etc.
+/// GetCurrentUIState() -> Moho's UI state's name: "none" until the first of
+/// uimain.lua's entry points starts, then "splash", "frontend", "game" or
+/// "lobby" (osc::ui_state). Not the game-state manager's, which the boot
+/// publishes only after its UI entry points have run.
 static int l_GetCurrentUIState(lua_State* L) {
     if (lua_gettop(L) != 0)
         return arg_count_error(L,
                                "state GetCurrentUIState() - returns 'splash', 'frontend' or "
                                "'game' depending on the current state of the ui",
                                0, lua_gettop(L));
-    auto* mgr = get_game_state_mgr(L);
-    if (mgr) {
-        lua_pushstring(L, osc::game_state_to_string(mgr->current()));
-    } else {
-        lua_pushstring(L, "game");
-    }
+    lua_pushstring(L, osc::ui_state_to_string(osc::ui_state()));
     return 1;
 }
 
@@ -3694,6 +3694,7 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
 
 /// StartFrontEndUI() — transition to FRONT_END, call main.lua:CreateUI()
 static int l_StartFrontEndUI(lua_State* L) {
+    osc::set_ui_state(osc::UIState::FrontEnd);
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
 
@@ -4611,6 +4612,7 @@ static int l_ExitGame(lua_State* L) {
         lua_rawset(L, LUA_REGISTRYINDEX);
         return 0;
     }
+    osc::set_ui_state(osc::UIState::FrontEnd);
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
     auto* beat = get_beat_registry(L);

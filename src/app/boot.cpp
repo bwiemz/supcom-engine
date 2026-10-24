@@ -397,15 +397,6 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // ── Engine state machine ──
-    // Store game state string in UI registry (source of truth for GetCurrentUIState)
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_game_state");
-        lua_pushstring(uL, "game");
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-
     // Set focus army (0 = ARMY_1)
     {
         lua_State* uL = ui_lua_state.raw();
@@ -570,8 +561,11 @@ std::optional<int> App::boot_ui() {
     const bool game_ui = !opt.map_path.empty() && (!opt.headless || request.world_ui);
     if (auto code = init_ui_state(game_ui ? &game_setup.mods : nullptr)) return code;
 
-    // State transition: INIT → GAME or INIT → FRONT_END
+    // State transition: INIT → GAME or INIT → FRONT_END. Moho's UI state is
+    // the entry point's before its SetupUI runs (StartUIMainEntryWithState):
+    // userInit.lua above saw "none".
     if (!opt.map_path.empty()) {
+        osc::set_ui_state(osc::UIState::Game);
         osc::core::call_setup_ui(ui_lua_state.raw());
     } else if (!opt.gpgnet_endpoint.empty()) {
         // /gpgnet: the matchmaking client drives the game (M220a). As Moho's
@@ -591,9 +585,10 @@ std::optional<int> App::boot_ui() {
         // (uimain.lua's StartSplashScreen, which leaves through
         // EngineStartFrontEndUI). Tests, captures and scripted runs go
         // straight to the main menu, unless a test asks for the splash.
-        osc::core::call_setup_ui(ui_lua_state.raw());
         const bool splash = request.splash || (opt.interactive && !opt.scripted_window &&
                                                !parse_flag(argc, argv, "--auto-skirmish"));
+        osc::set_ui_state(splash ? osc::UIState::Splash : osc::UIState::FrontEnd);
+        osc::core::call_setup_ui(ui_lua_state.raw());
         if (auto r =
                 ui_lua_state.do_string(splash ? "import('/lua/ui/uimain.lua').StartSplashScreen()"
                                               : "EngineStartFrontEndUI()");

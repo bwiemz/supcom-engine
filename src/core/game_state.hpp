@@ -25,6 +25,27 @@ enum class GameState : u8 {
 
 const char* game_state_to_string(GameState s);
 
+/// Moho's UI state (EUIState, its process-global sUIState): which of
+/// uimain.lua's entry points the user side last started. It is `None` until
+/// the first, then Splash, FrontEnd, Game or Lobby, set just before the
+/// entry point and the SetupUI that precedes it (StartUIMainEntryWithState),
+/// so a new UI state's init scripts still see the last one. It is apart
+/// from the GameStateManager's states, which have their own names and
+/// transitions. GetCurrentUIState answers its name. User side only: the sim
+/// never reads it.
+enum class UIState : u8 {
+    None,
+    Splash,
+    FrontEnd,
+    Game,
+    Lobby,
+};
+
+UIState ui_state();
+void set_ui_state(UIState s);
+/// Moho's lexical names: "none", "splash", "frontend", "game", "lobby".
+const char* ui_state_to_string(UIState s);
+
 class GameStateManager {
 public:
     GameState current() const { return state_; }
@@ -131,8 +152,10 @@ inline void call_setup_ui(lua_State* L) {
 }
 /// uimain.StartGameUI: Moho calls it when a world session starts; it
 /// creates the Lua WldUIProvider (gamemain.CreateWldUIProvider), which the
-/// engine then drives (loading dialog, CreateGameInterface).
+/// engine then drives (loading dialog, CreateGameInterface). The UI state is
+/// the game's from then on, as Moho's UI_StartGameUI sets it.
 inline void call_start_game_ui(lua_State* L) {
+    set_ui_state(UIState::Game);
     push_uimain_function(L, "StartGameUI");
     if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
     if (lua_pcall(L, 0, 0, 0) != 0) {

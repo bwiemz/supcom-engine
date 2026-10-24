@@ -22,6 +22,29 @@ const char* game_state_to_string(GameState s) {
     return "unknown";
 }
 
+namespace {
+UIState g_ui_state = UIState::None;
+} // namespace
+
+UIState ui_state() {
+    return g_ui_state;
+}
+
+void set_ui_state(UIState s) {
+    g_ui_state = s;
+}
+
+const char* ui_state_to_string(UIState s) {
+    switch (s) {
+    case UIState::None: return "none";
+    case UIState::Splash: return "splash";
+    case UIState::FrontEnd: return "frontend";
+    case UIState::Game: return "game";
+    case UIState::Lobby: return "lobby";
+    }
+    return "none";
+}
+
 bool GameStateManager::transition_to(GameState new_state, lua_State* ui_L) {
     if (new_state == state_) return true;
     spdlog::info("GameState: {} -> {}", game_state_to_string(state_),

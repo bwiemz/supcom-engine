@@ -103,7 +103,9 @@ void App::Window::handle_launch() {
                 // review), as from the front end.
                 detach_ui_from_sim(uiL);
 
-                // Transition to LOADING (SetupUI) and show the loading screen
+                // Transition to LOADING (SetupUI, the game's UI state's)
+                // and show the loading screen
+                osc::set_ui_state(osc::UIState::Game);
                 game_state_mgr.transition_to(osc::GameState::LOADING, uiL);
                 begin_world_ui(uiL, wld_provider);
 
@@ -286,8 +288,10 @@ void App::Window::handle_return_to_lobby() {
             uiL = ui_lua_state.raw();
             publish_window_objects();
 
-            // Transition to FRONT_END (SetupUI) and show the main menu, as
-            // Moho's UI_StartFrontEnd does (with the LAN dialog).
+            // Transition to FRONT_END (SetupUI, the front end's UI state's)
+            // and show the main menu, as Moho's UI_StartFrontEnd does (with
+            // the LAN dialog).
+            osc::set_ui_state(osc::UIState::FrontEnd);
             game_state_mgr.transition_to(osc::GameState::FRONT_END, uiL);
             if (auto shown = ui_lua_state.do_string("EngineStartFrontEndUI()"); !shown)
                 spdlog::warn("Front end: {}", shown.error().message);
