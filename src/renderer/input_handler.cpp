@@ -316,12 +316,17 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim, f64 dt,
     // turns a world click into that command.
     const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
     const bool mode_active = mode.mode == "build" || mode.mode == "order";
-    cursor_world_.reset();
-    cursor_ray_.reset();
+    // While the pointer is pinned (a spin's or a middle drag's scrub), what
+    // is under it stays as it was (CUIWorldView skips UpdateSelection)
+    const bool scrubbing = renderer.mouse_scrubbing();
+    if (!scrubbing) {
+        cursor_world_.reset();
+        cursor_ray_.reset();
+        hovered_ = 0;
+        hovered_command_ = 0;
+    }
     camera_zoom_ = renderer.camera().zoom();
-    hovered_ = 0;
-    hovered_command_ = 0;
-    if (!on_minimap && !(mouse_over_ui && mouse_over_ui())) {
+    if (!scrubbing && !on_minimap && !(mouse_over_ui && mouse_over_ui())) {
         f32 wx = 0;
         f32 wz = 0;
         if (world_at(renderer, sim, mx, my, wx, wz)) {

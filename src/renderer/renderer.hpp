@@ -71,6 +71,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 struct GLFWcursor;
@@ -203,6 +204,13 @@ public:
 
     /// Poll window events and update camera.
     void poll_events(f64 dt);
+    /// Moho's mouse scrubbing: the pointer is pinned to a world view's centre
+    /// while its camera's spin or middle drag asks (Camera::scrubs), and put
+    /// back where it was after; meanwhile FA's cursor is hidden, and the
+    /// world view's hover isn't updated.
+    bool mouse_scrubbing() const { return scrub_.has_value(); }
+    /// Whether the scrub began (true) or ended (false) since last asked.
+    std::optional<bool> take_scrub_change() { return std::exchange(scrub_change_, std::nullopt); }
 
     /// Clean up all Vulkan resources.
     void shutdown();
@@ -1084,6 +1092,22 @@ private:
     bool split_ = false;
     bool split_last_frame_ = false;
     bool mouse_over_ui_ = false;
+    /// A scrub's pointer, in the window's units: where it was (put back
+    /// after), the view's centre it is pinned to, and where it landed when
+    /// last put there (func_StartMouseScrubbing's sMouseMoveStart,
+    /// sMouseScrubAnchor, sMouseScrubLanded)
+    struct MouseScrub {
+        f64 start_x = 0, start_y = 0;
+        f64 anchor_x = 0, anchor_y = 0;
+        f64 landed_x = 0, landed_y = 0;
+    };
+    std::optional<MouseScrub> scrub_;
+    std::optional<bool> scrub_change_;
+    /// func_ProcessMouseScrubbing: this frame's motion of a pinned pointer
+    /// into `in`, and the pointer back to its pin.
+    void take_scrub(CameraInput& in);
+    /// Pins the pointer, or lets it go, as the views' cameras now ask.
+    void settle_scrub(const std::vector<SceneView>& views);
     VkCommandBuffer cmd_ = VK_NULL_HANDLE;
     i32 player_army_ = 0;
     ReconView recon_;

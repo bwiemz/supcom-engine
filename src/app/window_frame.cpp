@@ -775,6 +775,12 @@ void App::Window::update_ui(double dt) {
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
     renderer.poll_events(dt);
+    // While the pointer is pinned FA's cursor is hidden, every frame
+    // (func_ProcessMouseScrubbing), and let go, it is shown again
+    // (func_StartMouseScrubbing)
+    if (const auto scrub = renderer.take_scrub_change(); renderer.mouse_scrubbing() || scrub) {
+        show_ui_cursor(ui_lua_state.raw(), !renderer.mouse_scrubbing());
+    }
     if (renderer.should_close() && !renderer.iconified() &&
         osc::core::call_show_escape_dialog(ui_lua_state.raw())) {
         renderer.keep_open();
@@ -848,7 +854,8 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
             renderer.ui_mouse_position(mx, my);
             return mouse_over_ui(ui_lua_state.raw(), mx, my);
         });
-        if (input_handler.cursor_world()) {
+        // (not while the pointer is pinned: CUIWorldView::Frame skips it)
+        if (input_handler.cursor_world() && !renderer.mouse_scrubbing()) {
             osc::lua::update_world_view_cursor(ui_lua_state.raw());
         }
     }

@@ -108,8 +108,8 @@ Both follow the log of the target zoom:
   - It moves against the view's right for dx, and along its up, flattened
     onto the ground, for dy.
   - Uses:
-    - the middle-button drag: `CameraDragger`, by the mouse's movement
-      since the last move;
+    - the middle-button drag: `CameraDragger`, by the pointer's motion
+      while it is pinned (mouse scrubbing, below);
     - the keyboard: arrows and screen edges, 90 a frame (×4 with Ctrl).
       Up and the top edge are +dy; left and the left edge are +dx.
 - **Spin (`CameraSpin(dx, dy)`, in pixels):**
@@ -118,8 +118,22 @@ Both follow the log of the target zoom:
   - The pitch is clamped to [0.1, 1.5608].
   - It marks the view rotated.
   - Uses:
-    - Space + mouse motion, only while `zoom < 125`;
+    - Space + mouse motion, only while `zoom < 125`: the first motion
+      arms it, the rest turn it by the pointer's motion while it is
+      pinned; the pointer leaving the view ends it;
     - Insert and Delete, ±10 a frame (×2 with Ctrl), not with Alt.
+- **Mouse scrubbing (`func_StartMouseScrubbing`,
+  `func_ProcessMouseScrubbing`; amended for #809):**
+  - From the Space spin's second motion, and from the middle drag's
+    press, FA's cursor is hidden, the pointer's place is kept, and the
+    pointer is pinned to the view's centre.
+  - Each frame its motion away from the pin is the drag's (negated by
+    `SetInvertMidMouseButton`, the spin's too), and it goes back to the
+    pin; so a drag has no bound, and the pinned pointer is on no screen
+    edge. The hover and `OnUpdateCursor` wait meanwhile.
+  - When the drag ends the cursor shows again, where it was.
+  - `ui_DisableCursorFixing` (off by default) leaves the pointer free:
+    the drags move by the change of its position.
 - **Revert (`CameraRevertRotation`):**
   - Triggered by letting go of Space, or by the end of a middle-drag.
   - Each frame the heading steps 0.1 toward ±π, and the pitch steps 0.1

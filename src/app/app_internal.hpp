@@ -348,6 +348,7 @@ void finish_world_load(sim::SimState& sim_state, lua::LuaState& sim_lua_state,
 
 // frames.cpp
 bool mouse_over_ui(lua_State* uiL, f64 x, f64 y);
+void show_ui_cursor(lua_State* uiL, bool shown);
 void cancel_command_mode(lua_State* uiL);
 void call_command_graph(lua_State* uiL, const char* name, int nargs);
 void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& ghost_from_mode);

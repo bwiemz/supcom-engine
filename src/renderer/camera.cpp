@@ -730,7 +730,14 @@ void Camera::copy_options(const Camera& from) {
     edge_scroll_ = from.edge_scroll_;
     arrow_scroll_ = from.arrow_scroll_;
     invert_middle_ = from.invert_middle_;
+    disable_cursor_fixing_ = from.disable_cursor_fixing_;
     free_ = from.free_;
+}
+
+void Camera::end_spin() {
+    if (spinning_ && !free_) revert_rotation();
+    spinning_ = false;
+    spin_scrubs_ = false;
 }
 
 void Camera::apply(const CameraInput& in, f64 dt) {
@@ -741,19 +748,30 @@ void Camera::apply(const CameraInput& in, f64 dt) {
     const f32 pan_speed = keyboard_pan_speed_ * (in.control ? keyboard_pan_accelerate_ : 1.0f);
     const f32 rotate_speed =
         keyboard_rotate_speed_ * (in.control ? keyboard_rotate_accelerate_ : 1.0f);
-    const f32 dx = in.mouse_x - last_mouse_x_;
-    const f32 dy = in.mouse_y - last_mouse_y_;
+    // The pointer's motion this frame: pinned, its offset from the pin, which
+    // SetInvertMidMouseButton negates (func_ProcessMouseScrubbing); free, the
+    // change of its position
+    const f32 scrub_sign = invert_middle_ ? -1.0f : 1.0f;
+    const f32 dx = in.pinned ? scrub_sign * in.scrub_x : in.mouse_x - last_mouse_x_;
+    const f32 dy = in.pinned ? scrub_sign * in.scrub_y : in.mouse_y - last_mouse_y_;
+    const bool moved = dx != 0.0f || dy != 0.0f;
 
-    // Space and the mouse spin the view while near; let go, it turns back
+    // Space and the mouse spin the view while near; let go, or the pointer
+    // off the world (MET_MouseExit), and it turns back
     if (in.space && (free_ || target_zoom_ < kSpinZoomLimit)) {
-        // Over the world: the first motion arms it, the rest turn
-        if (mouse_enabled_) {
-            if (spinning_) spin(dx, dy);
+        // The first motion arms it; from the second the pointer is pinned
+        // and the rest turn it, with no bound (CUIWorldView::HandleEvent)
+        if (!mouse_enabled_) {
+            end_spin();
+        } else if (moved) {
+            if (spinning_) {
+                spin(dx, dy);
+                spin_scrubs_ = true;
+            }
             spinning_ = true;
         }
     } else {
-        if (spinning_ && !free_) revert_rotation();
-        spinning_ = false;
+        end_spin();
     }
 
     // Insert and Delete turn it (not with Alt)
@@ -784,10 +802,13 @@ void Camera::apply(const CameraInput& in, f64 dt) {
     }
     if (!in.alt && (px != 0.0f || py != 0.0f)) pan(px, py);
 
-    // The middle button drags the ground (CameraDragger), from over the
-    // world; letting go turns a rotated view back
+    // The middle button drags the ground (CameraDragger, which pins the
+    // pointer from its press), from over the world; letting go turns a
+    // rotated view back
     if (in.middle && (dragging_ || mouse_enabled_)) {
-        if (dragging_) pan(invert_middle_ ? -dx : dx, invert_middle_ ? -dy : dy);
+        // (pinned, the scrub's sign is in dx already)
+        const f32 sign = !in.pinned && invert_middle_ ? -1.0f : 1.0f;
+        if (dragging_) pan(sign * dx, sign * dy);
         dragging_ = true;
     } else if (dragging_) {
         dragging_ = false;

@@ -25,6 +25,12 @@ struct CameraInput {
     /// The cursor on the screen's edges (windowed, focused and over it).
     bool at_left = false, at_right = false, at_top = false, at_bottom = false;
     f32 mouse_x = 0.0f, mouse_y = 0.0f;
+    /// The pointer pinned to the view's centre (Moho's mouse scrubbing):
+    /// `scrub_x`, `scrub_y` is its motion away from there this frame, which
+    /// the spin and the middle drag take in place of the change of its
+    /// position (func_ProcessMouseScrubbing).
+    bool pinned = false;
+    f32 scrub_x = 0.0f, scrub_y = 0.0f;
 };
 
 /// Where the camera aims (Moho's target types, M217g).
@@ -48,7 +54,9 @@ struct CameraEntityPose {
 ///
 /// The middle button drags the ground; the arrow keys and the screen's edges
 /// pan; Space (while near) and Insert/Delete spin the view, which glides back
-/// when let go. frame() is UpdateBasis then UpdateCoords.
+/// when let go. The Space spin and the middle drag pin the pointer while they
+/// last (scrubs()), and move by its motion. frame() is UpdateBasis then
+/// UpdateCoords.
 class Camera {
 public:
     // Moho's tunables (cam_*, ui_Keyboard*, ren_BgLowerBound)
@@ -257,9 +265,21 @@ public:
     bool arrow_scroll() const { return arrow_scroll_; }
     void set_arrow_scroll(bool on) { arrow_scroll_ = on; }
     /// SetInvertMidMouseButton: the middle button drags the ground the other
-    /// way (Moho negates its scrub deltas, UI_SetInvertMidMouseScrub).
+    /// way (Moho negates its scrub deltas, UI_SetInvertMidMouseScrub, so a
+    /// pinned spin turns the other way too).
     void set_invert_middle(bool on) { invert_middle_ = on; }
     bool invert_middle() const { return invert_middle_; }
+    /// ui_DisableCursorFixing: the drags leave the pointer free and move by
+    /// the change of its position (Moho's default: off).
+    void set_disable_cursor_fixing(bool on) { disable_cursor_fixing_ = on; }
+    bool disable_cursor_fixing() const { return disable_cursor_fixing_; }
+    /// Whether its drag holds the pointer pinned now, as Moho's
+    /// func_StartMouseScrubbing's callers do: a Space spin from its second
+    /// motion, a middle drag from its press; never with
+    /// ui_DisableCursorFixing.
+    bool scrubs() const {
+        return input_enabled_ && !disable_cursor_fixing_ && (spin_scrubs_ || dragging_);
+    }
     /// When false, the keys don't pan or spin (Moho's MAUI_KeyIsDown is false).
     void set_keys_enabled(bool enabled) { keys_enabled_ = enabled; }
     /// When false, the mouse's drags aren't the world view's: it is over a UI
@@ -345,6 +365,7 @@ private:
     bool edge_scroll_ = true;
     bool arrow_scroll_ = true;
     bool invert_middle_ = false;
+    bool disable_cursor_fixing_ = false; ///< ui_DisableCursorFixing
 
     // CameraImpl's lanes
     std::array<f32, 3> target_{512.0f, 0.0f, 512.0f}; ///< mTargetLocation
@@ -404,9 +425,13 @@ private:
 
     // The world view's drags
     bool dragging_ = false;
-    bool spinning_ = false;
+    bool spinning_ = false;    ///< Moho's mCameraRotationActive
+    bool spin_scrubs_ = false; ///< the spin has had its second motion
     f32 last_mouse_x_ = 0.0f;
     f32 last_mouse_y_ = 0.0f;
+    /// The Space spin's end (its key let go, the pointer off the view): the
+    /// view turns back unless cam_Free.
+    void end_spin();
 
     f32 shake_intensity_ = 0;
     bool ortho_ = false; ///< mIsOrtho
