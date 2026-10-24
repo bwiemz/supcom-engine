@@ -1544,6 +1544,7 @@ void SimState::adopt_history(const Replay& saved) {
     recording_ = true;
     playback_ = false;
     resume_beat_ = 0;
+    loaded_from_save_ = true;
 }
 
 void SimState::start_resume(const Replay& saved) {
@@ -1551,6 +1552,7 @@ void SimState::start_resume(const Replay& saved) {
     const bool behind = saved.final_beat > beat_count_;
     playback_ = behind;
     resume_beat_ = behind ? saved.final_beat : 0;
+    loaded_from_save_ = true;
 }
 
 std::shared_ptr<const ProjectileBlueprintInfo>

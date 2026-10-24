@@ -2596,6 +2596,22 @@ static int l_SessionIsObservingAllowed(lua_State* L) {
     return 1;
 }
 
+/// SessionIsBeingRecorded() -> whether the session is being recorded
+/// (Moho's cfunc_SessionIsBeingRecordedL 0x00897EE0: the session's
+/// IsBeingRecorded): the sim's recording, but false in a game loaded from a
+/// save, whose session Moho starts unrecorded. The engine records that one
+/// on, as a later save carries its whole history. As Moho's, it takes no
+/// argument, and raises with no world session.
+static int l_SessionIsBeingRecorded(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return true iff the active session is a being recorded.", 0,
+                               lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "no active session.");
+    const auto* sim = get_sim(L);
+    lua_pushboolean(L, sim->recording() && !sim->loaded_from_save() ? 1 : 0);
+    return 1;
+}
+
 /// SetFocusArmy(army) -- 1-based, -1 = observer. While FA's game interface
 /// runs it is a request the next sim beat applies (SyncQueue), as Moho's
 /// session does, so the sim and the UI's OnSync see the change together --
@@ -4842,7 +4858,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_bool_fn("HasCommandLineArg2", false);
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
-    set_bool_fn("SessionIsBeingRecorded", false);
     set_bool_fn("SessionCanRestart", false);
     set_nil_fn("SessionGetCommandSourceNames");
     set_nil_fn("SessionGetLocalCommandSource");
@@ -5145,6 +5160,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetSessionClients", l_GetSessionClients);
     state.register_function("SessionIsMultiplayer", l_SessionIsMultiplayer);
     state.register_function("SessionIsObservingAllowed", l_SessionIsObservingAllowed);
+    state.register_function("SessionIsBeingRecorded", l_SessionIsBeingRecorded);
     state.register_function("EjectSessionClient", l_EjectSessionClient);
 
     // Engine state queries (M144c)

@@ -613,6 +613,13 @@ public:
     /// Catching up a loaded game. It is not a replay: SessionIsReplay()
     /// stays false.
     bool resuming() const { return resume_beat_ != 0; }
+    /// The game began from a saved game, restored (adopt_history) or caught
+    /// up (start_resume). Moho's session for a loaded save isn't being
+    /// recorded (CSavedGame::CreateSinglePlayerSessionInfo), so
+    /// SessionIsBeingRecorded answers false, though this sim records on: its
+    /// history is what a later save writes. A session fact: no checksum or
+    /// snapshot holds it.
+    bool loaded_from_save() const { return loaded_from_save_; }
 
     // Game end state
     bool game_ended() const { return game_ended_; }
@@ -1203,6 +1210,7 @@ private:
     bool recording_ = false;
     bool playback_ = false;
     u32 resume_beat_ = 0; // a loaded game's saved beat, until it is reached
+    bool loaded_from_save_ = false;
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {

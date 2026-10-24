@@ -171,8 +171,9 @@ App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
         return Restore::Failed;
     }
     // The restored game is the saved one: its history is its recording
-    // (a later save carries the whole game), and its checksum is the one
-    // that history holds for the saved tick.
+    // (a later save carries the whole game; SessionIsBeingRecorded answers
+    // false all the same, as Moho's for a loaded save), and its checksum is
+    // the one that history holds for the saved tick.
     sim_state->set_recording(true);
     sim_state->adopt_history(save.game);
     const auto& sums = save.game.checksums;
