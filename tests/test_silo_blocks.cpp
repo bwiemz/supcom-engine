@@ -2,6 +2,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include "log_capture.hpp"
+
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "sim/manipulator.hpp"
@@ -106,4 +108,27 @@ TEST_CASE("A Stop turns a silo's auto mode off and drops its missile under way",
     lua_getglobal(L, "__heard");
     CHECK(std::string(lua_tostring(L, -1)) == "off");
     lua_pop(L, 1);
+}
+
+TEST_CASE("A silo's build cost script that raises is reported, and its default stands", "[silo]") {
+    SiloSim s;
+    lua_State* L = s.state.raw();
+    lua_getglobal(L, "silo");
+    s.silo->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    REQUIRE(s.state
+                .do_string("function silo:GetEnergyBuildAdjMod() error('boom') end\n"
+                           "function silo:GetMassBuildAdjMod() return 0.5 end")
+                .ok());
+    s.silo->order_silo_build(true);
+    // Moho's RunScript logs the script's error (LogScriptWarning)
+    osc::test::LogCapture log;
+    s.silo->update_silo(0.1, 1.0f, L);
+    REQUIRE(s.silo->silo_building());
+    CHECK(log.count("Error running GetEnergyBuildAdjMod script in Entity ") == 1);
+    CHECK(log.count("boom") == 1);
+    CHECK(log.count("GetMassBuildAdjMod") == 0);
+    // Energy at the default (1), mass at the script's half
+    const double per_second = 1500.0 / 450000.0;
+    CHECK(s.silo->economy().silo_energy == Approx(per_second));
+    CHECK(s.silo->economy().silo_mass == Approx(0.5 * per_second));
 }

@@ -3638,7 +3638,7 @@ void Renderer::update_view_effects(u32 fi, const std::array<f32, 16>& vp, const 
     projectile_icon_renderer_.update(strategic_icon_renderer_.projectile_icons(), fi);
 
     {
-        bool resources = !view_camera_->free() && view_resources_;
+        bool resources = view_camera_->icons_visible() && view_resources_;
         if (!split_ && L) {
             lua_pushstring(L, "__osc_world_view");
             lua_rawget(L, LUA_REGISTRYINDEX);
@@ -4462,12 +4462,16 @@ void Renderer::poll_events(f64 dt) {
         camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
         // Its clocks: the system's, and the game's
         camera_.set_clocks(glfwGetTime(), camera_game_time_);
-        camera_.update(window_.get(), dt);
+        CameraInput in = camera_.read_input(window_.get());
+        take_scrub(in);
+        camera_.apply(in, dt);
+        settle_scrub(views);
         return;
     }
     // Each view's camera takes the mouse over it; only the one that GetsGlobalCameraCommands
     // takes the keys' and the screen edges' pans and spins (CUIWorldView::Frame)
-    const CameraInput in = camera_.read_input(window_.get());
+    CameraInput in = camera_.read_input(window_.get());
+    take_scrub(in);
     for (const SceneView& v : views) {
         Camera& c = *v.camera;
         if (&c != &camera_) {
@@ -4491,6 +4495,66 @@ void Renderer::poll_events(f64 dt) {
             own.at_left = own.at_right = own.at_top = own.at_bottom = false;
         }
         c.apply(own, dt);
+    }
+    settle_scrub(views);
+}
+
+void Renderer::take_scrub(CameraInput& in) {
+    if (!scrub_ || !window_) return;
+    int ww = 0;
+    int wh = 0;
+    int fw = 0;
+    int fh = 0;
+    glfwGetWindowSize(window_.get(), &ww, &wh);
+    glfwGetFramebufferSize(window_.get(), &fw, &fh);
+    // Its motion from where it landed is the drag's, and it goes back to the
+    // pin; read again, it is where it landed (a platform that can't move it
+    // leaves it free, and the motion is still its own)
+    f64 x = 0;
+    f64 y = 0;
+    glfwGetCursorPos(window_.get(), &x, &y);
+    const auto motion =
+        core::to_framebuffer(x - scrub_->landed_x, y - scrub_->landed_y, ww, wh, fw, fh);
+    glfwSetCursorPos(window_.get(), scrub_->anchor_x, scrub_->anchor_y);
+    glfwGetCursorPos(window_.get(), &scrub_->landed_x, &scrub_->landed_y);
+    const auto at = core::to_framebuffer(scrub_->landed_x, scrub_->landed_y, ww, wh, fw, fh);
+    in.pinned = true;
+    in.scrub_x = static_cast<f32>(motion[0]);
+    in.scrub_y = static_cast<f32>(motion[1]);
+    in.mouse_x = static_cast<f32>(at[0]);
+    in.mouse_y = static_cast<f32>(at[1]);
+    // Pinned, it is on none of the screen's edges
+    in.at_left = in.at_right = in.at_top = in.at_bottom = false;
+}
+
+void Renderer::settle_scrub(const std::vector<SceneView>& views) {
+    if (!window_) return;
+    const auto scrubbing = std::find_if(views.begin(), views.end(),
+                                        [](const SceneView& v) { return v.camera->scrubs(); });
+    if (scrubbing != views.end() && !scrub_) {
+        // func_StartMouseScrubbing(true): where the pointer is, kept, and the
+        // pointer to the view's centre
+        int ww = 0;
+        int wh = 0;
+        int fw = 0;
+        int fh = 0;
+        glfwGetWindowSize(window_.get(), &ww, &wh);
+        glfwGetFramebufferSize(window_.get(), &fw, &fh);
+        const f64 sx = fw > 0 ? static_cast<f64>(ww) / fw : 1.0;
+        const f64 sy = fh > 0 ? static_cast<f64>(wh) / fh : 1.0;
+        MouseScrub pin;
+        glfwGetCursorPos(window_.get(), &pin.start_x, &pin.start_y);
+        pin.anchor_x = (scrubbing->x + scrubbing->w * 0.5) * sx;
+        pin.anchor_y = (scrubbing->y + scrubbing->h * 0.5) * sy;
+        glfwSetCursorPos(window_.get(), pin.anchor_x, pin.anchor_y);
+        glfwGetCursorPos(window_.get(), &pin.landed_x, &pin.landed_y);
+        scrub_ = pin;
+        scrub_change_ = true;
+    } else if (scrubbing == views.end() && scrub_) {
+        // func_StartMouseScrubbing(false): the pointer back where it was
+        glfwSetCursorPos(window_.get(), scrub_->start_x, scrub_->start_y);
+        scrub_.reset();
+        scrub_change_ = false;
     }
 }
 

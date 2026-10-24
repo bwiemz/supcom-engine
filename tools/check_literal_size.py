@@ -17,17 +17,16 @@ Usage: check_literal_size.py <dir or file>...   (exit 1 on any over)
 
 from __future__ import annotations
 
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+# The checks run as scripts, so tools/ is sys.path[0]: the module beside them
+import cpp_source  # pyright: ignore[reportImplicitRelativeImport]
+
 PIECE_LIMIT = 16_380  # C2026: one literal
 RUN_LIMIT = 65_535  # C1091: adjacent literals, concatenated
 SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl"}
-
-# An encoding prefix, then R for a raw string: R"delim( ... )delim".
-_RAW_OPEN = re.compile(r'(?:u8|u|U|L)?R"([^()\\\s]{0,16})\(')
 
 
 @dataclass(frozen=True)
@@ -53,77 +52,23 @@ class Finding:
 
 
 def literals(text: str) -> list[Literal]:
-    """The string literals in C++ source `text`, skipping comments and
-    character literals."""
-    found: list[Literal] = []
-    i = 0
-    n = len(text)
-    while i < n:
-        c = text[i]
-        if text.startswith("//", i):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-        elif text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            i = n if j < 0 else j + 2
-        elif c == "R" or (c in "uUL" and _RAW_OPEN.match(text, i)):
-            raw = _RAW_OPEN.match(text, i)
-            if raw and not _ident_before(text, i):
-                close = ")" + raw.group(1) + '"'
-                j = text.find(close, raw.end())
-                if j < 0:
-                    break
-                body = text[raw.end() : j]
-                size = len(body.encode()) + body.count("\n")  # its line breaks as CRLF
-                found.append(Literal(text.count("\n", 0, i) + 1, size, i, j + len(close)))
-                i = j + len(close)
-            else:
-                i += 1
-        elif c == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            body = text[i + 1 : j]
-            found.append(Literal(text.count("\n", 0, i) + 1, len(body.encode()), i, j + 1))
-            i = j + 1
-        elif c == "'" and not _in_number(text, i):
-            # A character literal (a digit separator, 1'000, is not one).
-            j = i + 1
-            while j < n and text[j] != "'":
-                j += 2 if text[j] == "\\" else 1
-            i = j + 1
-        else:
-            i += 1
-    return found
-
-
-def _ident_before(text: str, i: int) -> bool:
-    """Whether the R at `i` (after any prefix) ends an identifier, as in
-    `FOR"`… — then it is no raw string."""
-    k = i
-    while k > 0 and text[k - 1] in "u8UL":
-        k -= 1
-    return k > 0 and (text[k - 1].isalnum() or text[k - 1] == "_")
-
-
-def _in_number(text: str, i: int) -> bool:
-    """Whether the quote at `i` is a digit separator (`1'000`, `0xFF'FF`):
-    the word before it starts with a digit. `L'x'` and `u8'x'` are
-    character literals."""
-    k = i
-    while k > 0 and (text[k - 1].isalnum() or text[k - 1] in "_'"):
-        k -= 1
-    return k < i and text[k].isdigit()
-
-
-def _only_space_or_comments(between: str) -> bool:
-    stripped = re.sub(r"//[^\n]*|/\*.*?\*/", "", between, flags=re.DOTALL)
-    return stripped.strip() == ""
+    """The string literals in C++ source `text` (tools/cpp_source.py reads it:
+    comments and character literals skipped)."""
+    return [
+        Literal(
+            lit.line,
+            len(lit.body.encode()) + (lit.body.count("\n") if lit.raw else 0),  # CRLF
+            lit.start,
+            lit.end,
+        )
+        for lit in cpp_source.scan(text).literals
+    ]
 
 
 def check_text(path: Path, text: str) -> list[Finding]:
     findings: list[Finding] = []
     lits = literals(text)
+    code = cpp_source.scan(text).code  # comments blanked: only space between joined literals
     for lit in lits:
         if lit.size > PIECE_LIMIT:
             findings.append(
@@ -132,7 +77,7 @@ def check_text(path: Path, text: str) -> list[Finding]:
     # Runs of adjacent literals, which the compiler concatenates.
     run_start = 0
     for k in range(1, len(lits) + 1):
-        joined = k < len(lits) and _only_space_or_comments(text[lits[k - 1].end : lits[k].start])
+        joined = k < len(lits) and not code[lits[k - 1].end : lits[k].start].strip()
         if not joined:
             total = sum(lit.size for lit in lits[run_start:k])
             if k - run_start > 1 and total > RUN_LIMIT:

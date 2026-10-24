@@ -18,11 +18,13 @@
 #include "lua/sim_loader.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/user_stand_ins.hpp"
 #include "map/terrain.hpp"
 #include "platform/browser.hpp"
 #include "platform/paths.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/lua_sim.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -316,12 +318,7 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         if (!opt.headless) osc::lua::set_ui_world_source(ui_lua_state.raw(), &world_interp.history);
         // If we used a dummy, clear the sim pointer in UI registry so moho methods
         // return gracefully instead of dereferencing a dangling pointer.
-        if (dummy_sim) {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "osc_sim_state");
-            lua_pushlightuserdata(uL, nullptr);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
+        if (dummy_sim) sim::set_sim(ui_lua_state.raw(), nullptr);
     }
 
     // The localization cache, loaded once (boot_ui), in the UI registry
@@ -397,15 +394,6 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // ── Engine state machine ──
-    // Store game state string in UI registry (source of truth for GetCurrentUIState)
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_game_state");
-        lua_pushstring(uL, "game");
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-
     // Set focus army (0 = ARMY_1)
     {
         lua_State* uL = ui_lua_state.raw();
@@ -426,83 +414,9 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
     // bootstrap expect must exist first.
     osc::lua::register_prefetch_bindings(ui_lua_state);
     osc::lua::register_category_bindings(ui_lua_state);
-    {
-        lua_State* uL = ui_lua_state.raw();
-        auto global_is_defined = [&](const char* name) {
-            lua_pushstring(uL, name);
-            lua_rawget(uL, LUA_GLOBALSINDEX);
-            const bool defined = !lua_isnil(uL, -1);
-            lua_pop(uL, 1);
-            return defined;
-        };
-        auto set_stub = [&](const char* name) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, [](lua_State*) -> int { return 0; });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        auto set_str = [&](const char* name, const char* val) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushstring(uL, val);
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        auto set_bool_fn = [&](const char* name, bool val) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, val ?
-                +[](lua_State* L) -> int { lua_pushboolean(L, 1); return 1; } :
-                +[](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        set_stub("AudioSetLanguage");
-        set_str("__language", "us");
-        set_bool_fn("HasLocalizedVO", false);
-        // Engine globals needed by FA's UI bootstrap chain
-        // (GetOptions, GetVolume, SetVolume, etc.)
-        auto set_nil_fn = [&](const char* name) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, [](lua_State* L) -> int {
-                lua_pushnil(L);
-                return 1;
-            });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        set_bool_fn("DebugFacilitiesEnabled", false);
-        set_stub("ExitApplication");              // exit
-        set_stub("PrefetchSession");              // loading optimization
-        set_stub("SetFocusArmy");                 // army focus
-        set_nil_fn("GetFocusArmy");               // army focus
-        set_stub("ClearFrame");                   // UI cleanup
-        set_bool_fn("HasCommandLineArg2", false); // command line
-        // Session functions
-        set_bool_fn("SessionIsActive", false);
-        set_bool_fn("SessionIsMultiplayer", false);
-        set_bool_fn("SessionIsObservingAllowed", false);
-        set_bool_fn("SessionIsBeingRecorded", false);
-        set_bool_fn("SessionCanRestart", false);
-        set_nil_fn("SessionGetCommandSourceNames");
-        set_nil_fn("SessionGetLocalCommandSource");
-        // System info
-        set_nil_fn("GetMouseScreenPos");
-        set_stub("SetOverlayFilter");
-        set_stub("SetOverlayFilters");
-        set_nil_fn("GetActiveBuildTemplate");
-        set_nil_fn("GetHighlightCommand");
-        set_stub("RestartSession");
-        set_nil_fn("GetAntiAliasingOptions");
-        set_nil_fn("GetResolution");
-        set_stub("SetResolution");
-        // __installedlanguages — table of available language codes
-        if (!global_is_defined("__installedlanguages")) {
-            lua_pushstring(uL, "__installedlanguages");
-            lua_newtable(uL);
-            lua_pushstring(uL, "us");
-            lua_rawseti(uL, -2, 1);
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        }
-    }
+    // The Moho globals FA's UI bootstrap expects that no binding above
+    // defines yet: each once, from one typed table
+    osc::lua::register_user_stand_ins(ui_lua_state);
     {
         // A game's state runs SessionInit.lua, as Moho's session loader does:
         // userInit.lua, then the player's UI-only mods join __active_mods,
@@ -570,8 +484,11 @@ std::optional<int> App::boot_ui() {
     const bool game_ui = !opt.map_path.empty() && (!opt.headless || request.world_ui);
     if (auto code = init_ui_state(game_ui ? &game_setup.mods : nullptr)) return code;
 
-    // State transition: INIT → GAME or INIT → FRONT_END
+    // State transition: INIT → GAME or INIT → FRONT_END. Moho's UI state is
+    // the entry point's before its SetupUI runs (StartUIMainEntryWithState):
+    // userInit.lua above saw "none".
     if (!opt.map_path.empty()) {
+        osc::set_ui_state(osc::UIState::Game);
         osc::core::call_setup_ui(ui_lua_state.raw());
     } else if (!opt.gpgnet_endpoint.empty()) {
         // /gpgnet: the matchmaking client drives the game (M220a). As Moho's
@@ -591,9 +508,10 @@ std::optional<int> App::boot_ui() {
         // (uimain.lua's StartSplashScreen, which leaves through
         // EngineStartFrontEndUI). Tests, captures and scripted runs go
         // straight to the main menu, unless a test asks for the splash.
-        osc::core::call_setup_ui(ui_lua_state.raw());
         const bool splash = request.splash || (opt.interactive && !opt.scripted_window &&
                                                !parse_flag(argc, argv, "--auto-skirmish"));
+        osc::set_ui_state(splash ? osc::UIState::Splash : osc::UIState::FrontEnd);
+        osc::core::call_setup_ui(ui_lua_state.raw());
         if (auto r =
                 ui_lua_state.do_string(splash ? "import('/lua/ui/uimain.lua').StartSplashScreen()"
                                               : "EngineStartFrontEndUI()");
@@ -761,8 +679,8 @@ std::optional<int> App::start() {
         bool restore = false;
         if (opt.save_to_load) {
             const auto& save = *opt.save_to_load;
-            std::string why = "--load-by-replay";
-            const Restore result = opt.load_by_replay ? Restore::Skipped : restore_save(save, why);
+            std::string why;
+            const Restore result = restore_save(save, why);
             if (result == Restore::Failed) {
                 spdlog::error("Saved game '{}': not restored: {}", save.name, why);
                 std::printf("LOAD failed tick=%u\n", save.beat);
@@ -795,7 +713,8 @@ std::optional<int> App::start() {
         }
         return osc::lua::coverage::run_coverage_report(
             sim_lua_state->raw(), ui_lua_state.raw(), vfs, coverage_out,
-            parse_string_arg(argc, argv, "--binding-baseline", ""));
+            parse_string_arg(argc, argv, "--binding-baseline", ""),
+            parse_string_arg(argc, argv, "--binding-moho-user", ""));
     }
 
     osc::WorkerPool::instance().set_enabled(opt.workers);

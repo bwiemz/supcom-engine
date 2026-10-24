@@ -15,7 +15,7 @@ pod rebuild died on that), so this check fails on:
   owner and the readers that walk or freeze the whole table.
 
 Comments are skipped, and string literals are read as C++ reads them (a `//`
-inside one is not a comment).
+inside one is not a comment): tools/cpp_source.py reads the source.
 
 Usage: check_blueprint_lookups.py <repo root>   (exit 1 on a raw lookup)
        check_blueprint_lookups.py --self-test
@@ -27,6 +27,9 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+
+# The checks run as scripts, so tools/ is sys.path[0]: the module beside them
+import cpp_source  # pyright: ignore[reportImplicitRelativeImport]
 
 OWNER = "src/blueprints/blueprint_store.cpp"
 # Files that may name the global, and why.
@@ -44,78 +47,21 @@ BULK_ALLOWED = {
 SUFFIXES = {".cpp", ".hpp", ".h", ".c", ".inl", ".mm"}
 
 _BULK_CALL = re.compile(r"\bpush_blueprints\s*\(")
-_RAW_OPEN = re.compile(r'R"([^(\s\\]{0,16})\(')
-
-
-def read_literal(text: str, i: int) -> tuple[str, int] | None:
-    """The string literal starting at `i` (any prefix, or raw) as (contents,
-    index after it); None if none starts there."""
-    prefix_match = re.match(r"(?:u8|u|U|L)?", text[i:])
-    assert prefix_match is not None  # The optional prefix also matches the empty string.
-    prefix = prefix_match.group(0)
-    raw = _RAW_OPEN.match(text, i + len(prefix))
-    if raw is not None:
-        end = ")" + raw.group(1) + '"'
-        j = text.find(end, raw.end())
-        j = len(text) if j < 0 else j
-        return text[raw.end() : j], min(len(text), j + len(end))
-    if not text.startswith('"', i + len(prefix)):
-        return None
-    j = i + len(prefix) + 1
-    while j < len(text) and text[j] not in '"\n':
-        j += 2 if text[j] == "\\" else 1
-    return text[i + len(prefix) + 1 : j], min(len(text), j + 1)
-
-
-def in_word(text: str, i: int) -> bool:
-    return i > 0 and (text[i - 1].isalnum() or text[i - 1] == "_")
-
-
-def skip_comment(text: str, i: int) -> int | None:
-    """The index after the comment starting at `i`; None if none starts there."""
-    if text.startswith("//", i):
-        j = text.find("\n", i)
-        return len(text) if j < 0 else j
-    if text.startswith("/*", i):
-        j = text.find("*/", i + 2)
-        return len(text) if j < 0 else j + 2
-    return None
 
 
 def scan(text: str) -> tuple[list[tuple[int, str]], str]:
     """The string literals of C++ `text` as (line, contents), adjacent ones
     joined; and the code with comments and literals blanked (lines kept)."""
+    src = cpp_source.scan(text)
     literals: list[tuple[int, str]] = []
-    code: list[str] = []
-    i, line = 0, 1
-    joinable = False  # only whitespace or comments since the last literal
-    while i < len(text):
-        after = skip_comment(text, i)
-        mid_word = text[i].isalnum() and in_word(text, i)  # `u` of `menu` is no prefix
-        literal = None if after is not None or mid_word else read_literal(text, i)
-        if after is not None:
-            code.append("\n" * text.count("\n", i, after))
-            line, i = line + text.count("\n", i, after), after
-        elif literal is not None:
-            body, i = literal
-            code.append("\n" * body.count("\n") + '""')
-            if joinable:
-                literals[-1] = (literals[-1][0], literals[-1][1] + body)
-            else:
-                literals.append((line, body))
-            line, joinable = line + body.count("\n"), True
-        elif text[i] == "'" and not in_word(text, i):  # not a digit separator
-            j = i + 1
-            while j < len(text) and text[j] not in "'\n":
-                j += 2 if text[j] == "\\" else 1
-            code.append("''")
-            i, joinable = j + 1, False
+    after_last: int | None = None  # where the last literal ended
+    for lit in src.literals:
+        if after_last is not None and not src.code[after_last : lit.start].strip():
+            literals[-1] = (literals[-1][0], literals[-1][1] + lit.body)
         else:
-            line += text[i] == "\n"
-            joinable = joinable and text[i].isspace()
-            code.append(text[i])
-            i += 1
-    return literals, "".join(code)
+            literals.append((lit.line, lit.body))
+        after_last = lit.end
+    return literals, src.code
 
 
 def problems_in(rel: str, text: str) -> list[str]:

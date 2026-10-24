@@ -3,10 +3,12 @@
 // and the UI's own orders (M191). They live apart from the Lua library, which
 // the sim uses, so that library needs no renderer: osc_lua_user links both.
 
+#include "blueprints/blueprint_store.hpp"
 #include "core/color.hpp"
 #include "core/localization.hpp"
 #include "platform/executable.hpp"
 #include "lua/user_bindings.hpp"
+#include "lua/arg_count.hpp"
 
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
@@ -931,37 +933,105 @@ static int l_UnProject(lua_State* L) {
     return 1;
 }
 
-// --- GetMouseWorldPos global (M136a) ---
-// FA calls this as a standalone function: GetMouseWorldPos()
-static int l_GetMouseWorldPos(lua_State* L) {
-    // Get WorldView from registry
+/// GetMouseScreenPos() -> Vector2: the cursor's position on the screen, in
+/// the UI's pixels, as Moho's (faf-re cfunc_GetMouseScreenPosL: the
+/// session's CursorScreenPos; "No session started." without one). FAF's
+/// reticles, area attack and painting follow the cursor by it.
+static int l_GetMouseScreenPos(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "vector GetMouseScreenPos()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
+    f64 x = 0, y = 0;
+    if (auto* r = get_renderer(L)) r->ui_mouse_position(x, y);
+    push_vector2(L, static_cast<f32>(x), static_cast<f32>(y));
+    return 1;
+}
+
+/// GetAntiAliasingOptions() -> the antialiasing option keys the display
+/// offers: Moho's lists 0 (off), then a packed key for each multisample
+/// mode of the device (faf-re cfunc_GetAntiAliasingOptionsL). The engine
+/// draws without multisampling, so off alone, as the options screen's
+/// antialiasing states list (publish_fidelity_options); retail's and
+/// FAF's fidelity presets pick their antialiasing from it.
+static int l_GetAntiAliasingOptions(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "obj GetAntiAliasingOptions()", 0, lua_gettop(L));
+    lua_newtable(L);
+    lua_pushnumber(L, 0);
+    lua_rawseti(L, -2, 1);
+    return 1;
+}
+
+/// Where the cursor points on the ground (the session's CursorWorldPos):
+/// 0, 0, 0 without a world view.
+static sim::Vector3 cursor_world_pos(lua_State* L) {
     lua_pushstring(L, "__osc_world_view");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-
-    if (!wv || !wv->camera()) {
-        // Return zero vector
-        lua_newtable(L);
-        lua_pushstring(L, "x");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "y");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "z");
-        lua_pushnumber(L, 0);
-        lua_rawset(L, -3);
-        return 1;
-    }
-
-    f32 wx = 0, wy = 0, wz = 0;
+    sim::Vector3 at{};
+    if (!wv || !wv->camera()) return at;
     if (auto* r = get_renderer(L)) {
         f64 dx = 0, dy = 0;
         r->ui_mouse_position(dx, dy);
         renderer::pick_ground_in(r->ui_views(), static_cast<f32>(dx), static_cast<f32>(dy),
-                                 wv->terrain(), wx, wy, wz);
+                                 wv->terrain(), at.x, at.y, at.z);
     }
+    return at;
+}
+
+/// CreateUnitAtMouse(blueprintId, armyIndex, offsetX, offsetZ, rotation): a
+/// cheat, as Moho's (faf-re cfunc_CreateUnitAtMouseL): a unit of the
+/// blueprint for the 0-based army, at the cursor's place on the ground
+/// moved by the offsets, facing `rotation`. It errors as Moho's does: five
+/// arguments, "No active session.", "Unknown unit kind: <id>", the army in
+/// range. The sim makes the unit (kCreateUnitCallback) through the command
+/// stream, and only with cheats on.
+static int l_CreateUnitAtMouse(lua_State* L) {
+    if (lua_gettop(L) != 5) return arg_count_error(L, "CreateUnitAtMouse", 5, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "No active session.");
+    auto* sim = get_sim(L);
+    if (lua_type(L, 1) != LUA_TSTRING) return luaL_typerror(L, 1, "string");
+    const std::string id = lua_tostring(L, 1);
+    const auto* store = LuaState::get_blueprint_store(L);
+    const auto* entry = store ? store->find(id) : nullptr;
+    if (!entry || entry->type != blueprints::BlueprintType::Unit)
+        return luaL_error(L, "Unknown unit kind: %s", id.c_str());
+    if (lua_type(L, 2) != LUA_TNUMBER) return luaL_typerror(L, 2, "integer");
+    // (a NaN or a number past an int is no army: cast only one within range)
+    const lua_Number army_arg = lua_tonumber(L, 2);
+    const int army = army_arg > -1e9 && army_arg < 1e9 ? static_cast<int>(army_arg) : -1;
+    const auto armies = static_cast<int>(sim->army_count());
+    if (army < 0 || army >= armies)
+        return luaL_error(L, "Invalid army index, must be >= 0 and < %d but got %d.", armies, army);
+    for (const int arg : {4, 3, 5}) { // (Moho's order)
+        if (lua_type(L, arg) != LUA_TNUMBER) return luaL_typerror(L, arg, "number");
+    }
+    const sim::Vector3 at = cursor_world_pos(L);
+    if (auto* queue = get_callback_queue(L)) {
+        sim::SimCallbackEntry entry_cb;
+        entry_cb.func_name = sim::kCreateUnitCallback;
+        entry_cb.args["Blueprint"] = entry->id;
+        entry_cb.args["Army"] = static_cast<f64>(army);
+        entry_cb.args["X"] = static_cast<f64>(at.x + static_cast<f32>(lua_tonumber(L, 3)));
+        entry_cb.args["Z"] = static_cast<f64>(at.z + static_cast<f32>(lua_tonumber(L, 4)));
+        entry_cb.args["Heading"] = static_cast<f64>(static_cast<f32>(lua_tonumber(L, 5)));
+        queue->push(std::move(entry_cb));
+    }
+    return 0;
+}
+
+// --- GetMouseWorldPos global (M136a) ---
+// FA calls this as a standalone function: GetMouseWorldPos(), in a session
+// (faf-re cfunc_GetMouseWorldPosL reads the session's cursor).
+static int l_GetMouseWorldPos(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "vector GetMouseWorldPos()", 0, lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, kNoSessionStarted);
+    const sim::Vector3 at = cursor_world_pos(L);
+    const f32 wx = at.x;
+    const f32 wy = at.y;
+    const f32 wz = at.z;
 
     lua_newtable(L);
     lua_pushstring(L, "x");
@@ -1093,9 +1163,7 @@ static int userdecal_Destroy(lua_State* L) {
 /// sim's is, the camera keeps to it, and the meshes outside it now hide
 /// until the next.
 static int l_SyncPlayableRect(lua_State* L) {
-    if (lua_gettop(L) != 1)
-        return luaL_error(L, "SyncPlayableRect(rect)\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+    if (lua_gettop(L) != 1) return arg_count_error(L, "SyncPlayableRect(rect)", 1, lua_gettop(L));
     luaL_checktype(L, 1, LUA_TTABLE);
     // A Rect's fields, its y the map's z
     const auto field = [L](const char* name) {
@@ -1126,8 +1194,7 @@ static int l_SyncPlayableRect(lua_State* L) {
 /// DisplayEconomyOverlay), which the MFD's toggle sets and a NIS clears.
 static int l_RenderOverlayEconomy(lua_State* L) {
     if (lua_gettop(L) != 1)
-        return luaL_error(L, "RenderOverlayEconomy(bool)\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "RenderOverlayEconomy(bool)", 1, lua_gettop(L));
     if (auto* r = get_renderer(L)) r->set_economy_overlay(lua_toboolean(L, 1) != 0);
     return 0;
 }
@@ -1136,7 +1203,7 @@ static int l_RenderOverlayEconomy(lua_State* L) {
 /// (FA-Binary-Patches section/TeamColorMode.cpp).
 static int l_TeamColorMode(lua_State* L) {
     if (lua_gettop(L) != 1) {
-        return luaL_error(L, "TeamColorMode(bool)\n  expected 1 args, but got %d", lua_gettop(L));
+        return arg_count_error(L, "TeamColorMode(bool)", 1, lua_gettop(L));
     }
     auto* r = get_renderer(L);
     if (!r) {
@@ -1179,8 +1246,7 @@ static renderer::RangeOverlays* get_range_overlays(lua_State* L) {
 /// AARRGGBB, the alpha their glow; each pair is a line's thickness zoomed in
 /// and zoomed out.
 static int l_SetOverlayFilter(lua_State* L) {
-    if (lua_gettop(L) != 9)
-        return luaL_error(L, "SetOverlayFilter()\n  expected 9 args, but got %d", lua_gettop(L));
+    if (lua_gettop(L) != 9) return arg_count_error(L, "SetOverlayFilter()", 9, lua_gettop(L));
     auto* overlays = get_range_overlays(L);
     if (!overlays) return 0;
     renderer::RangeProfile profile;
@@ -1322,9 +1388,7 @@ static int l_UiGetDepositsAroundPoint(lua_State* L) {
 /// CopyToClipboard(text): puts the text on the desktop's clipboard (FAF's
 /// patch); whether it did.
 static int l_CopyToClipboard(lua_State* L) {
-    if (lua_gettop(L) != 1)
-        return luaL_error(L, "%s\n  expected %d args, but got %d", "CopyToClipboard", 1,
-                          lua_gettop(L));
+    if (lua_gettop(L) != 1) return arg_count_error(L, "CopyToClipboard", 1, lua_gettop(L));
     auto* r = get_renderer(L);
     const char* text = lua_tostring(L, 1);
     lua_pushboolean(L, r && text && r->copy_to_clipboard(text) ? 1 : 0);
@@ -1424,8 +1488,7 @@ static int l_GetActiveBuildTemplate(lua_State* L) {
 /// and left out.
 static int l_SetActiveBuildTemplate(lua_State* L) {
     if (lua_gettop(L) != 1)
-        return luaL_error(L, "set this as an active build template.\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "set this as an active build template.", 1, lua_gettop(L));
     auto* ih = get_input_handler(L);
     if (!ih) return 0;
     if (!lua_istable(L, 1) || luaL_getn(L, 1) < 3) {
@@ -2031,6 +2094,9 @@ void register_user_bindings(LuaState& state) {
     lua_rawset(L, LUA_GLOBALSINDEX);
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
+    state.register_function("GetMouseScreenPos", l_GetMouseScreenPos);
+    state.register_function("CreateUnitAtMouse", l_CreateUnitAtMouse);
+    state.register_function("GetAntiAliasingOptions", l_GetAntiAliasingOptions);
     state.register_function("GetHighlightCommand", l_GetHighlightCommand);
     state.register_function("GetDepositsAroundPoint", l_UiGetDepositsAroundPoint);
     state.register_function("CopyToClipboard", l_CopyToClipboard);
@@ -2236,7 +2302,11 @@ void start_command_mode(lua_State* L, const std::vector<std::string>& args) {
     const int top = lua_gettop(L);
     std::string active_mode, active_name;
     if (push_module_function(L, "/lua/ui/game/commandmode.lua", "GetCommandMode")) {
-        if (lua_pcall(L, 0, 1, 0) == 0 && lua_istable(L, -1)) {
+        if (lua_pcall(L, 0, 1, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            spdlog::warn("Error running '/lua/ui/game/commandmode.lua:GetCommandMode': {}",
+                         err ? err : "(unknown error)");
+        } else if (lua_istable(L, -1)) {
             lua_rawgeti(L, -1, 1);
             if (lua_type(L, -1) == LUA_TSTRING) active_mode = lua_tostring(L, -1);
             lua_pop(L, 1);

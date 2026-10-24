@@ -8,10 +8,13 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <random>
+#include <regex>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace osc::platform;
@@ -272,4 +275,84 @@ TEST_CASE("Only a player's own game stops to ask where FA is", "[app][first_run]
     CHECK_FALSE(asks({"--lan-game-join", "127.0.0.1"}));
     CHECK_FALSE(asks({"--screenshot", "shot.png"}));
     CHECK_FALSE(asks({"--golden", "name"}));
+}
+
+namespace {
+
+/// `args` after the program's name, as main is given them.
+struct CommandLine {
+    std::vector<std::string> args;
+    std::vector<char*> argv;
+    explicit CommandLine(std::vector<std::string> given) : args(std::move(given)) {
+        args.insert(args.begin(), "opensupcom");
+        argv.reserve(args.size());
+        for (auto& a : args) argv.push_back(a.data());
+    }
+    int argc() const { return static_cast<int>(argv.size()); }
+};
+
+} // namespace
+
+TEST_CASE("A value option given last is refused", "[app][cli]") {
+    // The option without its value, named, and no options: it was read as
+    // not given (a last --ticks made a headless run a windowed one, a last
+    // --faf-data played another install than the one asked for)
+    const auto parse = [](std::vector<std::string> args) {
+        CommandLine line(std::move(args));
+        const char* missing = osc::app::option_without_value(line.argc(), line.argv.data());
+        const bool parsed = osc::app::parse_options(line.argc(), line.argv.data(), {}).has_value();
+        return std::pair{std::string(missing ? missing : ""), parsed};
+    };
+    const std::string map = "/maps/SCMP_009/SCMP_009_scenario.lua";
+    for (const char* option : {"--ticks", "--init", "--fa-path", "--faf-data", "--map", "--click",
+                               "--click-at", "--mouse", "--load", "--save", "--seed", "--log",
+                               "--user-dir", "--screenshot", "--gpgnet", "--count-marks"}) {
+        CAPTURE(option);
+        const auto [missing, parsed] = parse({"--map", map, option});
+        CHECK(missing == option);
+        CHECK_FALSE(parsed);
+    }
+    const std::pair<std::string, bool> passes{"", true};
+    // Given their values, they pass
+    CHECK(parse({"--map", map, "--ticks", "5"}) == passes);
+    CHECK(parse({"--faf-data", "", "--map", map}) == passes); // "" is "not given"
+    // The argument after an option is its value, whatever it says
+    CHECK(parse({"--ticks", "5", "--map", map}) == passes);
+    // Moho's own options pass over a missing value, as Moho's command line
+    // does; --collect-logs's zip is optional; a flag takes nothing
+    CHECK(parse({"--map", map, "/gpgnet"}) == passes);
+    CHECK(parse({"--collect-logs"}) == passes);
+    CHECK(parse({"--map", map, "--no-fog"}) == passes);
+}
+
+TEST_CASE("Every option the help gives a value takes one", "[app][cli]") {
+    // Each "--name <value>" of --help is refused given last, so a new one
+    // must be listed with the others
+    std::ostringstream help;
+    auto* const was = std::cout.rdbuf(help.rdbuf());
+    osc::app::print_usage();
+    std::cout.rdbuf(was);
+    const std::string text = help.str();
+    const std::regex value_option(R"((--[a-z][a-z-]*) [<"])");
+    int found = 0;
+    for (std::sregex_iterator it(text.begin(), text.end(), value_option), end; it != end; ++it) {
+        const std::string name = (*it)[1];
+        CAPTURE(name);
+        CommandLine line({name});
+        CHECK(osc::app::option_without_value(line.argc(), line.argv.data()) != nullptr);
+        ++found;
+    }
+    CHECK(found >= 40);
+}
+
+TEST_CASE("A load that must restore refuses --load-by-replay", "[app][cli]") {
+    // A network game resumes only from each player's own restored copy
+    // (OE-128), never caught up alone; the game's other loads honour it
+    const auto parses = [](std::vector<std::string> args) {
+        CommandLine line(std::move(args));
+        return osc::app::parse_options(line.argc(), line.argv.data(), {}).has_value();
+    };
+    CHECK_FALSE(parses({"--lan-game-host", "--lan-game-resume", "saved", "--load-by-replay"}));
+    CHECK(parses({"--lan-game-host", "--lan-game-resume", "saved"}));
+    CHECK(parses({"--load-by-replay"}));
 }

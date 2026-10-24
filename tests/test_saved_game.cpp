@@ -4,9 +4,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include "core/game_state.hpp"
+#include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/sim_sync.hpp"
 #include "sim/build_info.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
@@ -15,6 +19,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "ui/ui_control.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -59,6 +64,28 @@ std::vector<osc::u32> setup(SimState& sim) {
     game.seed = 31;
     sim.set_game_setup(game);
     return ids;
+}
+
+/// What SessionIsBeingRecorded() answers in the UI's state of `sim`'s game.
+bool ui_says_recorded(SimState& sim) {
+    osc::lua::LuaState ui;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    osc::GameStateManager game_state; // in a game, as the function asks
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(ui.raw(), "__osc_game_state_mgr");
+    lua_pushlightuserdata(ui.raw(), &game_state);
+    lua_rawset(ui.raw(), LUA_REGISTRYINDEX);
+    auto r = ui.do_string("recorded = SessionIsBeingRecorded()");
+    INFO((r.ok() ? std::string() : r.error().message));
+    REQUIRE(r.ok());
+    lua_pushstring(ui.raw(), "recorded");
+    lua_rawget(ui.raw(), LUA_GLOBALSINDEX);
+    REQUIRE(lua_type(ui.raw(), -1) == LUA_TBOOLEAN);
+    const bool recorded = lua_toboolean(ui.raw(), -1) != 0;
+    lua_pop(ui.raw(), 1);
+    return recorded;
 }
 
 UnitCommand move_to(osc::f32 x, osc::f32 z) {
@@ -381,9 +408,7 @@ namespace {
 struct PauseHeard {
     LuaGuard ui;
     explicit PauseHeard(SimState& sim) {
-        lua_pushstring(ui.L, "osc_sim_state");
-        lua_pushlightuserdata(ui.L, &sim);
-        lua_rawset(ui.L, LUA_REGISTRYINDEX);
+        osc::sim::set_sim(ui.L, &sim);
         const char* hooks = "pauses, resumes = 0, 0 "
                             "function OnPause() pauses = pauses + 1 end "
                             "function OnResume() resumes = resumes + 1 end";
@@ -532,4 +557,83 @@ TEST_CASE("A save holds none of the Sync its user side hasn't had", "[savegame][
     REQUIRE(osc::sim::load_snapshot(b, save.snapshot).empty());
     b.tick();
     CHECK(delivered(sync_b, gb.L) == "4,");
+}
+
+TEST_CASE("SessionIsBeingRecorded answers true in a recorded new game", "[savegame][lua]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    setup(sim);
+    CHECK_FALSE(ui_says_recorded(sim)); // not recording, as a replay plays
+    sim.set_recording(true);
+    sim.tick();
+    CHECK_FALSE(sim.loaded_from_save());
+    CHECK(ui_says_recorded(sim));
+}
+
+TEST_CASE("SessionIsBeingRecorded answers false in a game loaded from a save", "[savegame][lua]") {
+    // Moho's CSavedGame::CreateSinglePlayerSessionInfo starts a loaded save's
+    // session unrecorded. The engine's sim records it all the same (a later
+    // save writes its history), so the answer is the session's, not the
+    // recording's.
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    a.set_seed(31);
+    const auto ids = setup(a);
+    a.set_recording(true);
+    a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
+    for (int i = 0; i < 10; ++i) a.tick();
+    const SavedGame save = osc::sim::save_game(a, "mid-game");
+    REQUIRE_FALSE(save.snapshot.empty());
+
+    // Restored from its snapshot, as App::restore_save does
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    b.set_seed(save.game.seed);
+    setup(b);
+    REQUIRE(osc::sim::load_snapshot(b, save.snapshot).empty());
+    b.set_recording(true);
+    b.adopt_history(save.game);
+    CHECK(b.recording());
+    CHECK(b.loaded_from_save());
+    CHECK_FALSE(ui_says_recorded(b));
+
+    // Caught up from its history instead, as the load falls back to
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    c.set_seed(save.game.seed);
+    setup(c);
+    osc::sim::ReplayPlayback(save.game).resume(c);
+    c.set_recording(true);
+    CHECK(c.recording());
+    CHECK(c.loaded_from_save());
+    CHECK_FALSE(ui_says_recorded(c));
+    while (c.resuming()) c.tick();
+    CHECK_FALSE(ui_says_recorded(c)); // the player's again: still a loaded game
+}
+
+TEST_CASE("A game loaded from a save saves again with its whole history", "[savegame]") {
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    a.set_seed(31);
+    const auto ids = setup(a);
+    a.set_recording(true);
+    a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
+    for (int i = 0; i < 10; ++i) a.tick();
+    const SavedGame first = osc::sim::save_game(a, "first");
+    for (int i = 0; i < 10; ++i) a.tick();
+
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    b.set_seed(first.game.seed);
+    setup(b);
+    REQUIRE(osc::sim::load_snapshot(b, first.snapshot).empty());
+    b.set_recording(true);
+    b.adopt_history(first.game);
+    for (int i = 0; i < 10; ++i) b.tick();
+    REQUIRE(b.loaded_from_save()); // unrecorded, as the session reports it...
+    const SavedGame again = osc::sim::save_game(b, "again");
+    // ...and the save holds the game from its first tick
+    CHECK(again.beat == 20);
+    CHECK(again.game.checksums == a.recorded_replay().checksums);
+    CHECK(again.game.commands.size() == a.recorded_replay().commands.size());
 }

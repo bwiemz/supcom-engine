@@ -1,4 +1,6 @@
 #include "lua/sim_bindings.hpp"
+#include "lua/arg_count.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/unit_blueprint.hpp"
 #include "lua/engine_bindings.hpp"
 #include "core/dmath.hpp"
@@ -9,6 +11,7 @@
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_sim.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_sync.hpp"
 #include "core/game_state.hpp"
@@ -53,13 +56,7 @@ extern "C" {
 
 namespace osc::lua {
 
-static sim::SimState* get_sim(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
-}
+using sim::get_sim;
 
 /// Resolve an army argument that can be either a 1-based number or a name string.
 /// Returns 0-based index, or -1 if not found.
@@ -1065,8 +1062,7 @@ static int l_GetTerrainHeight(lua_State* L) {
 
 static int l_FlattenMapRect(lua_State* L) {
     if (lua_gettop(L) != 5) {
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "FlattenRect(x, z, sizex, sizez, elevation)", 5, lua_gettop(L));
+        return arg_count_error(L, "FlattenRect(x, z, sizex, sizez, elevation)", 5, lua_gettop(L));
     }
     const auto x = static_cast<i32>(luaL_checknumber(L, 1));
     const auto z = static_cast<i32>(luaL_checknumber(L, 2));
@@ -1743,7 +1739,7 @@ static int l_sim_RequestPause(lua_State* L) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (mgr) mgr->set_paused(true, nullptr);
+    if (mgr) mgr->set_paused(true);
     return 0;
 }
 
@@ -1752,7 +1748,7 @@ static int l_sim_ResumeSim(lua_State* L) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (mgr) mgr->set_paused(false, nullptr);
+    if (mgr) mgr->set_paused(false);
     return 0;
 }
 
@@ -1994,9 +1990,20 @@ void register_prefetch_bindings(LuaState& state) {
 
 static int l_ParseEntityCategory(lua_State* L); // defined with the category helpers
 
+/// The user state's ParseEntityCategory: the sim's, but one argument and a
+/// session first, as Moho's user version parses with the session's rules
+/// (faf-re cfunc_ParseEntityCategoryUserL).
+static int l_ui_ParseEntityCategory(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return arg_count_error(L, "parse a string to generate a new entity category", 1,
+                               lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "ParseEntityCategory: no session loaded");
+    return l_ParseEntityCategory(L);
+}
+
 void register_category_bindings(LuaState& state) {
     setup_categories(state.raw());
-    state.register_function("ParseEntityCategory", l_ParseEntityCategory);
+    state.register_function("ParseEntityCategory", l_ui_ParseEntityCategory);
 }
 
 // ====================================================================
@@ -2859,10 +2866,10 @@ static int l_CreateSlaver(lua_State* L) {
 static int l_CreateStorageManip(lua_State* L) {
     const int n = lua_gettop(L);
     if (n < 2 || n > 9)
-        return luaL_error(L, "%s\n  expected between %d and %d args, but got %d",
-                          "CreateStorageManip(unit, bone, resouceName, minX, minY, minZ, maxX, "
-                          "maxY, maxZ)",
-                          2, 9, n);
+        return arg_range_error(L,
+                               "CreateStorageManip(unit, bone, resouceName, minX, minY, minZ, "
+                               "maxX, maxY, maxZ)",
+                               2, 9, n);
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
     const i32 bone = manip_resolve_bone(unit, L, 2);
@@ -2899,8 +2906,7 @@ static int l_CreateStorageManip(lua_State* L) {
 static int l_CreateThrustController(lua_State* L) {
     const int n = lua_gettop(L);
     if (n != 3) {
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "CreateThrustController(unit, label, thrustBone)", 3, n);
+        return arg_count_error(L, "CreateThrustController(unit, label, thrustBone)", 3, n);
     }
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
@@ -3666,11 +3672,15 @@ static int l_MATH_IRound(lua_State* L) {
 /// MATH_Lerp(s, a, b) or MATH_Lerp(s, sMin, sMax, a, b): a at s = 0 (or
 /// sMin), b at 1 (or sMax), in floats -- Moho's cfunc_MATH_lerpL, in both
 /// states. Four arguments give nil, as there; FAF's SimPing and UI pulse
-/// effects use the five.
+/// effects use the five. Another count raises Moho's error, with its usage.
 static int l_MATH_Lerp(lua_State* L) {
     const int n = lua_gettop(L);
     if (n < 3 || n > 5)
-        return luaL_error(L, "MATH_Lerp: expected between 3 and 5 args, but got %d", n);
+        return arg_range_error(L,
+                               "MATH_Lerp(s, a, b) or MATH_Lerp(s, sMin, sMax, a, b) -> number -- "
+                               "linear interpolation from a (at s=0 or s=sMin) to b (at s=1 or "
+                               "s=sMax)",
+                               3, 5, n);
     if (n == 3) {
         const auto b = static_cast<f32>(luaL_checknumber(L, 3));
         const auto a = static_cast<f32>(luaL_checknumber(L, 2));
@@ -3892,11 +3902,10 @@ static int l_SetArmyUnitCap(lua_State* L) {
 
 /// SetIgnoreArmyUnitCap(army, flag): the army makes units past its unit cap
 /// (Moho's CArmyImpl::SetUseUnitCap; campaign scripts set it around a big
-/// spawn, and a capture under ScenarioFramework).
+/// spawn, and a capture under ScenarioFramework). Its usage text, in Moho's
+/// count error, is just "army, flag".
 static int l_SetIgnoreArmyUnitCap(lua_State* L) {
-    if (lua_gettop(L) != 2)
-        return luaL_error(L, "SetIgnoreArmyUnitCap(army, flag): expected 2 args, got %d",
-                          lua_gettop(L));
+    if (lua_gettop(L) != 2) return arg_count_error(L, "army, flag", 2, lua_gettop(L));
     auto* sim = get_sim(L);
     if (!sim) return 0;
     if (auto* brain = sim->get_army(resolve_army(L, 1, sim)))
@@ -4396,9 +4405,7 @@ static int push_command_handle(lua_State* L, u32 command_id) {
 // the corners as integers, in reverse (faf-re cfunc_FlushIntelInRectL).
 static int l_FlushIntelInRect(lua_State* L) {
     const int n = lua_gettop(L);
-    if (n != 4)
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "FlushIntelInRect( minX, minZ, maxX, maxZ )", 4, n);
+    if (n != 4) return arg_count_error(L, "FlushIntelInRect( minX, minZ, maxX, maxZ )", 4, n);
     std::array<i32, 4> corner{};
     for (int i = 4; i >= 1; --i) {
         if (lua_type(L, i) != LUA_TNUMBER) return luaL_typerror(L, i, "integer");
@@ -4415,8 +4422,7 @@ static int l_FlushIntelInRect(lua_State* L) {
 // unit to roll off before they take the next build.
 static int l_IsCommandDone(lua_State* L) {
     const int n = lua_gettop(L);
-    if (n != 1)
-        return luaL_error(L, "%s\n  expected %d args, but got %d", "IsCommandDone(command)", 1, n);
+    if (n != 1) return arg_count_error(L, "IsCommandDone(command)", 1, n);
     if (lua_type(L, 1) != LUA_TNUMBER)
         return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
     auto* sim = get_sim(L);
@@ -4679,8 +4685,8 @@ static int l_IssueDive(lua_State* L) {
 // TransferUnitsOwnership).
 // ====================================================================
 
-// From moho_bindings_internal.hpp, whose get_sim clashes with this file's:
-// the entity a handle names (moho_bindings.cpp), and Entity:Destroy.
+// From moho_bindings_internal.hpp: the entity a handle names
+// (moho_bindings.cpp), and Entity:Destroy.
 sim::Entity* check_entity(lua_State* L, int idx);
 int entity_Destroy(lua_State* L);
 
@@ -4791,9 +4797,7 @@ static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army
 /// (Moho also queues the pair for the allies' UI; the engine's selection
 /// follows an upgrade on its own.)
 static int l_NotifyUpgrade(lua_State* L) {
-    if (lua_gettop(L) != 2)
-        return luaL_error(L, "NotifyUpgrade(from,to)\n  expected 2 args, but got %d",
-                          lua_gettop(L));
+    if (lua_gettop(L) != 2) return arg_count_error(L, "NotifyUpgrade(from,to)", 2, lua_gettop(L));
     auto* sim = get_sim(L);
     const auto live = [](sim::Entity* e) -> sim::Unit* {
         if (!e || e->destroyed() || !e->is_unit()) return nullptr;
@@ -4872,8 +4876,7 @@ static int l_NotifyUpgrade(lua_State* L) {
 // unless its third argument, noRestrictions, is set (SimHooks.lua).
 static int l_ChangeUnitArmy(lua_State* L) {
     if (lua_gettop(L) != 2)
-        return luaL_error(L, "ChangeUnitArmy(unit, army)\n  expected 2 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "ChangeUnitArmy(unit, army)", 2, lua_gettop(L));
     auto* sim = get_sim(L);
     auto* e = check_entity(L, 1);
     if (!sim || !e || !e->is_unit()) {
@@ -5446,10 +5449,7 @@ static int l_CreateVisibleAreaAtPoint(lua_State* L) {
     f32 radius = static_cast<f32>(luaL_checknumber(L, 5));
     f32 lifetime = static_cast<f32>(luaL_optnumber(L, 6, 10.0));
 
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = get_sim(L);
     if (sim && army >= 0) {
         sim->add_temp_vision(static_cast<u32>(army), x, z, radius, lifetime);
     }

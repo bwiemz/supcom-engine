@@ -9,8 +9,10 @@
 #include "app/app_internal.hpp"
 #include "app/lan_game_test.hpp"
 #include "app/campaign_flow_test.hpp"
+#include "app/loading_screen_test.hpp"
 #include "app/mods_flow_test.hpp"
 #include "app/self_destruct_flow_test.hpp"
+#include "app/restart_flow_test.hpp"
 #include "app/render_bench.hpp"
 #include "app/scripted_mouse.hpp"
 #include "app/sim_thread.hpp"
@@ -118,6 +120,9 @@ private:
     /// The UI's frame: the camera's input, events, the networks, the UI's
     /// threads and beats.
     void update_ui(double dt);
+    /// Its scripts' part: the UI's clock, its threads, OnBeat and the beat
+    /// functions.
+    void run_ui_scripts(double dt);
     /// Clicks and keys on this frame's world: the focus army, selection
     /// and orders.
     void update_input(double dt, const sim::FrameView& frame_view);
@@ -131,8 +136,35 @@ private:
     // window_session.cpp: the UI's requests between games.
     /// The UI asked to exit (ExitApplication).
     bool exit_requested();
-    /// A game, replay or saved game launched from the lobby or a dialog.
+    /// A game, replay or saved game launched from the lobby or a dialog, or
+    /// the game in play launched again (RestartSession).
     void handle_launch();
+    /// A frame while the launched game loads (Moho's WLD_DoLoading, which
+    /// returns at once each frame until the loader is done): the loader's
+    /// job collected when it is done, and the loading screen's frame drawn.
+    /// Nothing reads a sim: there is none yet that is the game's.
+    void loading_frame(double dt, std::chrono::high_resolution_clock::time_point started);
+    /// The launched game's world, begun here and loaded by the loader.
+    void start_world_load();
+    /// Run `job` on the loader's thread (or, without one, here, after the
+    /// next frame is drawn).
+    void start_load_job(std::function<void()> job);
+    /// The loader's job is done (what it threw, thrown here).
+    bool load_job_done();
+    /// What follows a job: a saved game's restore, the world loaded again
+    /// after a failed one, or the game in (finish_launch).
+    void advance_load();
+    /// The launched game in: its replay or catch-up, its network session,
+    /// and its interface (or, for a loaded game, its wait for its
+    /// post-load).
+    void finish_launch();
+    /// The run ends while a game loads: the loader's job waited for, and
+    /// what it made the App's, to go as a game's does.
+    void abandon_load();
+    /// Whether the loader has a thread of its own: as the sim's ticks do
+    /// (--no-sim-thread, and --profile, whose zones are this thread's, keep
+    /// it here).
+    bool load_threaded() const;
     /// Back to the front end (the score screen's Continue, ReturnToLobby).
     void handle_return_to_lobby();
 
@@ -301,6 +333,40 @@ private:
     /// The entities whose loops the frame's sound plays (update_world_sounds).
     EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched
+    /// What the game in play was launched from (Moho's session's launch
+    /// info), for RestartSession: none at the front end.
+    std::optional<SessionLaunch> session_launch;
+    /// A launched game while it loads (handle_launch to finish_launch).
+    struct Loading {
+        /// (Defined out of line: clang 18 takes a nested class with member
+        /// initializers for not default-constructible while the enclosing
+        /// class is incomplete, and std::optional<Loading> asks then.)
+        Loading();
+        std::string scenario;
+        std::optional<osc::sim::Replay> launch_replay;
+        std::optional<osc::sim::SavedGame> launch_save;
+        /// A new game started again (RestartSession): its own setup
+        std::optional<osc::sim::GameSetup> restart;
+        /// What it is launched from: session_launch once it is in
+        SessionLaunch launch;
+        /// The world being loaded, then (a saved game's) its snapshot
+        /// restoring into the sim the world loaded
+        enum class Stage { World, Restore } stage = Stage::World;
+        WorldLoad world;
+        /// The world loaded with no critical failure
+        bool world_ok = false;
+        /// The world loaded again after its restore failed (no restore)
+        bool reloaded = false;
+        Restore restore = Restore::Skipped;
+        std::string why; ///< why the save wasn't restored
+        std::chrono::steady_clock::time_point restore_started;
+        /// The job, without a loader's thread: run once the frame is drawn
+        std::function<void()> job_here;
+    };
+    std::optional<Loading> loading;
+    /// The loader's own thread (Moho's CWldSessionLoaderImpl worker): one
+    /// job at a time.
+    std::unique_ptr<SimThread> load_thread;
     /// FA's command mode drives world clicks (read once per frame).
     osc::renderer::CommandMode current_command_mode;
     bool ghost_from_mode = false;
@@ -352,7 +418,9 @@ private:
     /// recorded one watched.
     std::optional<osc::app::ModsFlowTest> mods_flow;
     std::optional<osc::app::SelfDestructFlowTest> self_destruct_flow;
+    std::optional<osc::app::RestartFlowTest> restart_flow;   ///< (#811)
     std::optional<osc::app::CampaignFlowTest> campaign_flow; ///< (M209b)
+    std::optional<osc::app::LoadingScreenTest> loading_screen;
     std::optional<osc::app::UiClicks> ui_clicks;
     std::optional<osc::app::ScriptedMouse> scripted_mouse;
     /// The matchmaking client closed its link while no game plays: without

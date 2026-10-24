@@ -4,6 +4,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "lua/arg_count.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -629,7 +630,7 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
 static sim::Entity* scroller_entity(lua_State* L, const char* help, int args) {
     const int n = lua_gettop(L);
     if (n != args) {
-        luaL_error(L, "%s\n  expected %d args, but got %d", help, args, n);
+        arg_count_error(L, help, args, n);
     }
     return check_entity(L);
 }
@@ -879,8 +880,7 @@ static int entity_AttachBoneTo(lua_State* L) {
 static int entity_AttachBoneToEntityBone(lua_State* L) {
     const int n = lua_gettop(L);
     if (n != 5) {
-        return luaL_error(L, "%s\n  expected %d args, but got %d",
-                          "Attach a unit bone position to an entity bone position", 5, n);
+        return arg_count_error(L, "Attach a unit bone position to an entity bone position", 5, n);
     }
     auto* self = check_entity(L);
     if (!self || !self->is_unit()) {
@@ -1281,8 +1281,7 @@ const MethodEntry motor_falldown_methods[] = {
 static int prop_AddBoundedProp(lua_State* L) {
     const int n = lua_gettop(L);
     if (n != 2) {
-        return luaL_error(L, "%s\n  expected %d args, but got %d", "Prop:AddBoundedProp(priority)",
-                          2, n);
+        return arg_count_error(L, "Prop:AddBoundedProp(priority)", 2, n);
     }
     auto* e = check_entity(L);
     if (!e || !e->is_prop()) {

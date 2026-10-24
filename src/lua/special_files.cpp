@@ -1,6 +1,7 @@
 #include "lua/special_files.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "platform/executable.hpp"
 #include "platform/paths.hpp"
@@ -9,6 +10,7 @@
 #include "sim/lua_bytes.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -175,15 +177,6 @@ int l_RemoveProfileDirectories(lua_State* L) {
     return 0;
 }
 
-/// The game being played, or null.
-sim::SimState* sim_of(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
-}
-
 /// Ask the game loop to launch a game (see the launch request in
 /// window.cpp): `key`, if given, names the file it plays from.
 void request_launch(lua_State* L, const char* key, const char* file, const std::string& scenario) {
@@ -204,9 +197,15 @@ std::string current_profile(lua_State* L) {
     static const char kProfile[] = "return import('/lua/user/prefs.lua').GetCurrentProfile().Name";
     const int top = lua_gettop(L);
     std::string out;
-    if (luaL_loadbuffer(L, kProfile, sizeof(kProfile) - 1, "=profile") == 0 &&
-        lua_pcall(L, 0, 1, 0) == 0 && lua_type(L, -1) == LUA_TSTRING)
-        out = lua_tostring(L, -1);
+    if (luaL_loadbuffer(L, kProfile, sizeof(kProfile) - 1, "=profile") == 0) {
+        if (lua_pcall(L, 0, 1, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            spdlog::warn("Error running '/lua/user/prefs.lua:GetCurrentProfile': {}",
+                         err ? err : "(unknown error)");
+        } else if (lua_type(L, -1) == LUA_TSTRING) {
+            out = lua_tostring(L, -1);
+        }
+    }
     lua_settop(L, top);
     return out;
 }
@@ -248,7 +247,7 @@ int l_CopyCurrentReplay(lua_State* L) {
     const char* profile = luaL_checkstring(L, 1);
     const char* base = luaL_checkstring(L, 2);
     auto* files = get_special_files(L);
-    const auto* sim = sim_of(L);
+    const auto* sim = sim::get_sim(L);
     if (!files || !sim || !sim->recording()) return 0;
     const auto path = files->path(*SpecialFiles::find_type("Replay"), profile, base);
     if (!path.empty()) write_replay_file(sim->recorded_replay(), path);
@@ -277,13 +276,21 @@ int l_LaunchReplaySession(lua_State* L) {
 /// folder names). A network game (OE-128) is saved by every player, each
 /// their own copy under the file's base name, after the tick every player
 /// runs the save on (kSaveGameCallback): the callback says it is under way.
+/// With no game, Moho's error, and no callback: Moho raises it on finding
+/// no sim driver, and hands the callback only to the save it queues (faf-re
+/// cfunc_InternalSaveGameL @ 0x00881B30).
 int l_InternalSaveGame(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
+    auto* sim = sim::get_sim(L); // a save's snapshot walks its Lua state
+    if (!sim || !session_active(L)) return luaL_error(L, "No session to save!");
     const char* name = luaL_checkstring(L, 2);
     const auto* files = get_special_files(L);
-    auto* sim = sim_of(L); // a save's snapshot walks its Lua state
+    // The engine's own refusals: a game it doesn't record (a headless run
+    // without --save) has no history to save, one catching up isn't there
+    // yet, and a replay isn't saved. (Moho's driver saves whatever its sim
+    // plays.)
     const char* refused = nullptr;
-    if (!sim || !sim->recording()) refused = "No session to save!";
+    if (!sim->recording()) refused = "No session to save!";
     else if (sim->resuming()) refused = "The game is still loading.";
     else if (sim->playback()) refused = "A replay can't be saved.";
     else if (!files || (!files->holds(*SpecialFiles::find_type("SaveGame"), file) &&

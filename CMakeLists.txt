@@ -148,6 +148,13 @@ if(OSC_BUILD_TESTS)
                          ${CMAKE_BINARY_DIR}/osc_link_graph.txt)
         set_tests_properties(arch.link_layers PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # The C++ reader the source checks below share: comments and
+        # literals found as the compiler finds them (tools/cpp_source.py).
+        add_test(NAME arch.cpp_source_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/cpp_source.py
+                         --self-test)
+        set_tests_properties(arch.cpp_source_self_test PROPERTIES LABELS "arch" TIMEOUT 60)
+
         # No string literal outgrows MSVC's caps (16,380 bytes a literal,
         # C2026): GCC and Clang take one, so a shader grown on another
         # platform breaks only the Windows build.

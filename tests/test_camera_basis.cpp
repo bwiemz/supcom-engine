@@ -399,6 +399,137 @@ TEST_CASE("The middle button drags the ground; let go, a rotation reverts (M217f
     CHECK_FALSE(cam.rotated());
 }
 
+TEST_CASE("Space spins the view by the pointer's relative motion, not its position", "[camera]") {
+    // Moho pins the pointer from the spin's second motion (mouse scrubbing)
+    // and turns by its motion away from the pin, with no bound
+    // (CUIWorldView::HandleEvent, func_ProcessMouseScrubbing)
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    cam.set_zoom(60.0f);
+    CameraInput in;
+    in.space = true;
+    in.mouse_x = 100.0f;
+    cam.apply(in, 0.0); // the first motion arms it
+    CHECK_FALSE(cam.scrubs());
+    // Pinned where it is: two motions of an eighth of the view each
+    in.pinned = true;
+    in.scrub_x = kW / 8.0f;
+    cam.apply(in, 0.0);
+    CHECK(cam.scrubs());
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.heading(), WithinAbs(Camera::kPi / 2.0f, 1e-4));
+    // On past a view width's turn, which the pointer's travel bounded
+    for (int i = 0; i < 8; ++i) cam.apply(in, 0.0);
+    CHECK_THAT(cam.heading(), WithinAbs(Camera::kPi / 2.0f, 1e-4));
+    // A still pointer turns nothing
+    in.scrub_x = 0.0f;
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.heading(), WithinAbs(Camera::kPi / 2.0f, 1e-4));
+    CHECK(cam.scrubs());
+    // Let go: the pointer is freed, and the view turns back
+    in.space = false;
+    in.pinned = false;
+    cam.apply(in, 0.0);
+    CHECK_FALSE(cam.scrubs());
+    for (int i = 0; i < 60; ++i) cam.apply(in, 1.0 / 60.0);
+    CHECK_FALSE(cam.rotated());
+
+    // SetInvertMidMouseButton negates the scrub, the spin's too
+    Camera inverted = camera_over(ground);
+    inverted.set_zoom(60.0f);
+    inverted.set_invert_middle(true);
+    CameraInput spin;
+    spin.space = true;
+    spin.mouse_x = 100.0f;
+    inverted.apply(spin, 0.0);
+    spin.pinned = true;
+    spin.scrub_x = kW / 8.0f;
+    inverted.apply(spin, 0.0);
+    CHECK_THAT(inverted.heading(), WithinAbs(-Camera::kPi + Camera::kPi / 4.0f, 1e-4));
+
+    // The pointer off the world ends the spin (MET_MouseExit)
+    Camera left = camera_over(ground);
+    left.set_zoom(60.0f);
+    CameraInput off;
+    off.space = true;
+    off.mouse_x = 100.0f;
+    left.apply(off, 0.0);
+    off.mouse_x = 200.0f;
+    left.apply(off, 0.0);
+    REQUIRE(left.scrubs());
+    left.set_mouse_enabled(false);
+    left.apply(off, 0.0);
+    CHECK_FALSE(left.scrubs());
+    for (int i = 0; i < 60; ++i) left.apply(off, 1.0 / 60.0);
+    CHECK_FALSE(left.rotated());
+
+    // With ui_DisableCursorFixing the pointer stays free, and the spin
+    // turns by the change of its position
+    Camera free_pointer = camera_over(ground);
+    free_pointer.set_zoom(60.0f);
+    free_pointer.set_disable_cursor_fixing(true);
+    CameraInput moved;
+    moved.space = true;
+    moved.mouse_x = 100.0f;
+    free_pointer.apply(moved, 0.0);
+    moved.mouse_x = 100.0f + kW / 8.0f;
+    free_pointer.apply(moved, 0.0);
+    CHECK_FALSE(free_pointer.scrubs());
+    CHECK_THAT(free_pointer.heading(), WithinAbs(Camera::kPi - Camera::kPi / 4.0f, 1e-4));
+}
+
+TEST_CASE("A view draws its icon pass only while it neither spins nor is free", "[camera]") {
+    // CUIWorldView::Render: !mCameraRotationActive && !cam_Free, the
+    // rotation from the spin's first motion until Space is let go
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    cam.set_zoom(60.0f);
+    CHECK(cam.icons_visible());
+    CameraInput in;
+    in.space = true;
+    cam.apply(in, 0.0); // Space alone, no motion: nothing yet
+    CHECK(cam.icons_visible());
+    in.mouse_x = 100.0f;
+    cam.apply(in, 0.0); // the first motion
+    CHECK(cam.spinning());
+    CHECK_FALSE(cam.icons_visible());
+    in.space = false;
+    cam.apply(in, 0.0);
+    CHECK(cam.icons_visible());
+    cam.set_free(true);
+    CHECK_FALSE(cam.icons_visible());
+}
+
+TEST_CASE("The middle button drags the ground by the pointer's relative motion", "[camera]") {
+    // CameraDragger pins the pointer from the press and pans by the scrub
+    // (CameraDragger::DragMove), as far as the drag of as many pixels did
+    const map::Heightmap ground = flat();
+    const auto dragged = [&](bool invert) {
+        Camera cam = camera_over(ground);
+        cam.set_zoom(64.0f);
+        cam.set_target(128.0f, 128.0f);
+        cam.set_invert_middle(invert);
+        CameraInput in;
+        in.mouse_x = 500.0f;
+        in.mouse_y = 400.0f;
+        cam.apply(in, 0.0);
+        in.middle = true;
+        cam.apply(in, 0.0); // pressed: the pointer is pinned, no move yet
+        CHECK(cam.scrubs());
+        CHECK_THAT(cam.target_x(), WithinAbs(128.0, 1e-4));
+        in.pinned = true;
+        in.scrub_x = kW / 8.0f;
+        cam.apply(in, 0.0);
+        const f32 x = cam.target_x();
+        in.middle = false;
+        cam.apply(in, 0.0);
+        CHECK_FALSE(cam.scrubs());
+        return x;
+    };
+    CHECK_THAT(dragged(false), WithinAbs(128.0 - kW / 8.0 * 64.0 / kW, 1e-3));
+    CHECK_THAT(dragged(true), WithinAbs(128.0 + kW / 8.0 * 64.0 / kW, 1e-3));
+}
+
 TEST_CASE("After a pan onto higher ground, the focus is on it (M217f)", "[camera]") {
     // Low (0) west of x = 128, a plateau at 20 east of it
     std::vector<u16> raw(257 * 257, 0);

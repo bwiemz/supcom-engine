@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/game_state.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -484,6 +485,64 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
     CHECK(at_bob == std::vector<std::vector<osc::u8>>{{1, 2, 3}});
 }
 
+TEST_CASE("A network lobby answers its local player's id inside GameLaunched, as Moho's CLobby "
+          "does",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run(R"(
+        -- As FAF's lobby.lua: GameLaunched finds this player by its id (the
+        -- loading screen's faction), then the lobby goes
+        TestComm.GameLaunched = function(self)
+            self.at_launch = {
+                id = self:GetLocalPlayerID(), host = self:IsHost(),
+                name = self:GetLocalPlayerName(), port = self:GetLocalPort(),
+                peer = self:GetPeer('0'), peers = table.getn(self:GetPeers()),
+                own = self:MakeValidPlayerName(self:GetLocalPlayerID(), 'HOST1'),
+                mine = self:MakeValidPlayerName('7', 'HOST1'),
+                theirs = self:MakeValidPlayerName('7', 'Host'),
+            }
+            self:Destroy()
+        end
+        host = NewLobby('Host') host:HostGame()
+    )"));
+    REQUIRE(w.until("host.hosted"));
+    // The host's name, case aside: the host's welcome renames the joiner
+    REQUIRE(
+        w.run("a = NewLobby('host') a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Host', nil)"));
+    REQUIRE(w.until("a.me == '1'"));
+    REQUIRE(w.run(R"(
+        assert(a.myname == 'host1', a.myname)
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'host1'},
+            })
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto joiner = take_launched();
+    REQUIRE(w.run("host:LaunchGame(GameInfo())"));
+    auto hosted = take_launched();
+    // Each its uid and name from before the launch, and a joiner still no
+    // host (Moho's CLobby keeps its host connection). No port and no peers:
+    // Moho's LaunchGame gave its connector to the game and deleted its
+    // peers, so only the local player's own name is taken
+    CHECK(w.run(R"(
+        local h, j = host.at_launch, a.at_launch
+        assert(h and j, 'GameLaunched ran')
+        assert(h.id == '0' and j.id == '1', h.id .. ', ' .. j.id)
+        assert(h.host == true and j.host == false)
+        assert(h.name == 'Host' and j.name == 'host1', j.name)
+        assert(h.port == nil and j.port == nil and h.peer == nil and j.peer == nil)
+        assert(h.peers == 0 and j.peers == 0)
+        assert(j.own == 'HOST1' and j.mine == 'HOST11' and j.theirs == 'Host',
+               j.own .. ', ' .. j.mine .. ', ' .. j.theirs)
+        assert(h.mine == 'HOST1' and h.theirs == 'Host1', h.mine .. ', ' .. h.theirs)
+    )"));
+}
+
 namespace {
 
 /// gamemain.lua's ReceiveChat, as the game's interface has it loaded:
@@ -564,6 +623,40 @@ TEST_CASE("A player's pause and resume answer SessionIsPaused at once, and both 
     w.sim.tick();
     CHECK(w.sim.paused());
     CHECK(w.sim.pause_serial() == serial + 1);
+}
+
+TEST_CASE("A replay's pause and resume reach gamemain.OnUserPause", "[lobby][lua]") {
+    // Moho's CWldSession::RequestPause and Resume in a replay hold its
+    // playback (mReplayIsPaused) and send the sim nothing; every request
+    // then reaches gamemain.OnUserPause (PauseListener). OnPause and
+    // OnResume are the sim's pause state's, which a replay's request leaves.
+    MpGuard guard;
+    World w;
+    osc::GameStateManager mgr;
+    lua_State* L = w.state.raw();
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &mgr);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    w.sim.set_victory_condition("sandbox");
+    w.sim.set_playback(true);
+    REQUIRE(w.run(R"(
+        heard = {}
+        function OnUserPause(pause) table.insert(heard, 'OnUserPause ' .. tostring(pause)) end
+        function OnPause(by, timeouts) table.insert(heard, 'OnPause') end
+        function OnResume() table.insert(heard, 'OnResume') end
+        SessionRequestPause()
+    )"));
+    CHECK(mgr.paused()); // the playback holds
+    w.sim.tick();
+    CHECK_FALSE(w.sim.paused()); // the sim was sent nothing
+    osc::lua::pump_pause_state(L);
+    REQUIRE(w.run("SessionResume()"));
+    CHECK_FALSE(mgr.paused());
+    CHECK(w.run(R"(
+        assert(table.getn(heard) == 2, table.getn(heard))
+        assert(heard[1] == 'OnUserPause true', heard[1])
+        assert(heard[2] == 'OnUserPause false', heard[2])
+    )"));
 }
 
 TEST_CASE("A lobby's game has its clients, and chat crosses to them (M218d)", "[lobby][lua]") {
@@ -734,6 +827,7 @@ TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)
 TEST_CASE("A lobby's game has the speed its lobby set; players change it, observers can't (M218i)",
           "[lobby][lua]") {
     MpGuard guard;
+    osc::GameStateManager game_state; // the game's, once it plays
     World w;
     REQUIRE(w.run(kScenarios));
     REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
@@ -765,8 +859,14 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
 
     // 'fast': fixed at +4
     REQUIRE(osc::lua::mp_attach_session(w.sim));
+    // In the game, where GetSimRate answers
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(w.state.raw(), "__osc_game_state_mgr");
+    lua_pushlightuserdata(w.state.raw(), &game_state);
+    lua_rawset(w.state.raw(), LUA_REGISTRYINDEX);
     REQUIRE(w.run(R"(
         assert(GetGameSpeed() == 4, GetGameSpeed())
+        assert(GetSimRate() == 4, 'the sim runs at the lockstep\'s speed')
         SetGameSpeed(7)
         assert(GetGameSpeed() == 4, 'fixed')
     )"));
@@ -781,6 +881,7 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
         assert(GetGameSpeed() == 0, GetGameSpeed())
         SetGameSpeed(3)
         assert(GetGameSpeed() == 3, GetGameSpeed())
+        assert(GetSimRate() == 3, GetSimRate())
     )"));
     osc::lua::pump_speed_changes(w.state.raw());
     REQUIRE(w.run("assert(table.getn(__heard) == 1 and __heard[1] == '1:3', __heard[1])"));

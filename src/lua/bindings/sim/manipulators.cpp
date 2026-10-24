@@ -141,12 +141,7 @@ static int manip_Destroy(lua_State* L) {
                 : nullptr;
             lua_pop(L, 1);
             if (mgr) {
-                lua_pushstring(L, "osc_sim_state");
-                lua_rawget(L, LUA_REGISTRYINDEX);
-                auto* ss = lua_isuserdata(L, -1)
-                    ? static_cast<sim::SimState*>(lua_touserdata(L, -1))
-                    : nullptr;
-                lua_pop(L, 1);
+                auto* ss = get_sim(L);
                 u32 tick = ss ? ss->tick_count() : 0;
                 mgr->wake(*m, tick);
             }

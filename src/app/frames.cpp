@@ -41,6 +41,21 @@ bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
     return dispatch.ui_has_mouse(uiL, *registry, x, y);
 }
 
+/// Shows or hides the UI's cursor (SetCursor's), as its Show and Hide do.
+void show_ui_cursor(lua_State* uiL, bool shown) {
+    lua_pushstring(uiL, "__osc_active_cursor");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    if (lua_istable(uiL, -1)) {
+        lua_pushstring(uiL, "_c_object");
+        lua_rawget(uiL, -2);
+        if (auto* cursor = static_cast<osc::ui::UIControl*>(lua_touserdata(uiL, -1))) {
+            cursor->set_cursor_visible(shown);
+        }
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1);
+}
+
 // ── FA's command mode (/lua/ui/game/commandmode.lua) ──
 static constexpr const char* kCommandModeModule = "/lua/ui/game/commandmode.lua";
 
@@ -144,7 +159,11 @@ static void build_mode_blueprint(lua_State* uiL, osc::renderer::CommandMode& m) 
 static std::function<std::string(const osc::sim::Vector3&)> script_order_at(lua_State* uiL) {
     std::string mode_data;
     osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
-    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) == 0 && lua_istable(uiL, -1)) {
+    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) != 0) {
+        const char* err = lua_tostring(uiL, -1);
+        spdlog::warn("Error running '{}:GetCommandMode': {}", kCommandModeModule,
+                     err ? err : "(unknown error)");
+    } else if (lua_istable(uiL, -1)) {
         lua_rawgeti(uiL, -1, 2);
         if (lua_istable(uiL, -1))
             if (auto bytes = osc::sim::lua_to_bytes(uiL, -1)) mode_data = std::move(*bytes);

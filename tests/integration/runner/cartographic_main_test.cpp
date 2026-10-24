@@ -180,11 +180,15 @@ void test_cartographic_main(TestContext& ctx) {
     {
         (void)ctx.lua_state.do_string(
             "moho.UIWorldView.EnableResourceRendering(rawget(_G, '__osc_cm_main'), false)\n");
-        const std::vector<renderer::UIInstance> quads = r.strategic_icons().quads();
+        // (Moho draws no strategic icons with cam_Free on, which the
+        // harness's views have: off for these)
+        cam.set_free(false);
         const renderer::Renderer::SceneImage with = scene();
+        const std::vector<renderer::UIInstance> quads = r.strategic_icons().quads();
         r.set_nis_icons(false);
         const renderer::Renderer::SceneImage without = scene();
         r.set_nis_icons(true);
+        cam.set_free(true);
         (void)ctx.lua_state.do_string(
             "moho.UIWorldView.EnableResourceRendering(rawget(_G, '__osc_cm_main'), true)\n");
         const u32 sw = r.width();
@@ -339,6 +343,9 @@ void test_cartographic_main(TestContext& ctx) {
     // shield's highlight, until its own comes back.)
     for (int i = 0; i < 250; ++i) ctx.sim.tick();
     (void)ctx.lua_state.do_string(set_cartographic("__osc_cm_main", false));
+    // (cam_Free off from here: with it on Moho draws no strategic icons or
+    // unit bars; this near, no deposit icon shows either way)
+    cam.set_free(false);
     (void)shots.shoot_frame(*terrain, acu_entity->position().x, acu_entity->position().z, kNear);
     const renderer::Renderer::SceneImage near_world = scene();
     const u32 icons_world = r.strategic_icons().quad_count();

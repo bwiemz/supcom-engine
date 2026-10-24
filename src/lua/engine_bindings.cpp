@@ -1,4 +1,5 @@
 #include "lua/engine_bindings.hpp"
+#include "lua/arg_count.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/thread_manager.hpp"
 #include "core/color.hpp"
@@ -489,8 +490,7 @@ static int l_STR_xtoi(lua_State* L) {
 /// is missing or not an SFD. Scenario scripts fall back to AllyCom.sfd on 0.
 static int l_GetMovieDuration(lua_State* L) {
     if (lua_gettop(L) != 1)
-        return luaL_error(L, "GetMovieDuration(localFileName)\n  expected 1 args, but got %d",
-                          lua_gettop(L));
+        return arg_count_error(L, "GetMovieDuration(localFileName)", 1, lua_gettop(L));
     const std::string path = luaL_checkstring(L, 1);
     auto* vfs = LuaState::get_vfs(L);
     auto file = vfs ? vfs->read_file(path) : std::nullopt;

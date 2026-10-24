@@ -5,6 +5,7 @@
 
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+#include "lua/arg_count.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
@@ -2305,9 +2306,7 @@ static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
 // row. None without an enemy.
 static int brain_SetUpAttackVectorsToArmy(lua_State* L) {
     const int n = lua_gettop(L);
-    if (n < 1 || n > 2)
-        return luaL_error(L, "%s\n  expected between %d and %d args, but got %d",
-                          "CAiBrain:SetUpAttackVectorsToArmy()", 1, 2, n);
+    if (n < 1 || n > 2) return arg_range_error(L, "CAiBrain:SetUpAttackVectorsToArmy()", 1, 2, n);
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
     if (!brain || !sim) return 0;
@@ -2439,10 +2438,10 @@ std::vector<const sim::Unit*> units_around(const sim::SimState& sim, i32 army,
 static int brain_PickBestAttackVector(lua_State* L) {
     const int n = lua_gettop(L);
     if (n < 6 || n > 8)
-        return luaL_error(L, "%s\n  expected between %d and %d args, but got %d",
-                          "CAiBrain:PickBestAttackVector(platoon, squad, alliance, "
-                          "compareType, category[, scoreScript, scoreFunc])",
-                          6, 8, n);
+        return arg_range_error(L,
+                               "CAiBrain:PickBestAttackVector(platoon, squad, alliance, "
+                               "compareType, category[, scoreScript, scoreFunc])",
+                               6, 8, n);
     auto* brain = check_brain(L);
     auto* platoon = check_platoon(L, 2);
     auto* sim = get_sim(L);
@@ -2606,8 +2605,8 @@ static int brain_SetGreaterOf(lua_State*) { return 0; }
 // CheckNavalPathing passes an end it never set.
 static int brain_CheckBlockingTerrain(lua_State* L) {
     if (lua_gettop(L) != 4) {
-        luaL_error(L, "%s\n  expected %d args, but got %d",
-                   "CAiBrain:CheckBlockingTerrain( startPos, endPos, arcType )", 4, lua_gettop(L));
+        arg_count_error(L, "CAiBrain:CheckBlockingTerrain( startPos, endPos, arcType )", 4,
+                        lua_gettop(L));
     }
     const auto point = [L](int idx) {
         std::array<f32, 3> p{0, 0, 0};

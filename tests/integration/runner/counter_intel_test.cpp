@@ -72,6 +72,9 @@ void test_counter_intel(TestContext& ctx) {
     renderer::Renderer& r = shots.renderer();
     r.set_fog_enabled(true);
     r.set_player_army(0);
+    // Moho draws no strategic icons with cam_Free on (CUIWorldView::Render),
+    // which the harness's views have
+    r.camera().set_free(false);
 
     std::vector<Spot> scry;
     const auto senses = [&](bool radar, bool sonar, bool omni) {

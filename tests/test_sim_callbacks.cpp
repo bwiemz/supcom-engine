@@ -4,7 +4,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "blueprints/blueprint_store.hpp"
+#include "core/game_state.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/user_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
@@ -17,6 +20,7 @@
 #include "sim/state_io.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "ui/ui_control.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -30,6 +34,8 @@ extern "C" {
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <variant>
 #include <vector>
 
 using osc::sim::LockstepSession;
@@ -840,6 +846,208 @@ TEST_CASE("Taking a factory's build under way off its queue cancels it", "[simca
     CHECK(f.command_queue().front().command_id == 5);
     CHECK(f.build_target_id() == 0);
     CHECK(w.hooks() == "OnFailedToBuild,OnFailedToBeBuilt,Destroy");
+}
+
+TEST_CASE("DeleteCommand's DecreaseCommandCount takes one off an order", "[simcallback]") {
+    // Moho's Sim::DecreaseCommandCount: a factory build of more makes one
+    // fewer; any other order (one unit each) leaves every queue holding it.
+    CallbackSim w;
+    const osc::u32 factory = w.spawn();
+    const osc::u32 a = w.spawn();
+    const osc::u32 b = w.spawn();
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "x";
+    build.command_id = 4;
+    build.count = 3;
+    build.max_count = 3;
+    w.unit(factory).push_command(build, false);
+    osc::sim::UnitCommand move;
+    move.type = osc::sim::CommandType::Move;
+    move.command_id = 9;
+    w.unit(a).push_command(move, false);
+    w.unit(b).push_command(move, false);
+    move.command_id = 10;
+    w.unit(a).push_command(move, false);
+
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kDecreaseCommandCountCallback;
+    cb.args["Command"] = 4.0;
+    cb.args["Count"] = 1.0;
+    w.sim.run_sim_callback(cb);
+    REQUIRE(w.unit(factory).command_queue().size() == 1);
+    CHECK(w.unit(factory).command_queue().front().count == 2);
+
+    cb.args["Command"] = 9.0;
+    w.sim.run_sim_callback(cb);
+    REQUIRE(w.unit(a).command_queue().size() == 1);
+    CHECK(w.unit(a).command_queue().front().command_id == 10);
+    CHECK(w.unit(b).command_queue().empty());
+
+    // No such order, or nonsense: nothing changes
+    cb.args["Command"] = 77.0;
+    w.sim.run_sim_callback(cb);
+    cb.args["Command"] = 10.0;
+    cb.args["Count"] = std::string("1");
+    w.sim.run_sim_callback(cb);
+    CHECK(w.unit(a).command_queue().size() == 1);
+    CHECK(w.unit(factory).command_queue().front().count == 2);
+}
+
+TEST_CASE("CreateUnitAtMouse's unit is a cheat the sim makes", "[simcallback][cheat]") {
+    // Moho's Sim::CreateUnit for CMDST_CreateUnit: nothing without cheats, an
+    // army in the game and a unit blueprint; a structure on its footprint's
+    // cells (its corner's cell, truncated), a mobile unit where it was asked.
+    lua_State* L = lua_open();
+    luaopen_base(L);
+    luaopen_table(L);
+    lua_settop(L, 0);
+    {
+        osc::blueprints::BlueprintStore store(L);
+        for (const char* bp : {"{BlueprintId = 'wall', Footprint = {SizeX = 2, SizeZ = 1},"
+                               " Physics = {MotionType = 'RULEUMT_None'}}",
+                               "{BlueprintId = 'tank', Footprint = {SizeX = 1, SizeZ = 1},"
+                               " Physics = {MotionType = 'RULEUMT_Land'}}"}) {
+            const std::string code = std::string("return ") + bp;
+            REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "bp") == 0);
+            REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+            store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, lua_gettop(L));
+            lua_pop(L, 1);
+        }
+        store.expose_to_lua(L);
+        const char* stub = "created = {}\n"
+                           "function CreateUnitHPR(...) table.insert(created, arg) end\n";
+        REQUIRE(luaL_loadbuffer(L, stub, std::strlen(stub), "stub") == 0);
+        REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
+        {
+            SimState sim{L, &store};
+            sim.add_army("ARMY_1", "ARMY_1");
+            const auto made = [&]() {
+                lua_pushstring(L, "created");
+                lua_rawget(L, LUA_GLOBALSINDEX);
+                const int n = luaL_getn(L, -1);
+                lua_pop(L, 1);
+                return n;
+            };
+            const auto field = [&](int i, int arg) {
+                lua_pushstring(L, "created");
+                lua_rawget(L, LUA_GLOBALSINDEX);
+                lua_rawgeti(L, -1, i);
+                lua_rawgeti(L, -1, arg);
+                std::string v = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+                const double n = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : -1.0;
+                lua_pop(L, 3);
+                return std::pair{v, n};
+            };
+            SimCallbackEntry cb;
+            cb.func_name = osc::sim::kCreateUnitCallback;
+            cb.args["Blueprint"] = std::string("WALL");
+            cb.args["Army"] = 0.0;
+            cb.args["X"] = 10.3;
+            cb.args["Z"] = 20.8;
+            cb.args["Heading"] = 1.5;
+            sim.run_sim_callback(cb);
+            CHECK(made() == 0); // cheats off
+
+            sim.set_cheats_enabled(true);
+            sim.run_sim_callback(cb);
+            REQUIRE(made() == 1);
+            CHECK(field(1, 1).first == "wall");
+            CHECK(field(1, 2).second == 1.0);  // the 1-based army
+            CHECK(field(1, 3).second == 10.0); // its corner in cell 9, 2 wide: 9 + 1
+            CHECK(field(1, 5).second == 20.5); // cell 20, 1 deep
+            CHECK(field(1, 7).second == 1.5);  // the heading, about Y
+
+            cb.args["Blueprint"] = std::string("tank");
+            sim.run_sim_callback(cb);
+            REQUIRE(made() == 2);
+            CHECK(field(2, 3).second == static_cast<double>(10.3f)); // where asked
+
+            cb.args["Blueprint"] = std::string("nothing");
+            sim.run_sim_callback(cb);
+            cb.args["Blueprint"] = std::string("tank");
+            cb.args["Army"] = 1.0; // no such army
+            sim.run_sim_callback(cb);
+            cb.args["Army"] = 0.0;
+            sim.army_at(0)->set_state(osc::sim::BrainState::Defeat);
+            sim.run_sim_callback(cb);
+            CHECK(made() == 2);
+        }
+    } // the store before its state
+    lua_close(L);
+}
+
+TEST_CASE("GetArmyScore, DeleteCommand and CreateUnitAtMouse check as Moho's do",
+          "[simcallback][lua]") {
+    // Each errors as Moho's does without a session or with bad arguments;
+    // DeleteCommand and CreateUnitAtMouse reach the sim through the command
+    // stream alone.
+    osc::lua::LuaState sim_lua;
+    osc::blueprints::BlueprintStore store(sim_lua.raw());
+    SimState sim{sim_lua.raw(), &store};
+    sim.add_army("ARMY_1", "ARMY_1");
+    REQUIRE(sim_lua.do_string("return {BlueprintId = 'tank'}").ok());
+    store.register_blueprint(sim_lua.raw(), osc::blueprints::BlueprintType::Unit,
+                             lua_gettop(sim_lua.raw()));
+    lua_pop(sim_lua.raw(), 1);
+    osc::lua::LuaState ui;
+    lua_State* L = ui.raw();
+    ui.set_blueprint_store(&store);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    osc::lua::register_user_bindings(ui);
+    osc::sim::SimCallbackQueue queue;
+    lua_pushstring(L, "__osc_sim_callback_queue");
+    lua_pushlightuserdata(L, &queue);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    const auto fails_with = [&](const char* call, const char* text) {
+        const std::string code = std::string("local ok, err = pcall(function() ") + call +
+                                 " end) failed = not ok and string.find(err, '" + text +
+                                 "', 1, true) ~= nil";
+        REQUIRE(ui.do_string(code).ok());
+        lua_getglobal(L, "failed");
+        const bool failed = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return failed;
+    };
+    CHECK(fails_with("GetArmyScore(1)", "No session started."));
+    CHECK(fails_with("DeleteCommand(4)", "No active session!"));
+    CHECK(fails_with("CreateUnitAtMouse('tank', 0, 0, 0, 0)", "No active session."));
+    CHECK(queue.empty());
+
+    osc::GameStateManager game;
+    game.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    CHECK(fails_with("GetArmyScore()", "expected 1 args, but got 0"));
+    CHECK(fails_with("DeleteCommand('4')", "integer expected"));
+    CHECK(fails_with("CreateUnitAtMouse('tank', 0, 0, 0)", "expected 5 args, but got 4"));
+    CHECK(fails_with("CreateUnitAtMouse('none', 0, 0, 0, 0)", "Unknown unit kind: none"));
+    CHECK(fails_with("CreateUnitAtMouse('tank', 1, 0, 0, 0)",
+                     "Invalid army index, must be >= 0 and < 1 but got 1."));
+    CHECK(queue.empty());
+
+    REQUIRE(ui.do_string("local function count(...) return arg.n end "
+                         "score_answers = count(GetArmyScore(1)) "
+                         "DeleteCommand(4) CreateUnitAtMouse('TANK', 0, 2, 3, 0.5)")
+                .ok());
+    lua_getglobal(L, "score_answers");
+    CHECK(lua_tonumber(L, -1) == 0.0);
+    lua_pop(L, 1);
+    const auto sent = queue.drain();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[0].func_name == osc::sim::kDecreaseCommandCountCallback);
+    CHECK(std::get<double>(sent[0].args.at("Command")) == 4.0);
+    CHECK(std::get<double>(sent[0].args.at("Count")) == 1.0);
+    CHECK(sent[1].func_name == osc::sim::kCreateUnitCallback);
+    CHECK(std::get<std::string>(sent[1].args.at("Blueprint")) == "tank");
+    CHECK(std::get<double>(sent[1].args.at("Army")) == 0.0);
+    CHECK(std::get<double>(sent[1].args.at("X")) == 2.0); // no world view: the cursor at 0, 0
+    CHECK(std::get<double>(sent[1].args.at("Z")) == 3.0);
+    CHECK(std::get<double>(sent[1].args.at("Heading")) == 0.5);
 }
 
 TEST_CASE("A dropped player's defeat is a command in the next beat", "[simcallback][drop]") {

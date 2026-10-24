@@ -34,6 +34,17 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim);
 /// the camera's move, M217g) to `hook`, which parks the thread or returns.
 void set_ui_wait_hook(lua_State* L, int (*hook)(lua_State*));
 
+/// Whether the UI state `L` has a world session, as Moho's user functions
+/// ask WLD_GetActiveSession(): a game loading with its sim made, playing, or
+/// at its score screen -- after SessionEndGame too, since Moho's session
+/// stays active until the game is left. The front end has none.
+bool session_active(lua_State* L);
+
+/// The errors Moho's user functions raise with no session (faf-re Sim.cpp's
+/// kNoSessionStartedText and kNoActiveSessionText): each raises its own.
+inline constexpr const char* kNoSessionStarted = "No session started.";
+inline constexpr const char* kNoActiveSession = "No active session";
+
 /// Register UI global functions (InternalCreateGroup, InternalCreateFrame, etc.)
 /// and store the UIControlRegistry pointer in Lua registry.
 /// Must be called after register_moho_bindings.
@@ -48,10 +59,6 @@ void register_console_commands(ui::Console& console);
 /// Moho's IN_InitKeyHandler, in the UI state `L`: the key names from
 /// keyNames.lua, and keymapper.lua's GetKeyMappings() into the key map.
 void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map);
-
-/// Register front-end bootstrap fallback globals that the FA UI import chain
-/// expects, without replacing globals already installed by real bindings.
-void register_front_end_fallback_bindings(LuaState& state);
 
 /// Push an array of UI-side unit objects for the given entity ids (dead or
 /// unknown ids are skipped), in the given order.

@@ -334,6 +334,10 @@ void register_option_commands(ui::Console& console, HeldConVars& held,
     camera_bool("ui_ArrowKeysScrollView", true, &Camera::arrow_scroll, &Camera::set_arrow_scroll);
     // cam_Free: "Allow the camera to remain rotated" (off, as Moho starts)
     camera_bool("cam_Free", false, &Camera::free, &Camera::set_free);
+    // ui_DisableCursorFixing: the spin and the middle drag leave the pointer
+    // free (off, as Moho and FAF's WorldViewParams have it)
+    camera_bool("ui_DisableCursorFixing", false, &Camera::disable_cursor_fixing,
+                &Camera::set_disable_cursor_fixing);
     const auto renderer_bool = [&](const char* name, bool fallback, bool (Renderer::*get)() const,
                                    void (Renderer::*set)(bool)) {
         renderer_var<bool>(

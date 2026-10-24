@@ -8,6 +8,7 @@
 #include "renderer/renderer.hpp"
 #include "sim/unit.hpp"
 #include "sim/build_info.hpp"
+#include "sim/lua_sim.hpp"
 #include "lua/mp_net_state.hpp"
 
 #include <random>
@@ -36,12 +37,12 @@ int finish_test_run(const char* mode, osc::u32 smoke_issues) {
 }
 
 void detach_ui_from_sim(lua_State* uiL) {
-    lua_pushstring(uiL, "osc_sim_state");
-    lua_pushnil(uiL);
-    lua_rawset(uiL, LUA_REGISTRYINDEX);
+    sim::set_sim(uiL, nullptr);
 }
 
-/// Give a sim (and its Lua state) the application's sound engine.
+/// Give a sim (and its Lua state) the application's sound engine. (Only
+/// the pointer: a game's sim may load off the window's thread, which the
+/// engine plays on.)
 void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
                   osc::audio::SoundManager* sound) {
     lua_State* L = sim_lua.raw();
@@ -50,9 +51,6 @@ void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
     else lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
     sim.set_sound_manager(sound);
-    // A game quit while paused left its categories paused (retail resumes
-    // them only from gamemain's OnResume): each game starts unpaused.
-    if (sound) sound->resume_all();
 }
 
 /// --checksum-trace <file>: every game's sims write their per-tick checksum

@@ -11,9 +11,11 @@ add_library(osc_app STATIC
     frames.cpp
     headless.cpp
     lan_game_test.cpp
+    loading_screen_test.cpp
     log_bundle.cpp
     mods_flow_test.cpp
     self_destruct_flow_test.cpp
+    restart_flow_test.cpp
     campaign_flow_test.cpp
     reload.cpp
     scripted_mouse.cpp

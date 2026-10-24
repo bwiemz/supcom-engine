@@ -15,7 +15,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <optional>
+#include <string_view>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
@@ -41,7 +43,46 @@ std::optional<UiClick> parse_point(const char* text) {
 /// How many earlier runs' logs a player's game keeps (M228b).
 constexpr int kKeptLogs = 5;
 
+/// The options that take the argument after them as their value, whatever
+/// it says: the engine's, and the integration runner's own (--render-dump
+/// to --mp-slow). Not Moho's /options (/gpgnet): Moho's CFG_GetArgOption
+/// passes over one with too few arguments after it, as if it weren't given.
+/// Nor --collect-logs, whose zip is optional. (Laid out by hand.)
+// clang-format off
+constexpr std::string_view kValueOptions[] = {
+    "--init", "--fa-path", "--faf-data", "--log", "--map", "--ticks", "--seed", "--difficulty",
+    "--ai-armies", "--ai-personality", "--replay", "--watch", "--record", "--load",
+    "--post-load-at", "--save", "--save-at", "--user-dir", "--prefs", "--screenshot",
+    "--screenshot-frame", "--golden", "--golden-tolerance", "--camera", "--capture-scale",
+    "--click", "--click-at", "--mouse", "--fast-match", "--match-telemetry", "--play-for",
+    "--play-rate", "--play-until-tick", "--bench", "--bench-scenario", "--render-bench",
+    "--render-scene", "--render-frames", "--render-warmup", "--binding-coverage",
+    "--binding-baseline", "--binding-moho-user", "--checksum-trace", "--entity-trace",
+    "--entity-trace-ticks", "--rng-trace", "--rng-trace-ticks", "--gpgnet", "--lan-game-join",
+    "--mp-port", "--lan-game-save", "--lan-game-resume", "--lan-game-quit-at",
+    "--lan-game-self-destruct-at", "--render-dump", "--count-marks", "--mp-join", "--mp-frames",
+    "--mp-drop-at", "--mp-slow"
+};
+// clang-format on
+
+/// A value option given last is refused, logged with its name (true).
+bool refuse_missing_value(int argc, char* argv[]) {
+    const char* option = option_without_value(argc, argv);
+    if (!option) return false;
+    spdlog::error("{} needs a value after it", option);
+    return true;
+}
+
 } // namespace
+
+const char* option_without_value(int argc, char* argv[]) {
+    // Each scanner takes the argument after its option, so only the last
+    // can go without one
+    if (argc < 2) return nullptr;
+    const std::string_view last = argv[argc - 1];
+    const auto* found = std::find(std::begin(kValueOptions), std::end(kValueOptions), last);
+    return found != std::end(kValueOptions) ? argv[argc - 1] : nullptr;
+}
 
 void print_usage() {
     // The option table is laid out by hand.
@@ -85,6 +126,8 @@ void print_usage() {
               << "                     the engine lacks (needs --map)\n"
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
               << "                     not listed in this baseline\n"
+              << "  --binding-moho-user <file>  With --binding-coverage: Moho's user-state\n"
+              << "                     functions, each a gap where the UI state lacks it\n"
               << "  --dump-threads     At exit, list where each sim script thread waits\n"
               << "  --ai-armies <n>    With --ai-skirmish: number of AI armies (default 2)\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua (a campaign operation's\n"
@@ -112,6 +155,11 @@ void print_usage() {
               << "                     mod manager with a player's clicks\n"
               << "  --self-destruct-flow-test Offscreen: a skirmish whose player, on ARMY_2,\n"
               << "                     self-destructs their commander as Ctrl-K does\n"
+              << "  --restart-flow-test Offscreen: a skirmish restarted as its game menu's\n"
+              << "                     Restart Game does, starting again from its launch\n"
+              << "  --loading-screen-test Offscreen: a skirmish launched from the front end,\n"
+              << "                     then its saved game loaded, each drawing its loading\n"
+              << "                     movie as its world loads (the save's as it restores)\n"
               << "  --campaign-flow-test Offscreen: the campaign through retail's screens, from\n"
               << "                     the main menu through X1CA_001 to X1CA_002's briefing\n"
               << "  --tutorial-flow-test Offscreen: the tutorial from operation select, through\n"
@@ -162,6 +210,10 @@ void print_usage() {
 
 osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests,
                                 const std::optional<fs::path>& chosen) {
+    // A value option given last, read as not given, would leave the search
+    // to find another install than the one asked for
+    if (refuse_missing_value(argc, argv)) std::exit(1);
+
     osc::platform::GameInstallHints hints;
     bool print_install = false;
 
@@ -305,6 +357,7 @@ std::string parse_string_arg(int argc, char* argv[], const char* flag, const cha
 }
 
 std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request) {
+    if (refuse_missing_value(argc, argv)) return std::nullopt;
     Options o;
     o.map_path = parse_map_arg(argc, argv);
     o.tick_count = parse_ticks_arg(argc, argv);
@@ -338,6 +391,11 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.mods_flow_test = parse_flag(argc, argv, "--mods-flow-test");
     // --self-destruct-flow-test: the player, on ARMY_2, self-destructs.
     o.self_destruct_flow_test = parse_flag(argc, argv, "--self-destruct-flow-test");
+    // --restart-flow-test: a skirmish restarted from its game menu (#811).
+    o.restart_flow_test = parse_flag(argc, argv, "--restart-flow-test");
+    // --loading-screen-test: a skirmish's load and its saved game's draw the
+    // loading screen as they load.
+    o.loading_screen_test = parse_flag(argc, argv, "--loading-screen-test");
     // --campaign-flow-test: the campaign through retail's screens (M209b).
     o.campaign_flow_test = parse_flag(argc, argv, "--campaign-flow-test");
     // --tutorial-flow-test: the same screens to the tutorial, played a while.
@@ -380,6 +438,13 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.lan_game_port = static_cast<u16>(std::clamp(std::stoi(port), 1, 65535));
     o.lan_game_save = parse_string_arg(argc, argv, "--lan-game-save", "");
     o.lan_game_resume = parse_string_arg(argc, argv, "--lan-game-resume", "");
+    if (o.load_by_replay && !o.lan_game_resume.empty()) {
+        // A network game resumes only from each player's own restored copy
+        // (OE-128), never caught up alone: its load can't honour the flag
+        spdlog::error("--load-by-replay: --lan-game-resume's network game resumes only from "
+                      "each player's restored copy");
+        return std::nullopt;
+    }
     o.sim_thread = !parse_flag(argc, argv, "--no-sim-thread");
     o.workers = !parse_flag(argc, argv, "--no-workers");
     o.play_for = std::strtod(parse_string_arg(argc, argv, "--play-for", "0").c_str(), nullptr);
@@ -404,9 +469,9 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
     o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
     o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
-                        o.mods_flow_test || o.self_destruct_flow_test || o.campaign_flow_test ||
-                        !o.clicks.empty() || !o.mouse.empty() || o.lan_game_test() ||
-                        o.gpgnet_scripted;
+                        o.mods_flow_test || o.self_destruct_flow_test || o.restart_flow_test ||
+                        o.campaign_flow_test || o.loading_screen_test || !o.clicks.empty() ||
+                        !o.mouse.empty() || o.lan_game_test() || o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
@@ -488,8 +553,9 @@ const char* test_mode_flag(int argc, char* argv[]) {
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
                           arg != "--replay-flow-test" && arg != "--load-flow-test" &&
                           arg != "--mods-flow-test" && arg != "--self-destruct-flow-test" &&
-                          arg != "--campaign-flow-test" && arg != "--tutorial-flow-test" &&
-                          arg != "--outro-flow-test";
+                          arg != "--restart-flow-test" && arg != "--campaign-flow-test" &&
+                          arg != "--tutorial-flow-test" && arg != "--outro-flow-test" &&
+                          arg != "--loading-screen-test";
         if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join")
             return argv[i];
     }

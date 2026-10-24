@@ -1,5 +1,6 @@
-# Retail FA 3599 engine API the game scripts call but OpenSupCom does not
-# provide yet (roadmap M184/M185/M186). Names only -- no game content.
+# Retail FA 3599 engine API the game scripts call, or Moho's user state
+# defines (moho_user_globals.txt), but OpenSupCom does not provide yet
+# (roadmap M184/M185/M186). Names only -- no game content.
 #
 # Ratchet: data.binding_coverage fails on a gap that is NOT listed here,
 # and on a listed one that has closed. When you bind something, delete its
@@ -7,22 +8,38 @@
 # message.
 #
 # Regenerate: opensupcom --map /maps/SCMP_009/SCMP_009_scenario.lua \
-#   --binding-coverage out.txt   (then strip the "# first call site" comments)
+#   --binding-coverage out.txt --binding-moho-user tests/integration/moho_user_globals.txt
+#   (then strip the "# first call site" comments)
 #
 # A name marked "not Moho's" has no binding in the retail engine either
 # (faf-re, the decompiled Moho, has none): the scripts' call is a slip or
-# a dead path, and the gap stays.
+# a dead path, and the gap stays. A name marked "user state" is one of
+# Moho's user-state functions no retail script calls, with what Moho's does.
 
+G AddBlinkyBox              # user state: blinks a unit's selection bracket
 G BaseManagerReclaimThread  # not Moho's: a BaseManager method called bare
 G ClearQueueGrid            # not Moho's
 G ERROR                     # not Moho's: a retail typo (error)
+G EngineStartSplashScreens  # user state: the startup movies
 G ExecLuaInSim
 G GetArmy                   # not Moho's as a global (a method of units and brains)
+G GetBlueprint              # user state: a UI unit's blueprint, as UserUnit:GetBlueprint gives it
+G GetMovieVolume            # user state: the movies' volume
+G GetResourceSharing        # user state: whether the focus army shares resources
+G GetSpecialFolder          # user state: a special file type's folder
+G GetUIControlsAlpha        # user state: with SetUIControlsAlpha
 G InternalCreateMesh
 G IssueEnhance              # not Moho's
+G KeycodeMSWToMaui          # user state: a Windows key code as the UI's
+G KeycodeMauiToMSW          # user state: the UI's key code as Windows'
+G PlayTutorialVO            # user state: a tutorial voice cue
+G RenderOverlayIntel        # user state: the intel overlay (RenderOverlayEconomy is bound)
+G RenderOverlayMilitary     # user state: the military overlay
+G SetMovieVolume            # user state: with GetMovieVolume
 G SetQueueGrid              # not Moho's
 G SetQueueState             # not Moho's
 G SetUIControlsAlpha
+G UISelectionByCategory     # user state: FAF's avatars and key actions call it (the console's UI_SelectByCategory selects so)
 G _c_CreatePathDebugger
 G errro                     # not Moho's: a retail typo (error)
 M AddOnKilledCallback       # not Moho's

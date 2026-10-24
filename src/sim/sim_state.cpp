@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/fnv.hpp"
 #include "sim/lua_profile.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -52,6 +53,28 @@ extern "C" {
 #include <vector>
 
 namespace osc::sim {
+
+namespace {
+
+/// The registry key under which a Lua state holds its sim (lua_sim.hpp).
+constexpr const char* kSimKey = "osc_sim_state";
+
+} // namespace
+
+void set_sim(lua_State* L, SimState* sim) {
+    lua_pushstring(L, kSimKey);
+    if (sim) lua_pushlightuserdata(L, sim);
+    else lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+SimState* get_sim(lua_State* L) {
+    lua_pushstring(L, kSimKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return sim;
+}
 
 u32 SimState::s_sim_generation_ = 0;
 
@@ -1411,19 +1434,22 @@ std::map<u32, SimState::QueueWithPending> SimState::queues_with_pending() const 
     return queues;
 }
 
-void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
-                                    bool clear_existing) {
+bool SimState::joins_rally_orders(const Unit& unit, CommandType type) {
     // Moho's UI splits these three by the RALLYPOINT category
     // (SplitSelectionByRallyPointCategory in its move, patrol and
     // call-transport arms); any other order goes to the selection as it is.
-    const bool rally_kind = command.type == CommandType::Move ||
-                            command.type == CommandType::Patrol ||
-                            command.type == CommandType::TransportLoad;
+    const bool rally_kind = type == CommandType::Move || type == CommandType::Patrol ||
+                            type == CommandType::TransportLoad;
+    return rally_kind && unit.has_category("RALLYPOINT");
+}
+
+void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                                    bool clear_existing) {
     std::vector<u32> rally, others;
     for (const u32 id : unit_ids) {
         const Entity* e = entity_registry_.find(id);
-        const bool rally_point = rally_kind && e && e->is_unit() &&
-                                 static_cast<const Unit*>(e)->has_category("RALLYPOINT");
+        const bool rally_point =
+            e && e->is_unit() && joins_rally_orders(*static_cast<const Unit*>(e), command.type);
         (rally_point ? rally : others).push_back(id);
     }
     if (!others.empty()) route_command(others, command, clear_existing);
@@ -1544,6 +1570,7 @@ void SimState::adopt_history(const Replay& saved) {
     recording_ = true;
     playback_ = false;
     resume_beat_ = 0;
+    loaded_from_save_ = true;
 }
 
 void SimState::start_resume(const Replay& saved) {
@@ -1551,6 +1578,7 @@ void SimState::start_resume(const Replay& saved) {
     const bool behind = saved.final_beat > beat_count_;
     playback_ = behind;
     resume_beat_ = behind ? saved.final_beat : 0;
+    loaded_from_save_ = true;
 }
 
 std::shared_ptr<const ProjectileBlueprintInfo>

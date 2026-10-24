@@ -139,6 +139,12 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+/// LobbyNet::valid_player_name for a lobby known by its parts: the local
+/// player's uid and name, and the other players (none once launched: Moho's
+/// LaunchGame deletes its peers).
+std::string valid_player_name(u32 uid, const std::string& name, u32 local_uid,
+                              const std::string& local_name, const std::vector<LobbyPeer>& peers);
+
 /// A launched game's connections (M218c): the lobby's, carrying the
 /// lockstep's frames, as Moho's LaunchGame hands its peers' connections to
 /// the game. Receiving polls the lobby, which keeps its keepalive going;

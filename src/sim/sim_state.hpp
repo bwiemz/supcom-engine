@@ -567,6 +567,11 @@ public:
     /// orders -- and to the rest as an order. Routed like route_command.
     void route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
                               bool clear_existing);
+    /// Whether a player's order of `type` joins `unit`'s rally orders, as a
+    /// factory command, rather than its own queue: a move, patrol or
+    /// transport call to a RALLYPOINT unit. The rule route_player_command
+    /// routes by, and so the queue an order's anchor is read from.
+    static bool joins_rally_orders(const Unit& unit, CommandType type);
     /// What each unit of a group order gets: a formation order is laid out in
     /// its slots, the group held to its slowest member's speed (M204); any
     /// other order goes to every unit as it is. Done where the sim applies
@@ -613,6 +618,13 @@ public:
     /// Catching up a loaded game. It is not a replay: SessionIsReplay()
     /// stays false.
     bool resuming() const { return resume_beat_ != 0; }
+    /// The game began from a saved game, restored (adopt_history) or caught
+    /// up (start_resume). Moho's session for a loaded save isn't being
+    /// recorded (CSavedGame::CreateSinglePlayerSessionInfo), so
+    /// SessionIsBeingRecorded answers false, though this sim records on: its
+    /// history is what a later save writes. A session fact: no checksum or
+    /// snapshot holds it.
+    bool loaded_from_save() const { return loaded_from_save_; }
 
     // Game end state
     bool game_ended() const { return game_ended_; }
@@ -1203,6 +1215,7 @@ private:
     bool recording_ = false;
     bool playback_ = false;
     u32 resume_beat_ = 0; // a loaded game's saved beat, until it is reached
+    bool loaded_from_save_ = false;
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {

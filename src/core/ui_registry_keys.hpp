@@ -9,4 +9,8 @@ namespace osc::core {
 /// HUD placeholders only when it does not exist (or with --legacy-hud).
 inline constexpr const char* kWorldUiActiveKey = "__osc_world_ui_active";
 
+/// True once RestartSession asked for the game in play to start again; the
+/// window takes it between frames, as Moho's CreateSession frame action.
+inline constexpr const char* kRestartRequestKey = "__osc_restart_requested";
+
 } // namespace osc::core

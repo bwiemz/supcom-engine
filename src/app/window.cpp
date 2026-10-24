@@ -36,13 +36,23 @@ App::Window::Window(App& app)
     // test the game check no other thread touches the sim's Lua meanwhile
     if (opt.sim_thread) {
         sim_thread = std::make_unique<SimThread>();
-        if (opt.lan_game_test() || opt.fast_match_ticks > 0 || opt.play_for > 0)
+        if (opt.lan_game_test() || opt.fast_match_ticks > 0 || opt.play_for > 0 ||
+            opt.loading_screen_test)
             lua::install_lua_thread_check();
     }
 }
 
 App::Window::~Window() {
     // Join before any members captured by a job are destroyed, including on exceptions.
+    try {
+        abandon_load();
+    } catch (...) { // (the load's own failure: what it made is the App's to drop)
+        if (loading)
+            adopt_world_load(loading->world, sim_lua_state, sim_state, scenario_meta, ui_lua_state,
+                             &world_interp);
+        loading.reset();
+    }
+    load_thread.reset();
     sim_thread.reset();
     if (sim_state) sim_state->set_ticking_elsewhere(false);
     lua::watch_lua_state(nullptr, {});
@@ -62,6 +72,7 @@ std::optional<int> App::Window::run() {
         while (running()) {
             if (!frame()) break;
         }
+        abandon_load(); // the window closed as a game loaded
         if (auto code = finish()) return code;
     } else if (auto code = run_without_renderer()) {
         return code;
@@ -261,6 +272,13 @@ std::optional<int> App::Window::set_up() {
         }
     }
 
+    // A command line's game (--map) the boot started: what RestartSession
+    // starts again is its scenario with its setup (a loaded save's, which
+    // the boot restored, has none to repeat)
+    if (sim_state && !opt.map_path.empty() && !sim_state->loaded_from_save() &&
+        !sim_state->playback())
+        session_launch = SessionLaunch{opt.map_path, {}, {}, sim_state->recorded_replay().setup};
+
     if (auto code = open_replay()) return code;
     if (auto code = open_saved_game()) return code;
     return start_flows();
@@ -436,6 +454,20 @@ std::optional<int> App::Window::start_flows() {
             return finish_test_run("self-destruct-flow-test");
         }
     }
+    if (opt.restart_flow_test) {
+        restart_flow.emplace();
+        if (!restart_flow->start(ui_lua_state)) {
+            restart_flow->finish();
+            return finish_test_run("restart-flow-test");
+        }
+    }
+    if (opt.loading_screen_test) {
+        loading_screen.emplace();
+        if (!loading_screen->start(ui_lua_state)) {
+            loading_screen->finish();
+            return finish_test_run("loading-screen-test");
+        }
+    }
     // --campaign-flow-test: the campaign through retail's screens (M209b)
     if (opt.campaign_flow_test) {
         using Route = osc::app::CampaignFlowTest::Route;
@@ -465,6 +497,7 @@ bool App::Window::running() const {
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
            !(self_destruct_flow && self_destruct_flow->done()) &&
+           !(restart_flow && restart_flow->done()) && !(loading_screen && loading_screen->done()) &&
            !(campaign_flow && campaign_flow->done()) &&
            !(opt.play_for > 0 && game_frames.in_game_s >= opt.play_for) && !played_to_the_end();
 }
@@ -480,7 +513,7 @@ std::optional<int> App::Window::finish() {
     quiesce_sim(); // the last frame's ticks, before anything reads the game
     if (const u64 off = lua::lua_thread_violations(); off > 0)
         osc::test_status::fail("[FAIL] the sim's Lua was used off its thread {} times while it "
-                               "ticked (OE-134)",
+                               "ticked or loaded (OE-134)",
                                off);
     if (game_frames.frames > 0)
         spdlog::info("Frames in the game: {}, mean {:.1f} ms, over 20 ms: {}, over 33 ms: {}, "
@@ -537,6 +570,14 @@ std::optional<int> App::Window::finish() {
     if (self_destruct_flow) {
         self_destruct_flow->finish();
         return finish_test_run("self-destruct-flow-test");
+    }
+    if (restart_flow) {
+        restart_flow->finish();
+        return finish_test_run("restart-flow-test");
+    }
+    if (loading_screen) {
+        loading_screen->finish();
+        return finish_test_run("loading-screen-test");
     }
     if (campaign_flow) {
         campaign_flow->finish();

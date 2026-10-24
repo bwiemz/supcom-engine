@@ -157,3 +157,47 @@ TEST_CASE("A silo's stored missiles draw nothing over it", "[overlay]") {
     CHECK(quads(2, 0) == bars);
     CHECK(quads(0, 3) == bars);
 }
+
+TEST_CASE("A unit's bars aren't drawn while its view spins or is free", "[overlay]") {
+    // CUIWorldView::Render draws its icon pass, the unit bars in it, only
+    // while its camera neither spins nor is free (cam_Free)
+    osc::sim::WorldSnapshot world;
+    osc::sim::EntityRecord tank;
+    tank.id = 1;
+    tank.is_unit = true;
+    tank.army = 0;
+    tank.health = 50.0f;
+    tank.max_health = 100.0f;
+    tank.position = {256, 0, 256};
+    world.entities.push_back(tank);
+    osc::renderer::Camera camera;
+    camera.init(512.0f, 512.0f);
+    camera.set_viewport(800.0f, 600.0f);
+    camera.set_zoom(40.0f);
+    camera.set_pitch(0.87f);
+    camera.set_target(256.0f, 256.0f);
+    osc::renderer::TextureCache textures;
+    const auto quads = [&] {
+        osc::renderer::OverlayRenderer overlays;
+        osc::sim::WorldEvents events;
+        overlays.update(osc::sim::FrameView(&world, &world, 1.0f), events, camera,
+                        camera.view_proj(800.0f / 600.0f), nullptr, textures, 800, 600);
+        return overlays.quads().size();
+    };
+    REQUIRE(quads() > 0);
+    camera.set_free(true);
+    CHECK(quads() == 0);
+    camera.set_free(false);
+    // Space held across two motions (nearer than zoom 125, where it spins)
+    osc::renderer::CameraInput spin;
+    spin.space = true;
+    spin.mouse_x = 100.0f;
+    camera.apply(spin, 0.0);
+    spin.mouse_x = 104.0f;
+    camera.apply(spin, 0.0);
+    REQUIRE(camera.spinning());
+    CHECK(quads() == 0);
+    camera.apply(osc::renderer::CameraInput{}, 0.0); // let go
+    CHECK_FALSE(camera.spinning());
+    CHECK(quads() > 0);
+}

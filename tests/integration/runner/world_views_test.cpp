@@ -212,6 +212,9 @@ void test_world_views(TestContext& ui, TestContext& sim, ui::UIControlRegistry& 
                             camera, acu_x, acu_y, acu_z)
                     .c_str());
         };
+        // (with cam_Free on, which the harness's views have, Moho draws no
+        // icons: off, for both views' cameras, which copy it)
+        r.camera().set_free(false);
         if (!zoomed_out("WorldCamera") || !zoomed_out("WorldCamera2")) {
             return;
         }
@@ -228,6 +231,7 @@ void test_world_views(TestContext& ui, TestContext& sim, ui::UIControlRegistry& 
                             "the left view's centre changed by {:.3f} as it left, the right's by "
                             "{:.3f}",
                             left_icon, right_icon));
+        r.camera().set_free(true);
     }
 
     {

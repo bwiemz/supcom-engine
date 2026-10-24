@@ -22,8 +22,13 @@ save was made in a loaded game, so its history holds the load's post-load:
 the catch-up replays it, and the game's interface must still wait for the
 new load's own.
 
+With `--by-replay` (CTest: data.load_flow_by_replay), the game's own loads
+are given --load-by-replay instead: the flow's, and a `--load` the game opens
+(`--fast-match`), must each catch up from the save's history, as a headless
+load does, and none may restore the snapshot.
+
 Usage:
-    load_flow.py <opensupcom> -- <game args for the first game...>
+    load_flow.py [--by-replay] <opensupcom> -- <game args for the first game...>
 
 The game args must run past SAVE_AT. Exits 77 (skipped) when the game has no
 data to run on.
@@ -44,9 +49,13 @@ from typing import cast
 TIMEOUT_SECONDS = 900
 SKIPPED = 77
 SAVE_AT = 200
+LOAD_BY_REPLAY = "--load-by-replay"
 
 
 def main(argv: list[str]) -> int:
+    by_replay = bool(argv) and argv[0] == "--by-replay"
+    if by_replay:
+        argv = argv[1:]
     if len(argv) < 2 or "--" not in argv:
         print(__doc__, file=sys.stderr)
         return 2
@@ -78,6 +87,9 @@ def main(argv: list[str]) -> int:
             print(f"the game run failed or saved nothing: exit {game.returncode}")
             return 1
 
+        if by_replay:
+            return check_by_replay(exe, user_dir, save, SAVE_AT)
+
         if run_flow(exe, user_dir, must_say="restored at tick") != 0:
             return 1
 
@@ -97,6 +109,40 @@ def main(argv: list[str]) -> int:
         if run_flow(exe, damaged_dir, must_say="not restored") != 0:
             return 1
         return check_performance(exe, user_dir, save, SAVE_AT)
+
+
+def check_by_replay(exe: Path, user_dir: Path, save: Path, saved_tick: int) -> int:
+    """Each of the game's loads, given --load-by-replay, catches up."""
+    caught_up = f"catching up to beat {saved_tick} (--load-by-replay)"
+    flow = run_flow(
+        exe, user_dir, must_say=caught_up, never_say="restored at tick", extra=[LOAD_BY_REPLAY]
+    )
+    if flow != 0:
+        return 1
+    # The --load the game opens (offscreen, unpaced), as the Load dialog does
+    game = subprocess.run(
+        [
+            str(exe),
+            "--user-dir",
+            str(user_dir),
+            "--load",
+            str(save),
+            LOAD_BY_REPLAY,
+            "--fast-match",
+            str(saved_tick + 60),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_SECONDS,
+        check=False,
+    )
+    if game.returncode != 0 or caught_up not in game.stdout or "restored at tick" in game.stdout:
+        code = game.returncode
+        print(f"FAIL: --load {LOAD_BY_REPLAY}: didn't catch up from the history, exit {code}")
+        print((game.stdout + game.stderr)[-2000:])
+        return 1
+    print(f"PASS: --load {LOAD_BY_REPLAY}: the game's load caught up to beat {saved_tick}")
+    return 0
 
 
 def check_performance(exe: Path, user_dir: Path, save: Path, saved_tick: int) -> int:
@@ -187,9 +233,15 @@ def damage_snapshot(save: bytes, key: bytes) -> bytes:
     return bytes(head) + packed + mac + save[pos + packed_size + len(mac) :]
 
 
-def run_flow(exe: Path, user_dir: Path, must_say: str = "") -> int:
+def run_flow(
+    exe: Path,
+    user_dir: Path,
+    must_say: str = "",
+    never_say: str = "",
+    extra: list[str] | None = None,
+) -> int:
     flow = subprocess.run(
-        [str(exe), "--user-dir", str(user_dir), "--load-flow-test"],
+        [str(exe), "--user-dir", str(user_dir), "--load-flow-test", *(extra or [])],
         capture_output=True,
         text=True,
         timeout=TIMEOUT_SECONDS,
@@ -200,6 +252,9 @@ def run_flow(exe: Path, user_dir: Path, must_say: str = "") -> int:
             print(line)
     if flow.returncode == 0 and must_say and must_say not in flow.stdout:
         print(f"the flow never said '{must_say}'")
+        return 1
+    if flow.returncode == 0 and never_say and never_say in flow.stdout:
+        print(f"the flow said '{never_say}'")
         return 1
     return flow.returncode
 

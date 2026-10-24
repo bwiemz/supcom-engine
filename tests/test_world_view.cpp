@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/game_state.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
@@ -14,6 +15,7 @@ extern "C" {
 }
 
 #include <array>
+#include <string>
 #include <utility>
 
 using Catch::Approx;
@@ -82,5 +84,54 @@ TEST_CASE("WorldView:Project takes a Moho vector and gives a Vector2", "[ui][wor
         CHECK(lua_tonumber(L, -1) == Approx(expected[static_cast<size_t>(i)]));
         lua_pop(L, 1);
     }
+    lua_pop(L, 1);
+}
+
+TEST_CASE("GetMouseScreenPos and GetAntiAliasingOptions answer Moho's types", "[ui][lua]") {
+    // GetMouseScreenPos answers a Vector2 (Moho's CursorScreenPos), and
+    // raises "No session started." without a session; GetAntiAliasingOptions
+    // a list of option keys, 0 (off) the engine's only one. FAF's reticles
+    // and the fidelity presets index what they answer: nil broke both.
+    osc::lua::LuaState sim_lua;
+    osc::sim::SimState sim{sim_lua.raw(), nullptr};
+    osc::lua::LuaState ui;
+    osc::lua::register_blueprint_bindings(ui);
+    osc::lua::register_moho_bindings(ui, sim);
+    osc::lua::register_user_bindings(ui);
+    lua_State* L = ui.raw();
+
+    auto result = ui.do_string(R"(
+        local ok, err = pcall(GetMouseScreenPos)
+        no_session = not ok and string.find(err, 'No session started.', 1, true) ~= nil
+        local aa = GetAntiAliasingOptions()
+        aa_off_only = type(aa) == 'table' and table.getn(aa) == 1 and aa[1] == 0
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_getglobal(L, "no_session");
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+    lua_getglobal(L, "aa_off_only");
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+
+    osc::GameStateManager game;
+    game.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    result = ui.do_string(R"(
+        local p = GetMouseScreenPos()
+        at_cursor = type(p) == 'table' and p[1] == 0 and p[2] == 0 and p.x == 0 and p.y == 0
+        local ok, err = pcall(GetMouseScreenPos, 1)
+        args_checked = not ok and string.find(err, 'expected 0 args', 1, true) ~= nil
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_getglobal(L, "at_cursor"); // no renderer: the cursor at 0, 0
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+    lua_getglobal(L, "args_checked");
+    CHECK(lua_toboolean(L, -1) != 0);
     lua_pop(L, 1);
 }

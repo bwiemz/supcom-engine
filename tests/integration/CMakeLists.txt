@@ -441,6 +441,16 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # #811: a skirmish launched from the front end and restarted as retail's
+    # game menu restarts it (RestartSession) starts again from its launch --
+    # a new sim from tick 0, with its scenario, armies and seed -- and plays
+    # on, offscreen.
+    add_test(NAME data.restart_flow COMMAND opensupcom --restart-flow-test)
+    set_tests_properties(data.restart_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+
     # M208a, M191 step 4: retail's Load dialog path -- GetSpecialFiles lists
     # the save, LoadSavedGame loads it -- then the game catches up (never a
     # replay meanwhile), plays on, and InternalSaveGame saves it again. Then
@@ -452,6 +462,27 @@ if(Python3_Interpreter_FOUND)
                      -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 2 --ticks 250
                      --seed 9 --scripted-orders)
     set_tests_properties(data.load_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+    # The same loads given --load-by-replay: the flow's, and a --load the
+    # game opens, each catch up from the save's history, as a headless
+    # load does, and never restore its snapshot.
+    add_test(NAME data.load_flow_by_replay
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/load_flow.py --by-replay
+                     $<TARGET_FILE:opensupcom>
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 2 --ticks 250
+                     --seed 9 --scripted-orders)
+    set_tests_properties(data.load_flow_by_replay PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+    # A game's load draws the loading screen as it loads, as Moho's frames go
+    # on through WLD_DoLoading (#808): a skirmish launched from the front
+    # end, then its saved game, each drawing frames with its loading movie
+    # as its world loads (the save's as its snapshot restores), offscreen.
+    add_test(NAME data.loading_screen COMMAND opensupcom --loading-screen-test)
+    set_tests_properties(data.loading_screen PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
@@ -694,12 +725,15 @@ set_tests_properties(data.right-click-mark PROPERTIES
 
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither
-# bound nor listed in the baseline. Baseline is for retail FA 3599; a machine
-# whose discovered install is FAForever will report FAF's own set instead.
+# bound nor listed in the baseline, or the UI state lacks one of Moho's
+# user-state functions (moho_user_globals.txt) the baseline doesn't list.
+# Baseline is for retail FA 3599; a machine whose discovered install is
+# FAForever will report FAF's own set instead.
 add_test(NAME data.binding_coverage
          COMMAND opensupcom --map ${OSC_TEST_MAP}
                  --binding-coverage ${CMAKE_CURRENT_BINARY_DIR}/binding_coverage.txt
-                 --binding-baseline ${CMAKE_CURRENT_SOURCE_DIR}/binding_baseline_retail.txt)
+                 --binding-baseline ${CMAKE_CURRENT_SOURCE_DIR}/binding_baseline_retail.txt
+                 --binding-moho-user ${CMAKE_CURRENT_SOURCE_DIR}/moho_user_globals.txt)
 set_tests_properties(data.binding_coverage PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77

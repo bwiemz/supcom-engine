@@ -21,6 +21,9 @@ import re
 import sys
 from pathlib import Path
 
+# The checks run as scripts, so tools/ is sys.path[0]: the module beside them
+import cpp_source  # pyright: ignore[reportImplicitRelativeImport]
+
 # (header, type): the classes and structs the serializers write field by
 # field. Nested types are named Outer::Inner.
 TYPES: list[tuple[str, str]] = [
@@ -111,12 +114,13 @@ SERIALIZERS = [
     "src/sim/state_io_paths.cpp",
 ]
 
-_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 _WORD = re.compile(r"[A-Za-z_]\w*")
 
 
 def strip_comments(text: str) -> str:
-    return _COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    """`text` with its comments and literals' contents blanked, lines kept
+    (tools/cpp_source.py): a `//` in a string literal is no comment."""
+    return cpp_source.scan(text).code
 
 
 def find_block(text: str, name: str) -> tuple[int, int] | None:
@@ -245,6 +249,13 @@ def self_test() -> int:
     want = ["a_", "b_", "c_", "d_", "e_", "f_", "r_", "g_"]
     if got != want:
         print(f"self-test: members() gave {got}, want {want}")
+        return 1
+    # a string literal holding a comment opener
+    literal = 'struct S { const char* url_ = "https://example"; int y_ = 0; };'
+    text = strip_comments(literal)
+    block = find_block(text, "S")
+    if block is None or [n for n, _ in members(text[block[0] : block[1]])] != ["url_", "y_"]:
+        print("self-test: a string literal holding a comment opener")
         return 1
     nested = "class Outer { struct Inner { int y_; int z_ = 0; }; int w_; };"
     block = find_block(nested, "Outer::Inner")

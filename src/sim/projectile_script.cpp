@@ -1,6 +1,7 @@
 #include "sim/projectile_script.hpp"
 
 #include "core/test_status.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/projectile.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
@@ -112,9 +113,7 @@ void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, boo
     if (!L) return;
     const int top = lua_gettop(L);
     // Its categories first: its own OnCreate may test them.
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim_of_registry = static_cast<SimState*>(lua_touserdata(L, -1));
+    auto* sim_of_registry = get_sim(L);
     if (sim_of_registry) {
         auto info = sim_of_registry->projectile_blueprint_info(proj.blueprint_id());
         const u32 from = source != 0 ? source : proj.launcher_id;

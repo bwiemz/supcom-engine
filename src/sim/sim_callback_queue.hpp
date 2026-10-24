@@ -64,6 +64,15 @@ inline constexpr const char* kRemoveCommandCallback = "__osc_RemoveCommand";
 /// `Command` of the named units (unit_ids) made a patrol (`Type`).
 inline constexpr const char* kSetCommandTypeCallback = "__osc_SetCommandType";
 
+/// Func name of Moho's CMDST_CreateUnit, as CreateUnitAtMouse sends it: a
+/// cheat making a complete unit of `Blueprint` for `Army` (0-based) at X, Z,
+/// facing `Heading` (radians).
+inline constexpr const char* kCreateUnitCallback = "__osc_CreateUnit";
+
+/// Func name of Moho's CMDST_DecreaseCommandCount, as DeleteCommand sends it:
+/// order `Command` made `Count` fewer; an order at none leaves every queue.
+inline constexpr const char* kDecreaseCommandCountCallback = "__osc_DecreaseCommandCount";
+
 /// Func name of a network game's save (OE-128; Args Name): every player
 /// saves the game, each their own copy, after the tick it runs on. Only a
 /// network game sends it (a single-player save is written at once).

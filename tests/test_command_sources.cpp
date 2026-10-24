@@ -14,6 +14,7 @@
 #include "lua/sim_sync.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_scheduler.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
@@ -398,12 +399,17 @@ TEST_CASE("A player may watch only an army it commands, as Moho's session allows
     // CWldSession::ValidateFocusArmyRequest, in single-player (source 0)
     SourcesWorld w;
     w.number_players();
-    // The UI's state, in a world session
+    // The UI's state, in a world session, its game interface up
     osc::lua::LuaState ui;
     osc::ui::UIControlRegistry registry;
     osc::lua::register_moho_bindings(ui, w.sim);
     osc::lua::register_ui_bindings(ui, registry);
     lua_State* L = ui.raw();
+    osc::GameStateManager game_state;
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game_state);
+    lua_rawset(L, LUA_REGISTRYINDEX);
     lua_pushstring(L, osc::core::kWorldUiActiveKey);
     lua_pushboolean(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
@@ -444,4 +450,65 @@ TEST_CASE("A player may watch only an army it commands, as Moho's session allows
     w.sim.set_game_ended(true);
     REQUIRE(run("SetFocusArmy(2)").empty());
     CHECK(take_focus_request(L) == "1");
+}
+
+TEST_CASE("SessionIsObservingAllowed answers the session's observing, so a finished player watches",
+          "[sources][focus]") {
+    // Moho's cfunc_SessionIsObservingAllowedL: the session's IsObservingAllowed,
+    // a replay's always, else the game's AllowObservers option. It had been a
+    // stand-in answering false, so retail's DoGameResult never made a
+    // defeated player an observer.
+    SourcesWorld w;
+    w.number_players();
+    osc::lua::LuaState ui;
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(ui, w.sim);
+    osc::lua::register_ui_bindings(ui, registry);
+    lua_State* L = ui.raw();
+    osc::GameStateManager game_state;
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game_state);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, osc::core::kWorldUiActiveKey);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    const auto run = [&](const char* code) {
+        auto r = ui.do_string(code);
+        return r.ok() ? std::string() : r.error().message;
+    };
+    // Retail's gameresult.lua, for the focus army's result
+    REQUIRE(run("function DoGameResult() if SessionIsObservingAllowed() then SetFocusArmy(-1) "
+                "end end")
+                .empty());
+
+    const auto allow_observers = [&](bool allowed) {
+        osc::sim::GameSetup setup;
+        setup.options.configured = true;
+        setup.options.set_bool("AllowObservers", allowed);
+        w.sim.set_game_setup(setup);
+    };
+    CHECK(run("assert(SessionIsObservingAllowed() == false)").empty()); // no AllowObservers
+    allow_observers(false);
+    CHECK(run("assert(SessionIsObservingAllowed() == false)").empty());
+    w.sim.get_army(0)->set_state(BrainState::Defeat);
+    REQUIRE(run("DoGameResult()").empty());
+    CHECK(take_focus_request(L) == "nil"); // stays on the defeated army
+
+    allow_observers(true);
+    CHECK(run("assert(SessionIsObservingAllowed() == true)").empty());
+    REQUIRE(run("DoGameResult()").empty());
+    CHECK(take_focus_request(L) == "-1"); // an observer now
+
+    // A replay's watcher always may
+    allow_observers(false);
+    w.sim.set_playback(true);
+    CHECK(run("assert(SessionIsObservingAllowed() == true)").empty());
+    w.sim.set_playback(false);
+
+    // Moho's refusals: any argument, and no world session
+    const std::string args = run("SessionIsObservingAllowed(1)");
+    CHECK(args.find("expected 0 args, but got 1") != std::string::npos);
+    osc::sim::set_sim(L, nullptr);
+    CHECK(run("SessionIsObservingAllowed()").find("no active session.") != std::string::npos);
 }

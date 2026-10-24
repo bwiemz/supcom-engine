@@ -81,6 +81,7 @@ add_executable(osc_tests
     test_game_state_setup_ui.cpp
     test_transport_unload.cpp
     test_special_files.cpp
+    test_script_errors.cpp
     test_binding_coverage.cpp
     test_lua_persist.cpp
     test_lua_state.cpp
@@ -102,6 +103,7 @@ add_executable(osc_tests
     test_ui_layout.cpp
     test_user_decals.cpp
     test_world_view.cpp
+    test_user_stand_ins.cpp
     test_resource_icons.cpp
     test_ui_controls.cpp
     test_texture_alpha.cpp
@@ -175,6 +177,8 @@ add_executable(osc_tests
     test_moho_reflected_fields.cpp
     test_command_handles.cpp
     test_url_bindings.cpp
+    test_arg_count.cpp
+    test_session_functions.cpp
     test_script_object.cpp
     test_veterancy_kills.cpp
     test_unit_weapons.cpp
@@ -184,6 +188,7 @@ add_executable(osc_tests
     test_effect_expiry.cpp
     test_sim_lua_gc.cpp
     test_saved_game.cpp
+    test_restart_session.cpp
     test_checksum_coverage.cpp
     test_sha256.cpp
     test_platform_secrets.cpp

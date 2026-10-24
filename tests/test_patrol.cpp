@@ -30,6 +30,7 @@ extern "C" {
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -237,6 +238,124 @@ TEST_CASE("A queued patrol starts where the last unit with orders ends them", "[
     REQUIRE(idle->command_queue().size() == 2);
     CHECK(idle->command_queue()[0].target_pos.x == 60.0f);
     CHECK(idle->command_queue()[0].target_pos.z == 60.0f);
+}
+
+namespace {
+
+/// A stationary factory that patrols: its moves and patrols are factory
+/// commands, into its rally orders (SimState::route_player_command)
+Unit* rally_factory(SimState& sim, osc::f32 x, osc::f32 z) {
+    auto u = std::make_unique<Unit>();
+    u->set_army(0);
+    u->set_position({x, 0.0f, z});
+    u->add_category("FACTORY");
+    u->add_category("RALLYPOINT");
+    u->add_command_cap("RULEUCC_Patrol");
+    auto* raw = u.get();
+    sim.entity_registry().register_entity(std::move(u));
+    return raw;
+}
+
+/// Its rally orders, as "Move 40,10 Patrol 40,10 ..."
+std::string rally_route(const Unit& factory) {
+    std::string out;
+    for (const auto& c : factory.rally_orders()) {
+        out += out.empty() ? "" : " ";
+        out += c.type == CommandType::Move     ? "Move"
+               : c.type == CommandType::Patrol ? "Patrol"
+                                               : "Other";
+        out += " " + std::to_string(static_cast<int>(c.target_pos.x)) + "," +
+               std::to_string(static_cast<int>(c.target_pos.z));
+    }
+    return out;
+}
+
+/// A factory selected in the patrol order's mode
+struct FactoryPatrol {
+    LuaGuard g;
+    SimState sim{g.L, nullptr};
+    Unit* factory = nullptr;
+    osc::renderer::InputHandler input;
+    osc::renderer::CommandMode mode;
+    FactoryPatrol() {
+        flat(sim);
+        factory = rally_factory(sim, 10.0f, 10.0f);
+        input.set_player_army(0);
+        input.set_selected({factory->entity_id()});
+        mode.mode = "order";
+        mode.name = "RULEUCC_Patrol";
+    }
+    /// An exit click, then three Shift patrol clicks, each in its own beat
+    /// or all in one
+    void exit_and_patrol(bool beat_each) {
+        REQUIRE_FALSE(input.right_click_at(sim, 40.0f, 10.0f, false).empty());
+        const std::pair<osc::f32, osc::f32> points[] = {
+            {40.0f, 40.0f}, {70.0f, 40.0f}, {70.0f, 70.0f}};
+        for (const auto& [x, z] : points) {
+            if (beat_each) {
+                sim.tick();
+            }
+            REQUIRE(input.click_in_command_mode(sim, mode, x, z, true));
+        }
+        sim.tick();
+    }
+};
+
+// Moho's patrol arm (IssuePatrolOrderForDrag) anchors a queued patrol on the
+// last order of each unit's queue, a stationary unit's factory command queue
+// (ResolveGroupMoveAnchorOrDetectPatrol): after the exit, one patrol at the
+// exit, then the points, with none at the factory between them.
+constexpr const char* kFactoryPatrol =
+    "Move 40,10 Patrol 40,10 Patrol 40,40 Patrol 70,40 Patrol 70,70";
+
+} // namespace
+
+TEST_CASE("A queued patrol given to a factory starts where its rally orders end", "[patrol]") {
+    FactoryPatrol t;
+    t.exit_and_patrol(true);
+    CHECK(rally_route(*t.factory) == kFactoryPatrol);
+    CHECK(t.factory->command_queue().empty());
+}
+
+TEST_CASE("A factory's patrol clicked within one beat starts where its pending rally orders end",
+          "[patrol]") {
+    FactoryPatrol t;
+    t.exit_and_patrol(false);
+    CHECK(rally_route(*t.factory) == kFactoryPatrol);
+}
+
+TEST_CASE("A factory with builds queued anchors its patrol on its rally orders", "[patrol]") {
+    // A build order from the UI has no place: neither it nor (0, 0) is the
+    // anchor.
+    FactoryPatrol t;
+    osc::sim::UnitCommand build;
+    build.type = CommandType::BuildFactory;
+    build.blueprint_id = "uel0101";
+    t.factory->push_command(build, false);
+    t.factory->push_command(build, false);
+    t.factory->set_paused(true); // the builds stay queued
+    t.exit_and_patrol(true);
+    CHECK(rally_route(*t.factory) == kFactoryPatrol);
+    CHECK(t.factory->command_queue().size() == 2);
+}
+
+TEST_CASE("A factory and mobile units given one patrol share one anchor", "[patrol]") {
+    // Moho resolves the anchor over the whole selection for both halves, the
+    // factory's factory command and the others' order.
+    FactoryPatrol t;
+    REQUIRE_FALSE(t.input.right_click_at(t.sim, 40.0f, 10.0f, false).empty());
+    t.sim.tick();
+    Unit* tank = walker(t.sim, 10.0f, 30.0f);
+    t.input.set_selected({t.factory->entity_id(), tank->entity_id()});
+    REQUIRE(t.input.click_in_command_mode(t.sim, t.mode, 70.0f, 70.0f, true));
+    t.sim.tick();
+    CHECK(rally_route(*t.factory) == "Move 40,10 Patrol 40,10 Patrol 70,70");
+    const auto& q = tank->command_queue();
+    REQUIRE(q.size() == 2);
+    CHECK(q[0].target_pos.x == 40.0f);
+    CHECK(q[0].target_pos.z == 10.0f);
+    CHECK(q[1].target_pos.x == 70.0f);
+    CHECK(q[1].target_pos.z == 70.0f);
 }
 
 TEST_CASE("A patrol breaks off to attack an enemy within its GuardScanRadius of the route",

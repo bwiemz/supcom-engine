@@ -422,8 +422,9 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     save(w, sim.command_scheduler_);
     w.u32v(sim.command_delay_);
     // local_command_sink_, local_callback_sink_, human_input_active_: the
-    // host's; recorded_replay_, recording_, playback_, resume_beat_: the
-    // host's too (a load adopts the saved game's history: adopt_history)
+    // host's; recorded_replay_, recording_, playback_, resume_beat_,
+    // loaded_from_save_: the host's too (a load adopts the saved game's
+    // history: adopt_history)
     w.size(sim.temp_visions_.size());
     for (const auto& v : sim.temp_visions_) {
         w.u32v(v.army);

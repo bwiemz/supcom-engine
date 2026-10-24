@@ -31,6 +31,15 @@ bool App::Window::frame() {
     const auto frame_started = std::chrono::high_resolution_clock::now();
     const double dt = begin_frame();
 
+    // A launched game loading: the loading screen's frame alone, the world
+    // loading on the loader's thread meanwhile (as Moho's frames go on
+    // through WLD_DoLoading)
+    if (loading) {
+        loading_frame(dt, frame_started);
+        osc::Profiler::instance().end_frame();
+        return true;
+    }
+
     // The ticks the last frame started on the sim thread still running (a
     // game sped up past what its sim keeps up with): this frame draws and
     // doesn't wait for them, so the game slows and the frame rate holds.
@@ -695,6 +704,10 @@ void App::Window::run_flows() {
         mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(), renderer.ui_dispatch(),
                          ui_registry);
     if (self_destruct_flow) self_destruct_flow->frame(ui_lua_state, sim_state.get());
+    if (restart_flow) restart_flow->frame(ui_lua_state, sim_state.get());
+    if (loading_screen)
+        loading_screen->frame(ui_lua_state, sim_state.get(), !world_ui_after_post_load,
+                              restored_at);
     if (campaign_flow)
         campaign_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(),
                              renderer.ui_dispatch(), ui_registry);
@@ -762,6 +775,12 @@ void App::Window::update_ui(double dt) {
                                             sim_state->playable_x1(), sim_state->playable_z1());
     }
     renderer.poll_events(dt);
+    // While the pointer is pinned FA's cursor is hidden, every frame
+    // (func_ProcessMouseScrubbing), and let go, it is shown again
+    // (func_StartMouseScrubbing)
+    if (const auto scrub = renderer.take_scrub_change(); renderer.mouse_scrubbing() || scrub) {
+        show_ui_cursor(ui_lua_state.raw(), !renderer.mouse_scrubbing());
+    }
     if (renderer.should_close() && !renderer.iconified() &&
         osc::core::call_show_escape_dialog(ui_lua_state.raw())) {
         renderer.keep_open();
@@ -792,6 +811,10 @@ void App::Window::update_ui(double dt) {
     // The engine statistics the UI reads this frame (FAF's cursor depth)
     if (sim_state) osc::lua::update_engine_stats(ui_lua_state.raw());
 
+    run_ui_scripts(dt);
+}
+
+void App::Window::run_ui_scripts(double dt) {
     // Resume UI coroutines
     ++ui_frame_count;
     osc::lua::advance_ui_clock(ui_lua_state.raw(), wall_dt);
@@ -831,7 +854,8 @@ void App::Window::update_input(double dt, const sim::FrameView& frame_view) {
             renderer.ui_mouse_position(mx, my);
             return mouse_over_ui(ui_lua_state.raw(), mx, my);
         });
-        if (input_handler.cursor_world()) {
+        // (not while the pointer is pinned: CUIWorldView::Frame skips it)
+        if (input_handler.cursor_world() && !renderer.mouse_scrubbing()) {
             osc::lua::update_world_view_cursor(ui_lua_state.raw());
         }
     }
