@@ -33,8 +33,9 @@ constexpr std::array<i32, kClusterLevels + 1> kClusterShift = {0, 3, 5};
 constexpr i32 kClusterCost = 10;
 /// The sim's background budget a tick (path_BackgroundBudget).
 constexpr i32 kBackgroundBudget = 1000;
-/// Each army's search budget a tick (path_ArmyBudget).
-constexpr i32 kArmyPathBudget = 2500;
+/// Each army's search budget a tick (path_ArmyBudget): retail 3599's 1000, measured in the
+/// running game; FAF's exe patches it to 2500, which faf-re (FAF's build) shows.
+constexpr i32 kArmyPathBudget = 1000;
 
 /// Moho's OccupationData: a level-1 cluster's 9 x 9 window, its own 8 x 8
 /// cells and the far boundary lines it shares with its neighbours. Bit x of

@@ -1328,7 +1328,7 @@ TEST_CASE("A unit a thread destroys is found and takes its step, then hears OnDe
     REQUIRE(w.run("log = {} victim.tag = 'victim' later.tag = 'later'"
                   " Plain.OnMotionHorzEventChange = function(self)"
                   "   if GetEntityById(" +
-                  std::to_string(victim_id) +
+                  std::to_string(osc::sim::EntityRegistry::moho_id(victim_id)) +
                   ") == victim then"
                   "     table.insert(log, self.tag)"
                   "   end"

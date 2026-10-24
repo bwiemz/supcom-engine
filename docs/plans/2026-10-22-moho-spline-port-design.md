@@ -115,6 +115,11 @@ retail's. So the engine numbers entities as Moho does, from a pool per family an
 serial sits below them.
 
 - **EN's id is Moho's plus one**, so 0 stays "none". `EntityRegistry::moho_id` gives Moho's.
+- **Scripts see Moho's.** `push_entity_id` hands it out (`GetEntityId`, `EntityId` fields, target
+  ids), `to_entity_id` takes one back (`GetEntityById`, `GetUnitById`, the selection, ferry beacons,
+  blips); `from_moho_id` converts. Hidden fields (`_c_entity_id`, `_c_prop_id`, `_c_effect_id`) and
+  the engine's own helpers keep EN's number. Before, scripts saw EN's number, so the prop meeting
+  tick a script checked against `GetEntityId` was one off Moho's.
 - **Walks:** entities are walked in the order they were made. The world snapshot sorts them by id
   before it fills its records, for its binary search.
 - **shortcut:** Moho reuses a released serial, the least first. EN's serials only grow: its orders,

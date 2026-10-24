@@ -123,3 +123,42 @@ The most common first difference is not a rounding. Two cases:
   at 80, each in unit b's z as the two units meet (in `cross90a`, two ticks after they stop pushing
   each other).
 - **A tick early:** `overtake1`'s engineer starts a tick early (tick 4).
+
+## 6. Movement (step 4) so far
+
+Retail FA 3599 (Steam) against the engine on `feat/moho-entity-ids`, rebased on c9055933,
+`--moho-pathing`:
+
+- **Drive grid:** 306 of 337 legs bit for bit (192 at the baseline), 330 within 0.01. Of the seven
+  units of the second batch that started a tick early, one still does. Its start follows which trees
+  fell before it, so it waits on the precision of meeting props.
+- **Crowd probe:** bit for bit to its end (closest pair 0.899).
+- **`url0001`:** off only in a float's last bits, step 2's work.
+- **`crowd-test`'s scene:** retail's closest pair is 0.936. The engine's is 0.873 in the game (it
+  parts from retail at tick 94) and 0.18 under `osc_integration`'s runner, so `data.moho.crowd-test`
+  is a `retail-gap` until that difference is found.
+
+The rules this round matched, from faf-re:
+
+- **Path budget:** an army's path work is 1000 a tick, retail's (FAF's is 2500): expansions plus 10
+  per cluster rebuilt.
+- **Arrival:** an arriving unit stops its steering before it goes idle (`CAiNavigatorLand::Execute`).
+- **Meetings:**
+  - candidates are gathered as `CollectCollisionCandidates` and `func_IsSourceUnit`;
+  - boxes met edge to edge make a contact of no depth;
+  - the spline brakes for a unit standing where it would go (`Generate`'s `UnitIsBlockedAt`).
+- **Props:** one worth reclaiming occupies its ground when made, whatever its caps (a tree has none,
+  yet it dirties the path clusters under it), and releases it where it stands when destroyed. A unit
+  meets props when its motion meets units (`MotionTick`: speed squared over 1e-6 or a surface
+  collision, not while pushed), on its id's tick mod 5.
+- **The spline's start:** the velocity it starts from is the motion's for a unit not in the air
+  (`Unit::GetVelocity`); braking travel is velocity times `1 / speed`.
+- **Through a waypoint:** at top speed when the waypoint's cell is in the goal and the goal is driven
+  through, or when the path has ended and no path is awaited.
+- **Pushed units:** a pushed unit settles once it is below 1% of its top speed
+  (`CAiSteeringImpl::OnTick`).
+- **Destination:** the steering's destination is the waypoint even when the unit stands at it
+  (`DriveToNextWaypoint`).
+
+Found on the way, and not Moho: an army with no units gets a commander (`session_manager.cpp`), and
+without a lobby the victory condition defaults to demoralization, where retail's `/map` sets none.

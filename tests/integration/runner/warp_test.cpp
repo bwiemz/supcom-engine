@@ -25,6 +25,7 @@
 
 #include "lua/lua_state.hpp"
 #include "map/terrain.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -129,7 +130,7 @@ void test_warp(TestContext& ctx) {
     for (size_t i = 0; i < ids.size(); ++i) {
         lua_rawgeti(L, -1, static_cast<int>(i + 1));
         lua_rawgeti(L, -1, 1);
-        ids[i] = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+        ids[i] = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 2);
     }
     lua_pop(L, 1);
@@ -214,7 +215,7 @@ void test_warp(TestContext& ctx) {
             "Warp(__osc_mover, Vector(p[1] + 20, GetTerrainHeight(p[1] + 20, p[3]), p[3]))\n");
         lua_pushstring(L, "__osc_mover_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         const sim::Entity* e = registry.find(id);
         const auto* tank = e && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;

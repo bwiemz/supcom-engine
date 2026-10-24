@@ -1,6 +1,7 @@
 #include "sim/script_class.hpp"
 
 #include "blueprints/blueprint_store.hpp"
+#include "sim/entity_registry.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -132,7 +133,12 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
 }
 
 void push_entity_id(lua_State* L, u32 id) {
-    lua_pushstring(L, std::to_string(static_cast<i32>(id)).c_str());
+    lua_pushstring(L, std::to_string(static_cast<i32>(EntityRegistry::moho_id(id))).c_str());
+}
+
+u32 to_entity_id(lua_State* L, int idx) {
+    if (!lua_isnumber(L, idx)) return 0;
+    return EntityRegistry::from_moho_id(static_cast<u32>(static_cast<i32>(lua_tonumber(L, idx))));
 }
 
 void push_new_script_object(lua_State* L, const char* kind) {

@@ -7,6 +7,7 @@
 
 #include "lua/lua_state.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -43,7 +44,7 @@ void test_assist_beam(TestContext& ctx) {
     const auto global_number = [&](const char* name) {
         lua_pushstring(ctx.L, name);
         lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-        const u32 n = static_cast<u32>(lua_tonumber(ctx.L, -1));
+        const u32 n = osc::sim::to_entity_id(ctx.L, -1);
         lua_pop(ctx.L, 1);
         return n;
     };

@@ -6,6 +6,7 @@
 #include "render_probe.hpp"
 
 #include "lua/lua_state.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 
 #include <fmt/format.h>
@@ -30,7 +31,7 @@ std::vector<u32> global_ids(lua_State* L, const char* name) {
                 lua_pop(L, 1);
                 break;
             }
-            ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+            ids.push_back(osc::sim::to_entity_id(L, -1));
             lua_pop(L, 1);
         }
     }

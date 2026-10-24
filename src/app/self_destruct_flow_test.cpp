@@ -47,7 +47,7 @@ u32 self_destruct_commander(lua::LuaState& ui, const sim::SimState& sim, i32 arm
     const auto ctrl_k =
         fmt::format("SelectUnits({{GetUnitById({})}}) "
                     "import('/lua/ui/game/confirmunitdestroy.lua').ConfirmUnitDestruction()",
-                    acu);
+                    osc::sim::EntityRegistry::moho_id(acu));
     if (auto r = ui.do_string(ctrl_k); !r) {
         why = "self-destructing: " + r.error().message;
         return 0;

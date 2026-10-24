@@ -11,6 +11,7 @@
 #include "render_probe.hpp"
 
 #include "lua/lua_state.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 
 #include <lua.h>
@@ -31,11 +32,11 @@ void test_pod_rebuild(TestContext& ctx) {
         run_lua(ctx, R"(
             local data = __osc_pr_station.PodData and __osc_pr_station.PodData.PodOne
             local pod = data and data.Active and data.PodHandle
-            __osc_pr_pod = (pod and not pod:IsDead()) and tonumber(pod:GetEntityId()) or 0
+            __osc_pr_pod = (pod and not pod:IsDead()) and tonumber(pod:GetEntityId()) or -1
         )");
         lua_pushstring(ctx.L, "__osc_pr_pod");
         lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-        const u32 id = lua_isnumber(ctx.L, -1) ? static_cast<u32>(lua_tonumber(ctx.L, -1)) : 0;
+        const u32 id = osc::sim::to_entity_id(ctx.L, -1);
         lua_pop(ctx.L, 1);
         return id;
     };

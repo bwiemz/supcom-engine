@@ -25,6 +25,7 @@
 
 #include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -70,7 +71,7 @@ void test_unit_hooks(TestContext& ctx) {
             lua_gettable(L, -2);
             lua_pushvalue(L, -2);
             if (lua_pcall(L, 1, 1, 0) == 0) {
-                const auto id = static_cast<u32>(lua_tonumber(L, -1));
+                const auto id = osc::sim::to_entity_id(L, -1);
                 auto* e = ctx.sim.entity_registry().find(id);
                 if (e && e->is_unit() && !e->destroyed()) u = static_cast<sim::Unit*>(e);
             }

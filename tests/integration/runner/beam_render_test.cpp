@@ -20,6 +20,7 @@
 #include "renderer/beam_renderer.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/entity.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
@@ -148,7 +149,7 @@ void test_beam_render(TestContext& ctx) {
     const u32 cbfx = effect_id("__osc_bt_cbfx");
     lua_pushstring(ctx.L, "__osc_bt_cbid");
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
-    const u32 cb = lua_isnumber(ctx.L, -1) ? static_cast<u32>(lua_tonumber(ctx.L, -1)) : 0;
+    const u32 cb = osc::sim::to_entity_id(ctx.L, -1);
     lua_pop(ctx.L, 1);
     sim::Vector3 cb_end{beam_at.x, 0, beam_at.z + 20};
     cb_end.y = ctx.sim.terrain()->get_terrain_height(cb_end.x, cb_end.z) + kLift;

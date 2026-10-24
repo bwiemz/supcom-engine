@@ -17,6 +17,7 @@
 #include "render_probe.hpp"
 
 #include "lua/lua_state.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -92,7 +93,7 @@ void test_drown(TestContext& ctx) {
     lua_rawget(L, LUA_GLOBALSINDEX);
     for (size_t i = 0; i < ids.size(); ++i) {
         lua_rawgeti(L, -1, static_cast<int>(i + 1));
-        ids[i] = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+        ids[i] = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
     }
     lua_pop(L, 1);

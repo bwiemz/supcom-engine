@@ -54,14 +54,22 @@ void call_on_collision(lua_State* L, Prop& prop, const Unit& unit, const BoxCont
 
 } // namespace
 
-void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 tick) {
+void collide_with_props(Unit& unit, EntityRegistry& registry, lua_State* L, u32 tick,
+                        bool moho_pathing) {
     if (!L || EntityRegistry::moho_id(unit.entity_id()) % 5 != tick % 5 ||
         !(unit.size_x() * unit.size_z() > 0.2f)) {
         return;
     }
-    const Vector3& v = unit.velocity();
-    if (!((v.x * v.x + v.y * v.y + v.z * v.z) * 0.01f > 1e-6f)) {
-        return;
+    if (moho_pathing) {
+        const Vector3& mv = unit.motion_velocity();
+        if (!(mv.x * mv.x + mv.y * mv.y + mv.z * mv.z > 0.000001f) && !unit.surface_collision())
+            return;
+        if (unit.pushed()) return;
+    } else {
+        const Vector3& v = unit.velocity();
+        if (!((v.x * v.x + v.y * v.y + v.z * v.z) * 0.01f > 1e-6f)) {
+            return;
+        }
     }
     if (unit.is_dying() || unit.is_being_built() || unit.can_fly() || unit.transport_id() != 0 ||
         unit.parent_entity_id() != 0 || unit.layer() == "Air" || unit.layer() == "Sub" ||

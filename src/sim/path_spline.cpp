@@ -160,7 +160,11 @@ void Spline::brake(const SplineUnit& u, const Pose& pose, int mode, const Spline
     Vector3 step = with_length(forward, speed);
     constexpr f32 kMax = std::numeric_limits<f32>::max();
     Vector3 travel{kMax, kMax, kMax};
-    if (speed != 0) travel = {v.x / speed, v.y / speed, v.z / speed};
+    // Times the inverse speed, as Update forms it (a quotient rounds otherwise).
+    if (speed != 0) {
+        const f32 inverse = 1.0f / speed;
+        travel = {v.x * inverse, v.y * inverse, v.z * inverse};
+    }
     if (travel.y * forward.y + travel.z * forward.z + travel.x * forward.x < 0)
         step = {-step.x, -step.y, -step.z};
     bool done = false;

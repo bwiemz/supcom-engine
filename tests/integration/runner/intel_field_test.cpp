@@ -19,6 +19,7 @@
 #include "intel_probe.hpp"
 #include "render_probe.hpp"
 
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
@@ -131,9 +132,9 @@ void test_intel_fields(TestContext& ctx) {
     u32 frigate = 0;
     if (lua_istable(L, -1)) {
         lua_rawgeti(L, -1, 1);
-        sub = static_cast<u32>(lua_tonumber(L, -1));
+        sub = osc::sim::to_entity_id(L, -1);
         lua_rawgeti(L, -2, 2);
-        frigate = static_cast<u32>(lua_tonumber(L, -1));
+        frigate = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 2);
     }
     lua_pop(L, 1);

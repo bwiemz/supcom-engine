@@ -105,8 +105,15 @@ bool attacking(const Unit& u) {
 /// owner ignores `c` altogether.
 bool ignored(const Unit& owner, const Unit& c) {
     if (&c == &owner || !steers(c) || !c.is_mobile()) return true;
+    if (c.has_unit_state("Attached")) return true;
     if (c.layer() != owner.layer() || (owner.is_naval() && !c.is_naval())) return true;
     if (can_fly(c) && (c.is_air_unit() || c.transport_capacity() > 0)) return true;
+    // One that ignores structures passes over a unit with no footprint flags at all
+    // (func_IsSourceUnit, 0x0062EEA0).
+    if ((owner.footprint().flags & blueprints::kFootprintIgnoreStructures) != 0 &&
+        c.footprint().flags == 0)
+        return true;
+    if (owner.has_unit_state("Upgrading") && c.creator_id() == owner.entity_id()) return true;
     const u32 awaited = awaited_transport(owner);
     return awaited != 0 && awaited == awaited_transport(c);
 }
@@ -349,6 +356,45 @@ bool ignores_structures(const Unit& u) {
     return (u.footprint().flags & blueprints::kFootprintIgnoreStructures) != 0;
 }
 
+/// COGrid::ForAllEntitiesIterator's units for a sphere, as CollectCollisionCandidates asks
+/// it: those whose collision shape the sphere meets, and above a radius of 3 any whose bounds
+/// touch the box 0.707 of the radius about its centre (0x00721FB0).
+std::vector<Entity*> units_meeting_sphere(const SimState& sim, const Vector3& c, f32 r) {
+    constexpr f32 kReach = 32.0f; // past any unit's shape from its centre
+    const f32 inner = r * 0.70700002f;
+    std::vector<Entity*> out;
+    for (Entity* e : sim.entity_registry().units_in_radius(c.x, c.z, r + kReach)) {
+        const CollisionShape& shape = e->collision_shape();
+        Vector3 lo, hi;
+        bool meets = false;
+        if (shape.type == CollisionShapeType::BOX) {
+            const OrientedBox box = *collision_box(*e);
+            Vector3 half{};
+            for (int i = 0; i < 3; ++i) {
+                half.x += std::abs(box.axis[i].x) * box.extent[i];
+                half.y += std::abs(box.axis[i].y) * box.extent[i];
+                half.z += std::abs(box.axis[i].z) * box.extent[i];
+            }
+            lo = {box.centre.x - half.x, box.centre.y - half.y, box.centre.z - half.z};
+            hi = {box.centre.x + half.x, box.centre.y + half.y, box.centre.z + half.z};
+            meets = box_sphere_overlap(box, c, r);
+        } else if (shape.type == CollisionShapeType::SPHERE) {
+            const Vector3 at = collision_centre(*e);
+            lo = {at.x - shape.sx, at.y - shape.sx, at.z - shape.sx};
+            hi = {at.x + shape.sx, at.y + shape.sx, at.z + shape.sx};
+            const f32 dx = at.x - c.x, dy = at.y - c.y, dz = at.z - c.z;
+            meets = dx * dx + dy * dy + dz * dz <= (r + shape.sx) * (r + shape.sx);
+        } else {
+            continue;
+        }
+        const bool in_inner = r > 3.0f && !(c.x - inner > hi.x) && !(lo.x > c.x + inner) &&
+                              !(c.y - inner > hi.y) && !(lo.y > c.y + inner) &&
+                              !(c.z - inner > hi.z) && !(lo.z > c.z + inner);
+        if (in_inner || meets) out.push_back(e);
+    }
+    return out;
+}
+
 /// Moho's CheckCollisions on the units' splines: the units near `owner` it would
 /// meet, predicted for whichever of the two yields (CollectCollisionCandidates: the
 /// ones it steers round first, then those of its army that yield to it).
@@ -366,8 +412,7 @@ void check_moho(SimState& sim, Unit& owner) {
         nodes * top * kTick + (a > 0 ? top * top / (a * 2.0f) : 0.0f) + larger_size(owner);
     std::vector<Unit*> preferred;
     std::vector<Unit*> deferred;
-    for (Entity* e :
-         sim.entity_registry().units_in_radius(owner.position().x, owner.position().z, radius)) {
+    for (Entity* e : units_meeting_sphere(sim, owner.position(), radius)) {
         auto& c = static_cast<Unit&>(*e);
         if (ignored(owner, c)) continue;
         const Navigator& cn = c.navigator();
@@ -561,12 +606,7 @@ void steer_moho(SimState& sim, Unit& u) {
     const auto mode = [&] {
         return nav.through_target() ? path::PathType::TopSpeed : path::PathType::Normal;
     };
-    // Stop: off its spline; with nodes left on it, its meetings checked afresh.
-    const auto stop = [&] {
-        const bool remaining = nav.has_spline() && !nav.spline().empty();
-        nav.spline_stop();
-        if (remaining) check_moho(sim, u);
-    };
+    const auto stop = [&] { steer_stop(sim, u); };
     // ProcessSplineMovement.
     const auto process = [&] {
         const Vector3* dest = nav.steer_destination();
@@ -825,6 +865,17 @@ void steer_units(SimState& sim, const std::vector<u32>& ids) {
             if (steers(u)) steer_moho(sim, u);
             continue;
         }
+        // Moho's steering ticks every unit, a still one too (CAiSteeringImpl::OnTick): one
+        // pushed settles once slower than a hundredth of its top speed a tick
+        // (ProcessSplineMovement), and meets what it runs into again.
+        if (sim.moho_pathing() && steers(u) && u.pushed()) {
+            const Vector3& v = u.motion_velocity();
+            if (u.max_speed() * 0.01f > std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z)) {
+                u.set_pushed(false);
+                u.set_in_state_transition(false);
+            }
+            continue;
+        }
         if (!steers(u) || !nav.is_moving() || nav.holding() || nav.sidestepping()) continue;
         if (nav.has_collision() && now >= nav.collision().tick) resolve(sim, u, now, cache);
         else if (now >= nav.next_check()) check(sim, u, now, cache);
@@ -833,6 +884,14 @@ void steer_units(SimState& sim, const std::vector<u32>& ids) {
 
 void collide_units(SimState& sim, Unit& u) {
     collide_moho_units(sim, u);
+}
+
+void steer_stop(SimState& sim, Unit& u) {
+    Navigator& nav = u.navigator();
+    if (!nav.has_spline()) return;
+    const bool remaining = !nav.spline().empty();
+    nav.spline_stop();
+    if (remaining) check_moho(sim, u);
 }
 
 void steer_ground_units(SimState& sim) {

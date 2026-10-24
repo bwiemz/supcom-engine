@@ -183,6 +183,7 @@ Asked on 2026-10-15 and 2026-10-20: the original three times (`drive`, once with
 - `drive_diff.py --trace` compares the paths tick by tick. With `--steer-log` the engine writes its steering's decisions as retail's `/synclog` does (each `SetWaypoints`, each meeting and how it ends, each push), and `steer_diff.py` prints, per unit and move, the first event where the two part.
 - Positions and orientations print with 9 significant digits, enough to give a float back bit for bit, and `--trace` counts the legs that match bit for bit.
 - Asked on 2026-10-21 and 2026-10-22: of 337 legs of 85 ground units, top speeds off the original's fell from 47 to 20, ends off its tick from 39 to 10, and turns the wrong way from 68 to 15, with the spline states of `docs/plans/2026-10-22-moho-reverse-gears-design.md`.
+- Asked on 2026-10-24, `--moho-pathing`: 306 of 337 legs bit for bit with the original, 330 within 0.01 (`docs/plans/2026-10-23-moho-bit-exact-sim-design.md`, §6).
 
 **`blueprints/`** compares every unit blueprint with the original's. Run with `/synclog <dir>`, the original writes a file a beat, and its hooks set `sim_KeepAllLogFiles` from the interface so that it keeps them (without it Moho deletes each beat's file unless that beat went out of sync). Beat 0's file holds every blueprint as Moho filled it in, after its constructors and `OnInitBlueprint`: the defaults a `.bp` leaves out included. On the engine, its other hook logs each blueprint as the scripts see it, a `PROBE bp <id> <path>=<value>` line a field; a few ticks are enough. Then:
 

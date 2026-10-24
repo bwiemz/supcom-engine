@@ -378,7 +378,21 @@ void SimState::on_entity_unregistered(Entity& entity) {
     entity.clear_ambient_sounds();
 
     // Its ground is free (Moho's ReleaseOccupyGround, a prop's destructor),
-    // and any place it reserved to land on.
+    // and any place it reserved to land on. A prop frees its footprint where it stands
+    // now (~Prop works it out afresh from its transform): a fallen tree's may be a cell
+    // off the one it took.
+    if (entity.is_prop()) {
+        if (auto it = ground_occupants_.find(entity.entity_id());
+            it != ground_occupants_.end() && it->second.rects.size() == 1) {
+            OccupancyRect& r = it->second.rects.front();
+            const i32 w = r.x1 - r.x0;
+            const i32 h = r.z1 - r.z0;
+            r.x0 = static_cast<i32>(std::lrint(entity.position().x - static_cast<f32>(w) * 0.5f));
+            r.z0 = static_cast<i32>(std::lrint(entity.position().z - static_cast<f32>(h) * 0.5f));
+            r.x1 = r.x0 + w;
+            r.z1 = r.z0 + h;
+        }
+    }
     release_ground(entity.entity_id());
     if (entity.is_unit()) static_cast<Unit&>(entity).free_landing_reservation(*this);
 
@@ -707,7 +721,7 @@ void SimState::crash_impact(Unit& unit) {
 Entity::Walk SimState::step_entity(Entity& e, bool attached, SimContext& ctx) {
     if (e.is_unit()) {
         auto& unit = static_cast<Unit&>(e);
-        collide_with_props(unit, entity_registry_, L_, tick_count());
+        collide_with_props(unit, entity_registry_, L_, tick_count(), moho_pathing_);
         if (moho_pathing_) collide_units(*this, unit);
         unit.update(SECONDS_PER_TICK, ctx);
         unit.note_queue_head();

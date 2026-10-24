@@ -66,7 +66,7 @@ struct Scene {
 
     int calls_after(u32 first_tick, u32 ticks) {
         for (u32 t = first_tick; t < first_tick + ticks; ++t) {
-            collide_with_props(*unit, registry, lua.raw(), t);
+            collide_with_props(*unit, registry, lua.raw(), t, false);
         }
         lua_State* L = lua.raw();
         lua_getglobal(L, "calls");

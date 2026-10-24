@@ -787,8 +787,7 @@ static int unit_GetBlip(lua_State* L) {
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "EntityId");
         lua_rawget(L, 1);
-        if (lua_isnumber(L, -1))
-            entity_id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        if (lua_isnumber(L, -1)) entity_id = sim::to_entity_id(L, -1);
         lua_pop(L, 1);
     }
     if (entity_id == 0) { lua_pushnil(L); return 1; }

@@ -199,11 +199,18 @@ Vector3 cross(const Vector3& a, const Vector3& b) {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
 }
 
+/// A dot product summed (y, z) then x, as Moho's box projection forms each.
+f32 dot_yzx(const Vector3& a, const Vector3& b) {
+    return (a.y * b.y + a.z * b.z) + a.x * b.x;
+}
+
+// shortcut: Moho keeps the radius on the x87 stack (BoxRadiusOnAxisX87), which differs from
+// these float steps only when a product is a float denormal; ported with the x87 helpers.
 std::pair<f32, f32> project(const OrientedBox& b, const Vector3& axis) {
-    const f32 centre = dot(axis, b.centre);
-    const f32 radius = (std::abs(dot(axis, b.axis[2])) * b.extent[2] +
-                        std::abs(dot(axis, b.axis[1])) * b.extent[1]) +
-                       std::abs(dot(axis, b.axis[0])) * b.extent[0];
+    const f32 centre = dot_yzx(axis, b.centre);
+    const f32 radius = (std::abs(dot_yzx(axis, b.axis[2])) * b.extent[2] +
+                        std::abs(dot_yzx(axis, b.axis[1])) * b.extent[1]) +
+                       std::abs(dot_yzx(axis, b.axis[0])) * b.extent[0];
     return {centre - radius, centre + radius};
 }
 
@@ -230,6 +237,7 @@ std::optional<BoxContact> box_contact(const OrientedBox& shape, const OrientedBo
         overlap[i] = std::fmin(a_max, b_max) - std::fmax(a_min, b_min);
     }
     std::optional<BoxContact> best;
+    size_t best_axis = 0;
     for (size_t i = 0; i < axes.size(); ++i) {
         const f32 length_sq = dot(axes[i], axes[i]);
         if (length_sq < 1e-6f) {
@@ -240,10 +248,16 @@ std::optional<BoxContact> box_contact(const OrientedBox& shape, const OrientedBo
         if (!best || depth < best->depth) {
             best =
                 BoxContact{{axes[i].x * inverse, axes[i].y * inverse, axes[i].z * inverse}, depth};
+            best_axis = i;
         }
     }
     if (!best) {
         return std::nullopt;
+    }
+    // Met edge to edge, Moho's manifold leaves the normal and the depth zero
+    // (ComputeBoxBoxContactManifold, 0x00474830): a contact that pushes nothing.
+    if (best_axis >= 6) {
+        return BoxContact{{0, 0, 0}, 0.0f};
     }
     const Vector3 apart{box.centre.x - shape.centre.x, box.centre.y - shape.centre.y,
                         box.centre.z - shape.centre.z};

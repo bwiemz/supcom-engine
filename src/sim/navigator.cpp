@@ -7,6 +7,7 @@
 #include "sim/path_tables.hpp"
 #include "sim/prepare_move.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/steering.hpp"
 #include "sim/unit.hpp"
 #include "map/pathfinder.hpp"
 #include "map/terrain.hpp"
@@ -306,17 +307,15 @@ void Navigator::navigate(Unit& unit) {
     moho_.update(nav, world, army->path_queue());
     const State st = moho_.state();
     if (st == State::Idle || st == State::Failed) {
-        // There (or as near as it gets), or given up: it stops. Moho's
-        // steering->Stop() retargets CUnitMotion to where the unit is, which
-        // brakes it from its speed (CUnitMotion::Stop); undriven, the unit
-        // coasts to a stop at its brake (Unit::coast), not dead in a tick.
-        // shortcut: Moho's SetWaypoints(0) brakes one still on its spline on a fresh one and
-        // checks its meetings, yet retail's crowd probe shows it coasting; port once a probe
-        // shows why (docs/plans/2026-10-22-moho-spline-port-design.md, section 4).
+        // There (or as near as it gets), or given up: CAiNavigatorLand::Execute stops its
+        // steering first (Stop: off its spline, its meetings checked afresh if nodes were
+        // left), then goes idle, handing the steering no waypoints, and nothing is left to
+        // brake on. Undriven, it coasts.
         if (sim_->steer_log())
             *sim_->steer_log() << "STEER t=" << sim_->tick_count() << ' ' << unit.blueprint_id()
                                << " waypoints none #" << EntityRegistry::moho_id(unit.entity_id())
                                << '\n';
+        steer_stop(*sim_, unit);
         reset_moho();
         arrive();
         ended_ = true;
@@ -339,7 +338,16 @@ void Navigator::navigate(Unit& unit) {
             waypoints_.assign(1, Vector3{moho_.target_x(), pos.y, moho_.target_z()});
             waypoint_index_ = 0;
             sidestep_ = false;
-            through_target_ = !moho_.cell_in_goal(target);
+            // UseTopSpeed(IsCellInGoal) picks the flag GetVal reads: in the goal, the
+            // order's speed through it (CalcAtTopSpeed1); short of it, none left of its
+            // path and not thinking (CalcAtTopSpeed2). CAiNavigatorLand::Execute, 0x005A4280.
+            through_target_ = moho_.cell_in_goal(target) ? speed_through_goal_
+                                                         : status_ != Status::WaitingForPath &&
+                                                               moho_.last_node_index() < 0;
+        } else {
+            // At it, the steering still takes it for its destination (mDestination), what a
+            // path asked afresh after a push makes for.
+            set_steer_destination(Vector3{moho_.target_x(), pos.y, moho_.target_z()});
         }
     }
     status_ = st == State::HasPath ? Status::Moving : Status::WaitingForPath;
@@ -412,6 +420,9 @@ path::Pose spline_pose(const Unit& unit) {
     const Quaternion& q = unit.orientation();
     const Vector3 forward{(q.w * q.y + q.z * q.x) * 2.0f, (q.z * q.y - q.w * q.x) * 2.0f,
                           1.0f - (q.y * q.y + q.x * q.x) * 2.0f};
+    // Its velocity a tick, as Unit::GetVelocity (0x006A9C90) gives it: off the ground, its
+    // motion's own (CUnitMotion's mVelocity), not the step between its last two places.
+    if (unit.layer() != "Air") return {unit.position(), forward, unit.motion_velocity()};
     const Vector3& v = unit.velocity();
     constexpr f32 kTick = 0.1f;
     return {unit.position(), forward, {v.x * kTick, v.y * kTick, v.z * kTick}};
@@ -455,8 +466,12 @@ void Navigator::spline_generate(const Unit& unit, const Vector3& to, path::PathT
         world.wont_fit = [&](f32 x, f32 z) {
             return sim_->footprint_fits_at(unit.footprint(), x, z) == 0;
         };
+        // A unit that turns wider than it turns fast brakes for one standing where it
+        // would go (Generate's PPS_7: UnitIsBlockedAt, mode 2).
+        world.blocked = [&](f32 x, f32 z) {
+            return sim_->unit_blockers().unit_blocked_at(unit.entity_id(), x, z, 2);
+        };
     }
-    // shortcut: UnitIsBlockedAt (units standing where a wide unit would turn) is left out.
     spline_.generate(spline_unit(unit), spline_pose(unit), to, type, carry_on, unit_at(unit, to),
                      world);
     has_spline_ = true;

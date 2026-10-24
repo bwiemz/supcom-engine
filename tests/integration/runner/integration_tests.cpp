@@ -27,7 +27,10 @@
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
 #include "sim/pose.hpp"
+#include "sim/path_clusters.hpp"
+#include "sim/path_tables.hpp"
 #include "sim/projectile.hpp"
+#include "sim/script_class.hpp"
 #include "sim/weapon.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/ieffect.hpp"
@@ -73,7 +76,7 @@ static int l_test_acu_id(lua_State* L) {
     if (id == 0) {
         lua_pushnil(L);
     } else {
-        lua_pushnumber(L, static_cast<lua_Number>(id));
+        lua_pushnumber(L, static_cast<lua_Number>(osc::sim::EntityRegistry::moho_id(id)));
     }
     return 1;
 }
@@ -478,12 +481,13 @@ void test_chain(TestContext& ctx) {
             // Phase 2: Factory builds T1 Engineer (uel0105)
             // Economy.BuildTime=130, Factory BuildRate=20 → 6.5s = 65 ticks + margin
             spdlog::info("--- Phase 2: Factory builds T1 Engineer (uel0105) ---");
-            std::string p2_lua =
-                "local factory = GetEntityById(" + std::to_string(factory_id) + ")\n"
-                "if factory then\n"
-                "    LOG('Chain Phase 2: Factory building uel0105')\n"
-                "    IssueBuildFactory({factory}, 'uel0105', 1)\n"
-                "end";
+            std::string p2_lua = "local factory = GetEntityById(" +
+                                 std::to_string(osc::sim::EntityRegistry::moho_id(factory_id)) +
+                                 ")\n"
+                                 "if factory then\n"
+                                 "    LOG('Chain Phase 2: Factory building uel0105')\n"
+                                 "    IssueBuildFactory({factory}, 'uel0105', 1)\n"
+                                 "end";
             auto r2 = ctx.lua_state.do_string(p2_lua);
             if (!r2) spdlog::warn("Chain P2 Lua error: {}", r2.error().message);
 
@@ -521,7 +525,9 @@ void test_chain(TestContext& ctx) {
                 // Economy.BuildTime=125, Engineer BuildRate=5 → 25s = 250 ticks + margin
                 spdlog::info("--- Phase 3: Engineer builds T1 PGen (ueb1101) ---");
                 std::string p3_lua =
-                    "local eng = GetEntityById(" + std::to_string(engineer_id) + ")\n"
+                    "local eng = GetEntityById(" +
+                    std::to_string(osc::sim::EntityRegistry::moho_id(engineer_id)) +
+                    ")\n"
                     "if eng then\n"
                     "    local pos = eng:GetPosition()\n"
                     "    local build_pos = {pos[1] + 10, pos[2], pos[3]}\n"
@@ -6458,6 +6464,43 @@ void test_prop(TestContext& ctx) {
         if none ~= nil then error('an empty rect gave ' .. tostring(none)) end
         rock:Destroy()
     )");
+    // A tree, worth reclaiming but taking no cells (no OccupancyCaps), still dirties the path
+    // clusters under it as it is made, and as it goes where it stands then (Moho's Prop:
+    // ExecuteOccupy; ~Prop's ReleaseOccupy, from its transform).
+    if (auto* tables = ctx.sim.path_tables(); tables && tables->size() > 0) {
+        const auto* acu = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
+        const auto cluster = [](f32 v) { return static_cast<osc::i32>(v) >> 3; };
+        const osc::i32 cx = acu ? cluster(acu->position().x) : 0;
+        const osc::i32 cz = acu ? cluster(acu->position().z) + 2 : 0;
+        const f32 x = static_cast<f32>(cx * 8) + 4.5f;
+        const f32 z = static_cast<f32>(cz * 8) + 4.5f;
+        const auto& map = tables->map(0);
+        tables->update_background(INT_MAX);
+        const bool clean = !map.dirty(1, cx, cz);
+        (void)ctx.lua_state.do_string(fmt::format(
+            "__osc_dirty_tree = CreatePropHPR('/env/evergreen/props/trees/brch01_prop.bp', {0}, "
+            "GetTerrainHeight({0}, {1}), {1}, 0, 0, 0)",
+            x, z));
+        const bool made = map.dirty(1, cx, cz);
+        tables->update_background(INT_MAX);
+        (void)ctx.lua_state.do_string(fmt::format(
+            "__osc_dirty_tree:SetPosition(Vector({0}, GetTerrainHeight({0}, {1}), {1}), true) "
+            "__osc_dirty_tree:Destroy()",
+            x + 8.0f, z));
+        ctx.sim.tick();
+        const bool gone = map.dirty(1, cx + 1, cz) && !map.dirty(1, cx, cz);
+        if (acu && clean && made && gone) {
+            pass++;
+            spdlog::info("[PASS] Test 10b2: a tree dirties the clusters it is made on, and goes "
+                         "dirtying those where it stands");
+        } else {
+            fail++;
+            osc::test_status::fail(
+                "[FAIL] Test 10b2: a tree's clusters: clean {}, made {}, gone {}", clean, made,
+                gone);
+        }
+    }
+
     // Moho's order, as the original game gives it (probed 2026-10-13): a
     // cell's units the last linked first, so the last made, and one that
     // left and came back first again.
@@ -7070,7 +7113,7 @@ void test_projectile(TestContext& ctx) {
             }
             osc::sim::Entity* e = nullptr;
             if (lua_isnumber(L, -1)) {
-                e = ctx.sim.entity_registry().find(static_cast<osc::u32>(lua_tonumber(L, -1)));
+                e = ctx.sim.entity_registry().find(osc::sim::to_entity_id(L, -1));
             }
             lua_pop(L, 1);
             return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e)->get_weapon(0) : nullptr;
@@ -7243,7 +7286,7 @@ void test_weapon(TestContext& ctx) {
         lua_State* L = ctx.lua_state.raw();
         lua_pushstring(L, "__osc_built_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         auto* built = ctx.sim.entity_registry().find(id);
         if (built && built->is_unit())
@@ -7414,7 +7457,7 @@ void test_targeting(TestContext& ctx) {
         lua_State* L = ctx.lua_state.raw();
         lua_pushstring(L, global);
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
@@ -7702,7 +7745,7 @@ void test_aim(TestContext& ctx) {
         lua_State* L = ctx.lua_state.raw();
         lua_pushstring(L, "__osc_tank_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         const auto* e = ctx.sim.entity_registry().find(id);
         const auto* tank = e && e->is_unit() ? static_cast<const osc::sim::Unit*>(e) : nullptr;
@@ -7807,7 +7850,7 @@ void test_death(TestContext& ctx) {
     const auto global_id = [L](const char* name) {
         lua_pushstring(L, name);
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         return id;
     };
@@ -8482,7 +8525,7 @@ void test_collide(TestContext& ctx) {
         auto* L = ctx.lua_state.raw();
         lua_pushstring(L, "__osc_striker_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         const osc::sim::Entity* striker = ctx.sim.entity_registry().find(id);
         const auto shape = striker ? striker->collision_shape() : osc::sim::CollisionShape{};
@@ -8848,7 +8891,7 @@ void test_area(TestContext& ctx) {
         const auto global = [L](const char* name) {
             lua_pushstring(L, name);
             lua_rawget(L, LUA_GLOBALSINDEX);
-            const auto v = static_cast<osc::u32>(lua_tonumber(L, -1));
+            const auto v = osc::sim::to_entity_id(L, -1);
             lua_pop(L, 1);
             return v;
         };
@@ -9178,7 +9221,8 @@ void test_drive(TestContext& ctx) {
         if math.abs(vz - (b[3] - a[3])) > 1e-3 or math.abs(vx - (b[1] - a[1])) > 1e-3 then
             error('velocity ' .. vx .. ',' .. vz .. ' for a move of ' .. (b[1] - a[1]) .. ',' .. (b[3] - a[3]))
         end
-        if vz <= 0.1 then error('not moving: ' .. vz) end
+        -- Its path turns aside round the hill, so its whole ground speed, not z's alone.
+        if math.sqrt(vx * vx + vz * vz) <= 0.05 then error('not moving: ' .. vx .. ',' .. vz) end
         if moho.unit_methods.GetVelocity == nil then error('not on moho.unit_methods') end
     )");
 
@@ -9213,7 +9257,7 @@ void test_steer(TestContext& ctx) {
         if (!lua(std::string("__osc_id = ") + global + ":GetEntityId()")) return nullptr;
         lua_pushstring(L, "__osc_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
@@ -9370,7 +9414,10 @@ void test_steer(TestContext& ctx) {
     {
         const float r = reach("__osc_east", "__osc_north");
         const Watch w = watch("__osc_east", "__osc_north", 300, true, false);
-        check((w.held[0] || w.held[1]) && w.closest >= 0.9f * r && w.arrived[0] && w.arrived[1],
+        // Retail's Strikers come within 0.803 of a reach of 0.90 at this crossing (cone
+        // probe, cross90a), and Moho's pathing matches that.
+        check((w.held[0] || w.held[1]) && w.closest >= (moho ? 0.85f : 0.9f) * r && w.arrived[0] &&
+                  w.arrived[1],
               fmt::format("Test 2: crossing, one stops for the other (held {} {}, closest {:.2f} "
                           "of {:.2f})",
                           w.held[0], w.held[1], w.closest, r));
@@ -10101,7 +10148,7 @@ void test_missile(TestContext& ctx) {
         u32 a_id = 0;
         if (ctx.lua_state.do_string("__osc_a_id = __osc_a:GetEntityId()")) {
             lua_getglobal(ctx.L, "__osc_a_id");
-            a_id = static_cast<u32>(lua_tonumber(ctx.L, -1));
+            a_id = osc::sim::to_entity_id(ctx.L, -1);
             lua_pop(ctx.L, 1);
         }
         const osc::sim::EntityRecord* rec = snap.find(a_id);
@@ -11503,7 +11550,7 @@ void test_range(TestContext& ctx) {
         __osc_burn_id = tonumber(__osc_burn:GetEntityId())
     )");
     lua_getglobal(ctx.lua_state.raw(), "__osc_burn_id");
-    const auto burn_id = static_cast<osc::u32>(lua_tonumber(ctx.lua_state.raw(), -1));
+    const auto burn_id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1);
     lua_pop(ctx.lua_state.raw(), 1);
     bool unit_templates = false;
     const auto burning = [&](float ratio) {
@@ -11542,7 +11589,7 @@ void test_range(TestContext& ctx) {
     )");
     {
         lua_getglobal(ctx.lua_state.raw(), "__osc_scaled_id");
-        const auto id = static_cast<osc::u32>(lua_tonumber(ctx.lua_state.raw(), -1));
+        const auto id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1);
         lua_pop(ctx.lua_state.raw(), 1);
         const auto* e = ctx.sim.entity_registry().find(id);
         check(e && e->scale_x() == 1.0f && std::abs(e->scale_y() - 0.2f) < 1e-6f &&
@@ -11811,7 +11858,7 @@ void test_factory_assist(TestContext& ctx) {
         __osc_a_id = __osc_a:GetEntityId()
     )");
     lua_getglobal(ctx.lua_state.raw(), "__osc_a_id");
-    const auto a_id = static_cast<u32>(std::stoul(lua_tostring(ctx.lua_state.raw(), -1)));
+    const auto a_id = osc::sim::to_entity_id(ctx.lua_state.raw(), -1);
     lua_pop(ctx.lua_state.raw(), 1);
     auto* a_unit = static_cast<osc::sim::Unit*>(ctx.sim.entity_registry().find(a_id));
     if (a_unit) a_unit->increase_build_count(1, 2);
@@ -12115,7 +12162,7 @@ void test_factory_rally(TestContext& ctx) {
     {
         lua_State* L = ctx.lua_state.raw();
         lua_getglobal(L, "__osc_a_id");
-        const auto a_id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto a_id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         osc::sim::UnitCommand move;
         move.type = osc::sim::CommandType::Move;
@@ -12584,7 +12631,7 @@ void test_transport_slots(TestContext& ctx) {
             lua_gettable(L, -2);
             lua_pushvalue(L, -2);
             lua_pcall(L, 1, 1, 0);
-            const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+            const auto id = osc::sim::to_entity_id(L, -1);
             lua_pop(L, 2);
             if (const auto* e = ctx.sim.entity_registry().find(id)) out.push_back(e->position());
         }
@@ -12652,7 +12699,8 @@ void test_transport_slots(TestContext& ctx) {
                       number("__osc_named"), number("__osc_distinct")));
 
     lua("__osc_xid = __osc_xport:GetEntityId()");
-    const auto* xport = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_xid")));
+    const auto* xport = ctx.sim.entity_registry().find(
+        osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_xid"))));
     const auto* transport =
         xport && xport->is_unit() ? static_cast<const osc::sim::Unit*>(xport) : nullptr;
     // How many carried units hang by their AttachPoint bone, and how far the
@@ -12779,7 +12827,8 @@ void test_transport_pickup(TestContext& ctx) {
     };
     const auto unit = [&](const char* expr) -> osc::sim::Unit* {
         lua((std::string("__osc_id = ") + expr + ":GetEntityId()").c_str());
-        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto* terrain = ctx.sim.terrain();
@@ -13061,7 +13110,7 @@ int test_board(lua_State* L) {
         lua_gettable(L, idx);
         lua_pushvalue(L, idx);
         lua_call(L, 1, 1);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         return id;
     };
@@ -13105,7 +13154,8 @@ void test_carrier(TestContext& ctx) {
     };
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
-        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
 
@@ -13312,7 +13362,8 @@ void test_right_click(TestContext& ctx) {
     };
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
-        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     if (!lua(R"(
@@ -13454,7 +13505,7 @@ void test_right_click(TestContext& ctx) {
     // completed, it hears OnStopBeingBuilt once.
     if (unbuilt) {
         const osc::u32 pgen = unbuilt->entity_id();
-        lua(("__osc_pgen = " + std::to_string(pgen)).c_str());
+        lua(("__osc_pgen = " + std::to_string(osc::sim::EntityRegistry::moho_id(pgen))).c_str());
         lua(R"(
             __osc_eng2 = CreateUnitHPR('uel0105', 'ARMY_1', __osc_x + 8, GetTerrainHeight(__osc_x + 8, __osc_z - 8), __osc_z - 8, 0, 0, 0)
             __osc_done = 0
@@ -13505,7 +13556,10 @@ void test_right_click(TestContext& ctx) {
             }
         }
         for (int i = 0; i < 20; ++i) ctx.sim.tick();
-        lua(("__osc_left = " + std::to_string(left ? left->entity_id() : 0)).c_str());
+        lua(("__osc_left = " +
+             std::to_string(static_cast<osc::i32>(
+                 osc::sim::EntityRegistry::moho_id(left ? left->entity_id() : 0))))
+                .c_str());
         const bool was_building = left && eng->build_target_id() == left->entity_id();
         lua(R"(
             IssueClearCommands({__osc_eng})
@@ -13520,7 +13574,8 @@ void test_right_click(TestContext& ctx) {
         // Its orders cleared, the builder lets the build go and stops paying.
         check(was_building && eng->build_target_id() == 0 && !eng->economy().consumption_active,
               "a builder whose orders are cleared lets its build go");
-        const osc::u32 left_id = static_cast<osc::u32>(number("__osc_left"));
+        const osc::u32 left_id = osc::sim::EntityRegistry::from_moho_id(
+            static_cast<osc::u32>(static_cast<osc::i32>(number("__osc_left"))));
         const auto* le = left_id ? ctx.sim.entity_registry().find(left_id) : nullptr;
         left = le && !le->destroyed() && le->is_unit() ? static_cast<const osc::sim::Unit*>(le)
                                                        : nullptr;
@@ -13626,7 +13681,8 @@ void test_carrier_land(TestContext& ctx) {
     };
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
-        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
 
@@ -13994,7 +14050,7 @@ void test_change_army(TestContext& ctx) {
             return nullptr;
         lua_pushstring(L, "__osc_id");
         lua_rawget(L, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        const auto id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         auto* e = ctx.sim.entity_registry().find(id);
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
@@ -14275,7 +14331,8 @@ void test_air_turn(TestContext& ctx) {
         return v;
     };
     const auto unit = [&](const char* id_global) -> const osc::sim::Unit* {
-        const auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number(id_global)));
+        const auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number(id_global))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<const osc::sim::Unit*>(e)
                                                     : nullptr;
     };
@@ -14507,7 +14564,8 @@ void test_air_staging(TestContext& ctx) {
     };
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
-        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto dock = [&](osc::sim::Unit& plane, const osc::sim::Unit& pad) {
@@ -14956,7 +15014,8 @@ void test_transport_drop(TestContext& ctx) {
     };
     const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
         lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
-        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        auto* e = ctx.sim.entity_registry().find(
+            osc::sim::EntityRegistry::from_moho_id(static_cast<osc::u32>(number("__osc_id"))));
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto* terrain = ctx.sim.terrain();
@@ -16175,12 +16234,12 @@ void test_unitsound(TestContext& ctx) {
         const osc::sim::Vector3 at = e1->position();
         auto made = ctx.lua_state.do_string(fmt::format(
             "local u = CreateUnitHPR('uel0201', 'ARMY_1', {0}, GetTerrainHeight({0}, {1}), "
-            "{1}, 0, 0, 0)\n__osc_sound_unit = u and u:GetEntityId() or 0",
+            "{1}, 0, 0, 0)\n__osc_sound_unit = u and u:GetEntityId() or -1",
             at.x + 12.0f, at.z + 12.0f));
         lua_State* sL = ctx.lua_state.raw();
         lua_pushstring(sL, "__osc_sound_unit");
         lua_rawget(sL, LUA_GLOBALSINDEX);
-        const auto made_id = static_cast<osc::u32>(lua_tonumber(sL, -1));
+        const auto made_id = osc::sim::to_entity_id(sL, -1);
         lua_pop(sL, 1);
         if (!made || made_id == 0 || !reg.find(made_id)) {
             osc::test_status::fail("[FAIL] the unit sound test's tank wasn't made");
@@ -16194,7 +16253,7 @@ void test_unitsound(TestContext& ctx) {
     // Inject test audio entries into the unit's blueprint Audio table. The
     // engine reads the blueprint from the store (GetBlueprint); e.Blueprint
     // is a FAF script field retail units don't have.
-    std::string id_str = std::to_string(test_id);
+    std::string id_str = std::to_string(osc::sim::EntityRegistry::moho_id(test_id));
     auto inject = ctx.lua_state.do_string(
         "local e = GetEntityById(" + id_str + ")\n"
         "if not e then error('inject: entity not found') end\n"
@@ -16300,12 +16359,12 @@ void test_unitsound(TestContext& ctx) {
     auto loop_of = [&](const char* name) -> osc::audio::SoundHandle {
         auto r = lua(std::string("local c = e.AmbientSounds and e.AmbientSounds.") + name +
                      "\nif not e.AmbientSounds then c = e.SoundEntity or e end"
-                     "\n__osc_loop_entity = c and c:GetEntityId() or 0");
+                     "\n__osc_loop_entity = c and c:GetEntityId() or -1");
         if (!r) return osc::audio::INVALID_SOUND;
         lua_State* sL = ctx.lua_state.raw();
         lua_pushstring(sL, "__osc_loop_entity");
         lua_rawget(sL, LUA_GLOBALSINDEX);
-        const auto id = static_cast<osc::u32>(lua_tonumber(sL, -1));
+        const auto id = osc::sim::to_entity_id(sL, -1);
         lua_pop(sL, 1);
         return sound->entity_loop(osc::app::entity_loop_key(id, "__ambient"));
     };
@@ -16429,7 +16488,7 @@ void test_medstub(TestContext& ctx) {
     }
     spdlog::info("Using entity #{} for medstub tests", test_id);
 
-    std::string id_str = std::to_string(test_id);
+    std::string id_str = std::to_string(osc::sim::EntityRegistry::moho_id(test_id));
     auto lua = [&](const std::string& code) {
         return ctx.lua_state.do_string(
             "local e = GetEntityById(" + id_str + ")\n" + code);
@@ -16536,7 +16595,7 @@ void test_lowstub(TestContext& ctx) {
         return;
     }
     spdlog::info("Using entity #{} for lowstub tests", test_id);
-    std::string id_str = std::to_string(test_id);
+    std::string id_str = std::to_string(osc::sim::EntityRegistry::moho_id(test_id));
 
     // Test 1: IEffect BeenDestroyed returns false before Destroy
     {
@@ -18871,7 +18930,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        auto* acu = ctx.sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+        auto* acu = ctx.sim.entity_registry().find(osc::sim::to_entity_id(L, -1));
         lua_pop(L, 1);
         play(1); // a beat to record health
         if (acu) acu->set_health(acu->health() - 50.0f);
@@ -19007,7 +19066,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         end
         SelectUnits({{acu}})
     )",
-                       unarmed_id)
+                       osc::sim::EntityRegistry::moho_id(unarmed_id))
                .c_str());
     sim_lua("__osc_ui_pgen:Destroy()");
     play(2);
@@ -19033,14 +19092,15 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         }
     });
     play(2);
-    const std::string select_unselectable = fmt::format(R"(
+    const std::string select_unselectable = fmt::format(
+        R"(
         local acu = GetSelectedUnits()[1]
         SelectUnits({{{{EntityId = {}}}, {{EntityId = {}}}}})
         local n = table.getn(GetSelectedUnits())
         SelectUnits({{acu}})
         if n ~= 0 then error(n .. ' selected') end
     )",
-                                                        bot_id, unbuilt_id);
+        osc::sim::EntityRegistry::moho_id(bot_id), osc::sim::EntityRegistry::moho_id(unbuilt_id));
     lua_ok("Test 10b3: a build bot and an unbuilt power generator can't be selected",
            select_unselectable.c_str());
     sim_lua("__osc_ui_bot:Destroy() __osc_ui_fac:Destroy()");
@@ -19069,11 +19129,12 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             return reg ? osc::renderer::shown_world_meshes(*reg)
                        : std::vector<osc::renderer::WorldMeshDraw>{};
         };
-        const std::string select_factory = fmt::format(R"(
+        const std::string select_factory =
+            fmt::format(R"(
             __osc_rally_acu = GetSelectedUnits()[1]
             SelectUnits({{{{EntityId = {}}}}})
         )",
-                                                       rally_factory);
+                        osc::sim::EntityRegistry::moho_id(rally_factory));
         lua_ok("Test 10b5: select a factory", select_factory.c_str());
         pump_frames(2);
         const auto flags = shown();
@@ -19146,7 +19207,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             ClearBuildTemplates()
             if table.getn(GetActiveBuildTemplate()) ~= 0 then error('not cleared') end
         )",
-                                                      second, first);
+                                                      osc::sim::EntityRegistry::moho_id(second),
+                                                      osc::sim::EntityRegistry::moho_id(first));
         lua_ok("Test 10b4: retail's CreateBuildTemplate makes a template of the selection",
                make_template.c_str());
         sim_lua("__osc_tpl_a:Destroy() __osc_tpl_b:Destroy()");
@@ -19199,7 +19261,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             if not has(radar_toggles, 'RULEUTC_IntelToggle') then error('the radar has no intel toggle') end
             if not has(scout_orders, 'RULEUCC_Dock') then error('the scout has no dock order') end
         )",
-                                              radar, scout);
+                                              osc::sim::EntityRegistry::moho_id(radar),
+                                              osc::sim::EntityRegistry::moho_id(scout));
         lua_ok("Test 10g0: a radar's intel toggle and a scout's dock order", check.c_str());
     }
     sim_lua("__osc_ui_radar:Destroy() __osc_ui_scout:Destroy()");
@@ -19255,14 +19318,15 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                 launcher = e.entity_id();
             }
         });
-        lua_ok("Test 10g0c: the nuke order's mode, the cursor updated", fmt::format(R"(
+        lua_ok("Test 10g0c: the nuke order's mode, the cursor updated",
+               fmt::format(R"(
             __osc_nuke_acu = GetSelectedUnits()[1]
             SelectUnits({{{{EntityId = {}}}}})
             import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {{name = 'RULEUCC_Nuke'}})
             import('/lua/ui/game/worldview.lua').viewLeft:OnUpdateCursor()
         )",
-                                                                                    launcher)
-                                                                            .c_str());
+                           osc::sim::EntityRegistry::moho_id(launcher))
+                   .c_str());
         lua_pushstring(L, "osc_ui_registry");
         lua_rawget(L, LUA_REGISTRYINDEX);
         auto* reg = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(L, -1));
@@ -19360,7 +19424,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             error('buildable: ' .. table.getn(list) .. ' blueprints, ' .. tostring(list[1]))
         end
     )",
-                                               mex_id);
+                                               osc::sim::EntityRegistry::moho_id(mex_id));
     lua_ok("Test 10g3: a T1 extractor offers its upgrade", select_mex.c_str());
     play(2);
     lua_ok("Test 10g4: the construction panel shows it", R"(
@@ -19372,7 +19436,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not upgrade then error('no ueb1202 among ' .. table.getn(shown) .. ' items') end
         SelectUnits({__osc_test_acu})
     )");
-    const std::string reselect_mex = fmt::format("SelectUnits({{{{EntityId = {}}}}})", mex_id);
+    const std::string reselect_mex = fmt::format("SelectUnits({{{{EntityId = {}}}}})",
+                                                 osc::sim::EntityRegistry::moho_id(mex_id));
     lua_ok("Test 10g5 setup: the extractor selected", reselect_mex.c_str());
     play(2);
     sim_lua("IssueUpgrade({__osc_ui_mex}, 'ueb1202')");
@@ -19405,7 +19470,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             error('focusUpgrade without health')
         end
     )",
-                                                     mex_id);
+                                                     osc::sim::EntityRegistry::moho_id(mex_id));
     lua_ok("Test 10g6: an upgrading extractor's rollover has its upgrade",
            upgrade_rollover.c_str());
     sim_lua("__osc_ui_mex:Destroy()");
@@ -19431,7 +19496,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     play(1);
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        const auto* e = ctx.sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+        const auto* e = ctx.sim.entity_registry().find(osc::sim::to_entity_id(L, -1));
         lua_pop(L, 1);
         if (e && e->is_unit() && static_cast<const osc::sim::Unit*>(e)->is_paused())
             spdlog::info("[PASS] Test 10j: ProcessInfo SetPaused paused the unit");
@@ -19498,7 +19563,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     {
         const auto* factory = army1_unit("ueb0101");
         lua_pushstring(L, "__osc_test_factory_id");
-        lua_pushnumber(L, factory ? factory->entity_id() : 0);
+        lua_pushnumber(L, static_cast<osc::i32>(osc::sim::EntityRegistry::moho_id(
+                              factory ? factory->entity_id() : 0)));
         lua_rawset(L, LUA_GLOBALSINDEX);
     }
     lua_ok("Test 10q: queue three engineers at a factory", R"(
@@ -19577,7 +19643,8 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     {
         const auto* drone = army1_unit("uea0001");
         lua_pushstring(L, "__osc_test_drone_id");
-        lua_pushnumber(L, drone ? drone->entity_id() : 0);
+        lua_pushnumber(L, static_cast<osc::i32>(
+                              osc::sim::EntityRegistry::moho_id(drone ? drone->entity_id() : 0)));
         lua_rawset(L, LUA_GLOBALSINDEX);
         if (!drone || drone->factory_queue().empty()) {
             osc::test_status::fail("[FAIL] Test 10s5: the drone has no queued builds");
@@ -19685,7 +19752,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     const auto planes = army1_units("uea0102");
     lua_newtable(L);
     for (size_t i = 0; i < planes.size(); ++i) {
-        lua_pushnumber(L, planes[i]->entity_id());
+        lua_pushnumber(L, osc::sim::EntityRegistry::moho_id(planes[i]->entity_id()));
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
     lua_pushstring(L, "__osc_dock_planes");
@@ -19814,7 +19881,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        const auto acu_id = static_cast<osc::u32>(std::stoul(lua_tostring(L, -1)));
+        const auto acu_id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         const auto* acu =
             static_cast<const osc::sim::Unit*>(ctx.sim.entity_registry().find(acu_id));
@@ -19878,7 +19945,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         __osc_test_acu_id = GetSelectedUnits()[1]:GetEntityId()
     )");
     lua_getglobal(L, "__osc_test_acu_id");
-    const auto tpl_acu = static_cast<u32>(std::stoul(lua_tostring(L, -1)));
+    const auto tpl_acu = osc::sim::to_entity_id(L, -1);
     lua_pop(L, 1);
     if (const auto* commander =
             static_cast<const osc::sim::Unit*>(ctx.sim.entity_registry().find(tpl_acu))) {
@@ -20046,7 +20113,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     // as the deposit markers FAF's maps make: a click passes through it.)
     {
         lua_getglobal(L, "__osc_test_acu_id");
-        const auto acu_id = static_cast<u32>(lua_tonumber(L, -1));
+        const auto acu_id = osc::sim::to_entity_id(L, -1);
         lua_pop(L, 1);
         auto& reg = ctx.sim.entity_registry();
         const auto* acu = reg.find(acu_id);
@@ -24287,8 +24354,8 @@ void test_commands(TestContext& ctx) {
         return;
     }
     spdlog::info("Using unit IDs: {} and {}", unit1_id, unit2_id);
-    auto u1 = std::to_string(unit1_id);
-    auto u2 = std::to_string(unit2_id);
+    auto u1 = std::to_string(osc::sim::EntityRegistry::moho_id(unit1_id));
+    auto u2 = std::to_string(osc::sim::EntityRegistry::moho_id(unit2_id));
 
     // Test 1: a launch order needs a launch weapon. The ACU's missile weapons
     // stay off until an enhancement enables them, so its orders are dropped
@@ -24582,7 +24649,7 @@ void test_deposits(TestContext& ctx) {
         spdlog::error("Deposit test: no units found");
         return;
     }
-    auto u1 = std::to_string(unit1_id);
+    auto u1 = std::to_string(osc::sim::EntityRegistry::moho_id(unit1_id));
 
     // Test 1: CreateResourceDeposit stores mass deposit
     {
@@ -24717,7 +24784,7 @@ void test_deposits(TestContext& ctx) {
             lua_State* L = ctx.lua_state.raw();
             lua_pushstring(L, "__osc_storage_id");
             lua_rawget(L, LUA_GLOBALSINDEX);
-            const auto id = static_cast<u32>(lua_tonumber(L, -1));
+            const auto id = osc::sim::to_entity_id(L, -1);
             lua_pop(L, 1);
             storage = dynamic_cast<sim::Unit*>(ctx.sim.entity_registry().find(id));
         }
@@ -25982,9 +26049,9 @@ void InterpProbe::on_frame(sim::SimState& sim, const sim::FrameView& view,
         const f32 dx = cx - p.x;
         const f32 dz = cz - p.z;
         const f32 len = std::max(std::sqrt(dx * dx + dz * dz), 1.0f);
-        const std::string order = fmt::format(
-            "IssueMove({{GetEntityById({})}}, {{{}, {}, {}}})", acu_, p.x + 40.0f * dx / len,
-            p.y, p.z + 40.0f * dz / len);
+        const std::string order = fmt::format("IssueMove({{GetEntityById({})}}, {{{}, {}, {}}})",
+                                              osc::sim::EntityRegistry::moho_id(acu_),
+                                              p.x + 40.0f * dx / len, p.y, p.z + 40.0f * dz / len);
         if (!sim_lua(order.c_str())) {
             test_status::fail("[FAIL] interp: could not order the commander to move");
             done_ = true;

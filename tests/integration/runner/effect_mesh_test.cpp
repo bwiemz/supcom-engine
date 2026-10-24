@@ -25,6 +25,7 @@
 #include "renderer/unit_renderer.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
@@ -673,8 +674,12 @@ void test_effect_meshes(TestContext& ctx) {
                 "__osc_scaled:SetScale({})\n",
                 bp, offset, scale));
             if (!made) spdlog::warn("{}: {}", bp, made.error().message);
-            const auto* p = ctx.sim.entity_registry().find(
-                static_cast<u32>(lua_number("__osc_scaled:GetEntityId()")));
+            // Read whole: a projectile's id is past a float's 24 bits.
+            (void)ctx.lua_state.do_string("__osc_number = __osc_scaled:GetEntityId()");
+            lua_pushstring(ctx.L, "__osc_number");
+            lua_rawget(ctx.L, LUA_GLOBALSINDEX);
+            const auto* p = ctx.sim.entity_registry().find(osc::sim::to_entity_id(ctx.L, -1));
+            lua_pop(ctx.L, 1);
             const f32 x = p ? p->position().x : 0.0f;
             const f32 z = p ? p->position().z : 0.0f;
             (void)frame(x, z, map::ScmapLighting{}, distance);

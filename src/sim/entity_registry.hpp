@@ -41,6 +41,8 @@ public:
     u32 register_entity(std::unique_ptr<Entity> entity);
     /// Moho's id of the entity the engine numbers `id`.
     static u32 moho_id(u32 id) { return id - 1; }
+    /// The engine's number of the entity Moho numbers `moho`.
+    static u32 from_moho_id(u32 moho) { return moho + 1; }
 
     /// Remove an entity by ID: Moho's EntityDB::Purge. The deletion queue
     /// (destroy, purge_destroyed) comes here, so the unregister hook sees each
