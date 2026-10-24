@@ -174,7 +174,8 @@ struct Options {
 void print_usage();
 /// The install to play from: the command line's, else the search's
 /// (platform::locate_game_install), with `chosen` as the folder the player
-/// chose (else the engine settings').
+/// chose (else the engine settings'). A command line with a value option
+/// given last (option_without_value) exits, refused.
 lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests,
                            const std::optional<fs::path>& chosen = std::nullopt);
 /// The first run (M228a): ask the player where FA is, with native dialogs,
@@ -184,8 +185,11 @@ u32 parse_ticks_arg(int argc, char* argv[]);
 std::string parse_map_arg(int argc, char* argv[]);
 /// The test mode flag on the command line, if any.
 const char* test_mode_flag(int argc, char* argv[]);
-/// The run's options, or null (logged) when the --replay or --load file
-/// can't be read, or --save can't be done.
+/// An option that takes a value given last, with none after it, or null.
+/// parse_args and parse_options refuse such a command line, naming it.
+const char* option_without_value(int argc, char* argv[]);
+/// The run's options, or null (logged) when an option lacks its value,
+/// the --replay or --load file can't be read, or --save can't be done.
 std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request);
 /// A player's own game, which may stop to ask them something (the first
 /// run's FA folder, M228a): interactive, and not a scripted window (the

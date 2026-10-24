@@ -15,7 +15,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <optional>
+#include <string_view>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
@@ -41,7 +43,45 @@ std::optional<UiClick> parse_point(const char* text) {
 /// How many earlier runs' logs a player's game keeps (M228b).
 constexpr int kKeptLogs = 5;
 
+/// The options that take the argument after them as their value, whatever
+/// it says: the engine's, and the integration runner's own (--render-dump
+/// to --mp-slow). Not Moho's /options (/gpgnet): Moho's CFG_GetArgOption
+/// passes over one with too few arguments after it, as if it weren't given.
+/// Nor --collect-logs, whose zip is optional. (Laid out by hand.)
+// clang-format off
+constexpr std::string_view kValueOptions[] = {
+    "--init", "--fa-path", "--faf-data", "--log", "--map", "--ticks", "--seed", "--difficulty",
+    "--ai-armies", "--ai-personality", "--replay", "--watch", "--record", "--load",
+    "--post-load-at", "--save", "--save-at", "--user-dir", "--prefs", "--screenshot",
+    "--screenshot-frame", "--golden", "--golden-tolerance", "--camera", "--capture-scale",
+    "--click", "--click-at", "--mouse", "--fast-match", "--match-telemetry", "--play-for",
+    "--play-rate", "--play-until-tick", "--bench", "--bench-scenario", "--render-bench",
+    "--render-scene", "--render-frames", "--render-warmup", "--binding-coverage",
+    "--binding-baseline", "--checksum-trace", "--entity-trace", "--entity-trace-ticks",
+    "--rng-trace", "--rng-trace-ticks", "--gpgnet", "--lan-game-join", "--mp-port",
+    "--lan-game-save", "--lan-game-resume", "--lan-game-quit-at", "--lan-game-self-destruct-at",
+    "--render-dump", "--count-marks", "--mp-join", "--mp-frames", "--mp-drop-at", "--mp-slow"
+};
+// clang-format on
+
+/// A value option given last is refused, logged with its name (true).
+bool refuse_missing_value(int argc, char* argv[]) {
+    const char* option = option_without_value(argc, argv);
+    if (!option) return false;
+    spdlog::error("{} needs a value after it", option);
+    return true;
+}
+
 } // namespace
+
+const char* option_without_value(int argc, char* argv[]) {
+    // Each scanner takes the argument after its option, so only the last
+    // can go without one
+    if (argc < 2) return nullptr;
+    const std::string_view last = argv[argc - 1];
+    const auto* found = std::find(std::begin(kValueOptions), std::end(kValueOptions), last);
+    return found != std::end(kValueOptions) ? argv[argc - 1] : nullptr;
+}
 
 void print_usage() {
     // The option table is laid out by hand.
@@ -164,6 +204,10 @@ void print_usage() {
 
 osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests,
                                 const std::optional<fs::path>& chosen) {
+    // A value option given last, read as not given, would leave the search
+    // to find another install than the one asked for
+    if (refuse_missing_value(argc, argv)) std::exit(1);
+
     osc::platform::GameInstallHints hints;
     bool print_install = false;
 
@@ -307,6 +351,7 @@ std::string parse_string_arg(int argc, char* argv[], const char* flag, const cha
 }
 
 std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request) {
+    if (refuse_missing_value(argc, argv)) return std::nullopt;
     Options o;
     o.map_path = parse_map_arg(argc, argv);
     o.tick_count = parse_ticks_arg(argc, argv);
