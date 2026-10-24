@@ -477,6 +477,15 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # A game's load draws the loading screen as it loads, as Moho's frames go
+    # on through WLD_DoLoading (#808): a skirmish launched from the front
+    # end, then its saved game, each drawing frames with its loading movie
+    # as its world loads (the save's as its snapshot restores), offscreen.
+    add_test(NAME data.loading_screen COMMAND opensupcom --loading-screen-test)
+    set_tests_properties(data.loading_screen PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 
     # The campaign through retail's own screens (M209b): the main menu, the
     # timeline movie skipped, operation select, the briefing, X1CA_001 to its

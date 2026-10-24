@@ -38,6 +38,7 @@
 #include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -106,10 +107,11 @@ struct Options {
     bool load_flow_test = false;
     bool mods_flow_test = false;
     bool self_destruct_flow_test = false;
-    bool restart_flow_test = false;  ///< (#811)
-    bool campaign_flow_test = false; ///< (M209b)
-    bool tutorial_flow_test = false; ///< its tutorial route (campaign_flow_test is set too)
-    bool outro_flow_test = false;    ///< its outro route (campaign_flow_test is set too)
+    bool restart_flow_test = false;   ///< (#811)
+    bool loading_screen_test = false; ///< --loading-screen-test
+    bool campaign_flow_test = false;  ///< (M209b)
+    bool tutorial_flow_test = false;  ///< its tutorial route (campaign_flow_test is set too)
+    bool outro_flow_test = false;     ///< its outro route (campaign_flow_test is set too)
     bool mods_flow_lobby = false;
     std::vector<UiClick> clicks; ///< --click <label>, --click-at <x>,<y>, in order
     std::vector<MouseStep> mouse; ///< --mouse, in order
@@ -294,6 +296,56 @@ struct WorldInterp {
     }
 };
 
+// reload.cpp: execute_reload_sequence in its stages, for a window to load a
+// game's sim off its frames, as Moho's loader does (its worker thread's
+// func_WorldSessionUserLoad, while WLD_DoLoading returns at once each frame
+// until the world is in).
+/// A game's world as it loads: what the load was given, and what it made,
+/// not yet the game's. begin_world_load makes it, on the window's thread;
+/// load_world loads the sim, on any thread, touching nothing else of the
+/// game's (the UI state, the renderer, the window's state); adopt_world_load
+/// and finish_world_load make it the game, on the window's thread again.
+struct WorldLoad {
+    std::string scenario;
+    const sim::Replay* replay = nullptr; ///< a replay or saved game: its own setup
+    sim::GameSetup setup;
+    u64 seed = 0;
+    audio::SoundManager* sound = nullptr;
+    std::unique_ptr<lua::LuaState> sim_lua;
+    std::unique_ptr<sim::SimState> sim;
+    lua::ScenarioMetadata scenario_meta;
+    /// No critical failure yet (what was made stays, for the game to drop)
+    bool ok = false;
+};
+/// The old game dropped, the new sim Lua state made and its init run (it
+/// mounts the VFS), and the launch's setup read from the UI state, or a
+/// `restart`'s own (RestartSession: a new game's setup, seed included).
+WorldLoad begin_world_load(std::unique_ptr<lua::LuaState>& sim_lua_state,
+                           std::unique_ptr<sim::SimState>& sim_state, lua::LuaState& ui_lua_state,
+                           vfs::VirtualFileSystem& vfs, blueprints::BlueprintStore& store,
+                           lua::InitLoader& loader, const lua::InitConfig& config,
+                           const lua::ScenarioMetadata& scenario_meta, renderer::Renderer* renderer,
+                           u64 seed, const std::string& launch_scenario, const sim::Replay* replay,
+                           const sim::GameSetup* restart);
+/// The sim: blueprints, scenario, boot and session. On any thread, while
+/// nothing else uses the load's sim or `store` (the sim's blueprints).
+void load_world(WorldLoad& load, vfs::VirtualFileSystem& vfs, blueprints::BlueprintStore& store,
+                lua::InitLoader& loader, const lua::InitConfig& config,
+                GameStateManager& game_state_mgr);
+/// What the load made, the game's: its sim, and the world drawn's beats.
+void adopt_world_load(WorldLoad& load, std::unique_ptr<lua::LuaState>& sim_lua_state,
+                      std::unique_ptr<sim::SimState>& sim_state,
+                      lua::ScenarioMetadata& scenario_meta, lua::LuaState& ui_lua_state,
+                      WorldInterp* world_interp);
+/// A loaded game's UI side: the UI state's sim, the renderer's scene, the
+/// player's army, and the GAME state.
+void finish_world_load(sim::SimState& sim_state, lua::LuaState& sim_lua_state,
+                       lua::LuaState& ui_lua_state, vfs::VirtualFileSystem& vfs,
+                       GameStateManager& game_state_mgr, renderer::Renderer* renderer,
+                       blueprints::BlueprintStore* ui_store, renderer::InputHandler* input_handler,
+                       std::unordered_set<u32>* prev_selection, double& sim_accumulator,
+                       const std::string& launch_scenario);
+
 // frames.cpp
 bool mouse_over_ui(lua_State* uiL, f64 x, f64 y);
 void cancel_command_mode(lua_State* uiL);
@@ -387,6 +439,16 @@ private:
         Failed,  ///< the sim is spoiled: boot it again to catch up
     };
     Restore restore_save(const sim::SavedGame& save, std::string& why);
+    /// restore_save in its parts, for a window to restore off its frames:
+    /// whether to (the snapshot is this installation's, and no
+    /// --load-by-replay; `why` says why not); the restore itself, into the
+    /// sim booted for it, on any thread (Done, or Failed: the sim is
+    /// spoiled); and, once the sim is the game's again, the game resumed
+    /// from it (its post-load scheduled).
+    bool may_restore(const sim::SavedGame& save, std::string& why);
+    static Restore restore_snapshot(sim::SimState& sim, const sim::SavedGame& save,
+                                    std::string& why);
+    void restored(const sim::SavedGame& save, std::chrono::steady_clock::time_point started);
 
     /// This player's copy of a network game's save every player agreed to
     /// (OE-128), signed as their own, in their current profile's saves; the

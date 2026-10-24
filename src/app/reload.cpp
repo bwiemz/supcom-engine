@@ -115,26 +115,24 @@ int human_army(lua_State* simL, osc::sim::SimState& sim) {
 }
 
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
-//    reloads blueprints/scenario, boots sim, rebuilds renderer scene. ──
-// Returns true on success, false on critical failure.
-bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
-                             std::unique_ptr<osc::sim::SimState>& sim_state,
-                             osc::lua::LuaState& ui_lua_state, osc::vfs::VirtualFileSystem& vfs,
-                             osc::blueprints::BlueprintStore& store, osc::lua::InitLoader& loader,
-                             const osc::lua::InitConfig& config,
-                             osc::lua::ScenarioMetadata& scenario_meta,
-                             osc::GameStateManager& game_state_mgr,
-                             osc::renderer::Renderer* renderer,            // nullable for headless
-                             osc::blueprints::BlueprintStore* ui_store,    // nullable for headless
-                             osc::renderer::InputHandler* input_handler,   // nullable for headless
-                             std::unordered_set<osc::u32>* prev_selection, // nullable for headless
-                             WorldInterp* world_interp,                    // nullable for headless
-                             osc::u64 seed, // the new game's random seed
-                             double& sim_accumulator, const std::string& launch_scenario,
-                             const osc::sim::Replay* replay,       // a replay to play instead
-                             const osc::sim::GameSetup* restart) { // a game started again
+//    reloads blueprints/scenario, boots sim, rebuilds renderer scene. In
+//    stages, so a window loads the sim's part off its frames (see
+//    WorldLoad). ──
 
+WorldLoad begin_world_load(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
+                           std::unique_ptr<osc::sim::SimState>& sim_state,
+                           osc::lua::LuaState& ui_lua_state, osc::vfs::VirtualFileSystem& vfs,
+                           osc::blueprints::BlueprintStore& store, osc::lua::InitLoader& loader,
+                           const osc::lua::InitConfig& config,
+                           const osc::lua::ScenarioMetadata& scenario_meta,
+                           osc::renderer::Renderer* renderer, osc::u64 seed,
+                           const std::string& launch_scenario, const osc::sim::Replay* replay,
+                           const osc::sim::GameSetup* restart) {
     lua_State* uiL = ui_lua_state.raw();
+    WorldLoad load;
+    load.scenario = launch_scenario;
+    load.replay = replay;
+    load.scenario_meta = scenario_meta; // (kept if the scenario doesn't load)
 
     // 1. GPU fence — ensure no in-flight work
     if (renderer) renderer->clear_scene();
@@ -152,15 +150,17 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     store.rebind(nullptr);
 
     // 3. Create fresh sim Lua state
-    sim_lua_state = std::make_unique<osc::lua::LuaState>();
-    sim_lua_state->set_vfs(&vfs);
-    sim_lua_state->set_blueprint_store(&store);
+    load.sim_lua = std::make_unique<osc::lua::LuaState>();
+    load.sim_lua->set_vfs(&vfs);
+    load.sim_lua->set_blueprint_store(&store);
 
-    // 4. Run init sequence on new sim state (polyfills, config, class, import)
-    auto reinit_result = loader.execute_init(*sim_lua_state, config, vfs);
+    // 4. Run init sequence on new sim state (polyfills, config, class,
+    // import). Here, on the window's thread: it mounts the VFS its frames
+    // read.
+    auto reinit_result = loader.execute_init(*load.sim_lua, config, vfs);
     if (!reinit_result) {
         spdlog::error("Reload init failed: {}", reinit_result.error().message);
-        return false;
+        return load;
     }
 
     // The game's setup. Moho creates only the filled slots' armies, and
@@ -169,69 +169,73 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     // against no brain at all.
     // A restart's is its game's own, the seed too: Moho starts the session
     // again from its launch info, which holds the seed it was launched with.
-    if (restart) seed = restart->seed;
-    else if (replay) seed = replay->setup.seed;
-    osc::sim::GameSetup setup =
-        restart ? *restart : launch_setup(uiL, replay, launch_scenario, seed);
+    load.seed = restart ? restart->seed : replay ? replay->setup.seed : seed;
+    load.setup = restart ? *restart : launch_setup(uiL, replay, launch_scenario, load.seed);
+    // The audio engine (the application's, kept in the UI state)
+    lua_pushstring(uiL, "osc_sound_manager");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    load.sound = static_cast<osc::audio::SoundManager*>(lua_touserdata(uiL, -1));
+    lua_pop(uiL, 1);
+    load.ok = true;
+    return load;
+}
+
+void load_world(WorldLoad& load, osc::vfs::VirtualFileSystem& vfs,
+                osc::blueprints::BlueprintStore& store, osc::lua::InitLoader& loader,
+                const osc::lua::InitConfig& config, osc::GameStateManager& game_state_mgr) {
+    if (!load.ok) return;
+    load.ok = false; // until the sim boots
+    osc::lua::LuaState& sim_lua = *load.sim_lua;
+    osc::sim::GameSetup& setup = load.setup;
 
     // 5. Rebind BlueprintStore to new Lua state and reload blueprints, with
     // the game's mods (theirs, and their hooks of Blueprints.lua)
-    osc::lua::set_active_mods(sim_lua_state->raw(), setup.mods);
-    store.rebind(sim_lua_state->raw());
-    auto rebp_result = loader.load_blueprints(*sim_lua_state, vfs, store);
+    osc::lua::set_active_mods(sim_lua.raw(), setup.mods);
+    store.rebind(sim_lua.raw());
+    auto rebp_result = loader.load_blueprints(sim_lua, vfs, store);
     if (!rebp_result) {
         spdlog::error("Reload blueprint load failed: {}", rebp_result.error().message);
-        return false;
+        return;
     }
 
     // 6. Create fresh SimState
-    sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
-    sim_state->set_seed(seed);
-    sim_state->set_checksum_trace(g_checksum_trace);
-    sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
-    sim_state->set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
-    sim_state->set_moho_pathing(setup.moho_pathing);
-    sim_state->set_moho_random(setup.moho_random);
-    sim_state->set_faf_exe(!config.faf_data_path.empty());
-    spdlog::info("Game seed {:#018x}{}", seed, setup.moho_random ? ", Moho's random stream" : "");
+    load.sim = std::make_unique<osc::sim::SimState>(sim_lua.raw(), &store);
+    osc::sim::SimState& sim = *load.sim;
+    sim.set_seed(load.seed);
+    sim.set_checksum_trace(g_checksum_trace);
+    sim.set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
+    sim.set_rng_trace(g_rng_trace, g_rng_trace_from, g_rng_trace_to);
+    sim.set_moho_pathing(setup.moho_pathing);
+    sim.set_moho_random(setup.moho_random);
+    sim.set_faf_exe(!config.faf_data_path.empty());
+    spdlog::info("Game seed {:#018x}{}", load.seed,
+                 setup.moho_random ? ", Moho's random stream" : "");
 
-    // 7. Audio (the application's engine, kept in the UI state), bone
-    // cache, anim cache
-    {
-        lua_pushstring(uiL, "osc_sound_manager");
-        lua_rawget(uiL, LUA_REGISTRYINDEX);
-        auto* sound = static_cast<osc::audio::SoundManager*>(lua_touserdata(uiL, -1));
-        lua_pop(uiL, 1);
-        attach_sound(*sim_lua_state, *sim_state, sound);
-    }
-    if (world_interp) {
-        world_interp->attach(*sim_state, &ui_lua_state);
-    }
-    sim_state->set_bone_cache(
-        std::make_unique<osc::sim::BoneCache>(&vfs, &store));
-    sim_state->set_anim_cache(
-        std::make_unique<osc::sim::AnimCache>(&vfs));
+    // 7. Audio (the sim's way to it; a saved game's snapshot names it),
+    // bone cache, anim cache
+    attach_sound(sim_lua, sim, load.sound);
+    sim.set_bone_cache(std::make_unique<osc::sim::BoneCache>(&vfs, &store));
+    sim.set_anim_cache(std::make_unique<osc::sim::AnimCache>(&vfs));
 
     // 8. Load scenario from selected map
     osc::lua::ScenarioLoader new_scenario_loader;
-    auto new_meta_result = new_scenario_loader.load_scenario(
-        *sim_lua_state, vfs, launch_scenario, *sim_state);
+    auto new_meta_result = new_scenario_loader.load_scenario(sim_lua, vfs, load.scenario, sim);
     if (!new_meta_result) {
-        spdlog::error("Reload scenario failed: {}",
-                      new_meta_result.error().message);
+        spdlog::error("Reload scenario failed: {}", new_meta_result.error().message);
     } else {
-        scenario_meta = new_meta_result.value();
+        load.scenario_meta = new_meta_result.value();
         // The setup's armies: a lobby's slots taken, each its slot's army
-        for (const std::string& name : osc::sim::session_army_names(setup, scenario_meta.armies))
-            sim_state->add_army(name, name);
+        for (const std::string& name :
+             osc::sim::session_army_names(setup, load.scenario_meta.armies))
+            sim.add_army(name, name);
     }
-    if (sim_state->army_count() == 0) {
-        sim_state->add_army("ARMY_1", "Player");
+    if (sim.army_count() == 0) {
+        sim.add_army("ARMY_1", "Player");
     }
 
     // 9. Register GiveResources SimCallback on new state
     {
-        lua_State* sL = sim_lua_state->raw();
+        lua_State* sL = sim_lua.raw();
         lua_pushstring(sL, "SimCallbacks");
         lua_rawget(sL, LUA_GLOBALSINDEX);
         if (!lua_istable(sL, -1)) {
@@ -241,7 +245,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
             lua_pushvalue(sL, -2);
             lua_rawset(sL, LUA_GLOBALSINDEX);
         }
-        sim_lua_state->do_string(R"(
+        sim_lua.do_string(R"(
             local sc = rawget(_G, 'SimCallbacks')
             sc.GiveResources = function(args)
                 if not args or not args.From or not args.To then return end
@@ -254,7 +258,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
 
     // 10. Store game state manager in new sim registry
     {
-        lua_State* sL = sim_lua_state->raw();
+        lua_State* sL = sim_lua.raw();
         lua_pushstring(sL, "__osc_game_state_mgr");
         lua_pushlightuserdata(sL, &game_state_mgr);
         lua_rawset(sL, LUA_REGISTRYINDEX);
@@ -262,18 +266,16 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
 
     // 11. Boot sim (registers moho/sim bindings, runs simInit.lua)
     osc::lua::SimLoader new_sim_loader;
-    auto new_sim_result = new_sim_loader.boot_sim(
-        *sim_lua_state, vfs, *sim_state);
+    auto new_sim_result = new_sim_loader.boot_sim(sim_lua, vfs, sim);
     if (!new_sim_result) {
-        spdlog::error("Reload sim boot failed: {}",
-                      new_sim_result.error().message);
-        return false;
+        spdlog::error("Reload sim boot failed: {}", new_sim_result.error().message);
+        return;
     }
 
     // 12. Start the session from the setup
     {
-        if (!replay && setup.slots.empty() && setup.ai_armies.empty() &&
-            sim_state->army_count() >= 2) {
+        if (!load.replay && setup.slots.empty() && setup.ai_armies.empty() &&
+            sim.army_count() >= 2) {
             // No sessionConfig: ARMY_2 is the AI (legacy behavior).
             setup.ai_armies = {1};
             spdlog::info("Session: fallback — ARMY_2 as AI (no sessionConfig)");
@@ -283,7 +285,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         }
         for (size_t i = 0; i < setup.slots.size(); ++i) {
             if (!setup.slots[i].configured) continue;
-            if (auto* brain = sim_state->get_army(static_cast<osc::i32>(i))) {
+            if (auto* brain = sim.get_army(static_cast<osc::i32>(i))) {
                 brain->set_faction(setup.slots[i].faction);
                 if (!setup.slots[i].human) {
                     brain->set_ai_personality(setup.slots[i].ai_personality.empty()
@@ -294,25 +296,50 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         }
         osc::lua::SessionManager new_session_mgr;
         new_session_mgr.configure(setup);
-        auto sess_result = new_session_mgr.start_session(
-            *sim_lua_state, vfs, *sim_state, scenario_meta);
+        auto sess_result = new_session_mgr.start_session(sim_lua, vfs, sim, load.scenario_meta);
         if (!sess_result) {
-            spdlog::warn("Reload session start failed: {}",
-                         sess_result.error().message);
+            spdlog::warn("Reload session start failed: {}", sess_result.error().message);
         }
-        sim_state->set_game_setup(setup);
+        sim.set_game_setup(setup);
         // Every game records (for LastGame and --record); a replay plays.
-        if (!replay) sim_state->set_recording(true);
+        if (!load.replay) sim.set_recording(true);
     }
+    load.ok = true;
+}
+
+void adopt_world_load(WorldLoad& load, std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
+                      std::unique_ptr<osc::sim::SimState>& sim_state,
+                      osc::lua::ScenarioMetadata& scenario_meta, osc::lua::LuaState& ui_lua_state,
+                      WorldInterp* world_interp) {
+    sim_lua_state = std::move(load.sim_lua);
+    sim_state = std::move(load.sim);
+    scenario_meta = std::move(load.scenario_meta);
+    if (!sim_state) return;
+    // A game quit while paused left its sound categories paused (retail
+    // resumes them only from gamemain's OnResume): each game starts unpaused.
+    if (load.sound) load.sound->resume_all();
+    if (world_interp) {
+        world_interp->attach(*sim_state, &ui_lua_state);
+    }
+}
+
+void finish_world_load(osc::sim::SimState& sim_state, osc::lua::LuaState& sim_lua_state,
+                       osc::lua::LuaState& ui_lua_state, osc::vfs::VirtualFileSystem& vfs,
+                       osc::GameStateManager& game_state_mgr, osc::renderer::Renderer* renderer,
+                       osc::blueprints::BlueprintStore* ui_store,
+                       osc::renderer::InputHandler* input_handler,
+                       std::unordered_set<osc::u32>* prev_selection, double& sim_accumulator,
+                       const std::string& launch_scenario) {
+    lua_State* uiL = ui_lua_state.raw();
 
     // 13. Update UI state's sim_state registry pointer to new SimState
-    sim::set_sim(uiL, sim_state.get());
+    sim::set_sim(uiL, &sim_state);
 
     // 14. Rebuild renderer scene, reading blueprints through the UI state's
     // store: its tables are uiL's
     if (renderer)
-        renderer->build_scene(sim_state->terrain(), ui_store,
-                              osc::sim::world_blueprints(*sim_state), &vfs, uiL);
+        renderer->build_scene(sim_state.terrain(), ui_store, osc::sim::world_blueprints(sim_state),
+                              &vfs, uiL);
 
     // 15. The camera's reset came with the scene (CameraReset: the whole map)
 
@@ -327,8 +354,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
 
     // The player plays the army the lobby set up as theirs: not always the
     // first, as a lobby gives the player the slot taken (its start spot)
-    osc::lua::set_focus_army(sim_lua_state->raw(), uiL,
-                             human_army(sim_lua_state->raw(), *sim_state));
+    osc::lua::set_focus_army(sim_lua_state.raw(), uiL, human_army(sim_lua_state.raw(), sim_state));
 
     // 17. Clear selection
     if (input_handler) input_handler->set_selected({});
@@ -349,6 +375,34 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     game_state_mgr.transition_to(osc::GameState::GAME, nullptr); // nullptr = skip SetupUI
 
     spdlog::info("=== Map reload complete ===");
+}
+
+// Returns true on success, false on critical failure.
+bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
+                             std::unique_ptr<osc::sim::SimState>& sim_state,
+                             osc::lua::LuaState& ui_lua_state, osc::vfs::VirtualFileSystem& vfs,
+                             osc::blueprints::BlueprintStore& store, osc::lua::InitLoader& loader,
+                             const osc::lua::InitConfig& config,
+                             osc::lua::ScenarioMetadata& scenario_meta,
+                             osc::GameStateManager& game_state_mgr,
+                             osc::renderer::Renderer* renderer,            // nullable for headless
+                             osc::blueprints::BlueprintStore* ui_store,    // nullable for headless
+                             osc::renderer::InputHandler* input_handler,   // nullable for headless
+                             std::unordered_set<osc::u32>* prev_selection, // nullable for headless
+                             WorldInterp* world_interp,                    // nullable for headless
+                             osc::u64 seed, // the new game's random seed
+                             double& sim_accumulator, const std::string& launch_scenario,
+                             const osc::sim::Replay* replay,       // a replay to play instead
+                             const osc::sim::GameSetup* restart) { // a game started again
+    WorldLoad load =
+        begin_world_load(sim_lua_state, sim_state, ui_lua_state, vfs, store, loader, config,
+                         scenario_meta, renderer, seed, launch_scenario, replay, restart);
+    load_world(load, vfs, store, loader, config, game_state_mgr);
+    const bool ok = load.ok;
+    adopt_world_load(load, sim_lua_state, sim_state, scenario_meta, ui_lua_state, world_interp);
+    if (!ok) return false;
+    finish_world_load(*sim_state, *sim_lua_state, ui_lua_state, vfs, game_state_mgr, renderer,
+                      ui_store, input_handler, prev_selection, sim_accumulator, launch_scenario);
     return true;
 }
 

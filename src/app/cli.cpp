@@ -154,6 +154,9 @@ void print_usage() {
               << "                     self-destructs their commander as Ctrl-K does\n"
               << "  --restart-flow-test Offscreen: a skirmish restarted as its game menu's\n"
               << "                     Restart Game does, starting again from its launch\n"
+              << "  --loading-screen-test Offscreen: a skirmish launched from the front end,\n"
+              << "                     then its saved game loaded, each drawing its loading\n"
+              << "                     movie as its world loads (the save's as it restores)\n"
               << "  --campaign-flow-test Offscreen: the campaign through retail's screens, from\n"
               << "                     the main menu through X1CA_001 to X1CA_002's briefing\n"
               << "  --tutorial-flow-test Offscreen: the tutorial from operation select, through\n"
@@ -387,6 +390,9 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.self_destruct_flow_test = parse_flag(argc, argv, "--self-destruct-flow-test");
     // --restart-flow-test: a skirmish restarted from its game menu (#811).
     o.restart_flow_test = parse_flag(argc, argv, "--restart-flow-test");
+    // --loading-screen-test: a skirmish's load and its saved game's draw the
+    // loading screen as they load.
+    o.loading_screen_test = parse_flag(argc, argv, "--loading-screen-test");
     // --campaign-flow-test: the campaign through retail's screens (M209b).
     o.campaign_flow_test = parse_flag(argc, argv, "--campaign-flow-test");
     // --tutorial-flow-test: the same screens to the tutorial, played a while.
@@ -461,8 +467,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
     o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
                         o.mods_flow_test || o.self_destruct_flow_test || o.restart_flow_test ||
-                        o.campaign_flow_test || !o.clicks.empty() || !o.mouse.empty() ||
-                        o.lan_game_test() || o.gpgnet_scripted;
+                        o.campaign_flow_test || o.loading_screen_test || !o.clicks.empty() ||
+                        !o.mouse.empty() || o.lan_game_test() || o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
@@ -545,7 +551,8 @@ const char* test_mode_flag(int argc, char* argv[]) {
                           arg != "--replay-flow-test" && arg != "--load-flow-test" &&
                           arg != "--mods-flow-test" && arg != "--self-destruct-flow-test" &&
                           arg != "--restart-flow-test" && arg != "--campaign-flow-test" &&
-                          arg != "--tutorial-flow-test" && arg != "--outro-flow-test";
+                          arg != "--tutorial-flow-test" && arg != "--outro-flow-test" &&
+                          arg != "--loading-screen-test";
         if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join")
             return argv[i];
     }

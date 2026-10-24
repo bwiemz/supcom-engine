@@ -70,7 +70,7 @@ int run(int argc, char* argv[], TestModes* tests) {
     // so, in parse.)
     if (opt->any_test || opt->replay_flow_test || opt->load_flow_test || opt->mods_flow_test ||
         opt->self_destruct_flow_test || opt->restart_flow_test || opt->campaign_flow_test ||
-        opt->lan_game_test() || opt->gpgnet_scripted)
+        opt->loading_screen_test || opt->lan_game_test() || opt->gpgnet_scripted)
         osc::test_status::set_count_lua_failures(true);
 
     // The first run (M228a): a player's game that found no FA asks where it
@@ -88,6 +88,7 @@ int run(int argc, char* argv[], TestModes* tests) {
             tests || (retail_only && std::string_view(retail_only) == "1") || opt->any_test ||
             opt->lan_game_test() || opt->gpgnet_scripted || opt->mods_flow_test ||
             opt->self_destruct_flow_test || opt->restart_flow_test || opt->campaign_flow_test ||
+            opt->loading_screen_test ||
             !parse_string_arg(argc, argv, "--binding-coverage", "").empty();
         return data_test_mode ? kExitSkippedNoData : 1;
     }
@@ -159,20 +160,23 @@ int App::run() {
     return run_headless();
 }
 
-App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
+bool App::may_restore(const sim::SavedGame& save, std::string& why) {
     // Asked to catch up from the save's history, the oracle a restore is
     // checked against: every load, headless or the game's own
     if (opt.load_by_replay) {
         why = "--load-by-replay";
-        return Restore::Skipped;
+        return false;
     }
     if (!special_files) {
         why = "there are no special files";
-        return Restore::Skipped;
+        return false;
     }
-    if (!special_files->trusts_snapshot(save, why)) return Restore::Skipped;
-    const auto start = std::chrono::steady_clock::now();
-    if (std::string err = sim::load_snapshot(*sim_state, save.snapshot); !err.empty()) {
+    return special_files->trusts_snapshot(save, why);
+}
+
+App::Restore App::restore_snapshot(sim::SimState& sim, const sim::SavedGame& save,
+                                   std::string& why) {
+    if (std::string err = sim::load_snapshot(sim, save.snapshot); !err.empty()) {
         why = err;
         return Restore::Failed;
     }
@@ -180,24 +184,35 @@ App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
     // (a later save carries the whole game; SessionIsBeingRecorded answers
     // false all the same, as Moho's for a loaded save), and its checksum is
     // the one that history holds for the saved tick.
-    sim_state->set_recording(true);
-    sim_state->adopt_history(save.game);
+    sim.set_recording(true);
+    sim.adopt_history(save.game);
     const auto& sums = save.game.checksums;
     const u64 at =
         save.beat >= save.game.checksum_from ? save.beat - save.game.checksum_from : sums.size();
-    if (at >= sums.size() || sim_state->compute_sync_checksum() != sums[at]) {
+    if (at >= sums.size() || sim.compute_sync_checksum() != sums[at]) {
         why = "it isn't the saved game (its checksum at beat " + std::to_string(save.beat) + ")";
         return Restore::Failed;
     }
+    return Restore::Done;
+}
+
+void App::restored(const sim::SavedGame& save, std::chrono::steady_clock::time_point started) {
     restored_at = sim_state->tick_count();
     // Each peer discards queued network state beyond the agreed save beat.
     if (lua::mp_net_state().transport_ready) sim_state->command_scheduler().forget_network_state();
-    spdlog::info("Saved game '{}': restored at tick {} in {:.0f} ms", save.name,
-                 sim_state->tick_count(),
-                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
-                     .count());
+    spdlog::info(
+        "Saved game '{}': restored at tick {} in {:.0f} ms", save.name, sim_state->tick_count(),
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+            .count());
     post_load();
-    return Restore::Done;
+}
+
+App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
+    if (!may_restore(save, why)) return Restore::Skipped;
+    const auto started = std::chrono::steady_clock::now();
+    const Restore result = restore_snapshot(*sim_state, save, why);
+    if (result == Restore::Done) restored(save, started);
+    return result;
 }
 
 void App::save_network_game(sim::SimState& sim, const std::string& name) {

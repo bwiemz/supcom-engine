@@ -40,7 +40,9 @@ void detach_ui_from_sim(lua_State* uiL) {
     sim::set_sim(uiL, nullptr);
 }
 
-/// Give a sim (and its Lua state) the application's sound engine.
+/// Give a sim (and its Lua state) the application's sound engine. (Only
+/// the pointer: a game's sim may load off the window's thread, which the
+/// engine plays on.)
 void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
                   osc::audio::SoundManager* sound) {
     lua_State* L = sim_lua.raw();
@@ -49,9 +51,6 @@ void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
     else lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
     sim.set_sound_manager(sound);
-    // A game quit while paused left its categories paused (retail resumes
-    // them only from gamemain's OnResume): each game starts unpaused.
-    if (sound) sound->resume_all();
 }
 
 /// --checksum-trace <file>: every game's sims write their per-tick checksum
