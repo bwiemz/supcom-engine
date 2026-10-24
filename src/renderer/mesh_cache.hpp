@@ -71,10 +71,12 @@ enum class MeshTechnique : u32 {
     MapImager = 31,
     // The explosions' and effects' (EffectVS: unlit, as old as their mesh
     // instance). None casts a shadow (no STAGE_DEPTH).
-    Effect = 32,     ///< EffectPS: TMeshAdd; opaque, its glow 1 - albedo.a
-    Cloud = 33,      ///< EffectFadePS: TMeshCloud; the ambience alone, blended
-    OuterCloud = 34, ///< AlphaFadeTexShiftScalePS: TMeshOuterCloud; blended, no depth written
-    NukeUEF = 35,    ///< NukeHeadPS: the UEF nuke's dome; blended, alpha-tested
+    Effect = 32,      ///< EffectPS: TMeshAdd; opaque, its glow 1 - albedo.a
+    Cloud = 33,       ///< EffectFadePS: TMeshCloud; the ambience alone, blended
+    OuterCloud = 34,  ///< AlphaFadeTexShiftScalePS: TMeshOuterCloud; blended, no depth written
+    NukeUEF = 35,     ///< NukeHeadPS: the UEF nuke's dome; blended, alpha-tested
+    NukeEMP = 36,     ///< AlphaFadeTexShiftScalePS: OuterCloud's, its alpha written too
+    NukeQuantum = 37, ///< AlphaFadeTexShiftScalePS: red, blue and alpha written
 };
 
 /// Stable names for render dumps.
@@ -106,7 +108,8 @@ inline bool is_blended_technique(MeshTechnique t) {
     return is_build_technique(t) || t == MeshTechnique::AlphaFade ||
            t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal ||
            is_feedback_technique(t) || t == MeshTechnique::Cloud ||
-           t == MeshTechnique::OuterCloud || t == MeshTechnique::NukeUEF;
+           t == MeshTechnique::OuterCloud || t == MeshTechnique::NukeUEF ||
+           t == MeshTechnique::NukeEMP || t == MeshTechnique::NukeQuantum;
 }
 
 /// A shield's technique (M211k), which the shield shaders draw.
@@ -138,16 +141,17 @@ inline bool is_post_water_technique(MeshTechnique t) {
     return t == MeshTechnique::AlphaFade || t == MeshTechnique::BlackenedNormalMappedAlpha ||
            t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha ||
            is_feedback_technique(t) || t == MeshTechnique::OuterCloud ||
-           t == MeshTechnique::NukeUEF; // STAGE_POSTWATER + STAGE_PREEFFECT
+           t == MeshTechnique::NukeUEF ||
+           t == MeshTechnique::NukeEMP; // STAGE_POSTWATER + STAGE_PREEFFECT
 }
 
 /// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
 /// draws: after the water and the beams, particles and trails above it
 /// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k), UnitPlace,
-/// Effect and Cloud.
+/// Effect, Cloud and NukeQuantum.
 inline bool is_post_effect_technique(MeshTechnique t) {
     return is_shield_technique(t) || t == MeshTechnique::UnitPlace || t == MeshTechnique::Effect ||
-           t == MeshTechnique::Cloud;
+           t == MeshTechnique::Cloud || t == MeshTechnique::NukeQuantum;
 }
 
 /// The mesh.fx states the shields' passes draw with (M211k): blended
@@ -188,7 +192,8 @@ inline bool has_depth_stage(MeshTechnique t) {
            t != MeshTechnique::UnitPlace && t != MeshTechnique::MapImager &&
            !is_shield_technique(t) && !is_feedback_technique(t) && t != MeshTechnique::Effect &&
            t != MeshTechnique::Cloud && t != MeshTechnique::OuterCloud &&
-           t != MeshTechnique::NukeUEF;
+           t != MeshTechnique::NukeUEF && t != MeshTechnique::NukeEMP &&
+           t != MeshTechnique::NukeQuantum;
 }
 
 /// What a technique reads as its instance's material.y (its `parameter`

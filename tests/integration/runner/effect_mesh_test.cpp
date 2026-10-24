@@ -4,7 +4,8 @@
 // Retail's build effects are projectiles with meshes of their own: UEF's
 // cube (UEFBuildCube) and slices (AlphaFade), Aeon's pool (AeonBuildPuddle).
 // So are the UEF nuke's dome (NukeUEF), the EMP warhead's cloud
-// (OuterCloud), the teleport's shockwave (Effect) and a plume (Cloud).
+// (OuterCloud) and sphere (NukeEMP), the Aeon nuke's head (NukeQuantum), the
+// teleport's shockwave (Effect) and a plume (Cloud).
 // Moho resolves legacy ShaderNames (TMeshGlow is NormalMappedGlow) and gives
 // every mesh but a unit's a white instance colour. Test 1 builds real units;
 // the rest stand plates of the test's own off its ground, over the sky's
@@ -121,6 +122,14 @@ void test_effect_meshes(TestContext& ctx) {
         16, 4);
     write_dds(dir / "spec_none.dds", 1, flat(0, 0, 0, 0));
     write_dds(dir / "sec_black.dds", 1, flat(0, 0, 0, 0));
+    write_dds(dir / "mask_full.dds", 1, flat(0, 255, 0, 255));
+    write_dds(
+        dir / "albedo_bands.dds", 1,
+        [](int, u32, u32 row) {
+            const u8 v = (row / 4) % 2 == 0 ? 255 : 0;
+            return std::array<u8, 4>{v, v, v, 255};
+        },
+        4, 16);
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
 
     // Prop blueprints the map has none of (so none are drawn but the
@@ -760,6 +769,251 @@ void test_effect_meshes(TestContext& ctx) {
             side_draws > 0,
             fmt::format("Test 12: seen from close by its side, the dome draws ({} NukeUEF draws)",
                         side_draws));
+    }
+
+    // Test 13: NukeEMP (Depth_Enable_Less_Write_None, POSTWATER + PREEFFECT).
+    {
+        Look emp;
+        emp.shader = "NukeEMP";
+        emp.albedo = "albedo_slice.dds";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(emp, 1.0f, 100.0f, 250.0f);
+        stand(effect, 1.0f, 130.0f, 250.0f);
+        stand(emp, 1.0f, 130.0f, 250.0f, false, 2.0f);
+        stand(unit, 1.0f, 160.0f, 250.0f);
+        stand(emp, 1.0f, 160.0f, 250.0f);
+        const Rgb alone = at_lit(100.0f, 250.0f);
+        const Rgb above = at_lit(130.0f, 250.0f);
+        const Rgb level = at_lit(160.0f, 250.0f);
+        dispatch("technique=NukeEMP stage=post-water pass=0 pipeline=nuke_emp "
+                 "drawn=NukeEMP lane=2");
+        const Rgb expected = over(sky_lit, slice, 128.0f / 255.0f);
+        const Rgb lit_unit = scaled(green, 0.72f);
+        t.check(near(alone, expected) && near(above, green) && near(level, lit_unit),
+                fmt::format("Test 13: a NukeEMP plate shows {} ({} expected); over an Effect "
+                            "plate, {} (the Effect plate, {}); level with a Unit plate, {} (the "
+                            "Unit plate, {})",
+                            show(alone), show(expected), show(above), show(green), show(level),
+                            show(lit_unit)));
+    }
+
+    // Test 14: NukeQuantum (ColorWriteEnable 0x0D, POSTWATER + POSTEFFECT).
+    {
+        Look quantum;
+        quantum.shader = "NukeQuantum";
+        Look unit;
+        unit.albedo = "albedo_green.dds";
+        stand(unit, 1.0f, 190.0f, 250.0f);
+        stand(quantum, 1.0f, 190.0f, 250.0f, false, 2.0f);
+        stand(quantum, 1.0f, 220.0f, 250.0f);
+        const u32 born = ctx.sim.tick_count();
+        const Rgb above = at_lit(190.0f, 250.0f);
+        dispatch("technique=NukeQuantum stage=post-effect pass=0 pipeline=nuke_quantum "
+                 "drawn=NukeQuantum lane=2");
+        const f32 a = 128.0f / 255.0f;
+        const Rgb lit_unit = scaled(green, 0.72f);
+        const auto red_blue = [](const Rgb& below, f32 alpha) {
+            return Rgb{below[0] + (1.0f - below[0]) * alpha, below[1],
+                       below[2] + (1.0f - below[2]) * alpha};
+        };
+        while (ctx.sim.tick_count() < born + 169) {
+            ctx.sim.tick();
+        }
+        const Rgb faded = at_lit(220.0f, 250.0f);
+        t.check(near(above, red_blue(lit_unit, a)) && near(faded, red_blue(sky_lit, 0.5f * a)),
+                fmt::format("Test 14: a NukeQuantum plate over a Unit plate shows {} ({} "
+                            "expected: the Unit plate's green); 170 ticks old, {} ({})",
+                            show(above), show(red_blue(lit_unit, a)), show(faded),
+                            show(red_blue(sky_lit, 0.5f * a))));
+    }
+
+    const auto red_crossings = [&](f32 x, f32 z, int cut) {
+        const ImageRGBA8 image = frame(x, z, lit);
+        const u32 y = image.height / 2;
+        const auto at = [&](u32 x0, u32 c) {
+            return static_cast<int>(
+                image.pixels[(static_cast<size_t>(y) * image.width + x0) * 4 + c]);
+        };
+        const auto off_sky = [&](u32 x0) {
+            for (u32 c = 0; c < 3; ++c) {
+                if (std::abs(at(x0, c) - static_cast<int>(std::lround(sky_lit[c] * 255.0f))) > 12) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        u32 left = 0;
+        while (left < image.width && !off_sky(left)) {
+            ++left;
+        }
+        u32 right = image.width;
+        while (right > left && !off_sky(right - 1)) {
+            --right;
+        }
+        const f32 width = static_cast<f32>(right - left);
+        std::vector<f32> found;
+        for (u32 x0 = left; x0 + 1 < right; ++x0) {
+            const f32 e = static_cast<f32>(x0 + 1 - left) / width;
+            if (e > 0.05f && e < 0.95f && (at(x0, 0) > cut) != (at(x0 + 1, 0) > cut)) {
+                found.push_back(e);
+            }
+        }
+        return found;
+    };
+    const auto nearest_middle = [](const std::vector<f32>& found) {
+        f32 best = 1.0f;
+        for (const f32 e : found) {
+            if (std::abs(e - 0.5f) < std::abs(best - 0.5f)) {
+                best = e;
+            }
+        }
+        return best;
+    };
+
+    // Test 15: AlphaFadeTexShiftScalePS's scroll and scale, on plates turned so
+    // that their v runs across the frame.
+    {
+        const auto band = [](const std::vector<f32>& found) {
+            if (found.size() < 2) {
+                return 0.0f;
+            }
+            return (found.back() - found.front()) / static_cast<f32>(found.size() - 1);
+        };
+        for (const char* shader : {"NukeEMP", "NukeQuantum"}) {
+            Look banded;
+            banded.shader = shader;
+            banded.albedo = "albedo_bands.dds";
+            stand(banded, 1.0f, std::string(shader) == "NukeEMP" ? 250.0f : 280.0f, 280.0f);
+            const auto turned =
+                ctx.lua_state.do_string("__osc_last_plate:SetOrientation({0, 0.70710678, 0, "
+                                        "0.70710678}, true)\n");
+            if (!turned) {
+                spdlog::warn("turning the plate: {}", turned.error().message);
+            }
+        }
+        ctx.sim.tick();
+        const std::vector<f32> emp_before = red_crossings(250.0f, 280.0f, 128);
+        const std::vector<f32> quantum_before = red_crossings(280.0f, 280.0f, 128);
+        for (int i = 0; i < 10; ++i) {
+            ctx.sim.tick();
+        }
+        const std::vector<f32> emp_after = red_crossings(250.0f, 280.0f, 128);
+        const std::vector<f32> quantum_after = red_crossings(280.0f, 280.0f, 128);
+        const f32 emp_moved = std::abs(nearest_middle(emp_after) - nearest_middle(emp_before));
+        const f32 quantum_moved =
+            std::abs(nearest_middle(quantum_after) - nearest_middle(quantum_before));
+        const f32 emp_band = band(emp_after);
+        const f32 quantum_band = band(quantum_after);
+        t.check(emp_moved > 0.06f && emp_moved < 0.10f && quantum_moved > 0.10f &&
+                    quantum_moved < 0.14f && std::abs(emp_band - 0.25f) < 0.04f &&
+                    std::abs(quantum_band - 0.5f) < 0.06f,
+                fmt::format("Test 15: over 10 ticks a NukeEMP plate's bands move {:.3f} of the "
+                            "plate (0.08 expected), {:.3f} wide (0.25); a NukeQuantum plate's "
+                            "{:.3f} (0.12), {:.3f} wide (0.5)",
+                            emp_moved, emp_band, quantum_moved, quantum_band));
+    }
+
+    // Test 16: the nukes write their alpha, the frame's glow; OuterCloud doesn't.
+    {
+        map::ScmapLighting no_map_bloom = lit;
+        no_map_bloom.bloom = 0.0f;
+        const auto halo = [&](f32 x) {
+            const ImageRGBA8 off = frame(x, 310.0f, no_map_bloom);
+            r.set_bloom_enabled(true);
+            const ImageRGBA8 on = frame(x, 310.0f, no_map_bloom);
+            r.set_bloom_enabled(false);
+            size_t n = 0;
+            for (size_t i = 0; i + 2 < off.pixels.size() && i + 2 < on.pixels.size(); i += 4) {
+                bool sky_pixel = true;
+                for (int c = 0; c < 3; ++c) {
+                    sky_pixel = sky_pixel && std::abs(off.pixels[i + static_cast<size_t>(c)] -
+                                                      std::lround(sky_lit[c] * 255.0f)) <= 3;
+                }
+                if (sky_pixel && on.pixels[i] > off.pixels[i] + 8) {
+                    ++n;
+                }
+            }
+            return n;
+        };
+        std::array<size_t, 3> haloes{};
+        const std::array<const char*, 3> shaders = {"NukeEMP", "NukeQuantum", "OuterCloud"};
+        for (size_t i = 0; i < shaders.size(); ++i) {
+            Look glowing;
+            glowing.shader = shaders[i];
+            glowing.normals = "mask_full.dds";
+            stand(glowing, 1.0f, 100.0f + 60.0f * static_cast<f32>(i), 310.0f);
+        }
+        for (size_t i = 0; i < shaders.size(); ++i) {
+            haloes[i] = halo(100.0f + 60.0f * static_cast<f32>(i));
+        }
+        t.check(haloes[0] > 1000 && haloes[1] > 1000 && haloes[2] < 20,
+                fmt::format("Test 16: with the bloom on, {} pixels of sky brighten about a "
+                            "NukeEMP plate, {} about a NukeQuantum one, {} about an OuterCloud "
+                            "one",
+                            haloes[0], haloes[1], haloes[2]));
+    }
+
+    // Test 17: an Aeon and a Cybran commander's DeathWeapons.
+    {
+        struct Death {
+            const char* commander;
+            const char* effect;
+            MeshTechnique technique;
+            f32 x;
+            f32 z;
+        };
+        const std::array<Death, 2> deaths = {
+            Death{"ual0001", "quantumwarheadeffect01", MeshTechnique::NukeQuantum, 200.0f, 400.0f},
+            Death{"url0001", "empfluxwarheadeffect03", MeshTechnique::NukeEMP, 320.0f, 400.0f}};
+        const char* dump = std::getenv("OSC_EFFECT_MESH_TEST_PNG");
+        for (const Death& death : deaths) {
+            const auto killed = ctx.lua_state.do_string(
+                fmt::format("local acu = CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)\n"
+                            "Damage(nil, acu, 99999, nil, 'Normal')\n",
+                            death.commander, death.x, death.z));
+            if (!killed) {
+                spdlog::warn("{}: {}", death.commander, killed.error().message);
+            }
+            std::string effect_bp;
+            f32 effect_x = death.x;
+            f32 effect_z = death.z;
+            u32 draws = 0;
+            int made_at = 0;
+            for (int i = 1; i <= 120; ++i) {
+                ctx.sim.tick();
+                ctx.sim.entity_registry().for_each([&](const sim::Entity& e) {
+                    if (e.destroyed() || !e.is_projectile() ||
+                        lower(e.blueprint_id()).find(death.effect) == std::string::npos) {
+                        return;
+                    }
+                    effect_bp = e.blueprint_id();
+                    effect_x = e.position().x;
+                    effect_z = e.position().z;
+                });
+                if (!effect_bp.empty() && made_at == 0) {
+                    made_at = i;
+                }
+                if (made_at == 0 || (i != made_at + 10 && i != made_at + 50)) {
+                    continue;
+                }
+                const ImageRGBA8 image = frame(effect_x, effect_z, map::ScmapLighting{}, 60.0f);
+                draws += r.mesh_draws(death.technique);
+                if (dump) {
+                    write_png(fmt::format("{}_{}_t{}.png", dump, death.commander, i - made_at),
+                              image);
+                }
+            }
+            const MeshTechnique seen =
+                effect_bp.empty() ? MeshTechnique::Unit : r.mesh_technique(effect_bp, ctx.L);
+            t.check(seen == death.technique && draws > 0,
+                    fmt::format("Test 17: the {} commander's death makes {} ({}), drawn by "
+                                "technique {} ({} {} draws in the frames)",
+                                death.commander, death.effect,
+                                effect_bp.empty() ? "never made" : effect_bp,
+                                static_cast<u32>(seen), draws,
+                                renderer::mesh_technique_name(death.technique)));
+        }
     }
 
     // The dump sees actual shadow draws, with terrain in view.

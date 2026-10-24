@@ -9,8 +9,6 @@ Explosion
 Flat
 GlassAlpha
 NormalMappedAlphaNoShadow
-NukeEMP
-NukeQuantum
 PhalanxEffect
 Shield
 UEFQuantumGate

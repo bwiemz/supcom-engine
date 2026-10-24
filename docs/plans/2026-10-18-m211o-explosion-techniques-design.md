@@ -107,3 +107,6 @@ What they do not prove:
 `UEFQuantumGate` and `Flat` still draw as `Unit`; a check that lists the
 ShaderNames with no technique; a comparison with the original's nuke
 for the dome's texture and motion.
+
+*Done (2026-10-25) — M211p: `NukeEMP` and `NukeQuantum`, and a test of
+`OuterCloud`'s scroll.*
