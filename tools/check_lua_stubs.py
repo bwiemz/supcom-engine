@@ -14,6 +14,9 @@ each with its reason after a '#': Moho's own does nothing or answers the
 same constant, or the binding is a fallback for a function retail's Lua
 defines itself.
 
+The source is read through tools/cpp_source.py, so a comment or a literal
+holds no registration and no brace.
+
 A body does nothing when it makes no call but reading arguments, pushing
 nothing and logging, assigns nothing, and returns 0 on every path; a
 lua_stubs:: helper counts too. It answers a constant when it does that but
@@ -33,6 +36,9 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+# The checks run as scripts, so tools/ is sys.path[0]: the module beside them
+import cpp_source  # pyright: ignore[reportImplicitRelativeImport]
 
 READS = re.compile(
     r"(lua_gettop|lua_type|lua_is\w+|lua_to\w+|luaL_check\w+|luaL_opt\w+|static_cast"
@@ -67,38 +73,30 @@ CONST_PUSH = re.compile(
 )
 
 
-def match_brace(text: str, i: int) -> int:
+def match_brace(code: str, i: int) -> int:
+    """The brace closing the one at `i` in `code` (cpp_source's: no comment or
+    literal left to hold a brace)."""
     depth = 0
-    while i < len(text):
-        c = text[i]
+    while i < len(code):
+        c = code[i]
         if c == "{":
             depth += 1
         elif c == "}":
             depth -= 1
             if depth == 0:
                 return i
-        elif c == '"':
-            i += 1
-            while i < len(text) and text[i] != '"':
-                if text[i] == "\\":
-                    i += 1
-                i += 1
-        elif text.startswith("//", i):
-            nl = text.find("\n", i)
-            i = len(text) if nl < 0 else nl
         i += 1
     return i
 
 
 def does_nothing(body: str) -> bool:
-    b = re.sub(r"//[^\n]*", "", body)
-    b = re.sub(r"/\*.*?\*/", "", b, flags=re.S)
+    b = cpp_source.scan(body).code
     calls = set(re.findall(r"([A-Za-z_][\w:]*)\s*\(", b)) - {"if", "return", "for", "while",
                                                              "switch", "sizeof"}
     calls |= set(re.findall(r"(?:->|\.)\s*([A-Za-z_]\w*)\s*\(", b))
     if any(not READS.match(c) for c in calls):
         return False
-    if re.search(r"(?<![=!<>])=(?!=)|\+\+|--|\+=|-=", re.sub(r'"(?:[^"\\]|\\.)*"', "", b)):
+    if re.search(r"(?<![=!<>])=(?!=)|\+\+|--|\+=|-=", b):  # (a literal's contents are blank)
         return False
     returns = re.findall(r"return\s+([^;]+);", b)
     return all(r.strip() == "0" for r in returns)
@@ -106,8 +104,7 @@ def does_nothing(body: str) -> bool:
 
 def answers_constant(body: str) -> bool:
     """Whether the body's only answers are literals it pushes."""
-    b = re.sub(r"//[^\n]*", "", body)
-    b = re.sub(r"/\*.*?\*/", "", b, flags=re.DOTALL)
+    b = cpp_source.scan(body).code
     pushed = CONST_PUSH.sub("", b)
     if pushed == b:
         return False
@@ -119,23 +116,31 @@ def answers_constant(body: str) -> bool:
 
 def registrations(sources: dict[str, str]) -> list[tuple[str, str, str, str]]:
     """(file, Lua name, C++ function, body or '@stub') for each registration."""
+    # The source as cpp_source reads it: definitions are found in the code,
+    # registrations (which name their binding in a literal) in the text at a
+    # place that is code, and bodies are read from the code.
+    scanned = {f: cpp_source.scan(t) for f, t in sources.items()}
     defs: dict[str, list[tuple[str, str]]] = {}
-    for f, t in sources.items():
-        for m in FUNC_DEF.finditer(t):
+    for f, src in scanned.items():
+        code = src.code
+        for m in FUNC_DEF.finditer(code):
             b = m.end() - 1
-            defs.setdefault(m.group(1).split("::")[-1], []).append((f, t[b + 1:match_brace(t, b)]))
-        for m in STUB_ALIAS.finditer(t):
+            defs.setdefault(m.group(1).split("::")[-1], []).append((f, code[b + 1:match_brace(code, b)]))
+        for m in STUB_ALIAS.finditer(code):
             defs.setdefault(m.group(1), []).append((f, "@stub"))
     out: list[tuple[str, str, str, str]] = []
-    for f, t in sources.items():
+    for f, src in scanned.items():
+        t, code = src.text, src.code
         found = [(m, m.group(1)) for m in REGISTER.finditer(t)]
         found += [(m, f"{m.group(1)}.{m.group(2)}") for m in REGISTER_TABLE.finditer(t)]
         found += [(m, m.group(1)) for m in REG_ENTRY.finditer(t)
-                  if re.match(r"(\[|[A-Za-z_][\w:]*\s*\}|lua_stubs::)", t[m.end():m.end() + 80])]
+                  if re.match(r"(\[|[A-Za-z_][\w:]*\s*\}|lua_stubs::)", code[m.end():m.end() + 80])]
         found += [(m, m.group(1)) for m in RAW_REGISTER.finditer(t)]
-        out += [(f, m.group(1), m.group(2), "@stub") for m in STAND_IN.finditer(t)]
+        found = [(m, name) for m, name in found if src.in_code(m.start())]
+        out += [(f, m.group(1), m.group(2), "@stub") for m in STAND_IN.finditer(t)
+                if src.in_code(m.start())]
         for m, name in found:
-            rest = t[m.end():m.end() + 2000].lstrip().lstrip("+")
+            rest = code[m.end():m.end() + 2000].lstrip().lstrip("+")
             if rest.startswith("lua_stubs::"):
                 out.append((f, name, re.match(r"lua_stubs::(\w+)", rest).group(1), "@stub"))
             elif rest.startswith("["):
@@ -246,7 +251,15 @@ def self_test() -> int:
                     '  lua_pushstring(L, "G"); lua_pushcfunction(L, l_F);\n'
                     '  lua_rawset(L, LUA_GLOBALSINDEX); }\n'
                     'constexpr UserStandIn k[] = {{"P", Command{}}, {"Q", ReturnsBool{false}},\n'
-                    '                             {"__w", GlobalString{"us"}}};\n'}
+                    '                             {"__w", GlobalString{"us"}}};\n'
+                    # a brace in a block comment or a literal is no brace, and a
+                    # registration in a comment is none
+                    'static int l_X(lua_State* L) { /* } */ do_it(L); return 0; }\n'
+                    'static int l_Y(lua_State* L) { lua_pushstring(L, "}"); do_it(L); return 1; }\n'
+                    'void more(S& s) { s.register_function("X", l_X);\n'
+                    '  s.register_function("Y", l_Y);\n'
+                    '  // s.register_function("Gone", l_A);\n'
+                    '  /* {"Old", lua_stubs::noop}, */ }\n'}
     got = stubs_of(src)
     want = {"A l_A", "B l_B", "C <lambda>", "D noop", "R l_A", "N <lambda>", "P Command",
             "Q ReturnsBool", "__w GlobalString"}
