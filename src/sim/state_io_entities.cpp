@@ -507,6 +507,10 @@ void StateIO::save(StateWriter& w, const Navigator& n) {
     w.u64v(n.sidestep_index_);
     w.i32v(n.hold_ticks_);
     w.u32v(n.held_for_);
+    enum8(w, n.gear_);
+    w.b(n.backup_);
+    w.vec3(n.gear_target_);
+    w.b(n.gear_fresh_);
     w.b(n.has_failed_request_);
     w.vec3(n.failed_goal_);
     w.vec3(n.failed_from_);
@@ -544,6 +548,10 @@ void StateIO::load(StateReader& r, Navigator& n, SimState& sim, i32 army) {
     n.sidestep_index_ = static_cast<size_t>(r.u64v());
     n.hold_ticks_ = r.i32v();
     n.held_for_ = r.u32v();
+    n.gear_ = enum8<Navigator::Gear>(r);
+    n.backup_ = r.b();
+    n.gear_target_ = r.vec3();
+    n.gear_fresh_ = r.b();
     n.has_failed_request_ = r.b();
     n.failed_goal_ = r.vec3();
     n.failed_from_ = r.vec3();

@@ -506,6 +506,7 @@ void mix_navigation(Fnv& navigation, const Unit& u, bool moho_pathing) {
     mix_vec(navigation, u.velocity());
     navigation.mix_f32(u.heading());
     navigation.mix_f32(u.elevation_target());
+    u.navigator().fingerprint_gear(navigation);
     // Moho pathing's (--moho-pathing), only with it on: its navigator and finder.
     if (moho_pathing) {
         navigation.mix(0x4d4f484f00000000ull); // "MOHO"

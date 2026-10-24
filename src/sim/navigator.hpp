@@ -85,6 +85,8 @@ public:
     /// Its Moho pathing state (whether it is following, its waypoint and
     /// its path navigator's), for the sync checksum.
     void fingerprint_moho(Fnv& f) const;
+    /// Its spline gear (backing up), for the sync checksum.
+    void fingerprint_gear(Fnv& f) const;
 
     // Steering (M203c; Moho's CAiSteeringImpl, see steering.hpp).
     /// A meeting the unit expects on the path ahead (Moho's
@@ -178,6 +180,16 @@ private:
     size_t sidestep_index_ = 0; ///< its index; passed, the sidestep is done
     int hold_ticks_ = 0;        ///< stopping, then this many ticks still
     u32 held_for_ = 0;          ///< the unit it stops for
+
+    /// Moho's spline states (faf-re CAiPathSpline::Generate's PPS_7, PPS_4, PPS_5,
+    /// PPS_6 and PPS_3): backing up, for a unit that doesn't rotate on the spot,
+    /// and braking to stop on its goal.
+    enum class Gear : u8 { Forward, BrakeForward, Reverse, BrakeReverse, Stop };
+    Gear gear_ = Gear::Forward;
+    bool backup_ = false; ///< reversing tail first to a goal close behind (doBackup)
+    /// The waypoint its gear was chosen for; a new one, or a new move, chooses again.
+    Vector3 gear_target_{};
+    bool gear_fresh_ = true;
     /// A sidestep point is reached, not passed near.
     static constexpr f32 SIDESTEP_TOLERANCE = 0.25f;
 

@@ -222,9 +222,11 @@ static int unit_IsUnitState(lua_State* L) {
                      (!u->command_queue().empty() &&
                       u->command_queue().front().type == sim::CommandType::BuildMobile &&
                       (u->arm_awaited() || u->command_queue().front().task_wait > 0));
-        } else if (std::strcmp(state, "Moving") == 0) result = u->is_moving();
-        else if (std::strcmp(state, "BeingBuilt") == 0)
-            result = u->is_being_built();
+        } else if (std::strcmp(state, "Moving") == 0) {
+            // Moho's move task holds UNITSTATE_Moving from its start (CUnitMoveTask, 0x006180E0),
+            // before it has a path.
+            result = u->navigator().busy();
+        } else if (std::strcmp(state, "BeingBuilt") == 0) result = u->is_being_built();
         else if (std::strcmp(state, "Guarding") == 0)
             result = u->guard_order() != nullptr; // fighting for it too
         else if (std::strcmp(state, "Reclaiming") == 0)

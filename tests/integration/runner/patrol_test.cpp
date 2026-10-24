@@ -59,6 +59,12 @@ void test_patrol(TestContext& ctx) {
                 unit(arty_id)->guard_scan_radius() == 30.0f,
             "GuardScanRadius: 25 without one in the blueprint, uel0304's 30");
 
+    // The map's own props about the route go first: which of them a patrol takes
+    // on, and so the way it wanders, turns on where each reclaim leaves it.
+    run_lua(ctx, fmt::format("for _, e in GetReclaimablesInRect({0}, {1}, {2}, {3}) or {{}} do\n"
+                             "    if IsProp(e) then e:Destroy() end\n"
+                             "end\n",
+                             sx - 50, sz - 30, sx + 70, sz + 30));
     run_lua(ctx,
             fmt::format("local c = CreateProp({{{0}, {1}, {2}}}, "
                         "'/env/Crystalline/Props/Rocks/CrysCrystal01_prop.bp')\n"

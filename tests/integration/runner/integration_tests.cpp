@@ -9027,6 +9027,27 @@ void test_drive(TestContext& ctx) {
         if got ~= want then error(got) end
     )");
 
+    // A Striker sent two cells ahead.
+    lua_check("setup: a short hop", R"(
+        __osc_hop = __osc_track(__osc_spawn('uel0201', 'ARMY_1', 600.5, 90.5, 0))
+        IssueMove({__osc_hop.u}, {600.5, GetTerrainHeight(600.5, 92.5), 92.5})
+    )");
+    run(1);
+    lua_check("Test 5b: it is Moving the tick after its order", R"(
+        -- Moho's move task sets UNITSTATE_Moving as it starts, before its path
+        -- (CUnitMoveTask, 0x006180E0); retail's units are Moving at tick 1.
+        if not __osc_hop.u:IsUnitState('Moving') then error('not Moving') end
+    )");
+    run(40);
+    lua_check("Test 5c: on a short hop it brakes at Moho's stopping speed", R"(
+        -- CAiPathSpline::Generate caps a node at sqrt(2 d brake) from where it
+        -- is, not a tick ahead: 2.67 on a hop of 2, where a tick ahead gave
+        -- 2.38. Retail's Striker on a hop of 1.85 (drivegrid) peaks at 2.48.
+        local top = 0
+        for _, v in ipairs(__osc_speeds(__osc_hop)) do top = math.max(top, v) end
+        if top < 2.55 then error('it peaked at ' .. top) end
+    )");
+
     // A Fatboy backs up to a goal just behind it; a Mantis (no pivoting)
     // turns as it drives.
     lua_check("setup: backing up and turning on the move", R"(
@@ -9039,6 +9060,14 @@ void test_drive(TestContext& ctx) {
         -- BackUpDistance of 4.
         __osc_pivoter = __osc_track(__osc_spawn('url0111', 'ARMY_1', 680, 116, 0))
         IssueMove({__osc_pivoter.u}, {680, GetTerrainHeight(680, 113), 113})
+        -- A Striker facing -z with its goal dead behind it, on its own line (cell
+        -- centres, so Moho pathing's goal cell is dead behind too), its heading a
+        -- hair under pi, as a turn leaves one.
+        __osc_about = __osc_track(__osc_spawn('uel0201', 'ARMY_1', 640.5, 100.5, math.pi - 5e-5))
+        IssueMove({__osc_about.u}, {640.5, GetTerrainHeight(640.5, 110.5), 110.5})
+        -- A scout that backs up and doesn't pivot (uel0101), sent 30 behind.
+        __osc_backer = __osc_track(__osc_spawn('uel0101', 'ARMY_1', 620.5, 100.5, 0))
+        IssueMove({__osc_backer.u}, {620.5, GetTerrainHeight(620.5, 70.5), 70.5})
     )");
     run(100);
     lua_check("Test 6: a Fatboy backs up to a goal just behind it", R"(
@@ -9070,6 +9099,45 @@ void test_drive(TestContext& ctx) {
         local s = __osc_pivoter.samples
         local last = s[table.getn(s)]
         if math.abs(last[2] - 113) > 1.0 then error('it ended at z ' .. last[2] .. ', 113 its goal') end
+    )");
+    lua_check("Test 7c: a goal dead behind, it turns the positive way round", R"(
+        -- Moho's RotateDirectionTowardTargetLimited (0x006992C0) turns by the
+        -- cross product's sign, positive on a tie; retail's Strikers in
+        -- tools/moho_probes/drivegrid go 180, -171, -162 ... degrees.
+        local s = __osc_about.samples
+        local h0 = s[1][3]
+        for i = 2, table.getn(s) do
+            local d = math.mod(s[i][3] - h0 + 3 * math.pi, 2 * math.pi) - math.pi
+            if math.abs(d) > 1e-3 then
+                if d < 0 then error('it turned the negative way, ' .. math.deg(d) .. ' degrees') end
+                return
+            end
+        end
+        error('it never turned')
+    )");
+    lua_check("Test 7d: one that backs up and can't pivot backs toward a goal behind as it turns",
+              R"(
+        -- Moho's spline state PPS_5 (CAiPathSpline::Generate): stopped with
+        -- its goal behind, it drives backward while its nose comes round.
+        -- Retail's uel0101 (drivegrid) gains 0.9 toward the goal in the
+        -- first half of its turn.
+        local s = __osc_backer.samples
+        local best = 0
+        for i = 1, table.getn(s) do
+            if __osc_turned(s[i][3], 0) > math.rad(90) then break end
+            best = math.max(best, 100.5 - s[i][2])
+        end
+        if best < 0.3 then error('it gained only ' .. best .. ' toward its goal turning the first 90 degrees') end
+    )");
+    lua_check("Test 7e: a unit that pivots never backs up", R"(
+        -- Moho backs up only a unit with MaxSpeedReverse that doesn't
+        -- RotateOnSpot; retail's url0111 turns about to a goal 3 behind it.
+        local s = __osc_pivoter.samples
+        for i = 2, table.getn(s) do
+            local h = s[i - 1][3]
+            local along = (s[i][1] - s[i - 1][1]) * math.sin(h) + (s[i][2] - s[i - 1][2]) * math.cos(h)
+            if along < -0.01 then error('it backed up ' .. -along .. ' on sample ' .. i) end
+        end
     )");
 
     // SetImmobile holds it; GetCurrentMoveLocation is where it is going.
