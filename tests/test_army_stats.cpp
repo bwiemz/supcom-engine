@@ -714,6 +714,32 @@ TEST_CASE("Front-end fallback bindings preserve real UI globals", "[frontend][lu
     lua_pop(L, 1);
 }
 
+TEST_CASE("Front-end fallback bindings define no global Moho lacks", "[frontend][lua]") {
+    // Moho's user state has no GetResolution, SetResolution or
+    // HasCommandLineArg2 (neither its executable nor faf-re names them; it
+    // has HasCommandLineArg), so a script's `if GetResolution then` must
+    // find nil, as under Moho.
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry ui_registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, ui_registry);
+    osc::lua::register_front_end_fallback_bindings(lua);
+
+    lua_State* L = lua.raw();
+    for (const char* name : {"GetResolution", "SetResolution", "HasCommandLineArg2"}) {
+        INFO(name);
+        lua_pushstring(L, name);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        CHECK(lua_isnil(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pushstring(L, "HasCommandLineArg");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    CHECK(lua_isfunction(L, -1));
+    lua_pop(L, 1);
+}
+
 TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][lua]") {
     // UI scripts keep unit objects across beats (avatars, idle lists,
     // selections). They must resolve through the registry, never hold a

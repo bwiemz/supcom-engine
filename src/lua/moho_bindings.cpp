@@ -4876,14 +4876,11 @@ void register_front_end_fallback_bindings(LuaState& state) {
     // runs this after them): a fallback of a bound name would be dead.
     set_str("__language", "us");
     set_bool_fn("DebugFacilitiesEnabled", false);
-    set_stub("PrefetchSession");              // loading optimization
-    set_stub("ClearFrame");                   // UI cleanup
-    set_bool_fn("HasCommandLineArg2", false); // command line
+    set_stub("PrefetchSession"); // loading optimization
+    set_stub("ClearFrame");      // UI cleanup
     // System info
     set_nil_fn("GetMouseScreenPos");
     set_nil_fn("GetAntiAliasingOptions");
-    set_nil_fn("GetResolution");
-    set_stub("SetResolution");
 
     // __installedlanguages: the language codes there are
     if (!global_is_defined(L, "__installedlanguages")) {
