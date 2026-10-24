@@ -306,6 +306,26 @@ bool Unit::approach_update(SimContext& ctx) {
     return nav_update();
 }
 
+Vector3 Unit::build_place(const Vector3& site, f32 skirt_x, f32 skirt_z, SimContext& ctx) const {
+    // Moho's mobile build task and its repair task for a factory's build: the
+    // place nearest the site, looked for a cell at a time, clear of the site's
+    // skirt grown by a cell all round (Unit::PrepareMove(1, site, skirt), faf-re
+    // CUnitMobileBuildTask.cpp): stopped anywhere in that cell, the builder is
+    // off the site, though another skirt hem it in.
+    const f32 half_x = skirt_x * 0.5f + 1;
+    const f32 half_z = skirt_z * 0.5f + 1;
+    Vector3 goal = approach_point(*this, site, half_x, half_z);
+    if (ctx.sim && ctx.terrain) {
+        Vector3 place = site;
+        const MoveExclusion skirt{site.x - half_x, site.z - half_z, site.x + half_x,
+                                  site.z + half_z};
+        if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(), ctx.sim->move_bounds(army()),
+                         place, 1, &skirt))
+            goal = place;
+    }
+    return goal;
+}
+
 bool Unit::tick_orders(f64 dt, SimContext& ctx, f32 econ_eff) {
     const bool awaited = std::exchange(arm_awaited_, false);
     if (!awaited && !is_reclaiming() && !is_repairing() && !is_capturing() && !is_building() &&
@@ -861,21 +881,8 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
                 return OrderStep::Next;
             }
             cmd.approached = true;
-            // Moho's CUnitMobileBuildTask: the place nearest the site, looked
-            // for a cell at a time, clear of the site's skirt grown by a cell
-            // all round (Unit::PrepareMove(1, site, skirt), faf-re
-            // CUnitMobileBuildTask.cpp): stopped anywhere in that cell, the
-            // builder is off the site, though another skirt hem it in.
-            Vector3 goal = approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1);
-            if (ctx.sim && ctx.terrain) {
-                Vector3 site = cmd.target_pos;
-                const MoveExclusion skirt{site.x - half_x - 1.0f, site.z - half_z - 1.0f,
-                                          site.x + half_x + 1.0f, site.z + half_z + 1.0f};
-                if (prepare_move(*this, *ctx.terrain, ctx.sim->occupancy(),
-                                 ctx.sim->move_bounds(army()), site, 1, &skirt))
-                    goal = site;
-            }
-            set_path_goal(goal, ctx);
+            set_path_goal(build_place(cmd.target_pos, cmd.site_skirt_x, cmd.site_skirt_z, ctx),
+                          ctx);
         }
         // The task's first tick checks the site and sends the builder; it
         // aims from the next (Moho's TASKSTATE_Preparing returns 1).
@@ -1808,6 +1815,10 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     const Entity* guarded_build = repairs && !rebuilder && target_unit->is_building()
                                       ? registry.find(target_unit->build_target_id())
                                       : nullptr;
+    if (!guarded_build || guarded_build->destroyed()) {
+        cmd.approached = false;
+        cmd.prepared = false;
+    }
     const Entity* guarded_reclaim = reclaims && target_unit->is_reclaiming()
                                         ? registry.find(target_unit->reclaim_target_id())
                                         : nullptr;
@@ -1815,9 +1826,30 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
         working = true;
         u32 target_build_id = target_unit->build_target_id();
         const bool helping = build_target_id_ == target_build_id;
-        const Entity& reach =
-            !helping && target_unit->has_category("FACTORY") ? *target_unit : *guarded_build;
-        if (!within_reach(reach, true, helping)) {
+        const bool factory_build = !helping && target_unit->has_category("FACTORY");
+        const Entity& reach = factory_build ? *target_unit : *guarded_build;
+        // Moho's repair task for a structure factory's build sends its helper
+        // to the build place first, within reach or not, and begins when the
+        // move ends. A mobile factory moves, so its helper keeps chasing it.
+        bool walking = false;
+        if (factory_build && !target_unit->is_mobile() && effective_speed() > 0 &&
+            !(flies_winged_on_guard(*this) && ctx.sim)) {
+            if (!cmd.approached) {
+                cmd.approached = true;
+                cmd.prepared = true;
+                Vector3 site = target_unit->position();
+                snap_structure_center(site.x, site.z, target_unit->footprint_size_x(),
+                                      target_unit->footprint_size_z());
+                set_path_goal(build_place(site, target_unit->skirt_size_x(),
+                                          target_unit->skirt_size_z(), ctx),
+                              ctx);
+            }
+            if (cmd.prepared) {
+                walking = approach_update(ctx);
+                cmd.prepared = walking;
+            }
+        }
+        if (walking || !within_reach(reach, true, helping)) {
             if (is_building()) stop_assisting(ctx.L, &ctx.registry);
         } else {
             if (build_target_id_ != target_build_id) {
