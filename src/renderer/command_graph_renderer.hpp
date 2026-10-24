@@ -118,8 +118,9 @@ std::vector<PlannedSite> planned_build_sites(const sim::WorldSnapshot& world,
                                              const std::unordered_set<u32>* selected,
                                              i32 player_army);
 
-/// A unit's orders as the graph draws them: the places from the unit through
-/// each order's target, and each leg's order and colours
+/// One of a unit's queues as the graph draws it, its own orders or a
+/// stationary factory's rally orders: the places from the unit through each
+/// order's target, and each leg's order and colours
 struct CommandGraphPath {
     struct Leg {
         sim::CommandRecord order;
@@ -135,8 +136,10 @@ struct CommandGraphPath {
 };
 
 /// The paths of command_graph_units: a selected unit's in its style's
-/// selected colours, another's in its plain ones. A path whose first patrol,
-/// guard or ground attack is not its last runs back to it, as Moho's
+/// selected colours, another's in its plain ones. Each unit's own orders are
+/// one path, and a stationary factory's rally orders a second one from it
+/// (Moho's RebuildCommandQueueNodes). A path whose first patrol, guard or
+/// ground attack is not its last runs back to it, as Moho's
 /// AddCommandQueueToCommandGraph links the loop.
 std::vector<CommandGraphPath>
 command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* selected,

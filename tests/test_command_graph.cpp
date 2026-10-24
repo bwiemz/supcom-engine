@@ -432,6 +432,115 @@ TEST_CASE("A patrol's path runs back to its first patrol point", "[renderer][com
     CHECK(path_of({{CommandType::Move, 10}, {CommandType::Move, 20}}).legs.size() == 2);
 }
 
+namespace {
+
+/// A unit of army 0 at `at`, with `orders` and `rally` orders
+void add_queued_unit(osc::sim::WorldSnapshot& world, osc::u32 id, osc::sim::Vector3 at, bool mobile,
+                     const std::vector<osc::sim::CommandRecord>& orders,
+                     const std::vector<osc::sim::CommandRecord>& rally) {
+    osc::sim::EntityRecord e;
+    e.id = id;
+    e.army = 0;
+    e.is_unit = true;
+    e.is_mobile = mobile;
+    e.position = at;
+    e.command_offset = static_cast<osc::u32>(world.commands.size());
+    e.command_count = static_cast<osc::u32>(orders.size());
+    world.commands.insert(world.commands.end(), orders.begin(), orders.end());
+    e.rally_offset = static_cast<osc::u32>(world.commands.size());
+    e.rally_count = static_cast<osc::u32>(rally.size());
+    world.commands.insert(world.commands.end(), rally.begin(), rally.end());
+    world.entities.push_back(e);
+}
+
+osc::sim::CommandRecord queued_order(osc::sim::CommandType type, osc::u32 id, osc::sim::Vector3 to,
+                                     osc::u32 target = 0) {
+    osc::sim::CommandRecord c;
+    c.type = type;
+    c.command_id = id;
+    c.target_pos = to;
+    c.target_id = target;
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("A stationary factory's rally orders are their own order chain from the factory",
+          "[renderer][command_graph]") {
+    using osc::sim::CommandType;
+    // A factory assisting another, with an exit and a rally patrol: Moho's
+    // RebuildCommandQueueNodes adds the factory command queue as a second
+    // chain, each from the factory and closing on its own anchor
+    // (AddCommandQueueToCommandGraph).
+    osc::sim::WorldSnapshot world;
+    add_queued_unit(world, 1, {0, 0, 0}, false, {queued_order(CommandType::Guard, 11, {}, 2)},
+                    {queued_order(CommandType::Move, 21, {0, 0, 30}),
+                     queued_order(CommandType::Patrol, 22, {20, 0, 30}),
+                     queued_order(CommandType::Patrol, 23, {20, 0, 50})});
+    add_queued_unit(world, 2, {50, 0, 0}, false, {}, {});
+    osc::renderer::CommandGraphStyle style;
+    const auto paths = osc::renderer::command_graph_paths(
+        osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0, [&](CommandType) { return &style; });
+    std::vector<const osc::renderer::CommandGraphPath*> factory;
+    for (const auto& path : paths) {
+        if (path.unit->id == 1) {
+            factory.push_back(&path);
+        }
+    }
+    REQUIRE(factory.size() == 2);
+    const auto& own = *factory[0];
+    REQUIRE(own.legs.size() == 1);
+    CHECK(own.legs[0].order.type == CommandType::Guard);
+    REQUIRE(own.chain.size() == 2);
+    CHECK(own.chain[0].x == 0.0f);
+    CHECK(own.chain[1].x == 50.0f);
+    const auto& rally = *factory[1];
+    REQUIRE(rally.legs.size() == 4);
+    CHECK(rally.legs[0].order.type == CommandType::Move);
+    CHECK(rally.legs[0].index == 1);
+    CHECK(rally.legs[3].closes);
+    REQUIRE(rally.chain.size() == 5);
+    CHECK(rally.chain[0].x == 0.0f);
+    CHECK(rally.chain[0].z == 0.0f);
+    CHECK(rally.chain[1].z == 30.0f);
+    CHECK(rally.chain[4].x == 20.0f);
+    CHECK(rally.chain[4].z == 30.0f);
+
+    // Drawn: the exit leg starts at the factory, and no leg runs from the
+    // assisted factory to the exit, or back from the rally loop to it
+    const auto graph = osc::renderer::command_graph(paths);
+    const auto at = [](const osc::sim::Vector3& p, osc::f32 x, osc::f32 z) {
+        return p.x == Catch::Approx(x) && p.z == Catch::Approx(z);
+    };
+    CHECK(graph.edges.size() == 5);
+    bool exit_from_factory = false;
+    for (const auto& edge : graph.edges) {
+        CHECK_FALSE((at(edge.from, 50, 0) && at(edge.to, 0, 30)));
+        CHECK_FALSE((at(edge.to, 50, 0) && !at(edge.from, 0, 0)));
+        exit_from_factory = exit_from_factory || (at(edge.from, 0, 0) && at(edge.to, 0, 30));
+    }
+    CHECK(exit_from_factory);
+}
+
+TEST_CASE("A mobile factory's orders are one order chain", "[renderer][command_graph]") {
+    using osc::sim::CommandType;
+    // RebuildCommandQueueNodes adds no second chain for a MOBILE factory
+    osc::sim::WorldSnapshot world;
+    add_queued_unit(world, 1, {0, 0, 0}, true,
+                    {queued_order(CommandType::Move, 11, {0, 0, 30}),
+                     queued_order(CommandType::Patrol, 12, {20, 0, 30}),
+                     queued_order(CommandType::Patrol, 13, {20, 0, 50})},
+                    {queued_order(CommandType::Move, 21, {40, 0, 0})});
+    osc::renderer::CommandGraphStyle style;
+    const auto paths = osc::renderer::command_graph_paths(
+        osc::sim::FrameView(&world, &world, 1.0f), nullptr, 0, [&](CommandType) { return &style; });
+    REQUIRE(paths.size() == 1);
+    REQUIRE(paths[0].legs.size() == 4);
+    CHECK(paths[0].legs[3].closes);
+    CHECK(paths[0].chain[4].x == 20.0f);
+    CHECK(paths[0].chain[4].z == 30.0f);
+}
+
 TEST_CASE("A structure ordered and not started is a planned site", "[renderer][command_graph]") {
     osc::sim::WorldSnapshot world;
     const auto build = [](const char* bp, osc::f32 x) {

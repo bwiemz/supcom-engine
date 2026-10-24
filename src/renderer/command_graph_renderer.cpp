@@ -205,14 +205,13 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
     if (!cur) {
         return paths;
     }
-    for (const auto& [e, chosen] : command_graph_units(*cur, selected, player_army)) {
+    // One queue's chain from the unit, its legs numbered from `first`
+    const auto queue_path = [&](const sim::EntityRecord& e, bool chosen,
+                                std::span<const sim::CommandRecord> cmds, size_t first) {
         CommandGraphPath path;
-        path.unit = e;
+        path.unit = &e;
         path.chosen = chosen;
-        path.chain.push_back(view.position(*e));
-        std::vector<sim::CommandRecord> cmds(cur->orders_of(*e).begin(), cur->orders_of(*e).end());
-        const auto rally = cur->rally_of(*e);
-        cmds.insert(cmds.end(), rally.begin(), rally.end());
+        path.chain.push_back(view.position(e));
         for (size_t n = 0; n < cmds.size(); ++n) {
             const sim::CommandRecord& c = cmds[n];
             const CommandGraphStyle* s = style_of(c.type);
@@ -230,7 +229,7 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
             path.chain.push_back(to);
             CommandGraphPath::Leg leg;
             leg.order = c;
-            leg.index = n;
+            leg.index = first + n;
             leg.style = s;
             leg.line_color = chosen ? s->line_selected_color : s->line_color;
             path.legs.push_back(std::move(leg));
@@ -249,6 +248,17 @@ command_graph_paths(const sim::FrameView& view, const std::unordered_set<u32>* s
             path.legs.push_back(std::move(back));
         }
         paths.push_back(std::move(path));
+    };
+    for (const auto& [e, chosen] : command_graph_units(*cur, selected, player_army)) {
+        const auto orders = cur->orders_of(*e);
+        queue_path(*e, chosen, orders, 0);
+        // A stationary factory's rally orders are a second chain from it, as
+        // RebuildCommandQueueNodes adds a FACTORY's factory command queue
+        // unless it is MOBILE: a mobile factory's orders are one chain.
+        const auto rally = cur->rally_of(*e);
+        if (!rally.empty() && !e->is_mobile) {
+            queue_path(*e, chosen, rally, orders.size());
+        }
     }
     return paths;
 }
