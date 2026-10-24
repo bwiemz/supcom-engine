@@ -3,6 +3,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/net_lobby.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 #include "vfs/mount_point.hpp"
@@ -818,4 +819,20 @@ TEST_CASE("Moho Lua: a value that is no table reads and takes fields through its
     REQUIRE_FALSE(locked);
     CHECK(locked.error().message.find("Attempt to set attribute field on number") !=
           std::string::npos);
+}
+
+TEST_CASE("A Lua state's sim reads back as stored, and as none once cleared", "[lua]") {
+    LuaState state;
+    lua_State* L = state.raw();
+    CHECK(osc::sim::get_sim(L) == nullptr);
+    osc::sim::SimState sim{L, nullptr};
+    osc::sim::set_sim(L, &sim);
+    CHECK(osc::sim::get_sim(L) == &sim);
+    // The bindings store it the same way
+    register_moho_bindings(state, sim);
+    CHECK(osc::sim::get_sim(L) == &sim);
+    const int top = lua_gettop(L);
+    osc::sim::set_sim(L, nullptr);
+    CHECK(osc::sim::get_sim(L) == nullptr);
+    CHECK(lua_gettop(L) == top);
 }

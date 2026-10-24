@@ -12,6 +12,7 @@
 #include "core/ui_registry_keys.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
@@ -58,12 +59,7 @@ struct UiOfGame {
         return v;
     }
     /// The world session gone, as at the front end.
-    void end_session() {
-        lua_State* L = ui.raw();
-        lua_pushstring(L, "osc_sim_state");
-        lua_pushnil(L);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
+    void end_session() { osc::sim::set_sim(ui.raw(), nullptr); }
 };
 
 } // namespace

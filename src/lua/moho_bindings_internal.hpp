@@ -5,6 +5,7 @@
 // libraries: not an API.
 
 #include "core/types.hpp"
+#include "sim/lua_sim.hpp"
 
 #include <string>
 #include <utility>
@@ -40,7 +41,7 @@ class WorldView;
 
 namespace osc::lua {
 
-sim::SimState* get_sim(lua_State* L);
+using sim::get_sim;
 sim::Entity* check_entity(lua_State* L, int idx = 1);
 ui::UIControl* check_control(lua_State* L, int idx = 1);
 /// Make `parent` a new control's parent, as Moho's CMauiControl constructor

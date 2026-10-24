@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/fnv.hpp"
 #include "sim/lua_profile.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -52,6 +53,28 @@ extern "C" {
 #include <vector>
 
 namespace osc::sim {
+
+namespace {
+
+/// The registry key under which a Lua state holds its sim (lua_sim.hpp).
+constexpr const char* kSimKey = "osc_sim_state";
+
+} // namespace
+
+void set_sim(lua_State* L, SimState* sim) {
+    lua_pushstring(L, kSimKey);
+    if (sim) lua_pushlightuserdata(L, sim);
+    else lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+SimState* get_sim(lua_State* L) {
+    lua_pushstring(L, kSimKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return sim;
+}
 
 u32 SimState::s_sim_generation_ = 0;
 

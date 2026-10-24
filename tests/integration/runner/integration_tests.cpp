@@ -31,6 +31,7 @@
 #include "sim/weapon.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/world_snapshot.hpp"
 #include "sim/decal.hpp"
@@ -66,10 +67,7 @@ u32 army_acu_id(sim::SimState& sim, i32 army) {
 }
 
 static int l_test_acu_id(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = sim::get_sim(L);
     const u32 id = sim ? army_acu_id(*sim, static_cast<i32>(luaL_checknumber(L, 1)) - 1)
                        : 0;
     if (id == 0) {
@@ -84,10 +82,7 @@ static int l_test_acu_id(lua_State* L) {
 // with the lowest entity id, or nil. Retail spends the low ids on props and
 // deposits, so tests must not scan a fixed id range for what they built.
 static int l_test_find_unit(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = sim::get_sim(L);
     const std::string bp = luaL_checkstring(L, 1);
     const bool any_army = !lua_isnumber(L, 2);
     const i32 army = any_army ? -1 : static_cast<i32>(lua_tonumber(L, 2)) - 1;

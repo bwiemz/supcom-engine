@@ -23,6 +23,7 @@
 #include "platform/paths.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/lua_sim.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -316,12 +317,7 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         if (!opt.headless) osc::lua::set_ui_world_source(ui_lua_state.raw(), &world_interp.history);
         // If we used a dummy, clear the sim pointer in UI registry so moho methods
         // return gracefully instead of dereferencing a dangling pointer.
-        if (dummy_sim) {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "osc_sim_state");
-            lua_pushlightuserdata(uL, nullptr);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
+        if (dummy_sim) sim::set_sim(ui_lua_state.raw(), nullptr);
     }
 
     // The localization cache, loaded once (boot_ui), in the UI registry

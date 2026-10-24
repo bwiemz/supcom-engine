@@ -11,6 +11,7 @@
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_sim.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_sync.hpp"
 #include "core/game_state.hpp"
@@ -55,13 +56,7 @@ extern "C" {
 
 namespace osc::lua {
 
-static sim::SimState* get_sim(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
-}
+using sim::get_sim;
 
 /// Resolve an army argument that can be either a 1-based number or a name string.
 /// Returns 0-based index, or -1 if not found.
@@ -4690,8 +4685,8 @@ static int l_IssueDive(lua_State* L) {
 // TransferUnitsOwnership).
 // ====================================================================
 
-// From moho_bindings_internal.hpp, whose get_sim clashes with this file's:
-// the entity a handle names (moho_bindings.cpp), and Entity:Destroy.
+// From moho_bindings_internal.hpp: the entity a handle names
+// (moho_bindings.cpp), and Entity:Destroy.
 sim::Entity* check_entity(lua_State* L, int idx);
 int entity_Destroy(lua_State* L);
 
@@ -5454,10 +5449,7 @@ static int l_CreateVisibleAreaAtPoint(lua_State* L) {
     f32 radius = static_cast<f32>(luaL_checknumber(L, 5));
     f32 lifetime = static_cast<f32>(luaL_optnumber(L, 6, 10.0));
 
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = get_sim(L);
     if (sim && army >= 0) {
         sim->add_temp_vision(static_cast<u32>(army), x, z, radius, lifetime);
     }

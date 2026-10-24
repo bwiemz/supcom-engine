@@ -7,6 +7,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/lobby_net.hpp"
 #include "sim/lockstep_session.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -42,21 +43,13 @@ std::vector<Chat>& local_chat() {
     return queue;
 }
 
-sim::SimState* sim_of(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
-}
-
 /// A single-player game's one client's name: its player's army's.
 std::string single_player_name(lua_State* L) {
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
     const int focus = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
     lua_pop(L, 1);
-    const sim::SimState* sim = sim_of(L);
+    const sim::SimState* sim = sim::get_sim(L);
     const sim::ArmyBrain* brain =
         sim && focus >= 0 ? sim->army_at(static_cast<size_t>(focus)) : nullptr;
     return brain && !brain->nickname().empty() ? brain->nickname() : "Player";
@@ -130,7 +123,7 @@ size_t session_client_count(lua_State* L) {
     const auto& mp = mp_net_state();
     if (!mp.clients.empty()) return mp.clients.size();
     if (mp.active()) return mp.all_sources.size();
-    return sim_of(L) ? 1 : 0;
+    return sim::get_sim(L) ? 1 : 0;
 }
 
 int push_session_clients(lua_State* L) {
@@ -289,7 +282,7 @@ namespace {
 /// A single-player game's sim, which takes its pause as a command; a replay
 /// pauses the client instead.
 sim::SimState* commanded_sim(lua_State* L) {
-    sim::SimState* sim = sim_of(L);
+    sim::SimState* sim = sim::get_sim(L);
     return sim && !sim->playback() ? sim : nullptr;
 }
 
@@ -354,7 +347,7 @@ bool session_single_step(lua_State* L) {
 }
 
 bool session_is_paused(lua_State* L, bool& paused) {
-    const sim::SimState* sim = session_is_multiplayer() ? sim_of(L) : commanded_sim(L);
+    const sim::SimState* sim = session_is_multiplayer() ? sim::get_sim(L) : commanded_sim(L);
     if (!session_is_multiplayer() && !sim) {
         return false;
     }
@@ -416,7 +409,7 @@ void pump_desyncs(lua_State* L) {
     if (sources.empty()) {
         return;
     }
-    const sim::SimState* sim = sim_of(L);
+    const sim::SimState* sim = sim::get_sim(L);
     show_desyncs(L, sim ? sim->beat_count() : 0, sources);
 }
 
@@ -427,7 +420,7 @@ void pump_pause_state(lua_State* L) {
     static u32 game = 0;
     static bool shown = false;
     static u32 shown_serial = 0;
-    const sim::SimState* sim = session_is_multiplayer() ? sim_of(L) : commanded_sim(L);
+    const sim::SimState* sim = session_is_multiplayer() ? sim::get_sim(L) : commanded_sim(L);
     if (!sim) {
         return;
     }

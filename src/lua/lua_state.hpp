@@ -19,10 +19,10 @@ class BlueprintStore;
 
 namespace osc::lua {
 
-/// Registry keys for storing engine pointers accessible from C bindings.
+/// Registry keys for storing engine pointers accessible from C bindings
+/// (a state's sim: sim/lua_sim.hpp).
 constexpr const char* REG_VFS = "osc_vfs";
 constexpr const char* REG_BLUEPRINT_STORE = "osc_blueprint_store";
-constexpr const char* REG_SIM_STATE = "osc_sim_state";
 constexpr const char* REG_UI_STATE_FLAG = "osc_is_ui_state";
 
 /// RAII wrapper around a Lua 5.0 state.

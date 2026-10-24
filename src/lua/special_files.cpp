@@ -10,6 +10,7 @@
 #include "sim/lua_bytes.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -176,15 +177,6 @@ int l_RemoveProfileDirectories(lua_State* L) {
     return 0;
 }
 
-/// The game being played, or null.
-sim::SimState* sim_of(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
-}
-
 /// Ask the game loop to launch a game (see the launch request in
 /// window.cpp): `key`, if given, names the file it plays from.
 void request_launch(lua_State* L, const char* key, const char* file, const std::string& scenario) {
@@ -255,7 +247,7 @@ int l_CopyCurrentReplay(lua_State* L) {
     const char* profile = luaL_checkstring(L, 1);
     const char* base = luaL_checkstring(L, 2);
     auto* files = get_special_files(L);
-    const auto* sim = sim_of(L);
+    const auto* sim = sim::get_sim(L);
     if (!files || !sim || !sim->recording()) return 0;
     const auto path = files->path(*SpecialFiles::find_type("Replay"), profile, base);
     if (!path.empty()) write_replay_file(sim->recorded_replay(), path);
@@ -289,7 +281,7 @@ int l_LaunchReplaySession(lua_State* L) {
 /// cfunc_InternalSaveGameL @ 0x00881B30).
 int l_InternalSaveGame(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
-    auto* sim = sim_of(L); // a save's snapshot walks its Lua state
+    auto* sim = sim::get_sim(L); // a save's snapshot walks its Lua state
     if (!sim || !session_active(L)) return luaL_error(L, "No session to save!");
     const char* name = luaL_checkstring(L, 2);
     const auto* files = get_special_files(L);

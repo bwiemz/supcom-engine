@@ -12,6 +12,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "lua/user_bindings.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
@@ -48,12 +49,7 @@ struct UserState {
     }
 
     /// No sim for the UI, as at the front end or while a game loads.
-    void drop_sim() {
-        lua_State* L = lua.raw();
-        lua_pushstring(L, "osc_sim_state");
-        lua_pushlightuserdata(L, nullptr);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
+    void drop_sim() { osc::sim::set_sim(lua.raw(), nullptr); }
 
     /// The error `code` raises, or "" when it ran.
     std::string error_of(const std::string& code) {

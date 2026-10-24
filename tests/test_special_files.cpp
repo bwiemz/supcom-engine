@@ -8,6 +8,7 @@
 #include "lua/special_files.hpp"
 #include "sim/build_info.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/saved_game.hpp"
 #include "sim/replay.hpp"
 #include "sim/sim_state.hpp"
@@ -327,9 +328,7 @@ TEST_CASE("InternalSaveGame raises with no session", "[specialfiles][savegame]")
     // A sim, but no session yet: a --map game's userInit.lua runs before it.
     osc::sim::SimState sim(L, nullptr);
     sim.set_recording(true);
-    lua_pushstring(L, "osc_sim_state");
-    lua_pushlightuserdata(L, &sim);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    osc::sim::set_sim(L, &sim);
     CHECK(run(lua, refused.c_str()).empty());
     CHECK_FALSE(fs::exists(file));
 

@@ -14,6 +14,7 @@
 #include "sim/anim_cache.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/lockstep_session.hpp"
+#include "sim/lua_sim.hpp"
 #include "lua/mp_net_state.hpp"
 
 namespace osc::app {
@@ -305,11 +306,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     }
 
     // 13. Update UI state's sim_state registry pointer to new SimState
-    {
-        lua_pushstring(uiL, "osc_sim_state");
-        lua_pushlightuserdata(uiL, sim_state.get());
-        lua_rawset(uiL, LUA_REGISTRYINDEX);
-    }
+    sim::set_sim(uiL, sim_state.get());
 
     // 14. Rebuild renderer scene, reading blueprints through the UI state's
     // store: its tables are uiL's

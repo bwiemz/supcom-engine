@@ -10,6 +10,7 @@
 #include "lua/session_clients.hpp"
 #include "lua/sim_sync.hpp"
 #include "sim/build_info.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
@@ -407,9 +408,7 @@ namespace {
 struct PauseHeard {
     LuaGuard ui;
     explicit PauseHeard(SimState& sim) {
-        lua_pushstring(ui.L, "osc_sim_state");
-        lua_pushlightuserdata(ui.L, &sim);
-        lua_rawset(ui.L, LUA_REGISTRYINDEX);
+        osc::sim::set_sim(ui.L, &sim);
         const char* hooks = "pauses, resumes = 0, 0 "
                             "function OnPause() pauses = pauses + 1 end "
                             "function OnResume() resumes = resumes + 1 end";

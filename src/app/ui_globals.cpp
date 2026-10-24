@@ -8,6 +8,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "map/terrain.hpp"
+#include "sim/lua_sim.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -34,10 +35,7 @@ static int l_SessionIsReplay(lua_State* L) {
         return osc::lua::arg_count_error(
             L, "Return true iff the active session is a replay session.", 0, lua_gettop(L));
     if (!osc::lua::session_active(L)) return luaL_error(L, "no active session.");
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const auto* sim = static_cast<const osc::sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    const auto* sim = sim::get_sim(L);
     lua_pushboolean(L, sim && sim->playback() && !sim->resuming() ? 1 : 0);
     return 1;
 }
@@ -78,10 +76,7 @@ static int l_SessionGetScenarioInfo(lua_State* L) {
                                          "passed to the sim on launch.",
                                          0, lua_gettop(L));
     if (!osc::lua::session_active(L)) return luaL_error(L, "no active session.");
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = sim::get_sim(L);
 
     if (!sim || !sim->terrain()) {
         lua_newtable(L);
@@ -157,10 +152,7 @@ static int l_SessionGetScenarioInfo(lua_State* L) {
 }
 
 static int l_GetEconomyTotals(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = sim::get_sim(L);
 
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -212,10 +204,7 @@ static int l_ui_IsAlly(lua_State* L) {
     int army1 = static_cast<int>(lua_tonumber(L, 1)) - 1; // 1-based Lua → 0-based C++
     int army2 = static_cast<int>(lua_tonumber(L, 2)) - 1;
 
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = sim::get_sim(L);
 
     if (!sim) { lua_pushboolean(L, 0); return 1; }
     auto* brain = sim->get_army(army1);
@@ -231,10 +220,7 @@ static int l_GetArmiesTable(lua_State* L) {
     if (lua_gettop(L) != 0)
         return osc::lua::arg_count_error(L, "armyInfo GetArmiesTable()", 0, lua_gettop(L));
     if (!osc::lua::session_active(L)) return luaL_error(L, osc::lua::kNoSessionStarted);
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    auto* sim = sim::get_sim(L);
 
     lua_newtable(L); // result table
 

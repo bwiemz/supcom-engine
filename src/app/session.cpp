@@ -8,6 +8,7 @@
 #include "renderer/renderer.hpp"
 #include "sim/unit.hpp"
 #include "sim/build_info.hpp"
+#include "sim/lua_sim.hpp"
 #include "lua/mp_net_state.hpp"
 
 #include <random>
@@ -36,9 +37,7 @@ int finish_test_run(const char* mode, osc::u32 smoke_issues) {
 }
 
 void detach_ui_from_sim(lua_State* uiL) {
-    lua_pushstring(uiL, "osc_sim_state");
-    lua_pushnil(uiL);
-    lua_rawset(uiL, LUA_REGISTRYINDEX);
+    sim::set_sim(uiL, nullptr);
 }
 
 /// Give a sim (and its Lua state) the application's sound engine.

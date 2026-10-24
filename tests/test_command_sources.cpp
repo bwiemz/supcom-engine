@@ -14,6 +14,7 @@
 #include "lua/sim_sync.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_scheduler.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
@@ -508,8 +509,6 @@ TEST_CASE("SessionIsObservingAllowed answers the session's observing, so a finis
     // Moho's refusals: any argument, and no world session
     const std::string args = run("SessionIsObservingAllowed(1)");
     CHECK(args.find("expected 0 args, but got 1") != std::string::npos);
-    lua_pushstring(L, "osc_sim_state");
-    lua_pushnil(L);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    osc::sim::set_sim(L, nullptr);
     CHECK(run("SessionIsObservingAllowed()").find("no active session.") != std::string::npos);
 }

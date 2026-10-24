@@ -6,6 +6,7 @@
 #include "lua/moho_bindings_internal.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lua_bytes.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/sim_state.hpp"
@@ -334,9 +335,7 @@ TEST_CASE("The construction panel's IssueCommand gives a Script order", "[script
     // {TaskName = 'EnhanceTask', Enhancement = ...}, true) for the selection.
     TaskSim w;
     const osc::u32 id = w.spawn();
-    lua_pushstring(w.L, "osc_sim_state");
-    lua_pushlightuserdata(w.L, &w.sim);
-    lua_rawset(w.L, LUA_REGISTRYINDEX);
+    osc::sim::set_sim(w.L, &w.sim);
     const std::string table = "return { TaskName = 'Seq', Payload = 'panel', Statuses = { -1 } }";
     REQUIRE(luaL_loadbuffer(w.L, table.c_str(), table.size(), "t") == 0);
     REQUIRE(lua_pcall(w.L, 0, 1, 0) == 0);

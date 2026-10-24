@@ -11,6 +11,7 @@
 #include "sim/sim_random.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/flight_math.hpp"
+#include "sim/lua_sim.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/occupancy.hpp"
 #include "sim/prop.hpp"
@@ -1575,10 +1576,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // (Lua callback may have destroyed the entity)
         target = registry.find(target_id);
 
-        lua_pushstring(L, "osc_sim_state");
-        lua_rawget(L, LUA_REGISTRYINDEX);
-        auto* sim_for_stat = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-        lua_pop(L, 1);
+        auto* sim_for_stat = get_sim(L);
         // Count only this completion, even if its callback removed or replaced
         // the unit. The registry retains its memory until the tick ends; its
         // removal and completion must both contribute to the army's counts.
@@ -1593,10 +1591,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // The completed structure now blocks paths until it is removed
         // (after re-validation — only if target survived OnStopBeingBuilt)
         if (target && !target->destroyed() && target->is_unit()) {
-            lua_pushstring(L, "osc_sim_state");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
+            auto* sim = get_sim(L);
             if (sim) sim->occupy_footprint(*static_cast<Unit*>(target));
         }
 
@@ -1612,10 +1607,7 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         target = registry.find(target_id);
         if (target && !target->destroyed() && target->is_unit()) {
             auto* completed = static_cast<Unit*>(target);
-            lua_pushstring(L, "osc_sim_state");
-            lua_rawget(L, LUA_REGISTRYINDEX);
-            auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
+            auto* sim = get_sim(L);
             if (sim) {
                 auto* brain = sim->get_army(completed->army());
                 if (brain) {
@@ -4241,10 +4233,7 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
             lua_pop(L, 1);
             if (tmgr) {
                 // Look up current tick from SimState in registry
-                lua_pushstring(L, "osc_sim_state");
-                lua_rawget(L, LUA_REGISTRYINDEX);
-                auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
-                lua_pop(L, 1);
+                auto* sim = get_sim(L);
                 if (sim) tmgr->wake(*m, sim->tick_count());
             }
             m->clear_waiting_thread();
@@ -4294,10 +4283,7 @@ void Unit::check_collision_detectors(lua_State* L) {
                 continue;
             }
             if (!terrain) {
-                lua_pushstring(L, "osc_sim_state");
-                lua_rawget(L, LUA_REGISTRYINDEX);
-                const auto* sim = static_cast<const SimState*>(lua_touserdata(L, -1));
-                lua_pop(L, 1);
+                const auto* sim = get_sim(L);
                 terrain = sim ? sim->terrain() : nullptr;
                 if (!terrain) break;
             }

@@ -89,14 +89,6 @@ namespace osc::lua {
 // Helper: extract C++ pointers from Lua self tables
 // ====================================================================
 
-sim::SimState* get_sim(lua_State* L) {
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return sim;
-}
-
 /// True for a weapon's Lua table: its _c_object is a Weapon*, not an Entity*.
 static bool is_weapon_table(lua_State* L, int idx) {
     lua_pushstring(L, "_c_unit");
@@ -1792,9 +1784,7 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim) {
     lua_State* L = state.raw();
 
     // Store sim state pointer in registry
-    lua_pushstring(L, "osc_sim_state");
-    lua_pushlightuserdata(L, &sim);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    sim::set_sim(L, &sim);
 
     // Create the moho global table
     lua_newtable(L);
