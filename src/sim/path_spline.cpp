@@ -49,10 +49,15 @@ Params params_for(const SplineUnit& u, const Vector3& from, const Vector3& to,
     p.distance = std::sqrt(p.distance_sq);
     p.forward_x = forward.x;
     p.forward_z = -forward.z;
+    // Wm3's Normalize: times the inverse length; zero at 1e-6 or under.
     const f32 flen = std::sqrt(p.forward_x * p.forward_x + p.forward_z * p.forward_z);
-    if (flen > 0) {
-        p.forward_x /= flen;
-        p.forward_z /= flen;
+    if (flen > 1.0e-6f) {
+        const f32 inv = 1.0f / flen;
+        p.forward_x *= inv;
+        p.forward_z *= inv;
+    } else {
+        p.forward_x = 0;
+        p.forward_z = 0;
     }
     p.turn_rate = u.turn_rate * u.turn_mult * kDegreesToRadiansPerTick;
     // The limit replaces the blueprint's speed unless it is greater.
@@ -134,9 +139,10 @@ void rotate_toward(f32 max_turn, f32 source_x, f32 source_z, f32 target_x, f32 t
     f32 cx = max_cos;
     f32 cz = turn_sin;
     if (std::fabs(turn_sin * turn_sin + max_cos * max_cos - 1.0f) > 0.001f) {
-        const f32 len = std::sqrt(cx * cx + cz * cz);
-        cx /= len;
-        cz /= len;
+        // Wm3's Normalize: times the inverse length.
+        const f32 inv = 1.0f / std::sqrt(cx * cx + cz * cz);
+        cx *= inv;
+        cz *= inv;
     }
     out_z = cx * source_z + cz * source_x;
     out_x = cx * source_x - cz * source_z;
@@ -226,7 +232,9 @@ void Spline::generate(const SplineUnit& u, const Pose& pose, const Vector3& dest
     const f32 distance = std::sqrt(dz * dz + dx * dx);
     if (distance < 0.001f) return;
     Vector3 velocity = pose.velocity;
-    f32 alignment = (dz / distance) * forward.z + (dx / distance) * forward.x;
+    // Moho's direction to it is the delta times the inverse length (DirectionOfDelta).
+    const f32 inv_distance = 1.0f / distance;
+    f32 alignment = (inv_distance * dz) * forward.z + (inv_distance * dx) * forward.x;
     const f32 current_speed =
         std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z + velocity.y * velocity.y);
     f32 ratio = current_speed * 10.0f / u.max_speed;
@@ -383,7 +391,8 @@ void Spline::generate(const SplineUnit& u, const Pose& pose, const Vector3& dest
         if (remaining == 0) {
             alignment = std::numeric_limits<f32>::max() * (forward.x + forward.z);
         } else {
-            alignment = forward.z * (dz / remaining) + (dx / remaining) * forward.x;
+            const f32 inv_remaining = 1.0f / remaining;
+            alignment = forward.z * (inv_remaining * dz) + (inv_remaining * dx) * forward.x;
         }
         if (at_goal) state = PointState::Done;
 

@@ -3,6 +3,7 @@
 #include "sim/air_combat.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/flight_math.hpp"
 #include "sim/path_tables.hpp"
 #include "sim/prepare_move.hpp"
 #include "sim/sim_state.hpp"
@@ -405,12 +406,15 @@ path::SplineUnit spline_unit(const Unit& unit) {
 
 /// Where it is: its position, heading and last tick's step.
 path::Pose spline_pose(const Unit& unit) {
-    const f32 heading = quat_yaw(unit.orientation());
+    // Its forward axis straight from its orientation, pitch and all, as Moho's
+    // QuatForwardAxis (Generate, 0x005B30E3): a unit made side-on to its goal has a
+    // forward z of float noise, whose sign picks forward or reverse.
+    const Quaternion& q = unit.orientation();
+    const Vector3 forward{(q.w * q.y + q.z * q.x) * 2.0f, (q.z * q.y - q.w * q.x) * 2.0f,
+                          1.0f - (q.y * q.y + q.x * q.x) * 2.0f};
     const Vector3& v = unit.velocity();
     constexpr f32 kTick = 0.1f;
-    return {unit.position(),
-            {osc::dmath::sin(heading), 0, osc::dmath::cos(heading)},
-            {v.x * kTick, v.y * kTick, v.z * kTick}};
+    return {unit.position(), forward, {v.x * kTick, v.y * kTick, v.z * kTick}};
 }
 
 } // namespace
@@ -423,11 +427,31 @@ bool Navigator::unit_at(const Unit& unit, const Vector3& p) {
            std::lrint(at.z - hz) == std::lrint(p.z - hz);
 }
 
+namespace {
+
+/// A node's height as Generate and Update give it: the terrain's, or the water's where a
+/// ship, a floating amphibian or a hover rides above it.
+void set_node_height(path::SplineWorld& world, const map::Terrain* terrain, const Unit& unit) {
+    if (!terrain) return;
+    const std::string& motion = unit.motion_type();
+    const bool rides_water = motion == "RULEUMT_Water" || motion == "RULEUMT_AmphibiousFloating" ||
+                             motion == "RULEUMT_Hover";
+    world.height = [terrain, rides_water](f32 x, f32 z) {
+        const f32 ground = terrain->get_terrain_height(x, z);
+        return rides_water && terrain->has_water() && terrain->water_elevation() > ground
+                   ? terrain->water_elevation()
+                   : ground;
+    };
+}
+
+} // namespace
+
 void Navigator::spline_generate(const Unit& unit, const Vector3& to, path::PathType type,
                                 bool carry_on) {
     collision_ = {}; // UpdatePath starts its collision afresh
     path::SplineWorld world;
     if (sim_) {
+        set_node_height(world, sim_->terrain(), unit);
         world.wont_fit = [&](f32 x, f32 z) {
             return sim_->footprint_fits_at(unit.footprint(), x, z) == 0;
         };
@@ -440,7 +464,9 @@ void Navigator::spline_generate(const Unit& unit, const Vector3& to, path::PathT
 
 void Navigator::spline_brake(const Unit& unit, int mode) {
     collision_ = {};
-    spline_.brake(spline_unit(unit), spline_pose(unit), mode, path::SplineWorld{});
+    path::SplineWorld world;
+    if (sim_) set_node_height(world, sim_->terrain(), unit);
+    spline_.brake(spline_unit(unit), spline_pose(unit), mode, world);
     has_spline_ = true;
 }
 
@@ -478,10 +504,12 @@ void Navigator::drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terra
     pos.x = node->position.x;
     pos.z = node->position.z;
     const f32 heading = osc::dmath::atan2(node->direction.x, node->direction.z);
-    const Quaternion level = euler_to_quat(heading, 0.0f, 0.0f);
+    // Facing the node's heading as CalcMoveCommon sets it (COORDS_Orient), tilted to the
+    // ground unnormalized: the motion normalizes once, in MoveTo.
+    const Quaternion level = coords_orient_moho(node->direction);
     Quaternion facing = level;
     if (terrain) {
-        const Unit::GroundStance stance = unit.ground_stance(terrain, pos.x, pos.z, level);
+        const Unit::GroundStance stance = unit.ground_stance(terrain, pos.x, pos.z, level, false);
         pos.y = stance.y;
         facing = stance.orientation;
     }
@@ -501,6 +529,7 @@ void Navigator::drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terra
         // It stays, its velocity gone, and is pushed back toward where it was
         // (CalcMoveCommon: AddImpulse at a hundredth of its top speed).
         unit.set_motion_velocity({});
+        unit.set_motion_pos(from);
         const f32 bx = from.x - pos.x;
         const f32 bz = from.z - pos.z;
         const f32 blen = std::sqrt(bx * bx + bz * bz);
@@ -509,13 +538,18 @@ void Navigator::drive_spline(Unit& unit, f32 max_speed, f64 dt, const map::Terra
             unit.add_impulse({bx * scale, 0, bz * scale}, true);
         }
         unit.set_orientation(
-            terrain ? unit.ground_stance(terrain, from.x, from.z, level).orientation : level);
+            terrain ? unit.ground_stance(terrain, from.x, from.z, level, false).orientation
+                    : level);
         unit.note_drive(0, 0, max_speed, turning);
         return;
     }
     unit.set_position(pos);
     unit.set_orientation(facing);
-    unit.set_motion_velocity({pos.x - from.x, pos.y - from.y, pos.z - from.z});
+    // Its step from mPos to the node, the node's own height and all (CalcMoveCommon).
+    const Vector3& was = unit.motion_pos();
+    unit.set_motion_velocity(
+        {node->position.x - was.x, node->position.y - was.y, node->position.z - was.z});
+    unit.set_motion_pos(node->position);
     // Its speed along its heading; it is stopping within a second's run of its target
     // (CUnitMotion::ProcessCommonMotionState).
     const f32 speed = ((pos.x - from.x) * osc::dmath::sin(heading) +

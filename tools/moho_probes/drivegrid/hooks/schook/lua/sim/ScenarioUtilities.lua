@@ -7,6 +7,8 @@
 --   4. 6 on (a short hop, below top speed).
 -- Each tick it logs every unit's position, heading and Moving state; once
 -- each, the blueprint fields its drive reads. drive_diff.py compares two logs.
+-- Positions and orientations print with 9 significant digits, enough to give a
+-- float back bit for bit: two logs' lines agree exactly when the floats do.
 
 local X0, X1 = 584, 704 -- the lanes' span: each rises under 0.3 along its length
 local ZS = 117 -- where each starts
@@ -68,8 +70,9 @@ local function drive(b, id, u, x, done)
             if u:IsDead() then break end
             local p = u:GetPosition()
             local moving = u:IsUnitState('Moving')
-            probe('dg b=%d %s L%d t=%d %.3f %.3f %.2f %s', b, id, n, t, p[1], p[3], yaw(u),
-                moving and 'm' or '-')
+            local q = u:GetOrientation()
+            probe('dg b=%d %s L%d t=%d %.9g %.9g %.2f %s q=%.9g,%.9g,%.9g,%.9g', b, id, n, t, p[1], p[3],
+                yaw(u), moving and 'm' or '-', q[1], q[2], q[3], q[4])
             if last and p[1] == last[1] and p[3] == last[2] then still = still + 1 else still = 0 end
             last = {p[1], p[3]} -- a copy: the original hands back one table, updated in place
             if t > 2 and not moving and table.getn(u:GetCommandQueue()) == 0 and still >= REST_TICKS then

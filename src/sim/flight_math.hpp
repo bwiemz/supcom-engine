@@ -16,6 +16,10 @@ Vector3 forward_of(const Quaternion& q);
 /// turn about X.
 Quaternion coords_orient(const Vector3& dir);
 
+/// COORDS_Orient (0x0050B480) bit for bit: Wm3's Normalize (times the inverse length)
+/// and func_MatrixToQuat (0x004EB3F0) on the rows right, up, forward.
+Quaternion coords_orient_moho(const Vector3& dir);
+
 /// QuatCrossAdd: the shortest rotation from `from` to `to` (neither need be
 /// unit length), by their half vector. Opposite directions give the half
 /// turn about `from`.

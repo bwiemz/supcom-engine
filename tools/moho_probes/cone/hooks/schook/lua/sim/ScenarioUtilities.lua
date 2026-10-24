@@ -26,11 +26,12 @@ local function scene(name, a, b, ticks)
     WaitTicks(2)
     move(ua, a[5], a[6])
     move(ub, b[5], b[6])
-    -- Each tick, both units' places (copied: GetPosition hands back one table, updated in place).
+    -- Each tick, both units' places (copied: GetPosition hands back one table, updated in place),
+    -- with 9 significant digits: enough to give a float back bit for bit.
     for t = 1, ticks do
         WaitTicks(1)
         local pa, pb = ua:GetPosition(), ub:GetPosition()
-        probe('cone %s t=%d %.3f %.3f %.3f %.3f', name, t, pa[1], pa[3], pb[1], pb[3])
+        probe('cone %s t=%d %.9g %.9g %.9g %.9g', name, t, pa[1], pa[3], pb[1], pb[3])
     end
     probe('cone %s end tick=%d', name, GetGameTick())
     ua:Destroy()

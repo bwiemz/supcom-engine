@@ -1250,6 +1250,7 @@ void StateIO::save(StateWriter& w, const Unit& u) {
     w.b(u.drove_);
     w.b(u.jostled_);
     w.vec3(u.motion_velocity_);
+    w.vec3(u.motion_pos_);
     w.b(u.pushed_);
     w.b(u.in_state_transition_);
     w.b(u.surface_collision_);
@@ -1667,6 +1668,7 @@ void StateIO::load(StateReader& r, Unit& u, SimState& sim) {
     u.drove_ = r.b();
     u.jostled_ = r.b();
     u.motion_velocity_ = r.vec3();
+    u.motion_pos_ = r.vec3();
     u.pushed_ = r.b();
     u.in_state_transition_ = r.b();
     u.surface_collision_ = r.b();

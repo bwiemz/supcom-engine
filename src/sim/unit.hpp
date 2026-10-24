@@ -518,6 +518,8 @@ public:
     /// mVelocity: its step last tick, as its motion keeps it.
     const Vector3& motion_velocity() const { return motion_velocity_; }
     void set_motion_velocity(const Vector3& v) { motion_velocity_ = v; }
+    const Vector3& motion_pos() const { return motion_pos_; }
+    void set_motion_pos(const Vector3& p) { motion_pos_ = p; }
     /// mIsBeingPushed: knocked off its spline, it coasts till slow.
     bool pushed() const { return pushed_; }
     void set_pushed(bool p) { pushed_ = p; }
@@ -1060,13 +1062,15 @@ public:
         Quaternion orientation;
     };
     /// Its height with its centre at (x, z), and `facing` tilted to the
-    /// ground under its box.
-    GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z,
-                               const Quaternion& facing) const;
+    /// ground under its box; normalized unless `normalize` is false (with Moho
+    /// pathing its motion normalizes once, in MoveTo).
+    GroundStance ground_stance(const map::Terrain* terrain, f32 x, f32 z, const Quaternion& facing,
+                               bool normalize = true) const;
     f32 ground_y(const map::Terrain* terrain, f32 x, f32 z) const {
         return ground_stance(terrain, x, z, pending_orientation()).y;
     }
-    void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing);
+    void stand_on_ground(const map::Terrain* terrain, Vector3 at, const Quaternion& facing,
+                         bool normalize = true);
     bool snaps_to_ground() const {
         return !can_fly() && (is_hover() || layer_ == "Land" || layer_ == "Seabed");
     }
@@ -1084,7 +1088,7 @@ public:
     void set_hover_physics(const HoverPhysics& h) { hover_physics_ = h; }
     /// Moho's CUnitMotion::CalcMoveHover after its move: the lean into its
     /// acceleration and the wobble, then the snap.
-    void tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random);
+    void tick_hover(const map::Terrain* terrain, u32 tick, SimRandom& random, bool moho = false);
     const Vector3& hover_tilt() const { return hover_tilt_; }
     const Vector3& wobble_offset() const { return wobble_offset_; }
     /// Physics.RaisedPlatforms: quads of four (x, z, height) corners.
@@ -2005,10 +2009,13 @@ private:
     // a transport picks up its largest units first.
     f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
     f32 average_density_ = 0.49f;
-    Vector3 motion_velocity_{};        ///< CUnitMotion's mVelocity, a tick's step
+    Vector3 motion_velocity_{}; ///< CUnitMotion's mVelocity, a tick's step
+    /// CUnitMotion's mPos: the node it last stood on, or where it coasted to, before the
+    /// ground snap; a node's velocity is the step from it.
+    Vector3 motion_pos_{};
     bool pushed_ = false;              ///< mIsBeingPushed
     bool in_state_transition_ = false; ///< mInStateTransition
-    bool surface_collision_ = false;   ///< mProcessSurfaceCollision
+    bool surface_collision_ = true;    ///< mProcessSurfaceCollision; a new CUnitMotion's is set
     /// Give up slots whose unit is no longer aboard (it died, was taken off
     /// the cargo list, or left), as Moho's TransportUnreserveUnattachedSpots.
     void release_stale_slots(const EntityRegistry& registry);

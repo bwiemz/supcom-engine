@@ -10,11 +10,14 @@ beyond a small tolerance, those units grouped by the blueprint fields their driv
 few. Exit 1 if any differ.
 
 With --trace it compares the paths tick by tick instead: per leg, the largest distance between
-the original's unit and the engine's at the same tick, and how those spread over all legs.
+the original's unit and the engine's at the same tick, and how those spread over all legs. Where
+both logs print positions with 9 significant digits (enough to give a float back bit for bit), it
+also counts the legs that match bit for bit, and how far into the others the first bit differs.
 """
 
 import math
 import re
+import struct
 import sys
 from collections import defaultdict
 from itertools import pairwise
@@ -97,6 +100,19 @@ def trace_gap(r: Samples, e: Samples) -> float:
     )
 
 
+def f32(v: float) -> float:
+    """The float a printed number gives back. The two C runtimes break a printing tie apart
+    (640.3515625 prints 640.351563 in the original and 640.351562 in the engine)."""
+    return struct.unpack("f", struct.pack("f", v))[0]
+
+
+def first_difference(r: Samples, e: Samples) -> int | None:
+    """The first tick the two positions differ at all, from the leg's start; None if never."""
+    at = {t: (f32(x), f32(z)) for t, x, z, _, _ in e}
+    t0 = r[0][0] if r else 0
+    return next((t - t0 for t, x, z, _, _ in r if t in at and (f32(x), f32(z)) != at[t]), None)
+
+
 def trace(r_runs: dict[tuple[str, int], Samples], e_runs: dict[tuple[str, int], Samples]) -> int:
     keys = sorted(r_runs.keys() & e_runs.keys())
     gaps = sorted((trace_gap(r_runs[k], e_runs[k]), k) for k in keys)
@@ -108,6 +124,12 @@ def trace(r_runs: dict[tuple[str, int], Samples], e_runs: dict[tuple[str, int], 
         print(f"  {int(share * 100):3d}% of legs within {gap:.3f}")
     for limit in (0.01, 0.05, 0.1, 0.5):
         print(f"  within {limit}: {sum(g <= limit for g, _ in gaps)}")
+    firsts = [first_difference(r_runs[k], e_runs[k]) for k in keys]
+    differing = sorted(f for f in firsts if f is not None)
+    print(f"  bit for bit: {len(firsts) - len(differing)}")
+    if differing:
+        median, earliest = differing[len(differing) // 2], differing[0]
+        print(f"  the others first differ at tick {median} (median), {earliest} at the earliest")
     for gap, (uid, leg) in gaps[-8:][::-1]:
         print(f"    {uid} L{leg}: {gap:.3f}")
     return 0
