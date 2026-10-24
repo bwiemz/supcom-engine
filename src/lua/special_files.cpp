@@ -1,6 +1,7 @@
 #include "lua/special_files.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "platform/executable.hpp"
 #include "platform/paths.hpp"
@@ -277,13 +278,21 @@ int l_LaunchReplaySession(lua_State* L) {
 /// folder names). A network game (OE-128) is saved by every player, each
 /// their own copy under the file's base name, after the tick every player
 /// runs the save on (kSaveGameCallback): the callback says it is under way.
+/// With no game, Moho's error, and no callback: Moho raises it on finding
+/// no sim driver, and hands the callback only to the save it queues (faf-re
+/// cfunc_InternalSaveGameL @ 0x00881B30).
 int l_InternalSaveGame(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
+    auto* sim = sim_of(L); // a save's snapshot walks its Lua state
+    if (!sim || !session_active(L)) return luaL_error(L, "No session to save!");
     const char* name = luaL_checkstring(L, 2);
     const auto* files = get_special_files(L);
-    auto* sim = sim_of(L); // a save's snapshot walks its Lua state
+    // The engine's own refusals: a game it doesn't record (a headless run
+    // without --save) has no history to save, one catching up isn't there
+    // yet, and a replay isn't saved. (Moho's driver saves whatever its sim
+    // plays.)
     const char* refused = nullptr;
-    if (!sim || !sim->recording()) refused = "No session to save!";
+    if (!sim->recording()) refused = "No session to save!";
     else if (sim->resuming()) refused = "The game is still loading.";
     else if (sim->playback()) refused = "A replay can't be saved.";
     else if (!files || (!files->holds(*SpecialFiles::find_type("SaveGame"), file) &&

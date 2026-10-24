@@ -3,12 +3,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/game_state.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/special_files.hpp"
 #include "sim/build_info.hpp"
 #include "sim/lua_bytes.hpp"
 #include "sim/saved_game.hpp"
 #include "sim/replay.hpp"
+#include "sim/sim_state.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -300,4 +302,52 @@ TEST_CASE("A saved network game is found as a lobby resuming it asks (OE-128)",
     CHECK_FALSE(osc::lua::check_network_save(L, "evening", 1300, found).empty());
     CHECK_FALSE(osc::lua::check_network_save(L, "missing", 1200, found).empty());
     CHECK_FALSE(osc::lua::check_network_save(L, "../evening", 1200, found).empty());
+}
+
+TEST_CASE("InternalSaveGame raises with no session", "[specialfiles][savegame]") {
+    // Moho's cfunc_InternalSaveGameL raises "No session to save!" with no sim
+    // driver; the callback goes only into the save it queues.
+    TempDir dir;
+    SpecialFiles files(dir.path);
+    osc::lua::LuaState lua;
+    osc::lua::register_special_file_bindings(lua, &files);
+    lua_State* L = lua.raw();
+    const fs::path file = files.path(*SpecialFiles::find_type("SaveGame"), "Player", "probe");
+    const std::string refused = "called = false\n"
+                                "local ok, err = pcall(InternalSaveGame, '" +
+                                file.generic_string() +
+                                "', 'probe', function() called = true end)\n"
+                                "assert(not ok, 'it answered')\n"
+                                "assert(string.find(err, 'No session to save!', 1, true), err)\n"
+                                "assert(not called, 'it called back')\n";
+
+    // No game: the front end.
+    CHECK(run(lua, refused.c_str()).empty());
+
+    // A sim, but no session yet: a --map game's userInit.lua runs before it.
+    osc::sim::SimState sim(L, nullptr);
+    sim.set_recording(true);
+    lua_pushstring(L, "osc_sim_state");
+    lua_pushlightuserdata(L, &sim);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    CHECK(run(lua, refused.c_str()).empty());
+    CHECK_FALSE(fs::exists(file));
+
+    // In a game, the callback has the outcome: here a refusal of its own.
+    osc::GameStateManager game_state;
+    game_state.transition_to(osc::GameState::GAME, nullptr);
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_pushlightuserdata(L, &game_state);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    const std::string outside = "local result\n"
+                                "InternalSaveGame('" +
+                                (dir.path / "outside.oscsave").generic_string() +
+                                "', 'probe', function(worked, errmsg)\n"
+                                "    result = {worked = worked, errmsg = errmsg}\n"
+                                "end)\n"
+                                "assert(result, 'no callback')\n"
+                                "assert(result.worked == false, 'saved')\n"
+                                "assert(result.errmsg == 'Games are saved only in the savegames "
+                                "folder.', result.errmsg)\n";
+    CHECK(run(lua, outside.c_str()).empty());
 }
