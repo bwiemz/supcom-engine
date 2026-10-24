@@ -2612,6 +2612,46 @@ static int l_SessionIsBeingRecorded(lua_State* L) {
     return 1;
 }
 
+/// Whether the session can start again from its launch (Moho's: it has
+/// launch info, as every launched game has). A network game can't: one peer
+/// can't start a lockstep game again alone.
+static bool session_restartable(lua_State* L) {
+    return session_active(L) && !session_is_multiplayer();
+}
+
+/// RestartSession(): the game in play starts again from its launch, as
+/// Moho's cfunc_RestartSessionL (0x0083F420) requests the CreateSession
+/// frame action while a session is active and has launch info. The window
+/// takes the request between frames (take_restart_request). As Moho's, it
+/// raises its argument-count error given any argument, and does nothing
+/// with no session.
+static int l_RestartSession(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "RestartSession() - Restart the current mission/skirmish/etc", 0,
+                               lua_gettop(L));
+    if (!session_restartable(L)) {
+        if (session_active(L)) spdlog::warn("RestartSession: a network game can't be restarted");
+        return 0;
+    }
+    lua_pushstring(L, core::kRestartRequestKey);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// SessionCanRestart() -> whether RestartSession would start the session
+/// again (Moho's cfunc_SessionCanRestartL 0x008981B0: it has launch info).
+/// Moho's argument-count error given any argument, and "no active session."
+/// with none.
+static int l_SessionCanRestart(lua_State* L) {
+    if (lua_gettop(L) != 0)
+        return arg_count_error(L, "Return true iff the active session can be restarted.", 0,
+                               lua_gettop(L));
+    if (!session_active(L)) return luaL_error(L, "no active session.");
+    lua_pushboolean(L, session_restartable(L) ? 1 : 0);
+    return 1;
+}
+
 /// SetFocusArmy(army) -- 1-based, -1 = observer. While FA's game interface
 /// runs it is a request the next sim beat applies (SyncQueue), as Moho's
 /// session does, so the sim and the UI's OnSync see the change together --
@@ -4864,7 +4904,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_bool_fn("HasCommandLineArg2", false);
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
-    set_bool_fn("SessionCanRestart", false);
     set_nil_fn("SessionGetCommandSourceNames");
     set_nil_fn("SessionGetLocalCommandSource");
     set_nil_fn("GetMouseScreenPos");
@@ -4873,7 +4912,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_nil_fn("GetActiveBuildTemplate");
     set_nil_fn("GetHighlightCommand");
     set_nil_fn("GetInputCapture");
-    set_stub("RestartSession");
     set_nil_fn("GetAntiAliasingOptions");
     set_nil_fn("GetResolution");
     set_stub("SetResolution");
@@ -5167,6 +5205,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SessionIsMultiplayer", l_SessionIsMultiplayer);
     state.register_function("SessionIsObservingAllowed", l_SessionIsObservingAllowed);
     state.register_function("SessionIsBeingRecorded", l_SessionIsBeingRecorded);
+    state.register_function("SessionCanRestart", l_SessionCanRestart);
+    state.register_function("RestartSession", l_RestartSession);
     state.register_function("EjectSessionClient", l_EjectSessionClient);
 
     // Engine state queries (M144c)

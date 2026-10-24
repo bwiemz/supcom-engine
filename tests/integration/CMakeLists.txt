@@ -441,6 +441,16 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # #811: a skirmish launched from the front end and restarted as retail's
+    # game menu restarts it (RestartSession) starts again from its launch --
+    # a new sim from tick 0, with its scenario, armies and seed -- and plays
+    # on, offscreen.
+    add_test(NAME data.restart_flow COMMAND opensupcom --restart-flow-test)
+    set_tests_properties(data.restart_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+
     # M208a, M191 step 4: retail's Load dialog path -- GetSpecialFiles lists
     # the save, LoadSavedGame loads it -- then the game catches up (never a
     # replay meanwhile), plays on, and InternalSaveGame saves it again. Then

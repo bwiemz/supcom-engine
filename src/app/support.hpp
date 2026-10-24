@@ -10,6 +10,7 @@
 #include "sim/game_setup.hpp"
 
 #include <array>
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -96,6 +97,24 @@ u64 new_game_seed(const std::string& seed_arg, bool reproducible);
 sim::GameSetup launch_setup(lua_State* uiL, const sim::Replay* replay, const std::string& scenario,
                             u64 seed);
 
+/// What the game in play was launched from, as Moho's session keeps its
+/// launch info: RestartSession launches it again.
+struct SessionLaunch {
+    std::string scenario;
+    std::string replay_file; ///< a replay watched (LaunchReplaySession), or ""
+    std::string save_file;   ///< a saved game loaded (LoadSavedGame), or ""
+    /// A new game's own setup, its seed included: a restart starts from it,
+    /// not from the front end's sessionConfig as it stands then (and a
+    /// command line's game has none there).
+    std::optional<sim::GameSetup> setup;
+};
+
+/// RestartSession's request (core::kRestartRequestKey), taken from the UI
+/// state's registry: `launch` requested again through the keys
+/// LaunchSinglePlayerSession, LaunchReplaySession and LoadSavedGame set.
+/// False when none was asked for, or there is no launch to repeat.
+bool take_restart_request(lua_State* uiL, const std::optional<SessionLaunch>& launch);
+
 /// The player's army in a game it plays alone: the first human one, by its
 /// index in the sim -- as InitializeArmyAI decides, one with no
 /// ScenarioInfo.ArmySetup entry, or one whose entry is Human; with none (AIs
@@ -107,8 +126,9 @@ int human_army(lua_State* simL, sim::SimState& sim);
 /// the renderer's scene. The pointers may be null (headless). The renderer
 /// reads blueprints through `ui_store`, whose tables are `ui_lua_state`'s,
 /// the state it is given each frame: the sim's store's refs name tables in
-/// the sim's state, and the renderer must not touch that one. False on a
-/// critical failure.
+/// the sim's state, and the renderer must not touch that one. A `restart`
+/// is a new game's own setup, seed included, in place of the launch's
+/// (RestartSession). False on a critical failure.
 bool execute_reload_sequence(std::unique_ptr<lua::LuaState>& sim_lua_state,
                              std::unique_ptr<sim::SimState>& sim_state, lua::LuaState& ui_lua_state,
                              vfs::VirtualFileSystem& vfs, blueprints::BlueprintStore& store,
@@ -118,6 +138,7 @@ bool execute_reload_sequence(std::unique_ptr<lua::LuaState>& sim_lua_state,
                              renderer::InputHandler* input_handler,
                              std::unordered_set<u32>* prev_selection, WorldInterp* world_interp,
                              u64 seed, double& sim_accumulator, const std::string& launch_scenario,
-                             const sim::Replay* replay = nullptr);
+                             const sim::Replay* replay = nullptr,
+                             const sim::GameSetup* restart = nullptr);
 
 } // namespace osc::app

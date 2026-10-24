@@ -261,6 +261,13 @@ std::optional<int> App::Window::set_up() {
         }
     }
 
+    // A command line's game (--map) the boot started: what RestartSession
+    // starts again is its scenario with its setup (a loaded save's, which
+    // the boot restored, has none to repeat)
+    if (sim_state && !opt.map_path.empty() && !sim_state->loaded_from_save() &&
+        !sim_state->playback())
+        session_launch = SessionLaunch{opt.map_path, {}, {}, sim_state->recorded_replay().setup};
+
     if (auto code = open_replay()) return code;
     if (auto code = open_saved_game()) return code;
     return start_flows();
@@ -436,6 +443,13 @@ std::optional<int> App::Window::start_flows() {
             return finish_test_run("self-destruct-flow-test");
         }
     }
+    if (opt.restart_flow_test) {
+        restart_flow.emplace();
+        if (!restart_flow->start(ui_lua_state)) {
+            restart_flow->finish();
+            return finish_test_run("restart-flow-test");
+        }
+    }
     // --campaign-flow-test: the campaign through retail's screens (M209b)
     if (opt.campaign_flow_test) {
         using Route = osc::app::CampaignFlowTest::Route;
@@ -465,7 +479,7 @@ bool App::Window::running() const {
            !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
            !gpgnet_done && !(mods_flow && mods_flow->done()) &&
            !(self_destruct_flow && self_destruct_flow->done()) &&
-           !(campaign_flow && campaign_flow->done()) &&
+           !(restart_flow && restart_flow->done()) && !(campaign_flow && campaign_flow->done()) &&
            !(opt.play_for > 0 && game_frames.in_game_s >= opt.play_for) && !played_to_the_end();
 }
 
@@ -537,6 +551,10 @@ std::optional<int> App::Window::finish() {
     if (self_destruct_flow) {
         self_destruct_flow->finish();
         return finish_test_run("self-destruct-flow-test");
+    }
+    if (restart_flow) {
+        restart_flow->finish();
+        return finish_test_run("restart-flow-test");
     }
     if (campaign_flow) {
         campaign_flow->finish();

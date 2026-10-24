@@ -186,6 +186,7 @@ add_executable(osc_tests
     test_effect_expiry.cpp
     test_sim_lua_gc.cpp
     test_saved_game.cpp
+    test_restart_session.cpp
     test_checksum_coverage.cpp
     test_sha256.cpp
     test_platform_secrets.cpp

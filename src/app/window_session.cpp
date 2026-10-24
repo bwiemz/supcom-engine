@@ -23,6 +23,11 @@ bool App::Window::exit_requested() {
 }
 
 void App::Window::handle_launch() {
+    // RestartSession: the game in play launched again, from its own launch
+    // (a new game from its own setup, seed and all), as Moho's CreateSession
+    // frame action starts the session again from its launch info
+    std::optional<osc::sim::GameSetup> restart;
+    if (take_restart_request(ui_lua_state.raw(), session_launch)) restart = session_launch->setup;
     // Check for game launch request from lobby (M148a)
     {
         lua_State* uiL = ui_lua_state.raw();
@@ -46,10 +51,12 @@ void App::Window::handle_launch() {
 
             // A replay to play (LaunchReplaySession), if any
             std::optional<osc::sim::Replay> launch_replay;
+            SessionLaunch launch{launch_scenario, {}, {}, std::nullopt};
             lua_pushstring(uiL, "__osc_launch_replay");
             lua_rawget(uiL, LUA_REGISTRYINDEX);
             if (lua_type(uiL, -1) == LUA_TSTRING) {
-                launch_replay = load_replay(lua_tostring(uiL, -1));
+                launch.replay_file = lua_tostring(uiL, -1);
+                launch_replay = load_replay(launch.replay_file);
                 if (!launch_replay) launch_scenario.clear();
             }
             lua_pop(uiL, 1);
@@ -62,8 +69,9 @@ void App::Window::handle_launch() {
             lua_pushstring(uiL, "__osc_launch_save");
             lua_rawget(uiL, LUA_REGISTRYINDEX);
             if (lua_type(uiL, -1) == LUA_TSTRING) {
+                launch.save_file = lua_tostring(uiL, -1);
                 osc::sim::SavedGame save;
-                if (osc::lua::read_saved_game(lua_tostring(uiL, -1), save) ==
+                if (osc::lua::read_saved_game(launch.save_file, save) ==
                     osc::sim::SaveLoadError::None)
                     launch_save = std::move(save);
                 else launch_scenario.clear();
@@ -75,12 +83,14 @@ void App::Window::handle_launch() {
             const osc::sim::Replay* recorded = launch_replay ? &*launch_replay
                                                : launch_save ? &launch_save->game
                                                              : nullptr;
+            if (recorded) restart.reset(); // a replay's or a save's is its file's
 
             if (!launch_scenario.empty()) {
-                spdlog::info("Launch requested: {}{}", launch_scenario,
+                spdlog::info("Launch requested: {}{}{}", launch_scenario,
                              launch_replay ? " (replay)"
                              : launch_save ? " (saved game)"
-                                           : "");
+                                           : "",
+                             restart ? ", restarted" : "");
                 save_last_game(); // the game being left, if any
                 perf_stretch.clear();
                 game_frames.last_drawn = game_frames.last_pace = -1.0;
@@ -94,7 +104,8 @@ void App::Window::handle_launch() {
                 wld_provider.destroy_game_interface(uiL);
                 renderer.forget_ui_controls();
                 // (with the game's mods, as its sim will have them)
-                const std::string game_mods = launch_setup(uiL, recorded, launch_scenario, 0).mods;
+                const std::string game_mods =
+                    restart ? restart->mods : launch_setup(uiL, recorded, launch_scenario, 0).mods;
                 reset_ui_state(&game_mods);
                 uiL = ui_lua_state.raw();
                 publish_window_objects();
@@ -115,14 +126,19 @@ void App::Window::handle_launch() {
 
                 // Execute reload in stages, pumping UI frames between each
                 const auto reload = [&] {
-                    execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
-                                            loader, config, scenario_meta, game_state_mgr,
-                                            &renderer, &ui_store, &input_handler, &prev_selection,
-                                            &world_interp,
-                                            launch_seed(opt.seed_arg, opt.reproducible_run),
-                                            sim_accumulator, launch_scenario, recorded);
+                    execute_reload_sequence(
+                        sim_lua_state, sim_state, ui_lua_state, vfs, store, loader, config,
+                        scenario_meta, game_state_mgr, &renderer, &ui_store, &input_handler,
+                        &prev_selection, &world_interp,
+                        launch_seed(opt.seed_arg, opt.reproducible_run), sim_accumulator,
+                        launch_scenario, recorded, restart ? &*restart : nullptr);
                 };
                 reload();
+                // What it was launched from, for RestartSession: a new
+                // game's own setup (its seed too), or its replay or save
+                if (sim_state && !recorded) launch.setup = sim_state->recorded_replay().setup;
+                session_launch =
+                    sim_state ? std::optional<SessionLaunch>(std::move(launch)) : std::nullopt;
                 if (launch_replay && sim_state) {
                     // Watched as an observer, as the replay plays.
                     active_playback.emplace(std::move(*launch_replay));
@@ -252,6 +268,7 @@ void App::Window::handle_return_to_lobby() {
             game_frames.last_drawn = game_frames.last_pace = -1.0;
             active_playback.reset();
             catch_up.reset();
+            session_launch.reset();
 
             // Tear down game state
             wld_provider.destroy_game_interface(uiL);

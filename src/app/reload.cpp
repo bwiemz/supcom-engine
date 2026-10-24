@@ -43,6 +43,35 @@ osc::sim::GameSetup launch_setup(lua_State* uiL, const osc::sim::Replay* replay,
     return setup;
 }
 
+bool take_restart_request(lua_State* uiL, const std::optional<SessionLaunch>& launch) {
+    lua_pushstring(uiL, osc::core::kRestartRequestKey);
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    const bool asked = lua_toboolean(uiL, -1) != 0;
+    lua_pop(uiL, 1);
+    if (!asked) return false;
+    lua_pushstring(uiL, osc::core::kRestartRequestKey);
+    lua_pushnil(uiL);
+    lua_rawset(uiL, LUA_REGISTRYINDEX);
+    if (!launch) {
+        spdlog::warn("RestartSession: the game in play has no launch to repeat");
+        return false;
+    }
+    const auto set = [&](const char* key, const std::string& value) {
+        lua_pushstring(uiL, key);
+        if (value.empty()) lua_pushnil(uiL);
+        else lua_pushstring(uiL, value.c_str());
+        lua_rawset(uiL, LUA_REGISTRYINDEX);
+    };
+    set("__osc_launch_scenario", launch->scenario);
+    set("__osc_launch_replay", launch->replay_file);
+    set("__osc_launch_save", launch->save_file);
+    lua_pushstring(uiL, "__osc_launch_requested");
+    lua_pushboolean(uiL, 1);
+    lua_rawset(uiL, LUA_REGISTRYINDEX);
+    spdlog::info("RestartSession: {} again", launch->scenario);
+    return true;
+}
+
 int human_army(lua_State* simL, osc::sim::SimState& sim) {
     if (!simL) {
         return 0;
@@ -101,7 +130,8 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
                              WorldInterp* world_interp,                    // nullable for headless
                              osc::u64 seed, // the new game's random seed
                              double& sim_accumulator, const std::string& launch_scenario,
-                             const osc::sim::Replay* replay) { // a replay to play instead
+                             const osc::sim::Replay* replay,       // a replay to play instead
+                             const osc::sim::GameSetup* restart) { // a game started again
 
     lua_State* uiL = ui_lua_state.raw();
 
@@ -136,8 +166,12 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     // retail InitializeArmies spawns an ACU for every army ListArmies()
     // returns -- an army without a brain then runs its commander's scripts
     // against no brain at all.
-    if (replay) seed = replay->setup.seed;
-    osc::sim::GameSetup setup = launch_setup(uiL, replay, launch_scenario, seed);
+    // A restart's is its game's own, the seed too: Moho starts the session
+    // again from its launch info, which holds the seed it was launched with.
+    if (restart) seed = restart->seed;
+    else if (replay) seed = replay->setup.seed;
+    osc::sim::GameSetup setup =
+        restart ? *restart : launch_setup(uiL, replay, launch_scenario, seed);
 
     // 5. Rebind BlueprintStore to new Lua state and reload blueprints, with
     // the game's mods (theirs, and their hooks of Blueprints.lua)

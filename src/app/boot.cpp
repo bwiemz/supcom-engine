@@ -470,7 +470,6 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         // Session functions
         set_bool_fn("SessionIsActive", false);
         set_bool_fn("SessionIsMultiplayer", false);
-        set_bool_fn("SessionCanRestart", false);
         set_nil_fn("SessionGetCommandSourceNames");
         set_nil_fn("SessionGetLocalCommandSource");
         // System info
@@ -479,7 +478,6 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         set_stub("SetOverlayFilters");
         set_nil_fn("GetActiveBuildTemplate");
         set_nil_fn("GetHighlightCommand");
-        set_stub("RestartSession");
         set_nil_fn("GetAntiAliasingOptions");
         set_nil_fn("GetResolution");
         set_stub("SetResolution");

@@ -11,6 +11,7 @@
 #include "app/campaign_flow_test.hpp"
 #include "app/mods_flow_test.hpp"
 #include "app/self_destruct_flow_test.hpp"
+#include "app/restart_flow_test.hpp"
 #include "app/render_bench.hpp"
 #include "app/scripted_mouse.hpp"
 #include "app/sim_thread.hpp"
@@ -131,7 +132,8 @@ private:
     // window_session.cpp: the UI's requests between games.
     /// The UI asked to exit (ExitApplication).
     bool exit_requested();
-    /// A game, replay or saved game launched from the lobby or a dialog.
+    /// A game, replay or saved game launched from the lobby or a dialog, or
+    /// the game in play launched again (RestartSession).
     void handle_launch();
     /// Back to the front end (the score screen's Continue, ReturnToLobby).
     void handle_return_to_lobby();
@@ -301,6 +303,9 @@ private:
     /// The entities whose loops the frame's sound plays (update_world_sounds).
     EntityLoopSources loop_sources;
     std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched
+    /// What the game in play was launched from (Moho's session's launch
+    /// info), for RestartSession: none at the front end.
+    std::optional<SessionLaunch> session_launch;
     /// FA's command mode drives world clicks (read once per frame).
     osc::renderer::CommandMode current_command_mode;
     bool ghost_from_mode = false;
@@ -352,6 +357,7 @@ private:
     /// recorded one watched.
     std::optional<osc::app::ModsFlowTest> mods_flow;
     std::optional<osc::app::SelfDestructFlowTest> self_destruct_flow;
+    std::optional<osc::app::RestartFlowTest> restart_flow;   ///< (#811)
     std::optional<osc::app::CampaignFlowTest> campaign_flow; ///< (M209b)
     std::optional<osc::app::UiClicks> ui_clicks;
     std::optional<osc::app::ScriptedMouse> scripted_mouse;
